@@ -21,8 +21,11 @@ class CaptureSink;
 // reference can read the declared type of a `StructuralVar` at `hops > 0`.
 // Each node lives on the stack of the `StructuralScopeLowerer::Run` that
 // pushed it; the chain extends one node per scope opened during traversal.
-// Mirrors `RenderContext`'s `structural_parent_` link so lowering and render
-// reach the same `mir::StructuralVarDecl` for any (hops, var) reference.
+// This is the construction-side half of the shared walk position
+// (docs/architecture/lowering_organization.md "The Walk Position"): the
+// rendering fold's read-only `ScopeView` resolves the same (hops, var)
+// reference by climbing its own parent link, so both reach the same
+// `mir::StructuralVarDecl`.
 struct ScopeChainNode {
   const mir::StructuralScope* scope;
   const ScopeChainNode* parent;

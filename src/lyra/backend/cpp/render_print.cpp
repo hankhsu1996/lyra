@@ -8,8 +8,8 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
+#include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -67,17 +67,16 @@ auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
       from_int(is_time ? "kTimeUnitPower" : "0LL"));
 }
 
-auto RenderPrintValueArg(
-    const RenderContext& ctx, const mir::RuntimePrintValue& v)
+auto RenderPrintValueArg(const ScopeView& view, const mir::RuntimePrintValue& v)
     -> diag::Result<std::string> {
-  const auto& type = ctx.Unit().GetType(v.type);
+  const auto& type = view.Unit().GetType(v.type);
 
   // The argument is type-driven: the `PrintValue` overload set selects the
   // right `Formatter<T>` from the operand's C++ type, so the backend only
   // hands it the bare operand. Any spec/operand mismatch (e.g. `%s` on a bit
   // vector) must be resolved upstream of the backend -- at HIR -> MIR via an
   // explicit ConversionExpr, or rejected.
-  auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
+  auto operand_or = RenderExpr(view, view.Expr(v.value));
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
 
   if (type.IsIntegralPacked() || type.Kind() == mir::TypeKind::kReal ||
@@ -94,7 +93,7 @@ auto RenderPrintValueArg(
 }
 
 auto RenderPrintItemInit(
-    const RenderContext& ctx, const mir::RuntimePrintItem& item)
+    const ScopeView& view, const mir::RuntimePrintItem& item)
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
@@ -105,7 +104,7 @@ auto RenderPrintItemInit(
                 RenderCStringLiteral(lit.text), lit.text.size());
           },
           [&](const mir::RuntimePrintValue& v) -> diag::Result<std::string> {
-            auto arg_or = RenderPrintValueArg(ctx, v);
+            auto arg_or = RenderPrintValueArg(view, v);
             if (!arg_or) return std::unexpected(std::move(arg_or.error()));
             return std::format(
                 "lyra::value::PrintValueItem({}, {})", *arg_or,
@@ -120,7 +119,7 @@ auto RenderPrintItemInit(
 namespace {
 
 auto RenderRuntimePrintCall(
-    const RenderContext& ctx, const mir::RuntimePrintCall& call)
+    const ScopeView& view, const mir::RuntimePrintCall& call)
     -> diag::Result<std::string> {
   const std::string_view kind_literal = RenderPrintKindLiteral(call.kind);
 
@@ -129,7 +128,7 @@ auto RenderRuntimePrintCall(
   std::string descriptor_arg;
   std::string_view call_target = "lyra::runtime::LyraPrint";
   if (call.descriptor.has_value()) {
-    auto desc_or = RenderExpr(ctx, ctx.Expr(*call.descriptor));
+    auto desc_or = RenderExpr(view, view.Expr(*call.descriptor));
     if (!desc_or) return std::unexpected(std::move(desc_or.error()));
     descriptor_arg = std::format("{}, ", *desc_or);
     call_target = "lyra::runtime::LyraFPrint";
@@ -151,7 +150,7 @@ auto RenderRuntimePrintCall(
   std::vector<std::string> item_inits;
   item_inits.reserve(call.items.size());
   for (const mir::RuntimePrintItem& item : call.items) {
-    auto init_or = RenderPrintItemInit(ctx, item);
+    auto init_or = RenderPrintItemInit(view, item);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     item_inits.push_back(*std::move(init_or));
   }
@@ -172,16 +171,16 @@ auto RenderRuntimePrintCall(
 }  // namespace
 
 auto RenderRuntimeCallExpr(
-    const RenderContext& ctx, const mir::RuntimeCallExpr& expr)
+    const ScopeView& view, const mir::RuntimeCallExpr& expr)
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
           [&](const mir::RuntimePrintCall& pc) -> diag::Result<std::string> {
-            return RenderRuntimePrintCall(ctx, pc);
+            return RenderRuntimePrintCall(view, pc);
           },
           [&](const mir::RuntimeSubmitObservedCall& sc)
               -> diag::Result<std::string> {
-            auto closure_or = RenderExpr(ctx, ctx.Expr(sc.closure));
+            auto closure_or = RenderExpr(view, view.Expr(sc.closure));
             if (!closure_or) {
               return std::unexpected(std::move(closure_or.error()));
             }
@@ -191,7 +190,7 @@ auto RenderRuntimeCallExpr(
           },
           [&](const mir::RuntimeSubmitNbaCall& nc)
               -> diag::Result<std::string> {
-            auto closure_or = RenderExpr(ctx, ctx.Expr(nc.closure));
+            auto closure_or = RenderExpr(view, view.Expr(nc.closure));
             if (!closure_or) {
               return std::unexpected(std::move(closure_or.error()));
             }
@@ -209,7 +208,7 @@ auto RenderRuntimeCallExpr(
             // at fire time. LRM 21.3.2 cancellation on $fclose is the
             // file-sink entry's responsibility.
             const std::string_view capture{"[=]"};
-            auto print_or = RenderRuntimePrintCall(ctx, pc.print);
+            auto print_or = RenderRuntimePrintCall(view, pc.print);
             if (!print_or) {
               return std::unexpected(std::move(print_or.error()));
             }
@@ -218,7 +217,7 @@ auto RenderRuntimeCallExpr(
                   "lyra::runtime::LyraSubmitStrobe({}, {}() {{ {}; }})",
                   "self->Services()", capture, *print_or);
             }
-            auto desc_or = RenderExpr(ctx, ctx.Expr(*pc.print.descriptor));
+            auto desc_or = RenderExpr(view, view.Expr(*pc.print.descriptor));
             if (!desc_or) {
               return std::unexpected(std::move(desc_or.error()));
             }
@@ -227,11 +226,11 @@ auto RenderRuntimeCallExpr(
                 "self->Services()", *desc_or, capture, *print_or);
           },
           [&](const mir::RuntimeScanCall& ss) -> diag::Result<std::string> {
-            auto source_or = RenderExpr(ctx, ctx.Expr(ss.source));
+            auto source_or = RenderExpr(view, view.Expr(ss.source));
             if (!source_or) {
               return std::unexpected(std::move(source_or.error()));
             }
-            auto format_or = RenderExpr(ctx, ctx.Expr(ss.format));
+            auto format_or = RenderExpr(view, view.Expr(ss.format));
             if (!format_or) {
               return std::unexpected(std::move(format_or.error()));
             }
@@ -245,7 +244,7 @@ auto RenderRuntimeCallExpr(
                   Overloaded{
                       [&](const mir::IntegralScanSlot& s)
                           -> diag::Result<std::string> {
-                        auto temp_or = RenderLhsExpr(ctx, ctx.Expr(s.temp));
+                        auto temp_or = RenderLhsExpr(view, view.Expr(s.temp));
                         if (!temp_or) {
                           return std::unexpected(std::move(temp_or.error()));
                         }
@@ -259,7 +258,7 @@ auto RenderRuntimeCallExpr(
                       },
                       [&](const mir::StringScanSlot& s)
                           -> diag::Result<std::string> {
-                        auto temp_or = RenderLhsExpr(ctx, ctx.Expr(s.temp));
+                        auto temp_or = RenderLhsExpr(view, view.Expr(s.temp));
                         if (!temp_or) {
                           return std::unexpected(std::move(temp_or.error()));
                         }

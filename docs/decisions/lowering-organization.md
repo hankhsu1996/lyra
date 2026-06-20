@@ -1,6 +1,6 @@
 # Lowering organization
 
-Date: 2026-06-08 Status: accepted
+Date: 2026-06-08 Status: accepted (rendering classification revised 2026-06-19 -- see "Revision")
 
 ## Context
 
@@ -264,3 +264,43 @@ stylistic.
 - The architecture contract `lowering_organization.md` gains invariants 10-12 and the "Multi-File
   Organization Within a Pass Layer" section codifying this shape so the HIR-to-MIR (R10) and
   MIR-to-cpp (R11) migrations land on the same pattern.
+
+## Revision (2026-06-19): rendering is a fold, not a construction pass
+
+The original decision pinned one shape across "every lowering or rendering pass" and prescribed that
+`RenderContext` become `CppProcessRenderer` (a class), with `mutable owned_temp_counter_` becoming a
+class-owned registry. That classification of the MIR-to-C++ backend is revised here. The lowering
+half of the decision is unchanged.
+
+What actually happened diverged from the prescription. The render-to-class migration never landed:
+the backend stayed free functions with an immutable threaded lookup, and R11 made the temp counter a
+callable-body **local** (`std::size_t temp_counter` threaded by reference), not a class-owned
+registry. The implementation had already chosen the fold shape.
+
+The original rationale has thinned. The rejection of the immutable-Context shape rested on three
+costs: the `Context` name as a hospitality desk; the `mutable` escape hatch "the moment accumulation
+is needed (the backend's `owned_temp_counter_` is exactly that breach)"; and a parallel accumulator
+class beside the Context. The second and third costs presuppose that rendering accumulates state.
+Four cuts landed after this decision and removed every accumulation and every render-time decision
+from the backend: R11 (temp counter to a local), R12 (observable `Get` / `Set` / `Mutate` to
+explicit MIR calls), R16 (receiver to an explicit `self` member access in MIR), R17 (selector and
+field access to explicit MIR calls). With no accumulation left, there is no `mutable` breach and no
+accumulator class -- a render class would own only facts, with neither a registry nor a structured
+root to justify it. Only the first cost (the name's invitation to grow) survives, and it is answered
+by keeping the threaded lookup immutable and member-bounded rather than by wrapping the fold in a
+class.
+
+The corrected dividing line is whether a pass accumulates task-lifetime shared state, not whether it
+is called lowering or rendering. A **construction pass** -- one that accumulates registries and
+builds a cross-referenced output -- keeps the class shape from this decision; HIR-to-MIR lowering is
+one, and a future MIR-to-LLVM backend (accumulating an SSA value map, building a cross-referenced
+function) is another. The MIR-to-C++ text emit is a **rendering fold**: it composes an unstructured
+medium by concatenation, accumulates nothing, and so is free functions with an immutable read-only
+lookup (the unit plus the scope chain for hops resolution) threaded down and a callable-body-local
+temp counter. The architecture contract reflects this in `lowering_organization.md` (invariant 9,
+the "Rendering Folds" section, and the narrowed `*Context` forbidden shapes).
+
+Everything else in this decision stands: the god-object / `*State` removal, class-per-task for every
+accumulating pass, the constructor-injects-facts rule, the three member kinds, `WalkFrame` for
+per-recursion traversal state, the two-parameter dispatcher signature, and the multi-file subsystem
+organization.

@@ -10,9 +10,9 @@
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
-#include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
+#include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -28,10 +28,10 @@ namespace lyra::backend::cpp {
 namespace {
 
 auto RenderField(
-    const RenderContext& ctor_ctx, const mir::StructuralVarDecl& var,
+    const ScopeView& ctor_view, const mir::StructuralVarDecl& var,
     std::size_t indent) -> diag::Result<std::string> {
-  const auto& unit = ctor_ctx.Unit();
-  auto type_or = RenderTypeAsCpp(unit, ctor_ctx.StructuralScope(), var.type);
+  const auto& unit = ctor_view.Unit();
+  auto type_or = RenderTypeAsCpp(unit, ctor_view.StructuralScope(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   // An upward reference is an ExternUp member: its constructor takes the
   // symbol payload (ancestor, by-name tail, leaf signal) rather than a value
@@ -69,7 +69,7 @@ auto CtorParamName(std::size_t index) -> std::string {
 }
 
 auto RenderConstructor(
-    const RenderContext& scope_ctx, const mir::StructuralScope& s,
+    const ScopeView& scope_view, const mir::StructuralScope& s,
     const std::string& base_class, std::size_t indent)
     -> diag::Result<std::string> {
   std::string sig = s.name +
@@ -79,7 +79,7 @@ auto RenderConstructor(
   for (std::size_t i = 0; i < s.structural_params.size(); ++i) {
     const auto& p = s.structural_params[i];
     const auto param_name = CtorParamName(i);
-    auto type_or = RenderTypeAsCpp(scope_ctx.Unit(), s, p.type);
+    auto type_or = RenderTypeAsCpp(scope_view.Unit(), s, p.type);
     if (!type_or) return std::unexpected(std::move(type_or.error()));
     sig += ", " + *type_or + " " + param_name;
     init_list += ", " + p.name + "(" + param_name + ")";
@@ -92,7 +92,7 @@ auto RenderConstructor(
   std::string out;
   out += Indent(indent) + sig + " { init(this); }\n";
   out += Indent(indent) + "static void init(" + s.name + "* self) {\n";
-  auto rendered_or = RenderProceduralScopeStatements(scope_ctx, indent + 1);
+  auto rendered_or = RenderProceduralScopeStatements(scope_view, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
   out += Indent(indent) + "}\n";
@@ -100,19 +100,19 @@ auto RenderConstructor(
 }
 
 auto RenderProcessMethod(
-    const RenderContext* parent_struct_ctx, const mir::CompilationUnit& unit,
+    const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::StructuralScope& s, const mir::Process& process,
     std::size_t indent) -> diag::Result<std::string> {
-  const RenderContext proc_ctx =
-      (parent_struct_ctx == nullptr)
-          ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
-          : parent_struct_ctx->WithStructuralScope(
+  const ScopeView proc_view =
+      (parent_struct_view == nullptr)
+          ? ScopeView::ForRoot(unit, s, process.root_procedural_scope)
+          : parent_struct_view->WithStructuralScope(
                 s, process.root_procedural_scope);
 
   std::string out;
   out += Indent(indent) + "static auto " + process.name + "(" + s.name +
          "* self) -> lyra::runtime::Coroutine {\n";
-  auto rendered_or = RenderProceduralScopeStatements(proc_ctx, indent + 1);
+  auto rendered_or = RenderProceduralScopeStatements(proc_view, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
   out += Indent(indent + 1) + "co_return;\n";
@@ -132,7 +132,7 @@ auto RenderSubroutineResultType(
 }
 
 auto RenderSubroutineMethod(
-    const RenderContext* parent_struct_ctx, const mir::CompilationUnit& unit,
+    const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::StructuralScope& s, const mir::StructuralSubroutineDecl& sub,
     std::size_t indent) -> diag::Result<std::string> {
   // A task may suspend on timing controls, so it is a coroutine enabled with
@@ -170,15 +170,15 @@ auto RenderSubroutineMethod(
   }
   sig += ")";
 
-  const RenderContext sub_ctx =
-      parent_struct_ctx == nullptr
-          ? RenderContext::ForRoot(unit, s, sub.root_procedural_scope)
-          : parent_struct_ctx->WithStructuralScope(
+  const ScopeView sub_view =
+      parent_struct_view == nullptr
+          ? ScopeView::ForRoot(unit, s, sub.root_procedural_scope)
+          : parent_struct_view->WithStructuralScope(
                 s, sub.root_procedural_scope);
 
   std::string out;
   out += Indent(indent) + sig + " {\n";
-  auto rendered_or = RenderProceduralScopeStatements(sub_ctx, indent + 1);
+  auto rendered_or = RenderProceduralScopeStatements(sub_view, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
   if (is_task) {
@@ -212,15 +212,15 @@ auto RenderCreateProcesses(const mir::StructuralScope& s, std::size_t indent)
 
 auto RenderScopeAsClass(
     const mir::CompilationUnit& unit, const mir::StructuralScope& s,
-    std::size_t indent, bool is_top_level,
-    const RenderContext* parent_struct_ctx) -> diag::Result<std::string> {
+    std::size_t indent, bool is_top_level, const ScopeView* parent_struct_view)
+    -> diag::Result<std::string> {
   // `this_anchor` is bound to `s.constructor_scope` so it doubles as the
-  // ctx for rendering the constructor body. Children's bodies use it as
+  // view for rendering the constructor body. Children's bodies use it as
   // their structural parent (one hop above the child).
-  const RenderContext this_anchor =
-      (parent_struct_ctx == nullptr)
-          ? RenderContext::ForRoot(unit, s, s.constructor_scope)
-          : parent_struct_ctx->WithStructuralScope(s, s.constructor_scope);
+  const ScopeView this_anchor =
+      (parent_struct_view == nullptr)
+          ? ScopeView::ForRoot(unit, s, s.constructor_scope)
+          : parent_struct_view->WithStructuralScope(s, s.constructor_scope);
 
   // A unit-root scope is an instance; a nested generate block is a generate
   // scope. The base type carries the kind.
@@ -310,7 +310,7 @@ auto RenderScopeAsClass(
   for (const auto& p : s.processes) {
     out += "\n";
     auto method_or =
-        RenderProcessMethod(parent_struct_ctx, unit, s, p, indent + 1);
+        RenderProcessMethod(parent_struct_view, unit, s, p, indent + 1);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     out += *method_or;
   }
@@ -318,7 +318,7 @@ auto RenderScopeAsClass(
   for (const auto& sub : s.structural_subroutines) {
     out += "\n";
     auto method_or =
-        RenderSubroutineMethod(parent_struct_ctx, unit, s, sub, indent + 1);
+        RenderSubroutineMethod(parent_struct_view, unit, s, sub, indent + 1);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     out += *method_or;
   }
