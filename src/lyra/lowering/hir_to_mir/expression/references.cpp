@@ -123,7 +123,7 @@ auto LowerProceduralVarRefExpr(
         frame, process.Module().Unit(), member);
   }
   const auto& ab = std::get<AutomaticVarBinding>(binding);
-  if (auto* sink = frame.active_closure) {
+  if (auto* sink = frame.capture_sink) {
     if (ab.declaration_procedural_depth < sink->BoundaryDepth()) {
       return mir::Expr{
           .data = sink->Capture(
