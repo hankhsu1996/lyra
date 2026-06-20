@@ -223,6 +223,13 @@ class PackedArray {
   [[nodiscard]] auto ValueWords() const -> std::span<const std::uint64_t>;
   [[nodiscard]] auto UnknownWords() const -> std::span<const std::uint64_t>;
 
+  // View the bit vector as a byte sequence, most significant byte first
+  // (`bit_width / 8` bytes; a byte with any x or z bit yields `0x00`). The
+  // shared producer for the LRM 6.16 string lift and the LRM 21.2.1.7 `%s`
+  // formatter, which post-process the NUL byte differently
+  // (decisions/string-packed-conversion.md).
+  [[nodiscard]] auto ByteString() const -> std::string;
+
   // Typed view accessors. The atom encoded in `is_four_state_` selects which
   // overload is callable: 2-state stores expose Bit views, 4-state stores
   // expose Logic views. Calling the wrong one throws InternalError.

@@ -1,4 +1,4 @@
-id: errors.foreach_string_rejected
+id: errors.string_element_nba_rejected
 tags: [errors, diag]
 input:
   command: [emit, cpp]
@@ -11,6 +11,6 @@ expect:
   stderr:
     contains:
       - "main.sv:"
-      - "foreach over string is not yet supported"
+      - "nonblocking assignment to a string element is not yet supported"
     not_contains:
       - "internal error"

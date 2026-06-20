@@ -569,6 +569,21 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       call the synchronous sites use). **Trigger**: standalone -- the builder exists and the
       synchronous IIFE sites already use it; R30 builds its new closures on it too.
 
+- [ ] R30 -- Unify the Expr- / value-construction helper naming, which is ad hoc today (`Make*` and
+      `Build*` are both used for the same job). Establish one rule, grounded in the cross-language
+      norm: every IR / value system separates a **pure node factory** -- assembles a node from
+      ready-made parts, no scope or arena side effect, returns by value -- from a **scope-using
+      builder** -- allocates sub-nodes into a scope and assembles, side-effecting. C++ `std::make_*`
+      (pure) versus the builder pattern; LLVM `Type::get` / `ConstantInt::get` (pure, interned)
+      versus `IRBuilder::Create*` (inserts into a block); rustc `T::new` versus `tcx.mk_*` (interns
+      into the arena); MLIR / Clang `builder.create` / `Expr::Create(ctx, ...)` (arena). Keep both
+      -- the pure-versus-stateful split is load-bearing, since it tells the reader whether the
+      helper mutates a scope -- and pin the rule: `Make<Node>(parts...) -> Expr` is the pure factory
+      (the caller does the `AddExpr`); `Build<Node>(scope-or-frame, inputs...) -> Expr | ExprId` is
+      the scope builder (it does the `AddExpr`, with the context argument first); a type-producing
+      variant is `Make<X>Type(...) -> TypeId`. Audit every construction helper and rename it to the
+      correct side. **Trigger**: standalone naming cleanup.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

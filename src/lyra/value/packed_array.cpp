@@ -271,6 +271,33 @@ auto PackedArray::UnknownWords() const -> std::span<const std::uint64_t> {
   return {};
 }
 
+auto PackedArray::ByteString() const -> std::string {
+  const std::uint64_t bit_width = BitWidth();
+  const std::uint64_t byte_count = bit_width / 8U;
+  std::string out;
+  out.reserve(static_cast<std::size_t>(byte_count));
+  const auto val_words = ValueWords();
+  const auto unk_words = UnknownWords();
+  for (std::uint64_t byte_i = 0; byte_i < byte_count; ++byte_i) {
+    unsigned char byte = 0;
+    bool any_unknown = false;
+    for (std::uint64_t bit_in_byte = 0; bit_in_byte < 8U; ++bit_in_byte) {
+      const std::uint64_t bit_pos =
+          (bit_width - 1U) - (byte_i * 8U) - bit_in_byte;
+      const auto word_ix = static_cast<std::size_t>(bit_pos / 64U);
+      const auto bit_ix = static_cast<std::size_t>(bit_pos % 64U);
+      if (!unk_words.empty() && ((unk_words[word_ix] >> bit_ix) & 1U) != 0U) {
+        any_unknown = true;
+      }
+      if (((val_words[word_ix] >> bit_ix) & 1U) != 0U) {
+        byte |= static_cast<unsigned char>(1U << (7U - bit_in_byte));
+      }
+    }
+    out.push_back(any_unknown ? '\0' : static_cast<char>(byte));
+  }
+  return out;
+}
+
 auto PackedArray::IsBitIdentical(const PackedArray& other) const -> bool {
   if (bit_width_ != other.bit_width_) return false;
   if (is_four_state_ != other.is_four_state_) return false;

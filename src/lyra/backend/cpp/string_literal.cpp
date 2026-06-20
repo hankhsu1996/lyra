@@ -39,8 +39,4 @@ auto RenderCStringLiteral(std::string_view s) -> std::string {
   return out;
 }
 
-auto RenderSvStringLiteral(std::string_view s) -> std::string {
-  return "lyra::value::String{" + RenderCStringLiteral(s) + "}";
-}
-
 }  // namespace lyra::backend::cpp

@@ -1,0 +1,16 @@
+id: cpp.string_nul_handling
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    embedded: "helloworld"
+    len_embedded: 10
+    leading: "A"
+    len_leading: 1
+    empty: ""
+    len_empty: 0
