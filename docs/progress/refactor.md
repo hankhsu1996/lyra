@@ -526,6 +526,11 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         five `Render*MethodCall` wrappers, five `*MemberName` tables,
         `RenderAssociativeTraversalCall`, `RenderServicesCall`, and `RenderIsUnknownCall`
         all collapse into these realization tables.
+      - HIR's `BuiltinMethodRef` carries the same per-family enum redundancy and collapses
+        to a flat closed-namespace identifier in lockstep with the MIR-side change. The
+        per-family `Lower*MethodName` lookup tables in `slang_atoms` remain (the SV
+        spelling is the source-language identifier), but the resolved HIR callee is a
+        single id rather than a variant arm.
 
       R25's render-handler collapse falls out mechanically once this lands. Subsumes the
       earlier "shared kinds only" framing of R29 (rejected as a half-measure: a per-family

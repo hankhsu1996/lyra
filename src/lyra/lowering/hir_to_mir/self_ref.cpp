@@ -22,8 +22,8 @@ auto BuildStructuralMemberAccessExpr(
   const mir::TypeId field_type = frame.StructuralScopeAtHops(member.hops)
                                      .GetStructuralVar(member.var)
                                      .type;
-  const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
-      BuildSelfRefExpr(
+  const mir::ExprId receiver =
+      frame.current_procedural_scope->AddExpr(BuildSelfRefExpr(
           frame, frame.current_structural_scope->self_pointer_type));
   return mir::MakeMemberAccessExpr(receiver, member, field_type);
 }
