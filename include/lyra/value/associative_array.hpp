@@ -273,6 +273,16 @@ class AssociativeArray {
     return true;
   }
 
+  // LRM 20.9: any value carrying an unknown bit propagates up. Keys with
+  // unknown bits are rejected at write time (LRM 7.8.1), so they cannot
+  // appear here.
+  [[nodiscard]] auto HasUnknown() const -> bool {
+    for (const auto& [k, v] : data_) {
+      if (v.HasUnknown()) return true;
+    }
+    return false;
+  }
+
  private:
   [[nodiscard]] auto IsInvalidKey(const K& key) const -> bool {
     if constexpr (std::same_as<K, PackedArray>) {

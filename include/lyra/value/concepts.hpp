@@ -28,10 +28,10 @@ namespace lyra::value {
 
 class PackedArray;
 
-// The contract every Lyra runtime value type satisfies so it can live in the
-// STL containers the runtime stores it in (`std::vector` / `std::deque` /
-// `std::map`) and survive their relocation (insert / erase / grow).
-// `std::copyable` requires move- and copy-construction, move- and
+// C++ storage mechanics every runtime value type must satisfy so it can
+// live in the STL containers the runtime stores it in (`std::vector` /
+// `std::deque` / `std::map`) and survive their relocation (insert / erase /
+// grow). `std::copyable` requires move- and copy-construction, move- and
 // copy-assignment, and swappability -- and, per the standard library
 // contract it builds on, a moved-from object that remains valid for
 // assignment and destruction. That moved-from validity is the property that
@@ -44,7 +44,7 @@ class PackedArray;
 // not a pure value adopt); see docs/decisions/integral-representation.md.
 // The concept only guarantees the operations exist and relocation is safe.
 template <typename T>
-concept LyraValue = std::copyable<T>;
+concept Storable = std::copyable<T>;
 
 // The SV data type contract every value type realises (LRM Table 11-1 "Any"
 // row). A type that satisfies this concept provides the universal equality
@@ -53,7 +53,7 @@ concept LyraValue = std::copyable<T>;
 // structural-var in observable storage gates on it. See
 // `docs/decisions/value-type-concepts.md`.
 template <typename T>
-concept LyraValueType = LyraValue<T> && requires(const T& a, const T& b) {
+concept LyraValue = Storable<T> && requires(const T& a, const T& b) {
   // LRM 11.4.5 `==` / `!=` (Any data type). Uniform return type: every
   // value type yields a 1-bit `PackedArray`; 2-state types yield a 2-state
   // packed result. The uniform type lets lowering and emit treat every
@@ -65,28 +65,33 @@ concept LyraValueType = LyraValue<T> && requires(const T& a, const T& b) {
   // operator (`CaseEqualComparable`) even when their internal algorithm
   // coincides.
   { a.IsBitIdentical(b) } -> std::same_as<bool>;
+  // LRM 20.9 `$isunknown` predicate: does any bit of this value's
+  // representation carry an X or Z. Universal: 2-state types implement
+  // it as `return false`; 4-state types scan their bit pattern;
+  // aggregate types recurse into elements. Lowering emits the call
+  // uniformly across every value type, and downstream optimization
+  // constant-folds the 2-state case.
+  { a.HasUnknown() } -> std::same_as<bool>;
 };
 
 // LRM 11.4.5 `===` / `!==` (Any data type except `real` and `shortreal`). A
 // value type opts in when its SV counterpart admits case equality; `real` /
 // `shortreal` does not.
 template <typename T>
-concept CaseEqualComparable =
-    LyraValueType<T> && requires(const T& a, const T& b) {
-      { a.CaseEqual(b) } -> std::same_as<PackedArray>;
-    };
+concept CaseEqualComparable = LyraValue<T> && requires(const T& a, const T& b) {
+  { a.CaseEqual(b) } -> std::same_as<PackedArray>;
+};
 
 // LRM 11.4.5 `==?` / `!=?` wildcard equality (Integral only).
 template <typename T>
-concept WildcardComparable =
-    LyraValueType<T> && requires(const T& a, const T& b) {
-      { a.WildcardEquals(b) } -> std::same_as<PackedArray>;
-    };
+concept WildcardComparable = LyraValue<T> && requires(const T& a, const T& b) {
+  { a.WildcardEquals(b) } -> std::same_as<PackedArray>;
+};
 
 // LRM 11.4.4 relational `<` / `<=` / `>` / `>=` (Integral, real /
 // shortreal, `String`).
 template <typename T>
-concept Ordered = LyraValueType<T> && requires(const T& a, const T& b) {
+concept Ordered = LyraValue<T> && requires(const T& a, const T& b) {
   { a < b } -> std::same_as<PackedArray>;
   { a <= b } -> std::same_as<PackedArray>;
   { a > b } -> std::same_as<PackedArray>;

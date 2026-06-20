@@ -240,7 +240,7 @@ struct VectorType {
 // SystemVerilog data type (not a handle, child instance, or external ref) in
 // this wrapper. The C++ backend renders the wrapper as `lyra::runtime::Var<T>`
 // where T is the inner value type; the C++ template requires `T` to satisfy
-// `lyra::value::LyraValueType`, so a value type that forgot to implement the
+// `lyra::value::LyraValue`, so a value type that forgot to implement the
 // contract fails at template instantiation. See
 // `docs/decisions/value-type-concepts.md`.
 struct ObservableType {

@@ -183,6 +183,14 @@ class Queue {
     return true;
   }
 
+  // LRM 20.9: any element carrying an unknown bit propagates up.
+  [[nodiscard]] auto HasUnknown() const -> bool {
+    for (const auto& e : data_) {
+      if (e.HasUnknown()) return true;
+    }
+    return false;
+  }
+
   // LRM Table 6-7: a queue's default is the empty queue. When this container
   // is itself an OOB shield slot of an outer container, the outer calls this
   // to restore canonical state before handing out a reference.

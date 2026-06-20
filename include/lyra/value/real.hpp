@@ -138,6 +138,11 @@ class RealValue {
     return std::bit_cast<BitsType>(v_) == std::bit_cast<BitsType>(o.v_);
   }
 
+  // LRM 6.12 reals have no X/Z plane.
+  [[nodiscard]] static auto HasUnknown() -> bool {
+    return false;
+  }
+
   // LRM Table 6-7: the real default is 0.0. This is the container OOB-shield
   // contract (docs/decisions/runtime-shape-and-default-value.md), so a real can
   // be an unpacked-array element.
@@ -173,8 +178,8 @@ struct Formatter<RealValue<Host>> {
   }
 };
 
-static_assert(LyraValueType<Real>);
-static_assert(LyraValueType<ShortReal>);
+static_assert(LyraValue<Real>);
+static_assert(LyraValue<ShortReal>);
 static_assert(Ordered<Real>);
 static_assert(Ordered<ShortReal>);
 static_assert(!CaseEqualComparable<Real>);

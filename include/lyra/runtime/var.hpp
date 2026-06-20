@@ -124,10 +124,10 @@ class Observable {
   std::vector<Waiter> waiters_;
 };
 
-template <value::LyraValueType T>
+template <value::LyraValue T>
 class ScopedMutation;
 
-template <value::LyraValueType T>
+template <value::LyraValue T>
 class Var : public Observable {
  public:
   Var() = default;
@@ -188,7 +188,7 @@ class Var : public Observable {
 // event fires and subscribers wake), or a plain `T` cell (raw read / write,
 // no observers). Copyable, so a ref formal can be forwarded as a ref
 // argument to a nested call.
-template <value::LyraValueType T>
+template <value::LyraValue T>
 class Ref {
  public:
   explicit Ref(Var<T>& cell) : signal_(&cell) {
@@ -295,7 +295,7 @@ inline auto MakePackedArrayEdgeClassifier(
   };
 }
 
-template <value::LyraValueType T>
+template <value::LyraValue T>
 void Var<T>::Set(RuntimeServices& services, const T& new_val) {
   // A PackedArray write classifies the LSB transition per waiter (LRM 9.4.2
   // Table 9-2); every other cell type only has any-change waiters.
@@ -325,7 +325,7 @@ void Var<T>::Set(RuntimeServices& services, const T& new_val) {
 //
 // `operator*` is the single access point -- all chain methods, operators,
 // and selectors are reached through the deref'd T directly.
-template <value::LyraValueType T>
+template <value::LyraValue T>
 class ScopedMutation {
  public:
   ScopedMutation(RuntimeServices& services, Var<T>& var)
@@ -351,7 +351,7 @@ class ScopedMutation {
   T snapshot_;
 };
 
-template <value::LyraValueType T>
+template <value::LyraValue T>
 auto Var<T>::Mutate(RuntimeServices& services) -> ScopedMutation<T> {
   return ScopedMutation<T>{services, *this};
 }

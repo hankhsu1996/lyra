@@ -49,30 +49,31 @@ concept; LRM-specific lowering paths gate on the relevant per-family concept.
 ### Concept lattice
 
 ```
-LyraValueType            -- the storage + universal-equality contract
-  std::copyable          -- container-safe relocation (existing `LyraValue`)
+LyraValue                -- the SV value contract every runtime value type realises
+  Storable               -- `std::copyable`, container-safe relocation
   operator==(T) const -> PackedArray   // LRM 11.4.5 == (Any data type)
   operator!=(T) const -> PackedArray   // LRM 11.4.5 != (Any data type)
   IsBitIdentical(T) const -> bool      // engine change-detection hook
                                        // (LRM 9.4.2 update event predicate)
+  HasUnknown() const -> bool           // LRM 20.9 $isunknown predicate
 
-CaseEqualComparable : LyraValueType
+CaseEqualComparable : LyraValue
   CaseEqual(T) const -> PackedArray    // LRM 11.4.5 === (Any except real/shortreal)
                                        // by convention shares internal impl with IsBitIdentical
 
-WildcardComparable : LyraValueType
+WildcardComparable : LyraValue
   WildcardEquals(T) const -> PackedArray  // LRM 11.4.5 ==? (Integral only)
 
-Ordered : LyraValueType
+Ordered : LyraValue
   operator< / <= / > / >= -> PackedArray  // LRM 11.4.4 relational (Integral / Real / String)
 ```
 
-The four concepts are independent refinements of `LyraValueType`. Each value type opts in to the
-subset LRM defines for it.
+The four concepts are independent refinements of `LyraValue`. Each value type opts in to the subset
+LRM defines for it.
 
 ### Per-type concept membership
 
-| Type                    | `LyraValueType`       | `CaseEqualComparable`               | `WildcardComparable` | `Ordered`                |
+| Type                    | `LyraValue`           | `CaseEqualComparable`               | `WildcardComparable` | `Ordered`                |
 | ----------------------- | --------------------- | ----------------------------------- | -------------------- | ------------------------ |
 | `PackedArray`           | yes                   | yes                                 | yes                  | yes                      |
 | `Enum<Derived>`         | yes (via inheritance) | yes                                 | yes                  | yes                      |
@@ -108,16 +109,16 @@ runtime; the entire compiler-and-emit pipeline above it stays uniform.
 
 These are separate methods on a value type even when they share an internal algorithm:
 
-- `IsBitIdentical(T) const -> bool` is a member of `LyraValueType`. It is the engine's
-  change-detection question ("did the cell's bit-pattern change between two writes"). Its name
-  reflects its role, not an LRM operator. It returns the truthful host-bool result.
+- `IsBitIdentical(T) const -> bool` is a member of `LyraValue`. It is the engine's change-detection
+  question ("did the cell's bit-pattern change between two writes"). Its name reflects its role, not
+  an LRM operator. It returns the truthful host-bool result.
 - `CaseEqual(T) const -> PackedArray` is a member of `CaseEqualComparable`. It is the LRM `===`
   operator's value-type realisation. The result type carries the SV-typed 1-bit packed value that
   participates in further SV expression evaluation.
 
 For types that satisfy both concepts the two methods share an internal helper (bit-by-bit identity
 check), because for integral values case equality _is_ bit identity. `Real` satisfies only
-`LyraValueType`, so only `IsBitIdentical` exists -- it implements bit-pattern equality via
+`LyraValue`, so only `IsBitIdentical` exists -- it implements bit-pattern equality via
 `std::bit_cast<std::uint64_t>(double)` so that `+0.0` and `-0.0` are distinct and NaN bit-patterns
 classify by identity, both required for "did the storage cell's bits change". There is no
 `Real::CaseEqual`: `===` / `!==` are not defined on real (Table 11-1), and lowering rejects the
@@ -125,18 +126,18 @@ source-level form before it could reach a value-type method.
 
 ### `Var<T>` and `ObservableType{T}` gating
 
-`Var<T>` requires only `LyraValueType`. Every type that can be wrapped as observable storage
-satisfies this concept, no more.
+`Var<T>` requires only `LyraValue`. Every type that can be wrapped as observable storage satisfies
+this concept, no more.
 
 MIR's `ObservableType{T_mir}` (R12) wraps an MIR value type to declare module-scope observable
 storage. HIR-to-MIR's wrap rule is structural -- a structural-var declaration whose value type is a
 "data storage" kind is wrapped; pointer / vector / object-handle / external-ref / event / chandle /
 void / scope / self types are not. The C++ emit then sees `ObservableType{T_mir}` and renders
-`Var<T_cpp>`. The C++ template instantiation `Var<T_cpp>` requires `LyraValueType<T_cpp>`; a value
-type that forgot to implement the contract triggers a compile-time concept failure at the
-instantiation site. The MIR type system gates "this storage is observable"; the C++ concept system
-gates "this value type can fulfill the observable contract". Both gates compose without duplicating
-the predicate.
+`Var<T_cpp>`. The C++ template instantiation `Var<T_cpp>` requires `LyraValue<T_cpp>`; a value type
+that forgot to implement the contract triggers a compile-time concept failure at the instantiation
+site. The MIR type system gates "this storage is observable"; the C++ concept system gates "this
+value type can fulfill the observable contract". Both gates compose without duplicating the
+predicate.
 
 The old backend predicate `IsObservableScalarType(mir::Type)` is removed.
 
@@ -179,7 +180,7 @@ just another runtime library API.
 
 ### `lyra::value::Real` / `ShortReal` / `RealTime`
 
-`Real` / `ShortReal` wrap `double` / `float` and satisfy `LyraValueType` + `Ordered`, not
+`Real` / `ShortReal` wrap `double` / `float` and satisfy `LyraValue` + `Ordered`, not
 `CaseEqualComparable` (LRM Table 11-1 excludes `real` / `shortreal` from `===`). `RealTime` is the
 same C++ type as `Real` per LRM 6.12.1. The runtime exposes the full LRM operator surface --
 arithmetic (`+` / `-` / `*` / `/` / `**`), unary negation, relational (`<` / `<=` / `>` / `>=`
@@ -192,13 +193,12 @@ mechanism as a module-level `int` signal.
 
 ## Implementation status
 
-- `LyraValueType`, `CaseEqualComparable`, `WildcardComparable`, `Ordered` defined in
-  `include/lyra/value/value_concept.hpp`.
+- `Storable`, `LyraValue`, `CaseEqualComparable`, `WildcardComparable`, `Ordered` defined in
+  `include/lyra/value/concepts.hpp`.
 - `PackedArray`, `String`, `UnpackedArray`, `DynamicArray`, `Queue`, `AssociativeArray` updated to
   satisfy the concepts LRM requires. Naming aligned: the host-bool predicate is `IsBitIdentical`
   across every type.
-- `lyra::runtime::Var<T>` requires `LyraValueType` and reads change-detection through
-  `IsBitIdentical`.
+- `lyra::runtime::Var<T>` requires `LyraValue` and reads change-detection through `IsBitIdentical`.
 - `IsObservableScalarType` removed from `backend::cpp`.
 - `mir::ObservableType` added; HIR-to-MIR's structural-var lowering wraps eligible value types; the
   C++ render emits `Var<T_cpp>` for an `ObservableType{T_mir}` field declaration.
@@ -223,8 +223,8 @@ mechanism as a module-level `int` signal.
   realisation is `CaseEqual`. They are separate even when their internal algorithm coincides.
 - A backend predicate that decides "is this storage observable" by inspecting the value type's
   variant kind (the removed `IsObservableScalarType` shape). Observability is an MIR-type-system
-  fact (`ObservableType` wrapping); eligibility to be wrapped is a C++ concept fact
-  (`LyraValueType`). The backend reads one or the other; it does not synthesise either.
+  fact (`ObservableType` wrapping); eligibility to be wrapped is a C++ concept fact (`LyraValue`).
+  The backend reads one or the other; it does not synthesise either.
 - A value type that satisfies `CaseEqualComparable` but whose `CaseEqual` and `IsBitIdentical` give
   different answers. The two methods may share an internal helper; they may not diverge. (`Real`
   sidesteps this by not satisfying `CaseEqualComparable` at all -- it has no `CaseEqual`, only the

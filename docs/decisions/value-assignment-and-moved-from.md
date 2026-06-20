@@ -73,8 +73,8 @@ value type whose shape is declared rather than value-derived) follow these invar
 3. **A moved-from object is a valid value of the same shape**, never an empty husk: the move
    constructor keeps the source's `dims` and rebuilds its storage to the canonical zero of its
    width. This is the property that makes the type safe inside STL containers; it is the
-   C++-mechanics half of the `LyraValue` concept (`std::copyable`) asserted on every value type. The
-   concept is a relocation-safety guarantee, not a claim that assignment is value-adopt.
+   C++-mechanics base (`Storable`, the `std::copyable` half of `LyraValue`) asserted on every value
+   type. The concept is a relocation-safety guarantee, not a claim that assignment is value-adopt.
 4. **Cross-shape coercion is an explicit `ConvertFrom`, not assignment.** When a value must change
    width / state to reach the destination's shape, the lowering emits `PackedArray::ConvertFrom`
    ahead of the store; `AssignFrom` then runs same-shape and asserts (`ExpectSameShape`) that the
