@@ -1359,7 +1359,7 @@ auto ReplaceOuterDimCount(
 
 }  // namespace
 
-auto PackedArray::ElementAt(const PackedArray& idx) -> PackedArrayRef {
+auto PackedArray::ElementRef(const PackedArray& idx) -> PackedArrayRef {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   return PackedArrayRef{
       *this,
@@ -1372,7 +1372,7 @@ auto PackedArray::ElementAt(const PackedArray& idx) -> PackedArrayRef {
       element_bw, PopOuterDim(dims_)};
 }
 
-auto PackedArray::ElementAt(const PackedArray& idx) const -> PackedArray {
+auto PackedArray::Element(const PackedArray& idx) const -> PackedArray {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   const auto bit_offset =
       element_bw == 1U
@@ -1384,9 +1384,11 @@ auto PackedArray::ElementAt(const PackedArray& idx) const -> PackedArray {
   return ExtractBits(bit_offset, element_bw);
 }
 
-auto PackedArray::Slice(
+auto PackedArray::SliceRef(
     const PackedArray& offset_in_outer_elements,
-    std::uint32_t count_in_outer_elements) -> PackedArrayRef {
+    const PackedArray& count_in_outer_elements) -> PackedArrayRef {
+  const auto count =
+      static_cast<std::uint32_t>(count_in_outer_elements.ToInt64());
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   return PackedArrayRef{
       *this,
@@ -1396,13 +1398,14 @@ auto PackedArray::Slice(
              PackedArray::FromInt(
                  static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
                  kOffsetSigned, kOffsetFourState)),
-      count_in_outer_elements * element_bw,
-      ReplaceOuterDimCount(dims_, count_in_outer_elements)};
+      count * element_bw, ReplaceOuterDimCount(dims_, count)};
 }
 
 auto PackedArray::Slice(
     const PackedArray& offset_in_outer_elements,
-    std::uint32_t count_in_outer_elements) const -> PackedArray {
+    const PackedArray& count_in_outer_elements) const -> PackedArray {
+  const auto count =
+      static_cast<std::uint32_t>(count_in_outer_elements.ToInt64());
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   const auto bit_offset =
       element_bw == 1U
@@ -1411,7 +1414,7 @@ auto PackedArray::Slice(
              PackedArray::FromInt(
                  static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
                  kOffsetSigned, kOffsetFourState));
-  return ExtractBits(bit_offset, count_in_outer_elements * element_bw);
+  return ExtractBits(bit_offset, count * element_bw);
 }
 
 PackedArrayRef::PackedArrayRef(
@@ -1432,7 +1435,8 @@ auto PackedArrayRef::operator=(const PackedArray& value) -> PackedArrayRef& {
   return *this;
 }
 
-auto PackedArrayRef::ElementAt(const PackedArray& idx) const -> PackedArrayRef {
+auto PackedArrayRef::ElementRef(const PackedArray& idx) const
+    -> PackedArrayRef {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   return PackedArrayRef{
       *root_,
@@ -1446,9 +1450,11 @@ auto PackedArrayRef::ElementAt(const PackedArray& idx) const -> PackedArrayRef {
       element_bw, PopOuterDim(dims_)};
 }
 
-auto PackedArrayRef::Slice(
+auto PackedArrayRef::SliceRef(
     const PackedArray& offset_in_outer_elements,
-    std::uint32_t count_in_outer_elements) const -> PackedArrayRef {
+    const PackedArray& count_in_outer_elements) const -> PackedArrayRef {
+  const auto count =
+      static_cast<std::uint32_t>(count_in_outer_elements.ToInt64());
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   return PackedArrayRef{
       *root_,
@@ -1459,8 +1465,7 @@ auto PackedArrayRef::Slice(
               PackedArray::FromInt(
                   static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
                   kOffsetSigned, kOffsetFourState))),
-      count_in_outer_elements * element_bw,
-      ReplaceOuterDimCount(dims_, count_in_outer_elements)};
+      count * element_bw, ReplaceOuterDimCount(dims_, count)};
 }
 
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {

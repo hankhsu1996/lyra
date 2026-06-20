@@ -10,10 +10,8 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Yields the container access chain's base argument if `expr` is one of the
-// `kElementAt` / `kSlice` / `kRead` / `kElementRef` CallExprs HIR-to-MIR
-// emits for an indexed / sliced LHS path; null otherwise. The first argument
-// of those calls is by construction the container being accessed.
+// Yields the container access chain's base argument when `expr` is a
+// container access (per `mir::IsContainerAccessCall`); null otherwise.
 auto AsContainerAccessBase(const mir::Expr& expr) -> const mir::ExprId* {
   const auto* call = std::get_if<mir::CallExpr>(&expr.data);
   if (call == nullptr) return nullptr;

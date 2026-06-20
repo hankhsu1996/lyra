@@ -241,10 +241,10 @@ class HirDumper {
         return "push_front";
       case QueueMethodKind::kPushBack:
         return "push_back";
-      case QueueMethodKind::kElementAt:
-        return "element_at";
-      case QueueMethodKind::kWriteRef:
-        return "write_ref";
+      case QueueMethodKind::kElement:
+        return "element";
+      case QueueMethodKind::kElementRef:
+        return "element_ref";
       case QueueMethodKind::kSlice:
         return "slice";
     }

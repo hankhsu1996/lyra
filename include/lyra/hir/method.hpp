@@ -72,10 +72,11 @@ enum class ArrayMethodKind : std::uint8_t {
   kMap,
 };
 
-// LRM 7.10.2 queue methods. `kElementAt` / `kWriteRef` / `kSlice` have no SV
-// method syntax -- they carry `q[i]` read, `q[i] = v` write, and `q[a:b]`
-// slice, which lower to calls because a queue has no native C++ subscript
-// (LRM 7.10.1).
+// LRM 7.10 queue-native methods plus the compiler-internal access methods
+// that queue operators lower to. LRM 7.10.1 bakes the `q[$+1]` append
+// semantic into the write-side element access; LRM 7.10 defines no
+// write-side queue slice. The shared LRM 7.12 family stays in
+// `ArrayMethodKind`.
 enum class QueueMethodKind : std::uint8_t {
   kSize,
   kInsert,
@@ -84,8 +85,8 @@ enum class QueueMethodKind : std::uint8_t {
   kPopBack,
   kPushFront,
   kPushBack,
-  kElementAt,
-  kWriteRef,
+  kElement,
+  kElementRef,
   kSlice,
 };
 

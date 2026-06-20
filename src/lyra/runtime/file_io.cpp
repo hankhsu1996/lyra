@@ -362,7 +362,7 @@ auto FReadUnpackedImpl(
     const std::int64_t sv_index = start_sv + static_cast<std::int64_t>(k);
     const std::int64_t storage_idx =
         ascending ? (sv_index - declared_left) : (declared_left - sv_index);
-    dest.ElementAt(
+    dest.ElementRef(
         value::PackedArray::Int(static_cast<std::int32_t>(storage_idx))) =
         std::move(elem_value);
     total_bytes += got_this;

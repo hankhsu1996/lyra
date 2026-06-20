@@ -215,8 +215,8 @@ auto LowerHirIncDecExprProc(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_process = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
-  // The target is written in place, so a queue element resolves to its write
-  // access method (`WriteRef`) just as an assignment target does.
+  // The target is written in place, so a queue element dispatches to its
+  // write-side access just as an assignment target does.
   auto target_or = process.LowerLhsExpr(
       hir_process.exprs.at(inc.target.value), frame.WithLvalueTarget(true));
   if (!target_or) return std::unexpected(std::move(target_or.error()));

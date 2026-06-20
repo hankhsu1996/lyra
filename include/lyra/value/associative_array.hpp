@@ -8,10 +8,10 @@
 #include <utility>
 
 #include "lyra/value/array_case_equal.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -120,7 +120,7 @@ class AssociativeArray {
   // LRM 7.8.6: a read of a nonexistent or invalid index returns the element
   // default without allocating. The shield slot is restored first so a prior
   // discarded write does not leak into the result.
-  [[nodiscard]] auto Read(const K& key) const -> const V& {
+  [[nodiscard]] auto Element(const K& key) const -> const V& {
     if (IsInvalidKey(key)) {
       oob_slot_.ResetToDefault();
       return oob_slot_;
@@ -293,5 +293,11 @@ struct Formatter<AssociativeArray<K, V>> {
 
 static_assert(LyraValue<AssociativeArray<String, PackedArray>>);
 static_assert(LyraValue<AssociativeArray<PackedArray, PackedArray>>);
+static_assert(Sized<AssociativeArray<String, PackedArray>>);
+static_assert(AssocIndexable<AssociativeArray<String, PackedArray>, String>);
+static_assert(Defaultable<AssociativeArray<String, PackedArray>>);
+static_assert(KeyTraversal<AssociativeArray<String, PackedArray>, String>);
+static_assert(
+    KeyTraversal<AssociativeArray<PackedArray, PackedArray>, PackedArray>);
 
 }  // namespace lyra::value

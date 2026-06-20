@@ -8,10 +8,10 @@
 #include <string_view>
 #include <utility>
 
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/unpacked_array.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -288,5 +288,6 @@ class String {
 };
 
 static_assert(LyraValue<String>);
+static_assert(Lengthable<String>);
 
 }  // namespace lyra::value

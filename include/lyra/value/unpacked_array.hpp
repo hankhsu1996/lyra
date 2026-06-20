@@ -11,10 +11,10 @@
 
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -26,7 +26,7 @@ class ArraySliceRef;
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2). One C++ container layer
 // per declared unpacked dimension; multi-dim composes as
 // `UnpackedArray<UnpackedArray<...>>`. Mirrors `PackedArray`'s surface for
-// every op that crosses the SV / C++ boundary: `ElementAt(const PackedArray&)`
+// every op that crosses the SV / C++ boundary: `Element(const PackedArray&)`
 // for indexed access (no `operator[]`), `Slice(offset, count)` for the LRM
 // 7.4.5 contiguous-range selector, and `operator==` / `CaseEqual` returning a
 // 1-bit `PackedArray` so equality on aggregates propagates through the same
@@ -85,7 +85,7 @@ class UnpackedArray {
   // aggregate-format path
   // (`Formatter<UnpackedArray<T>>::Format`), which traverses storage to defer
   // each element to its own `Formatter` specialization. SV-semantics access
-  // goes through `ElementAt(PackedArray)`.
+  // goes through `Element(PackedArray)`.
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
     return data_[i];
   }
@@ -106,13 +106,11 @@ class UnpackedArray {
     }
   }
 
-  // LRM 7.4.5: an invalid index makes the access route through `oob_slot_`.
-  // The slot is restored to canonical state before the reference is handed
-  // out, so OOB writes that mutate it are invisible to any subsequent
-  // access. The non-const overload returns a writable reference; writes
-  // through it land on the shield rather than on real storage and are
-  // erased on the next OOB access.
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) -> T& {
+  // LRM 7.4.5: an invalid index routes through `oob_slot_`. The slot is
+  // restored to canonical state before the reference is handed out, so OOB
+  // writes that mutate it are erased on the next OOB access -- the shield
+  // never accumulates state.
+  [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
       oob_slot_.ResetToDefault();
       return oob_slot_;
@@ -120,7 +118,7 @@ class UnpackedArray {
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> const T& {
+  [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
     if (IsInvalidIndex(idx)) {
       oob_slot_.ResetToDefault();
       return oob_slot_;
@@ -128,20 +126,23 @@ class UnpackedArray {
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
-  // LRM 7.4.5 contiguous-range selector. The const overload materializes a
-  // fresh sub-array; partial-OOB positions yield the canonical default,
-  // X / Z offset yields a wholly-default sub-array. The non-const overload
-  // returns a write-back proxy with the same invalid-index policy on
-  // `operator=`.
-  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count) const
+  // LRM 7.4.5 contiguous-range selector. Partial-OOB positions yield the
+  // canonical default; X / Z offset yields a wholly-default sub-array at
+  // the type-fixed count's width. See `concepts.hpp` for the `Sliceable`
+  // protocol shape.
+  [[nodiscard]] auto Slice(
+      const PackedArray& offset, const PackedArray& count_pa) const
       -> UnpackedArray {
+    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     const T canonical = MakeCanonicalElement();
     return UnpackedArray(
         canonical, detail::ArraySliceGather(data_, canonical, offset, count));
   }
 
-  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count)
+  [[nodiscard]] auto SliceRef(
+      const PackedArray& offset, const PackedArray& count_pa)
       -> ArraySliceRef<T> {
+    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     return ArraySliceRef<T>{data_, MakeCanonicalElement(), offset, count};
   }
 
@@ -394,5 +395,12 @@ struct Formatter<UnpackedArray<T>> {
 };
 
 static_assert(LyraValue<UnpackedArray<PackedArray>>);
+static_assert(Sized<UnpackedArray<PackedArray>>);
+static_assert(Indexable<UnpackedArray<PackedArray>>);
+static_assert(Sliceable<UnpackedArray<PackedArray>>);
+static_assert(SliceableRef<UnpackedArray<PackedArray>>);
+static_assert(Ownable<UnpackedArray<PackedArray>>);
+static_assert(Defaultable<UnpackedArray<PackedArray>>);
+static_assert(Sortable<UnpackedArray<PackedArray>>);
 
 }  // namespace lyra::value

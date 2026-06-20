@@ -298,15 +298,17 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       with an explicit `ConversionExpr` re-tag to the declared field type. Render is a pure
       mechanical translation of `Call(kSlice)` / `Call(kToOwned)` / `ConversionExpr` independently.
 
-- [ ] R17b -- Stop window-projecting the `kSlice` `count` argument from an `IntegerLiteral` in the
-      C++ backend. Today `RenderArrayMethodCall` peeks at the third argument of a
-      `Call(ArrayMethod{kSlice})` and -- only when that argument is a literal -- emits a raw `N U`
-      integer, because the runtime `Slice` signature takes `std::uint32_t`. The peek is a backend
-      re-derivation that no other backend will replicate uniformly, violating `mir.md` Core
-      Invariant 10. Target shape: the runtime `Slice` accepts a `PackedArray` for `count` and
-      projects to `std::uint32_t` internally (matching how the `offset` argument already flows);
-      render renders the `Call` mechanically with no peek. **Trigger**: standalone, batches with
-      R17a as one render-cleanup cut.
+- [ ] R17b -- **SUBSUMED by R26.** The narrow "make `Slice`'s `count` argument a `PackedArray`"
+      target only fixes half of the slice asymmetry -- the underlying problem is that runtime
+      containers carry no formal protocol forcing `Slice` (and every other shared family) to one
+      signature shape. Original text retained for history: Stop window-projecting the `kSlice`
+      `count` argument from an `IntegerLiteral` in the C++ backend. Today `RenderArrayMethodCall`
+      peeks at the third argument of a `Call(ArrayMethod{kSlice})` and -- only when that argument is
+      a literal -- emits a raw `N U` integer, because the runtime `Slice` signature takes
+      `std::uint32_t`. The peek is a backend re-derivation that no other backend will replicate
+      uniformly, violating `mir.md` Core Invariant 10. Target shape: the runtime `Slice` accepts a
+      `PackedArray` for `count` and projects to `std::uint32_t` internally (matching how the
+      `offset` argument already flows); render renders the `Call` mechanically with no peek.
 
 - [x] R17c -- Render-side method-receiver dispatch is gone. `RenderMethodReceiver` retired and every
       method-call render path (`String` / `Array` / `Queue` / `Associative` / `Observable`) renders
@@ -442,7 +444,93 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       need their own decision -- enum static methods (`Class::first()`, no receiver), associative
       traversal (a free runtime call still splicing the engine handle, the one remaining services
       fabrication), and value `$isunknown` (type-static, no call in the all-2-state case).
-      **Trigger**: continuation of `decisions/runtime-effects-as-generic-calls.md`.
+      **Structural prerequisite**: R29 -- it collapses the per-family enums whose existence forces
+      R25's handler to keep per-family member-name tables; the per-family `Render*MethodCall`
+      wrappers then collapse mechanically. R29 itself rests on R26 / R28. **Trigger**: continuation
+      of `decisions/runtime-effects-as-generic-calls.md`.
+
+- [ ] R26 -- Define runtime container protocols as explicit C++20 concepts, pin the
+      currently-conforming surface, and complete `Sliceable` alignment. Today five containers
+      (`PackedArray`, `DynamicArray`, `UnpackedArray`, `Queue`, `AssociativeArray`, plus `String` as
+      a sixth member-shaped surface) share method families with no compile-time contract forcing the
+      signatures into one shape. Most families already align de-facto (`ResetToDefault`, `ToOwned`,
+      the equality / case-equal / bit-identical surface, the with-clause reduction and search
+      families); two have drifted -- `Sliceable` is fixed in this entry, `Writable` defers to R28 (a
+      pure rename pass, independent). The full protocol inventory derived from the audit:
+
+      - `Sized` -- `Size() -> PackedArray`: Dynamic / Unpacked / Queue / AA. PackedArray opts out
+        (its "size" is ambiguous between bit count, element count, and outer-dim count; SV does
+        not expose `.size()` on packed types).
+      - `Lengthable` -- `Len() -> PackedArray`: String (LRM 6.16.1 mandates the name).
+      - `Indexable` -- `ElementAt(pos) -> ConstView`: Packed / Dynamic / Unpacked / Queue; String
+        carries the LRM-named variant `Getc`.
+      - `Writable` -- `WriteRef(pos) -> MutView`: Queue conforms today, AA's `ElementRef(K)` is
+        the keyed sibling; the three array containers conform after R28's rename.
+      - `AssocRead` -- `Read(K) -> ConstView`: AA only (the key is not a position; separate
+        protocol from `Indexable`).
+      - `Sliceable` -- `Slice(PackedArray, PackedArray) -> Window`: after this entry's
+        alignment, Packed / Dynamic / Unpacked / Queue all conform structurally. The two
+        arguments mean different things per LRM contract: Queue takes inclusive bounds
+        `(lo, hi)` (LRM 7.10.1); Packed / Dynamic / Unpacked take `(offset, count)` because
+        LRM 7.4.5 / 11.5.2 require canonical-fill at the type-fixed width even when bounds
+        carry X/Z, and that width is not derivable from `(lo, hi)` alone. String's
+        `Substr(i, j)` uses the queue's `(lo, hi)` shape but does not claim the protocol
+        (the method name differs per LRM 6.16.8).
+      - `Ownable` -- `ToOwned() -> Self`: Packed / Dynamic / Unpacked / Queue.
+      - `Defaultable` -- `ResetToDefault()`: all five containers plus selected ref views.
+      - `Equatable` -- `==`, `!=`, `CaseEqual`, `IsBitIdentical`: universal.
+      - `Sortable` -- `Sort(F)`, `Rsort(F)`, `Reverse()`: Dynamic / Unpacked / Queue.
+      - `Reducible` -- `Sum/Product/And/Or/Xor(F)`: Dynamic / Unpacked / Queue.
+      - `Searchable` -- `Find/FindIndex/FindFirst/FindLast/Min/Max/Unique(F)`: Dynamic /
+        Unpacked / Queue.
+      - `KeyTraversal` -- `FirstKey/LastKey/NextKey/PrevKey -> optional<K>`: AA only.
+
+      Target shape:
+
+      - A new runtime header defines all 13 concepts in their final-aligned form
+      - Every container header carries a matching `static_assert(<Concept><...>)` for each
+        protocol it satisfies (12 of 13 pinnable after this entry; `Writable` waits for R28)
+      - `Sliceable` alignment: `PackedArray`, `DynamicArray`, and `UnpackedArray` change their
+        `Slice` signature's second argument from `std::uint32_t count` to
+        `const PackedArray& count`. The runtime projects to `std::uint32_t` internally at the
+        API boundary. Queue keeps its `(lo, hi)` form; both fixed-width and queue containers
+        now share the structural `Slice(PackedArray, PackedArray)` shape.
+      - HIR-to-MIR's three parallel range-unfold helpers collapse onto a single
+        `UnfoldRangeBoundsToLoHi` that dispatches by container kind. The MIR `Call(kSlice,
+        ...)` argument list carries `[base, offset, count_pa]` for fixed-width containers
+        (count is a PackedArray-typed literal for static-width slices) and `[base, lo, hi]`
+        for Queue.
+      - The backend's `RenderArrayMethodCall` Slice argument peek (the only emit-side
+        type-dependent argument projection) disappears; arguments render uniformly through
+        `RenderExpr`.
+
+      Subsumes R17b. After R26 + R28 lands, every signature drift becomes a compile-time
+      failure rather than a silent regression. **Trigger**: standalone; before R28 / R29.
+
+- [ ] R28 -- Align the `Writable` protocol's naming across the three array containers.
+      `Queue::WriteRef(idx)` and `AssociativeArray::ElementRef(K)` carry the "write-side has extra
+      semantics" intent (queue auto-pushes on out-of-bound write, AA creates the key);
+      `PackedArray`, `DynamicArray`, and `UnpackedArray` overload the non-const `ElementAt(idx)`
+      form for the same role. Target shape: rename the non-const `ElementAt` overload on the three
+      array containers to `WriteRef`, aligning the protocol on `ElementAt(pos) -> ConstView` for
+      read and `WriteRef(pos) -> MutView` for write. The `kElementAt` / `kWriteRef` enum asymmetry
+      in MIR's `BuiltinMethodCallee` dissolves -- HIR-to-MIR's LHS-side dispatch produces
+      `kWriteRef` for every array container, not just Queue. `static_assert(Writable<...>)` lands on
+      all four array containers. **Trigger**: after R26 lands.
+
+- [ ] R29 -- Collapse per-family MIR `BuiltinMethodCallee` enum redundancy. After R26 / R28 the
+      containers share fully-aligned signatures, and the per-family enums (`ArrayMethodKind`,
+      `QueueMethodKind`, `AssociativeMethodKind`) then double-encode "what is the receiver's
+      container type" -- a fact MIR already carries on the receiver expression's type. For shared
+      kinds (`kSlice`, `kElementAt`, `kSize`, `kReverse`, `kSort`, the with-clause reduction and
+      search families) the per-family split is pure redundancy; for non-shared kinds (associative
+      traversal, queue-only push / pop / insert, AA-only `Read` / `ElementRef` / `Exists`,
+      string-only `Substr` / `Toupper` / `Itoa` etc.) the family identity is real. Target shape:
+      audit each per-family kind, collapse the shared ones onto a single `BuiltinMemberKind` (or
+      carry the C++ member name directly as a `string_view` -- the audit picks between these), and
+      keep the non-shared kinds where family identity is real. The backend's five
+      `Render*MethodCall` wrappers then collapse onto one generic `(receiver).name(args)` handler.
+      Structural prerequisite for R25's clean landing. **Trigger**: after R26 / R28.
 
 - [ ] R26 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
       same decision). Each of these lowers to a generic `CallExpr` over a compiler-synthesized

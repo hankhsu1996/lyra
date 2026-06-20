@@ -12,11 +12,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/unpacked_array.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -130,13 +130,11 @@ class DynamicArray {
     data_.clear();
   }
 
-  // LRM 7.4.5: an invalid index makes the access route through `oob_slot_`.
-  // The slot is restored to canonical state before the reference is handed
-  // out, so OOB writes that mutate it are invisible to any subsequent
-  // access. The non-const overload returns a writable reference; writes
-  // through it land on the shield rather than on real storage and are
-  // erased on the next OOB access.
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) -> T& {
+  // LRM 7.4.5: an invalid index routes through `oob_slot_`. The slot is
+  // restored to canonical state before the reference is handed out, so OOB
+  // writes that mutate it are erased on the next OOB access -- the shield
+  // never accumulates state.
+  [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
       oob_slot_.ResetToDefault();
       return oob_slot_;
@@ -144,7 +142,7 @@ class DynamicArray {
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> const T& {
+  [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
     if (IsInvalidIndex(idx)) {
       oob_slot_.ResetToDefault();
       return oob_slot_;
@@ -152,21 +150,23 @@ class DynamicArray {
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
-  // LRM 7.4.5 / 7.4.6 contiguous-range selector. A dynamic array slices like
-  // any unpacked array; the constant width makes the result a fixed-size
-  // unpacked array. The const overload materializes a fresh sub-array
-  // (partial-OOB positions and an x / z offset yield the canonical default);
-  // the non-const overload returns the shared write-back proxy with the same
-  // invalid-index policy on `operator=`.
-  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count) const
+  // LRM 7.4.5 / 7.4.6 contiguous-range selector. A dynamic array slices the
+  // same way an unpacked array does. Partial-OOB positions and an x / z
+  // offset yield the canonical default at the type-fixed count's width;
+  // see `concepts.hpp` for the `Sliceable` protocol shape.
+  [[nodiscard]] auto Slice(
+      const PackedArray& offset, const PackedArray& count_pa) const
       -> UnpackedArray<T> {
+    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     const T canonical = MakeCanonicalElement();
     return UnpackedArray<T>(
         canonical, detail::ArraySliceGather(data_, canonical, offset, count));
   }
 
-  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count)
+  [[nodiscard]] auto SliceRef(
+      const PackedArray& offset, const PackedArray& count_pa)
       -> ArraySliceRef<T> {
+    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     return ArraySliceRef<T>{data_, MakeCanonicalElement(), offset, count};
   }
 
@@ -390,5 +390,12 @@ struct Formatter<DynamicArray<T>> {
 };
 
 static_assert(LyraValue<DynamicArray<PackedArray>>);
+static_assert(Sized<DynamicArray<PackedArray>>);
+static_assert(Indexable<DynamicArray<PackedArray>>);
+static_assert(Sliceable<DynamicArray<PackedArray>>);
+static_assert(SliceableRef<DynamicArray<PackedArray>>);
+static_assert(Ownable<DynamicArray<PackedArray>>);
+static_assert(Defaultable<DynamicArray<PackedArray>>);
+static_assert(Sortable<DynamicArray<PackedArray>>);
 
 }  // namespace lyra::value
