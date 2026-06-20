@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
-#include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
+#include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -22,7 +22,7 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
+auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
@@ -31,19 +31,19 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
             // yields (every integral value is a PackedArray), so `auto` is the
             // exact same type as spelling it out -- and reads as the idiomatic
             // loop counter.
-            const auto& lv = ctx.ProceduralScopeAtHops(d.induction_var.hops)
+            const auto& lv = view.ProceduralScopeAtHops(d.induction_var.hops)
                                  .vars.at(d.induction_var.var.value);
             const auto& init_expr =
-                ctx.ProceduralScope().exprs.at(d.init.value);
-            auto rendered_or = RenderExpr(ctx, init_expr);
+                view.ProceduralScope().exprs.at(d.init.value);
+            auto rendered_or = RenderExpr(view, init_expr);
             if (!rendered_or) {
               return std::unexpected(std::move(rendered_or.error()));
             }
             return "auto " + lv.name + " = " + *rendered_or;
           },
           [&](const mir::ForInitExpr& e) -> diag::Result<std::string> {
-            const auto& expr = ctx.ProceduralScope().exprs.at(e.expr.value);
-            return RenderExpr(ctx, expr);
+            const auto& expr = view.ProceduralScope().exprs.at(e.expr.value);
+            return RenderExpr(view, expr);
           },
       },
       init);
@@ -64,23 +64,23 @@ auto RenderEventEdgeAsRuntime(mir::EventEdge edge) -> std::string_view {
 }
 
 auto RenderProceduralVarDeclStmt(
-    const RenderContext& ctx, const mir::ProceduralVarDeclStmt& s,
+    const ScopeView& view, const mir::ProceduralVarDeclStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
   const auto& lv =
-      ctx.ProceduralScopeAtHops(s.target.hops).vars.at(s.target.var.value);
-  auto type_or = RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
+      view.ProceduralScopeAtHops(s.target.hops).vars.at(s.target.var.value);
+  auto type_or = RenderTypeAsCpp(view.Unit(), view.StructuralScope(), lv.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  const auto& init_expr = ctx.ProceduralScope().exprs.at(s.init.value);
-  auto init_or = RenderExpr(ctx, init_expr);
+  const auto& init_expr = view.ProceduralScope().exprs.at(s.init.value);
+  auto init_or = RenderExpr(view, init_expr);
   if (!init_or) return std::unexpected(std::move(init_or.error()));
   return Indent(indent) + *type_or + " " + lv.name + " = " + *init_or + ";\n";
 }
 
 auto RenderExprStmt(
-    const RenderContext& ctx, const mir::ExprStmt& s, std::size_t indent)
+    const ScopeView& view, const mir::ExprStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& expr = ctx.ProceduralScope().exprs.at(s.expr.value);
-  auto rendered_or = RenderExpr(ctx, expr);
+  const auto& expr = view.ProceduralScope().exprs.at(s.expr.value);
+  auto rendered_or = RenderExpr(view, expr);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   return Indent(indent) + *rendered_or + ";\n";
 }
@@ -89,20 +89,20 @@ auto RenderExprStmt(
 // awaitable operand. One uniform site for every suspending construct ($finish,
 // task call, named-event await).
 auto RenderAwaitStmt(
-    const RenderContext& ctx, const mir::AwaitStmt& s, std::size_t indent)
+    const ScopeView& view, const mir::AwaitStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& expr = ctx.ProceduralScope().exprs.at(s.awaitable.value);
-  auto rendered_or = RenderExpr(ctx, expr);
+  const auto& expr = view.ProceduralScope().exprs.at(s.awaitable.value);
+  auto rendered_or = RenderExpr(view, expr);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   return Indent(indent) + "co_await " + *rendered_or + ";\n";
 }
 
 auto RenderBlockStmtNode(
-    const RenderContext& ctx, const mir::BlockStmt& s, std::size_t indent)
+    const ScopeView& view, const mir::BlockStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& child = ctx.ProceduralScope().GetChildScope(s.scope);
+  const auto& child = view.ProceduralScope().GetChildScope(s.scope);
   std::string result = Indent(indent) + "{\n";
-  auto child_or = RenderNestedProceduralScope(ctx, child, indent + 1);
+  auto child_or = RenderNestedProceduralScope(view, child, indent + 1);
   if (!child_or) return std::unexpected(std::move(child_or.error()));
   result += *child_or;
   result += Indent(indent) + "}\n";
@@ -129,23 +129,23 @@ auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
 // yielding a `lyra::runtime::Coroutine` collected into `fork_branches`. The
 // fork then waits per the join mode.
 auto RenderForkStmtNode(
-    const RenderContext& ctx, const mir::ForkStmt& s, std::size_t indent)
+    const ScopeView& view, const mir::ForkStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
   // The fork-branches vector lives in this fork's own `{...}` block scope
   // (opened just below), so a fixed name suffices -- a sibling fork in the
   // surrounding scope, or a nested fork in a branch lambda body, each has
   // its own `fork_branches` in its own C++ scope.
   const std::string vec = "fork_branches";
-  const RenderContext fork_ctx =
-      ctx.WithProceduralScope(ctx.ProceduralScope().GetChildScope(s.scope));
+  const ScopeView fork_view =
+      view.WithProceduralScope(view.ProceduralScope().GetChildScope(s.scope));
   std::string out = Indent(indent) + "{\n";
-  auto locals_or = RenderProceduralScopeStatements(fork_ctx, indent + 1);
+  auto locals_or = RenderProceduralScopeStatements(fork_view, indent + 1);
   if (!locals_or) return std::unexpected(std::move(locals_or.error()));
   out += *locals_or;
   out += Indent(indent + 1) + "std::vector<lyra::runtime::Coroutine> " + vec +
          ";\n";
   for (const auto branch : s.branches) {
-    auto closure_or = RenderExpr(fork_ctx, fork_ctx.Expr(branch));
+    auto closure_or = RenderExpr(fork_view, fork_view.Expr(branch));
     if (!closure_or) return std::unexpected(std::move(closure_or.error()));
     out += Indent(indent + 1) + vec + ".push_back(" + *closure_or + ");\n";
   }
@@ -157,21 +157,22 @@ auto RenderForkStmtNode(
 }
 
 auto RenderIfStmtNode(
-    const RenderContext& ctx, const mir::IfStmt& s, std::size_t indent)
+    const ScopeView& view, const mir::IfStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& cond_expr = ctx.ProceduralScope().exprs.at(s.condition.value);
-  const auto& then_scope = ctx.ProceduralScope().GetChildScope(s.then_scope);
-  auto cond_or = RenderConditionAsBool(ctx, cond_expr);
+  const auto& cond_expr = view.ProceduralScope().exprs.at(s.condition.value);
+  const auto& then_scope = view.ProceduralScope().GetChildScope(s.then_scope);
+  auto cond_or = RenderConditionAsBool(view, cond_expr);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  auto then_or = RenderNestedProceduralScope(ctx, then_scope, indent + 1);
+  auto then_or = RenderNestedProceduralScope(view, then_scope, indent + 1);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   std::string result;
   result += Indent(indent) + "if (" + *cond_or + ") {\n";
   result += *then_or;
   result += Indent(indent) + "}";
   if (s.else_scope.has_value()) {
-    const auto& else_scope = ctx.ProceduralScope().GetChildScope(*s.else_scope);
-    auto else_or = RenderNestedProceduralScope(ctx, else_scope, indent + 1);
+    const auto& else_scope =
+        view.ProceduralScope().GetChildScope(*s.else_scope);
+    auto else_or = RenderNestedProceduralScope(view, else_scope, indent + 1);
     if (!else_or) return std::unexpected(std::move(else_or.error()));
     result += " else {\n";
     result += *else_or;
@@ -182,21 +183,21 @@ auto RenderIfStmtNode(
 }
 
 auto RenderConstructOwnedObjectStmt(
-    const RenderContext& ctx, const mir::ConstructOwnedObjectStmt& s,
+    const ScopeView& view, const mir::ConstructOwnedObjectStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
-  const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
+  const auto& var = view.StructuralScope().GetStructuralVar(s.target);
   const auto& target_scope =
-      ctx.StructuralScope().GetChildStructuralScope(s.scope_id);
+      view.StructuralScope().GetChildStructuralScope(s.scope_id);
   std::string trailing_args;
   for (const auto arg_id : s.args) {
-    auto arg_or = RenderExpr(ctx, ctx.Expr(arg_id));
+    auto arg_or = RenderExpr(view, view.Expr(arg_id));
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     trailing_args += ", " + *arg_or;
   }
   const std::string make = "std::make_unique<" + target_scope.name +
                            ">(self, \"" + target_scope.name +
                            "\", self->Services()" + trailing_args + ")";
-  const auto child = mir::GetChildScope(ctx.Unit(), var.type);
+  const auto child = mir::GetChildScope(view.Unit(), var.type);
   if (!child.has_value() ||
       !std::holds_alternative<mir::GenerateScopeChild>(*child)) {
     throw InternalError(
@@ -206,7 +207,7 @@ auto RenderConstructOwnedObjectStmt(
   const std::string reg_name =
       var.source_name.empty() ? var.name : var.source_name;
   if (std::holds_alternative<mir::VectorType>(
-          ctx.Unit().GetType(var.type).data)) {
+          view.Unit().GetType(var.type).data)) {
     return Indent(indent) + lhs + ".push_back(" + make + ");\n" +
            Indent(indent) + "self->RegisterChild(\"" + reg_name +
            "\", std::array{" + lhs + ".size() - 1}, *" + lhs + ".back());\n";
@@ -222,19 +223,19 @@ auto RenderConstructOwnedObjectStmt(
 // the member's compile-time label. `dims` carries one element count per vector
 // layer, so a scalar (no vector layer) renders just the leaf.
 auto RenderExternalUnitFill(
-    const RenderContext& ctx, const std::string& lvalue, mir::TypeId type,
+    const ScopeView& view, const std::string& lvalue, mir::TypeId type,
     const std::string& unit_name, const std::string& label,
     const std::vector<std::uint32_t>& dims, std::size_t depth,
     std::size_t indent) -> std::string {
   if (const auto* vec =
-          std::get_if<mir::VectorType>(&ctx.Unit().GetType(type).data)) {
+          std::get_if<mir::VectorType>(&view.Unit().GetType(type).data)) {
     const std::string idx = "i" + std::to_string(depth);
     std::string out;
     out += Indent(indent) + "for (std::size_t " + idx + " = 0; " + idx + " < " +
            std::to_string(dims.at(depth)) + "; ++" + idx + ") {\n";
     out += Indent(indent + 1) + lvalue + ".emplace_back();\n";
     out += RenderExternalUnitFill(
-        ctx, lvalue + "[" + idx + "]", vec->element, unit_name, label, dims,
+        view, lvalue + "[" + idx + "]", vec->element, unit_name, label, dims,
         depth + 1, indent + 1);
     out += Indent(indent) + "}\n";
     return out;
@@ -257,11 +258,11 @@ auto RenderExternalUnitFill(
 }
 
 auto RenderConstructExternalUnitStmt(
-    const RenderContext& ctx, const mir::ConstructExternalUnitStmt& s,
+    const ScopeView& view, const mir::ConstructExternalUnitStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
-  const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
+  const auto& var = view.StructuralScope().GetStructuralVar(s.target);
   return RenderExternalUnitFill(
-      ctx, "self->" + var.name, var.type, s.unit_name, var.name, s.dims, 0,
+      view, "self->" + var.name, var.type, s.unit_name, var.name, s.dims, 0,
       indent);
 }
 
@@ -273,32 +274,32 @@ auto BreakLandingLabel(mir::LoopLabelId label) -> std::string {
 }
 
 auto RenderForStmtNode(
-    const RenderContext& ctx, const mir::ForStmt& s, std::size_t indent)
+    const ScopeView& view, const mir::ForStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
   std::string init;
   for (std::size_t i = 0; i < s.init.size(); ++i) {
     if (i != 0) init += ", ";
-    auto init_or = RenderForInit(ctx, s.init[i]);
+    auto init_or = RenderForInit(view, s.init[i]);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init += *init_or;
   }
   std::string cond;
   if (s.condition.has_value()) {
-    const auto& cond_expr = ctx.ProceduralScope().exprs.at(s.condition->value);
-    auto cond_or = RenderConditionAsBool(ctx, cond_expr);
+    const auto& cond_expr = view.ProceduralScope().exprs.at(s.condition->value);
+    auto cond_or = RenderConditionAsBool(view, cond_expr);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
     cond = *std::move(cond_or);
   }
   std::string step;
   for (std::size_t i = 0; i < s.step.size(); ++i) {
     if (i != 0) step += ", ";
-    const auto& step_expr = ctx.ProceduralScope().exprs.at(s.step[i].value);
-    auto step_or = RenderExpr(ctx, step_expr);
+    const auto& step_expr = view.ProceduralScope().exprs.at(s.step[i].value);
+    auto step_or = RenderExpr(view, step_expr);
     if (!step_or) return std::unexpected(std::move(step_or.error()));
     step += *step_or;
   }
-  const auto& scope = ctx.ProceduralScope().GetChildScope(s.scope);
-  auto body_or = RenderNestedProceduralScope(ctx, scope, indent + 1);
+  const auto& scope = view.ProceduralScope().GetChildScope(s.scope);
+  auto body_or = RenderNestedProceduralScope(view, scope, indent + 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   std::string result =
       Indent(indent) + "for (" + init + "; " + cond + "; " + step + ") {\n";
@@ -311,13 +312,13 @@ auto RenderForStmtNode(
 }
 
 auto RenderWhileStmtNode(
-    const RenderContext& ctx, const mir::WhileStmt& s, std::size_t indent)
+    const ScopeView& view, const mir::WhileStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& cond_expr = ctx.ProceduralScope().exprs.at(s.condition.value);
-  auto cond_or = RenderConditionAsBool(ctx, cond_expr);
+  const auto& cond_expr = view.ProceduralScope().exprs.at(s.condition.value);
+  auto cond_or = RenderConditionAsBool(view, cond_expr);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const auto& scope = ctx.ProceduralScope().GetChildScope(s.scope);
-  auto body_or = RenderNestedProceduralScope(ctx, scope, indent + 1);
+  const auto& scope = view.ProceduralScope().GetChildScope(s.scope);
+  auto body_or = RenderNestedProceduralScope(view, scope, indent + 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   std::string result =
       Indent(indent) + "while (" + *std::move(cond_or) + ") {\n";
@@ -327,13 +328,13 @@ auto RenderWhileStmtNode(
 }
 
 auto RenderDoWhileStmtNode(
-    const RenderContext& ctx, const mir::DoWhileStmt& s, std::size_t indent)
+    const ScopeView& view, const mir::DoWhileStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& cond_expr = ctx.ProceduralScope().exprs.at(s.condition.value);
-  auto cond_or = RenderConditionAsBool(ctx, cond_expr);
+  const auto& cond_expr = view.ProceduralScope().exprs.at(s.condition.value);
+  auto cond_or = RenderConditionAsBool(view, cond_expr);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const auto& scope = ctx.ProceduralScope().GetChildScope(s.scope);
-  auto body_or = RenderNestedProceduralScope(ctx, scope, indent + 1);
+  const auto& scope = view.ProceduralScope().GetChildScope(s.scope);
+  auto body_or = RenderNestedProceduralScope(view, scope, indent + 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   std::string result = Indent(indent) + "do {\n";
   result += *body_or;
@@ -346,20 +347,20 @@ auto RenderDoWhileStmtNode(
 // through its resolved cell (AsObservable); a downward slot is already a
 // resolved `Var<T>*`, so the slot name is the pointer.
 auto RenderSensitivityRefPtr(
-    const RenderContext& ctx, const mir::SensitivityRef& ref)
+    const ScopeView& view, const mir::SensitivityRef& ref)
     -> diag::Result<std::string> {
-  auto name = RenderStructuralVarName(ctx, ref);
+  auto name = RenderStructuralVarName(view, ref);
   if (!name) return std::unexpected(std::move(name.error()));
   const auto& var =
-      ctx.StructuralScopeAtHops(ref.hops).GetStructuralVar(ref.var);
+      view.StructuralScopeAtHops(ref.hops).GetStructuralVar(ref.var);
   if (std::holds_alternative<mir::ExternalRefType>(
-          ctx.Unit().GetType(var.type).data)) {
+          view.Unit().GetType(var.type).data)) {
     return *name + ".AsObservable()";
   }
   // A borrowed-pointer slot already holds a `Var<T>*` (= Observable*); the
   // pointer value is the subscription target, no address-of.
   if (const auto* ptr =
-          std::get_if<mir::PointerType>(&ctx.Unit().GetType(var.type).data);
+          std::get_if<mir::PointerType>(&view.Unit().GetType(var.type).data);
       ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
     return *name;
   }
@@ -367,12 +368,12 @@ auto RenderSensitivityRefPtr(
 }
 
 auto RenderSensitivityWaitStmt(
-    const RenderContext& ctx, const mir::SensitivityWaitStmt& s,
+    const ScopeView& view, const mir::SensitivityWaitStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
   std::string result = Indent(indent) + "co_await lyra::runtime::WaitAny({";
   for (std::size_t i = 0; i < s.reads.size(); ++i) {
     const auto& read = s.reads[i];
-    auto ptr_or = RenderSensitivityRefPtr(ctx, read.ref);
+    auto ptr_or = RenderSensitivityRefPtr(view, read.ref);
     if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
     if (i != 0) result += ", ";
     // bit_range follows slang's `(lo_bit, hi_bit)` inclusive convention; the
@@ -390,7 +391,7 @@ auto RenderSensitivityWaitStmt(
 }  // namespace
 
 auto RenderStmt(
-    const RenderContext& ctx, const mir::Stmt& stmt, std::size_t indent)
+    const ScopeView& view, const mir::Stmt& stmt, std::size_t indent)
     -> diag::Result<std::string> {
   std::string out;
   if (stmt.label.has_value()) {
@@ -408,36 +409,36 @@ auto RenderStmt(
           },
           [&](const mir::ProceduralVarDeclStmt& s)
               -> diag::Result<std::string> {
-            return RenderProceduralVarDeclStmt(ctx, s, indent);
+            return RenderProceduralVarDeclStmt(view, s, indent);
           },
           [&](const mir::ExprStmt& s) -> diag::Result<std::string> {
-            return RenderExprStmt(ctx, s, indent);
+            return RenderExprStmt(view, s, indent);
           },
           [&](const mir::BlockStmt& s) -> diag::Result<std::string> {
-            return RenderBlockStmtNode(ctx, s, indent);
+            return RenderBlockStmtNode(view, s, indent);
           },
           [&](const mir::ForkStmt& s) -> diag::Result<std::string> {
-            return RenderForkStmtNode(ctx, s, indent);
+            return RenderForkStmtNode(view, s, indent);
           },
           [&](const mir::IfStmt& s) -> diag::Result<std::string> {
-            return RenderIfStmtNode(ctx, s, indent);
+            return RenderIfStmtNode(view, s, indent);
           },
           [&](const mir::ConstructOwnedObjectStmt& s)
               -> diag::Result<std::string> {
-            return RenderConstructOwnedObjectStmt(ctx, s, indent);
+            return RenderConstructOwnedObjectStmt(view, s, indent);
           },
           [&](const mir::ConstructExternalUnitStmt& s)
               -> diag::Result<std::string> {
-            return RenderConstructExternalUnitStmt(ctx, s, indent);
+            return RenderConstructExternalUnitStmt(view, s, indent);
           },
           [&](const mir::ForStmt& s) -> diag::Result<std::string> {
-            return RenderForStmtNode(ctx, s, indent);
+            return RenderForStmtNode(view, s, indent);
           },
           [&](const mir::WhileStmt& s) -> diag::Result<std::string> {
-            return RenderWhileStmtNode(ctx, s, indent);
+            return RenderWhileStmtNode(view, s, indent);
           },
           [&](const mir::DoWhileStmt& s) -> diag::Result<std::string> {
-            return RenderDoWhileStmtNode(ctx, s, indent);
+            return RenderDoWhileStmtNode(view, s, indent);
           },
           [&](const mir::BreakStmt& s) -> diag::Result<std::string> {
             if (s.target.has_value()) {
@@ -460,15 +461,15 @@ auto RenderStmt(
             if (!s.value.has_value()) {
               return Indent(indent) + "return;\n";
             }
-            auto value_or = RenderExpr(ctx, ctx.Expr(*s.value));
+            auto value_or = RenderExpr(view, view.Expr(*s.value));
             if (!value_or) return std::unexpected(std::move(value_or.error()));
             return Indent(indent) + "return " + *value_or + ";\n";
           },
           [&](const mir::AwaitStmt& s) -> diag::Result<std::string> {
-            return RenderAwaitStmt(ctx, s, indent);
+            return RenderAwaitStmt(view, s, indent);
           },
           [&](const mir::SensitivityWaitStmt& s) -> diag::Result<std::string> {
-            return RenderSensitivityWaitStmt(ctx, s, indent);
+            return RenderSensitivityWaitStmt(view, s, indent);
           },
       },
       stmt.data);
@@ -477,9 +478,9 @@ auto RenderStmt(
   return out;
 }
 
-auto RenderProceduralScopeStatements(
-    const RenderContext& ctx, std::size_t indent) -> diag::Result<std::string> {
-  const auto& scope = ctx.ProceduralScope();
+auto RenderProceduralScopeStatements(const ScopeView& view, std::size_t indent)
+    -> diag::Result<std::string> {
+  const auto& scope = view.ProceduralScope();
   // When a scope's whole content is a single begin/end block, the enclosing
   // braces (a function body, a loop or branch body, an outer block) already
   // scope it; render the block's body directly instead of emitting a redundant
@@ -489,12 +490,12 @@ auto RenderProceduralScopeStatements(
     if (const auto* block = std::get_if<mir::BlockStmt>(&only.data)) {
       const auto& inner = scope.GetChildScope(block->scope);
       return RenderProceduralScopeStatements(
-          ctx.WithProceduralScope(inner), indent);
+          view.WithProceduralScope(inner), indent);
     }
   }
   std::string out;
   for (const auto& sid : scope.root_stmts) {
-    auto rendered_or = RenderStmt(ctx, scope.stmts.at(sid.value), indent);
+    auto rendered_or = RenderStmt(view, scope.stmts.at(sid.value), indent);
     if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
     out += *rendered_or;
   }
@@ -502,9 +503,9 @@ auto RenderProceduralScopeStatements(
 }
 
 auto RenderNestedProceduralScope(
-    const RenderContext& parent, const mir::ProceduralScope& scope,
+    const ScopeView& parent, const mir::ProceduralScope& scope,
     std::size_t indent) -> diag::Result<std::string> {
-  const RenderContext child = parent.WithProceduralScope(scope);
+  const ScopeView child = parent.WithProceduralScope(scope);
   return RenderProceduralScopeStatements(child, indent);
 }
 

@@ -8,6 +8,7 @@
 namespace lyra::mir {
 class CompilationUnit;
 struct ProceduralScope;
+struct StructuralVarRef;
 }  // namespace lyra::mir
 
 namespace lyra::lowering::hir_to_mir {
@@ -20,6 +21,18 @@ namespace lyra::lowering::hir_to_mir {
 // effect engine handle starts from it.
 auto BuildSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr;
+
+// Builds a read of a structural var through the current body's `self`:
+// `MemberAccess(self, member)`. The result type is the var's declared MIR
+// storage type, read from the constructed scope at `member.hops` (a wrapper
+// type for observable storage, the value type otherwise) -- a fact that lives
+// only in the MIR scope, not in HIR, so it is read here rather than passed
+// down. Serves both a structural-var reference and a static-lifetime local
+// promoted to a per-instance structural var (LRM 13.3.1), which reach their
+// storage identically.
+auto BuildStructuralMemberAccessExpr(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    const mir::StructuralVarRef& member) -> mir::Expr;
 
 // Constructs a reference to the cell `cell` denotes (LRM 13.5.2): adds a
 // reference-construction `CallExpr` to `scope` whose result type is a
