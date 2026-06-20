@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,14 +12,12 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/capture_sink.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_scan.hpp"
@@ -184,7 +181,6 @@ auto LowerScanSystemSubroutineCall(
 
   const auto& module = process.Module();
   const auto& hir_proc = process.HirBody();
-  auto& outer_scope = *frame.current_procedural_scope;
 
   // Compute slot metadata from HIR type alone -- output args are not
   // lowered until their conditional commit point inside the closure body.
@@ -204,41 +200,27 @@ auto LowerScanSystemSubroutineCall(
   const mir::TypeId integer_t = module.Unit().builtins.integer;
   const mir::TypeId bit_t = module.Unit().builtins.bit1;
 
-  // Build the closure body. Entering the deeper procedural-depth frame
-  // before installing the capture sink is what makes the sink's boundary
-  // depth reflect the body's own depth; any leaf reference resolving above
-  // it is captured by reference (sync IIFE -- aliasing is correct for both
-  // reads and writes because the caller's storage is live throughout the
-  // closure's evaluation).
-  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
-  mir::ProceduralScope body;
-  const WalkFrame body_frame = frame.WithProceduralScope(&body).Deeper();
-  const mir::ProceduralVarId self_binding = body.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
-  const mir::ExprId outer_self_read =
-      outer_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
-  CaptureSink sink{
-      body_frame.procedural_depth, body, outer_scope, process.Module().Unit()};
-  // The scan IIFE is a synchronous body that returns a count -- no suspends.
-  const WalkFrame closure_frame =
-      body_frame.WithClosure(&sink)
-          .WithSelfBinding(self_binding, body_frame.procedural_depth)
-          .WithCoroutineBody(false);
+  // LRM 21.3.4.3: the call is an IIFE -- a synchronous closure invoked at once.
+  // The body parses into procedural-local temps, conditionally writes them back
+  // to the output lvalues, and yields the matched-conversion count.
+  ClosureBuilder closure(process.Module().Unit(), frame, integer_t);
+  mir::ProceduralScope& body = closure.Body();
+  const WalkFrame& closure_frame = closure.Frame();
 
   // Source / format are rvalues inside the body. The leaf lowering routes
-  // procedural-var leaves through the sink, producing body-side bindings.
-  // For each operand the order is: raw-lower -> x/z guard (if 4-state
-  // integral) -> conversion lift to string. The guard reads the raw
-  // PackedArray; the lift is post-guard because conversion to string
-  // silently drops x/z bits and would defeat the LRM 21.3.4.3 EOF rule.
+  // procedural-var leaves through the sink, producing body-side bindings. For
+  // each operand the order is: raw-lower -> x/z guard (if 4-state integral) ->
+  // conversion lift to string. The guard reads the raw PackedArray; the lift is
+  // post-guard because conversion to string silently drops x/z bits and would
+  // defeat the LRM 21.3.4.3 EOF rule.
   auto source_or = process.LowerExpr(
       hir_proc.exprs.at(call.arguments[0]->value), closure_frame);
   if (!source_or) return std::unexpected(std::move(source_or.error()));
   const mir::TypeId source_type = source_or->type;
   mir::ExprId source_id = body.AddExpr(*std::move(source_or));
   if (info.source == support::ScanSourceKind::kString) {
-    EmitIsUnknownGuard(module, body_frame, bit_t, source_id);
-    source_id = LiftStringSource(module, body_frame, source_type, source_id);
+    EmitIsUnknownGuard(module, closure_frame, bit_t, source_id);
+    source_id = LiftStringSource(module, closure_frame, source_type, source_id);
   } else if (
       module.Unit().GetType(source_type).Kind() !=
       mir::TypeKind::kPackedArray) {
@@ -251,13 +233,13 @@ auto LowerScanSystemSubroutineCall(
   if (!format_or) return std::unexpected(std::move(format_or.error()));
   const mir::TypeId format_type = format_or->type;
   mir::ExprId format_id = body.AddExpr(*std::move(format_or));
-  EmitIsUnknownGuard(module, body_frame, bit_t, format_id);
-  format_id = LiftStringFormat(module, body_frame, format_type, format_id);
+  EmitIsUnknownGuard(module, closure_frame, bit_t, format_id);
+  format_id = LiftStringFormat(module, closure_frame, format_type, format_id);
 
-  // Allocate body-side temps for each slot. The parse call writes them;
-  // the conditional commit later reads them back into the original
-  // lvalue. Default-init is a syntactic requirement for procedural locals;
-  // the value is never observed because parse runs before commit.
+  // Allocate body-side temps for each slot. The parse call writes them; the
+  // conditional commit later reads them back into the original lvalue.
+  // Default-init is a syntactic requirement for procedural locals; the value is
+  // never observed because parse runs before commit.
   std::vector<mir::ProceduralVarId> temp_ids;
   temp_ids.reserve(metas.size());
   for (std::size_t k = 0; k < metas.size(); ++k) {
@@ -307,11 +289,11 @@ auto LowerScanSystemSubroutineCall(
       mir::ProceduralVarDecl{.name = "_lyra_scan_count", .type = integer_t},
       parse_call_id);
 
-  // Conditional commits: for each output arg k, lower the lvalue HIR
-  // freshly inside the then-scope. The leaf lowering path routes any
-  // procedural-var leaf above the sink's boundary through the sink, which
-  // installs a by-reference binding in the closure body so writes to the
-  // rebased lvalue propagate to the caller's storage.
+  // Conditional commits: for each output arg k, lower the lvalue HIR freshly
+  // inside the then-scope. The leaf lowering path routes any procedural-var
+  // leaf above the sink's boundary through the sink, which installs a
+  // by-reference binding in the closure body so writes to the rebased lvalue
+  // propagate to the caller's storage.
   for (std::size_t k = 0; k < metas.size(); ++k) {
     const mir::ExprId count_read_id =
         body.AddExpr(mir::Expr{.data = count_ref, .type = integer_t});
@@ -349,33 +331,11 @@ auto LowerScanSystemSubroutineCall(
     body.AppendIfThen(cond_id, std::move(then_body));
   }
 
-  // return count_local -- the closure's yield value.
-  const mir::ExprId return_value_id =
+  // Yield the matched-conversion count.
+  const mir::ExprId count_id =
       body.AddExpr(mir::Expr{.data = count_ref, .type = integer_t});
-  body.AppendStmt(mir::ReturnStmt{.value = return_value_id});
-
-  // The sync IIFE aliases the caller's storage (live throughout the closure's
-  // evaluation), so the sink gives every captured identity a reference binding.
-  std::vector<mir::Capture> captures;
-  captures.push_back(
-      mir::Capture{.value = outer_self_read, .binding = self_binding});
-  for (const CaptureRequest& request : sink.TakeRequests()) {
-    captures.push_back(
-        mir::Capture{.value = request.source, .binding = request.binding});
-  }
-  mir::ClosureExpr closure;
-  closure.captures = std::move(captures);
-  closure.body = std::make_unique<mir::ProceduralScope>(std::move(body));
-
-  const mir::ExprId closure_id = outer_scope.AddExpr(
-      mir::Expr{.data = std::move(closure), .type = integer_t});
-
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::ClosureRef{.closure = closure_id},
-              .arguments = {}},
-      .type = integer_t};
+  return BuildClosureCallExpr(
+      *frame.current_procedural_scope, closure.Build(count_id));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

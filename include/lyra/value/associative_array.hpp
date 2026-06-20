@@ -189,6 +189,25 @@ class AssociativeArray {
     return std::prev(it)->first;
   }
 
+  // LRM 7.9.4 -- 7.9.7 traversal: write the visited key into `probe` and return
+  // SV int 1, or return 0 and leave `probe` unchanged when there is no such key
+  // (empty array, or no next / prev). `First` / `Last` ignore `probe`'s input;
+  // `Next` / `Prev` read it as the search bound. These are pure value queries
+  // -- firing the index variable's LRM 4.3 update event is the caller's
+  // separate write-back assignment, not this query's concern.
+  auto First(K& probe) const -> PackedArray {
+    return WriteVisited(probe, FirstKey());
+  }
+  auto Last(K& probe) const -> PackedArray {
+    return WriteVisited(probe, LastKey());
+  }
+  auto Next(K& probe) const -> PackedArray {
+    return WriteVisited(probe, NextKey(probe));
+  }
+  auto Prev(K& probe) const -> PackedArray {
+    return WriteVisited(probe, PrevKey(probe));
+  }
+
   // LRM 11.2.2 aggregate equality / 11.4.5: same key set and each paired value
   // compares equal. A different key set or a different size yields 0; matching
   // empties yield 1. `==` / `!=` propagate X / Z through the per-value `==`;
@@ -261,6 +280,15 @@ class AssociativeArray {
     } else {
       return false;
     }
+  }
+
+  static auto WriteVisited(K& probe, const std::optional<K>& key)
+      -> PackedArray {
+    if (!key.has_value()) {
+      return PackedArray::Int(0);
+    }
+    probe = *key;
+    return PackedArray::Int(1);
   }
 
   mutable V oob_slot_;

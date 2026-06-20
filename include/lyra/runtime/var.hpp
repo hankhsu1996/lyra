@@ -203,7 +203,9 @@ class Ref {
     return *plain_;
   }
 
-  void Set(RuntimeServices& services, const T& new_val) {
+  // Const: a `Ref` is a view, so `Set` writes the referenced cell, not the
+  // handle's own pointers -- as `*p = v` is allowed through a `T* const p`.
+  void Set(RuntimeServices& services, const T& new_val) const {
     if (signal_ != nullptr) {
       signal_->Set(services, new_val);
     } else {

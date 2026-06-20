@@ -880,79 +880,15 @@ auto AssociativeMethodMemberName(mir::AssociativeMethodKind k)
     case mir::AssociativeMethodKind::kDelete:
       return "Delete";
     case mir::AssociativeMethodKind::kFirst:
+      return "First";
     case mir::AssociativeMethodKind::kLast:
+      return "Last";
     case mir::AssociativeMethodKind::kNext:
+      return "Next";
     case mir::AssociativeMethodKind::kPrev:
-      throw InternalError(
-          "AssociativeMethodMemberName: traversal methods render as runtime "
-          "calls, not member calls");
+      return "Prev";
   }
   throw InternalError("AssociativeMethodMemberName: unknown kind");
-}
-
-auto AssociativeTraversalFunctionName(mir::AssociativeMethodKind k)
-    -> std::optional<std::string_view> {
-  switch (k) {
-    case mir::AssociativeMethodKind::kFirst:
-      return "AssocFirst";
-    case mir::AssociativeMethodKind::kLast:
-      return "AssocLast";
-    case mir::AssociativeMethodKind::kNext:
-      return "AssocNext";
-    case mir::AssociativeMethodKind::kPrev:
-      return "AssocPrev";
-    case mir::AssociativeMethodKind::kElement:
-    case mir::AssociativeMethodKind::kElementRef:
-    case mir::AssociativeMethodKind::kNum:
-    case mir::AssociativeMethodKind::kSize:
-    case mir::AssociativeMethodKind::kExists:
-    case mir::AssociativeMethodKind::kDelete:
-      return std::nullopt;
-  }
-  throw InternalError("AssociativeTraversalFunctionName: unknown kind");
-}
-
-// LRM 7.9.4 -- 7.9.7 traversal: `m.first(idx)` etc. The index argument is a
-// `ref` that the method writes the visited key into and whose observable
-// update event must fire (LRM 4.3), so it lowers to a runtime call carrying
-// the index lvalue as a `Ref<K>` -- the same by-reference shape a user `ref`
-// argument uses -- and `Services()` as the leading argument. The receiver is
-// read-only (traversal methods are `const`): a plain read renders it through
-// `Var<T>::Get` for observable members and through `Read(...)` for nested
-// receivers such as `mm[i]`, so the call lands on the stored sub-map without a
-// detached clone.
-auto RenderAssociativeTraversalCall(
-    const ScopeView& view, const mir::CallExpr& call,
-    std::string_view function_name) -> diag::Result<std::string> {
-  if (call.arguments.size() != 2) {
-    throw InternalError(
-        "RenderAssociativeTraversalCall: traversal method expects a receiver "
-        "and an index argument");
-  }
-  auto receiver_or = RenderExpr(view, view.Expr(call.arguments[0]));
-  if (!receiver_or) {
-    return std::unexpected(std::move(receiver_or.error()));
-  }
-  const mir::Expr& index = view.Expr(call.arguments[1]);
-  auto index_or = RenderLhsExpr(view, index);
-  if (!index_or) {
-    return std::unexpected(std::move(index_or.error()));
-  }
-  // `Ref<T>` is templated on the inner value type, not the observable wrapper.
-  // The index's MIR type carries the wrapper for an observable cell -- unwrap
-  // it before rendering the C++ type so `Ref<T>(Var<T>&)` resolves correctly.
-  const mir::Type& index_ty = view.Unit().GetType(index.type);
-  const mir::TypeId key_type_id = mir::IsObservableCellType(index_ty)
-                                      ? mir::ObservableInnerValueType(index_ty)
-                                      : index.type;
-  auto key_type_or =
-      RenderTypeAsCpp(view.Unit(), view.StructuralScope(), key_type_id);
-  if (!key_type_or) {
-    return std::unexpected(std::move(key_type_or.error()));
-  }
-  return std::format(
-      "lyra::runtime::{}(self->Services(), {}, lyra::runtime::Ref<{}>({}))",
-      function_name, *receiver_or, *key_type_or, *index_or);
 }
 
 // LRM 20.9 `$isunknown`: side-effect-free per-value query. The result is
@@ -1241,13 +1177,7 @@ auto RenderCallExpr(
                       return RenderMethodCall(
                           view, call, QueueMethodMemberName(m.kind));
                     },
-                    [&](const mir::AssociativeMethodInfo& m)
-                        -> diag::Result<std::string> {
-                      if (auto traversal =
-                              AssociativeTraversalFunctionName(m.kind)) {
-                        return RenderAssociativeTraversalCall(
-                            view, call, *traversal);
-                      }
+                    [&](const mir::AssociativeMethodInfo& m) {
                       return RenderMethodCall(
                           view, call, AssociativeMethodMemberName(m.kind));
                     },

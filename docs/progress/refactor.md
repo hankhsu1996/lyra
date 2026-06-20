@@ -75,29 +75,6 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       needed for correctness. **Trigger**: when a second fixed-extent object-collection consumer
       appears.
 
-- [ ] R5 -- Resurrect a smoke-suite tier so the emit-cpp path gets CI gating. Today
-      `tests/suites.yaml` carries only the monolithic `architecture_reset` suite, and the
-      `cpp_tests` target is tagged `requires-host-cxx` while CI's `Test` job filters that tag out --
-      so every PR merges without any automated check that the emitted C++ still compiles and runs. A
-      toolchain-compat regression (runtime header or emitted code reaching for a stdlib feature
-      absent from the floor toolchain), or an emit-vs-runtime ABI break, is only caught when a
-      contributor runs `cpp_tests` locally. Target shape: a `cpp_run_smoke` suite defined in
-      `tests/suites.yaml`, populated by `cpp_run_smoke`-tagged cases -- one representative per
-      distinct emit codegen family (integral / unpacked array / process / `$display` / loop / etc.),
-      5-10 cases total, target wall-clock under 30 seconds. A dedicated CI lane runs that suite via
-      the existing `cpp_tests` target with whatever toolchain `ubuntu-latest` ships -- no explicit
-      LLVM install. The lane is the anchor for a (yet-to-be-written)
-      `docs/decisions/emit-cpp-baseline.md` that pins the supported toolchain floor. The shape
-      mirrors the pre-reset `aot_smoke` suite (see `archived/tests/suites.yaml`); the only
-      adaptation is regex-on-path becoming tag-on-case, since cpp is currently the only backend and
-      tags travel with cases more naturally than external catalogs do. **Why deferred**: this is its
-      own focused PR (decision doc + suite entry + tag application + CI lane); folding it into a
-      feature PR makes both diffs noisy. Full `cpp_tests` in CI remains separately gated on the LLVM
-      JIT backend replacing per-case clang invocations (expected 5-10x faster), at which point a
-      sibling `jit_smoke` / `jit_full` pair can be added on the same pattern. **Trigger**:
-      standalone -- can be picked up at any time. The longer it waits, the larger the window for an
-      unspotted toolchain-compat regression to land in emit or runtime headers.
-
 - [ ] R6 -- Consolidate the "synthesize an expression of canonical type X" helpers that lowerings
       reach for whenever they need a temporary, sentinel, or computed bound. The HIR -> MIR side
       already exposes `UnitLoweringState::MakeInt32LiteralExpr(int64)` and has ~8 consumers across
@@ -349,18 +326,23 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       string-format family (`$sformat` / `$swrite` / `$sformatf`), `$printtimescale`, and
       `$timeformat` (the no-argument reset form restores a design-global default the runtime
       resolves, so set and reset select different runtime entries). The closure-free effects are all
-      on the generic shape now; the closure-bearing effects are carved out to R26 below, and
-      retiring `RuntimeCallExpr` entirely depends on R26.
+      on the generic shape now; the closure-bearing effects are carved out to R30 below, and
+      retiring `RuntimeCallExpr` entirely depends on R30.
 
-- [ ] R21 -- Rename `LowerStructuralVarRefExpr` (the central HIR-to-MIR helper) to reflect what it
-      actually does post-R16: translate an HIR implicit-receiver structural-var read into a MIR
-      `MemberAccessExpr` whose receiver reaches `self`. The current name still refers to
-      `mir::StructuralVarRef` even though that node is no longer a top-level `ExprData` arm. As a
-      follow-on, consider whether HIR should also retire its own `hir::StructuralVarRef` primary in
-      favour of a unified `hir::MemberAccessExpr` -- SV's `x` (implicit-receiver) and `obj.x`
-      (explicit-receiver) are the same operation at the IR level, and a unified shape would push the
-      implicit-vs-explicit distinction back to the slang front-end. **Trigger**: standalone -- the
-      rename is mechanical; the HIR unification is a separate design discussion.
+- [x] R21 -- **Closed after review: no rename, follow-on rejected.** The proposed rename of the
+      HIR-to-MIR structural-var-read helper assumed its name tracked the MIR structural-var-ref expr
+      arm that R16 dropped. It does not: like its procedural-var, cross-unit, and loop-var siblings,
+      the helper is named for its HIR _input_ node, which still exists -- the cross-unit sibling
+      likewise lowers to a member access and keeps its input-aligned name. Renaming this one helper
+      for its MIR output would break that convention, so there is nothing to rename. The follow-on
+      -- fold HIR's structural-var reference into a unified HIR member access -- is rejected on
+      layering grounds: a bare SV name carries no receiver, so synthesizing the explicit `self`
+      receiver is a HIR-to-MIR translation into MIR's generic vocabulary (settled in
+      `decisions/callable-receiver.md`), not an HIR shape. HIR is SV-faithful (`hir.md` invariant 3)
+      and must not carry that receiver, and HIR member access models LRM 7.2.1 packed-struct field
+      selection -- a distinct construct from a named-variable reference, so the two cannot share one
+      node. If any name is now misleading it is the MIR member-selector struct, which no longer
+      names an expression; that lives in R22's vocabulary review, not here.
 
 - [ ] R22 -- Reconsider the procedural-vs-structural variable naming and structure now that
       "structural variable" no longer appears as an `ExprData` arm. With class-member access
@@ -515,15 +497,37 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `Render*MethodCall` wrappers then collapse onto one generic `(receiver).name(args)` handler.
       Structural prerequisite for R25's clean landing. **Trigger**: after R26 / R28.
 
-- [ ] R26 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
+- [ ] R30 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
       same decision). Each of these lowers to a generic `CallExpr` over a compiler-synthesized
       closure: the `$strobe` family (deferred print -- the last effect whose print items the backend
       still constructs inline), the scan family (`$sscanf` / `$fscanf`, whose write-through output
       slots are captured into the closure), and the synthesized non-blocking-assignment and
       deferred-assertion submits (no system-subroutine id -- these need a callee for
-      compiler-synthesized effects). **Blocked**: the MIR closure representation is mid-refactor on
-      a separate thread; reworking these now would collide. Resume once that lands. **Trigger**:
-      continuation of `decisions/runtime-effects-as-generic-calls.md`.
+      compiler-synthesized effects). The MIR closure representation this once waited on has landed,
+      and the closure builder (R31) is the construction vehicle. **Trigger**: continuation of
+      `decisions/runtime-effects-as-generic-calls.md`.
+
+- [x] R27 -- **Associative-array traversal output write-back.** `first` / `last` / `next` / `prev`
+      (LRM 7.9.4 -- 7.9.7) lower to an immediately-invoked closure that reads the index into a plain
+      local, runs a pure (engine-free) query that mutates it, and commits `index = temp` through an
+      ordinary observable assignment -- so the LRM 4.3 update event fires in the assignment, not the
+      query. The traversal query is now a plain container member rendered through the generic
+      member-call rule; the backend no longer fabricates the engine handle or a reference wrapper
+      for traversal. Closes R25's traversal carve-out (traversal now fits the generic member rule).
+
+- [ ] R31 -- Converge every closure-construction site onto the one closure builder. Associative
+      traversal (R27) and the scan family introduced and adopted a builder that owns the closure
+      body scope, the `self` capture, and the capture sink: the caller fills the body through it and
+      a terminal assembles the closure value, so the build-the-closure boilerplate lives in one
+      place. The remaining sites still inline that scaffolding -- the fork-join branch (a coroutine
+      closure with a by-value capture depth), the with-clause iterator (LRM 7.12.4, carrying an
+      index binding), the non-blocking-assignment submit (manual value captures, no sink), and the
+      deferred-assertion check. Converging them deletes the duplicated body-scope / self / sink /
+      capture-assembly code and leaves one builder for every closure. Requires generalizing the
+      builder with a coroutine result, a by-value capture depth, manual value captures, an index
+      binding, and a bare closure-value terminal (for spawn / submit, versus the immediately-invoked
+      call the synchronous sites use). **Trigger**: standalone -- the builder exists and the
+      synchronous IIFE sites already use it; R30 builds its new closures on it too.
 
 ## Out of Scope
 

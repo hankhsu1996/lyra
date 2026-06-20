@@ -78,11 +78,11 @@ struct WalkFrame {
   // hop count from the reading site back to the declaration depth.
   ProceduralDepth procedural_depth{};
 
-  // The active closure capture sink while a closure body is being lowered. A
-  // procedural-var reference whose declaration sits above the sink's boundary
-  // routes through it so the closure's captures are composed as the body is
-  // built. Null outside a closure body.
-  CaptureSink* active_closure = nullptr;
+  // The capture sink of the closure body being lowered. A procedural-var
+  // reference whose declaration sits above the sink's boundary routes through
+  // it so the closure's captures are composed as the body is built. Null
+  // outside a closure body.
+  CaptureSink* capture_sink = nullptr;
 
   // The iterator-index binding active while lowering an array-method
   // with-clause body (LRM 7.12.4). Read by the `item.index` reference
@@ -171,9 +171,9 @@ struct WalkFrame {
     return next;
   }
 
-  [[nodiscard]] auto WithClosure(CaptureSink* sink) const -> WalkFrame {
+  [[nodiscard]] auto WithCaptureSink(CaptureSink* sink) const -> WalkFrame {
     WalkFrame next = *this;
-    next.active_closure = sink;
+    next.capture_sink = sink;
     return next;
   }
 
