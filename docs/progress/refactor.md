@@ -472,30 +472,70 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       Subsumes R17b. After R26 + R28 lands, every signature drift becomes a compile-time
       failure rather than a silent regression. **Trigger**: standalone; before R28 / R29.
 
-- [ ] R28 -- Align the `Writable` protocol's naming across the three array containers.
-      `Queue::WriteRef(idx)` and `AssociativeArray::ElementRef(K)` carry the "write-side has extra
-      semantics" intent (queue auto-pushes on out-of-bound write, AA creates the key);
-      `PackedArray`, `DynamicArray`, and `UnpackedArray` overload the non-const `ElementAt(idx)`
-      form for the same role. Target shape: rename the non-const `ElementAt` overload on the three
-      array containers to `WriteRef`, aligning the protocol on `ElementAt(pos) -> ConstView` for
-      read and `WriteRef(pos) -> MutView` for write. The `kElementAt` / `kWriteRef` enum asymmetry
-      in MIR's `BuiltinMethodCallee` dissolves -- HIR-to-MIR's LHS-side dispatch produces
-      `kWriteRef` for every array container, not just Queue. `static_assert(Writable<...>)` lands on
-      all four array containers. **Trigger**: after R26 lands.
+- [x] R28 -- The read-vs-write access surface is aligned across every container at the noun-level
+      naming axis: `Element(pos) -> value` for read, `ElementRef(pos) -> ref` for write. The earlier
+      `ElementAt` (read) / `WriteRef` (write) split is gone; the runtime, MIR's `ArrayMethodKind` /
+      `QueueMethodKind` / `AssociativeMethodKind`, and HIR's `QueueMethodKind` all use `kElement` /
+      `kElementRef`. The slice axis follows the same pattern -- `Slice` for read, `SliceRef` for
+      write -- so `MakeRangeSliceCallExpr` / `MakeFieldSliceCallExpr` route through one `AccessSide`
+      enum at the lowering boundary. `concepts.hpp` pins `Indexable` (bare + `Ref` pair),
+      `Sliceable` (bare), and `SliceableRef` (Ref form); Queue opts out of `SliceableRef` because
+      LRM 7.10 defines no write-side queue slice. The `Writable` concept is intentionally not minted
+      -- the bare-vs-`Ref` pair is now part of `Indexable` itself.
 
-- [ ] R29 -- Collapse per-family MIR `BuiltinMethodCallee` enum redundancy. After R26 / R28 the
-      containers share fully-aligned signatures, and the per-family enums (`ArrayMethodKind`,
-      `QueueMethodKind`, `AssociativeMethodKind`) then double-encode "what is the receiver's
-      container type" -- a fact MIR already carries on the receiver expression's type. For shared
-      kinds (`kSlice`, `kElementAt`, `kSize`, `kReverse`, `kSort`, the with-clause reduction and
-      search families) the per-family split is pure redundancy; for non-shared kinds (associative
-      traversal, queue-only push / pop / insert, AA-only `Read` / `ElementRef` / `Exists`,
-      string-only `Substr` / `Toupper` / `Itoa` etc.) the family identity is real. Target shape:
-      audit each per-family kind, collapse the shared ones onto a single `BuiltinMemberKind` (or
-      carry the C++ member name directly as a `string_view` -- the audit picks between these), and
-      keep the non-shared kinds where family identity is real. The backend's five
-      `Render*MethodCall` wrappers then collapse onto one generic `(receiver).name(args)` handler.
-      Structural prerequisite for R25's clean landing. **Trigger**: after R26 / R28.
+- [ ] R29 -- Collapse `BuiltinMethodCallee` into closed-ID generic-call callees, and lift pointer
+      dereference into MIR structure. MIR is a generic programming-language IR (`mir.md`); it has no
+      node concept for "method call" versus "free function call" versus "static method" -- in LLVM
+      lowering all three are the same `call <symbol>(<args>)`, with any receiver passed as the first
+      argument. The current `BuiltinMethodCallee` arm with ten per-family `*MethodInfo` variants
+      encodes facts MIR does not need to carry: the family (already on the receiver expression's MIR
+      type) and a syntactic spelling preference (a per-backend localization, not a MIR axis --
+      invariant 10). Target shape:
+
+      - One flat `BuiltinFn` enum covering every compiler-internal runtime entry. Closed
+        namespace, same shape as `support::SystemSubroutineId`. Sections within the enum
+        mirror the `concepts.hpp` (R26) protocol grouping via comments; protocol membership
+        itself is a derived `ConceptOf(BuiltinFn)` helper, not a structural arm -- the source
+        of truth for the concept structure already lives in `concepts.hpp`, and encoding it
+        again as a MIR variant would put the same fact in two places.
+      - `BuiltinMethodCallee` retires. Two sibling callee arms replace it:
+        `BuiltinFnCallee { BuiltinFn id }` (receiver via `args[0]`, used for instance methods
+        and free functions alike) and `BuiltinStaticCallee { BuiltinFn id; TypeId type_qual }`
+        (no value receiver; `type_qual` is the type-namespace identity that LLVM also reads
+        for symbol mangling, not a render hint). Both sit beside `SystemSubroutineCallee` as
+        closed-ID runtime-entry callees.
+      - Pointer dereference becomes structural in MIR. A call whose receiver reaches the
+        pointee through a pointer wraps the receiver in `DerefExpr` at HIR-to-MIR; today
+        `MakeServicesCallExpr` and any sibling site that hands the C++ backend a pointer
+        receiver directly forces the backend to derive `->` vs `.` from receiver-type
+        inspection, which LIR / LLVM would have to repeat (invariant 10).
+      - No upstream constant folding of LRM type-static queries. Enum statics
+        (LRM 6.19.5 `first` / `last` / `num`) lower as ordinary `BuiltinStaticCallee` calls
+        whose symbols are `constexpr` / inlinable in the runtime; the C++ compiler and LLVM
+        fold them downstream. `$isunknown` (LRM 20.9) lowers as a uniform `BuiltinFnCallee`
+        call; the runtime exposes `HasUnknown()` on every packed value type (always-false
+        impl on 2-state), and downstream optimization folds the 2-state case. Follows the
+        `decisions/conversion-folding.md` precedent ("MIR is the program in primitives;
+        constant folding is the downstream optimizer's job, not HIR-to-MIR's") and removes
+        the `RenderIsUnknownCall` peephole, which was the same invariant-10 violation as the
+        retired literal-conversion peephole.
+      - Each backend owns a single `(BuiltinFn, receiver_type)` -> realization table for
+        `BuiltinFnCallee` and a `(BuiltinFn, type_qual)` -> realization table for
+        `BuiltinStaticCallee`. The C++ realization is `{ syntax: member / free / static,
+        name }`; the LLVM realization is a mangled symbol. MIR carries no syntactic hint. The
+        five `Render*MethodCall` wrappers, five `*MemberName` tables,
+        `RenderAssociativeTraversalCall`, `RenderServicesCall`, and `RenderIsUnknownCall`
+        all collapse into these realization tables.
+      - HIR's `BuiltinMethodRef` carries the same per-family enum redundancy and collapses
+        to a flat closed-namespace identifier in lockstep with the MIR-side change. The
+        per-family `Lower*MethodName` lookup tables in `slang_atoms` remain (the SV
+        spelling is the source-language identifier), but the resolved HIR callee is a
+        single id rather than a variant arm.
+
+      R25's render-handler collapse falls out mechanically once this lands. Subsumes the
+      earlier "shared kinds only" framing of R29 (rejected as a half-measure: a per-family
+      split kept around "non-shared" kinds restates receiver-type information the same way
+      the shared kinds do). **Trigger**: standalone after R26 / R28.
 
 - [ ] R30 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
       same decision). Each of these lowers to a generic `CallExpr` over a compiler-synthesized

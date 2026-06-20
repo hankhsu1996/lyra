@@ -18,13 +18,13 @@ auto BuildSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
 }
 
 auto BuildStructuralMemberAccessExpr(
-    const WalkFrame& frame, const mir::CompilationUnit& unit,
-    const mir::StructuralVarRef& member) -> mir::Expr {
+    const WalkFrame& frame, const mir::StructuralVarRef& member) -> mir::Expr {
   const mir::TypeId field_type = frame.StructuralScopeAtHops(member.hops)
                                      .GetStructuralVar(member.var)
                                      .type;
-  const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
-      BuildSelfRefExpr(frame, unit.builtins.self_pointer));
+  const mir::ExprId receiver =
+      frame.current_procedural_scope->AddExpr(BuildSelfRefExpr(
+          frame, frame.current_structural_scope->self_pointer_type));
   return mir::MakeMemberAccessExpr(receiver, member, field_type);
 }
 

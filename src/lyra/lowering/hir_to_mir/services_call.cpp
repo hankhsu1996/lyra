@@ -10,8 +10,8 @@ auto BuildServicesCallExpr(
     const ProcessLowerer& process, const WalkFrame& frame) -> mir::Expr {
   auto& body = *frame.current_procedural_scope;
   const auto& builtins = process.Module().Unit().builtins;
-  const mir::ExprId self_id =
-      body.AddExpr(BuildSelfRefExpr(frame, builtins.self_pointer));
+  const mir::ExprId self_id = body.AddExpr(BuildSelfRefExpr(
+      frame, frame.current_structural_scope->self_pointer_type));
   return mir::MakeServicesCallExpr(self_id, builtins.services);
 }
 

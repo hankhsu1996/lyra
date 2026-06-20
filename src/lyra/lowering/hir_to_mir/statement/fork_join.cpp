@@ -64,7 +64,7 @@ auto LowerForkStmt(
   std::vector<mir::ExprId> branches;
   branches.reserve(f.branches.size());
   const mir::TypeId self_ptr_type =
-      process.Module().Unit().builtins.self_pointer;
+      frame.current_structural_scope->self_pointer_type;
   for (const hir::StmtId branch_hir_id : f.branches) {
     const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
     mir::ProceduralScope branch_scope;

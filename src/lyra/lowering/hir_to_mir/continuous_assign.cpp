@@ -29,7 +29,8 @@ auto LowerContinuousAssign(
   mir::ProceduralScope process_scope;
   const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
-          .name = "self", .type = scope.Module().Unit().builtins.self_pointer});
+          .name = "self",
+          .type = frame.current_structural_scope->self_pointer_type});
   mir::ProceduralScope body_scope;
   const WalkFrame body_frame =
       frame.WithProceduralScope(&body_scope)
@@ -50,7 +51,8 @@ auto LowerContinuousAssign(
   // Build `self.Services()` in the body so an observable LHS routes through
   // `Var<T>::Set` (or `Mutate` for a selector chain). The body's `self` is
   // already bound at depth 0 via `WithSelfBinding(self_id, ...)` above.
-  const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
+  const mir::TypeId self_ptr_type =
+      frame.current_structural_scope->self_pointer_type;
   const mir::ExprId body_self_ref = body_scope.AddExpr(
       mir::MakeProceduralVarRefExpr(
           mir::ProceduralHops{

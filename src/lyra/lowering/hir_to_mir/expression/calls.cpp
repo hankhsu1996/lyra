@@ -454,7 +454,8 @@ auto BuildArrayMethodClosure(
           ? hir_process.procedural_vars.at(with_clause->iterator.value).name
           : std::string{"item"};
 
-  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
+  const mir::TypeId self_ptr_type =
+      frame.current_structural_scope->self_pointer_type;
   mir::ProceduralScope body_scope;
   const WalkFrame body_frame = frame.WithProceduralScope(&body_scope).Deeper();
   const ProceduralDepth body_depth = body_frame.procedural_depth;
@@ -618,8 +619,8 @@ auto LowerHirCallExprProc(
             // (mir.md invariant 11); the SV actuals follow.
             std::vector<mir::ExprId> args;
             args.reserve(c.arguments.size() + 1);
-            args.push_back(proc_scope.AddExpr(
-                BuildSelfRefExpr(frame, module.Unit().builtins.self_pointer)));
+            args.push_back(proc_scope.AddExpr(BuildSelfRefExpr(
+                frame, frame.current_structural_scope->self_pointer_type)));
             for (std::size_t i = 0; i < c.arguments.size(); ++i) {
               if (!c.arguments[i].has_value()) {
                 throw InternalError(

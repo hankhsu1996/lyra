@@ -172,10 +172,10 @@ auto EnumerateGenerateChildSpecs(
   return specs;
 }
 
-auto MakeUniqueObjectPointer(
-    ModuleLowerer& module, mir::StructuralScopeId child_id) -> mir::TypeId {
+auto MakeUniqueObjectPointer(ModuleLowerer& module, std::string scope_name)
+    -> mir::TypeId {
   const mir::TypeId object_type =
-      module.Unit().AddType(mir::ObjectType{.target = child_id});
+      module.Unit().AddType(mir::ObjectType{.name = std::move(scope_name)});
   return module.Unit().AddType(
       mir::PointerType{
           .pointee = object_type, .ownership = mir::PointerOwnership::kUnique});
@@ -329,7 +329,8 @@ auto BuildDownwardNavValue(
     const std::vector<hir::PathStep>& path, mir::TypeId slot_type,
     mir::TypeId scope_ptr_type) -> mir::Expr {
   mir::ProceduralScope& ctor_scope = *frame.current_procedural_scope;
-  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
+  const mir::TypeId self_ptr_type =
+      frame.current_structural_scope->self_pointer_type;
   struct NavHop {
     std::string name;
     std::vector<mir::ExprId> indices;
@@ -421,7 +422,7 @@ void InstallCrossUnitRefs(
     const mir::ExprId nav = ctor_scope.AddExpr(BuildDownwardNavValue(
         module, frame, head_name, cu.path, slot_type, scope_ptr_type));
     const mir::ExprId self_for_target = ctor_scope.AddExpr(
-        BuildSelfRefExpr(frame, module.Unit().builtins.self_pointer));
+        BuildSelfRefExpr(frame, mir_scope.self_pointer_type));
     const mir::ExprId target = ctor_scope.AddExpr(
         mir::Expr{
             .data =
@@ -459,12 +460,12 @@ void ValidateConstructOwnedObjectStmt(
   const auto child = mir::GetChildScope(unit, var.type);
   const auto* generate =
       child ? std::get_if<mir::GenerateScopeChild>(&*child) : nullptr;
-  if (generate == nullptr || generate->target != stmt.scope_id) {
+  const auto& child_scope = owner_scope.GetChildStructuralScope(stmt.scope_id);
+  if (generate == nullptr || generate->name != child_scope.name) {
     throw InternalError(
         "ConstructOwnedObjectStmt: target var does not own the requested "
         "scope");
   }
-  const auto& child_scope = owner_scope.GetChildStructuralScope(stmt.scope_id);
   if (stmt.args.size() != child_scope.structural_params.size()) {
     throw InternalError(
         "ConstructOwnedObjectStmt: args count does not match child scope "
@@ -713,7 +714,8 @@ auto InstallGenerateOwnedChildScopes(
 
       const mir::StructuralScopeId child_id =
           mir_scope.AddChildStructuralScope(*std::move(child_r));
-      mir::TypeId var_type = MakeUniqueObjectPointer(module, child_id);
+      mir::TypeId var_type = MakeUniqueObjectPointer(
+          module, mir_scope.GetChildStructuralScope(child_id).name);
       if (spec.is_repeated) {
         var_type = module.Unit().AddType(mir::VectorType{.element = var_type});
       }
@@ -742,8 +744,15 @@ auto StructuralScopeLowerer::Run(
   const hir::StructuralScope& hir_scope = *hir_scope_;
   StructuralScopeLowerer& scope = *this;
 
+  const mir::TypeId self_object_type =
+      module.Unit().AddType(mir::ObjectType{.name = name_});
+  const mir::TypeId self_pointer_type = module.Unit().AddType(
+      mir::PointerType{
+          .pointee = self_object_type,
+          .ownership = mir::PointerOwnership::kBorrowed});
   mir::StructuralScope mir_scope{
       .name = name_,
+      .self_pointer_type = self_pointer_type,
       .time_resolution = hir_scope.time_resolution,
       .structural_params = {},
       .structural_vars = {},
@@ -767,14 +776,14 @@ auto StructuralScopeLowerer::Run(
   mir::ProceduralScope ctor_scope;
   const mir::ProceduralVarId self_id = ctor_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
-          .name = "self", .type = module.Unit().builtins.self_pointer});
+          .name = "self", .type = mir_scope.self_pointer_type});
   ScopeChainNode outer_scope_link{};
   const WalkFrame scope_frame =
       frame.WithStructuralScope(&mir_scope, outer_scope_link)
           .WithProceduralScope(&ctor_scope)
           .WithSelfBinding(self_id, frame.procedural_depth);
   const mir::TypeId void_type = module.Unit().AddType(mir::VoidType{});
-  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
+  const mir::TypeId self_ptr_type = mir_scope.self_pointer_type;
   const auto self_read = [&]() -> mir::ExprId {
     return ctor_scope.AddExpr(BuildSelfRefExpr(scope_frame, self_ptr_type));
   };

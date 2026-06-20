@@ -40,7 +40,7 @@ struct ChildStep {
 // the member behaves like the referenced `Var<T>` while naming no ancestor
 // type (docs/architecture/emission_model.md). Non-movable: it registers `this`,
 // and is owned by the stable scope node that declares it.
-template <value::LyraValueType T>
+template <value::LyraValue T>
 class ExternUp : public ExternBase {
  public:
   ExternUp(

@@ -11,11 +11,13 @@
 #include "lyra/mir/structural_subroutine.hpp"
 #include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type_alias.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
 
 struct StructuralScope {
   std::string name;
+  TypeId self_pointer_type;
   // The scope's resolved time unit and precision (LRM 3.14.2). The emitted
   // class exposes the precision so the engine can take the design-global
   // minimum (LRM 3.14.3) and so delays scale to it.

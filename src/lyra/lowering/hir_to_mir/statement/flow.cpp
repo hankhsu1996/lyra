@@ -44,8 +44,7 @@ auto LowerStaticVarDeclStmt(
   auto* owner_scope = frame.current_structural_scope;
   const auto& ctor_frame = process.OwnerCtorFrame();
   auto& ctor_scope = *ctor_frame.current_procedural_scope;
-  const mir::TypeId self_ptr_type =
-      process.Module().Unit().builtins.self_pointer;
+  const mir::TypeId self_ptr_type = owner_scope->self_pointer_type;
 
   const std::string mangled = std::format(
       "{}__{}_{}", process.CallableName(), hir_local.name, v.var.value);

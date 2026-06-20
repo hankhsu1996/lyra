@@ -51,7 +51,6 @@ class ClosureBuilder {
   [[nodiscard]] auto Build(mir::ExprId result) -> mir::Expr;
 
  private:
-  mir::CompilationUnit* unit_;
   mir::ProceduralScope* outer_;
   mir::TypeId result_type_;
   mir::ProceduralScope body_;
