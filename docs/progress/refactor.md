@@ -197,27 +197,18 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       (see R18). The mutable escape hatch is the one shape that is unambiguously wrong from any
       vantage. **Trigger**: standalone -- can be picked up at any time.
 
-- [ ] R12 -- A signal read / write is an explicit access call in MIR, not a render-time decision.
-      The observable-storage wrapper is already a first-class MIR type (sibling to the
-      owning-pointer and vector wrappers): a signal field's type is the wrapper and
-      `RenderTypeAsCpp` maps it straight to `lyra::runtime::Var<T>`. What remains is the access
-      half. The wrapper's `Get` / `Set` / `Mutate` are still injected by the backend -- a value read
-      appends `.Get()`, a write routes through `.Set()` / `.Mutate()`, each gated on the backend
-      reading the wrapper type at the access site. Per the mir.md boundary note these are
-      library-API method calls and belong in MIR: HIR-to-MIR should emit a `Get` call for a value
-      read and a `Set` / `Mutate` call for a write, so the backend renders the call like any other
-      and never asks "is this observable" at access time. The value/storage duality -- a signal is
-      read as a value but its cell is the target of a write or a reference binding -- is then
-      carried by which call wraps the cell, not by a render-time branch. **Known consequence
-      today**: pass-by-reference of an observable scalar (LRM 13.5.2) needs the bare cell, not a
-      value read, so its argument is currently routed through a backend lvalue render to dodge the
-      injected `.Get()`; once reads are explicit calls a bare cell renders directly and that route
-      collapses. **Why deferred**: cross-cuts all signal value access (read, write, sensitivity) and
-      is its own focused cut, and the current render-time decision is behaviorally correct.
-      **Trigger**: standalone -- highest leverage taken together with R2, which reworks the same
-      observable decision from the capability-gating angle (wrap every value type uniformly, push
-      unsupported change-tracking to explicit diagnostics). Done together they leave the backend a
-      pure renderer of explicit calls.
+- [x] R12 -- A signal read / write is an explicit access call in MIR, not a render-time decision.
+      The observable-storage wrapper is a first-class MIR type (sibling to the owning-pointer and
+      vector wrappers): a signal field's type is the wrapper and `RenderTypeAsCpp` maps it straight
+      to `lyra::runtime::Var<T>`. The access half is now explicit too -- HIR-to-MIR emits an
+      observable `Get` call for a value read and a `Set` / `Mutate` call for a write, so the backend
+      renders each like any other call and never asks "is this observable" at access time. The
+      value/storage duality -- a signal is read as a value but its cell is the target of a write or
+      a reference binding -- is carried by which call wraps the cell, not by a render-time branch.
+      The backend's `IsObservableScalarType` predicate is gone. See
+      `docs/decisions/value-type-concepts.md`. R2 still reworks the same observable surface from the
+      capability-gating angle (wrap every value type uniformly, push unsupported change-tracking to
+      explicit diagnostics).
 
 - [x] R13 -- HIR-to-MIR per-LRM-family subsystem split. Per-kind handlers are now grouped by
       semantic family in
@@ -329,11 +320,11 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       both local to one callable body, both plain locals in the callable's render function. Each
       callable kind (process, task, function, constructor, fork-branch, deferred closure) becomes
       one render function; per-node-kind handlers are free functions taking only what they read. The
-      result is the mechanical-translation shape rendering should always have had;
-      `lowering_organization.md` invariant 9 (which today claims lowering and rendering share the
-      same pattern) is updated in this cut to reflect that the patterns are distinct -- lowering
-      makes semantic decisions, rendering doesn't. **Trigger**: scheduled after R11, R12, R14, R15,
-      R16, R17 all land.
+      result is the mechanical-translation shape rendering should always have had: a rendering fold,
+      not a construction pass. `lowering_organization.md` already reflects this distinction
+      (invariant 9, the "Rendering Folds" section, and the narrowed `*Context` forbidden shapes);
+      this cut brings the code to the fold shape the contract now describes. **Trigger**: R11, R12,
+      R14, R15, R16, R17 have all landed; ready to pick up.
 
 - [x] R19 -- LRM 10.5 variable initialization lowers to an `AssignExpr` statement at the top of
       `constructor_scope.root_stmts`, with the value being the user-supplied expression when present

@@ -35,14 +35,26 @@ ruled out by the constraint, irrespective of how the constraint is currently rea
 
 ## Purpose
 
-Define how a lowering or rendering pass is structured: the class shape, the dispatcher method
-signature, the three kinds of fields a class member may be, the per-kind handler shape, and the
-rules that keep new concepts cheap to add and the class bounded.
+A pass over one IR comes in two kinds, divided by whether it accumulates task-lifetime shared state:
+
+- A **construction pass** builds a structured output whose parts cross-reference each other and
+  accumulates shared registries (a dedup cache, a binding table) as it walks. HIR-to-MIR lowering is
+  one; a future MIR-to-LLVM backend -- accumulating an SSA value map, building a cross-referenced
+  function -- is another.
+- A **rendering fold** maps each node to a fragment of an unstructured medium and composes the
+  fragments by concatenation, accumulating nothing. The MIR-to-C++ text backend is one: a node's
+  rendered text never references another node's, so there is no shared output to own.
+
+The dividing question is always "what task-lifetime shared mutable state exists?" -- registries
+justify the class; their absence is what makes a fold a fold. This document defines the
+construction-pass shape (the class, the dispatcher signature, the three member kinds, the per-kind
+handler shape, the `WalkFrame`); the rendering-fold shape (free functions, a read-only lookup
+threaded down, a per-callable-body temp counter) is defined separately under "Rendering Folds."
 
 ## Owns
 
-- The pattern that every lowering or rendering pass is implemented as a class scoped to one task
-  instance (one process, one scope, one unit, etc.).
+- The pattern that every construction pass is implemented as a class scoped to one task instance
+  (one process, one scope, one unit, etc.).
 - The classification of every class member into one of three kinds: facts, registries, and the owned
   root output. Nested builders opened during the walk are stack-allocated inside the walker that
   opens them; they are never class members.
@@ -52,8 +64,9 @@ rules that keep new concepts cheap to add and the class bounded.
 - The constructor convention: facts are injected at construction; registries are owned by the class;
   the root output is constructed in the constructor (or at `Run`'s entry) and moved out of the class
   by `Run`'s return.
-- The rule that the pattern is shared across lowering and rendering passes while concrete types are
-  per pass.
+- The rule that the construction-pass pattern is shared by every accumulating pass (HIR-to-MIR
+  lowering, a future IR-emitting backend) while concrete types are per pass, and that a rendering
+  fold is a distinct shape, not an instance of it.
 
 ## Does Not Own
 
@@ -63,10 +76,10 @@ rules that keep new concepts cheap to add and the class bounded.
 
 ## Core Invariants
 
-1. Every lowering or rendering pass is implemented as a class named for the unit of work it
-   processes and the action it performs (`ProcessLowerer`, `CppProcessRenderer`,
-   `StructuralScopeLowerer`). The class is constructed once per task instance and destroyed when
-   that task completes; one class instance does not span multiple task instances.
+1. Every construction pass is implemented as a class named for the unit of work it processes and the
+   action it performs (`ProcessLowerer`, `StructuralScopeLowerer`). The class is constructed once
+   per task instance and destroyed when that task completes; one class instance does not span
+   multiple task instances. A rendering fold is not a class (see "Rendering Folds").
 
 2. The class constructor receives the read-only facts the pass depends on. After construction those
    facts are not mutated. Registries the pass accumulates and the root output the pass is
@@ -117,13 +130,14 @@ rules that keep new concepts cheap to add and the class bounded.
    contract, so there is only one unit per pass, never a "current vs other" notion. Owning the root
    on the class corrects that misplacement.
 
-6. `WalkFrame` is a small value type holding **per-recursion traversal context only**: a pointer to
-   the current write-target nested builder, the current procedural depth, an optional closure
-   context, and any future stack-discipline state. It is passed by value between walker methods.
-   Each recursion may construct a new frame with different fields set; the cost of copying is
-   trivial. Walk-invariant facts (the unit currently being constructed, source mapper, builtins
-   table) are class members on the pass class, not `WalkFrame` fields -- only state that genuinely
-   changes from one recursion to the next belongs on `WalkFrame`. Writes to nested scopes go through
+6. `WalkFrame` is a construction pass's **walk position** (see "The Walk Position"): a small value
+   type holding **per-recursion traversal context only** -- the scope chain plus a pointer to the
+   current write-target nested builder, the current procedural depth, an optional closure context,
+   and any future stack-discipline state. It is passed by value between walker methods. Each
+   recursion may construct a new frame with different fields set; the cost of copying is trivial.
+   Walk-invariant facts (the unit currently being constructed, source mapper, builtins table) are
+   class members on the pass class, not `WalkFrame` fields -- only state that genuinely changes from
+   one recursion to the next belongs on `WalkFrame`. Writes to nested scopes go through
    `frame.current_*_scope->Add...`; writes to the root output go through the pass class's narrow
    methods (see invariant 5).
 
@@ -136,9 +150,15 @@ rules that keep new concepts cheap to add and the class bounded.
    appear on any pass class, any member type, or any field name. Type names describe what the type
    represents.
 
-9. The pattern (class plus dispatcher methods plus per-kind handler free functions plus `WalkFrame`)
-   is identical across lowering and rendering passes. Concrete types (`ProcessLowerer`,
-   `CppProcessRenderer`) are per pass; no base type spans lowering or rendering pass boundaries.
+9. The dividing line between the class pattern and the fold shape is whether the pass accumulates
+   task-lifetime shared state -- not whether it is called "lowering" or "rendering." Every
+   construction pass (accumulates registries, builds a cross-referenced output) takes the
+   class-plus-dispatcher-plus-handler-plus-`WalkFrame` shape, whether it lowers HIR to MIR or emits
+   MIR to a structured backend IR. A rendering fold (composes an unstructured medium, accumulates
+   nothing) takes the fold shape instead (see "Rendering Folds"). The earlier formulation claimed
+   the class pattern was identical across lowering and rendering; that conflated a structured
+   backend (which does accumulate, so is a construction pass) with a text fold (which does not).
+   Concrete types are per pass; no base type spans pass boundaries.
 
 10. Per-kind dispatch is centralised in exactly one location, and that location is decoupled from
     the pass class header so the header does not grow per kind. Per-kind handlers form a layer the
@@ -169,6 +189,85 @@ rules that keep new concepts cheap to add and the class bounded.
     `lowerer.Module().InternType(...)`. `proc.Module()` returns the `ModuleLowerer&` the
     `ProcessLowerer` captured at construction.
 
+## The Walk Position
+
+Every pass over an IR is a recursion, and at each node the recursion needs context that is not in
+the node but follows from where the node sits in the tree. That context is the **walk position**,
+threaded by value down the recursion. Its universal core is the **scope chain**: a hops-relative
+reference (a procedural-var reference at `hops > 0`, a structural-var reference at `hops > 0`)
+resolves only by climbing the chain of enclosing scopes. Every pass -- lowering, fold, or a future
+structured backend -- carries this chain and resolves hops the same way (`StructuralScopeAtHops`,
+`ProceduralScopeAtHops`).
+
+What a pass adds on top of the scope chain follows from what it does:
+
+- A **construction pass** adds write-targets (the nested scope being built) and the decision state
+  it uses to compute what to build: the procedural depth (to _compute_ a reference's hop count at
+  the write site), the active capture sink, the lvalue-target flag, the `self` binding, the
+  coroutine-body flag. This is the fat walk position -- `WalkFrame` in HIR-to-MIR.
+- A **fold** adds nothing. Its walk position is the read-only scope chain alone, because every
+  decision the construction pass made is already baked into the MIR it reads. It does not _compute_
+  a hop count; it _resolves_ an already-baked one to a name. This is the thin walk position -- the
+  MIR-to-C++ read-only scope view.
+
+The walk position thins as the pipeline descends: each pass that bakes a decision into the IR
+removes state a later pass would otherwise carry. HIR-to-MIR carries a fat frame because it is still
+deciding hops, captures, and callees; the C++ fold carries almost nothing because those decisions
+are now MIR nodes. The same force that let R12 / R16 / R17 strip render-time decisions is what thins
+the walk position.
+
+Two consequences for type structure:
+
+- **The concept is shared; the type is per pass.** A construction pass's `WalkFrame` and the fold's
+  scope view are two instances of one concept, not one type. Merging them would drag the
+  construction-only fields (write-targets, depth, capture sink) into a fold that never uses them.
+  The structural-scope-chain mirror is already deliberate -- `WalkFrame`'s scope-chain node carries
+  a comment that it mirrors the render side's parent link so both reach the same `StructuralVarDecl`
+  -- and naming the render side to match makes that mirror explicit instead of comment-enforced.
+- **A fold need not split invariant facts from the walk position.** A construction pass keeps
+  walk-invariant facts (the unit, builtins) on its class and only per-recursion state on
+  `WalkFrame`, because facts must stay immutable and stay out of the copied-per-recursion frame. A
+  fold has no class and mutates nothing, so its one immutable threaded value carries both the
+  walk-invariant lookup (the unit, for type and arena reads) and the per-recursion scope chain. The
+  split that protects a construction pass buys a fold nothing.
+- **The two passes resolve the chain differently per axis, and that is correct.** For a procedural
+  reference, a construction pass computes the hop count from a depth counter plus its binding
+  registry (symbol -> declaration depth) and never reads the ancestor procedural scope; the fold has
+  no registry, so it climbs the procedural chain to read the referenced var's name. The fold's
+  procedural chain is the read-side substitute for the construction pass's binding registry -- the
+  same registry-presence distinction that separates the two pass kinds. The structural chain, by
+  contrast, both passes climb, because a structural var's declared MIR storage type lives only in
+  the constructed scope and must be read there by whoever needs it (a structural reference, or a
+  static-lifetime local promoted to a per-instance structural var). Forcing the two axes onto one
+  mechanism would either carry a chain a construction pass never reads or demand a name a counter
+  cannot produce.
+
+## Rendering Folds
+
+A rendering fold emits an unstructured medium (today, C++ text) from an IR. It is not a construction
+pass and does not take the class shape, because the two things the class exists to own are both
+absent: there is no shared registry to accumulate (a node's text is computed and returned, never
+written into a cross-walk accumulator), and there is no structured root to own (the output is text
+composed by concatenation, with no node referencing another). What remains is genuinely small:
+
+- Per-kind handlers are free functions that return the rendered fragment for their node; a parent
+  composes its children's fragments.
+- The only context threaded down is the fold's thin **walk position** (see "The Walk Position"): a
+  read-only lookup carrying the unit (for type and arena reads) and the chain of enclosing scopes
+  (to resolve a hops-relative reference to a name). It is immutable, it accumulates nothing, and it
+  grows no member per concept -- so it is not the forbidden `*Context`, which is banned for being a
+  mutable, growing carrier that stands in for a class. Threading an immutable lookup down a fold is
+  the ordinary functional shape, not that anti-pattern.
+- The one piece of mutable state -- a temp-name counter -- is local to a single callable body's
+  render, declared where that body's render begins and threaded by reference through its statement
+  handlers. It is not task-lifetime state and lives on no context object.
+
+The fold has no `WalkFrame` (no traversal-position state beyond the scope chain in the lookup), no
+registries, and no owned root. The opposite case is a structured backend (MIR to LLVM IR): it
+accumulates an SSA value map and builds a cross-referenced function, so it is a construction pass
+and takes the class shape above. "Backend" is therefore not one shape -- a text emit is a fold, a
+structured-IR emit is a construction pass.
+
 ## Boundary to Adjacent Layers
 
 - A pass class is a layer-internal artifact. It is not exposed across lowering or rendering
@@ -179,9 +278,14 @@ rules that keep new concepts cheap to add and the class bounded.
 
 ## Forbidden Shapes
 
-- A pass implemented as free functions threading a context-like object as a separate parameter.
+- A construction pass implemented as free functions threading a context-like object as a separate
+  parameter. The constraint is that an accumulating pass must be a class; it is not that free
+  functions are forbidden everywhere -- a rendering fold is free functions by nature (see "Rendering
+  Folds").
 - A `RenderContext`, `LoweringContext`, or any other `*Context` type used as the carrier for facts,
-  builders, or walk-frame state. The name is an open invitation to unbounded growth.
+  registries, builders, or walk-frame state -- anything the pass accumulates or mutates. The name is
+  an open invitation to unbounded growth. A rendering fold's immutable read-only lookup (the unit
+  plus the scope chain, growing no member per concept) is not this shape.
 - A class instance shared across multiple task instances (one `ProcessLowerer` reused for several
   processes).
 - A class member whose lifetime exceeds the class's task instance.
@@ -190,10 +294,12 @@ rules that keep new concepts cheap to add and the class bounded.
   handler free functions are a different shape: they take the pass class instance explicitly because
   they live outside the class, but the instance is the single access channel -- no further narrowed
   references.)
-- An immutable-context-with-`With*()` copy-on-descend pattern. The pattern's superficial appeal is
-  symmetry with the walk frame; its cost is the Context name's open invitation, the `mutable` escape
-  hatch required for accumulating state, and the parallel structure needed for the class that owns
-  the accumulators.
+- An immutable-context-with-`With*()` copy-on-descend pattern used to carry a construction pass's
+  state. Its cost is the Context name's open invitation, the `mutable` escape hatch a construction
+  pass needs for its accumulators, and the parallel structure for the class that owns them. A
+  rendering fold threading an immutable scope-chain lookup down with copy-on-descend is the ordinary
+  functional shape, not this anti-pattern: a fold accumulates nothing, so there is no mutable escape
+  hatch and no parallel accumulator class.
 - A walker struct passed as the single fat parameter. Same pathology as a context, with a different
   name.
 - A `*State` suffix on a class, a member, or a field.
@@ -220,8 +326,7 @@ rules that keep new concepts cheap to add and the class bounded.
   `Build*` factory and interned by the caller; `mir::ExprId`-returning helpers are reserved for
   transforms keyed on an input `mir::ExprId` (which read or pass through an existing arena node).
   See "Expression-Builder Helpers".
-- A shared base class spanning lowering and rendering pass classes. The pattern is shared; types are
-  per pass.
+- A shared base class spanning construction-pass classes. The pattern is shared; types are per pass.
 - A dispatcher method or per-kind handler that mutates the class's fact members. Facts are mutated
   only by the constructor.
 - A bundle of multiple kinds (facts + registry + builder) into one type. Each member of a class is a
