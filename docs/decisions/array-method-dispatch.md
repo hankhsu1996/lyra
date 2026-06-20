@@ -38,6 +38,15 @@ semantics uniformly across container kinds; only the AST -> HIR receiver-detecti
 container. Fixed-unpacked, queue, and associative array workstreams extend the routing block, not
 the kind enum.
 
+**Subsequent revision.** This decision pinned `ArrayMethodKind` and its sibling per-family enums
+under `hir::BuiltinMethodRef` / `mir::BuiltinMethodCallee` at a time when container method APIs were
+unaligned and `runtime-effects-as-generic-calls.md` did not yet exist. Once R26
+(`progress/refactor.md`) formalized the cross-container concept system and the generic-call pattern
+became the MIR-wide rule, the per-family enum carries family information the receiver expression's
+type already states -- the same fact in two places, which the generic-call pattern forbids (`mir.md`
+invariant 10). The receiver-type dispatch in `LowerCallExprProc` still routes, but the resolved
+callee is a flat closed-namespace `BuiltinFn` ID; see `progress/refactor.md` R29.
+
 **Empty-array reduction returns element-shape zero.**
 
 LRM 7.12.3 is silent on the empty-input case. Slang's `ArrayReductionMethod::eval` returns an

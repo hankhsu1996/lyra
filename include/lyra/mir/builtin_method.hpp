@@ -210,4 +210,147 @@ struct BuiltinMethodCallee {
 [[nodiscard]] auto IsContainerAccessCall(const BuiltinMethodCallee& callee)
     -> bool;
 
+// Closed namespace of compiler-internal runtime entries. Same identity
+// shape as `support::SystemSubroutineId`; sections below mirror the
+// protocol grouping in `value/concepts.hpp`. Resolution to a concrete
+// C++ method or LLVM symbol is per-backend, keyed by `(BuiltinFn,
+// receiver_type)` for `BuiltinFnCallee` and `(BuiltinFn, type_qual)` for
+// `BuiltinStaticCallee`.
+enum class BuiltinFn : std::uint16_t {
+  // Indexable / SliceableRef (LRM 7.4 / 7.8 / 7.10 / 11.5). Universal
+  // positional access -- bare returns value form, `Ref` returns
+  // write-through reference. `Slice` is read; `SliceRef` is write.
+  kElement,
+  kElementRef,
+  kSlice,
+  kSliceRef,
+  // Sized -- LRM 7.4.3 / 7.5 / 7.10.2 element-count query. Universal
+  // across Dynamic / Unpacked / Queue / AA (AA's LRM 7.9 `num` is the
+  // same symbol). `String::Len` (LRM 6.16.1) is a sibling under its own
+  // mandated spelling.
+  kSize,
+  kLen,
+  // Ownable / mutating container ops (LRM 7.12 + 7.5 / 7.10).
+  kToOwned,
+  kDelete,
+  // Sortable (LRM 7.12). The closure-bearing siblings (`Sort` /
+  // `Rsort`) take a `with`-clause closure as the second argument.
+  kReverse,
+  kSort,
+  kRsort,
+  // Reducible (LRM 7.12.3). All take a `with`-clause closure.
+  kSum,
+  kProduct,
+  kAnd,
+  kOr,
+  kXor,
+  // Searchable (LRM 7.12.1).
+  kFind,
+  kFindIndex,
+  kFindFirst,
+  kFindFirstIndex,
+  kFindLast,
+  kFindLastIndex,
+  kMin,
+  kMax,
+  kUnique,
+  kUniqueIndex,
+  // LRM 7.12.5 array projection.
+  kMap,
+  // Queue insertion / removal (LRM 7.10).
+  kInsert,
+  kPopFront,
+  kPopBack,
+  kPushFront,
+  kPushBack,
+  // Associative-array keyed queries (LRM 7.9). `Exists` is keyed
+  // membership; the traversal family (LRM 7.9.4 -- 7.9.7) assigns the
+  // visited key through a `ref` index argument and returns 0 / 1 / -1.
+  kExists,
+  kAssocFirst,
+  kAssocLast,
+  kAssocNext,
+  kAssocPrev,
+  // String character / case / compare / substring (LRM 6.16).
+  kGetc,
+  kPutc,
+  kToupper,
+  kTolower,
+  kCompare,
+  kIcompare,
+  kSubstr,
+  // String numeric parse (LRM 6.16.9 -- 6.16.13).
+  kAtoi,
+  kAtohex,
+  kAtooct,
+  kAtobin,
+  kAtoreal,
+  // String numeric format (LRM 6.16.14 -- 6.16.18). Mutate the receiver.
+  kItoa,
+  kHextoa,
+  kOcttoa,
+  kBintoa,
+  kRealtoa,
+  // Named-event operations (LRM 15.5). `Trigger` and `Await` arise from
+  // `-> e;` / `@e;` collapsing at HIR -> MIR; `Triggered` surfaces from
+  // the slang `e.triggered` method call.
+  kTrigger,
+  kAwait,
+  kTriggered,
+  // Enum type-static queries (LRM 6.19.5). Lowered as
+  // `BuiltinStaticCallee` -- the enum type is the call's identity
+  // qualifier, not a value receiver. `constexpr` in the runtime so
+  // downstream optimizers fold.
+  kEnumFirst,
+  kEnumLast,
+  kEnumNum,
+  // Enum instance methods (LRM 6.19.5). Lowered as `BuiltinFnCallee` --
+  // the enum value is the receiver at args[0].
+  kEnumName,
+  kEnumNext,
+  kEnumPrev,
+  // LRM 20.9 `$isunknown` plus the LRM 21.3.4.3 internal `$sscanf` /
+  // `$fscanf` EOF guard. Runtime exposes `HasUnknown()` uniformly on
+  // every packed value type (always-false impl on 2-state); the call
+  // shape is uniform and downstream constant-folds the 2-state case.
+  kIsUnknown,
+  // Observable storage cell (`Var<T>` / `ExternalRef<T>`). The cell is
+  // the receiver; `Set` / `Mutate` take services as the second argument.
+  kGet,
+  kSet,
+  kMutate,
+  // Scope handle -- reaches the engine facade `RuntimeServices` so every
+  // runtime-effect call can thread it as a plain argument
+  // (`decisions/runtime-effects-as-generic-calls.md`).
+  kServices,
+};
+
+// Instance method or free-function call against a closed-namespace
+// runtime entry. The receiver, if any, is `args[0]`; remaining args are
+// the method parameters. The (`BuiltinFn`, `args[0].type`) pair fully
+// identifies the runtime symbol; the per-backend realization table maps
+// it to a method, free-function, or other C++ shape.
+struct BuiltinFnCallee {
+  BuiltinFn id;
+};
+
+// Type-static runtime entry -- no value receiver. `type_qual` names the
+// type whose static is invoked (e.g. `MyEnum::First()`), and is part of
+// the symbol's identity that LLVM also reads for mangling.
+struct BuiltinStaticCallee {
+  BuiltinFn id;
+  TypeId type_qual;
+};
+
+// Whether a `BuiltinFn` mutates its receiver in place. Drives the
+// LHS-chain walker that decides whether an observable receiver needs the
+// `Mutate` wrap. Same predicate role as `IsMutatingBuiltinMethod` for the
+// legacy callee shape.
+[[nodiscard]] auto IsMutatingBuiltinFn(BuiltinFn id) -> bool;
+
+// Whether a `BuiltinFn` is an indexed / sliced container access whose
+// receiver is `args[0]`. LHS-chain walkers use this to reach the root
+// primary.
+[[nodiscard]] auto IsContainerAccessFn(BuiltinFn id) -> bool;
+
 }  // namespace lyra::mir

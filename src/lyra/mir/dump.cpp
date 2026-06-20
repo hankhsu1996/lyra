@@ -378,6 +378,15 @@ class MirDumper {
                   "RuntimeNavCallee[fn={}, name=\"{}\"]",
                   static_cast<int>(nav.fn), nav.name);
             },
+            [](const BuiltinFnCallee& b) -> std::string {
+              return std::format(
+                  "BuiltinFnCallee[id={}]", static_cast<int>(b.id));
+            },
+            [](const BuiltinStaticCallee& b) -> std::string {
+              return std::format(
+                  "BuiltinStaticCallee[id={}, type_qual=Type[{}]]",
+                  static_cast<int>(b.id), b.type_qual.value);
+            },
             [](const BuiltinMethodCallee& b) -> std::string {
               return std::visit(
                   Overloaded{

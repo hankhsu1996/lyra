@@ -131,7 +131,8 @@ struct ConstructorCallee {};
 
 using Callee = std::variant<
     SystemSubroutineCallee, StructuralSubroutineRef, BuiltinMethodCallee,
-    ClosureRef, RuntimeNavCallee, ConstructorCallee>;
+    BuiltinFnCallee, BuiltinStaticCallee, ClosureRef, RuntimeNavCallee,
+    ConstructorCallee>;
 
 struct CallExpr {
   Callee callee;

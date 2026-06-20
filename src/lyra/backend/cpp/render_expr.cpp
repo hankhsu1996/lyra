@@ -1137,6 +1137,15 @@ auto RenderCallExpr(
             }
             return std::format("{}({})", decl.name, args);
           },
+          [&](const mir::BuiltinFnCallee&) -> diag::Result<std::string> {
+            throw InternalError(
+                "RenderCallExpr: BuiltinFnCallee has no realization path yet");
+          },
+          [&](const mir::BuiltinStaticCallee&) -> diag::Result<std::string> {
+            throw InternalError(
+                "RenderCallExpr: BuiltinStaticCallee has no realization path "
+                "yet");
+          },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
             // Most method families fit the generic `(receiver).name(args)`
             // shape and resolve through `RenderMethodCall` with a per-kind
