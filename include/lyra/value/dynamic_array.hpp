@@ -224,6 +224,14 @@ class DynamicArray {
     return true;
   }
 
+  // LRM 20.9: any element carrying an unknown bit propagates up.
+  [[nodiscard]] auto HasUnknown() const -> bool {
+    for (const auto& e : data_) {
+      if (e.HasUnknown()) return true;
+    }
+    return false;
+  }
+
   // LRM 7.5.3: empties the array, resulting in a zero-sized array. Body is
   // identical to ResetToDefault (LRM Table 6-7 default for dynamic array is
   // the empty array), but the two surface names track distinct contracts:

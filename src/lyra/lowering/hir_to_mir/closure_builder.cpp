@@ -17,11 +17,11 @@ namespace lyra::lowering::hir_to_mir {
 ClosureBuilder::ClosureBuilder(
     mir::CompilationUnit& unit, const WalkFrame& enclosing,
     mir::TypeId result_type)
-    : unit_(&unit),
-      outer_(enclosing.current_procedural_scope),
+    : outer_(enclosing.current_procedural_scope),
       result_type_(result_type),
       sink_(enclosing.procedural_depth.Inner(), body_, *outer_, unit) {
-  const mir::TypeId self_ptr_type = unit_->builtins.self_pointer;
+  const mir::TypeId self_ptr_type =
+      enclosing.current_structural_scope->self_pointer_type;
   self_binding_ = body_.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
   outer_self_read_ =

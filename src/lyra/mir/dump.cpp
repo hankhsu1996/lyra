@@ -169,15 +169,13 @@ class MirDumper {
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
-              return std::format(
-                  "Object(scope=ChildStructuralScope[{}])", o.target.value);
+              return std::format("Object(name=\"{}\")", o.name);
             },
             [](const ExternalUnitObjectType& e) -> std::string {
               return std::format(
                   "ExternalUnitObject(unit=\"{}\")", e.unit_name);
             },
             [](const ScopeType&) -> std::string { return "Scope"; },
-            [](const SelfType&) -> std::string { return "Self"; },
             [](const ServicesType&) -> std::string { return "Services"; },
             [](const RuntimeLibraryType& r) -> std::string {
               switch (r.kind) {
@@ -377,6 +375,15 @@ class MirDumper {
               return std::format(
                   "RuntimeNavCallee[fn={}, name=\"{}\"]",
                   static_cast<int>(nav.fn), nav.name);
+            },
+            [](const BuiltinFnCallee& b) -> std::string {
+              return std::format(
+                  "BuiltinFnCallee[id={}]", static_cast<int>(b.id));
+            },
+            [](const BuiltinStaticCallee& b) -> std::string {
+              return std::format(
+                  "BuiltinStaticCallee[id={}, type_qual=Type[{}]]",
+                  static_cast<int>(b.id), b.type_qual.value);
             },
             [](const BuiltinMethodCallee& b) -> std::string {
               return std::visit(

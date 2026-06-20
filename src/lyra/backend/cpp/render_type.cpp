@@ -107,17 +107,13 @@ auto RenderTypeAsCpp(
             return "lyra::value::AssociativeArray<" + *key_or + ", " +
                    *elem_or + ">";
           },
-          [&](const mir::ObjectType& o) -> diag::Result<std::string> {
-            return std::string{
-                owner_scope.GetChildStructuralScope(o.target).name};
+          [](const mir::ObjectType& o) -> diag::Result<std::string> {
+            return o.name;
           },
           [](const mir::ExternalUnitObjectType& e)
               -> diag::Result<std::string> { return e.unit_name; },
           [](const mir::ScopeType&) -> diag::Result<std::string> {
             return std::string{"lyra::runtime::Scope"};
-          },
-          [&](const mir::SelfType&) -> diag::Result<std::string> {
-            return std::string{owner_scope.name};
           },
           [](const mir::ServicesType&) -> diag::Result<std::string> {
             return std::string{"lyra::runtime::RuntimeServices&"};

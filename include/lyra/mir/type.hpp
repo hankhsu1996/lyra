@@ -6,7 +6,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/mir/structural_scope_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -28,7 +27,6 @@ enum class TypeKind {
   kObject,
   kExternalUnitObject,
   kScope,
-  kSelf,
   kServices,
   kRuntimeLibrary,
   kCoroutine,
@@ -130,7 +128,7 @@ struct ChandleType {};
 struct VoidType {};
 
 struct ObjectType {
-  StructuralScopeId target;
+  std::string name;
 
   auto operator==(const ObjectType&) const -> bool = default;
 };
@@ -152,17 +150,9 @@ struct ScopeType {
   auto operator==(const ScopeType&) const -> bool = default;
 };
 
-// Pointee of `self` (mir.md invariant 11). Distinct from `ScopeType` (the
-// type-erased runtime base) and `ObjectType` (a child of the owner): names
-// the concrete scope this declaration sits in, resolved lexically.
-struct SelfType {
-  auto operator==(const SelfType&) const -> bool = default;
-};
-
 // The engine facade `lyra::runtime::RuntimeServices`. A callable body reaches
 // it from `self` through the `Services` scope method; it is the engine handle
-// every runtime-effect call threads as a plain argument
-// (docs/decisions/runtime-effects-as-generic-calls.md).
+// every runtime-effect call threads as a plain argument.
 struct ServicesType {
   auto operator==(const ServicesType&) const -> bool = default;
 };
@@ -172,8 +162,7 @@ struct ServicesType {
 // and MIR makes no decision on its contents. The branch selects which library
 // type, and the backend maps the branch to the concrete library name. Distinct
 // from ServicesType / ScopeType, which are runtime object-model handles the
-// receiver semantics reason about; these are inert payloads
-// (docs/decisions/runtime-effects-as-generic-calls.md).
+// receiver semantics reason about; these are inert payloads.
 enum class RuntimeLibraryKind : std::uint8_t {
   kPrintItem,
   kPrintLiteralItem,
@@ -240,9 +229,8 @@ struct VectorType {
 // SystemVerilog data type (not a handle, child instance, or external ref) in
 // this wrapper. The C++ backend renders the wrapper as `lyra::runtime::Var<T>`
 // where T is the inner value type; the C++ template requires `T` to satisfy
-// `lyra::value::LyraValueType`, so a value type that forgot to implement the
-// contract fails at template instantiation. See
-// `docs/decisions/value-type-concepts.md`.
+// `lyra::value::LyraValue`, so a value type that forgot to implement the
+// contract fails at template instantiation.
 struct ObservableType {
   TypeId value;
 
@@ -282,8 +270,8 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, SelfType, ServicesType, RuntimeLibraryType, CoroutineType,
-    RefType, PointerType, VectorType, ExternalRefType, ObservableType>;
+    ScopeType, ServicesType, RuntimeLibraryType, CoroutineType, RefType,
+    PointerType, VectorType, ExternalRefType, ObservableType>;
 
 struct Type {
   TypeData data;
@@ -305,9 +293,9 @@ class CompilationUnit;
 
 // A child-scope member, classified by the leaf object type after stripping any
 // vector layers: an intra-unit object is a generate scope (carrying its target
-// scope), an external-unit object is a module instance.
+// scope's class name), an external-unit object is a module instance.
 struct GenerateScopeChild {
-  StructuralScopeId target;
+  std::string name;
 };
 struct ModuleInstanceChild {};
 using ChildScope = std::variant<GenerateScopeChild, ModuleInstanceChild>;

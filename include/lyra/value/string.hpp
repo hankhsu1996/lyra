@@ -108,6 +108,11 @@ class String {
     return impl_ == o.impl_;
   }
 
+  // LRM 6.16 strings have no X/Z plane.
+  [[nodiscard]] static auto HasUnknown() -> bool {
+    return false;
+  }
+
   // LRM Table 6-7: the string default is the empty string. This is the
   // container OOB-shield contract shared with the other value types
   // (docs/decisions/runtime-shape-and-default-value.md), so a `string` can be

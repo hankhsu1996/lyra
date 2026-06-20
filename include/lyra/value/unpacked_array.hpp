@@ -188,6 +188,14 @@ class UnpackedArray {
     return true;
   }
 
+  // LRM 20.9: any element carrying an unknown bit propagates up.
+  [[nodiscard]] auto HasUnknown() const -> bool {
+    for (const auto& e : data_) {
+      if (e.HasUnknown()) return true;
+    }
+    return false;
+  }
+
   // LRM 7.12 ordering and reduction, each a thin wrapper over the shared
   // `detail::Array*` algorithms. HIR-to-MIR always supplies the closure (the
   // `with`-clause body or the LRM-default identity), so the runtime exposes

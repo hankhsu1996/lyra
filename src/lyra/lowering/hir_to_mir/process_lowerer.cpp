@@ -242,7 +242,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
   const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
           .name = "self",
-          .type = process.Module().Unit().builtins.self_pointer});
+          .type = parent.current_structural_scope->self_pointer_type});
   const WalkFrame body_frame =
       parent.WithProceduralScope(&process_scope)
           .WithSelfBinding(self_id, parent.procedural_depth)
@@ -268,7 +268,7 @@ auto LowerForeverProcess(
   const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
           .name = "self",
-          .type = process.Module().Unit().builtins.self_pointer});
+          .type = parent.current_structural_scope->self_pointer_type});
   mir::ProceduralScope body_scope;
   {
     const WalkFrame body_frame =
@@ -352,7 +352,8 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   mir::ProceduralScope body_scope;
   const mir::ProceduralVarId self_id = body_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
-          .name = "self", .type = module_->Unit().builtins.self_pointer});
+          .name = "self",
+          .type = parent.current_structural_scope->self_pointer_type});
   // A task body suspends on timing controls and renders as a coroutine; a
   // function body executes synchronously.
   const bool body_is_coroutine = src.kind == hir::SubroutineKind::kTask;

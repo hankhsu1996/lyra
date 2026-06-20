@@ -106,7 +106,7 @@ auto LowerStructuralVarRefExpr(
     const hir::StructuralVarRef& m) -> mir::Expr {
   const mir::StructuralVarRef member =
       scope.TranslateStructuralVar(m.hops, m.var);
-  return BuildStructuralMemberAccessExpr(frame, scope.Module().Unit(), member);
+  return BuildStructuralMemberAccessExpr(frame, member);
 }
 
 auto LowerProceduralVarRefExpr(
@@ -119,8 +119,7 @@ auto LowerProceduralVarRefExpr(
   if (const auto* sb = std::get_if<StaticVarBinding>(&binding)) {
     const mir::StructuralVarRef member{
         .hops = mir::StructuralHops{.value = 0}, .var = sb->var};
-    return BuildStructuralMemberAccessExpr(
-        frame, process.Module().Unit(), member);
+    return BuildStructuralMemberAccessExpr(frame, member);
   }
   const auto& ab = std::get<AutomaticVarBinding>(binding);
   if (auto* sink = frame.capture_sink) {
@@ -146,7 +145,8 @@ auto LowerCrossUnitVarRefExpr(
     const hir::CrossUnitVarRef& c) -> mir::Expr {
   const auto& meta = scope.CrossUnitRefTarget(c.id);
   const mir::StructuralVarRef target = meta.target;
-  const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
+  const mir::TypeId self_ptr_type =
+      frame.current_structural_scope->self_pointer_type;
   const mir::ExprId self_ref = frame.current_procedural_scope->AddExpr(
       BuildSelfRefExpr(frame, self_ptr_type));
   const auto* ptr = std::get_if<mir::PointerType>(

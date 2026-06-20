@@ -31,8 +31,7 @@ auto BuildSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
 // promoted to a per-instance structural var (LRM 13.3.1), which reach their
 // storage identically.
 auto BuildStructuralMemberAccessExpr(
-    const WalkFrame& frame, const mir::CompilationUnit& unit,
-    const mir::StructuralVarRef& member) -> mir::Expr;
+    const WalkFrame& frame, const mir::StructuralVarRef& member) -> mir::Expr;
 
 // Constructs a reference to the cell `cell` denotes (LRM 13.5.2): adds a
 // reference-construction `CallExpr` to `scope` whose result type is a

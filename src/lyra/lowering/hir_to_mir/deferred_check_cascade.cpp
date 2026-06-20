@@ -134,9 +134,9 @@ auto SnapshotPredicate(
 }
 
 auto BuildDiagnosticThenScope(
-    mir::CompilationUnit& unit, mir::ProceduralVarId self_binding,
-    mir::ProceduralVarId count_var, const CheckVerdict& verdict)
-    -> mir::ProceduralScope {
+    mir::CompilationUnit& unit, mir::TypeId self_pointer_type,
+    mir::ProceduralVarId self_binding, mir::ProceduralVarId count_var,
+    const CheckVerdict& verdict) -> mir::ProceduralScope {
   mir::ProceduralScope scope;
   const mir::TypeId int32_type = unit.builtins.int32;
 
@@ -169,7 +169,7 @@ auto BuildDiagnosticThenScope(
           .data =
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 1}, .var = self_binding},
-          .type = unit.builtins.self_pointer});
+          .type = self_pointer_type});
   const mir::ExprId services = scope.AddExpr(
       mir::MakeServicesCallExpr(self_read, unit.builtins.services));
 
@@ -202,7 +202,8 @@ auto BuildUniqueCheckClosure(
   auto& body = *closure.body;
 
   const mir::TypeId int32_type = module.Unit().builtins.int32;
-  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
+  const mir::TypeId self_ptr_type =
+      wrapper_frame.current_structural_scope->self_pointer_type;
   const mir::ProceduralVarId self_binding = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
   const mir::ExprId outer_self_read =
@@ -310,8 +311,8 @@ auto BuildUniqueCheckClosure(
                   .rhs = expected_lit},
           .type = int32_type});
 
-  mir::ProceduralScope diag_scope =
-      BuildDiagnosticThenScope(module.Unit(), self_binding, count_var, verdict);
+  mir::ProceduralScope diag_scope = BuildDiagnosticThenScope(
+      module.Unit(), self_ptr_type, self_binding, count_var, verdict);
 
   const mir::ProceduralScopeId diag_scope_id =
       body.AddChildScope(std::move(diag_scope));
