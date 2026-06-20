@@ -199,13 +199,15 @@ auto LookupProceduralVarName(
   return ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).name;
 }
 
-// True iff the procedural var is a `ref` / `const ref` formal, rendered as a
-// `Ref<T>` whose read is `.Get()` and whose write is `.Set(Services(), ...)`
-// (LRM 13.5.2), the same surface as a structural Var.
+// True iff the procedural var holds a reference (its type is a `RefType`),
+// rendered as a `Ref<T>` whose read is `.Get()` and whose write is
+// `.Set(Services(), ...)` (LRM 13.5.2), the same surface as a structural Var.
 auto IsReferenceProceduralVar(
     const RenderContext& ctx, const mir::ProceduralVarRef& ref) -> bool {
-  return ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).binding ==
-         mir::VariableBinding::kReference;
+  const mir::TypeId var_type =
+      ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).type;
+  return std::holds_alternative<mir::RefType>(
+      ctx.Unit().GetType(var_type).data);
 }
 
 }  // namespace
@@ -1281,6 +1283,33 @@ auto RenderSystemSubroutineCall(
   return out;
 }
 
+// Constructs a value of the call's result data type: `<TypeName>(args)`, the
+// type name from `RenderTypeAsCpp` (a constructor is a call whose callee is the
+// type's constructor), the arguments rendered like any other call's. An empty
+// argument list against a pointer type value-initializes to `nullptr` (the
+// functional-cast `T*()` is ill-formed for a raw pointer). A `RefType` cell
+// argument renders as a bare signal read, which is the cell itself -- the
+// `Ref<T>` constructor binds it.
+auto RenderConstructorCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    mir::TypeId result_type) -> diag::Result<std::string> {
+  if (call.arguments.empty() && std::holds_alternative<mir::PointerType>(
+                                    ctx.Unit().GetType(result_type).data)) {
+    return std::string{"nullptr"};
+  }
+  auto type_or =
+      RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), result_type);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  std::string args;
+  for (std::size_t i = 0; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    if (i != 0) args += ", ";
+    args += *std::move(arg_or);
+  }
+  return *type_or + "(" + args + ")";
+}
+
 auto RenderCallExpr(
     const RenderContext& ctx, const mir::CallExpr& call,
     mir::TypeId result_type) -> diag::Result<std::string> {
@@ -1302,44 +1331,15 @@ auto RenderCallExpr(
             const auto& scope = ctx.StructuralScopeAtHops(
                 mir::StructuralHops{.value = ref.hops.value});
             const auto& decl = scope.GetStructuralSubroutine(ref.subroutine);
+            // arguments[0] is the callee's `self` handle (mir.md invariant 11);
+            // a ref / const ref actual is already a reference-construct
+            // (`Ref<T>(cell)`) in MIR, so every argument renders uniformly.
             std::string args;
             for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-              const mir::Expr& actual = ctx.Expr(call.arguments[i]);
-              std::string rendered;
-              if (i == 0) {
-                // arguments[0] is the callee's `self` instance handle (mir.md
-                // invariant 11) -- a plain pointer value with no formal.
-                auto self_or = RenderExpr(ctx, actual);
-                if (!self_or)
-                  return std::unexpected(std::move(self_or.error()));
-                rendered = *std::move(self_or);
-              } else {
-                const mir::ParamDirection dir = decl.params[i - 1].direction;
-                if (dir == mir::ParamDirection::kRef ||
-                    dir == mir::ParamDirection::kConstRef) {
-                  // A ref / const-ref actual binds the variable's cell.
-                  // HIR-to-MIR wraps observable selector-chain actuals with
-                  // `DerefExpr(CallExpr(kMutate, ...))`, so render is
-                  // mechanical.
-                  auto lhs_or = RenderLhsExpr(ctx, actual);
-                  if (!lhs_or)
-                    return std::unexpected(std::move(lhs_or.error()));
-                  auto type_or = RenderTypeAsCpp(
-                      ctx.Unit(), ctx.StructuralScope(),
-                      decl.params[i - 1].type);
-                  if (!type_or)
-                    return std::unexpected(std::move(type_or.error()));
-                  rendered =
-                      "lyra::runtime::Ref<" + *type_or + ">(" + *lhs_or + ")";
-                } else {
-                  auto arg_or = RenderExpr(ctx, actual);
-                  if (!arg_or)
-                    return std::unexpected(std::move(arg_or.error()));
-                  rendered = *std::move(arg_or);
-                }
-              }
+              auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
               if (i != 0) args += ", ";
-              args += rendered;
+              args += *std::move(arg_or);
             }
             return std::format("{}({})", decl.name, args);
           },
@@ -1447,6 +1447,9 @@ auto RenderCallExpr(
               }
             }
             throw InternalError("RenderCallExpr: unknown RuntimeFn");
+          },
+          [&](const mir::ConstructorCallee&) -> diag::Result<std::string> {
+            return RenderConstructorCall(ctx, call, result_type);
           },
       },
       call.callee);
@@ -1650,94 +1653,88 @@ auto RenderIncDecExpr(const RenderContext& ctx, const mir::IncDecExpr& inc)
   throw InternalError("RenderIncDecExpr: unknown IncDecOp");
 }
 
-auto RenderClosureExpr(
-    const RenderContext& ctx, const mir::ClosureExpr& closure)
+// Renders a binding's parameter declaration -- its type then its name. A
+// `RefType` binding renders as `Ref<T> name`, a value binding as `T name`;
+// the wrapper comes from the type alone (RenderTypeAsCpp), never hand-written.
+auto RenderBindingParamDecl(
+    const RenderContext& ctx, const mir::ProceduralVarDecl& bind)
     -> diag::Result<std::string> {
+  auto type_or = RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), bind.type);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  return *type_or + " " + bind.name;
+}
+
+// A closure renders from its captures, parameters, result type, and body alone.
+// A synchronous closure is a capture-clause lambda. A coroutine closure (result
+// type `Coroutine`) is a stateless lambda whose captures pass as frame-copied
+// parameters and are supplied by an immediate call -- a capturing coroutine
+// lambda would dangle once the spawned branch outlives the referencing site.
+auto RenderClosureExpr(
+    const RenderContext& ctx, const mir::ClosureExpr& closure,
+    mir::TypeId result_type) -> diag::Result<std::string> {
   if (closure.body == nullptr) {
     throw InternalError("RenderClosureExpr: closure has no body");
   }
 
-  // Every captured value flows through `closure.captures` as a named
-  // by-value or by-reference entry; the receiver `self` is captures[0] (mir.md
-  // invariant 11). The clause never contains `[this]`, `[=]`, or `[&]`.
-  std::string captures_text;
-  for (std::size_t i = 0; i < closure.captures.size(); ++i) {
-    if (i != 0) captures_text += ", ";
-    auto rendered_or = std::visit(
-        Overloaded{
-            [&](const mir::ByValueCapture& bv) -> diag::Result<std::string> {
-              const std::string& bind_name =
-                  closure.body->vars.at(bv.binding.value).name;
-              auto value_or = RenderExpr(ctx, ctx.Expr(bv.value));
-              if (!value_or) {
-                return std::unexpected(std::move(value_or.error()));
-              }
-              return bind_name + " = " + *value_or;
-            },
-            [&](const mir::ByReferenceCapture& br)
-                -> diag::Result<std::string> {
-              const std::string& bind_name =
-                  closure.body->vars.at(br.binding.value).name;
-              auto lvalue_or = RenderLhsExpr(ctx, ctx.Expr(br.target));
-              if (!lvalue_or) {
-                return std::unexpected(std::move(lvalue_or.error()));
-              }
-              return "&" + bind_name + " = " + *lvalue_or;
-            }},
-        closure.captures[i]);
-    if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-    captures_text += *rendered_or;
-  }
-
-  // LRM 7.12.4 with-clause closures (or any closure built with a non-empty
-  // `params` list) render as a value-returning lambda whose parameter
-  // clause names the bindings in declaration order and whose body ends with
-  // `return <value>;` (lowered from a tail `ReturnStmt`). Closures with no
-  // `params` (fork branches, NBA submit) keep the existing `()` form.
-  std::string params_text;
-  for (std::size_t i = 0; i < closure.params.size(); ++i) {
-    const auto& bind = closure.body->vars.at(closure.params[i].binding.value);
-    auto type_or =
-        RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), bind.type);
-    if (!type_or) return std::unexpected(std::move(type_or.error()));
-    if (i != 0) params_text += ", ";
-    params_text += "const " + *type_or + "& " + bind.name;
-  }
-
-  // Derive the lambda return type from the tail `ReturnStmt`'s value
-  // expression -- closures synthesized for LRM 7.12.2 / 7.12.3 always end
-  // there. An empty-params closure (fork branch / NBA submit) carries no
-  // return value; leave the lambda return type unspecified so C++ deduces
-  // `void`.
-  std::string return_clause;
-  if (!closure.params.empty()) {
-    const auto& root_stmts = closure.body->root_stmts;
-    if (root_stmts.empty()) {
-      throw InternalError(
-          "RenderClosureExpr: with-clause closure body has no root "
-          "statements (expected a tail ReturnStmt)");
-    }
-    const auto& tail = closure.body->stmts.at(root_stmts.back().value);
-    const auto* ret = std::get_if<mir::ReturnStmt>(&tail.data);
-    if (ret == nullptr || !ret->value.has_value()) {
-      throw InternalError(
-          "RenderClosureExpr: with-clause closure body does not end with a "
-          "value-returning `ReturnStmt`");
-    }
-    const auto& ret_expr = closure.body->GetExpr(*ret->value);
-    auto ret_ty_or =
-        RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), ret_expr.type);
-    if (!ret_ty_or) return std::unexpected(std::move(ret_ty_or.error()));
-    return_clause = " -> " + *ret_ty_or;
-  }
+  auto result_ty_or =
+      RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), result_type);
+  if (!result_ty_or) return std::unexpected(std::move(result_ty_or.error()));
+  const std::string return_clause = " -> " + *result_ty_or;
 
   const RenderContext body_ctx =
       RenderContext::ForRoot(ctx.Unit(), ctx.StructuralScope(), *closure.body);
   auto body_or = RenderProceduralScopeStatements(body_ctx, 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
+  const std::string body = " {\n" + *body_or + "}";
 
-  return "[" + captures_text + "](" + params_text + ")" + return_clause +
-         " {\n" + *body_or + "}";
+  if (std::holds_alternative<mir::CoroutineType>(
+          ctx.Unit().GetType(result_type).data)) {
+    if (!closure.params.empty()) {
+      throw InternalError(
+          "RenderClosureExpr: coroutine closure has parameters");
+    }
+    std::string params;
+    std::string args;
+    for (std::size_t i = 0; i < closure.captures.size(); ++i) {
+      const auto& bind =
+          closure.body->vars.at(closure.captures[i].binding.value);
+      auto decl_or = RenderBindingParamDecl(ctx, bind);
+      if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+      auto arg_or = RenderExpr(ctx, ctx.Expr(closure.captures[i].value));
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      if (i != 0) {
+        params += ", ";
+        args += ", ";
+      }
+      params += *decl_or;
+      args += *arg_or;
+    }
+    return "[](" + params + ")" + return_clause + body + "(" + args + ")";
+  }
+
+  // The capture clause never contains `[this]`, `[=]`, or `[&]` -- every entry
+  // is a named by-value binding `name = <value>`; an alias capture's value is a
+  // reference-construct, so it binds a `Ref<T>` without a hidden C++ reference.
+  std::string captures_text;
+  for (std::size_t i = 0; i < closure.captures.size(); ++i) {
+    const std::string& bind_name =
+        closure.body->vars.at(closure.captures[i].binding.value).name;
+    auto source_or = RenderExpr(ctx, ctx.Expr(closure.captures[i].value));
+    if (!source_or) return std::unexpected(std::move(source_or.error()));
+    if (i != 0) captures_text += ", ";
+    captures_text += bind_name + " = " + *source_or;
+  }
+
+  std::string params_text;
+  for (std::size_t i = 0; i < closure.params.size(); ++i) {
+    const auto& bind = closure.body->vars.at(closure.params[i].binding.value);
+    auto decl_or = RenderBindingParamDecl(ctx, bind);
+    if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+    if (i != 0) params_text += ", ";
+    params_text += *decl_or;
+  }
+
+  return "[" + captures_text + "](" + params_text + ")" + return_clause + body;
 }
 
 // LRM 10.10 unpacked array concatenation into a queue. Each operand is spliced
@@ -1811,7 +1808,7 @@ auto RenderConcatExpr(
 // `std::array<T, N>` implicitly
 // converts to the container ctor's `std::span<const T>` parameter, so this
 // rendering is context-independent: the same string is correct standalone
-// and as a `ConstructExpr` argument.
+// and as a construction-call argument.
 auto RenderArrayLiteralExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
@@ -1843,32 +1840,6 @@ auto RenderArrayLiteralExpr(
     out += *rendered;
   }
   out += "}";
-  return out;
-}
-
-// LRM 7.5.1 / 7.6: constructor invocation. Emits `RenderType(type)(args...)`
-// -- parenthesised so brace-vs-paren overload resolution is unambiguous and
-// the runtime ctor is selected by arg-list shape.
-auto RenderConstructExpr(
-    const RenderContext& ctx, const mir::Expr& expr,
-    const mir::ConstructExpr& c) -> diag::Result<std::string> {
-  // A pointer value-initializes to null; `nullptr` is the valid spelling of
-  // that (the functional-cast form `T*()` is ill-formed for a raw pointer
-  // type).
-  if (c.args.empty() && std::holds_alternative<mir::PointerType>(
-                            ctx.Unit().GetType(expr.type).data)) {
-    return std::string{"nullptr"};
-  }
-  auto type_or = RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), expr.type);
-  if (!type_or) return std::unexpected(std::move(type_or.error()));
-  std::string out = *type_or + "(";
-  for (std::size_t i = 0; i < c.args.size(); ++i) {
-    auto r = RenderExpr(ctx, ctx.Expr(c.args[i]));
-    if (!r) return std::unexpected(std::move(r.error()));
-    if (i != 0) out += ", ";
-    out += *r;
-  }
-  out += ")";
   return out;
 }
 
@@ -1975,7 +1946,7 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             return *receiver_or + "->" + var.name;
           },
           [&](const mir::ClosureExpr& cl) -> diag::Result<std::string> {
-            return RenderClosureExpr(ctx, cl);
+            return RenderClosureExpr(ctx, cl, expr.type);
           },
           [&](const mir::ConcatExpr& c) -> diag::Result<std::string> {
             return RenderConcatExpr(ctx, expr, c);
@@ -1985,9 +1956,6 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
           },
           [&](const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
             return RenderArrayLiteralExpr(ctx, expr, a);
-          },
-          [&](const mir::ConstructExpr& c) -> diag::Result<std::string> {
-            return RenderConstructExpr(ctx, expr, c);
           },
       },
       expr.data);

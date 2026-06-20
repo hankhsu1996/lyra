@@ -70,12 +70,13 @@ enum class JoinMode : std::uint8_t {
 // (in the enclosing procedural scope's child_scopes) holds the
 // block_item_declaration locals, which are initialized at block entry -- in the
 // parent, before any branch spawns -- giving each spawned branch a by-value
-// snapshot. Each branch is a closure (a captured callable value) in `scope`'s
-// expr arena, referenced here by id; a branch captures a fork-scope local by
-// value (the snapshot) and an enclosing-process variable by reference
-// (LRM 6.21). The backend spawns each branch as a concurrent process and the
-// parent waits per `mode`. Being a fork branch is what makes the closure run as
-// a coroutine -- the closure node itself carries no such property.
+// snapshot. Each branch is a coroutine-typed ClosureExpr in `scope`'s expr
+// arena, referenced here by id; the branch captures its environment (its
+// receiver `self`, a fork-scope local by value, an enclosing variable by
+// reference through a `Ref<T>`, LRM 6.21). The backend spawns each branch's
+// coroutine and the parent waits per `mode`. The branch runs as a coroutine
+// because its result type is the coroutine type, not because of any flag on the
+// closure node.
 struct ForkStmt {
   JoinMode mode;
   ProceduralScopeId scope;
@@ -164,8 +165,8 @@ struct ContinueStmt {};
 // value-returning function; it is absent for `return;` and for void functions
 // / tasks. The semantic concept is one across all consumers (LRM, LIR, LLVM
 // `ret`); `is_coroutine_return` is a render hint for the C++ backend only,
-// distinguishing `co_return` from plain `return`. HIR-to-MIR sets it from the
-// enclosing callable's `is_coroutine`; LIR / LLVM ignore it.
+// distinguishing `co_return` from plain `return`. HIR-to-MIR sets it from
+// whether the enclosing callable body is a coroutine; LIR / LLVM ignore it.
 struct ReturnStmt {
   std::optional<ExprId> value;
   bool is_coroutine_return = false;

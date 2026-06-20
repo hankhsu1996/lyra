@@ -19,13 +19,13 @@ enum class SubroutineKind : std::uint8_t {
 };
 
 // LRM 13.5 argument direction. MIR carries the semantic direction only; the
-// C++ argument-passing mode is the backend's decision.
+// C++ argument-passing mode is the backend's decision. A `ref` / `const ref`
+// formal is not a direction here: its `type` is a `RefType` and it is passed by
+// value (`kInput`) -- the reference value carries the aliasing.
 enum class ParamDirection : std::uint8_t {
   kInput,
   kOutput,
   kInOut,
-  kRef,
-  kConstRef,
 };
 
 // A formal argument of a subroutine. `name` is the procedural var the body

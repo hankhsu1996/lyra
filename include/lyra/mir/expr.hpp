@@ -119,9 +119,18 @@ struct RuntimeNavCallee {
   std::string name;
 };
 
+// Constructs a value of the call's result data type from the positional
+// arguments -- the data type's constructor, which is just a call whose callee
+// is the type itself (Python's `T(args)`, Rust's `T::new(args)`). The backend
+// renders it as `<TypeName>(args)`, the type name from the result type; it
+// carries no knowledge of which data type it builds (a reference from a cell, a
+// runtime-sized container from a size, a default value from no arguments). The
+// brace-list aggregate form is `ArrayLiteralExpr`, a value literal, not this.
+struct ConstructorCallee {};
+
 using Callee = std::variant<
     SystemSubroutineCallee, StructuralSubroutineRef, BuiltinMethodCallee,
-    ClosureRef, RuntimeNavCallee>;
+    ClosureRef, RuntimeNavCallee, ConstructorCallee>;
 
 struct CallExpr {
   Callee callee;
@@ -164,33 +173,21 @@ struct ReplicationExpr {
   ExprId concat;
 };
 
-// LRM 10.9.1 array assignment pattern `'{e1, e2, ...}` element list. Always
-// appears as an argument of a `ConstructExpr` whose result is an array
-// container; renders as `std::array<T, N>{e1, ...}` so the surrounding ctor
-// resolves uniformly against a `std::span<const T>` parameter. `Expr::type`
-// is the parent container type (`UnpackedArrayType` / `DynamicArrayType`);
-// the element type is read off it at render time.
+// LRM 10.9.1 array assignment pattern `'{e1, e2, ...}` element list. Feeds an
+// array container's constructor; renders as `std::array<T, N>{e1, ...}` so it
+// resolves uniformly against the ctor's `std::span<const T>` parameter.
+// `Expr::type` is the parent container type (`UnpackedArrayType` /
+// `DynamicArrayType`); the element type is read off it at render time. A value
+// literal (the brace form), distinct from the constructor call it feeds.
 struct ArrayLiteralExpr {
   std::vector<ExprId> elements;
-};
-
-// Invokes the result type's constructor with positional arguments; the result
-// type lives on Expr::type. Used for runtime-sized container construction --
-// LRM 7.5.1 dynamic-array `new[N]` / `new[N](other)`, and the LRM 7.6
-// dynamic-array whole-array assignment that desugars to the same shape.
-// Distinct from ArrayLiteralExpr in semantics: args are constructor
-// arguments, not initializer-list elements, so the brace-vs-paren overload
-// distinction is preserved at the C++ surface.
-struct ConstructExpr {
-  std::vector<ExprId> args;
 };
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
     ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
     IncDecExpr, CallExpr, RuntimeCallExpr, DerefExpr, MemberAccessExpr,
-    ConversionExpr, ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr,
-    ConstructExpr>;
+    ConversionExpr, ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr>;
 
 struct Expr {
   ExprData data;

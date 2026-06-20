@@ -1,7 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <variant>
 #include <vector>
 
 #include "lyra/mir/expr_id.hpp"
@@ -11,31 +10,22 @@ namespace lyra::mir {
 
 struct ProceduralScope;
 
-struct ByValueCapture {
+// Binds the body's `binding` var to the value of `value` at closure
+// construction. Snapshot or alias is decided by the binding var's type, not by
+// a separate capture kind (closure.md): a value-typed binding owns a snapshot;
+// a `RefType` binding aliases an enclosing cell (`value` constructs the
+// reference, LRM 6.21), so the body's reads / writes route through the live
+// cell. The receiver `self` is always `captures[0]`.
+struct Capture {
   ExprId value{};
   ProceduralVarId binding{};
 };
 
-// A by-reference capture binds the body's `binding` var to an enclosing-scope
-// lvalue (`target`). The spawned body reaches it through a frame-copied
-// reference parameter; the enclosing storage outlives the body (LRM 6.21), so
-// reads and writes share the one live location. Used by fork branches that
-// touch their enclosing process's variables and by synchronous IIFEs (e.g.
-// `$sscanf` / `$fscanf`) whose body writes back to its output args.
-struct ByReferenceCapture {
-  ExprId target{};
-  ProceduralVarId binding{};
-};
-
-using Capture = std::variant<ByValueCapture, ByReferenceCapture>;
-
-// A per-invocation closure parameter (LRM 7.12.4 with-clause `item` /
-// `index`). `binding` is a procedural-var slot in the closure body that
-// holds the per-call argument value; body reads go through
-// `ProceduralVarRef{binding}` -- the same mechanism captures use. The
-// difference between a `Capture` and a `Parameter` is when the binding is
-// filled: captures snapshot once at closure creation, parameters receive a
-// new value on each invocation.
+// A per-invocation closure parameter (LRM 7.12.4 with-clause `item` / `index`).
+// `binding` is a procedural-var slot in the closure body holding the argument
+// value; body reads go through `ProceduralVarRef{binding}`, the same mechanism
+// captures use. A capture is filled once at closure construction; a parameter
+// receives a fresh value on each invocation.
 struct Parameter {
   ProceduralVarId binding{};
 };
@@ -51,19 +41,25 @@ struct Parameter {
 //   1. Each capture's binding and each parameter's binding is a
 //      ProceduralVarId valid in body.vars and is unique across the union of
 //      the two lists.
-//   2. A ByValueCapture binding is read-only inside body. A ByReferenceCapture
-//      binding may be read and written -- it aliases the enclosing storage.
-//      A parameter binding is read-only inside body; the value is supplied
-//      by the caller per invocation.
+//   2. A capture whose binding is a value type is read-only inside body (a
+//      snapshot). A capture whose binding is a `RefType` may be read and
+//      written -- it aliases the enclosing storage through a `Ref<T>`. A
+//      parameter binding is read-only; the value is supplied per invocation.
 //   3. ProceduralVarRef inside body uses hops bounded by body's own scope
 //      nesting and does not escape into the enclosing process scope. Outer
-//      procedural state reaches body only through captures.
-//   4. A closure with non-empty `params` is invoked many times (each call
-//      supplies new parameter values) and renders as a lambda whose `(...)`
-//      clause lists the parameters and whose body ends with a `ReturnStmt`
-//      carrying the result expression. An empty-`params` closure is invoked
-//      once (fork branch / deferred IIFE) and renders as a captures-as-args
-//      IIFE.
+//      procedural state reaches body only through captures and parameters.
+//   4. The closure's result type is the closure expression's own type; a
+//      coroutine closure (a fork branch, LRM 9.3.2) carries the coroutine type,
+//      a synchronous closure its value-result type. The body is rendered from
+//      its own statements alone -- the render reads none of the body's interior
+//      to discover the signature, and nothing about the closure's use. A
+//      backend realizes the closure from its captures, parameters, result type,
+//      and body: a synchronous closure as a capture-clause lambda, a coroutine
+//      closure as a stateless lambda whose captures pass as frame-copied
+//      parameters (so nothing dangles when the spawned coroutine outlives the
+//      referencing site). How the closure is invoked -- called at a fork site,
+//      submitted as a deferred effect, iterated by a with-clause -- lives at
+//      the referencing site, not on the closure.
 //
 // StructuralVarRef inside body may carry hops that reach module-scope storage
 // directly, the same way C++ lambdas may reference globals without capture.
