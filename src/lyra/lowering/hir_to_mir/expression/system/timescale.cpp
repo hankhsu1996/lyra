@@ -23,7 +23,7 @@ auto LowerTimeFormatSystemSubroutineCall(
     support::SystemSubroutineId id, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
-  auto& body = *frame.current_procedural_scope;
+  auto& body = *frame.current_block;
   const auto& args = call.arguments;
   if (!args.empty() && args.size() != 4) {
     return diag::Unsupported(
@@ -56,7 +56,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     support::SystemSubroutineId id) -> diag::Result<mir::Expr> {
   const auto& builtins = process.Module().Unit().builtins;
-  auto& body = *frame.current_procedural_scope;
+  auto& body = *frame.current_block;
   const auto resolution = process.Resolution();
 
   const mir::ExprId services_id =
@@ -64,7 +64,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   const mir::ExprId scope_name_lit = body.AddExpr(
       mir::Expr{
           .data =
-              mir::StringLiteral{.value = std::string(process.Scope().Name())},
+              mir::StringLiteral{.value = std::string(process.Owner().Name())},
           .type = builtins.string});
   const mir::ExprId scope_name_id = body.AddExpr(
       mir::Expr{

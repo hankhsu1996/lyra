@@ -86,14 +86,12 @@ auto LowerNamedEventTimedStmt(
     const hir::TimedStmt& t, const hir::NamedEventControl& nec)
     -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  mir::ProceduralScope child_proc_scope;
-  const WalkFrame child_frame =
-      frame.WithProceduralScope(&child_proc_scope).Deeper();
+  mir::Block child_block;
+  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
   auto receiver_or =
       process.LowerExpr(hir_proc.exprs.at(nec.event.value), child_frame);
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::ExprId receiver_id =
-      child_proc_scope.AddExpr(*std::move(receiver_or));
+  const mir::ExprId receiver_id = child_block.AddExpr(*std::move(receiver_or));
   mir::Expr await_call{
       .data =
           mir::CallExpr{
@@ -105,8 +103,8 @@ auto LowerNamedEventTimedStmt(
               .arguments = {receiver_id},
           },
       .type = process.Module().Unit().builtins.void_type};
-  const mir::ExprId await_id = child_proc_scope.AddExpr(std::move(await_call));
-  child_proc_scope.AppendStmt(
+  const mir::ExprId await_id = child_block.AddExpr(std::move(await_call));
+  child_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
           .data = mir::AwaitStmt{.awaitable = await_id}});
@@ -115,10 +113,9 @@ auto LowerNamedEventTimedStmt(
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
-  child_proc_scope.AppendStmt(*std::move(inner_or));
-  const mir::ProceduralScopeId scope_id =
-      frame.current_procedural_scope->AddChildScope(
-          std::move(child_proc_scope));
+  child_block.AppendStmt(*std::move(inner_or));
+  const mir::BlockId scope_id =
+      frame.current_block->AddChildScope(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -150,20 +147,18 @@ auto LowerEventTimedStmt(
     }
   }
 
-  mir::ProceduralScope child_proc_scope;
-  const WalkFrame child_frame =
-      frame.WithProceduralScope(&child_proc_scope).Deeper();
-  child_proc_scope.AppendStmt(
-      BuildSensitivityWaitStmt(process.Scope(), union_reads));
+  mir::Block child_block;
+  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
+  child_block.AppendStmt(
+      BuildSensitivityWaitStmt(process.Owner(), union_reads));
   const hir::Stmt& inner_hir = process.HirBody().stmts.at(t.stmt.value);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
-  child_proc_scope.AppendStmt(*std::move(inner_or));
-  const mir::ProceduralScopeId scope_id =
-      frame.current_procedural_scope->AddChildScope(
-          std::move(child_proc_scope));
+  child_block.AppendStmt(*std::move(inner_or));
+  const mir::BlockId scope_id =
+      frame.current_block->AddChildScope(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -173,20 +168,18 @@ auto LowerImplicitEventTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t, const hir::ImplicitEventControl& ie)
     -> diag::Result<mir::Stmt> {
-  mir::ProceduralScope child_proc_scope;
-  const WalkFrame child_frame =
-      frame.WithProceduralScope(&child_proc_scope).Deeper();
-  child_proc_scope.AppendStmt(
-      BuildSensitivityWaitStmt(process.Scope(), ie.sensitivity_list));
+  mir::Block child_block;
+  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
+  child_block.AppendStmt(
+      BuildSensitivityWaitStmt(process.Owner(), ie.sensitivity_list));
   const hir::Stmt& inner_hir = process.HirBody().stmts.at(t.stmt.value);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
-  child_proc_scope.AppendStmt(*std::move(inner_or));
-  const mir::ProceduralScopeId scope_id =
-      frame.current_procedural_scope->AddChildScope(
-          std::move(child_proc_scope));
+  child_block.AppendStmt(*std::move(inner_or));
+  const mir::BlockId scope_id =
+      frame.current_block->AddChildScope(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -200,10 +193,9 @@ auto LowerDelayTimedStmt(
   if (!ticks_or) {
     return std::unexpected(std::move(ticks_or.error()));
   }
-  mir::ProceduralScope child_proc_scope;
-  const WalkFrame child_frame =
-      frame.WithProceduralScope(&child_proc_scope).Deeper();
-  child_proc_scope.AppendStmt(
+  mir::Block child_block;
+  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
+  child_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
           .data = mir::DelayStmt{.duration = *ticks_or}});
@@ -212,10 +204,9 @@ auto LowerDelayTimedStmt(
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
-  child_proc_scope.AppendStmt(*std::move(inner_or));
-  const mir::ProceduralScopeId scope_id =
-      frame.current_procedural_scope->AddChildScope(
-          std::move(child_proc_scope));
+  child_block.AppendStmt(*std::move(inner_or));
+  const mir::BlockId scope_id =
+      frame.current_block->AddChildScope(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -246,17 +237,17 @@ auto LowerTimedStmt(
 auto LowerEventTriggerStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::EventTriggerStmt& et) -> diag::Result<mir::Stmt> {
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   auto receiver_or =
       process.LowerExpr(process.HirBody().exprs.at(et.event.value), frame);
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::ExprId receiver_id = proc_scope.AddExpr(*std::move(receiver_or));
+  const mir::ExprId receiver_id = block.AddExpr(*std::move(receiver_or));
   // LRM 15.5.1: triggering reaches RuntimeServices to wake subscribers. The
   // engine handle is a real trailing argument, threaded the same way every
   // runtime effect threads it
   // (docs/decisions/runtime-effects-as-generic-calls.md).
   const mir::ExprId services_id =
-      proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+      block.AddExpr(BuildServicesCallExpr(process, frame));
   mir::Expr call{
       .data =
           mir::CallExpr{
@@ -268,7 +259,7 @@ auto LowerEventTriggerStmt(
               .arguments = {receiver_id, services_id},
           },
       .type = process.Module().Unit().builtins.void_type};
-  const mir::ExprId call_id = proc_scope.AddExpr(std::move(call));
+  const mir::ExprId call_id = block.AddExpr(std::move(call));
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};
 }
@@ -278,8 +269,8 @@ auto LowerWaitStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::WaitStmt& w) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  mir::ProceduralScope wrapper;
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
+  mir::Block wrapper;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   const hir::Expr& hir_cond = hir_proc.exprs.at(w.cond.value);
   auto cond_or = process.LowerExpr(hir_cond, wrapper_frame);
@@ -298,11 +289,11 @@ auto LowerWaitStmt(
 
   const auto& reads = w.sensitivity_list;
 
-  mir::ProceduralScope inner_scope;
-  inner_scope.AppendStmt(BuildSensitivityWaitStmt(process.Scope(), reads));
+  mir::Block inner_block;
+  inner_block.AppendStmt(BuildSensitivityWaitStmt(process.Owner(), reads));
 
-  const mir::ProceduralScopeId inner_scope_id =
-      wrapper.AddChildScope(std::move(inner_scope));
+  const mir::BlockId inner_scope_id =
+      wrapper.AddChildScope(std::move(inner_block));
 
   wrapper.AppendStmt(
       mir::Stmt{
@@ -317,8 +308,8 @@ auto LowerWaitStmt(
   }
   wrapper.AppendStmt(*std::move(body_or));
 
-  const mir::ProceduralScopeId wrapper_scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(wrapper));
+  const mir::BlockId wrapper_scope_id =
+      frame.current_block->AddChildScope(std::move(wrapper));
 
   return mir::Stmt{
       .label = std::move(label),

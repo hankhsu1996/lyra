@@ -5,10 +5,10 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
+#include "lyra/lowering/hir_to_mir/block_depth.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::mir {
@@ -25,9 +25,9 @@ namespace lyra::lowering::hir_to_mir {
 // `source` to `binding` uniformly; the snapshot-versus-alias choice is already
 // realized in `binding`'s type and in `source`.
 struct CaptureRequest {
-  mir::ProceduralVarId var;
-  ProceduralDepth decl_depth;
-  mir::ProceduralVarId binding;
+  mir::LocalId var;
+  BlockDepth decl_depth;
+  mir::LocalId binding;
   mir::ExprId source;
 };
 
@@ -47,9 +47,9 @@ struct CaptureRequest {
 class CaptureSink {
  public:
   CaptureSink(
-      ProceduralDepth boundary_depth, mir::ProceduralScope& body,
-      mir::ProceduralScope& outer, mir::CompilationUnit& unit,
-      std::optional<ProceduralDepth> by_value_depth = std::nullopt)
+      BlockDepth boundary_depth, mir::Block& body, mir::Block& outer,
+      mir::CompilationUnit& unit,
+      std::optional<BlockDepth> by_value_depth = std::nullopt)
       : boundary_depth_(boundary_depth),
         body_(&body),
         outer_(&outer),
@@ -57,17 +57,17 @@ class CaptureSink {
         by_value_depth_(by_value_depth) {
   }
 
-  [[nodiscard]] auto BoundaryDepth() const -> ProceduralDepth {
+  [[nodiscard]] auto BoundaryDepth() const -> BlockDepth {
     return boundary_depth_;
   }
 
   // Capture `var` (declared at `decl_depth`) and return the body-side reference
   // -- a binding local to the body, read at `current_depth`.
   auto Capture(
-      mir::ProceduralVarId var, ProceduralDepth decl_depth, mir::TypeId type,
-      ProceduralDepth current_depth) -> mir::ProceduralVarRef {
-    mir::ProceduralVarId binding = FindOrCreate(var, decl_depth, type);
-    return mir::ProceduralVarRef{
+      mir::LocalId var, BlockDepth decl_depth, mir::TypeId type,
+      BlockDepth current_depth) -> mir::LocalRef {
+    mir::LocalId binding = FindOrCreate(var, decl_depth, type);
+    return mir::LocalRef{
         .hops = current_depth - boundary_depth_, .var = binding};
   }
 
@@ -76,9 +76,8 @@ class CaptureSink {
   }
 
  private:
-  auto FindOrCreate(
-      mir::ProceduralVarId var, ProceduralDepth decl_depth, mir::TypeId type)
-      -> mir::ProceduralVarId {
+  auto FindOrCreate(mir::LocalId var, BlockDepth decl_depth, mir::TypeId type)
+      -> mir::LocalId {
     for (const auto& request : requests_) {
       if (request.decl_depth == decl_depth && request.var == var) {
         return request.binding;
@@ -89,24 +88,22 @@ class CaptureSink {
     const mir::ExprId cell = outer_->AddExpr(
         mir::Expr{
             .data =
-                mir::ProceduralVarRef{
+                mir::LocalRef{
                     .hops = boundary_depth_.Outer() - decl_depth, .var = var},
             .type = type});
     const std::string name = "_lyra_cap_" + std::to_string(requests_.size());
-    mir::ProceduralVarId binding{};
+    mir::LocalId binding{};
     mir::ExprId source{};
     if (by_value_depth_ == decl_depth) {
       // By-value snapshot: the binding owns a copy; the source is the read.
-      binding = body_->AddProceduralVar(
-          mir::ProceduralVarDecl{.name = name, .type = type});
+      binding = body_->AddLocal(mir::LocalDecl{.name = name, .type = type});
       source = cell;
     } else {
       // By-reference alias: the source constructs a reference to the cell and
       // the binding holds that reference (its `RefType`).
       source = BuildReferenceArg(*unit_, *outer_, cell, type);
-      binding = body_->AddProceduralVar(
-          mir::ProceduralVarDecl{
-              .name = name, .type = outer_->GetExpr(source).type});
+      binding = body_->AddLocal(
+          mir::LocalDecl{.name = name, .type = outer_->GetExpr(source).type});
     }
     requests_.push_back(
         CaptureRequest{
@@ -117,11 +114,11 @@ class CaptureSink {
     return binding;
   }
 
-  ProceduralDepth boundary_depth_;
-  mir::ProceduralScope* body_;
-  mir::ProceduralScope* outer_;
+  BlockDepth boundary_depth_;
+  mir::Block* body_;
+  mir::Block* outer_;
   mir::CompilationUnit* unit_;
-  std::optional<ProceduralDepth> by_value_depth_;
+  std::optional<BlockDepth> by_value_depth_;
   std::vector<CaptureRequest> requests_;
 };
 

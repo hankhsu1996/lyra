@@ -9,16 +9,16 @@
 #include <vector>
 
 #include "lyra/base/time.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/procedural_var.hpp"
-#include "lyra/mir/structural_scope_id.hpp"
-#include "lyra/mir/structural_var.hpp"
+#include "lyra/mir/local.hpp"
+#include "lyra/mir/member.hpp"
 #include "lyra/mir/value_ref.hpp"
 
 namespace lyra::mir {
 
 struct Stmt;
-struct ProceduralScope;
+struct Block;
 
 struct StmtId {
   std::uint32_t value;
@@ -36,17 +36,16 @@ struct LoopLabelId {
   auto operator<=>(const LoopLabelId&) const -> std::strong_ordering = default;
 };
 
-struct ProceduralScopeId {
+struct BlockId {
   std::uint32_t value;
 
-  auto operator<=>(const ProceduralScopeId&) const
-      -> std::strong_ordering = default;
+  auto operator<=>(const BlockId&) const -> std::strong_ordering = default;
 };
 
 struct EmptyStmt {};
 
-struct ProceduralVarDeclStmt {
-  ProceduralVarRef target;
+struct LocalDeclStmt {
+  LocalRef target;
   ExprId init;
 };
 
@@ -55,7 +54,7 @@ struct ExprStmt {
 };
 
 struct BlockStmt {
-  ProceduralScopeId scope;
+  BlockId scope;
 };
 
 // LRM 9.3.2 Table 9-1: when the forking process resumes relative to its
@@ -66,9 +65,9 @@ enum class JoinMode : std::uint8_t {
   kNone,
 };
 
-// LRM 9.3.2 parallel block. The fork is itself a procedural scope: `scope`
-// (in the enclosing procedural scope's child_scopes) holds the
-// block_item_declaration locals, which are initialized at block entry -- in the
+// LRM 9.3.2 parallel block. The fork is itself a block: `scope` (in the
+// enclosing block's child_scopes) holds the block_item_declaration locals,
+// which are initialized at block entry -- in the
 // parent, before any branch spawns -- giving each spawned branch a by-value
 // snapshot. Each branch is a coroutine-typed ClosureExpr in `scope`'s expr
 // arena, referenced here by id; the branch captures its environment (its
@@ -79,19 +78,19 @@ enum class JoinMode : std::uint8_t {
 // closure node.
 struct ForkStmt {
   JoinMode mode;
-  ProceduralScopeId scope;
+  BlockId scope;
   std::vector<ExprId> branches;
 };
 
 struct IfStmt {
   ExprId condition;
-  ProceduralScopeId then_scope;
-  std::optional<ProceduralScopeId> else_scope;
+  BlockId then_scope;
+  std::optional<BlockId> else_scope;
 };
 
 struct ConstructOwnedObjectStmt {
-  StructuralVarId target;
-  StructuralScopeId scope_id;
+  MemberId target;
+  ClassId scope_id;
   std::vector<ExprId> args;
 };
 
@@ -101,13 +100,13 @@ struct ConstructOwnedObjectStmt {
 // array dimension, outermost first; the backend materializes the nested vector
 // by replication over these counts.
 struct ConstructExternalUnitStmt {
-  StructuralVarId target;
+  MemberId target;
   std::string unit_name;
   std::vector<std::uint32_t> dims;
 };
 
 struct ForInitDecl {
-  ProceduralVarRef induction_var = {};
+  LocalRef induction_var = {};
   ExprId init = {};
 };
 
@@ -121,7 +120,7 @@ struct ForStmt {
   std::vector<ForInit> init;
   std::optional<ExprId> condition;
   std::vector<ExprId> step;
-  ProceduralScopeId scope;
+  BlockId scope;
   std::optional<LoopLabelId> break_label = std::nullopt;
 };
 
@@ -147,12 +146,12 @@ struct DelayStmt {
 
 struct WhileStmt {
   ExprId condition;
-  ProceduralScopeId scope;
+  BlockId scope;
 };
 
 struct DoWhileStmt {
   ExprId condition;
-  ProceduralScopeId scope;
+  BlockId scope;
 };
 
 struct BreakStmt {
@@ -184,8 +183,8 @@ struct AwaitStmt {
   ExprId awaitable;
 };
 
-// One leaf entry of a wait's projection set. Identity-only: which structural
-// variable, which flat bit range of its packed encoding, and what edge
+// One leaf entry of a wait's projection set. Identity-only: which member,
+// which flat bit range of its packed encoding, and what edge
 // polarity the leaf was subscribed under (LRM 9.4.2 / 9.4.2.2 / 9.4.3). slang
 // DFA produces the (var, bit_range) pairs; the SV edge identifier (or
 // `kAnyChange` for implicit sensitivity) attaches per leaf at AST lowering.
@@ -204,7 +203,7 @@ struct SensitivityWaitStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt,
+    EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt,
     ConstructOwnedObjectStmt, ConstructExternalUnitStmt, ForStmt, DelayStmt,
     WhileStmt, DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt, AwaitStmt,
     SensitivityWaitStmt>;
@@ -217,15 +216,15 @@ struct Stmt {
 // `{...}` in MIR: an arena for the four kinds of locally-owned IR nodes (vars,
 // exprs, stmts, child scopes) plus the ordered execution sequence at this
 // brace level (`root_stmts`). All four IDs are scope-local: `ExprId`, `StmtId`,
-// `ProceduralVarId`, and `ProceduralScopeId` resolve against the same
-// ProceduralScope that introduces them. Cross-scope variable references carry
+// `LocalId`, and `BlockId` resolve against the same
+// Block that introduces them. Cross-scope variable references carry
 // hops; cross-scope statement / expression / scope references do not exist --
-// each ProceduralScope is a self-contained subtree.
-struct ProceduralScope {
-  std::vector<ProceduralVarDecl> vars;
+// each Block is a self-contained subtree.
+struct Block {
+  std::vector<LocalDecl> vars;
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
-  std::vector<ProceduralScope> child_scopes;
+  std::vector<Block> child_scopes;
   std::vector<StmtId> root_stmts;
 
   [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr& {
@@ -240,18 +239,16 @@ struct ProceduralScope {
     return stmts.at(id.value);
   }
 
-  [[nodiscard]] auto GetChildScope(ProceduralScopeId id) const
-      -> const ProceduralScope& {
+  [[nodiscard]] auto GetChildScope(BlockId id) const -> const Block& {
     return child_scopes.at(id.value);
   }
 
-  auto AddProceduralVar(ProceduralVarDecl decl) -> ProceduralVarId {
-    const ProceduralVarId id{static_cast<std::uint32_t>(vars.size())};
+  auto AddLocal(LocalDecl decl) -> LocalId {
+    const LocalId id{static_cast<std::uint32_t>(vars.size())};
     vars.push_back(std::move(decl));
     return id;
   }
-  [[nodiscard]] auto GetProceduralVar(ProceduralVarId id) const
-      -> const ProceduralVarDecl& {
+  [[nodiscard]] auto GetLocal(LocalId id) const -> const LocalDecl& {
     return vars.at(id.value);
   }
   auto AddExpr(Expr expr) -> ExprId {
@@ -264,8 +261,8 @@ struct ProceduralScope {
     stmts.push_back(std::move(stmt));
     return id;
   }
-  auto AddChildScope(ProceduralScope scope) -> ProceduralScopeId {
-    const ProceduralScopeId id{static_cast<std::uint32_t>(child_scopes.size())};
+  auto AddChildScope(Block scope) -> BlockId {
+    const BlockId id{static_cast<std::uint32_t>(child_scopes.size())};
     child_scopes.push_back(std::move(scope));
     return id;
   }
@@ -288,21 +285,20 @@ struct ProceduralScope {
 
   // Declare a body-local variable: register it in the var arena and emit its
   // declaration statement in the body. The two must co-occur for a genuine
-  // local, so they are exposed as one operation. (A subroutine formal is a
-  // ProceduralVar declared in the signature, not the body, and uses bare
-  // AddProceduralVar instead.)
-  auto AppendLocal(ProceduralVarDecl decl, ExprId init) -> ProceduralVarRef {
-    const ProceduralVarId var = AddProceduralVar(std::move(decl));
-    const ProceduralVarRef ref{.hops = ProceduralHops{.value = 0}, .var = var};
-    AppendStmt(ProceduralVarDeclStmt{.target = ref, .init = init});
+  // local, so they are exposed as one operation. (A method formal is a local
+  // declared in the signature, not the body, and uses bare AddLocal instead.)
+  auto AppendLocal(LocalDecl decl, ExprId init) -> LocalRef {
+    const LocalId var = AddLocal(std::move(decl));
+    const LocalRef ref{.hops = BlockHops{.value = 0}, .var = var};
+    AppendStmt(LocalDeclStmt{.target = ref, .init = init});
     return ref;
   }
 
   // Append an `if (cond) <then_body>` statement, registering `then_body` as a
   // child scope of this scope and consuming it. The IfStmt's then_scope id
   // resolves against this scope's child_scopes.
-  auto AppendIfThen(ExprId cond, ProceduralScope then_body) -> StmtId {
-    const ProceduralScopeId then_scope_id = AddChildScope(std::move(then_body));
+  auto AppendIfThen(ExprId cond, Block then_body) -> StmtId {
+    const BlockId then_scope_id = AddChildScope(std::move(then_body));
     return AppendStmt(
         IfStmt{
             .condition = cond,

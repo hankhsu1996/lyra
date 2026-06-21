@@ -22,7 +22,7 @@ enum class ProcessKind : std::uint8_t {
 struct Process {
   ProcessKind kind = ProcessKind::kInitial;
   std::string name;
-  ProceduralScope root_procedural_scope;
+  Block root_block;
 };
 
 }  // namespace lyra::mir

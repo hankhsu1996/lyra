@@ -44,7 +44,7 @@ auto LowerPrintSystemSubroutineCall(
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   const mir::TypeId void_type = process.Module().Unit().builtins.void_type;
 
   std::optional<mir::ExprId> descriptor = std::nullopt;
@@ -59,7 +59,7 @@ auto LowerPrintSystemSubroutineCall(
     auto lowered_or =
         process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
     if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
-    descriptor = proc_scope.AddExpr(*std::move(lowered_or));
+    descriptor = block.AddExpr(*std::move(lowered_or));
     arg_offset = 1;
   }
 
@@ -87,11 +87,11 @@ auto LowerPrintSystemSubroutineCall(
   auto& unit = process.Module().Unit();
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
-  const mir::ExprId items_array = proc_scope.AddExpr(
-      BuildPrintItemsArray(unit, proc_scope, *items_or, time_unit_power));
+  const mir::ExprId items_array = block.AddExpr(
+      BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   std::vector<mir::ExprId> args;
-  args.push_back(proc_scope.AddExpr(BuildServicesCallExpr(process, frame)));
+  args.push_back(block.AddExpr(BuildServicesCallExpr(process, frame)));
   if (descriptor.has_value()) {
     args.push_back(*descriptor);
   }

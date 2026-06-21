@@ -15,11 +15,11 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/procedural_hops.hpp"
-#include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -28,7 +28,7 @@ auto LowerForStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForStmt& f) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
 
   std::vector<mir::ForInit> mir_init;
   mir_init.reserve(f.init.size());
@@ -39,13 +39,12 @@ auto LowerForStmt(
               const auto& hir_local = hir_proc.procedural_vars.at(d.var.value);
               const mir::TypeId type =
                   process.Module().TranslateType(hir_local.type);
-              const mir::ProceduralVarId local_id = proc_scope.AddProceduralVar(
-                  mir::ProceduralVarDecl{.name = hir_local.name, .type = type});
+              const mir::LocalId local_id = block.AddLocal(
+                  mir::LocalDecl{.name = hir_local.name, .type = type});
               process.MapProceduralVar(
-                  d.var,
-                  AutomaticVarBinding{
-                      .declaration_procedural_depth = frame.procedural_depth,
-                      .var = local_id});
+                  d.var, AutomaticVarBinding{
+                             .declaration_procedural_depth = frame.block_depth,
+                             .var = local_id});
               mir::ExprId init_id{};
               if (d.init.has_value()) {
                 auto init_or =
@@ -53,16 +52,15 @@ auto LowerForStmt(
                 if (!init_or) {
                   return std::unexpected(std::move(init_or.error()));
                 }
-                init_id = proc_scope.AddExpr(*std::move(init_or));
+                init_id = block.AddExpr(*std::move(init_or));
               } else {
-                init_id = proc_scope.AddExpr(
+                init_id = block.AddExpr(
                     BuildDefaultValueExpr(process.Module(), frame, type));
               }
               return mir::ForInit{mir::ForInitDecl{
                   .induction_var =
-                      mir::ProceduralVarRef{
-                          .hops = mir::ProceduralHops{.value = 0},
-                          .var = local_id},
+                      mir::LocalRef{
+                          .hops = mir::BlockHops{.value = 0}, .var = local_id},
                   .init = init_id}};
             },
             [&](const hir::ForInitExpr& e) -> diag::Result<mir::ForInit> {
@@ -71,8 +69,8 @@ auto LowerForStmt(
               if (!expr_or) {
                 return std::unexpected(std::move(expr_or.error()));
               }
-              return mir::ForInit{mir::ForInitExpr{
-                  .expr = proc_scope.AddExpr(*std::move(expr_or))}};
+              return mir::ForInit{
+                  mir::ForInitExpr{.expr = block.AddExpr(*std::move(expr_or))}};
             },
         },
         hinit);
@@ -87,7 +85,7 @@ auto LowerForStmt(
     if (!cond_or) {
       return std::unexpected(std::move(cond_or.error()));
     }
-    cond_id = proc_scope.AddExpr(*std::move(cond_or));
+    cond_id = block.AddExpr(*std::move(cond_or));
   }
 
   std::vector<mir::ExprId> step_ids;
@@ -97,7 +95,7 @@ auto LowerForStmt(
     if (!step_or) {
       return std::unexpected(std::move(step_or.error()));
     }
-    step_ids.push_back(proc_scope.AddExpr(*std::move(step_or)));
+    step_ids.push_back(block.AddExpr(*std::move(step_or)));
   }
 
   auto body_or = LowerStmtIntoChildScope(process, frame, f.body);
@@ -105,8 +103,8 @@ auto LowerForStmt(
     return std::unexpected(std::move(body_or.error()));
   }
 
-  const mir::ProceduralScopeId body_scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(*body_or));
+  const mir::BlockId body_scope_id =
+      frame.current_block->AddChildScope(std::move(*body_or));
 
   return mir::Stmt{
       .label = std::move(label),
@@ -124,21 +122,21 @@ auto LowerForStmt(
 auto LowerWhileStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::WhileStmt& w) -> diag::Result<mir::Stmt> {
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   auto cond_or =
       process.LowerExpr(process.HirBody().exprs.at(w.condition.value), frame);
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
+  const mir::ExprId cond_id = block.AddExpr(*std::move(cond_or));
 
   auto body_or = LowerStmtIntoChildScope(process, frame, w.body);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
 
-  const mir::ProceduralScopeId body_scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(*body_or));
+  const mir::BlockId body_scope_id =
+      frame.current_block->AddChildScope(std::move(*body_or));
 
   return mir::Stmt{
       .label = std::move(label),
@@ -148,7 +146,7 @@ auto LowerWhileStmt(
 auto LowerDoWhileStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::DoWhileStmt& d) -> diag::Result<mir::Stmt> {
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   auto body_or = LowerStmtIntoChildScope(process, frame, d.body);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
@@ -159,10 +157,10 @@ auto LowerDoWhileStmt(
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
+  const mir::ExprId cond_id = block.AddExpr(*std::move(cond_or));
 
-  const mir::ProceduralScopeId body_scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(*body_or));
+  const mir::BlockId body_scope_id =
+      frame.current_block->AddChildScope(std::move(*body_or));
 
   return mir::Stmt{
       .label = std::move(label),
@@ -175,8 +173,8 @@ auto LowerRepeatStmt(
   const mir::TypeId int_type = process.Module().Unit().builtins.int32;
   const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
 
-  mir::ProceduralScope wrapper;
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
+  mir::Block wrapper;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   auto count_or = process.LowerExpr(
       process.HirBody().exprs.at(r.count.value), wrapper_frame);
@@ -194,21 +192,20 @@ auto LowerRepeatStmt(
             .type = int_type});
   }
 
-  const mir::ProceduralVarId count_var = wrapper.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = "_lyra_repeat_count", .type = int_type});
+  const mir::LocalId count_var = wrapper.AddLocal(
+      mir::LocalDecl{.name = "_lyra_repeat_count", .type = int_type});
 
   wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
-          .data = mir::ProceduralVarDeclStmt{
+          .data = mir::LocalDeclStmt{
               .target =
-                  mir::ProceduralVarRef{
-                      .hops = mir::ProceduralHops{.value = 0},
-                      .var = count_var},
+                  mir::LocalRef{
+                      .hops = mir::BlockHops{.value = 0}, .var = count_var},
               .init = count_expr_id}});
 
-  const mir::ProceduralVarId idx_var = wrapper.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = "_lyra_repeat_index", .type = int_type});
+  const mir::LocalId idx_var = wrapper.AddLocal(
+      mir::LocalDecl{.name = "_lyra_repeat_index", .type = int_type});
 
   const mir::ExprId zero_id = wrapper.AddExpr(
       mir::MakeInt32Literal(process.Module().Unit().builtins.int32, 0));
@@ -218,14 +215,13 @@ auto LowerRepeatStmt(
   const mir::ExprId idx_ref_cond = wrapper.AddExpr(
       mir::Expr{
           .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
+              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = idx_var},
           .type = int_type});
   const mir::ExprId count_ref_cond = wrapper.AddExpr(
       mir::Expr{
           .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = count_var},
+              mir::LocalRef{
+                  .hops = mir::BlockHops{.value = 0}, .var = count_var},
           .type = int_type});
   const mir::ExprId cond_id = wrapper.AddExpr(
       mir::Expr{
@@ -239,8 +235,7 @@ auto LowerRepeatStmt(
   const mir::ExprId idx_ref_step = wrapper.AddExpr(
       mir::Expr{
           .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
+              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = idx_var},
           .type = int_type});
   const mir::ExprId add_id = wrapper.AddExpr(
       mir::Expr{
@@ -253,8 +248,7 @@ auto LowerRepeatStmt(
   const mir::ExprId step_target_id = wrapper.AddExpr(
       mir::Expr{
           .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
+              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = idx_var},
           .type = int_type});
   const mir::ExprId step_id = wrapper.AddExpr(
       mir::Expr{
@@ -266,15 +260,13 @@ auto LowerRepeatStmt(
     return std::unexpected(std::move(body_or.error()));
   }
 
-  const mir::ProceduralScopeId body_scope_id =
-      wrapper.AddChildScope(std::move(*body_or));
+  const mir::BlockId body_scope_id = wrapper.AddChildScope(std::move(*body_or));
 
   std::vector<mir::ForInit> for_init;
   for_init.emplace_back(
       mir::ForInitDecl{
           .induction_var =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
+              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = idx_var},
           .init = zero_id});
 
   wrapper.AppendStmt(
@@ -286,8 +278,8 @@ auto LowerRepeatStmt(
               .step = {step_id},
               .scope = body_scope_id}});
 
-  const mir::ProceduralScopeId wrapper_scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(wrapper));
+  const mir::BlockId wrapper_scope_id =
+      frame.current_block->AddChildScope(std::move(wrapper));
 
   return mir::Stmt{
       .label = std::move(label),
@@ -302,8 +294,8 @@ auto LowerForeverStmt(
     return std::unexpected(std::move(body_or.error()));
   }
 
-  const mir::ProceduralScopeId body_scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(*body_or));
+  const mir::BlockId body_scope_id =
+      frame.current_block->AddChildScope(std::move(*body_or));
 
   return mir::Stmt{
       .label = std::move(label),

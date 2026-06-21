@@ -15,6 +15,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
@@ -24,7 +25,6 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/conversion.hpp"
@@ -49,8 +49,8 @@ auto LowerDestructuringAssign(
     const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat)
     -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  mir::ProceduralScope wrapper;
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
+  mir::Block wrapper;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   std::vector<std::uint64_t> part_widths;
   part_widths.reserve(lhs_concat.operands.size());
@@ -85,8 +85,8 @@ auto LowerDestructuringAssign(
 
   const mir::ExprId temp_default_init = wrapper.AddExpr(
       BuildDefaultValueExpr(process.Module(), wrapper_frame, temp_type));
-  const mir::ProceduralVarRef snapshot_ref = wrapper.AppendLocal(
-      mir::ProceduralVarDecl{.name = "_lyra_destruct_rhs", .type = temp_type},
+  const mir::LocalRef snapshot_ref = wrapper.AppendLocal(
+      mir::LocalDecl{.name = "_lyra_destruct_rhs", .type = temp_type},
       temp_default_init);
 
   // RHS is evaluated once; the snapshot temp is what gets distributed,
@@ -203,8 +203,8 @@ auto LowerDestructuringAssign(
     wrapper.AppendStmt(mir::ExprStmt{.expr = per_part_expr_id});
   }
 
-  const mir::ProceduralScopeId wrapper_scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(wrapper));
+  const mir::BlockId wrapper_scope_id =
+      frame.current_block->AddChildScope(std::move(wrapper));
 
   return mir::Stmt{
       .label = std::move(label),
@@ -216,14 +216,14 @@ auto LowerDestructuringAssign(
 // its HIR declaration, or nullptr for a value-only call (system / builtin
 // callee, or an all-`input` user callee).
 auto SubroutineWithWritebacks(
-    const StructuralScopeLowerer& scope, const hir::CallExpr& call)
+    const ClassLowerer& lowerer, const hir::CallExpr& call)
     -> const hir::StructuralSubroutineDecl* {
   const auto* ref = std::get_if<hir::StructuralSubroutineRef>(&call.callee);
   if (ref == nullptr) {
     return nullptr;
   }
   const hir::StructuralSubroutineDecl& decl =
-      scope.LookupHirSubroutine(ref->hops, ref->subroutine);
+      lowerer.LookupHirSubroutine(ref->hops, ref->subroutine);
   for (const auto& param : decl.params) {
     if (hir::RequiresWriteback(param.direction)) {
       return &decl;
@@ -252,16 +252,15 @@ auto LowerSubroutineCallWithWritebacks(
   }
 
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  mir::ProceduralScope wrapper;
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
+  mir::Block wrapper;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   // The callee body takes its instance handle as `arguments[0]` (mir.md
   // invariant 11); the SV actuals (with output / inout temps) follow.
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size() + 1);
   call_args.push_back(wrapper.AddExpr(BuildSelfRefExpr(
-      wrapper_frame,
-      wrapper_frame.current_structural_scope->self_pointer_type)));
+      wrapper_frame, wrapper_frame.current_class->self_pointer_type)));
   std::vector<OutputArgSlot> writebacks;
 
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
@@ -320,8 +319,8 @@ auto LowerSubroutineCallWithWritebacks(
       init = wrapper.AddExpr(
           BuildDefaultValueExpr(process.Module(), wrapper_frame, formal_type));
     }
-    const mir::ProceduralVarRef temp = wrapper.AppendLocal(
-        mir::ProceduralVarDecl{
+    const mir::LocalRef temp = wrapper.AppendLocal(
+        mir::LocalDecl{
             .name = "_lyra_arg" + std::to_string(i), .type = formal_type},
         init);
     call_args.push_back(
@@ -333,7 +332,7 @@ auto LowerSubroutineCallWithWritebacks(
   mir::Expr call_expr{
       .data =
           mir::CallExpr{
-              .callee = process.Scope().TranslateStructuralSubroutine(
+              .callee = process.Owner().TranslateStructuralSubroutine(
                   callee_ref.hops, callee_ref.subroutine),
               .arguments = std::move(call_args)},
       .type = result_type};
@@ -360,7 +359,7 @@ auto LowerExprStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ExprStmt& e) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
 
   // LRM 11.4.12 LHS destructuring: detect AssignExpr-with-ConcatExpr-LHS
   // and dispatch to the snapshot+distribute desugar.
@@ -384,7 +383,7 @@ auto LowerExprStmt(
   // 13.4 keeps every suspending call void and statement-positioned, so a bare
   // call is the only place suspension arises.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
-    if (const auto* decl = SubroutineWithWritebacks(process.Scope(), *call)) {
+    if (const auto* decl = SubroutineWithWritebacks(process.Owner(), *call)) {
       return LowerSubroutineCallWithWritebacks(
           process, frame, std::move(label), *call,
           std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
@@ -414,13 +413,13 @@ auto LowerExprStmt(
         const auto* struct_ref =
             std::get_if<hir::StructuralSubroutineRef>(&call->callee)) {
       suspends =
-          process.Scope()
+          process.Owner()
               .LookupHirSubroutine(struct_ref->hops, struct_ref->subroutine)
               .kind == hir::SubroutineKind::kTask;
     }
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));
-    const mir::ExprId call_id = proc_scope.AddExpr(*std::move(call_or));
+    const mir::ExprId call_id = block.AddExpr(*std::move(call_or));
     if (suspends) {
       return mir::Stmt{
           .label = std::move(label),
@@ -445,7 +444,7 @@ auto LowerExprStmt(
       }
       if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
         if (const auto* decl =
-                SubroutineWithWritebacks(process.Scope(), *call)) {
+                SubroutineWithWritebacks(process.Owner(), *call)) {
           if (!conv_target_type.has_value()) {
             return LowerSubroutineCallWithWritebacks(
                 process, frame, std::move(label), *call,
@@ -478,7 +477,7 @@ auto LowerExprStmt(
   }
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::ExprStmt{.expr = proc_scope.AddExpr(*std::move(expr_or))}};
+      .data = mir::ExprStmt{.expr = block.AddExpr(*std::move(expr_or))}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

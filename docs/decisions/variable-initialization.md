@@ -1,4 +1,4 @@
-# Variable initialization (LRM 10.5) as constructor scope statement
+# Variable initialization (LRM 10.5) as constructor block statement
 
 Date: 2026-06-16 Status: accepted
 
@@ -20,16 +20,16 @@ timing is pinned to elaboration.
 
 Before this decision, MIR carried the variable initializer two ways:
 
-1. `mir::StructuralVarDecl.initializer: ExprId` -- the init expression as a field on the declaration
+1. `mir::MemberDecl.initializer: ExprId` -- the init expression as a field on the declaration
    itself.
-2. `constructor_scope.root_stmts` -- the constructor-time statement sequence (`RegisterChild`,
+2. `constructor_block.root_stmts` -- the constructor-time statement sequence (`RegisterChild`,
    `RegisterSignal`, `CreateProcesses`, generate construction, ...).
 
 The C++ backend plucked path (1) into an inline class-body NSDMI (`Var<int> a{1};`) and rendered
 path (2) inside a static `init(Self* self)` helper. A `RenderContext::in_class_member_init_` flag
 switched receiver-access rendering between NSDMI position and function-body position, because
-`MemberAccessExpr(self, X)` and `StructuralParamRef(p)` had to spell as the bare field name in NSDMI
-scope but `self->X` in the body.
+`MemberAccessExpr(self, X)` and `ParamRef(p)` had to spell as the bare field name in NSDMI scope but
+`self->X` in the body.
 
 The two-channel shape forced every backend to read state from two places. It also locked the render
 to a C++-specific syntactic mode dependency that a LIR / LLVM-IR backend would have no analogue for.
@@ -37,12 +37,12 @@ to a C++-specific syntactic mode dependency that a LIR / LLVM-IR backend would h
 ## Decision
 
 **MIR has exactly one shape for construction-time work: statements in
-`constructor_scope.root_stmts`. For every value-assignable structural var, HIR-to-MIR inserts an
+`constructor_block.root_stmts`. For every value-assignable member, HIR-to-MIR inserts an
 `AssignExpr(MemberAccess(self, var), value)` statement at the position the variable is declared in
 source order, before any `RegisterSignal` / `RegisterChild` / `CreateProcesses` for the same scope.
 The value is the user-supplied expression when present, otherwise the LRM Table 6-7 type default;
-the statement shape is uniform either way. The `mir::StructuralVarDecl.initializer` field is
-removed; a structural-var declaration carries name and type only.**
+the statement shape is uniform either way. The `mir::MemberDecl.initializer` field is removed; a
+member declaration carries name and type only.**
 
 Vars whose type has no value-assignment semantics -- owned children (pointer, vector), object
 companions, upward references (`ExternalRefType`), and named events -- do not receive an init
@@ -79,7 +79,7 @@ static void init(Test* self) {
 }
 ```
 
-Every other MIR callable body (process, subroutine, closure) also renders as a static function whose
+Every other MIR callable body (process, method, closure) also renders as a static function whose
 first parameter is `Self* self`; the constructor's delegation to `init(this)` is the one place C++'s
 implicit `this` is mentioned. The body code emits `self->X` mechanically with no context-dependent
 receiver lookup. `RenderContext::in_class_member_init_` and `WithClassMemberInit` are removed in
@@ -137,8 +137,8 @@ pointers). The filter is structural: any var whose MIR type is in the set
 
 ## Rejected alternatives
 
-- **Keep `StructuralVarDecl.initializer` and continue using inline class-body NSDMI.** Matches C++
-  idiom most closely and is the previous shape. Costs: MIR carries two ways to express the same
+- **Keep `MemberDecl.initializer` and continue using inline class-body NSDMI.** Matches C++ idiom
+  most closely and is the previous shape. Costs: MIR carries two ways to express the same
   construction-time work; the `RenderContext::in_class_member_init_` flag switches receiver
   rendering by syntactic position; every future backend either learns the same dual-mode dispatch or
   re-lowers `.initializer` into a statement before generating code. The bookkeeping does not pay for
@@ -167,10 +167,9 @@ pointers). The filter is structural: any var whose MIR type is in the set
 
 ## Consequences
 
-- `mir::StructuralVarDecl.initializer` is removed; a declaration carries name and type only.
-- HIR-to-MIR's structural scope lowerer appends an `AssignExpr` statement to
-  `constructor_scope.root_stmts` for every value-assignable structural var, using the user-supplied
-  expression or the LRM Table 6-7 default.
+- `mir::MemberDecl.initializer` is removed; a declaration carries name and type only.
+- HIR-to-MIR's class lowerer appends an `AssignExpr` statement to `constructor_block.root_stmts` for
+  every value-assignable member, using the user-supplied expression or the LRM Table 6-7 default.
 - The C++ backend's `RenderField` emits a pure value-init declaration (`Var<T> name{};` or
   `T name{};`), with no inline initializer. Upward references retain their symbol-arg construction.
 - `RenderContext::in_class_member_init_`, `WithClassMemberInit`, and the `RenderField`
@@ -182,7 +181,7 @@ pointers). The filter is structural: any var whose MIR type is in the set
   `PackedArray::AssignFrom` adopts the source shape when the destination is the 0-bit sentinel;
   `WordCountForBits` and `PackedWords::PackedWords` accept 0-bit input.
 - LIR / LLVM-IR lowering reads the construction-time state straight from
-  `constructor_scope.root_stmts`. No backend re-derives type defaults or syntactic position from a
+  `constructor_block.root_stmts`. No backend re-derives type defaults or syntactic position from a
   side field.
 - Forbidden Shape: two MIR mechanisms for "code that runs at construction time", or a render that
   adds body statements not present in MIR.

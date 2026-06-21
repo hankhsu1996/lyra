@@ -42,7 +42,7 @@ auto RenderPrintKindLiteral(value::PrintKind k) -> std::string_view {
 // covers the common all-default spec; the full overload spells out all six.
 // LRM 21.2.1.3 / 3.14.2: `%t` scales from the enclosing scope's time unit, the
 // scope class constant `kTimeUnitPower`, resolved by unqualified C++ name
-// lookup -- mirrors how $time reads it, so a `%t` inside a subroutine uses its
+// lookup -- mirrors how $time reads it, so a `%t` inside a method uses its
 // declaration scope's unit.
 auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
   const auto from_int = [](std::string_view e) {
@@ -201,7 +201,7 @@ auto RenderRuntimeCallExpr(
               -> diag::Result<std::string> {
             // LRM 21.2.2: defer the print to the postponed region via the
             // matching $strobe-family runtime entry. The lambda captures
-            // procedural locals and the receiver by value -- NBAs do not touch
+            // block locals and the receiver by value -- NBAs do not touch
             // the locals and the snapshot is frame-death-safe for `initial`
             // The closure captures every referenced local by value (`[=]`)
             // including `self`, so it can reach scope members and Services()
@@ -235,7 +235,7 @@ auto RenderRuntimeCallExpr(
               return std::unexpected(std::move(format_or.error()));
             }
             // Slots render as ScanTarget variant literals. Each carries a
-            // pointer to a procedural-local temp in the surrounding closure
+            // pointer to a block-local temp in the surrounding closure
             // body plus the per-slot type metadata the parser needs to
             // materialize a fresh value of the lvalue's shape.
             std::string slot_pieces;

@@ -222,10 +222,10 @@ struct VectorType {
   auto operator==(const VectorType&) const -> bool = default;
 };
 
-// Observable storage wrapper around a value type. Declares that a structural
-// variable's storage is a module-scope cell that exposes Set / Get / Mutate
+// Observable storage wrapper around a value type. Declares that a member's
+// storage is a module-scope cell that exposes Set / Get / Mutate
 // (LRM 9.4.2 update event) -- writes route through the engine so subscribers
-// wake. HIR-to-MIR wraps a structural-var declaration whose value type is a
+// wake. HIR-to-MIR wraps a member declaration whose value type is a
 // SystemVerilog data type (not a handle, child instance, or external ref) in
 // this wrapper. The C++ backend renders the wrapper as `lyra::runtime::Var<T>`
 // where T is the inner value type; the C++ template requires `T` to satisfy
@@ -241,7 +241,7 @@ struct ObservableType {
 // the child member's name plus one index per array dimension (empty for a
 // scalar child). The ancestor answers by name from the children it registered,
 // so a multi-dimensional instance array is just more indices, never a flattened
-// offset. (Distinct from StructuralHops, which is a count of lexical frames
+// offset. (Distinct from EnclosingHops, which is a count of lexical frames
 // climbed, not a path step.)
 struct ChildStep {
   std::string name;

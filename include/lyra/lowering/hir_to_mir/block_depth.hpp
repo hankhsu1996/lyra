@@ -3,7 +3,7 @@
 #include <compare>
 #include <cstdint>
 
-#include "lyra/mir/procedural_hops.hpp"
+#include "lyra/mir/block_hops.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -14,24 +14,22 @@ namespace lyra::lowering::hir_to_mir {
 // subtraction is the one operation that crosses from the lowering's depth into
 // a MIR reference's hops; the strong type makes a depth/hops mix-up not
 // compile.
-struct ProceduralDepth {
+struct BlockDepth {
   std::uint32_t value = 0;
 
-  auto operator<=>(const ProceduralDepth&) const
-      -> std::strong_ordering = default;
+  auto operator<=>(const BlockDepth&) const -> std::strong_ordering = default;
 
   // One scope deeper / shallower -- lowering enters and leaves scopes one level
   // at a time, and a capture's source is evaluated one scope outside the body.
-  [[nodiscard]] auto Inner() const -> ProceduralDepth {
-    return ProceduralDepth{.value = value + 1};
+  [[nodiscard]] auto Inner() const -> BlockDepth {
+    return BlockDepth{.value = value + 1};
   }
-  [[nodiscard]] auto Outer() const -> ProceduralDepth {
-    return ProceduralDepth{.value = value - 1};
+  [[nodiscard]] auto Outer() const -> BlockDepth {
+    return BlockDepth{.value = value - 1};
   }
 
-  [[nodiscard]] auto operator-(ProceduralDepth rhs) const
-      -> mir::ProceduralHops {
-    return mir::ProceduralHops{.value = value - rhs.value};
+  [[nodiscard]] auto operator-(BlockDepth rhs) const -> mir::BlockHops {
+    return mir::BlockHops{.value = value - rhs.value};
   }
 };
 

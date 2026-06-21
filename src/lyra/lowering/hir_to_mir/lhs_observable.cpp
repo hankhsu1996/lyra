@@ -24,10 +24,9 @@ auto AsContainerAccessBase(const mir::Expr& expr) -> const mir::ExprId* {
 
 }  // namespace
 
-auto FindLhsRootId(const mir::ProceduralScope& scope, mir::ExprId lhs_id)
-    -> mir::ExprId {
+auto FindLhsRootId(const mir::Block& block, mir::ExprId lhs_id) -> mir::ExprId {
   while (true) {
-    const auto& expr = scope.GetExpr(lhs_id);
+    const auto& expr = block.GetExpr(lhs_id);
     if (const auto* base = AsContainerAccessBase(expr)) {
       lhs_id = *base;
       continue;
@@ -37,33 +36,33 @@ auto FindLhsRootId(const mir::ProceduralScope& scope, mir::ExprId lhs_id)
 }
 
 auto RewriteLhsRootWithMutate(
-    const mir::CompilationUnit& unit, mir::ProceduralScope& scope,
-    mir::ExprId lhs_id, mir::ExprId services_id) -> mir::ExprId {
-  const auto& expr = scope.GetExpr(lhs_id);
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
+    mir::ExprId services_id) -> mir::ExprId {
+  const auto& expr = block.GetExpr(lhs_id);
   if (AsContainerAccessBase(expr) != nullptr) {
     auto rewritten_call = std::get<mir::CallExpr>(expr.data);
     rewritten_call.arguments.front() = RewriteLhsRootWithMutate(
-        unit, scope, rewritten_call.arguments.front(), services_id);
-    return scope.AddExpr(
+        unit, block, rewritten_call.arguments.front(), services_id);
+    return block.AddExpr(
         mir::Expr{.data = std::move(rewritten_call), .type = expr.type});
   }
   const mir::TypeId value_type =
       mir::ObservableInnerValueType(unit.GetType(expr.type));
-  const mir::ExprId mutate_id = scope.AddExpr(
+  const mir::ExprId mutate_id = block.AddExpr(
       mir::MakeObservableMutateCallExpr(lhs_id, services_id, value_type));
-  return scope.AddExpr(
+  return block.AddExpr(
       mir::Expr{
           .data = mir::DerefExpr{.pointer = mutate_id}, .type = value_type});
 }
 
 auto BuildObservableAssignExpr(
-    const mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    const mir::CompilationUnit& unit, mir::Block& block,
     mir::ExprId services_id, mir::ExprId lhs_id, mir::ExprId rhs_id,
     std::optional<mir::BinaryOp> compound_op, mir::TypeId result_type,
     mir::TypeId void_type) -> mir::Expr {
-  const mir::ExprId root_id = FindLhsRootId(scope, lhs_id);
+  const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
   const bool root_is_cell =
-      mir::IsObservableCellType(unit.GetType(scope.GetExpr(root_id).type));
+      mir::IsObservableCellType(unit.GetType(block.GetExpr(root_id).type));
   if (!root_is_cell) {
     return mir::Expr{
         .data =
@@ -78,7 +77,7 @@ auto BuildObservableAssignExpr(
         lhs_id, services_id, rhs_id, void_type);
   }
   const mir::ExprId rewritten =
-      RewriteLhsRootWithMutate(unit, scope, lhs_id, services_id);
+      RewriteLhsRootWithMutate(unit, block, lhs_id, services_id);
   return mir::Expr{
       .data =
           mir::AssignExpr{

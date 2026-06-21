@@ -30,14 +30,14 @@ auto LowerDiagnosticSystemSubroutineCall(
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   auto& unit = process.Module().Unit();
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
-  const mir::ExprId items_array = proc_scope.AddExpr(
-      BuildPrintItemsArray(unit, proc_scope, *items_or, time_unit_power));
+  const mir::ExprId items_array = block.AddExpr(
+      BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   std::vector<mir::ExprId> args;
-  args.push_back(proc_scope.AddExpr(BuildServicesCallExpr(process, frame)));
+  args.push_back(block.AddExpr(BuildServicesCallExpr(process, frame)));
   args.push_back(items_array);
 
   return mir::Expr{

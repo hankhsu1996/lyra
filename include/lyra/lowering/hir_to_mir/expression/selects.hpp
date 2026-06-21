@@ -6,8 +6,8 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -38,28 +38,28 @@ auto LowerHirMemberAccessExprProcLhs(
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 auto LowerHirElementSelectExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const ClassLowerer& lowerer, WalkFrame frame,
     const hir::ElementSelectExpr& sel, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 auto LowerHirRangeSelectExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const ClassLowerer& lowerer, WalkFrame frame,
     const hir::RangeSelectExpr& sel, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 auto LowerHirMemberAccessExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const ClassLowerer& lowerer, WalkFrame frame,
     const hir::MemberAccessExpr& sel, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
 auto LowerHirElementSelectExprStructuralLhs(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const ClassLowerer& lowerer, WalkFrame frame,
     const hir::ElementSelectExpr& sel, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 auto LowerHirRangeSelectExprStructuralLhs(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const ClassLowerer& lowerer, WalkFrame frame,
     const hir::RangeSelectExpr& sel, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 auto LowerHirMemberAccessExprStructuralLhs(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const ClassLowerer& lowerer, WalkFrame frame,
     const hir::MemberAccessExpr& sel, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 

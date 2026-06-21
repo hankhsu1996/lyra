@@ -2,34 +2,32 @@
 
 #include <variant>
 
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto BuildSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr {
-  return mir::MakeProceduralVarRefExpr(
-      frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
+  return mir::MakeLocalRefExpr(
+      frame.block_depth - frame.self_decl_depth, *frame.self_binding,
       self_ptr_type);
 }
 
 auto BuildStructuralMemberAccessExpr(
-    const WalkFrame& frame, const mir::StructuralVarRef& member) -> mir::Expr {
-  const mir::TypeId field_type = frame.StructuralScopeAtHops(member.hops)
-                                     .GetStructuralVar(member.var)
-                                     .type;
-  const mir::ExprId receiver =
-      frame.current_procedural_scope->AddExpr(BuildSelfRefExpr(
-          frame, frame.current_structural_scope->self_pointer_type));
+    const WalkFrame& frame, const mir::MemberRef& member) -> mir::Expr {
+  const mir::TypeId field_type =
+      frame.EnclosingClassAtHops(member.hops).GetMember(member.var).type;
+  const mir::ExprId receiver = frame.current_block->AddExpr(
+      BuildSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return mir::MakeMemberAccessExpr(receiver, member, field_type);
 }
 
 auto BuildReferenceArg(
-    mir::CompilationUnit& unit, mir::ProceduralScope& scope, mir::ExprId cell,
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId {
   // The reference aliases the cell's value, not its storage wrapper: a `Ref<T>`
   // over an observable cell binds the underlying `Var<T>`, so the pointee is
@@ -40,7 +38,7 @@ auto BuildReferenceArg(
   }
   const mir::TypeId ref_type = unit.AddType(
       mir::TypeData{mir::RefType{.pointee = pointee, .is_const = false}});
-  return scope.AddExpr(
+  return block.AddExpr(
       mir::Expr{
           .data =
               mir::CallExpr{

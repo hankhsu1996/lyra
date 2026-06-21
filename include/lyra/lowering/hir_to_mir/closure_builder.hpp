@@ -4,7 +4,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -42,7 +42,7 @@ class ClosureBuilder {
     return frame_;
   }
   // The body scope to append statements / locals into.
-  [[nodiscard]] auto Body() -> mir::ProceduralScope& {
+  [[nodiscard]] auto Body() -> mir::Block& {
     return body_;
   }
 
@@ -51,19 +51,18 @@ class ClosureBuilder {
   [[nodiscard]] auto Build(mir::ExprId result) -> mir::Expr;
 
  private:
-  mir::ProceduralScope* outer_;
+  mir::Block* outer_;
   mir::TypeId result_type_;
-  mir::ProceduralScope body_;
-  mir::ProceduralVarId self_binding_{};
+  mir::Block body_;
+  mir::LocalId self_binding_{};
   mir::ExprId outer_self_read_{};
   CaptureSink sink_;
   WalkFrame frame_;
 };
 
 // Builds the immediately-invoked call of `closure` (the IIFE shape): adds the
-// closure expression to `scope` and returns a `CallExpr` over a `ClosureRef` to
+// closure expression to `block` and returns a `CallExpr` over a `ClosureRef` to
 // it, with no arguments. The call's type is the closure's result type.
-auto BuildClosureCallExpr(mir::ProceduralScope& scope, mir::Expr closure)
-    -> mir::Expr;
+auto BuildClosureCallExpr(mir::Block& block, mir::Expr closure) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

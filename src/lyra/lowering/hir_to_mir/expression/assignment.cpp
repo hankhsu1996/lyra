@@ -24,10 +24,10 @@
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -39,14 +39,14 @@ namespace {
 // Walks the LHS expression to determine whether its addressable root is a
 // structural var (vs procedural local). NBA assignment requires a structural
 // target; procedural-local NBA is a known gap.
-auto IsExprRootedAtStructuralVar(
-    const mir::ProceduralScope& proc_scope, mir::ExprId expr_id) -> bool {
-  const auto& expr = proc_scope.GetExpr(expr_id);
+auto IsExprRootedAtStructuralVar(const mir::Block& block, mir::ExprId expr_id)
+    -> bool {
+  const auto& expr = block.GetExpr(expr_id);
   return std::visit(
       Overloaded{
-          [](const mir::StructuralVarRef&) { return true; },
+          [](const mir::MemberRef&) { return true; },
           [](const mir::MemberAccessExpr&) { return true; },
-          [](const mir::ProceduralVarRef&) { return false; },
+          [](const mir::LocalRef&) { return false; },
           [&](const mir::CallExpr& c) {
             const auto* callee =
                 std::get_if<mir::BuiltinMethodCallee>(&c.callee);
@@ -54,11 +54,11 @@ auto IsExprRootedAtStructuralVar(
                 c.arguments.empty()) {
               return false;
             }
-            return IsExprRootedAtStructuralVar(proc_scope, c.arguments.front());
+            return IsExprRootedAtStructuralVar(block, c.arguments.front());
           },
           [&](const mir::ConcatExpr& c) {
             return std::ranges::all_of(c.operands, [&](mir::ExprId op) {
-              return IsExprRootedAtStructuralVar(proc_scope, op);
+              return IsExprRootedAtStructuralVar(block, op);
             });
           },
           [](const auto&) { return false; },
@@ -69,20 +69,20 @@ auto IsExprRootedAtStructuralVar(
 // Snapshot a single outer-scope subexpression into the closure body. Literal
 // values clone verbatim so the body still sees an IntegerLiteral (some
 // downstream code paths extract constants from literal-shape exprs). Other
-// expressions are captured by value into a fresh procedural var so the body
+// expressions are captured by value into a fresh local so the body
 // reads the value as it stood at submit time. `name_prefix` distinguishes
 // the caller so the synthesized binding names stay readable when MIR dumps
 // are inspected.
 auto SnapshotNonLhsSubexpr(
-    const mir::ProceduralScope& outer_scope, mir::ProceduralScope& body,
+    const mir::Block& outer_block, mir::Block& body,
     std::vector<mir::Capture>& captures, std::uint32_t& snapshot_counter,
     mir::ExprId outer_id, std::string_view name_prefix) -> mir::ExprId {
-  const auto& outer_expr = outer_scope.GetExpr(outer_id);
+  const auto& outer_expr = outer_block.GetExpr(outer_id);
   if (std::holds_alternative<mir::IntegerLiteral>(outer_expr.data)) {
     return body.AddExpr(outer_expr);
   }
-  const auto binding = body.AddProceduralVar(
-      mir::ProceduralVarDecl{
+  const auto binding = body.AddLocal(
+      mir::LocalDecl{
           .name =
               std::format("_lyra_{}_arg{}", name_prefix, snapshot_counter++),
           .type = outer_expr.type});
@@ -90,8 +90,7 @@ auto SnapshotNonLhsSubexpr(
   return body.AddExpr(
       mir::Expr{
           .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = binding},
+              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = binding},
           .type = outer_expr.type});
 }
 
@@ -102,11 +101,10 @@ auto SnapshotNonLhsSubexpr(
 // snapshotted by value so the closure body sees the values that were live
 // at submit time.
 auto CloneLhsExprForNbaBody(
-    const mir::ProceduralScope& outer_scope, mir::ProceduralScope& body,
-    mir::TypeId self_ptr_type, mir::ProceduralVarId body_self_id,
-    std::vector<mir::Capture>& captures, std::uint32_t& snapshot_counter,
-    mir::ExprId outer_id) -> mir::ExprId {
-  const auto& outer_expr = outer_scope.GetExpr(outer_id);
+    const mir::Block& outer_block, mir::Block& body, mir::TypeId self_ptr_type,
+    mir::LocalId body_self_id, std::vector<mir::Capture>& captures,
+    std::uint32_t& snapshot_counter, mir::ExprId outer_id) -> mir::ExprId {
+  const auto& outer_expr = outer_block.GetExpr(outer_id);
   return std::visit(
       Overloaded{
           [&](const mir::CallExpr& c) -> mir::ExprId {
@@ -121,11 +119,11 @@ auto CloneLhsExprForNbaBody(
             std::vector<mir::ExprId> body_args;
             body_args.reserve(c.arguments.size());
             body_args.push_back(CloneLhsExprForNbaBody(
-                outer_scope, body, self_ptr_type, body_self_id, captures,
+                outer_block, body, self_ptr_type, body_self_id, captures,
                 snapshot_counter, c.arguments.front()));
             for (std::size_t i = 1; i < c.arguments.size(); ++i) {
               body_args.push_back(SnapshotNonLhsSubexpr(
-                  outer_scope, body, captures, snapshot_counter, c.arguments[i],
+                  outer_block, body, captures, snapshot_counter, c.arguments[i],
                   "nba"));
             }
             return body.AddExpr(
@@ -141,7 +139,7 @@ auto CloneLhsExprForNbaBody(
             body_operands.reserve(c.operands.size());
             for (const mir::ExprId op_id : c.operands) {
               body_operands.push_back(CloneLhsExprForNbaBody(
-                  outer_scope, body, self_ptr_type, body_self_id, captures,
+                  outer_block, body, self_ptr_type, body_self_id, captures,
                   snapshot_counter, op_id));
             }
             return body.AddExpr(
@@ -150,15 +148,15 @@ auto CloneLhsExprForNbaBody(
                         mir::ConcatExpr{.operands = std::move(body_operands)},
                     .type = outer_expr.type});
           },
-          [&](const mir::StructuralVarRef&) -> mir::ExprId {
+          [&](const mir::MemberRef&) -> mir::ExprId {
             return body.AddExpr(outer_expr);
           },
           [&](const mir::MemberAccessExpr& m) -> mir::ExprId {
             const mir::ExprId body_receiver = body.AddExpr(
                 mir::Expr{
                     .data =
-                        mir::ProceduralVarRef{
-                            .hops = mir::ProceduralHops{.value = 0},
+                        mir::LocalRef{
+                            .hops = mir::BlockHops{.value = 0},
                             .var = body_self_id},
                     .type = self_ptr_type});
             return body.AddExpr(
@@ -168,7 +166,7 @@ auto CloneLhsExprForNbaBody(
                             .receiver = body_receiver, .member = m.member},
                     .type = outer_expr.type});
           },
-          [&](const mir::ProceduralVarRef&) -> mir::ExprId {
+          [&](const mir::LocalRef&) -> mir::ExprId {
             return body.AddExpr(outer_expr);
           },
           [&](const auto&) -> mir::ExprId {
@@ -186,24 +184,24 @@ auto LowerHirAssignExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_process = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   auto rhs_or = process.LowerExpr(hir_process.exprs.at(a.rhs.value), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::TypeId rhs_type = (*rhs_or).type;
-  const mir::ExprId rhs_id = proc_scope.AddExpr(*std::move(rhs_or));
+  const mir::ExprId rhs_id = block.AddExpr(*std::move(rhs_or));
   auto lhs_or = process.LowerLhsExpr(
       hir_process.exprs.at(a.lhs.value), frame.WithLvalueTarget(true));
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = proc_scope.AddExpr(*std::move(lhs_or));
+  const mir::ExprId lhs_id = block.AddExpr(*std::move(lhs_or));
 
   if (a.kind == hir::AssignKind::kBlocking) {
     const std::optional<mir::BinaryOp> compound_op =
         a.compound_op.has_value() ? std::optional{LowerBinaryOp(*a.compound_op)}
                                   : std::nullopt;
     const mir::ExprId services_id =
-        proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+        block.AddExpr(BuildServicesCallExpr(process, frame));
     return BuildObservableAssignExpr(
-        process.Module().Unit(), proc_scope, services_id, lhs_id, rhs_id,
+        process.Module().Unit(), block, services_id, lhs_id, rhs_id,
         compound_op, result_type, process.Module().Unit().builtins.void_type);
   }
 
@@ -213,7 +211,7 @@ auto LowerHirAssignExprProc(
         "is not a legal SV form (LRM A.6.2 grammar)");
   }
 
-  if (!IsExprRootedAtStructuralVar(proc_scope, lhs_id)) {
+  if (!IsExprRootedAtStructuralVar(block, lhs_id)) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
         "non-blocking assignment to procedural local is not supported yet",
@@ -222,7 +220,7 @@ auto LowerHirAssignExprProc(
 
   mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
       process.Module(), frame, lhs_id, rhs_id, rhs_type);
-  const mir::ExprId closure_id = proc_scope.AddExpr(std::move(closure_expr));
+  const mir::ExprId closure_id = block.AddExpr(std::move(closure_expr));
   return mir::Expr{
       .data =
           mir::RuntimeCallExpr{
@@ -238,33 +236,32 @@ auto LowerHirAssignExprProc(
 auto BuildNbaSubmitClosureExpr(
     const ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
     mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr {
-  auto& outer_scope = *frame.current_procedural_scope;
-  mir::ProceduralScope body;
+  auto& outer_block = *frame.current_block;
+  mir::Block body;
   std::vector<mir::Capture> captures;
 
-  const mir::TypeId self_ptr_type =
-      frame.current_structural_scope->self_pointer_type;
-  const mir::ProceduralVarId self_id = body.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
+  const mir::LocalId self_id =
+      body.AddLocal(mir::LocalDecl{.name = "self", .type = self_ptr_type});
   const mir::ExprId outer_self_read =
-      outer_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
+      outer_block.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
   captures.emplace_back(
       mir::Capture{.value = outer_self_read, .binding = self_id});
 
-  const mir::ProceduralVarId rhs_binding = body.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = "_lyra_nba_rhs", .type = rhs_type});
+  const mir::LocalId rhs_binding =
+      body.AddLocal(mir::LocalDecl{.name = "_lyra_nba_rhs", .type = rhs_type});
   captures.emplace_back(
       mir::Capture{.value = rhs_id_in_outer, .binding = rhs_binding});
   const mir::ExprId rhs_ref_id = body.AddExpr(
       mir::Expr{
           .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = rhs_binding},
+              mir::LocalRef{
+                  .hops = mir::BlockHops{.value = 0}, .var = rhs_binding},
           .type = rhs_type});
 
   std::uint32_t snapshot_counter = 0;
   const mir::ExprId body_lhs_id = CloneLhsExprForNbaBody(
-      outer_scope, body, self_ptr_type, self_id, captures, snapshot_counter,
+      outer_block, body, self_ptr_type, self_id, captures, snapshot_counter,
       lhs_in_outer);
 
   // Body-side `self.Services()` for the observable write. Built only inside
@@ -273,8 +270,7 @@ auto BuildNbaSubmitClosureExpr(
   const mir::ExprId body_self_ref = body.AddExpr(
       mir::Expr{
           .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = self_id},
+              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = self_id},
           .type = self_ptr_type});
   const mir::ExprId body_services_id = body.AddExpr(
       mir::MakeServicesCallExpr(
@@ -290,7 +286,7 @@ auto BuildNbaSubmitClosureExpr(
 
   mir::ClosureExpr closure;
   closure.captures = std::move(captures);
-  closure.body = std::make_unique<mir::ProceduralScope>(std::move(body));
+  closure.body = std::make_unique<mir::Block>(std::move(body));
 
   return mir::Expr{
       .data = std::move(closure), .type = module.Unit().builtins.void_type};

@@ -8,8 +8,8 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -35,15 +35,14 @@ auto LowerHirDynamicArrayNewExprProc(
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 auto LowerHirConcatExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::ConcatExpr& c, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 auto LowerHirAssignmentPatternExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const ClassLowerer& lowerer, WalkFrame frame,
     const hir::AssignmentPatternExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 auto LowerHirAssignmentPatternReplicationExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const ClassLowerer& lowerer, WalkFrame frame,
     const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 

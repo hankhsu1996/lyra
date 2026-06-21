@@ -72,7 +72,7 @@ auto BuildPrintValueItem(
     ProcessLowerer& process, WalkFrame frame, hir::ExprId hir_arg,
     mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
   const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   auto lowered_or = process.LowerExpr(hir_proc.exprs.at(hir_arg.value), frame);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
@@ -85,7 +85,7 @@ auto BuildPrintValueItem(
   if (spec.kind == value::FormatKind::kString &&
       value_type.Kind() != mir::TypeKind::kString &&
       !value_type.IsIntegralPacked()) {
-    const mir::ExprId inner = proc_scope.AddExpr(std::move(lowered));
+    const mir::ExprId inner = block.AddExpr(std::move(lowered));
     lowered = mir::Expr{
         .data =
             mir::ConversionExpr{
@@ -94,7 +94,7 @@ auto BuildPrintValueItem(
   }
 
   const mir::TypeId type = lowered.type;
-  const mir::ExprId value = proc_scope.AddExpr(std::move(lowered));
+  const mir::ExprId value = block.AddExpr(std::move(lowered));
   return mir::RuntimePrintValue(value, type, std::move(spec));
 }
 
@@ -163,10 +163,10 @@ auto TryGetHirStringLiteral(
 // `int` literals the runtime FormatSpec constructor converts; the modifier
 // fields are omitted when none differs from its default.
 auto BuildFormatSpecExpr(
-    mir::CompilationUnit& unit, mir::ProceduralScope& scope,
-    const mir::FormatSpec& spec, std::int64_t time_unit_power) -> mir::Expr {
+    mir::CompilationUnit& unit, mir::Block& block, const mir::FormatSpec& spec,
+    std::int64_t time_unit_power) -> mir::Expr {
   const auto int_lit = [&](std::int64_t v) {
-    return scope.AddExpr(mir::MakeInt32Literal(unit.builtins.int32, v));
+    return block.AddExpr(mir::MakeInt32Literal(unit.builtins.int32, v));
   };
   std::vector<mir::ExprId> args;
   args.push_back(int_lit(static_cast<std::int64_t>(spec.kind)));
@@ -189,17 +189,17 @@ auto BuildFormatSpecExpr(
 }
 
 auto BuildPrintItemExpr(
-    mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    mir::CompilationUnit& unit, mir::Block& block,
     const mir::RuntimePrintItem& item, std::int64_t time_unit_power)
     -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](const mir::RuntimePrintLiteral& lit) -> mir::Expr {
-            const mir::ExprId text_lit = scope.AddExpr(
+            const mir::ExprId text_lit = block.AddExpr(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = lit.text},
                     .type = unit.builtins.string});
-            const mir::ExprId text = scope.AddExpr(
+            const mir::ExprId text = block.AddExpr(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -214,8 +214,8 @@ auto BuildPrintItemExpr(
                 .type = unit.builtins.print_literal_item};
           },
           [&](const mir::RuntimePrintValue& v) -> mir::Expr {
-            const mir::ExprId spec = scope.AddExpr(
-                BuildFormatSpecExpr(unit, scope, v.spec, time_unit_power));
+            const mir::ExprId spec = block.AddExpr(
+                BuildFormatSpecExpr(unit, block, v.spec, time_unit_power));
             return mir::Expr{
                 .data =
                     mir::CallExpr{
@@ -311,14 +311,14 @@ auto BuildRuntimePrintItemsFromCallArgs(
 }
 
 auto BuildPrintItemsArray(
-    mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    mir::CompilationUnit& unit, mir::Block& block,
     const std::vector<mir::RuntimePrintItem>& items,
     std::int64_t time_unit_power) -> mir::Expr {
   std::vector<mir::ExprId> elements;
   elements.reserve(items.size());
   for (const mir::RuntimePrintItem& item : items) {
     elements.push_back(
-        scope.AddExpr(BuildPrintItemExpr(unit, scope, item, time_unit_power)));
+        block.AddExpr(BuildPrintItemExpr(unit, block, item, time_unit_power)));
   }
   const mir::TypeId array_type = unit.AddType(
       mir::TypeData{mir::UnpackedArrayType{

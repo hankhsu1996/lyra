@@ -5,10 +5,10 @@
 
 namespace lyra::mir {
 
-struct ProceduralHops {
+struct EnclosingHops {
   std::uint32_t value = 0;
 
-  auto operator<=>(const ProceduralHops&) const
+  auto operator<=>(const EnclosingHops&) const
       -> std::strong_ordering = default;
 };
 

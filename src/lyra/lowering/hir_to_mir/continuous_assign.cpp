@@ -24,58 +24,56 @@ namespace lyra::lowering::hir_to_mir {
 // natural fall-through of the eternal loop) before the first wait, matching
 // LRM 9.2.2.2's "evaluate at time 0" requirement for inferred sensitivity.
 auto LowerContinuousAssign(
-    const StructuralScopeLowerer& scope, WalkFrame frame, std::string name,
+    const ClassLowerer& lowerer, WalkFrame frame, std::string name,
     const hir::ContinuousAssign& src) -> diag::Result<mir::Process> {
-  mir::ProceduralScope process_scope;
-  const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{
-          .name = "self",
-          .type = frame.current_structural_scope->self_pointer_type});
-  mir::ProceduralScope body_scope;
-  const WalkFrame body_frame =
-      frame.WithProceduralScope(&body_scope)
-          .WithSelfBinding(self_id, frame.procedural_depth)
-          .Deeper();
+  mir::Block process_block;
+  const mir::LocalId self_id = process_block.AddLocal(
+      mir::LocalDecl{
+          .name = "self", .type = frame.current_class->self_pointer_type});
+  mir::Block body_block;
+  const WalkFrame body_frame = frame.WithBlock(&body_block)
+                                   .WithSelfBinding(self_id, frame.block_depth)
+                                   .Deeper();
 
-  const hir::StructuralScope& hir_scope = scope.HirScope();
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
 
-  auto rhs_or = scope.LowerExpr(hir_scope.GetExpr(src.rhs), body_frame);
+  auto rhs_or = lowerer.LowerExpr(hir_scope.GetExpr(src.rhs), body_frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::TypeId assign_type = (*rhs_or).type;
-  const mir::ExprId rhs_id = body_scope.AddExpr(*std::move(rhs_or));
+  const mir::ExprId rhs_id = body_block.AddExpr(*std::move(rhs_or));
 
-  auto lhs_or = scope.LowerLhsExpr(hir_scope.GetExpr(src.lhs), body_frame);
+  auto lhs_or = lowerer.LowerLhsExpr(hir_scope.GetExpr(src.lhs), body_frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = body_scope.AddExpr(*std::move(lhs_or));
+  const mir::ExprId lhs_id = body_block.AddExpr(*std::move(lhs_or));
 
   // Build `self.Services()` in the body so an observable LHS routes through
   // `Var<T>::Set` (or `Mutate` for a selector chain). The body's `self` is
   // already bound at depth 0 via `WithSelfBinding(self_id, ...)` above.
-  const mir::TypeId self_ptr_type =
-      frame.current_structural_scope->self_pointer_type;
-  const mir::ExprId body_self_ref = body_scope.AddExpr(
-      mir::MakeProceduralVarRefExpr(
-          mir::ProceduralHops{
-              .value = body_frame.procedural_depth.value -
+  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
+  const mir::ExprId body_self_ref = body_block.AddExpr(
+      mir::MakeLocalRefExpr(
+          mir::BlockHops{
+              .value = body_frame.block_depth.value -
                        body_frame.self_decl_depth.value},
           self_id, self_ptr_type));
-  const mir::ExprId body_services_id = body_scope.AddExpr(
+  const mir::ExprId body_services_id = body_block.AddExpr(
       mir::MakeServicesCallExpr(
-          body_self_ref, scope.Module().Unit().builtins.services));
+          body_self_ref, lowerer.Module().Unit().builtins.services));
 
   const mir::Expr assign_expr = BuildObservableAssignExpr(
-      scope.Module().Unit(), body_scope, body_services_id, lhs_id, rhs_id,
-      std::nullopt, assign_type, scope.Module().Unit().builtins.void_type);
-  const mir::ExprId assign_id = body_scope.AddExpr(assign_expr);
-  body_scope.AppendStmt(
+      lowerer.Module().Unit(), body_block, body_services_id, lhs_id, rhs_id,
+      std::nullopt, assign_type, lowerer.Module().Unit().builtins.void_type);
+  const mir::ExprId assign_id = body_block.AddExpr(assign_expr);
+  body_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
 
-  body_scope.AppendStmt(BuildSensitivityWaitStmt(scope, src.sensitivity_list));
+  body_block.AppendStmt(
+      BuildSensitivityWaitStmt(lowerer, src.sensitivity_list));
 
-  const mir::ProceduralScopeId body_scope_id =
-      process_scope.AddChildScope(std::move(body_scope));
-  process_scope.AppendStmt(
+  const mir::BlockId body_scope_id =
+      process_block.AddChildScope(std::move(body_block));
+  process_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
           .data = mir::ForStmt{
@@ -86,7 +84,7 @@ auto LowerContinuousAssign(
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
       .name = std::move(name),
-      .root_procedural_scope = std::move(process_scope)};
+      .root_block = std::move(process_block)};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

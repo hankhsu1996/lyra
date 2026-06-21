@@ -25,7 +25,7 @@ auto LowerTimeSystemSubroutineCall(
       result_type = builtins.realtime;
       break;
   }
-  auto& body = *frame.current_procedural_scope;
+  auto& body = *frame.current_block;
   const mir::ExprId services_id =
       body.AddExpr(BuildServicesCallExpr(process, frame));
   const mir::ExprId unit_power_id = body.AddExpr(

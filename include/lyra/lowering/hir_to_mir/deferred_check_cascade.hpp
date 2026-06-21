@@ -15,7 +15,7 @@ namespace lyra::lowering::hir_to_mir {
 
 struct DeferredCheckBranch {
   mir::ExprId predicate{};
-  mir::ProceduralScope body;
+  mir::Block body;
 };
 
 // Snapshots predicates into wrapper so the deferred closure body captures
@@ -24,11 +24,10 @@ struct DeferredCheckBranch {
 // (case puts its selector snapshot there; unique-if passes a fresh wrapper)
 // and pre-lowers each body with the depth guards the cascade nesting requires.
 auto BuildDeferredCheckCascade(
-    ModuleLowerer& module, WalkFrame frame, mir::ProceduralScope wrapper,
+    ModuleLowerer& module, WalkFrame frame, mir::Block wrapper,
     std::vector<DeferredCheckBranch> branches,
-    std::optional<mir::ProceduralScope> tail_else,
-    hir::UniquePriorityCheck check, std::optional<std::string> outer_label)
-    -> mir::Stmt;
+    std::optional<mir::Block> tail_else, hir::UniquePriorityCheck check,
+    std::optional<std::string> outer_label) -> mir::Stmt;
 
 auto LowerUniqueIfStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

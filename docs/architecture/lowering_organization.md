@@ -77,9 +77,9 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
 ## Core Invariants
 
 1. Every construction pass is implemented as a class named for the unit of work it processes and the
-   action it performs (`ProcessLowerer`, `StructuralScopeLowerer`). The class is constructed once
-   per task instance and destroyed when that task completes; one class instance does not span
-   multiple task instances. A rendering fold is not a class (see "Rendering Folds").
+   action it performs (`ProcessLowerer`, `ClassLowerer`). The class is constructed once per task
+   instance and destroyed when that task completes; one class instance does not span multiple task
+   instances. A rendering fold is not a class (see "Rendering Folds").
 
 2. The class constructor receives the read-only facts the pass depends on. After construction those
    facts are not mutated. Registries the pass accumulates and the root output the pass is
@@ -114,11 +114,10 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
      output's type table with a slang-keyed cache living in a class registry). Trivial delegating
      wrappers (a class method whose body is `unit_.AddX(...)` with no other state) are forbidden;
      they bloat the class surface without encapsulating anything.
-   - **Nested builders are separate.** IR scopes opened mid-walk by a handler (a procedural scope
-     for an if-branch, a closure body, a fork-branch body) are stack-allocated inside the walker
-     that opens them, populated by recursion through `frame.current_*_scope`, finalized by move when
-     the scope closes, and embedded into their owning slot in the parent IR. They are never class
-     members.
+   - **Nested builders are separate.** IR blocks opened mid-walk by a handler (a block for an
+     if-branch, a closure body, a fork-branch body) are stack-allocated inside the walker that opens
+     them, populated by recursion through `frame.current_block`, finalized by move when the scope
+     closes, and embedded into their owning slot in the parent IR. They are never class members.
 
    This three-way split (root on the class; nested builders on the walker stack; the rest on the
    class as facts / registries) is derived from actual lifetime and sharing reality, not from a
@@ -132,9 +131,9 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
 
 6. `WalkFrame` is a construction pass's **walk position** (see "The Walk Position"): a small value
    type holding **per-recursion traversal context only** -- the scope chain plus a pointer to the
-   current write-target nested builder, the current procedural depth, an optional closure context,
-   and any future stack-discipline state. It is passed by value between walker methods. Each
-   recursion may construct a new frame with different fields set; the cost of copying is trivial.
+   current write-target nested builder, the current block depth, an optional closure context, and
+   any future stack-discipline state. It is passed by value between walker methods. Each recursion
+   may construct a new frame with different fields set; the cost of copying is trivial.
    Walk-invariant facts (the unit currently being constructed, source mapper, builtins table) are
    class members on the pass class, not `WalkFrame` fields -- only state that genuinely changes from
    one recursion to the next belongs on `WalkFrame`. Writes to nested scopes go through
@@ -194,16 +193,15 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
 Every pass over an IR is a recursion, and at each node the recursion needs context that is not in
 the node but follows from where the node sits in the tree. That context is the **walk position**,
 threaded by value down the recursion. Its universal core is the **scope chain**: a hops-relative
-reference (a procedural-var reference at `hops > 0`, a structural-var reference at `hops > 0`)
-resolves only by climbing the chain of enclosing scopes. Every pass -- lowering, fold, or a future
-structured backend -- carries this chain and resolves hops the same way (`StructuralScopeAtHops`,
-`ProceduralScopeAtHops`).
+reference (a local reference at `hops > 0`, a member reference at `hops > 0`) resolves only by
+climbing the chain of enclosing scopes. Every pass -- lowering, fold, or a future structured backend
+-- carries this chain and resolves hops the same way (`EnclosingClassAtHops`, `BlockAtHops`).
 
 What a pass adds on top of the scope chain follows from what it does:
 
 - A **construction pass** adds write-targets (the nested scope being built) and the decision state
-  it uses to compute what to build: the procedural depth (to _compute_ a reference's hop count at
-  the write site), the active capture sink, the lvalue-target flag, the `self` binding, the
+  it uses to compute what to build: the block depth (to _compute_ a reference's hop count at the
+  write site), the active capture sink, the lvalue-target flag, the `self` binding, the
   coroutine-body flag. This is the fat walk position -- `WalkFrame` in HIR-to-MIR.
 - A **fold** adds nothing. Its walk position is the read-only scope chain alone, because every
   decision the construction pass made is already baked into the MIR it reads. It does not _compute_
@@ -221,26 +219,25 @@ Two consequences for type structure:
 - **The concept is shared; the type is per pass.** A construction pass's `WalkFrame` and the fold's
   scope view are two instances of one concept, not one type. Merging them would drag the
   construction-only fields (write-targets, depth, capture sink) into a fold that never uses them.
-  The structural-scope-chain mirror is already deliberate -- `WalkFrame`'s scope-chain node carries
-  a comment that it mirrors the render side's parent link so both reach the same `StructuralVarDecl`
-  -- and naming the render side to match makes that mirror explicit instead of comment-enforced.
+  The class-chain mirror is already deliberate -- `WalkFrame`'s scope-chain node carries a comment
+  that it mirrors the render side's parent link so both reach the same `MemberDecl` -- and naming
+  the render side to match makes that mirror explicit instead of comment-enforced.
 - **A fold need not split invariant facts from the walk position.** A construction pass keeps
   walk-invariant facts (the unit, builtins) on its class and only per-recursion state on
   `WalkFrame`, because facts must stay immutable and stay out of the copied-per-recursion frame. A
   fold has no class and mutates nothing, so its one immutable threaded value carries both the
   walk-invariant lookup (the unit, for type and arena reads) and the per-recursion scope chain. The
   split that protects a construction pass buys a fold nothing.
-- **The two passes resolve the chain differently per axis, and that is correct.** For a procedural
+- **The two passes resolve the chain differently per axis, and that is correct.** For a local
   reference, a construction pass computes the hop count from a depth counter plus its binding
-  registry (symbol -> declaration depth) and never reads the ancestor procedural scope; the fold has
-  no registry, so it climbs the procedural chain to read the referenced var's name. The fold's
-  procedural chain is the read-side substitute for the construction pass's binding registry -- the
-  same registry-presence distinction that separates the two pass kinds. The structural chain, by
-  contrast, both passes climb, because a structural var's declared MIR storage type lives only in
-  the constructed scope and must be read there by whoever needs it (a structural reference, or a
-  static-lifetime local promoted to a per-instance structural var). Forcing the two axes onto one
-  mechanism would either carry a chain a construction pass never reads or demand a name a counter
-  cannot produce.
+  registry (symbol -> declaration depth) and never reads the ancestor block; the fold has no
+  registry, so it climbs the block chain to read the referenced var's name. The fold's block chain
+  is the read-side substitute for the construction pass's binding registry -- the same
+  registry-presence distinction that separates the two pass kinds. The class chain, by contrast,
+  both passes climb, because a member's declared MIR storage type lives only in the constructed
+  class and must be read there by whoever needs it (a member reference, or a static-lifetime local
+  promoted to a per-instance member). Forcing the two axes onto one mechanism would either carry a
+  chain a construction pass never reads or demand a name a counter cannot produce.
 
 ## Rendering Folds
 
@@ -307,8 +304,8 @@ structured-IR emit is a construction pass.
 - A borrowed reference (`&` / pointer-to-stack) to the in-flight output held on a class member. The
   root output is the pass's own deliverable -- it is owned by the class as a real member, moved out
   by `Run`, and the class holds no IR pointer after `Run` returns. Nested scopes opened during the
-  walk (a `mir::ProceduralScope` for an if-branch, a closure body, a fork-branch body) remain
-  stack-local to the walker that opens them; only the pass's single root output lives on the class.
+  walk (a `mir::Block` for an if-branch, a closure body, a fork-branch body) remain stack-local to
+  the walker that opens them; only the pass's single root output lives on the class.
 - A trivial delegating method on the pass class that forwards a single call into the in-flight
   output or the current nested scope (e.g., `lowerer.AddStmt(...)` whose body is
   `frame.current_scope->AddStmt(...)`, or `lowerer.AddType(...)` whose body is `unit_.AddType(...)`
@@ -349,10 +346,9 @@ When a layer's expression / statement dispatch grows past a single readable file
 into the pass class itself and one subsystem file per expression / statement family. The shape is
 fixed:
 
-- The pass class header (`process_lowerer.hpp`, `structural_scope_lowerer.hpp`,
-  `module_lowerer.hpp`) declares the dispatcher methods (`LowerExpr`, `LowerStmt`, `InternType`,
-  etc.), the registry operations, and the fact accessors. Per-kind handler declarations are not on
-  the class.
+- The pass class header (`process_lowerer.hpp`, `class_lowerer.hpp`, `module_lowerer.hpp`) declares
+  the dispatcher methods (`LowerExpr`, `LowerStmt`, `InternType`, etc.), the registry operations,
+  and the fact accessors. Per-kind handler declarations are not on the class.
 - The pass class implementation (`process_lowerer.cpp`, etc.) defines the dispatcher methods. Each
   dispatcher method body is a single switch over node kind, with each case routing to a per-kind
   handler in a subsystem file.
@@ -389,12 +385,11 @@ keyed on an input `mir::ExprId`:
 - **Factory** -- builds a fresh node (or a subtree whose top is a fresh node) from inputs that are
   not an arena handle: a `mir::TypeId`, an HIR node, a literal value, or the body's `self`. A
   factory returns the top node as a detached `mir::Expr`; the caller interns it with
-  `scope.AddExpr(...)`. A composite factory interns its own children into
-  `frame.current_procedural_scope` as it builds and returns only the top detached, so interning the
-  result yields a self-contained arena subtree. The `mir::Make*Expr` family (pure structural
-  constructors) and the lowering `Build*Expr` family (frame-aware) are factories. Examples:
-  `MakeProceduralVarRefExpr`, `BuildSelfRefExpr`, `BuildServicesCallExpr`, `BuildDefaultValueExpr`,
-  `BuildArrayConstructExpr`.
+  `scope.AddExpr(...)`. A composite factory interns its own children into `frame.current_block` as
+  it builds and returns only the top detached, so interning the result yields a self-contained arena
+  subtree. The `mir::Make*Expr` family (pure stateless constructors) and the lowering `Build*Expr`
+  family (frame-aware) are factories. Examples: `MakeLocalRefExpr`, `BuildSelfRefExpr`,
+  `BuildServicesCallExpr`, `BuildDefaultValueExpr`, `BuildArrayConstructExpr`.
 - **Transform** -- keyed on an input `mir::ExprId`: it reads `scope.GetExpr(id)` to decide what to
   build, or may return the input unchanged (pass-through). A transform returns a `mir::ExprId`,
   because it operates on already-interned arena nodes. Examples: `WrapUnpackedIndex` (returns its
@@ -414,12 +409,11 @@ The three kinds of class members correspond to distinct access patterns:
   never mutated post-construction. Examples: an injected type-lookup table, an injected builtins
   struct, an injected HIR module reference, an injected time resolution.
 - **Registries** accumulate append-only entries. Their API exposes `Add` and `Lookup`; the contract
-  is enforced by the registry type's surface, not by external `const` qualifiers. Examples: a
-  procedural-var binding table, a static-locals list, a HIR-to-MIR type-translation map. Some
-  registries are keyed by data from an adjacent layer (e.g., a slang-keyed type cache on an
-  AST-to-HIR Lowerer); such registries cannot move into the IR they index into, because doing so
-  would force the IR layer to depend on the adjacent layer it was deliberately built to be
-  independent of.
+  is enforced by the registry type's surface, not by external `const` qualifiers. Examples: a local
+  binding table, a static-locals list, a HIR-to-MIR type-translation map. Some registries are keyed
+  by data from an adjacent layer (e.g., a slang-keyed type cache on an AST-to-HIR Lowerer); such
+  registries cannot move into the IR they index into, because doing so would force the IR layer to
+  depend on the adjacent layer it was deliberately built to be independent of.
 - **Root output** is the IR the pass exists to produce. It lives as an owned member on the pass
   class with lifetime equal to the pass instance; every handler shares one. The class exposes read
   access via a `const` accessor (`Unit()` returning `const hir::ModuleUnit&`, or its equivalent per
@@ -433,11 +427,11 @@ The three kinds of class members correspond to distinct access patterns:
   "current vs other" pointer for something that has only ever been one.
 
 Nested builders are not class members. They are the mutable IR scopes opened during the walk (e.g.,
-a `mir::ProceduralScope` for an if-branch body, a closure body, a fork-branch body). Each is
-stack-allocated inside the walker that opens it, populated by recursion, finalized by move when the
-scope closes, and embedded into its owning slot in the parent IR. The walk frame carries the
-current-scope pointer so every nested-scope write goes through one uniform call shape
-(`frame. current_*_scope->Add...`) regardless of how deeply nested the current scope is.
+a `mir::Block` for an if-branch body, a closure body, a fork-branch body). Each is stack-allocated
+inside the walker that opens it, populated by recursion, finalized by move when the scope closes,
+and embedded into its owning slot in the parent IR. The walk frame carries the current-scope pointer
+so every nested-scope write goes through one uniform call shape (`frame. current_*_scope->Add...`)
+regardless of how deeply nested the current scope is.
 
 Entry points outside the pass (e.g., a driver that constructs one `ProcessLowerer` per process)
 construct the class with its facts, invoke `Run`, and consume the returned IR or text. They do not

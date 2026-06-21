@@ -22,7 +22,7 @@ auto BuildOutputArgSlot(
     ProcessLowerer& proc, WalkFrame frame, hir::ExprId actual_hir,
     std::string_view temp_name) -> diag::Result<OutputArgSlot> {
   const auto& hir_body = proc.HirBody();
-  auto& wrapper = *frame.current_procedural_scope;
+  auto& wrapper = *frame.current_block;
   // The actual is written to after the call returns: lower it as a cell-
   // typed lvalue so an observable destination's writeback routes through
   // `Var<T>::Set`. For the copy-in initializer the temp wants the current
@@ -36,16 +36,15 @@ auto BuildOutputArgSlot(
   auto value_or = proc.LowerExpr(hir_body.exprs.at(actual_hir.value), frame);
   if (!value_or) return std::unexpected(std::move(value_or.error()));
   const mir::ExprId init_id = wrapper.AddExpr(*std::move(value_or));
-  const mir::ProceduralVarRef temp = wrapper.AppendLocal(
-      mir::ProceduralVarDecl{
-          .name = std::string{temp_name}, .type = actual_type},
+  const mir::LocalRef temp = wrapper.AppendLocal(
+      mir::LocalDecl{.name = std::string{temp_name}, .type = actual_type},
       init_id);
   return OutputArgSlot{.actual = actual_id, .temp = temp, .type = actual_type};
 }
 
 auto BuildCopyOutBlock(
     const mir::CompilationUnit& unit, mir::ExprId services_id,
-    WalkFrame parent_frame, mir::ProceduralScope wrapper,
+    WalkFrame parent_frame, mir::Block wrapper,
     std::optional<std::string> label, mir::TypeId result_type,
     mir::Expr call_expr, bool call_suspends,
     std::optional<mir::ExprId> assign_target_id,
@@ -86,8 +85,8 @@ auto BuildCopyOutBlock(
     wrapper.AppendStmt(mir::ExprStmt{.expr = copy_out});
   }
 
-  const mir::ProceduralScopeId scope_id =
-      parent_frame.current_procedural_scope->AddChildScope(std::move(wrapper));
+  const mir::BlockId scope_id =
+      parent_frame.current_block->AddChildScope(std::move(wrapper));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }

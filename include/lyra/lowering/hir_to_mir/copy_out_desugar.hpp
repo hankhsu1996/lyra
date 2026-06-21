@@ -33,12 +33,12 @@ namespace lyra::lowering::hir_to_mir {
 
 struct OutputArgSlot {
   mir::ExprId actual{};
-  mir::ProceduralVarRef temp{};
+  mir::LocalRef temp{};
   mir::TypeId type{};
 };
 
 // Lower `actual_hir` as an lvalue, allocate a same-typed temp in
-// `frame.current_procedural_scope` initialized from the lowered actual, and
+// `frame.current_block` initialized from the lowered actual, and
 // return the slot bookkeeping. UDF F4 (LowerSubroutineCallWithWritebacks)
 // does not use this helper because its formal type may differ from the
 // actual type via implicit conversion, and its `output`-direction formals
@@ -53,13 +53,13 @@ auto BuildOutputArgSlot(
 // the resulting scope in a BlockStmt carrying `stmt.label`. `assign_target_id`
 // is the LHS for an `lhs = f(...)` shape; `nullopt` produces a bare-call
 // statement. The completed `wrapper` is installed as a child of
-// `*parent_frame.current_procedural_scope`, and the returned Stmt's BlockStmt
+// `*parent_frame.current_block`, and the returned Stmt's BlockStmt
 // references it by id. When `call_suspends` (a bare task call -- LRM 13.4), the
 // call statement is emitted as a suspension (`AwaitStmt`); an `lhs = f(...)`
 // shape is a function and never suspends.
 auto BuildCopyOutBlock(
     const mir::CompilationUnit& unit, mir::ExprId services_id,
-    WalkFrame parent_frame, mir::ProceduralScope wrapper,
+    WalkFrame parent_frame, mir::Block wrapper,
     std::optional<std::string> label, mir::TypeId result_type,
     mir::Expr call_expr, bool call_suspends,
     std::optional<mir::ExprId> assign_target_id,

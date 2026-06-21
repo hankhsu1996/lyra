@@ -7,8 +7,8 @@
 
 namespace lyra::mir {
 class CompilationUnit;
-struct ProceduralScope;
-struct StructuralVarRef;
+struct Block;
+struct MemberRef;
 }  // namespace lyra::mir
 
 namespace lyra::lowering::hir_to_mir {
@@ -31,15 +31,15 @@ auto BuildSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
 // promoted to a per-instance structural var (LRM 13.3.1), which reach their
 // storage identically.
 auto BuildStructuralMemberAccessExpr(
-    const WalkFrame& frame, const mir::StructuralVarRef& member) -> mir::Expr;
+    const WalkFrame& frame, const mir::MemberRef& member) -> mir::Expr;
 
 // Constructs a reference to the cell `cell` denotes (LRM 13.5.2): adds a
-// reference-construction `CallExpr` to `scope` whose result type is a
+// reference-construction `CallExpr` to `block` whose result type is a
 // `RefType` over `pointee`, and returns its id. The body that holds the
 // resulting reference reads / writes the live cell through it. Used for a
 // `ref` / `const ref` actual and for a by-reference closure capture.
 auto BuildReferenceArg(
-    mir::CompilationUnit& unit, mir::ProceduralScope& scope, mir::ExprId cell,
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir
