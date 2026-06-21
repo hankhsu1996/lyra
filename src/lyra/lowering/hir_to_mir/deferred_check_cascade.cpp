@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -12,13 +11,12 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_hops.hpp"
-#include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -195,20 +193,14 @@ auto BuildDiagnosticThenScope(
 auto BuildUniqueCheckClosure(
     ModuleLowerer& module, const WalkFrame& wrapper_frame, mir::Block& wrapper,
     hir::UniquePriorityCheck check,
-    const std::vector<mir::LocalId>& snapshot_vars) -> mir::ClosureExpr {
-  mir::ClosureExpr closure;
-  closure.body = std::make_unique<mir::Block>();
-  auto& body = *closure.body;
+    const std::vector<mir::LocalId>& snapshot_vars) -> mir::Expr {
+  ClosureBuilder closure(module.Unit(), wrapper_frame);
+  mir::Block& body = closure.Body();
 
   const mir::TypeId int32_type = module.Unit().builtins.int32;
   const mir::TypeId self_ptr_type =
       wrapper_frame.current_class->self_pointer_type;
-  const mir::LocalId self_binding =
-      body.AddLocal(mir::LocalDecl{.name = "self", .type = self_ptr_type});
-  const mir::ExprId outer_self_read =
-      wrapper.AddExpr(BuildSelfRefExpr(wrapper_frame, self_ptr_type));
-  closure.captures.emplace_back(
-      mir::Capture{.value = outer_self_read, .binding = self_binding});
+  const mir::LocalId self_binding = closure.SelfBinding();
 
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
@@ -221,20 +213,8 @@ auto BuildUniqueCheckClosure(
                     .hops = mir::BlockHops{.value = 0},
                     .var = snapshot_vars[i]},
             .type = snap_type});
-
-    const mir::LocalId binding = body.AddLocal(
-        mir::LocalDecl{
-            .name = std::format("_lyra_unique_bind_{}", i), .type = snap_type});
-    closure.captures.emplace_back(
-        mir::Capture{.value = outer_read_id, .binding = binding});
-
-    const mir::ExprId inner_read_id = body.AddExpr(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops = mir::BlockHops{.value = 0}, .var = binding},
-            .type = snap_type});
-    inner_reads.push_back(inner_read_id);
+    inner_reads.push_back(closure.CaptureByValue(
+        outer_read_id, std::format("_lyra_unique_bind_{}", i)));
   }
 
   const mir::LocalId count_var = body.AddLocal(
@@ -320,7 +300,7 @@ auto BuildUniqueCheckClosure(
           .then_scope = diag_scope_id,
           .else_scope = std::nullopt});
 
-  return closure;
+  return closure.BuildVoid();
 }
 
 }  // namespace
@@ -350,10 +330,9 @@ auto BuildDeferredCheckCascade(
         branches[i].predicate));
   }
 
-  mir::ClosureExpr closure = BuildUniqueCheckClosure(
+  mir::Expr closure = BuildUniqueCheckClosure(
       module, wrapper_frame, wrapper, check, snapshot_vars);
-  const mir::ExprId closure_expr_id =
-      wrapper.AddExpr(mir::Expr{.data = std::move(closure), .type = void_type});
+  const mir::ExprId closure_expr_id = wrapper.AddExpr(std::move(closure));
 
   const mir::DeferredCheckSiteId site_id =
       module.Unit().AllocateDeferredCheckSiteId();

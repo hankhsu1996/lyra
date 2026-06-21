@@ -203,7 +203,7 @@ auto LowerScanSystemSubroutineCall(
   // LRM 21.3.4.3: the call is an IIFE -- a synchronous closure invoked at once.
   // The body parses into procedural-local temps, conditionally writes them back
   // to the output lvalues, and yields the matched-conversion count.
-  ClosureBuilder closure(process.Module().Unit(), frame, integer_t);
+  ClosureBuilder closure(process.Module().Unit(), frame);
   mir::Block& body = closure.Body();
   const WalkFrame& closure_frame = closure.Frame();
 

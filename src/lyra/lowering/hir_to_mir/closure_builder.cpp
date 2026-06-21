@@ -1,8 +1,9 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 
 #include <memory>
+#include <string>
 #include <utility>
-#include <vector>
+#include <variant>
 
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -15,41 +16,77 @@
 namespace lyra::lowering::hir_to_mir {
 
 ClosureBuilder::ClosureBuilder(
-    mir::CompilationUnit& unit, const WalkFrame& enclosing,
-    mir::TypeId result_type)
-    : outer_(enclosing.current_block),
-      result_type_(result_type),
-      sink_(enclosing.block_depth.Inner(), body_, *outer_, unit) {
-  const mir::TypeId self_ptr_type = enclosing.current_class->self_pointer_type;
+    mir::CompilationUnit& unit, const WalkFrame& enclosing, bool coroutine,
+    std::optional<BlockDepth> by_value_depth)
+    : unit_(&unit),
+      outer_(enclosing.current_block),
+      sink_(
+          enclosing.block_depth.Inner(), body_, *outer_, unit, by_value_depth) {
+  const mir::TypeId self_pointer_type =
+      enclosing.current_class->self_pointer_type;
   self_binding_ =
-      body_.AddLocal(mir::LocalDecl{.name = "self", .type = self_ptr_type});
-  outer_self_read_ =
-      outer_->AddExpr(BuildSelfRefExpr(enclosing, self_ptr_type));
-  // A synchronous IIFE aliases the caller's storage, live throughout the
-  // closure's evaluation, so every sink capture is a reference (no by-value
-  // depth) and the body never suspends.
+      body_.AddLocal(mir::LocalDecl{.name = "self", .type = self_pointer_type});
+  const mir::ExprId outer_self_read =
+      outer_->AddExpr(BuildSelfRefExpr(enclosing, self_pointer_type));
+  captures_.push_back(
+      mir::Capture{.value = outer_self_read, .binding = self_binding_});
   frame_ = enclosing.WithBlock(&body_)
                .Deeper()
                .WithCaptureSink(&sink_)
                .WithSelfBinding(self_binding_, enclosing.block_depth.Inner())
-               .WithCoroutineBody(false);
+               .WithCoroutineBody(coroutine);
 }
 
-auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
-  body_.AppendStmt(mir::ReturnStmt{.value = result});
+auto ClosureBuilder::AddParam(std::string_view name, mir::TypeId type)
+    -> mir::LocalId {
+  const mir::LocalId binding =
+      body_.AddLocal(mir::LocalDecl{.name = std::string(name), .type = type});
+  params_.push_back(mir::Parameter{.binding = binding});
+  return binding;
+}
 
-  std::vector<mir::Capture> captures;
-  captures.push_back(
-      mir::Capture{.value = outer_self_read_, .binding = self_binding_});
+auto ClosureBuilder::CaptureByValue(mir::ExprId outer_id, std::string_view name)
+    -> mir::ExprId {
+  const mir::Expr& outer_expr = outer_->GetExpr(outer_id);
+  if (std::holds_alternative<mir::IntegerLiteral>(outer_expr.data)) {
+    return body_.AddExpr(outer_expr);
+  }
+  const mir::LocalId binding = body_.AddLocal(
+      mir::LocalDecl{.name = std::string(name), .type = outer_expr.type});
+  captures_.push_back(mir::Capture{.value = outer_id, .binding = binding});
+  return body_.AddExpr(
+      mir::Expr{
+          .data =
+              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = binding},
+          .type = outer_expr.type});
+}
+
+auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
   for (const CaptureRequest& request : sink_.TakeRequests()) {
-    captures.push_back(
+    captures_.push_back(
         mir::Capture{.value = request.source, .binding = request.binding});
   }
   mir::ClosureExpr closure;
-  closure.captures = std::move(captures);
+  closure.captures = std::move(captures_);
+  closure.params = std::move(params_);
   closure.body = std::make_unique<mir::Block>(std::move(body_));
+  return mir::Expr{.data = std::move(closure), .type = result_type};
+}
 
-  return mir::Expr{.data = std::move(closure), .type = result_type_};
+auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
+  const mir::TypeId result_type = body_.GetExpr(result).type;
+  body_.AppendStmt(mir::ReturnStmt{.value = result});
+  return Finish(result_type);
+}
+
+auto ClosureBuilder::BuildCoroutine() -> mir::Expr {
+  body_.AppendStmt(
+      mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
+  return Finish(unit_->builtins.coroutine);
+}
+
+auto ClosureBuilder::BuildVoid() -> mir::Expr {
+  return Finish(unit_->builtins.void_type);
 }
 
 auto BuildClosureCallExpr(mir::Block& block, mir::Expr closure) -> mir::Expr {

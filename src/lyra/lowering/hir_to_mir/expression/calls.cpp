@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 
 #include <expected>
-#include <memory>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -14,8 +13,6 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/lowering/hir_to_mir/block_depth.hpp"
-#include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -33,7 +30,6 @@
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/block_hops.hpp"
-#include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -273,7 +269,7 @@ auto LowerAssociativeTraversal(
       module.TranslateType(hir_proc.exprs.at(idx_hir).type);
   const mir::TypeId void_t = module.Unit().builtins.void_type;
 
-  ClosureBuilder closure(process.Module().Unit(), frame, result_type);
+  ClosureBuilder closure(process.Module().Unit(), frame);
   mir::Block& body = closure.Body();
   const WalkFrame& closure_frame = closure.Frame();
 
@@ -425,21 +421,19 @@ auto ArrayContainerElementType(const mir::Type& ty) -> mir::TypeId {
       ty.data);
 }
 
-// LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The body is a
-// normal expression lowered through `process.LowerExpr`; only the
-// closure-specific leaf behaviour lives elsewhere -- captures via
-// `CaptureSink`, iterator and index resolution via pre-allocated body
-// procedural-var bindings remapped for the iterator HIR id and tracked on
-// the walk frame for the kIndex call. When the source has no `with` clause
-// LRM 7.12.1 defines the default as `with (item)`; this synthesises the
-// identity closure (body returns the iterator binding) so MIR always carries
-// the closure argument and downstream consumers see one uniform shape.
+// LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The iterator and
+// index are the closure's two parameters (LRM 7.12.4): the iterator HIR id
+// remaps to the `item` parameter and the index parameter resolves the `kIndex`
+// reference. The body is a normal expression lowered through
+// `process.LowerExpr`. When the source has no `with` clause LRM 7.12.1 defines
+// the default as `with (item)`; this synthesises the identity closure (body
+// returns the iterator binding) so MIR always carries the closure argument and
+// downstream consumers see one uniform shape.
 auto BuildArrayMethodClosure(
     ProcessLowerer& process, WalkFrame frame, hir::TypeId hir_receiver_type,
     const hir::WithClause* with_clause) -> diag::Result<mir::Expr> {
   const auto& module = process.Module();
   const auto& hir_process = process.HirBody();
-  auto& outer_block = *frame.current_block;
   const auto& hir_recv_ty = module.Hir().GetType(hir_receiver_type);
   const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
   if (!element_type.has_value()) {
@@ -453,70 +447,35 @@ auto BuildArrayMethodClosure(
           ? hir_process.procedural_vars.at(with_clause->iterator.value).name
           : std::string{"item"};
 
-  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
-  mir::Block body_block;
-  const WalkFrame body_frame = frame.WithBlock(&body_block).Deeper();
-  const BlockDepth body_depth = body_frame.block_depth;
+  ClosureBuilder closure(process.Module().Unit(), frame);
+  const mir::LocalId item_binding = closure.AddParam(iterator_name, item_type);
+  const mir::LocalId index_binding = closure.AddParam("index", index_type);
+  mir::Block& body = closure.Body();
 
-  const mir::LocalId self_binding = body_block.AddLocal(
-      mir::LocalDecl{.name = "self", .type = self_ptr_type});
-  const mir::ExprId outer_self_read =
-      outer_block.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
-  const mir::LocalId item_binding = body_block.AddLocal(
-      mir::LocalDecl{.name = iterator_name, .type = item_type});
-  const mir::LocalId index_binding =
-      body_block.AddLocal(mir::LocalDecl{.name = "index", .type = index_type});
+  mir::ExprId body_return_value{};
   if (with_clause != nullptr) {
     process.MapProceduralVar(
         with_clause->iterator,
         AutomaticVarBinding{
-            .declaration_procedural_depth = body_depth, .var = item_binding});
-  }
-
-  CaptureSink sink{
-      body_depth, body_block, outer_block, process.Module().Unit()};
-  // A with-clause body is a synchronous predicate / projection closure -- it
-  // never suspends; its trailing `return` renders as a plain `return`.
-  const WalkFrame closure_frame = body_frame.WithCaptureSink(&sink)
-                                      .WithIndexBinding(index_binding)
-                                      .WithSelfBinding(self_binding, body_depth)
-                                      .WithCoroutineBody(false);
-
-  mir::ExprId body_return_value{};
-  mir::TypeId return_type{};
-  if (with_clause != nullptr) {
+            .declaration_procedural_depth = closure.Frame().block_depth,
+            .var = item_binding});
+    // `item.index` (LRM 7.12.4) resolves to the index parameter -- a
+    // with-clause-specific role, so the body lowers through a frame carrying
+    // that binding rather than the builder knowing about it.
     auto body_expr_or = process.LowerExpr(
-        hir_process.exprs.at(with_clause->expr.value), closure_frame);
+        hir_process.exprs.at(with_clause->expr.value),
+        closure.Frame().WithIndexBinding(index_binding));
     if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
-    return_type = body_expr_or->type;
-    body_return_value = body_block.AddExpr(*std::move(body_expr_or));
+    body_return_value = body.AddExpr(*std::move(body_expr_or));
   } else {
-    return_type = item_type;
-    body_return_value = body_block.AddExpr(
+    body_return_value = body.AddExpr(
         mir::Expr{
             .data =
                 mir::LocalRef{
                     .hops = mir::BlockHops{.value = 0}, .var = item_binding},
             .type = item_type});
   }
-  body_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::ReturnStmt{.value = body_return_value}});
-
-  std::vector<mir::Capture> captures;
-  captures.push_back(
-      mir::Capture{.value = outer_self_read, .binding = self_binding});
-  for (const CaptureRequest& request : sink.TakeRequests()) {
-    captures.push_back(
-        mir::Capture{.value = request.source, .binding = request.binding});
-  }
-  mir::ClosureExpr closure;
-  closure.captures = std::move(captures);
-  closure.params.push_back(mir::Parameter{.binding = item_binding});
-  closure.params.push_back(mir::Parameter{.binding = index_binding});
-  closure.body = std::make_unique<mir::Block>(std::move(body_block));
-  return mir::Expr{.data = std::move(closure), .type = return_type};
+  return closure.Build(body_return_value);
 }
 
 // Fans out a system-subroutine call to the per-family handler under
