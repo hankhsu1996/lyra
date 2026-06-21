@@ -116,7 +116,7 @@ auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
   if (!raw_or) return raw_or;
   if (mir::IsObservableCellType(module_->Unit().GetType(raw_or->type))) {
     const mir::ExprId cell_id =
-        frame.current_procedural_scope->AddExpr(*std::move(raw_or));
+        frame.current_block->AddExpr(*std::move(raw_or));
     return mir::MakeObservableGetCallExpr(cell_id, result_type);
   }
   return raw_or;
@@ -230,29 +230,27 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
   const hir::ProceduralBody& body = process.HirBody();
   auto lowered = process.LowerStmt(body.stmts.at(body.root_stmt.value), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  auto& body_scope = *frame.current_procedural_scope;
-  body_scope.AppendStmt(*std::move(lowered));
+  auto& body_block = *frame.current_block;
+  body_block.AppendStmt(*std::move(lowered));
   return {};
 }
 
 auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
     -> diag::Result<mir::Process> {
   const WalkFrame& parent = process.OwnerCtorFrame();
-  mir::ProceduralScope process_scope;
-  const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{
-          .name = "self",
-          .type = parent.current_structural_scope->self_pointer_type});
-  const WalkFrame body_frame =
-      parent.WithProceduralScope(&process_scope)
-          .WithSelfBinding(self_id, parent.procedural_depth)
-          .WithCoroutineBody(true);
+  mir::Block process_block;
+  const mir::LocalId self_id = process_block.AddLocal(
+      mir::LocalDecl{
+          .name = "self", .type = parent.current_class->self_pointer_type});
+  const WalkFrame body_frame = parent.WithBlock(&process_block)
+                                   .WithSelfBinding(self_id, parent.block_depth)
+                                   .WithCoroutineBody(true);
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   return mir::Process{
       .kind = kind,
       .name = std::string{process.CallableName()},
-      .root_procedural_scope = std::move(process_scope)};
+      .root_block = std::move(process_block)};
 }
 
 // Wraps the body in a `forever` loop. `tail_stmt`, if present, is appended
@@ -264,28 +262,27 @@ auto LowerForeverProcess(
     ProcessLowerer& process, std::optional<mir::Stmt> tail_stmt)
     -> diag::Result<mir::Process> {
   const WalkFrame& parent = process.OwnerCtorFrame();
-  mir::ProceduralScope process_scope;
-  const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{
-          .name = "self",
-          .type = parent.current_structural_scope->self_pointer_type});
-  mir::ProceduralScope body_scope;
+  mir::Block process_block;
+  const mir::LocalId self_id = process_block.AddLocal(
+      mir::LocalDecl{
+          .name = "self", .type = parent.current_class->self_pointer_type});
+  mir::Block body_block;
   {
     const WalkFrame body_frame =
-        parent.WithProceduralScope(&body_scope)
-            .WithSelfBinding(self_id, parent.procedural_depth)
+        parent.WithBlock(&body_block)
+            .WithSelfBinding(self_id, parent.block_depth)
             .WithCoroutineBody(true)
             .Deeper();
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     if (tail_stmt.has_value()) {
-      body_scope.AppendStmt(*std::move(tail_stmt));
+      body_block.AppendStmt(*std::move(tail_stmt));
     }
   }
 
-  const mir::ProceduralScopeId body_scope_id =
-      process_scope.AddChildScope(std::move(body_scope));
-  process_scope.AppendStmt(
+  const mir::BlockId body_scope_id =
+      process_block.AddChildScope(std::move(body_block));
+  process_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
           .data = mir::ForStmt{
@@ -296,15 +293,15 @@ auto LowerForeverProcess(
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
       .name = std::string{process.CallableName()},
-      .root_procedural_scope = std::move(process_scope)};
+      .root_block = std::move(process_block)};
 }
 
-auto LowerSubroutineKind(hir::SubroutineKind kind) -> mir::SubroutineKind {
+auto LowerSubroutineKind(hir::SubroutineKind kind) -> mir::MethodKind {
   switch (kind) {
     case hir::SubroutineKind::kTask:
-      return mir::SubroutineKind::kTask;
+      return mir::MethodKind::kTask;
     case hir::SubroutineKind::kFunction:
-      return mir::SubroutineKind::kFunction;
+      return mir::MethodKind::kFunction;
   }
   throw InternalError("LowerSubroutineKind: unknown hir::SubroutineKind");
 }
@@ -341,31 +338,29 @@ auto ProcessLowerer::Run(const hir::Process& src)
     case hir::ProcessKind::kAlwaysLatch:
       return LowerForeverProcess(
           *this,
-          BuildSensitivityWaitStmt(*scope_, src.implicit_sensitivity_list));
+          BuildSensitivityWaitStmt(*owner_, src.implicit_sensitivity_list));
   }
   throw InternalError("ProcessLowerer::Run: unknown HIR ProcessKind");
 }
 
 auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
-    -> diag::Result<mir::StructuralSubroutineDecl> {
+    -> diag::Result<mir::MethodDecl> {
   const WalkFrame& parent = owner_ctor_frame_;
-  mir::ProceduralScope body_scope;
-  const mir::ProceduralVarId self_id = body_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{
-          .name = "self",
-          .type = parent.current_structural_scope->self_pointer_type});
+  mir::Block body_block;
+  const mir::LocalId self_id = body_block.AddLocal(
+      mir::LocalDecl{
+          .name = "self", .type = parent.current_class->self_pointer_type});
   // A task body suspends on timing controls and renders as a coroutine; a
   // function body executes synchronously.
   const bool body_is_coroutine = src.kind == hir::SubroutineKind::kTask;
-  const WalkFrame body_frame =
-      parent.WithProceduralScope(&body_scope)
-          .WithSelfBinding(self_id, parent.procedural_depth)
-          .WithCoroutineBody(body_is_coroutine);
+  const WalkFrame body_frame = parent.WithBlock(&body_block)
+                                   .WithSelfBinding(self_id, parent.block_depth)
+                                   .WithCoroutineBody(body_is_coroutine);
 
   // Formals are procedural vars of the body with no VarDeclStmt: pre-register
   // them in the body scope at depth 0 so the body's references resolve. The
   // backend renders these as C++ parameters rather than in-body declarations.
-  std::vector<mir::SubroutineParam> params;
+  std::vector<mir::MethodParam> params;
   params.reserve(src.params.size());
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.at(param.var.value);
@@ -382,15 +377,14 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
                                .is_const = param.direction ==
                                            hir::ParamDirection::kConstRef}})
                      : value_type;
-    const mir::ProceduralVarId mir_var = body_scope.AddProceduralVar(
-        mir::ProceduralVarDecl{.name = hir_var.name, .type = type});
+    const mir::LocalId mir_var =
+        body_block.AddLocal(mir::LocalDecl{.name = hir_var.name, .type = type});
     MapProceduralVar(
-        param.var,
-        AutomaticVarBinding{
-            .declaration_procedural_depth = body_frame.procedural_depth,
-            .var = mir_var});
+        param.var, AutomaticVarBinding{
+                       .declaration_procedural_depth = body_frame.block_depth,
+                       .var = mir_var});
     params.push_back(
-        mir::SubroutineParam{
+        mir::MethodParam{
             .name = hir_var.name,
             .type = type,
             .direction = LowerParamDirection(param.direction)});
@@ -405,17 +399,17 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   // resolves to the method), then close the body with `return <result>`.
   // void functions and tasks have no result variable and no trailing return.
   const mir::TypeId result_type = module_->TranslateType(src.result_type);
-  std::optional<mir::ProceduralVarRef> result_ref;
+  std::optional<mir::LocalRef> result_ref;
   if (src.result_var.has_value()) {
-    const mir::ExprId default_init = body_scope.AddExpr(
+    const mir::ExprId default_init = body_block.AddExpr(
         BuildDefaultValueExpr(*module_, body_frame, result_type));
-    result_ref = body_scope.AppendLocal(
-        mir::ProceduralVarDecl{.name = "_lyra_result", .type = result_type},
+    result_ref = body_block.AppendLocal(
+        mir::LocalDecl{.name = "_lyra_result", .type = result_type},
         default_init);
     MapProceduralVar(
         *src.result_var,
         AutomaticVarBinding{
-            .declaration_procedural_depth = body_frame.procedural_depth,
+            .declaration_procedural_depth = body_frame.block_depth,
             .var = result_ref->var});
   }
 
@@ -424,19 +418,19 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
 
   if (result_ref.has_value()) {
     const mir::ExprId result_read =
-        body_scope.AddExpr(mir::Expr{.data = *result_ref, .type = result_type});
-    body_scope.AppendStmt(
+        body_block.AddExpr(mir::Expr{.data = *result_ref, .type = result_type});
+    body_block.AppendStmt(
         mir::ReturnStmt{
             .value = result_read,
             .is_coroutine_return = body_frame.is_coroutine_body});
   }
 
-  return mir::StructuralSubroutineDecl{
+  return mir::MethodDecl{
       .name = src.name,
       .kind = LowerSubroutineKind(src.kind),
       .result_type = result_type,
       .params = std::move(params),
-      .root_procedural_scope = std::move(body_scope)};
+      .root_block = std::move(body_block)};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

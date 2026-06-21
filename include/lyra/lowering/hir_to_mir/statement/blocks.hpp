@@ -3,7 +3,7 @@
 // Lowering of block-shaped statements: `empty` and `begin...end` blocks
 // (LRM 9.3). Also exposes `LowerStmtIntoChildScope`, the helper every
 // control-flow statement uses to package a body / branch as its own fresh
-// `mir::ProceduralScope`.
+// `mir::Block`.
 
 #include <optional>
 #include <string>
@@ -23,14 +23,14 @@ auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::BlockStmt& b) -> diag::Result<mir::Stmt>;
 
-// Lowers a single HIR stmt into its own fresh `mir::ProceduralScope`: opens
-// a child procedural scope, descends through
-// `frame.WithProceduralScope(...).Deeper()` so procvar refs see the correct
-// hop count, and packages the result as the new scope's sole root stmt.
+// Lowers a single HIR stmt into its own fresh `mir::Block`: opens
+// a child block, descends through
+// `frame.WithBlock(...).Deeper()` so local refs see the correct
+// hop count, and packages the result as the new block's sole root stmt.
 // Used wherever a control-flow node needs a body or branch scope (for,
 // while, repeat, do-while, forever, if branches, case items).
 auto LowerStmtIntoChildScope(
     ProcessLowerer& process, WalkFrame frame, hir::StmtId hir_stmt_id)
-    -> diag::Result<mir::ProceduralScope>;
+    -> diag::Result<mir::Block>;
 
 }  // namespace lyra::lowering::hir_to_mir

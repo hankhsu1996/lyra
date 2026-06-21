@@ -13,7 +13,7 @@ namespace lyra::lowering::hir_to_mir {
 // Builds a primitive MIR expression evaluating to the LRM Table 6-7 default
 // value of `type`, returning the top node detached for the caller to intern.
 // Composite types (UnpackedArray, DynamicArray, Queue) recurse and register
-// each element default into `frame.current_procedural_scope` as children before
+// each element default into `frame.current_block` as children before
 // returning the outer composite, so interning the result yields a
 // self-contained subtree of arena entries.
 //

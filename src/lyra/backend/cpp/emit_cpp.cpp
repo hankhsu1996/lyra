@@ -16,11 +16,11 @@
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/member.hpp"
+#include "lyra/mir/param.hpp"
 #include "lyra/mir/process.hpp"
-#include "lyra/mir/structural_param.hpp"
-#include "lyra/mir/structural_scope.hpp"
-#include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -28,10 +28,10 @@ namespace lyra::backend::cpp {
 namespace {
 
 auto RenderField(
-    const ScopeView& ctor_view, const mir::StructuralVarDecl& var,
-    std::size_t indent) -> diag::Result<std::string> {
+    const ScopeView& ctor_view, const mir::MemberDecl& var, std::size_t indent)
+    -> diag::Result<std::string> {
   const auto& unit = ctor_view.Unit();
-  auto type_or = RenderTypeAsCpp(unit, ctor_view.StructuralScope(), var.type);
+  auto type_or = RenderTypeAsCpp(unit, ctor_view.Class(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   // An upward reference is an ExternUp member: its constructor takes the
   // symbol payload (ancestor, by-name tail, leaf signal) rather than a value
@@ -56,10 +56,10 @@ auto RenderField(
 }
 
 auto RenderParamField(
-    const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
-    const mir::StructuralParamDecl& param, std::size_t indent)
+    const mir::CompilationUnit& unit, const mir::Class& owner_class,
+    const mir::ParamDecl& param, std::size_t indent)
     -> diag::Result<std::string> {
-  auto type_or = RenderTypeAsCpp(unit, owner_scope, param.type);
+  auto type_or = RenderTypeAsCpp(unit, owner_class, param.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   return Indent(indent) + "const " + *type_or + " " + param.name + ";\n";
 }
@@ -69,15 +69,15 @@ auto CtorParamName(std::size_t index) -> std::string {
 }
 
 auto RenderConstructor(
-    const ScopeView& scope_view, const mir::StructuralScope& s,
+    const ScopeView& scope_view, const mir::Class& s,
     const std::string& base_class, std::size_t indent)
     -> diag::Result<std::string> {
   std::string sig = s.name +
                     "(lyra::runtime::Scope* parent, std::string name, "
                     "lyra::runtime::RuntimeServices& services";
   std::string init_list = base_class + "(parent, std::move(name), services)";
-  for (std::size_t i = 0; i < s.structural_params.size(); ++i) {
-    const auto& p = s.structural_params[i];
+  for (std::size_t i = 0; i < s.params.size(); ++i) {
+    const auto& p = s.params[i];
     const auto param_name = CtorParamName(i);
     auto type_or = RenderTypeAsCpp(scope_view.Unit(), s, p.type);
     if (!type_or) return std::unexpected(std::move(type_or.error()));
@@ -86,13 +86,13 @@ auto RenderConstructor(
   }
   sig += ") : " + init_list;
 
-  if (s.constructor_scope.root_stmts.empty()) {
+  if (s.constructor_block.root_stmts.empty()) {
     return Indent(indent) + sig + " {}\n";
   }
   std::string out;
   out += Indent(indent) + sig + " { init(this); }\n";
   out += Indent(indent) + "static void init(" + s.name + "* self) {\n";
-  auto rendered_or = RenderProceduralScopeStatements(scope_view, indent + 1);
+  auto rendered_or = RenderBlockStatements(scope_view, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
   out += Indent(indent) + "}\n";
@@ -101,18 +101,17 @@ auto RenderConstructor(
 
 auto RenderProcessMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
-    const mir::StructuralScope& s, const mir::Process& process,
-    std::size_t indent) -> diag::Result<std::string> {
+    const mir::Class& s, const mir::Process& process, std::size_t indent)
+    -> diag::Result<std::string> {
   const ScopeView proc_view =
       (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, process.root_procedural_scope)
-          : parent_struct_view->WithStructuralScope(
-                s, process.root_procedural_scope);
+          ? ScopeView::ForRoot(unit, s, process.root_block)
+          : parent_struct_view->WithClass(s, process.root_block);
 
   std::string out;
   out += Indent(indent) + "static auto " + process.name + "(" + s.name +
          "* self) -> lyra::runtime::Coroutine {\n";
-  auto rendered_or = RenderProceduralScopeStatements(proc_view, indent + 1);
+  auto rendered_or = RenderBlockStatements(proc_view, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
   out += Indent(indent + 1) + "co_return;\n";
@@ -122,8 +121,8 @@ auto RenderProcessMethod(
 
 // A value-returning function renders its result type; a void function or task
 // renders C++ `void`.
-auto RenderSubroutineResultType(
-    const mir::CompilationUnit& unit, const mir::StructuralScope& s,
+auto RenderMethodResultType(
+    const mir::CompilationUnit& unit, const mir::Class& s,
     mir::TypeId result_type) -> diag::Result<std::string> {
   if (std::holds_alternative<mir::VoidType>(unit.GetType(result_type).data)) {
     return std::string{"void"};
@@ -131,19 +130,19 @@ auto RenderSubroutineResultType(
   return RenderTypeAsCpp(unit, s, result_type);
 }
 
-auto RenderSubroutineMethod(
+auto RenderMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
-    const mir::StructuralScope& s, const mir::StructuralSubroutineDecl& sub,
-    std::size_t indent) -> diag::Result<std::string> {
+    const mir::Class& s, const mir::MethodDecl& sub, std::size_t indent)
+    -> diag::Result<std::string> {
   // A task may suspend on timing controls, so it is a coroutine enabled with
   // `co_await`; a function executes in zero time and renders its result type
   // (LRM 13.3 / 13.4).
-  const bool is_task = sub.kind == mir::SubroutineKind::kTask;
+  const bool is_task = sub.kind == mir::MethodKind::kTask;
   std::string return_type;
   if (is_task) {
     return_type = "lyra::runtime::Coroutine";
   } else {
-    auto result_or = RenderSubroutineResultType(unit, s, sub.result_type);
+    auto result_or = RenderMethodResultType(unit, s, sub.result_type);
     if (!result_or) return std::unexpected(std::move(result_or.error()));
     return_type = *std::move(result_or);
   }
@@ -172,13 +171,12 @@ auto RenderSubroutineMethod(
 
   const ScopeView sub_view =
       parent_struct_view == nullptr
-          ? ScopeView::ForRoot(unit, s, sub.root_procedural_scope)
-          : parent_struct_view->WithStructuralScope(
-                s, sub.root_procedural_scope);
+          ? ScopeView::ForRoot(unit, s, sub.root_block)
+          : parent_struct_view->WithClass(s, sub.root_block);
 
   std::string out;
   out += Indent(indent) + sig + " {\n";
-  auto rendered_or = RenderProceduralScopeStatements(sub_view, indent + 1);
+  auto rendered_or = RenderBlockStatements(sub_view, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
   if (is_task) {
@@ -198,7 +196,7 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
   throw InternalError("RenderProcessKindLiteral: unknown ProcessKind");
 }
 
-auto RenderCreateProcesses(const mir::StructuralScope& s, std::size_t indent)
+auto RenderCreateProcesses(const mir::Class& s, std::size_t indent)
     -> std::string {
   std::string out;
   out += Indent(indent) + "void CreateProcesses() override {\n";
@@ -211,16 +209,16 @@ auto RenderCreateProcesses(const mir::StructuralScope& s, std::size_t indent)
 }
 
 auto RenderScopeAsClass(
-    const mir::CompilationUnit& unit, const mir::StructuralScope& s,
-    std::size_t indent, bool is_top_level, const ScopeView* parent_struct_view)
+    const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
+    bool is_top_level, const ScopeView* parent_struct_view)
     -> diag::Result<std::string> {
-  // `this_anchor` is bound to `s.constructor_scope` so it doubles as the
+  // `this_anchor` is bound to `s.constructor_block` so it doubles as the
   // view for rendering the constructor body. Children's bodies use it as
-  // their structural parent (one hop above the child).
+  // their enclosing class (one hop above the child).
   const ScopeView this_anchor =
       (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, s.constructor_scope)
-          : parent_struct_view->WithStructuralScope(s, s.constructor_scope);
+          ? ScopeView::ForRoot(unit, s, s.constructor_block)
+          : parent_struct_view->WithClass(s, s.constructor_block);
 
   // A unit-root scope is an instance; a nested generate block is a generate
   // scope. The base type carries the kind.
@@ -246,19 +244,19 @@ auto RenderScopeAsClass(
 
   // The scope's own time unit (LRM 3.14.2). $time / $realtime read here to
   // scale the design-global tick back to this design element's unit (LRM
-  // 20.3); an unqualified reference in a process or subroutine body resolves
+  // 20.3); an unqualified reference in a process or method body resolves
   // to the lexically enclosing scope's value.
   out += Indent(indent + 1) + "static constexpr std::int8_t kTimeUnitPower = " +
          std::to_string(static_cast<int>(s.time_resolution.unit_power)) +
          ";\n\n";
 
-  for (const auto& child : s.child_structural_scopes) {
+  for (const auto& child : s.nested_classes) {
     auto child_or =
         RenderScopeAsClass(unit, child, indent + 1, false, &this_anchor);
     if (!child_or) return std::unexpected(std::move(child_or.error()));
     out += *child_or;
   }
-  if (!s.child_structural_scopes.empty()) {
+  if (!s.nested_classes.empty()) {
     out += "\n";
   }
 
@@ -282,24 +280,24 @@ auto RenderScopeAsClass(
 
   // Members follow the constructor and methods. They are public so cross-unit
   // references can reach them directly (see reference_resolution.md).
-  if (!s.structural_params.empty() || !s.structural_vars.empty()) {
+  if (!s.params.empty() || !s.members.empty()) {
     out += "\n";
   }
-  for (const auto& p : s.structural_params) {
+  for (const auto& p : s.params) {
     auto field_or = RenderParamField(unit, s, p, indent + 1);
     if (!field_or) return std::unexpected(std::move(field_or.error()));
     out += *field_or;
   }
-  if (!s.structural_params.empty() && !s.structural_vars.empty()) {
+  if (!s.params.empty() && !s.members.empty()) {
     out += "\n";
   }
-  for (const auto& v : s.structural_vars) {
+  for (const auto& v : s.members) {
     auto field_or = RenderField(this_anchor, v, indent + 1);
     if (!field_or) return std::unexpected(std::move(field_or.error()));
     out += *field_or;
   }
 
-  if (s.processes.empty() && s.structural_subroutines.empty()) {
+  if (s.processes.empty() && s.methods.empty()) {
     out += Indent(indent) + "};\n";
     return out;
   }
@@ -315,10 +313,9 @@ auto RenderScopeAsClass(
     out += *method_or;
   }
 
-  for (const auto& sub : s.structural_subroutines) {
+  for (const auto& sub : s.methods) {
     out += "\n";
-    auto method_or =
-        RenderSubroutineMethod(parent_struct_view, unit, s, sub, indent + 1);
+    auto method_or = RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     out += *method_or;
   }
@@ -343,7 +340,7 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
 }
 
 auto RenderScopeHeaderFile(
-    const mir::CompilationUnit& unit, const mir::StructuralScope& s)
+    const mir::CompilationUnit& unit, const mir::Class& s)
     -> diag::Result<std::string> {
   std::string out;
   out += "#pragma once\n";
@@ -449,15 +446,14 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
   for (const auto& top : tops) {
-    out += "#include \"" + top.unit->structural_scope.name + ".hpp\"\n";
+    out += "#include \"" + top.unit->top_class.name + ".hpp\"\n";
   }
   out += "\n";
   out += "auto main() -> int {\n";
   out += "  lyra::runtime::Engine engine;\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
-    out += "  " + tops[i].unit->structural_scope.name + " top" +
-           std::to_string(i) + "{nullptr, \"" + tops[i].name +
-           "\", engine.Services()};\n";
+    out += "  " + tops[i].unit->top_class.name + " top" + std::to_string(i) +
+           "{nullptr, \"" + tops[i].name + "\", engine.Services()};\n";
   }
   out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
@@ -475,7 +471,7 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
 auto EmitCppDeclarations(const mir::CompilationUnit& unit)
     -> diag::Result<std::vector<CppArtifact>> {
   std::vector<CppArtifact> headers;
-  const auto& root = unit.structural_scope;
+  const auto& root = unit.top_class;
   auto content_or = RenderScopeHeaderFile(unit, root);
   if (!content_or) return std::unexpected(std::move(content_or.error()));
   headers.push_back(

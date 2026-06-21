@@ -5,11 +5,10 @@
 
 namespace lyra::mir {
 
-struct StructuralScopeId {
+struct ClassId {
   std::uint32_t value;
 
-  auto operator<=>(const StructuralScopeId&) const
-      -> std::strong_ordering = default;
+  auto operator<=>(const ClassId&) const -> std::strong_ordering = default;
 };
 
 }  // namespace lyra::mir

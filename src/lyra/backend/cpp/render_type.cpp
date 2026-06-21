@@ -9,8 +9,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -41,11 +41,11 @@ auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
   return dim_list + ", " + signed_lit + ", " + four_state_lit;
 }
 
-auto RenderEnumClassName(
-    const mir::StructuralScope& owner_scope, mir::TypeId id) -> std::string {
+auto RenderEnumClassName(const mir::Class& owner_class, mir::TypeId id)
+    -> std::string {
   // First TypeAlias targeting `id` supplies the canonical class name. SV
   // identifiers are valid C++ identifiers, so the alias name flows directly.
-  for (const auto& alias : owner_scope.type_aliases) {
+  for (const auto& alias : owner_class.type_aliases) {
     if (alias.target == id) {
       return alias.name;
     }
@@ -54,7 +54,7 @@ auto RenderEnumClassName(
 }
 
 auto RenderTypeAsCpp(
-    const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
+    const mir::CompilationUnit& unit, const mir::Class& owner_class,
     mir::TypeId type_id) -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
@@ -62,7 +62,7 @@ auto RenderTypeAsCpp(
             return std::string{"lyra::value::PackedArray"};
           },
           [&](const mir::EnumType&) -> diag::Result<std::string> {
-            return RenderEnumClassName(owner_scope, type_id);
+            return RenderEnumClassName(owner_class, type_id);
           },
           [](const mir::StringType&) -> diag::Result<std::string> {
             return std::string{"lyra::value::String"};
@@ -80,17 +80,17 @@ auto RenderTypeAsCpp(
             return std::string{"lyra::value::Real"};
           },
           [&](const mir::UnpackedArrayType& ua) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, ua.element_type);
+            auto inner_or = RenderTypeAsCpp(unit, owner_class, ua.element_type);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "lyra::value::UnpackedArray<" + *inner_or + ">";
           },
           [&](const mir::DynamicArrayType& da) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, da.element_type);
+            auto inner_or = RenderTypeAsCpp(unit, owner_class, da.element_type);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "lyra::value::DynamicArray<" + *inner_or + ">";
           },
           [&](const mir::QueueType& q) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, q.element_type);
+            auto inner_or = RenderTypeAsCpp(unit, owner_class, q.element_type);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "lyra::value::Queue<" + *inner_or + ">";
           },
@@ -100,9 +100,9 @@ auto RenderTypeAsCpp(
                   "RenderTypeAsCpp: associative array with a wildcard index "
                   "type reached the backend; AST -> HIR rejects it");
             }
-            auto key_or = RenderTypeAsCpp(unit, owner_scope, *a.key_type);
+            auto key_or = RenderTypeAsCpp(unit, owner_class, *a.key_type);
             if (!key_or) return std::unexpected(std::move(key_or.error()));
-            auto elem_or = RenderTypeAsCpp(unit, owner_scope, a.element_type);
+            auto elem_or = RenderTypeAsCpp(unit, owner_class, a.element_type);
             if (!elem_or) return std::unexpected(std::move(elem_or.error()));
             return "lyra::value::AssociativeArray<" + *key_or + ", " +
                    *elem_or + ">";
@@ -135,7 +135,7 @@ auto RenderTypeAsCpp(
             return std::string{"lyra::runtime::Coroutine"};
           },
           [&](const mir::RefType& r) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, r.pointee);
+            auto inner_or = RenderTypeAsCpp(unit, owner_class, r.pointee);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             std::string ref = "lyra::runtime::Ref<" + *inner_or + ">";
             return r.is_const ? "const " + ref : ref;
@@ -144,7 +144,7 @@ auto RenderTypeAsCpp(
             return std::string{"void"};
           },
           [&](const mir::PointerType& p) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, p.pointee);
+            auto inner_or = RenderTypeAsCpp(unit, owner_class, p.pointee);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             switch (p.ownership) {
               case mir::PointerOwnership::kUnique:
@@ -161,17 +161,17 @@ auto RenderTypeAsCpp(
             throw InternalError("RenderTypeAsCpp: unknown PointerOwnership");
           },
           [&](const mir::VectorType& v) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, v.element);
+            auto inner_or = RenderTypeAsCpp(unit, owner_class, v.element);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "std::vector<" + *inner_or + ">";
           },
           [&](const mir::ExternalRefType& e) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, e.element);
+            auto inner_or = RenderTypeAsCpp(unit, owner_class, e.element);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "lyra::runtime::ExternUp<" + *inner_or + ">";
           },
           [&](const mir::ObservableType& o) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, o.value);
+            auto inner_or = RenderTypeAsCpp(unit, owner_class, o.value);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "lyra::runtime::Var<" + *inner_or + ">";
           },

@@ -20,10 +20,10 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -34,25 +34,24 @@ auto LowerIfStmt(
   if (i.check.has_value()) {
     return LowerUniqueIfStmt(process, frame, std::move(label), i);
   }
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   auto cond_expr_or =
       process.LowerExpr(process.HirBody().exprs.at(i.condition.value), frame);
   if (!cond_expr_or) {
     return std::unexpected(std::move(cond_expr_or.error()));
   }
-  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_expr_or));
+  const mir::ExprId cond_id = block.AddExpr(*std::move(cond_expr_or));
 
   auto then_or = LowerStmtIntoChildScope(process, frame, i.then_stmt);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
-  const mir::ProceduralScopeId then_scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(*then_or));
+  const mir::BlockId then_scope_id =
+      frame.current_block->AddChildScope(std::move(*then_or));
 
-  std::optional<mir::ProceduralScopeId> else_scope_id;
+  std::optional<mir::BlockId> else_scope_id;
   if (i.else_stmt.has_value()) {
     auto else_or = LowerStmtIntoChildScope(process, frame, *i.else_stmt);
     if (!else_or) return std::unexpected(std::move(else_or.error()));
-    else_scope_id =
-        frame.current_procedural_scope->AddChildScope(std::move(*else_or));
+    else_scope_id = frame.current_block->AddChildScope(std::move(*else_or));
   }
 
   return mir::Stmt{
@@ -80,8 +79,8 @@ auto LowerCaseStmt(
     throw InternalError("LowerCaseStmt: unknown hir::CaseCondition");
   }();
 
-  mir::ProceduralScope wrapper;
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
+  mir::Block wrapper;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   auto cond_or =
       process.LowerExpr(hir_proc.exprs.at(c.condition.value), wrapper_frame);
@@ -127,7 +126,7 @@ auto LowerCaseStmt(
     return f;
   };
 
-  std::vector<mir::ProceduralScope> body_scopes;
+  std::vector<mir::Block> body_scopes;
   body_scopes.reserve(c.items.size());
   for (std::size_t i = 0; i < c.items.size(); ++i) {
     auto body_or = LowerStmtIntoChildScope(
@@ -145,7 +144,7 @@ auto LowerCaseStmt(
   const WalkFrame default_enter_frame =
       c.items.empty() ? wrapper_frame
                       : deeper_by(wrapper_frame, c.items.size() - 1);
-  std::optional<mir::ProceduralScope> default_scope;
+  std::optional<mir::Block> default_scope;
   if (c.default_stmt.has_value()) {
     auto def_or =
         LowerStmtIntoChildScope(process, default_enter_frame, *c.default_stmt);
@@ -168,8 +167,7 @@ auto LowerCaseStmt(
             if (!lab_or) {
               return std::unexpected(std::move(lab_or.error()));
             }
-            return label_frame.current_procedural_scope->AddExpr(
-                *std::move(lab_or));
+            return label_frame.current_block->AddExpr(*std::move(lab_or));
           });
       if (!pred_or) return std::unexpected(std::move(pred_or.error()));
       predicates.push_back(*pred_or);
@@ -201,8 +199,7 @@ auto LowerCaseStmt(
           if (!lab_or) {
             return std::unexpected(std::move(lab_or.error()));
           }
-          return label_frame.current_procedural_scope->AddExpr(
-              *std::move(lab_or));
+          return label_frame.current_block->AddExpr(*std::move(lab_or));
         });
   };
 
@@ -217,8 +214,8 @@ auto LowerCaseInsideStmt(
   const hir::ProceduralBody& hir_proc = process.HirBody();
   const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
 
-  mir::ProceduralScope wrapper;
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
+  mir::Block wrapper;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   auto cond_or =
       process.LowerExpr(hir_proc.exprs.at(c.condition.value), wrapper_frame);
@@ -240,7 +237,7 @@ auto LowerCaseInsideStmt(
     return f;
   };
 
-  std::vector<mir::ProceduralScope> body_scopes;
+  std::vector<mir::Block> body_scopes;
   body_scopes.reserve(c.items.size());
   for (std::size_t i = 0; i < c.items.size(); ++i) {
     auto body_or = LowerStmtIntoChildScope(
@@ -254,7 +251,7 @@ auto LowerCaseInsideStmt(
   const WalkFrame default_enter_frame =
       c.items.empty() ? wrapper_frame
                       : deeper_by(wrapper_frame, c.items.size() - 1);
-  std::optional<mir::ProceduralScope> default_scope;
+  std::optional<mir::Block> default_scope;
   if (c.default_stmt.has_value()) {
     auto def_or =
         LowerStmtIntoChildScope(process, default_enter_frame, *c.default_stmt);
@@ -268,12 +265,12 @@ auto LowerCaseInsideStmt(
       [&](WalkFrame enc_frame, std::size_t item_idx,
           std::uint32_t sel_hops) -> diag::Result<mir::ExprId> {
     const WalkFrame level_frame = deeper_by(enc_frame, item_idx);
-    auto& enc = *level_frame.current_procedural_scope;
+    auto& enc = *level_frame.current_block;
     const mir::ExprId sel_ref = enc.AddExpr(
         mir::Expr{
             .data =
-                mir::ProceduralVarRef{
-                    .hops = mir::ProceduralHops{.value = sel_hops},
+                mir::LocalRef{
+                    .hops = mir::BlockHops{.value = sel_hops},
                     .var = snapshot.sel_var},
             .type = snapshot.sel_type});
     const auto& item = c.items[item_idx];

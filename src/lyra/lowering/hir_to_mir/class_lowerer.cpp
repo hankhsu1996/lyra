@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,13 +28,13 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/block_hops.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/procedural_hops.hpp"
-#include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/local.hpp"
+#include "lyra/mir/member.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/structural_scope.hpp"
-#include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -74,20 +74,20 @@ auto CompanionVarNameFor(std::string_view child_scope_name) -> std::string {
 }
 
 void CheckNoNameCollision(
-    const mir::StructuralScope& owner_scope, std::string_view child_scope_name,
+    const mir::Class& owner_class, std::string_view child_scope_name,
     std::string_view companion_var_name) {
-  for (const auto& v : owner_scope.structural_vars) {
+  for (const auto& v : owner_class.members) {
     if (v.name == companion_var_name || v.name == child_scope_name) {
       throw InternalError(
-          "child scope or companion var name collides with an existing "
-          "structural var declaration in the enclosing scope");
+          "child class or companion var name collides with an existing "
+          "member declaration in the enclosing class");
     }
   }
-  for (const auto& c : owner_scope.child_structural_scopes) {
+  for (const auto& c : owner_class.nested_classes) {
     if (c.name == child_scope_name) {
       throw InternalError(
-          "child scope name collides with an existing nested structural "
-          "scope declaration in the enclosing scope");
+          "child class name collides with an existing nested class "
+          "declaration in the enclosing class");
     }
   }
 }
@@ -156,7 +156,7 @@ auto EnumerateGenerateChildSpecs(
             bindings.push_back(
                 ScopeEntryStructuralParamBinding{
                     .param =
-                        mir::StructuralParamDecl{
+                        mir::ParamDecl{
                             .name = var_decl.name,
                             .type = module.TranslateType(var_decl.type)},
                     .source_loop_var = loop_gen.loop_var});
@@ -207,28 +207,28 @@ auto MakeExternalUnitMemberType(
 // Returns the StructuralVarId of each instance member, indexed by
 // InstanceMemberId, so cross-unit reference resolution can reach the child
 // instance var by the same id the HIR recipe carries.
-auto InstallInstanceMembers(StructuralScopeLowerer& scope, WalkFrame frame)
-    -> std::vector<mir::StructuralVarId> {
-  mir::StructuralScope& mir_scope = *frame.current_structural_scope;
-  mir::ProceduralScope& ctor_scope = *frame.current_procedural_scope;
-  const hir::StructuralScope& hir_scope = scope.HirScope();
-  std::vector<mir::StructuralVarId> instance_member_vars;
+auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
+    -> std::vector<mir::MemberId> {
+  mir::Class& mir_class = *frame.current_class;
+  mir::Block& ctor_block = *frame.current_block;
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  std::vector<mir::MemberId> instance_member_vars;
   instance_member_vars.reserve(hir_scope.instance_members.size());
   for (const auto& im : hir_scope.instance_members) {
-    for (const auto& v : mir_scope.structural_vars) {
+    for (const auto& v : mir_class.members) {
       if (v.name == im.instance_name) {
         throw InternalError(
-            "instance member name collides with an existing structural var "
-            "declaration in the enclosing scope");
+            "instance member name collides with an existing member "
+            "declaration in the enclosing class");
       }
     }
     const mir::TypeId var_type = MakeExternalUnitMemberType(
-        scope.Module(), im.target_unit, im.array_dims.size());
-    const mir::StructuralVarId var_id = mir_scope.AddStructuralVar(
-        mir::StructuralVarDecl{.name = im.instance_name, .type = var_type});
+        lowerer.Module(), im.target_unit, im.array_dims.size());
+    const mir::MemberId var_id = mir_class.AddMember(
+        mir::MemberDecl{.name = im.instance_name, .type = var_type});
     instance_member_vars.push_back(var_id);
 
-    ctor_scope.AppendStmt(
+    ctor_block.AppendStmt(
         mir::Stmt{
             .label = std::nullopt,
             .data = mir::ConstructExternalUnitStmt{
@@ -244,18 +244,17 @@ auto InstallInstanceMembers(StructuralScopeLowerer& scope, WalkFrame frame)
 // signal -- lives on its type, and the runtime ExternUp member self-relocates
 // at Bind by climbing the parent chain then walking the tail
 // (docs/architecture/emission_model.md). A downward reference gets a borrowed-
-// pointer slot structural var, null until the constructor resolves it. Both
+// pointer slot member, null until the constructor resolves it. Both
 // run before processes so reads resolve to the slot; both record their MIR read
 // target as a StructuralVarRef to that member, in HIR slot order. The returned
 // vector carries the downward slot var per ref (nullopt for upward), consumed
 // by InstallCrossUnitRefs once the children exist.
-auto MaterializeCrossUnitRefTargets(
-    StructuralScopeLowerer& scope, WalkFrame frame)
-    -> std::vector<std::optional<mir::StructuralVarId>> {
-  ModuleLowerer& module = scope.Module();
-  mir::StructuralScope& mir_scope = *frame.current_structural_scope;
-  const hir::StructuralScope& hir_scope = scope.HirScope();
-  std::vector<std::optional<mir::StructuralVarId>> slot_vars;
+auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
+    -> std::vector<std::optional<mir::MemberId>> {
+  ModuleLowerer& module = lowerer.Module();
+  mir::Class& mir_class = *frame.current_class;
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  std::vector<std::optional<mir::MemberId>> slot_vars;
   std::uint32_t downward_slot = 0;
   for (const auto& cu : hir_scope.cross_unit_refs) {
     if (const auto* up = std::get_if<hir::UpwardHead>(&cu.head)) {
@@ -289,11 +288,10 @@ auto MaterializeCrossUnitRefTargets(
               .ancestor = up->ancestor_name,
               .tail = std::move(tail),
               .signal = std::move(signal)});
-      const mir::StructuralVarId var = mir_scope.AddStructuralVar(
-          mir::StructuralVarDecl{
-              .name = std::move(member_name), .type = ext_type});
-      scope.AddCrossUnitRefTarget(
-          mir::StructuralVarRef{.hops = {.value = 0}, .var = var}, ext_type);
+      const mir::MemberId var = mir_class.AddMember(
+          mir::MemberDecl{.name = std::move(member_name), .type = ext_type});
+      lowerer.AddCrossUnitRefTarget(
+          mir::MemberRef{.hops = {.value = 0}, .var = var}, ext_type);
       slot_vars.emplace_back(std::nullopt);
     } else {
       // The pointee matches the producer's storage cell. A producer-side
@@ -305,12 +303,12 @@ auto MaterializeCrossUnitRefTargets(
       const mir::TypeId slot_type = module.Unit().AddType(
           mir::PointerType{
               .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed});
-      const mir::StructuralVarId slot = mir_scope.AddStructuralVar(
-          mir::StructuralVarDecl{
+      const mir::MemberId slot = mir_class.AddMember(
+          mir::MemberDecl{
               .name = "xref" + std::to_string(downward_slot),
               .type = slot_type});
-      scope.AddCrossUnitRefTarget(
-          mir::StructuralVarRef{.hops = {.value = 0}, .var = slot}, slot_type);
+      lowerer.AddCrossUnitRefTarget(
+          mir::MemberRef{.hops = {.value = 0}, .var = slot}, slot_type);
       slot_vars.emplace_back(slot);
       ++downward_slot;
     }
@@ -328,9 +326,8 @@ auto BuildDownwardNavValue(
     const ModuleLowerer& module, WalkFrame frame, const std::string& head_name,
     const std::vector<hir::PathStep>& path, mir::TypeId slot_type,
     mir::TypeId scope_ptr_type) -> mir::Expr {
-  mir::ProceduralScope& ctor_scope = *frame.current_procedural_scope;
-  const mir::TypeId self_ptr_type =
-      frame.current_structural_scope->self_pointer_type;
+  mir::Block& ctor_block = *frame.current_block;
+  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
   struct NavHop {
     std::string name;
     std::vector<mir::ExprId> indices;
@@ -342,7 +339,7 @@ auto BuildDownwardNavValue(
       hops.push_back(NavHop{.name = member->name, .indices = {}});
     } else {
       const std::uint32_t index = std::get<hir::IndexHop>(step).index;
-      hops.back().indices.push_back(ctor_scope.AddExpr(
+      hops.back().indices.push_back(ctor_block.AddExpr(
           mir::MakeInt32Literal(
               module.Unit().builtins.int32, static_cast<std::int64_t>(index))));
     }
@@ -353,14 +350,14 @@ auto BuildDownwardNavValue(
         "owned child");
   }
 
-  mir::ExprId cur = ctor_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
+  mir::ExprId cur = ctor_block.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
   for (std::size_t i = 0; i + 1 < hops.size(); ++i) {
     std::vector<mir::ExprId> args;
     args.push_back(cur);
     for (const mir::ExprId idx : hops[i].indices) {
       args.push_back(idx);
     }
-    cur = ctor_scope.AddExpr(
+    cur = ctor_block.AddExpr(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -387,14 +384,14 @@ auto BuildDownwardNavValue(
 // assignment of the navigation value into the borrowed-pointer slot. Upward
 // slots are materialized as ExternalRef members upstream and skipped here.
 void InstallCrossUnitRefs(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const std::vector<mir::StructuralVarId>& instance_member_vars,
+    ClassLowerer& lowerer, WalkFrame frame,
+    const std::vector<mir::MemberId>& instance_member_vars,
     const std::vector<GenerateBindings>& gen_bindings,
-    const std::vector<std::optional<mir::StructuralVarId>>& slot_vars) {
-  mir::StructuralScope& mir_scope = *frame.current_structural_scope;
-  mir::ProceduralScope& ctor_scope = *frame.current_procedural_scope;
-  const hir::StructuralScope& hir_scope = scope.HirScope();
-  ModuleLowerer& module = scope.Module();
+    const std::vector<std::optional<mir::MemberId>>& slot_vars) {
+  mir::Class& mir_class = *frame.current_class;
+  mir::Block& ctor_block = *frame.current_block;
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  ModuleLowerer& module = lowerer.Module();
   const mir::TypeId scope_ptr_type = module.Unit().AddType(
       mir::PointerType{
           .pointee = module.Unit().AddType(mir::ScopeType{}),
@@ -405,8 +402,8 @@ void InstallCrossUnitRefs(
     if (down == nullptr) {
       continue;
     }
-    const mir::StructuralVarId slot = *slot_vars.at(ci);
-    mir::StructuralVarId head_var{};
+    const mir::MemberId slot = *slot_vars.at(ci);
+    mir::MemberId head_var{};
     if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
       head_var = instance_member_vars.at(im->value);
     } else {
@@ -415,65 +412,63 @@ void InstallCrossUnitRefs(
                      .by_scope_id.at(g.scope.value)
                      .var_id;
     }
-    const auto& head = mir_scope.GetStructuralVar(head_var);
+    const auto& head = mir_class.GetMember(head_var);
     const std::string head_name =
         head.source_name.empty() ? head.name : head.source_name;
-    const mir::TypeId slot_type = mir_scope.GetStructuralVar(slot).type;
-    const mir::ExprId nav = ctor_scope.AddExpr(BuildDownwardNavValue(
+    const mir::TypeId slot_type = mir_class.GetMember(slot).type;
+    const mir::ExprId nav = ctor_block.AddExpr(BuildDownwardNavValue(
         module, frame, head_name, cu.path, slot_type, scope_ptr_type));
-    const mir::ExprId self_for_target = ctor_scope.AddExpr(
-        BuildSelfRefExpr(frame, mir_scope.self_pointer_type));
-    const mir::ExprId target = ctor_scope.AddExpr(
+    const mir::ExprId self_for_target = ctor_block.AddExpr(
+        BuildSelfRefExpr(frame, mir_class.self_pointer_type));
+    const mir::ExprId target = ctor_block.AddExpr(
         mir::Expr{
             .data =
                 mir::MemberAccessExpr{
                     .receiver = self_for_target,
                     .member =
-                        mir::StructuralVarRef{
-                            .hops = {.value = 0}, .var = slot}},
+                        mir::MemberRef{.hops = {.value = 0}, .var = slot}},
             .type = slot_type});
-    const mir::ExprId assign = ctor_scope.AddExpr(
+    const mir::ExprId assign = ctor_block.AddExpr(
         mir::Expr{
             .data = mir::AssignExpr{.target = target, .value = nav},
             .type = slot_type});
-    ctor_scope.AppendStmt(
+    ctor_block.AppendStmt(
         mir::Stmt{
             .label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
   }
 }
 
 void ValidateConstructOwnedObjectStmt(
-    const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
-    const mir::ProceduralScope& proc_scope,
-    const mir::ConstructOwnedObjectStmt& stmt) {
-  if (stmt.scope_id.value >= owner_scope.child_structural_scopes.size()) {
+    const mir::CompilationUnit& unit, const mir::Class& owner_class,
+    const mir::Block& block, const mir::ConstructOwnedObjectStmt& stmt) {
+  if (stmt.scope_id.value >= owner_class.nested_classes.size()) {
     throw InternalError(
         "ConstructOwnedObjectStmt: scope_id is not a direct child of the "
-        "enclosing scope");
+        "enclosing class");
   }
-  if (stmt.target.value >= owner_scope.structural_vars.size()) {
+  if (stmt.target.value >= owner_class.members.size()) {
     throw InternalError(
         "ConstructOwnedObjectStmt: target is out of range in the enclosing "
-        "scope");
+        "class");
   }
-  const auto& var = owner_scope.GetStructuralVar(stmt.target);
+  const auto& var = owner_class.GetMember(stmt.target);
   const auto child = mir::GetChildScope(unit, var.type);
   const auto* generate =
       child ? std::get_if<mir::GenerateScopeChild>(&*child) : nullptr;
-  const auto& child_scope = owner_scope.GetChildStructuralScope(stmt.scope_id);
+  const auto& child_scope = owner_class.GetNestedClass(stmt.scope_id);
   if (generate == nullptr || generate->name != child_scope.name) {
     throw InternalError(
         "ConstructOwnedObjectStmt: target var does not own the requested "
-        "scope");
+        "class");
   }
-  if (stmt.args.size() != child_scope.structural_params.size()) {
+  if (stmt.args.size() != child_scope.params.size()) {
     throw InternalError(
-        "ConstructOwnedObjectStmt: args count does not match child scope "
-        "structural params count");
+        "ConstructOwnedObjectStmt: args count does not match child class "
+        "param count");
   }
   for (std::size_t i = 0; i < stmt.args.size(); ++i) {
-    const auto& arg = proc_scope.GetExpr(stmt.args[i]);
-    const auto& param = child_scope.structural_params[i];
+    const auto& arg = block.GetExpr(stmt.args[i]);
+    const auto& param = child_scope.params[i];
     if (arg.type != param.type) {
       throw InternalError(
           "ConstructOwnedObjectStmt: arg type does not match structural "
@@ -482,30 +477,30 @@ void ValidateConstructOwnedObjectStmt(
   }
 }
 
-// The for-stmt body procedural scope is one level below the parent
-// constructor scope where the induction var was declared, so a
-// `ProceduralVarRef` to that var read from inside the body always hops up
-// once. This helper documents the +1 instead of writing it inline.
-auto MakeForBodyInductionVarArg(
-    mir::ProceduralVarId induction_var_id, mir::TypeId type) -> mir::Expr {
+// The for-stmt body block is one level below the parent constructor block
+// where the induction var was declared, so a `LocalRef` to that var read from
+// inside the body always hops up once. This helper documents the +1 instead of
+// writing it inline.
+auto MakeForBodyInductionVarArg(mir::LocalId induction_var_id, mir::TypeId type)
+    -> mir::Expr {
   return mir::Expr{
       .data =
-          mir::ProceduralVarRef{
-              .hops = mir::ProceduralHops{.value = 1}, .var = induction_var_id},
+          mir::LocalRef{
+              .hops = mir::BlockHops{.value = 1}, .var = induction_var_id},
       .type = type};
 }
 
 auto BuildGenerateArmBody(
     const ModuleLowerer& module, WalkFrame frame,
     const GenerateBindings& gen_bindings, hir::StructuralScopeId arm_scope_id,
-    std::vector<mir::Expr> args) -> mir::ProceduralScope {
+    std::vector<mir::Expr> args) -> mir::Block {
   const auto& binding = gen_bindings.by_scope_id.at(arm_scope_id.value);
 
-  mir::ProceduralScope arm_scope;
+  mir::Block arm_block;
   std::vector<mir::ExprId> arg_ids;
   arg_ids.reserve(args.size());
   for (auto& arg : args) {
-    arg_ids.push_back(arm_scope.AddExpr(std::move(arg)));
+    arg_ids.push_back(arm_block.AddExpr(std::move(arg)));
   }
 
   const mir::ConstructOwnedObjectStmt construct_stmt{
@@ -513,34 +508,32 @@ auto BuildGenerateArmBody(
       .scope_id = binding.scope_id,
       .args = std::move(arg_ids)};
   ValidateConstructOwnedObjectStmt(
-      module.Unit(), *frame.current_structural_scope, arm_scope,
-      construct_stmt);
+      module.Unit(), *frame.current_class, arm_block, construct_stmt);
 
-  arm_scope.AppendStmt(
+  arm_block.AppendStmt(
       mir::Stmt{.label = std::nullopt, .data = construct_stmt});
-  return arm_scope;
+  return arm_block;
 }
 
 auto LowerIfGenerate(
-    StructuralScopeLowerer& scope, WalkFrame frame,
+    ClassLowerer& lowerer, WalkFrame frame,
     const GenerateBindings& gen_bindings, const hir::IfGenerate& if_gen)
     -> diag::Result<mir::Stmt> {
-  const hir::StructuralScope& enclosing_scope = scope.HirScope();
-  mir::ProceduralScope& proc_scope = *frame.current_procedural_scope;
+  const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
+  mir::Block& block = *frame.current_block;
 
   auto cond_or =
-      scope.LowerExpr(enclosing_scope.GetExpr(if_gen.condition), frame);
+      lowerer.LowerExpr(enclosing_scope.GetExpr(if_gen.condition), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
+  const mir::ExprId cond_id = block.AddExpr(*std::move(cond_or));
 
-  const mir::ProceduralScopeId then_id =
-      proc_scope.AddChildScope(BuildGenerateArmBody(
-          scope.Module(), frame, gen_bindings, if_gen.then_scope, {}));
+  const mir::BlockId then_id = block.AddChildScope(BuildGenerateArmBody(
+      lowerer.Module(), frame, gen_bindings, if_gen.then_scope, {}));
 
-  std::optional<mir::ProceduralScopeId> else_id;
+  std::optional<mir::BlockId> else_id;
   if (if_gen.else_scope.has_value()) {
-    else_id = proc_scope.AddChildScope(BuildGenerateArmBody(
-        scope.Module(), frame, gen_bindings, *if_gen.else_scope, {}));
+    else_id = block.AddChildScope(BuildGenerateArmBody(
+        lowerer.Module(), frame, gen_bindings, *if_gen.else_scope, {}));
   }
 
   return mir::Stmt{
@@ -550,34 +543,34 @@ auto LowerIfGenerate(
 }
 
 auto LowerCaseGenerate(
-    StructuralScopeLowerer& scope, WalkFrame frame,
+    ClassLowerer& lowerer, WalkFrame frame,
     const GenerateBindings& gen_bindings, const hir::CaseGenerate& case_gen)
     -> diag::Result<mir::Stmt> {
-  const hir::StructuralScope& enclosing_scope = scope.HirScope();
-  const mir::TypeId bit_type = scope.Module().Unit().builtins.bit1;
+  const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
+  const mir::TypeId bit_type = lowerer.Module().Unit().builtins.bit1;
 
-  mir::ProceduralScope wrapper_scope;
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper_scope);
+  mir::Block wrapper_block;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper_block);
 
-  auto cond_or = scope.LowerExpr(
+  auto cond_or = lowerer.LowerExpr(
       enclosing_scope.GetExpr(case_gen.condition), wrapper_frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_expr_id = wrapper_scope.AddExpr(*std::move(cond_or));
+  const mir::ExprId cond_expr_id = wrapper_block.AddExpr(*std::move(cond_or));
 
   const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(scope.Module(), wrapper_frame, cond_expr_id);
+      AppendCaseSnapshot(lowerer.Module(), wrapper_frame, cond_expr_id);
 
-  std::vector<mir::ProceduralScope> body_scopes;
+  std::vector<mir::Block> body_scopes;
   body_scopes.reserve(case_gen.items.size());
   for (const auto& item : case_gen.items) {
     body_scopes.push_back(BuildGenerateArmBody(
-        scope.Module(), frame, gen_bindings, item.scope, {}));
+        lowerer.Module(), frame, gen_bindings, item.scope, {}));
   }
 
-  std::optional<mir::ProceduralScope> default_scope;
+  std::optional<mir::Block> default_scope;
   if (case_gen.default_scope.has_value()) {
     default_scope = BuildGenerateArmBody(
-        scope.Module(), frame, gen_bindings, *case_gen.default_scope, {});
+        lowerer.Module(), frame, gen_bindings, *case_gen.default_scope, {});
   }
 
   auto build_predicate =
@@ -588,64 +581,62 @@ auto LowerCaseGenerate(
         case_gen.items[item_idx].labels.size(),
         [&](WalkFrame label_frame,
             std::size_t li) -> diag::Result<mir::ExprId> {
-          auto lab_or = scope.LowerExpr(
+          auto lab_or = lowerer.LowerExpr(
               enclosing_scope.GetExpr(case_gen.items[item_idx].labels[li]),
               label_frame);
           if (!lab_or) {
             return std::unexpected(std::move(lab_or.error()));
           }
-          return label_frame.current_procedural_scope->AddExpr(
-              *std::move(lab_or));
+          return label_frame.current_block->AddExpr(*std::move(lab_or));
         });
   };
 
   return BuildCaseCascade(
-      frame, std::move(wrapper_scope), std::nullopt, case_gen.items.size(),
+      frame, std::move(wrapper_block), std::nullopt, case_gen.items.size(),
       std::move(body_scopes), std::move(default_scope), build_predicate);
 }
 
 auto LowerLoopGenerate(
-    StructuralScopeLowerer& scope, WalkFrame frame,
+    ClassLowerer& lowerer, WalkFrame frame,
     const GenerateBindings& gen_bindings, const hir::LoopGenerate& loop)
     -> diag::Result<mir::Stmt> {
-  const hir::StructuralScope& enclosing_scope = scope.HirScope();
-  mir::ProceduralScope& proc_scope = *frame.current_procedural_scope;
+  const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
+  mir::Block& block = *frame.current_block;
 
   const auto& var_decl = enclosing_scope.GetLoopVarDecl(loop.loop_var);
-  const mir::TypeId genvar_type = scope.Module().TranslateType(var_decl.type);
+  const mir::TypeId genvar_type = lowerer.Module().TranslateType(var_decl.type);
 
-  const mir::ProceduralVarId loop_local_id = proc_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = var_decl.name, .type = genvar_type});
-  const mir::ProceduralVarRef loop_local{
-      .hops = mir::ProceduralHops{.value = 0}, .var = loop_local_id};
+  const mir::LocalId loop_local_id = block.AddLocal(
+      mir::LocalDecl{.name = var_decl.name, .type = genvar_type});
+  const mir::LocalRef loop_local{
+      .hops = mir::BlockHops{.value = 0}, .var = loop_local_id};
 
-  scope.MapLoopVarAsProcedural(loop.loop_var, loop_local);
+  lowerer.MapLoopVarAsProcedural(loop.loop_var, loop_local);
 
   const WalkFrame proc_frame =
       frame.WithLoopVarMode(LoopVarLoweringMode::kProceduralInduction);
   auto init_or =
-      scope.LowerExpr(enclosing_scope.GetExpr(loop.initial), proc_frame);
+      lowerer.LowerExpr(enclosing_scope.GetExpr(loop.initial), proc_frame);
   if (!init_or) return std::unexpected(std::move(init_or.error()));
-  const mir::ExprId init_id = proc_scope.AddExpr(*std::move(init_or));
+  const mir::ExprId init_id = block.AddExpr(*std::move(init_or));
 
   auto cond_or =
-      scope.LowerExpr(enclosing_scope.GetExpr(loop.stop), proc_frame);
+      lowerer.LowerExpr(enclosing_scope.GetExpr(loop.stop), proc_frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
+  const mir::ExprId cond_id = block.AddExpr(*std::move(cond_or));
 
   // HIR carries the iter as the next-value expression for the loop variable;
   // the loop semantic (this lowering) owns the actual write back.
   auto step_value_or =
-      scope.LowerExpr(enclosing_scope.GetExpr(loop.iter), proc_frame);
+      lowerer.LowerExpr(enclosing_scope.GetExpr(loop.iter), proc_frame);
   if (!step_value_or) {
     return std::unexpected(std::move(step_value_or.error()));
   }
   const mir::TypeId step_type = (*step_value_or).type;
-  const mir::ExprId step_value_id =
-      proc_scope.AddExpr(*std::move(step_value_or));
+  const mir::ExprId step_value_id = block.AddExpr(*std::move(step_value_or));
   const mir::ExprId step_target_id =
-      proc_scope.AddExpr(mir::Expr{.data = loop_local, .type = genvar_type});
-  const mir::ExprId step_id = proc_scope.AddExpr(
+      block.AddExpr(mir::Expr{.data = loop_local, .type = genvar_type});
+  const mir::ExprId step_id = block.AddExpr(
       mir::Expr{
           .data =
               mir::AssignExpr{.target = step_target_id, .value = step_value_id},
@@ -654,10 +645,8 @@ auto LowerLoopGenerate(
   std::vector<mir::Expr> body_args;
   body_args.push_back(MakeForBodyInductionVarArg(loop_local_id, genvar_type));
 
-  const mir::ProceduralScopeId loop_scope_id =
-      proc_scope.AddChildScope(BuildGenerateArmBody(
-          scope.Module(), frame, gen_bindings, loop.scope,
-          std::move(body_args)));
+  const mir::BlockId loop_scope_id = block.AddChildScope(BuildGenerateArmBody(
+      lowerer.Module(), frame, gen_bindings, loop.scope, std::move(body_args)));
 
   return mir::Stmt{
       .label = std::nullopt,
@@ -670,29 +659,28 @@ auto LowerLoopGenerate(
 }
 
 auto LowerGenerateAsStmt(
-    StructuralScopeLowerer& scope, WalkFrame frame, const hir::Generate& gen,
+    ClassLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
     const GenerateBindings& gen_bindings) -> diag::Result<mir::Stmt> {
   return std::visit(
       Overloaded{
           [&](const hir::IfGenerate& if_gen) {
-            return LowerIfGenerate(scope, frame, gen_bindings, if_gen);
+            return LowerIfGenerate(lowerer, frame, gen_bindings, if_gen);
           },
           [&](const hir::CaseGenerate& case_gen) {
-            return LowerCaseGenerate(scope, frame, gen_bindings, case_gen);
+            return LowerCaseGenerate(lowerer, frame, gen_bindings, case_gen);
           },
           [&](const hir::LoopGenerate& loop) {
-            return LowerLoopGenerate(scope, frame, gen_bindings, loop);
+            return LowerLoopGenerate(lowerer, frame, gen_bindings, loop);
           },
       },
       gen.data);
 }
 
-auto InstallGenerateOwnedChildScopes(
-    StructuralScopeLowerer& scope, WalkFrame frame)
+auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
     -> diag::Result<std::vector<GenerateBindings>> {
-  ModuleLowerer& module = scope.Module();
-  mir::StructuralScope& mir_scope = *frame.current_structural_scope;
-  const hir::StructuralScope& hir_scope = scope.HirScope();
+  ModuleLowerer& module = lowerer.Module();
+  mir::Class& mir_class = *frame.current_class;
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
   std::vector<GenerateBindings> bindings_by_generate;
   bindings_by_generate.reserve(hir_scope.generates.size());
 
@@ -705,22 +693,22 @@ auto InstallGenerateOwnedChildScopes(
     auto specs = EnumerateGenerateChildSpecs(gen, gen_idx, hir_scope, module);
     for (auto& spec : specs) {
       const auto companion_name = CompanionVarNameFor(spec.scope_name);
-      CheckNoNameCollision(mir_scope, spec.scope_name, companion_name);
+      CheckNoNameCollision(mir_class, spec.scope_name, companion_name);
 
-      StructuralScopeLowerer child_scope(
-          module, &scope, std::move(spec.scope_name), *spec.scope);
+      ClassLowerer child_scope(
+          module, &lowerer, std::move(spec.scope_name), *spec.scope);
       auto child_r = child_scope.Run(frame, spec.entry_bindings);
       if (!child_r) return std::unexpected(std::move(child_r.error()));
 
-      const mir::StructuralScopeId child_id =
-          mir_scope.AddChildStructuralScope(*std::move(child_r));
+      const mir::ClassId child_id =
+          mir_class.AddNestedClass(*std::move(child_r));
       mir::TypeId var_type = MakeUniqueObjectPointer(
-          module, mir_scope.GetChildStructuralScope(child_id).name);
+          module, mir_class.GetNestedClass(child_id).name);
       if (spec.is_repeated) {
         var_type = module.Unit().AddType(mir::VectorType{.element = var_type});
       }
-      const mir::StructuralVarId var_id = mir_scope.AddStructuralVar(
-          mir::StructuralVarDecl{
+      const mir::MemberId var_id = mir_class.AddMember(
+          mir::MemberDecl{
               .name = companion_name,
               .source_name = spec.scope->source_name,
               .type = var_type});
@@ -736,13 +724,13 @@ auto InstallGenerateOwnedChildScopes(
 
 }  // namespace
 
-auto StructuralScopeLowerer::Run(
+auto ClassLowerer::Run(
     WalkFrame frame,
     std::span<const ScopeEntryStructuralParamBinding> entry_bindings)
-    -> diag::Result<mir::StructuralScope> {
+    -> diag::Result<mir::Class> {
   ModuleLowerer& module = *module_;
   const hir::StructuralScope& hir_scope = *hir_scope_;
-  StructuralScopeLowerer& scope = *this;
+  ClassLowerer& lowerer = *this;
 
   const mir::TypeId self_object_type =
       module.Unit().AddType(mir::ObjectType{.name = name_});
@@ -750,42 +738,40 @@ auto StructuralScopeLowerer::Run(
       mir::PointerType{
           .pointee = self_object_type,
           .ownership = mir::PointerOwnership::kBorrowed});
-  mir::StructuralScope mir_scope{
+  mir::Class mir_class{
       .name = name_,
       .self_pointer_type = self_pointer_type,
       .time_resolution = hir_scope.time_resolution,
-      .structural_params = {},
-      .structural_vars = {},
-      .constructor_scope = {},
+      .params = {},
+      .members = {},
+      .constructor_block = {},
       .processes = {},
-      .child_structural_scopes = {},
-      .structural_subroutines = {},
+      .nested_classes = {},
+      .methods = {},
       .type_aliases = {}};
   for (const auto& alias : hir_scope.type_aliases) {
-    mir_scope.type_aliases.push_back(
+    mir_class.type_aliases.push_back(
         mir::TypeAliasDecl{
             .name = alias.name, .target = module.TranslateType(alias.target)});
   }
 
   for (const auto& binding : entry_bindings) {
-    const mir::StructuralParamId mir_id =
-        mir_scope.AddStructuralParam(binding.param);
-    scope.MapLoopVarAsStructuralParam(binding.source_loop_var, mir_id);
+    const mir::ParamId mir_id = mir_class.AddParam(binding.param);
+    lowerer.MapLoopVarAsStructuralParam(binding.source_loop_var, mir_id);
   }
 
-  mir::ProceduralScope ctor_scope;
-  const mir::ProceduralVarId self_id = ctor_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{
-          .name = "self", .type = mir_scope.self_pointer_type});
+  mir::Block ctor_block;
+  const mir::LocalId self_id = ctor_block.AddLocal(
+      mir::LocalDecl{.name = "self", .type = mir_class.self_pointer_type});
   ScopeChainNode outer_scope_link{};
   const WalkFrame scope_frame =
-      frame.WithStructuralScope(&mir_scope, outer_scope_link)
-          .WithProceduralScope(&ctor_scope)
-          .WithSelfBinding(self_id, frame.procedural_depth);
+      frame.WithClass(&mir_class, outer_scope_link)
+          .WithBlock(&ctor_block)
+          .WithSelfBinding(self_id, frame.block_depth);
   const mir::TypeId void_type = module.Unit().AddType(mir::VoidType{});
-  const mir::TypeId self_ptr_type = mir_scope.self_pointer_type;
+  const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
   const auto self_read = [&]() -> mir::ExprId {
-    return ctor_scope.AddExpr(BuildSelfRefExpr(scope_frame, self_ptr_type));
+    return ctor_block.AddExpr(BuildSelfRefExpr(scope_frame, self_ptr_type));
   };
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
@@ -797,9 +783,9 @@ auto StructuralScopeLowerer::Run(
     // writes route through `Var<T>::Set` and subscribers fire.
     const mir::TypeId mir_field_type =
         MaybeWrapObservable(module, mir_value_type);
-    const mir::StructuralVarId mir_id = mir_scope.AddStructuralVar(
-        mir::StructuralVarDecl{.name = d.name, .type = mir_field_type});
-    scope.MapStructuralVar(hir_id, mir_id);
+    const mir::MemberId mir_id = mir_class.AddMember(
+        mir::MemberDecl{.name = d.name, .type = mir_field_type});
+    lowerer.MapStructuralVar(hir_id, mir_id);
 
     // Owned children (pointer / vector / object), resolution slots, upward
     // refs, and named events have no "value assignment" -- their declaration
@@ -817,30 +803,29 @@ auto StructuralScopeLowerer::Run(
       mir::ExprId value_id{};
       if (d.initializer.has_value()) {
         auto value_or =
-            scope.LowerExpr(hir_scope.GetExpr(*d.initializer), scope_frame);
+            lowerer.LowerExpr(hir_scope.GetExpr(*d.initializer), scope_frame);
         if (!value_or) return std::unexpected(std::move(value_or.error()));
-        value_id = ctor_scope.AddExpr(*std::move(value_or));
+        value_id = ctor_block.AddExpr(*std::move(value_or));
       } else {
-        value_id = ctor_scope.AddExpr(
+        value_id = ctor_block.AddExpr(
             BuildDefaultValueExpr(module, scope_frame, mir_value_type));
       }
-      const mir::ExprId init_target = ctor_scope.AddExpr(
+      const mir::ExprId init_target = ctor_block.AddExpr(
           mir::MakeMemberAccessExpr(
-              self_read(),
-              mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
+              self_read(), mir::MemberRef{.hops = {.value = 0}, .var = mir_id},
               mir_field_type));
       // An observable cell init routes through `Var<T>::Set` so the field's
       // engine-side change-tracking sees the initial value
       // (`docs/decisions/value-type-concepts.md`). Plain fields use a regular
       // `AssignExpr`.
-      const mir::ExprId services_id = ctor_scope.AddExpr(
+      const mir::ExprId services_id = ctor_block.AddExpr(
           mir::MakeServicesCallExpr(
               self_read(), module.Unit().builtins.services));
       const mir::Expr init_expr = BuildObservableAssignExpr(
-          module.Unit(), ctor_scope, services_id, init_target, value_id,
+          module.Unit(), ctor_block, services_id, init_target, value_id,
           std::nullopt, mir_value_type, module.Unit().builtins.void_type);
-      const mir::ExprId assign_id = ctor_scope.AddExpr(init_expr);
-      ctor_scope.AppendStmt(
+      const mir::ExprId assign_id = ctor_block.AddExpr(init_expr);
+      ctor_block.AppendStmt(
           mir::Stmt{
               .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
     }
@@ -855,12 +840,11 @@ auto StructuralScopeLowerer::Run(
         !std::holds_alternative<mir::ObjectType>(var_data) &&
         !std::holds_alternative<mir::ExternalUnitObjectType>(var_data);
     if (is_signal) {
-      const mir::ExprId var_ref = ctor_scope.AddExpr(
+      const mir::ExprId var_ref = ctor_block.AddExpr(
           mir::MakeMemberAccessExpr(
-              self_read(),
-              mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
+              self_read(), mir::MemberRef{.hops = {.value = 0}, .var = mir_id},
               mir_field_type));
-      const mir::ExprId call = ctor_scope.AddExpr(
+      const mir::ExprId call = ctor_block.AddExpr(
           mir::Expr{
               .data =
                   mir::CallExpr{
@@ -870,7 +854,7 @@ auto StructuralScopeLowerer::Run(
                               .name = d.name},
                       .arguments = {self_read(), var_ref}},
               .type = void_type});
-      ctor_scope.AppendStmt(
+      ctor_block.AppendStmt(
           mir::Stmt{
               .label = std::nullopt, .data = mir::ExprStmt{.expr = call}});
     }
@@ -880,7 +864,7 @@ auto StructuralScopeLowerer::Run(
   // target is recorded before any body is lowered, so reads and sensitivity in
   // subroutines and processes resolve each slot.
   const auto cross_unit_slot_vars =
-      MaterializeCrossUnitRefTargets(scope, scope_frame);
+      MaterializeCrossUnitRefTargets(lowerer, scope_frame);
 
   // Map every subroutine's identity before lowering any body, so a call in one
   // body resolves a forward or mutual reference to a peer (LRM 13.7). Only the
@@ -888,66 +872,66 @@ auto StructuralScopeLowerer::Run(
   // each decl will occupy, and the loop below adds the lowered decls in that
   // same order.
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
-    scope.MapStructuralSubroutine(
+    lowerer.MapStructuralSubroutine(
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)},
-        mir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
+        mir::MethodId{static_cast<std::uint32_t>(i)});
   }
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
     const auto& src = hir_scope.structural_subroutines[i];
     ProcessLowerer subroutine_lowerer(
-        module, scope, hir_scope.time_resolution, src.body, src.name,
+        module, lowerer, hir_scope.time_resolution, src.body, src.name,
         scope_frame);
     auto decl_or = subroutine_lowerer.Run(src);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
-    const mir::StructuralSubroutineId added =
-        mir_scope.AddStructuralSubroutine(*std::move(decl_or));
+    const mir::MethodId added = mir_class.AddMethod(*std::move(decl_or));
     if (added.value != i) {
       throw InternalError(
-          "StructuralScopeLowerer::Run: subroutine added out of mapped "
+          "ClassLowerer::Run: subroutine added out of mapped "
           "id order");
     }
   }
 
   for (const auto& p : hir_scope.processes) {
-    std::string name = std::format("process_{}", mir_scope.processes.size());
+    std::string name = std::format("process_{}", mir_class.processes.size());
     ProcessLowerer process_lowerer(
-        module, scope, hir_scope.time_resolution, p.body, std::move(name),
+        module, lowerer, hir_scope.time_resolution, p.body, std::move(name),
         scope_frame);
     auto proc_or = process_lowerer.Run(p);
     if (!proc_or) return std::unexpected(std::move(proc_or.error()));
-    mir_scope.AddProcess(*std::move(proc_or));
+    mir_class.AddProcess(*std::move(proc_or));
   }
 
   for (const auto& ca : hir_scope.continuous_assigns) {
-    std::string name = std::format("process_{}", mir_scope.processes.size());
+    std::string name = std::format("process_{}", mir_class.processes.size());
     auto proc_or =
-        LowerContinuousAssign(scope, scope_frame, std::move(name), ca);
+        LowerContinuousAssign(lowerer, scope_frame, std::move(name), ca);
     if (!proc_or) return std::unexpected(std::move(proc_or.error()));
-    mir_scope.AddProcess(*std::move(proc_or));
+    mir_class.AddProcess(*std::move(proc_or));
   }
 
-  auto bindings_r = InstallGenerateOwnedChildScopes(scope, scope_frame);
+  auto bindings_r = InstallGenerateOwnedChildScopes(lowerer, scope_frame);
   if (!bindings_r) return std::unexpected(std::move(bindings_r.error()));
 
   for (std::size_t i = 0; i < hir_scope.generates.size(); ++i) {
     auto stmt = LowerGenerateAsStmt(
-        scope, scope_frame, hir_scope.generates[i], bindings_r->at(i));
+        lowerer, scope_frame, hir_scope.generates[i], bindings_r->at(i));
     if (!stmt) return std::unexpected(std::move(stmt.error()));
-    ctor_scope.AppendStmt(*std::move(stmt));
+    ctor_block.AppendStmt(*std::move(stmt));
   }
 
-  const auto instance_member_vars = InstallInstanceMembers(scope, scope_frame);
+  const auto instance_member_vars =
+      InstallInstanceMembers(lowerer, scope_frame);
   InstallCrossUnitRefs(
-      scope, scope_frame, instance_member_vars, *bindings_r,
+      lowerer, scope_frame, instance_member_vars, *bindings_r,
       cross_unit_slot_vars);
 
-  mir_scope.constructor_scope = std::move(ctor_scope);
+  mir_class.constructor_block = std::move(ctor_block);
 
-  return mir_scope;
+  return mir_class;
 }
 
-auto StructuralScopeLowerer::LowerExpr(
-    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
+auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
+    -> diag::Result<mir::Expr> {
   const mir::TypeId result_type = module_->TranslateType(expr.type);
   auto raw_or = std::visit(
       Overloaded{
@@ -967,13 +951,13 @@ auto StructuralScopeLowerer::LowerExpr(
           },
           [](const hir::AssignExpr&) -> diag::Result<mir::Expr> {
             throw InternalError(
-                "StructuralScopeLowerer::LowerExpr: HIR AssignExpr does not "
+                "ClassLowerer::LowerExpr: HIR AssignExpr does not "
                 "appear in constructor-side expressions; structural code has "
                 "no general assignment");
           },
           [](const hir::IncDecExpr&) -> diag::Result<mir::Expr> {
             throw InternalError(
-                "StructuralScopeLowerer::LowerExpr: HIR IncDecExpr does not "
+                "ClassLowerer::LowerExpr: HIR IncDecExpr does not "
                 "appear in constructor-side expressions; structural code has "
                 "no increment / decrement");
           },
@@ -1038,14 +1022,14 @@ auto StructuralScopeLowerer::LowerExpr(
   // the value (e.g. a continuous assign whose RHS reads a signal).
   if (mir::IsObservableCellType(module_->Unit().GetType(raw_or->type))) {
     const mir::ExprId cell_id =
-        frame.current_procedural_scope->AddExpr(*std::move(raw_or));
+        frame.current_block->AddExpr(*std::move(raw_or));
     return mir::MakeObservableGetCallExpr(cell_id, result_type);
   }
   return raw_or;
 }
 
-auto StructuralScopeLowerer::LowerLhsExpr(
-    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
+auto ClassLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
+    -> diag::Result<mir::Expr> {
   const mir::TypeId result_type = module_->TranslateType(expr.type);
   return std::visit(
       Overloaded{
@@ -1070,7 +1054,7 @@ auto StructuralScopeLowerer::LowerLhsExpr(
           },
           [](const auto&) -> diag::Result<mir::Expr> {
             throw InternalError(
-                "StructuralScopeLowerer::LowerLhsExpr: non-addressable HIR "
+                "ClassLowerer::LowerLhsExpr: non-addressable HIR "
                 "expression in LHS context");
           },
       },

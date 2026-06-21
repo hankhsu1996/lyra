@@ -9,11 +9,11 @@
 
 namespace lyra::backend::cpp {
 
-auto RenderNestedProceduralScope(
-    const ScopeView& parent, const mir::ProceduralScope& scope,
-    std::size_t indent) -> diag::Result<std::string>;
+auto RenderNestedBlock(
+    const ScopeView& parent, const mir::Block& block, std::size_t indent)
+    -> diag::Result<std::string>;
 
-auto RenderProceduralScopeStatements(const ScopeView& view, std::size_t indent)
+auto RenderBlockStatements(const ScopeView& view, std::size_t indent)
     -> diag::Result<std::string>;
 
 auto RenderStmt(

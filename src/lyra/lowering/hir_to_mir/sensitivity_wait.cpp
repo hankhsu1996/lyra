@@ -7,7 +7,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/value_ref.hpp"
 
@@ -32,7 +32,7 @@ auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
 }  // namespace
 
 auto BuildSensitivityWaitStmt(
-    const StructuralScopeLowerer& scope,
+    const ClassLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {
   std::vector<mir::SensitivityRead> reads;
   reads.reserve(sensitivity_list.size());
@@ -40,10 +40,10 @@ auto BuildSensitivityWaitStmt(
     mir::SensitivityRef ref = std::visit(
         Overloaded{
             [&](const hir::StructuralVarRef& r) -> mir::SensitivityRef {
-              return scope.TranslateStructuralVar(r.hops, r.var);
+              return lowerer.TranslateStructuralVar(r.hops, r.var);
             },
             [&](const hir::CrossUnitVarRef& r) -> mir::SensitivityRef {
-              return scope.CrossUnitRefTarget(r.id).target;
+              return lowerer.CrossUnitRefTarget(r.id).target;
             },
         },
         entry.ref);

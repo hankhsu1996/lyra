@@ -42,11 +42,11 @@ what the construct means.
 - A member as a `(name, type)` pair. The type is the sole carrier of the member's storage shape and,
   for a member that owns a child, of its child-scope kind and cardinality.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
-  intra-unit object (a structural scope of this unit) and an external-unit object (another
-  compilation unit, named); and two composing wrappers, owning pointer and vector.
+  intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
+  named); and two composing wrappers, owning pointer and vector.
 - Callables: functions, tasks, constructors, processes, and assertion actions. Every callable body's
-  first binding is `self`, a pointer to the enclosing structural scope; the body reaches every value
-  it needs through its parameter list and captures, never through implicit context.
+  first binding is `self`, a pointer to the enclosing class; the body reaches every value it needs
+  through its parameter list and captures, never through implicit context.
 - The identity of each object and member within a compilation unit.
 - Lightweight structured control flow inside a callable body: `if`, loop, and sequence. No basic
   blocks at this layer.
@@ -98,8 +98,8 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
    wrapper. No member carries a classification flag beside its type; the type is the classification.
    _Programming-language consequence: the type system carries every fact about a member; no parallel
    discriminator exists._
-8. An object type is exactly one of two forms: intra-unit, naming a structural scope of this unit,
-   or external-unit, naming another compilation unit. This single distinction is the owned child's
+8. An object type is exactly one of two forms: intra-unit, naming a class of this unit, or
+   external-unit, naming another compilation unit. This single distinction is the owned child's
    runtime scope kind -- a named generate scope versus a module instance. Nothing else encodes scope
    kind. _Programming-language consequence: a class reference is either local to this translation
    unit or names an external one; there is no third kind._
@@ -117,20 +117,20 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     instead. The primitive set does grow, but only for a genuinely new generic-language concept,
     never to model a backend / library / sugar shape (see Owns). _Programming-language consequence:
     the program text is the program; consumers do not invent vocabulary the language does not have._
-11. Every callable body's first binding is `self`, a pointer to its enclosing structural scope --
-    `body.vars[0]` is a procedural-var declaration of that pointer type, named `self`. Access to any
-    class member -- a structural variable, a service call, a child instance -- flows through
-    `MemberAccess` whose receiver expression reaches the scope by traversing from `self`. A callable
-    has no implicit access to its enclosing state; the receiver is reached through an explicit
-    binding, never through an expression that means "look around and figure it out". The body's view
-    of `self` is uniform across every callable form -- the read site reads `vars[0]` the same way in
-    a process, a task, a function, a constructor body, and a closure.
+11. Every callable body's first binding is `self`, a pointer to its enclosing class --
+    `body.vars[0]` is a local declaration of that pointer type, named `self`. Access to any class
+    member -- a member variable, a service call, a child instance -- flows through `MemberAccess`
+    whose receiver expression reaches the class by traversing from `self`. A callable has no
+    implicit access to its enclosing state; the receiver is reached through an explicit binding,
+    never through an expression that means "look around and figure it out". The body's view of
+    `self` is uniform across every callable form -- the read site reads `vars[0]` the same way in a
+    process, a task, a function, a constructor body, and a closure.
 
     Where `self`'s value comes from differs by callable form, following the natural binding shape of
-    each: process, structural subroutine, and constructor bodies receive `self` as their first
-    formal parameter (each caller -- the runtime, a call site, the instance constructor -- supplies
-    it); every closure -- including a fork branch -- carries `self` as its first by-value capture
-    (the enclosing scope snapshots its own `self` at construction, because no later invoker of the
+    each: process, method, and constructor bodies receive `self` as their first formal parameter
+    (each caller -- the runtime, a call site, the instance constructor -- supplies it); every
+    closure -- including a fork branch -- carries `self` as its first by-value capture (the
+    enclosing scope snapshots its own `self` at construction, because no later invoker of the
     closure value can be relied on to know the receiver). Both supply mechanisms land the same
     binding at `body.vars[0]`; the body code does not know or care which one filled it. See
     `docs/decisions/callable-receiver.md`.
@@ -206,9 +206,9 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
 - An expression node whose meaning depends on which callable encloses it. A node that resolves to
   "the current receiver, whatever that is" carries an implicit context the consumer must walk
   surroundings to discover. Receiver semantics live on `body.vars[0]` as the `self` binding, reached
-  through `ProceduralVarRef`; member access reads the receiver from the containing `MemberAccess`'s
-  receiver field, never from a node that means "look around and figure it out". (Programming
-  languages do not have expressions whose meaning depends on syntactic context.)
+  through `LocalRef`; member access reads the receiver from the containing `MemberAccess`'s receiver
+  field, never from a node that means "look around and figure it out". (Programming languages do not
+  have expressions whose meaning depends on syntactic context.)
 
 ## Notes / Examples
 
@@ -243,18 +243,18 @@ expressions are access primitives. Each of these stays in MIR for the same reaso
 require expanding into a statement-form rewrite that does not fit the expression context.
 
 A closure is a captured callable value: a capture list, a parameter list, a result type (the closure
-expression's own type), and a procedural-scope body. It is the one IR shape for "a body bound to its
+expression's own type), and a block body. It is the one IR shape for "a body bound to its
 environment, run later," synthesized only by HIR-to-MIR. `closure.md` is the canonical contract: the
 capture model, snapshot-versus-alias as a captured field's type, and coroutine-ness as the result
 type all live there.
 
-Process, structural subroutine, and closure are three callable forms whose bodies are all the same
-procedural scope; they differ in how each is invoked and in how `self` is supplied. A process /
-subroutine / constructor body receives `self` as its first formal parameter at every invocation.
-Every closure -- including a fork branch -- carries `self` as its first by-value capture
-(`captures[0]`): the enclosing scope snapshots its own `self` at construction, because no later
-invoker of the closure value can be relied on to know the receiver. Both supply paths end at the
-same place: `body.vars[0]` is `self`, read identically by every member access in the body.
+Process, method, and closure are three callable forms whose bodies are all the same block; they
+differ in how each is invoked and in how `self` is supplied. A process / method / constructor body
+receives `self` as its first formal parameter at every invocation. Every closure -- including a fork
+branch -- carries `self` as its first by-value capture (`captures[0]`): the enclosing scope
+snapshots its own `self` at construction, because no later invoker of the closure value can be
+relied on to know the receiver. Both supply paths end at the same place: `body.vars[0]` is `self`,
+read identically by every member access in the body.
 
 An access through a runtime library wrapper type illustrates the boundary between MIR's vocabulary
 and a backend's storage realization. The C++ backend wraps an observable signal's storage in
