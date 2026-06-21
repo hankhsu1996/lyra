@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/statement/fork_join.hpp"
 
 #include <expected>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -10,13 +9,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/capture_sink.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/closure.hpp"
-#include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -37,13 +32,10 @@ auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
 
 }  // namespace
 
-// LRM 9.3.2: a fork is a block. Its block_item_declarations lower
-// into that block and initialize at block entry -- in the parent, before any
-// branch spawns. Each branch lowers to a coroutine-typed closure composed into
-// the fork scope's expr arena. The capture sink collects every enclosing
-// reference the body makes; a fork-scope-local snapshots by value, a
-// deeper-declared enclosing variable aliases the live cell by reference (LRM
-// 6.21). The receiver `self` is the closure's first by-value capture.
+// LRM 9.3.2: a fork is a block whose block_item_declarations lower into that
+// block and initialize at block entry -- in the parent, before any branch
+// spawns. Each branch lowers to a coroutine closure composed into the fork
+// block's expr arena.
 auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
@@ -63,52 +55,21 @@ auto LowerForkStmt(
 
   std::vector<mir::ExprId> branches;
   branches.reserve(f.branches.size());
-  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
   for (const hir::StmtId branch_hir_id : f.branches) {
     const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
-    mir::Block branch_block;
-
-    const mir::LocalId branch_self_id = branch_block.AddLocal(
-        mir::LocalDecl{.name = "self", .type = self_ptr_type});
-    const mir::ExprId outer_self_read =
-        fork_block.AddExpr(BuildSelfRefExpr(fork_frame, self_ptr_type));
-
-    // A fork-scope local is snapshotted by value; a deeper enclosing variable
-    // aliases through a reference capture (LRM 6.21).
-    CaptureSink sink{
-        fork_frame.block_depth.Inner(), branch_block, fork_block,
-        process.Module().Unit(), fork_depth};
     // LRM 9.3.2: a branch is a concurrent thread whose body may suspend on
-    // timing controls / event waits, so it lowers as a coroutine body --
-    // returns inside it become `co_return`.
-    const WalkFrame branch_frame =
-        fork_frame.WithCaptureSink(&sink)
-            .WithBlock(&branch_block)
-            .WithSelfBinding(branch_self_id, fork_frame.block_depth.Inner())
-            .WithCoroutineBody(true)
-            .Deeper();
-    auto lowered = process.LowerStmt(branch, branch_frame);
+    // timing controls / event waits, so it lowers as a coroutine closure --
+    // returns inside it become `co_return`. A fork-scope local is snapshotted
+    // by value (the `fork_depth` boundary); a deeper enclosing variable aliases
+    // the live cell through a reference capture (LRM 6.21).
+    ClosureBuilder closure(
+        process.Module().Unit(), fork_frame, true, fork_depth);
+    auto lowered = process.LowerStmt(branch, closure.Frame());
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    branch_block.AppendStmt(*std::move(lowered));
-    branch_block.AppendStmt(
-        mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
-
-    std::vector<mir::Capture> captures;
-    captures.push_back(
-        mir::Capture{.value = outer_self_read, .binding = branch_self_id});
-    for (const CaptureRequest& request : sink.TakeRequests()) {
-      captures.push_back(
-          mir::Capture{.value = request.source, .binding = request.binding});
-    }
-    mir::ClosureExpr closure;
-    closure.captures = std::move(captures);
-    closure.body = std::make_unique<mir::Block>(std::move(branch_block));
-    branches.push_back(fork_block.AddExpr(
-        mir::Expr{
-            .data = std::move(closure),
-            .type = process.Module().Unit().builtins.coroutine}));
+    closure.Body().AppendStmt(*std::move(lowered));
+    branches.push_back(fork_block.AddExpr(closure.BuildCoroutine()));
   }
 
   const mir::BlockId scope_id =

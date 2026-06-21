@@ -552,19 +552,20 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       member-call rule; the backend no longer fabricates the engine handle or a reference wrapper
       for traversal. Closes R25's traversal carve-out (traversal now fits the generic member rule).
 
-- [ ] R31 -- Converge every closure-construction site onto the one closure builder. Associative
-      traversal (R27) and the scan family introduced and adopted a builder that owns the closure
-      body scope, the `self` capture, and the capture sink: the caller fills the body through it and
-      a terminal assembles the closure value, so the build-the-closure boilerplate lives in one
-      place. The remaining sites still inline that scaffolding -- the fork-join branch (a coroutine
-      closure with a by-value capture depth), the with-clause iterator (LRM 7.12.4, carrying an
-      index binding), the non-blocking-assignment submit (manual value captures, no sink), and the
-      deferred-assertion check. Converging them deletes the duplicated body-scope / self / sink /
-      capture-assembly code and leaves one builder for every closure. Requires generalizing the
-      builder with a coroutine result, a by-value capture depth, manual value captures, an index
-      binding, and a bare closure-value terminal (for spawn / submit, versus the immediately-invoked
-      call the synchronous sites use). **Trigger**: standalone -- the builder exists and the
-      synchronous IIFE sites already use it; R30 builds its new closures on it too.
+- [x] R31 -- **Every closure-construction site now goes through the one closure builder.** The
+      builder owns the body scope, the `self` capture (captures[0]), and the capture sink; the
+      caller fills the body -- by lowering HIR through the builder's frame (the sink turns
+      enclosing-variable reads into captures) or by hand-snapshotting outer expressions by value --
+      and a terminal assembles the closure value. It generalizes over a coroutine result (a fork
+      branch yields the coroutine type via a `co_return` terminal), a by-value capture depth (a
+      fork-scope local snapshots, a deeper enclosing variable aliases), per-invocation parameters
+      (the with-clause iterator and index, LRM 7.12.4), manual by-value captures (the NBA submit and
+      deferred-assertion check, which build their bodies by hand and so use no sink), and three
+      terminals -- a value `return`, a `co_return`, and a bare void body. The fork-join branch,
+      with-clause iterator, NBA submit, and deferred-assertion check all dropped their inline
+      body-scope / self / sink / capture-assembly code; `mir::ClosureExpr` is now constructed in
+      exactly one place. The result type left the constructor -- a synchronous terminal derives it
+      from the result expression, since a closure's result type is just its returned value's type.
 
 - [ ] R32 -- Unify the Expr- / value-construction helper naming, which is ad hoc today (`Make*` and
       `Build*` are both used for the same job). Establish one rule, grounded in the cross-language
