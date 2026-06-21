@@ -28,7 +28,7 @@ auto LowerHirAssignExprProc(
 // (procedural-local NBA is not supported). Used by the AssignExpr handler
 // and the LHS-destructuring desugar.
 auto BuildNbaSubmitClosureExpr(
-    const ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
+    ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
     mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

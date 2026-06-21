@@ -4,8 +4,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <memory>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -16,16 +14,15 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_hops.hpp"
-#include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_submit.hpp"
@@ -66,44 +63,18 @@ auto IsExprRootedAtStructuralVar(const mir::Block& block, mir::ExprId expr_id)
       expr.data);
 }
 
-// Snapshot a single outer-scope subexpression into the closure body. Literal
-// values clone verbatim so the body still sees an IntegerLiteral (some
-// downstream code paths extract constants from literal-shape exprs). Other
-// expressions are captured by value into a fresh local so the body
-// reads the value as it stood at submit time. `name_prefix` distinguishes
-// the caller so the synthesized binding names stay readable when MIR dumps
-// are inspected.
-auto SnapshotNonLhsSubexpr(
-    const mir::Block& outer_block, mir::Block& body,
-    std::vector<mir::Capture>& captures, std::uint32_t& snapshot_counter,
-    mir::ExprId outer_id, std::string_view name_prefix) -> mir::ExprId {
-  const auto& outer_expr = outer_block.GetExpr(outer_id);
-  if (std::holds_alternative<mir::IntegerLiteral>(outer_expr.data)) {
-    return body.AddExpr(outer_expr);
-  }
-  const auto binding = body.AddLocal(
-      mir::LocalDecl{
-          .name =
-              std::format("_lyra_{}_arg{}", name_prefix, snapshot_counter++),
-          .type = outer_expr.type});
-  captures.emplace_back(mir::Capture{.value = outer_id, .binding = binding});
-  return body.AddExpr(
-      mir::Expr{
-          .data =
-              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = binding},
-          .type = outer_expr.type});
-}
-
 // Recursively clone an LHS-shaped expression into the closure body. The LHS
 // structure (PrimaryExpr, container-access CallExpr, ConcatExpr) is
 // reproduced as-is; per-layer subexpressions that are NOT part of the LHS
 // structure (selector indices, range offsets and count literals) are
-// snapshotted by value so the closure body sees the values that were live
-// at submit time.
+// snapshotted by value through the builder so the closure body sees the values
+// that were live at submit time.
 auto CloneLhsExprForNbaBody(
-    const mir::Block& outer_block, mir::Block& body, mir::TypeId self_ptr_type,
-    mir::LocalId body_self_id, std::vector<mir::Capture>& captures,
-    std::uint32_t& snapshot_counter, mir::ExprId outer_id) -> mir::ExprId {
+    ClosureBuilder& closure, const mir::Block& outer_block,
+    mir::TypeId self_ptr_type, std::uint32_t& snapshot_counter,
+    mir::ExprId outer_id) -> mir::ExprId {
+  mir::Block& body = closure.Body();
+  const mir::LocalId body_self_id = closure.SelfBinding();
   const auto& outer_expr = outer_block.GetExpr(outer_id);
   return std::visit(
       Overloaded{
@@ -119,12 +90,12 @@ auto CloneLhsExprForNbaBody(
             std::vector<mir::ExprId> body_args;
             body_args.reserve(c.arguments.size());
             body_args.push_back(CloneLhsExprForNbaBody(
-                outer_block, body, self_ptr_type, body_self_id, captures,
-                snapshot_counter, c.arguments.front()));
+                closure, outer_block, self_ptr_type, snapshot_counter,
+                c.arguments.front()));
             for (std::size_t i = 1; i < c.arguments.size(); ++i) {
-              body_args.push_back(SnapshotNonLhsSubexpr(
-                  outer_block, body, captures, snapshot_counter, c.arguments[i],
-                  "nba"));
+              body_args.push_back(closure.CaptureByValue(
+                  c.arguments[i],
+                  std::format("_lyra_nba_arg{}", snapshot_counter++)));
             }
             return body.AddExpr(
                 mir::Expr{
@@ -139,8 +110,8 @@ auto CloneLhsExprForNbaBody(
             body_operands.reserve(c.operands.size());
             for (const mir::ExprId op_id : c.operands) {
               body_operands.push_back(CloneLhsExprForNbaBody(
-                  outer_block, body, self_ptr_type, body_self_id, captures,
-                  snapshot_counter, op_id));
+                  closure, outer_block, self_ptr_type, snapshot_counter,
+                  op_id));
             }
             return body.AddExpr(
                 mir::Expr{
@@ -228,45 +199,26 @@ auto LowerHirAssignExprProc(
       .type = process.Module().Unit().builtins.void_type};
 }
 
-// Builds a ClosureExpr that snapshots the RHS by value into the body and
-// writes the snapshot to the LHS. The closure is the deferred-write vehicle
-// the NBA region invokes. The returned Expr has type `void` -- the closure
-// value flows only into RuntimeSubmitNbaCall. `lhs_in_outer` must be an
-// addressable expression.
+// Builds the deferred-write closure that snapshots the RHS by value into the
+// body and writes the snapshot to the LHS. It is the vehicle the NBA region
+// invokes. The returned Expr has type `void` -- the closure value flows only
+// into RuntimeSubmitNbaCall. `lhs_in_outer` must be an addressable expression.
 auto BuildNbaSubmitClosureExpr(
-    const ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
+    ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
     mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr {
   auto& outer_block = *frame.current_block;
-  mir::Block body;
-  std::vector<mir::Capture> captures;
-
+  ClosureBuilder closure(module.Unit(), frame);
+  mir::Block& body = closure.Body();
   const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
-  const mir::LocalId self_id =
-      body.AddLocal(mir::LocalDecl{.name = "self", .type = self_ptr_type});
-  const mir::ExprId outer_self_read =
-      outer_block.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
-  captures.emplace_back(
-      mir::Capture{.value = outer_self_read, .binding = self_id});
+  const mir::LocalId self_id = closure.SelfBinding();
 
-  const mir::LocalId rhs_binding =
-      body.AddLocal(mir::LocalDecl{.name = "_lyra_nba_rhs", .type = rhs_type});
-  captures.emplace_back(
-      mir::Capture{.value = rhs_id_in_outer, .binding = rhs_binding});
-  const mir::ExprId rhs_ref_id = body.AddExpr(
-      mir::Expr{
-          .data =
-              mir::LocalRef{
-                  .hops = mir::BlockHops{.value = 0}, .var = rhs_binding},
-          .type = rhs_type});
+  const mir::ExprId rhs_ref_id =
+      closure.CaptureByValue(rhs_id_in_outer, "_lyra_nba_rhs");
 
   std::uint32_t snapshot_counter = 0;
   const mir::ExprId body_lhs_id = CloneLhsExprForNbaBody(
-      outer_block, body, self_ptr_type, self_id, captures, snapshot_counter,
-      lhs_in_outer);
+      closure, outer_block, self_ptr_type, snapshot_counter, lhs_in_outer);
 
-  // Body-side `self.Services()` for the observable write. Built only inside
-  // the closure body because the outer scope's `self_binding` and depths do
-  // not reach into the body -- the body captures `self` by value at depth 0.
   const mir::ExprId body_self_ref = body.AddExpr(
       mir::Expr{
           .data =
@@ -284,12 +236,7 @@ auto BuildNbaSubmitClosureExpr(
       mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
 
-  mir::ClosureExpr closure;
-  closure.captures = std::move(captures);
-  closure.body = std::make_unique<mir::Block>(std::move(body));
-
-  return mir::Expr{
-      .data = std::move(closure), .type = module.Unit().builtins.void_type};
+  return closure.BuildVoid();
 }
 
 }  // namespace lyra::lowering::hir_to_mir
