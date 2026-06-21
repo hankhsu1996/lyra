@@ -4,10 +4,10 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/runtime_submit.hpp"
-#include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
@@ -37,7 +37,7 @@ struct BuiltinMirTypes {
 struct CompilationUnit {
   std::vector<Type> types;
   BuiltinMirTypes builtins;
-  StructuralScope structural_scope;
+  Class top_class;
   std::vector<DeferredCheckSite> deferred_check_sites;
 
   CompilationUnit()
@@ -96,7 +96,7 @@ struct CompilationUnit {
     return id;
   }
 
-  // Backing-vector position is the id, matching TypeId / ProceduralVarId.
+  // Backing-vector position is the id, matching TypeId / LocalId.
   auto AllocateDeferredCheckSiteId() -> DeferredCheckSiteId {
     const auto id = static_cast<std::uint32_t>(deferred_check_sites.size());
     deferred_check_sites.push_back({});

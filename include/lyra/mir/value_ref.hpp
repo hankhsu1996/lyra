@@ -1,26 +1,26 @@
 #pragma once
 
-#include "lyra/mir/procedural_hops.hpp"
-#include "lyra/mir/procedural_var.hpp"
-#include "lyra/mir/structural_hops.hpp"
-#include "lyra/mir/structural_var.hpp"
+#include "lyra/mir/block_hops.hpp"
+#include "lyra/mir/enclosing_hops.hpp"
+#include "lyra/mir/local.hpp"
+#include "lyra/mir/member.hpp"
 
 namespace lyra::mir {
 
-struct StructuralVarRef {
-  StructuralHops hops;
-  StructuralVarId var{};
+struct MemberRef {
+  EnclosingHops hops;
+  MemberId var{};
 };
 
-struct ProceduralVarRef {
-  ProceduralHops hops;
-  ProceduralVarId var{};
+struct LocalRef {
+  BlockHops hops;
+  LocalId var{};
 };
 
-// A sensitivity leaf observes a structural var that resolves to a stored
+// A sensitivity leaf observes a member that resolves to a stored
 // `Observable` the scheduler subscribes to: a plain signal, an upward
 // ExternalRef member, or a downward borrowed-pointer slot. All three are
-// StructuralVarRefs; the var's type tells the renderer how to reach the cell.
-using SensitivityRef = StructuralVarRef;
+// MemberRefs; the var's type tells the renderer how to reach the cell.
+using SensitivityRef = MemberRef;
 
 }  // namespace lyra::mir

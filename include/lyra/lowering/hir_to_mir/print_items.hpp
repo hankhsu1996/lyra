@@ -9,14 +9,13 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/support/system_subroutine.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::mir {
 struct CompilationUnit;
-struct ProceduralScope;
+struct Block;
 }  // namespace lyra::mir
 
 namespace lyra::lowering::hir_to_mir {
@@ -59,12 +58,12 @@ auto BuildRuntimePrintItemsFromCallArgs(
 // Materializes a runtime print-item DTO list into MIR construction nodes: each
 // item becomes a `ConstructExpr` of its runtime-library type (literal or value
 // item), and the sequence becomes an `ArrayLiteralExpr` typed as an array of
-// `print_item`. The element subtrees are interned into `scope`; the returned
+// `print_item`. The element subtrees are interned into `block`; the returned
 // array root is left for the caller to intern. `time_unit_power` scales a %t
 // directive (LRM 21.2.1.3) and is unread when no item carries a kTime spec.
 // The canonical item-array builder every print-item-bearing effect reuses.
 auto BuildPrintItemsArray(
-    mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    mir::CompilationUnit& unit, mir::Block& block,
     const std::vector<mir::RuntimePrintItem>& items,
     std::int64_t time_unit_power) -> mir::Expr;
 

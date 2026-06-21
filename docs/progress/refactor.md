@@ -114,27 +114,26 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       constant case, which is acceptable -- it faithfully mirrors the MIR. See
       `decisions/conversion-folding.md`.
 
-- [ ] R8 -- Unify the callable forms onto one concept. Today a process (`mir::Process`), a
-      subroutine (`mir::StructuralSubroutineDecl`), and a closure (`mir::ClosureExpr`) are three
-      separate types whose bodies are all the same `ProceduralScope`; the code already notes the
-      duplication ("a subroutine is a callable peer of a process"). Each hardcodes a fixed point in
-      three orthogonal axes: how the body binds outer state (the enclosing object only / named
-      parameters / captured values), whether the body is a coroutine, and whether it is an anonymous
-      value or a named declaration. The combinations in use today are partial -- process is
-      (object-only, coroutine, value-spawned-at-startup), function is (params, plain, named,
-      returns), task is (params, coroutine, named), closure is (captures or params, anonymous
-      value). A fork-join branch is a closure with a coroutine result type, distinguished from a
-      synchronous closure by that type, not by a flag on the node -- so a closure already spans both
-      coroutine and plain without a suspend axis. Target shape: a single callable concept carrying a
-      `ProceduralScope` body, a list of bound inputs that unifies parameters and captures behind one
-      binding-mode axis, and a result type (the coroutine type when the body suspends); the five
-      forms become instances differing only in their axis values and in how the referencing site
-      invokes them (spawn at startup, call, submit, spawn concurrently). **Why deferred**: this
-      rebases the whole process / subroutine / closure machinery across lowering, MIR, the dumper,
-      and the backend; the fork work needed only a coroutine result type on the closure and reached
-      it without touching processes or subroutines, so folding the full merge in would be scope
-      explosion. **Trigger**: when a further feature needs yet another axis combination, or when a
-      change has to be made three times across the duplicated forms.
+- [ ] R8 -- Unify the callable forms onto one concept. Today a process (`mir::Process`), a method
+      (`mir::MethodDecl`), and a closure (`mir::ClosureExpr`) are three separate types whose bodies
+      are all the same `Block`; the code already notes the duplication ("a method is a callable peer
+      of a process"). Each hardcodes a fixed point in three orthogonal axes: how the body binds
+      outer state (the enclosing object only / named parameters / captured values), whether the body
+      is a coroutine, and whether it is an anonymous value or a named declaration. The combinations
+      in use today are partial -- process is (object-only, coroutine, value-spawned-at-startup),
+      function is (params, plain, named, returns), task is (params, coroutine, named), closure is
+      (captures or params, anonymous value). A fork-join branch is a closure with a coroutine result
+      type, distinguished from a synchronous closure by that type, not by a flag on the node -- so a
+      closure already spans both coroutine and plain without a suspend axis. Target shape: a single
+      callable concept carrying a `Block` body, a list of bound inputs that unifies parameters and
+      captures behind one binding-mode axis, and a result type (the coroutine type when the body
+      suspends); the five forms become instances differing only in their axis values and in how the
+      referencing site invokes them (spawn at startup, call, submit, spawn concurrently). **Why
+      deferred**: this rebases the whole process / method / closure machinery across lowering, MIR,
+      the dumper, and the backend; the fork work needed only a coroutine result type on the closure
+      and reached it without touching processes or methods, so folding the full merge in would be
+      scope explosion. **Trigger**: when a further feature needs yet another axis combination, or
+      when a change has to be made three times across the duplicated forms.
 
 - [x] R9 -- AST-to-HIR migration to the class-based organization defined in
       `docs/architecture/lowering_organization.md`. The `*LoweringState` god-objects are gone;
@@ -146,17 +145,17 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 - [x] R10 -- HIR-to-MIR migration to the class-based organization defined in
       `docs/architecture/lowering_organization.md`. Every handler is now
       `(Lowerer&, WalkFrame, node)`; the `WalkFrame` value type carries `current_compilation_unit` /
-      `current_structural_scope` / `current_procedural_scope` / `static_frame_scope` /
-      `procedural_depth` / `active_closure` / `active_index_binding` and every write goes through
-      `frame.current_*_scope->Add...` uniformly. `ModuleLowerer`, `StructuralScopeLowerer`, and
-      `ProcessLowerer` hold facts and registries only -- no borrowed pointer to in-flight IR, no
-      delegate `Add` / `Allocate` wrapper, no ambient `Set*` / `Enter*` / `Leave*`.
-      `ProceduralDepthGuard` is gone. The dead `facts.hpp` is deleted. `state.hpp` has been split
-      into `module_lowerer.hpp` / `structural_scope_lowerer.hpp` / `process_lowerer.hpp`. AST-to-HIR
-      `StructuralScopeLowerer.scope_`, `ModuleLowerer.hir_unit_`, and `ProcessLowerer.body_` are
-      likewise off the lowerer. `~1400` local-variable sites renamed (`unit_state` -> `module`,
-      `scope_state` -> `scope`, `proc_state` -> `process`, `proc_scope_state` -> `proc_scope`,
-      etc.). The per-LRM-family subsystem split ships as its own focused cut; see R13.
+      `current_class` / `current_block` / `static_frame_scope` / `block_depth` / `active_closure` /
+      `active_index_binding` and every write goes through `frame.current_class->Add...` /
+      `frame.current_block->Add...` uniformly. `ModuleLowerer`, `ClassLowerer`, and `ProcessLowerer`
+      hold facts and registries only -- no borrowed pointer to in-flight IR, no delegate `Add` /
+      `Allocate` wrapper, no ambient `Set*` / `Enter*` / `Leave*`. `ProceduralDepthGuard` is gone.
+      The dead `facts.hpp` is deleted. `state.hpp` has been split into `module_lowerer.hpp` /
+      `class_lowerer.hpp` / `process_lowerer.hpp`. AST-to-HIR `StructuralScopeLowerer.scope_`,
+      `ModuleLowerer.hir_unit_`, and `ProcessLowerer.body_` are likewise off the lowerer. `~1400`
+      local-variable sites renamed (`unit_state` -> `module`, `scope_state` -> `scope`, `proc_state`
+      -> `process`, `proc_scope_state` -> `proc_scope`, etc.). The per-LRM-family subsystem split
+      ships as its own focused cut; see R13.
 
 - [x] R11 -- Remove the `mutable owned_temp_counter_` escape hatch on `RenderContext`. Today the C++
       backend's temp-name counter is a `mutable` field reached through a pointer from every
@@ -192,8 +191,8 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `include/lyra/lowering/hir_to_mir/expression/{operators, calls, references,     selects, aggregates, assignment, inside}.{hpp,cpp}`,
       `expression/system/{print, scan, sformat,     file_io, diagnostic, timescale, control}.{hpp,cpp}`,
       and `statement/{blocks, branches, loops,     timing, fork_join, assignment, flow}.{hpp,cpp}`.
-      The procedural and scope-level expression dispatchers are class methods
-      (`ProcessLowerer::LowerExpr` / `LowerStmt`, `StructuralScopeLowerer::LowerExpr`); the
+      The procedural and class-level expression dispatchers are class methods
+      (`ProcessLowerer::LowerExpr` / `LowerStmt`, `ClassLowerer::LowerExpr`); the
       for-generate-header vs generate-control distinction lives on `WalkFrame::loop_var_mode`.
       Subsystem files include only the pass-class headers and their own family header, so adding a
       kind touches three files (subsystem header, subsystem implementation, dispatcher switch) and
@@ -212,30 +211,30 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 - [x] R15 -- Give `mir::Process` a `name` field, so the C++ method name, static-frame struct name,
       static-frame field name, and any future LLVM-IR function symbol all flow from a single
       MIR-level identifier instead of each backend re-deriving "process_N" from a position-in-scope
-      iteration index. `mir::StructuralSubroutineDecl::name` already plays this role for
-      subroutines; processes are anonymous in SV (LRM 9.2) so HIR-to-MIR synthesises a positional
-      identifier (`"process_0"` etc.) and threads it into the lowering so the returned `Process` is
-      constant -- no post-hoc mutation. The `WithStaticFrame(...)` install in the cpp backend now
-      reads `process.name + "__static"` rather than computing from an iteration index; the
-      walker-state propagation of the frame field name continues until R18 dissolves the walk frame.
-      **Trigger**: scheduled in front of R18.
+      iteration index. `mir::MethodDecl::name` already plays this role for methods; processes are
+      anonymous in SV (LRM 9.2) so HIR-to-MIR synthesises a positional identifier (`"process_0"`
+      etc.) and threads it into the lowering so the returned `Process` is constant -- no post-hoc
+      mutation. The `WithStaticFrame(...)` install in the cpp backend now reads
+      `process.name + "__static"` rather than computing from an iteration index; the walker-state
+      propagation of the frame field name continues until R18 dissolves the walk frame. **Trigger**:
+      scheduled in front of R18.
 
 - [x] R16 -- Give every MIR callable body an explicit `self` first binding -- `body.vars[0]` is a
-      procedural-var of borrowed-pointer-to-enclosing-scope type, named `self`. Route every
-      class-member access through a new `mir::MemberAccessExpr { receiver, var }` whose receiver
-      reaches `self` via `DerefExpr(ProceduralVarRef(self))`. Today four distinct receiver
-      mechanisms coexist -- method `this` (process / subroutine / constructor bodies), fork-branch
-      `(M* self)` parameter, NBA / `$strobe` / scan closures' `[this]` or `[=, this]` capture, and
-      `mir::StructuralVarRef`'s implicit-receiver render -- and the cpp backend dispatches between
-      them through `RenderContext` walker state (`ReceiverObject()` / `WithReceiver(...)` /
+      local of borrowed-pointer-to-enclosing-class type, named `self`. Route every class-member
+      access through a new `mir::MemberAccessExpr { receiver, var }` whose receiver reaches `self`
+      via `DerefExpr(LocalRef(self))`. Today four distinct receiver mechanisms coexist -- method
+      `this` (process / method / constructor bodies), fork-branch `(M* self)` parameter, NBA /
+      `$strobe` / scan closures' `[this]` or `[=, this]` capture, and `mir::MemberRef`'s
+      implicit-receiver render -- and the cpp backend dispatches between them through
+      `RenderContext` walker state (`ReceiverObject()` / `WithReceiver(...)` /
       `DeferredByValueCapture()` / `MemberPrefix()`). The same dispatch would have to be re-derived
       by every future backend (LIR / LLVM-IR). Target shape: `body.vars[0]` is uniformly `self`
       across every callable form, but how it is supplied follows each form's natural binding
-      mechanism -- a process / subroutine / constructor body receives `self` as its first formal
+      mechanism -- a process / method / constructor body receives `self` as its first formal
       parameter (the caller supplies), while a closure carries `self` as its first by-value capture
       (the enclosing scope snapshots its own self at construction). `mir::SelfScopeExpr` is removed
       (its job was to denote "the current receiver, whatever that is" -- precisely the
-      implicit-context shape this refactor eliminates). C++ emit per form: process / subroutine /
+      implicit-context shape this refactor eliminates). C++ emit per form: process / method /
       constructor bodies as `static auto <name>(M* self, ...) -> ... { ... }`, with the C++
       constructor delegating its body to a `static init(this)` call; closures as
       `[self = <enclosing self>, cap1 = ..., &cap2 = ...](closure_params) -> R { ... }` -- every
@@ -304,10 +303,10 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       R14, R15, R16, R17 have all landed; ready to pick up.
 
 - [x] R19 -- LRM 10.5 variable initialization lowers to an `AssignExpr` statement at the top of
-      `constructor_scope.root_stmts`, with the value being the user-supplied expression when present
-      or the LRM Table 6-7 type default. `mir::StructuralVarDecl.initializer` is removed; MIR has
-      exactly one mechanism for construction-time work (the statement list). `RenderField` emits a
-      pure value-init declaration (`Var<T> name{};` or `T name{};`) with no inline initializer;
+      `constructor_block.root_stmts`, with the value being the user-supplied expression when present
+      or the LRM Table 6-7 type default. `mir::MemberDecl.initializer` is removed; MIR has exactly
+      one mechanism for construction-time work (the statement list). `RenderField` emits a pure
+      value-init declaration (`Var<T> name{};` or `T name{};`) with no inline initializer;
       `RenderContext::in_class_member_init_` and `WithClassMemberInit` are removed. The C++ runtime
       takes `RuntimeServices&` at `Scope` construction (Bind no longer wires services), and
       `PackedArray` / `UnpackedArray<T>` / `DynamicArray<T>` gain default constructors with a 0-bit
@@ -344,17 +343,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       node. If any name is now misleading it is the MIR member-selector struct, which no longer
       names an expression; that lives in R22's vocabulary review, not here.
 
-- [ ] R22 -- Reconsider the procedural-vs-structural variable naming and structure now that
-      "structural variable" no longer appears as an `ExprData` arm. With class-member access
-      generalised to `MemberAccessExpr(receiver, member)`, "structural var" is just "a member of the
-      class" -- a fully general concept -- while "procedural var" is the body-local concept. The two
-      were named as a symmetric pair when both were specialised expression forms; now the structural
-      side has been abstracted into general member access, the asymmetry is awkward. Open questions:
-      does `mir::StructuralVarDecl` need a different name (e.g. `ClassMemberDecl`)? Do shared
-      structures that paralleled the two (e.g. `*VarRef`, `Lookup*Var`) still need to be parallel,
-      or did some of them only exist to mirror an axis that no longer divides? **Trigger**: design
-      discussion -- requires walking the structural / procedural axis across MIR vocabulary, dumper,
-      lowering helpers, and backend, deciding what stays paired and what merges.
+- [x] R22 -- MIR's vocabulary is generic-software, not SystemVerilog: the structural / procedural
+      axis words are gone from MIR. A structural scope is a **class**, a structural variable is a
+      **member**, a procedural variable is a **local**, and a procedural scope is a **block**; their
+      ids, references, accessors, fields, and dumper labels follow. HIR stays SystemVerilog-faithful
+      and keeps its structural / procedural names, so the HIR-to-MIR lowering helpers that translate
+      _from_ HIR keep their HIR-input-aligned names (the convention R21 settled) -- the rename
+      touches what MIR _is_, not the translator that reads HIR. The member / local distinction (an
+      instance field versus a body-frame variable) is the real software pair that replaces the
+      former symmetric axis.
 
 - [x] R23 -- "Materialise a reference into an owning value" is an explicit
       `Call(ArrayMethod{kToOwned})` node in MIR (Rust's `ToOwned` trait). HIR-to-MIR inserts the
@@ -569,7 +566,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       call the synchronous sites use). **Trigger**: standalone -- the builder exists and the
       synchronous IIFE sites already use it; R30 builds its new closures on it too.
 
-- [ ] R30 -- Unify the Expr- / value-construction helper naming, which is ad hoc today (`Make*` and
+- [ ] R32 -- Unify the Expr- / value-construction helper naming, which is ad hoc today (`Make*` and
       `Build*` are both used for the same job). Establish one rule, grounded in the cross-language
       norm: every IR / value system separates a **pure node factory** -- assembles a node from
       ready-made parts, no scope or arena side effect, returns by value -- from a **scope-using

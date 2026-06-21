@@ -40,23 +40,23 @@ local declared in place" to map onto.
 
 **Honor the frontend's resolved lifetime; realize a static-lifetime body local as a per-instance
 member of the enclosing unit's class, default-initialized once; realize an automatic local as a C++
-local at its source position.** A process and a subroutine use the identical mechanism.
+local at its source position.** A process and a method use the identical mechanism.
 
 - The body reaches the static local by the same scoped reference it uses for any local; the backend
   resolves that reference to the per-instance member.
-- The per-instance member is a flat structural var on the owner scope's structural-var arena -- not
-  a sub-struct grouping per callable. SystemVerilog's per-callable scoping is already settled by HIR
-  name-binding before MIR sees the program; MIR has no visibility dimension, so the callable
-  grouping is not a MIR-level fact to preserve. Modeling each static local as a plain structural var
-  collapses static-local storage and access onto the same paths the rest of MIR already uses for
-  module-level signals (one type of decl, one MemberAccess shape, one render path, no static-frame
-  walker state on the backend).
+- The per-instance member is a flat member on the owner class's member arena -- not a sub-struct
+  grouping per callable. SystemVerilog's per-callable scoping is already settled by HIR name-binding
+  before MIR sees the program; MIR has no visibility dimension, so the callable grouping is not a
+  MIR-level fact to preserve. Modeling each static local as a plain member collapses static-local
+  storage and access onto the same paths the rest of MIR already uses for module-level signals (one
+  type of decl, one MemberAccess shape, one render path, no static-frame walker state on the
+  backend).
 - Names are made unique **uniformly** by appending an id to every static member -- not "append only
-  on collision". Sibling callables in the same owner scope (`static int x;` in two processes) and
+  on collision". Sibling callables in the same owner class (`static int x;` in two processes) and
   nested blocks repeating an identifier can both claim the same source name; the suffix removes the
   collision without a presence decision. HIR-to-MIR mangles the name as
-  `<callable_name>__<source_name>_<hir_var_id>` before adding the decl to the owner scope, so the
-  structural-var name is unique within the class's structural-var arena.
+  `<callable_name>__<source_name>_<hir_var_id>` before adding the decl to the owner class, so the
+  member name is unique within the class's member arena.
 
 ### Why honor the frontend, and not reclassify bare to automatic
 

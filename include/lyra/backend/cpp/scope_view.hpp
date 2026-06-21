@@ -1,13 +1,13 @@
 #pragma once
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/mir/block_hops.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/structural_hops.hpp"
-#include "lyra/mir/structural_scope.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -19,27 +19,25 @@ namespace lyra::backend::cpp {
 // hops-relative reference resolves by climbing that chain, exactly as the
 // construction-side `WalkFrame` resolves it; this is the read-only twin of that
 // frame, thin because every decision is already baked into the MIR it reads.
-// Immutable and copied on descent (`WithProceduralScope` /
-// `WithStructuralScope`); it grows no member per concept, so it is not the
+// Immutable and copied on descent (`WithBlock` /
+// `WithClass`); it grows no member per concept, so it is not the
 // forbidden growing `*Context`.
 class ScopeView {
  public:
   static auto ForRoot(
-      const mir::CompilationUnit& unit,
-      const mir::StructuralScope& structural_scope,
-      const mir::ProceduralScope& procedural_scope) -> ScopeView {
-    return ScopeView{unit, structural_scope, procedural_scope};
+      const mir::CompilationUnit& unit, const mir::Class& cls,
+      const mir::Block& block) -> ScopeView {
+    return ScopeView{unit, cls, block};
   }
 
-  [[nodiscard]] auto WithProceduralScope(
-      const mir::ProceduralScope& child) const -> ScopeView {
-    return ScopeView{*unit_, *scope_, child, this, structural_parent_};
+  [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
+    return ScopeView{*unit_, *class_, child, this, class_parent_};
   }
 
-  [[nodiscard]] auto WithStructuralScope(
-      const mir::StructuralScope& child_scope,
-      const mir::ProceduralScope& root_proc_scope) const -> ScopeView {
-    return ScopeView{*unit_, child_scope, root_proc_scope, nullptr, this};
+  [[nodiscard]] auto WithClass(
+      const mir::Class& child_class, const mir::Block& root_block) const
+      -> ScopeView {
+    return ScopeView{*unit_, child_class, root_block, nullptr, this};
   }
 
   ScopeView(const ScopeView&) = delete;
@@ -52,71 +50,68 @@ class ScopeView {
     return *unit_;
   }
 
-  [[nodiscard]] auto StructuralScope() const -> const mir::StructuralScope& {
-    return *scope_;
+  [[nodiscard]] auto Class() const -> const mir::Class& {
+    return *class_;
   }
 
-  [[nodiscard]] auto ProceduralScope() const -> const mir::ProceduralScope& {
-    return *proc_scope_;
+  [[nodiscard]] auto Block() const -> const mir::Block& {
+    return *block_;
   }
 
-  [[nodiscard]] auto ProceduralScopeAtHops(mir::ProceduralHops hops) const
-      -> const mir::ProceduralScope& {
+  [[nodiscard]] auto BlockAtHops(mir::BlockHops hops) const
+      -> const mir::Block& {
     if (hops.value == 0) {
-      return *proc_scope_;
+      return *block_;
     }
-    if (procedural_parent_ == nullptr) {
-      throw InternalError(
-          "ScopeView::ProceduralScopeAtHops: hops out of range");
+    if (block_parent_ == nullptr) {
+      throw InternalError("ScopeView::BlockAtHops: hops out of range");
     }
-    return procedural_parent_->ProceduralScopeAtHops(
-        mir::ProceduralHops{.value = hops.value - 1});
+    return block_parent_->BlockAtHops(mir::BlockHops{.value = hops.value - 1});
   }
 
-  [[nodiscard]] auto StructuralScopeAtHops(mir::StructuralHops hops) const
-      -> const mir::StructuralScope& {
+  [[nodiscard]] auto EnclosingClassAtHops(mir::EnclosingHops hops) const
+      -> const mir::Class& {
     if (hops.value == 0) {
-      return *scope_;
+      return *class_;
     }
-    if (structural_parent_ == nullptr) {
-      throw InternalError(
-          "ScopeView::StructuralScopeAtHops: hops out of range");
+    if (class_parent_ == nullptr) {
+      throw InternalError("ScopeView::EnclosingClassAtHops: hops out of range");
     }
-    return structural_parent_->StructuralScopeAtHops(
-        mir::StructuralHops{.value = hops.value - 1});
+    return class_parent_->EnclosingClassAtHops(
+        mir::EnclosingHops{.value = hops.value - 1});
   }
 
   [[nodiscard]] auto Expr(mir::ExprId id) const -> const mir::Expr& {
-    return proc_scope_->GetExpr(id);
+    return block_->GetExpr(id);
   }
 
  private:
   ScopeView(
-      const mir::CompilationUnit& unit, const mir::StructuralScope& scope,
-      const mir::ProceduralScope& proc_scope)
+      const mir::CompilationUnit& unit, const mir::Class& cls,
+      const mir::Block& block)
       : unit_(&unit),
-        scope_(&scope),
-        proc_scope_(&proc_scope),
-        procedural_parent_(nullptr),
-        structural_parent_(nullptr) {
+        class_(&cls),
+        block_(&block),
+        block_parent_(nullptr),
+        class_parent_(nullptr) {
   }
 
   ScopeView(
-      const mir::CompilationUnit& unit, const mir::StructuralScope& scope,
-      const mir::ProceduralScope& proc_scope,
-      const ScopeView* procedural_parent, const ScopeView* structural_parent)
+      const mir::CompilationUnit& unit, const mir::Class& cls,
+      const mir::Block& block, const ScopeView* block_parent,
+      const ScopeView* class_parent)
       : unit_(&unit),
-        scope_(&scope),
-        proc_scope_(&proc_scope),
-        procedural_parent_(procedural_parent),
-        structural_parent_(structural_parent) {
+        class_(&cls),
+        block_(&block),
+        block_parent_(block_parent),
+        class_parent_(class_parent) {
   }
 
   const mir::CompilationUnit* unit_;
-  const mir::StructuralScope* scope_;
-  const mir::ProceduralScope* proc_scope_;
-  const ScopeView* procedural_parent_;
-  const ScopeView* structural_parent_;
+  const mir::Class* class_;
+  const mir::Block* block_;
+  const ScopeView* block_parent_;
+  const ScopeView* class_parent_;
 };
 
 }  // namespace lyra::backend::cpp

@@ -14,7 +14,9 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/block_depth.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
@@ -26,16 +28,14 @@
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
-#include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -274,15 +274,15 @@ auto LowerAssociativeTraversal(
   const mir::TypeId void_t = module.Unit().builtins.void_type;
 
   ClosureBuilder closure(process.Module().Unit(), frame, result_type);
-  mir::ProceduralScope& body = closure.Body();
+  mir::Block& body = closure.Body();
   const WalkFrame& closure_frame = closure.Frame();
 
   // probe = idx -- snapshot the current index value into a plain local.
   auto idx_read_or =
       process.LowerExpr(hir_proc.exprs.at(idx_hir), closure_frame);
   if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
-  const mir::ProceduralVarRef probe_ref = body.AppendLocal(
-      mir::ProceduralVarDecl{.name = "_lyra_trav_probe", .type = key_type},
+  const mir::LocalRef probe_ref = body.AppendLocal(
+      mir::LocalDecl{.name = "_lyra_trav_probe", .type = key_type},
       body.AddExpr(*std::move(idx_read_or)));
 
   // found = (map).<kind>(probe) -- pure query: mutates probe, yields 1/0.
@@ -301,8 +301,8 @@ auto LowerAssociativeTraversal(
                           .method = mir::AssociativeMethodInfo{.kind = kind}},
                   .arguments = {map_read_id, probe_read_id}},
           .type = result_type});
-  const mir::ProceduralVarRef found_ref = body.AppendLocal(
-      mir::ProceduralVarDecl{.name = "_lyra_trav_found", .type = result_type},
+  const mir::LocalRef found_ref = body.AppendLocal(
+      mir::LocalDecl{.name = "_lyra_trav_found", .type = result_type},
       query_id);
 
   // idx = probe -- observable write-back fires the LRM 4.3 update event.
@@ -321,8 +321,7 @@ auto LowerAssociativeTraversal(
 
   const mir::ExprId found_id =
       body.AddExpr(mir::Expr{.data = found_ref, .type = result_type});
-  return BuildClosureCallExpr(
-      *frame.current_procedural_scope, closure.Build(found_id));
+  return BuildClosureCallExpr(*frame.current_block, closure.Build(found_id));
 }
 
 auto LowerIteratorMethodKind(hir::IteratorMethodKind k)
@@ -384,9 +383,9 @@ auto BuildMirBuiltinMethodCallee(
 }
 
 auto LowerUserCallee(
-    const StructuralScopeLowerer& scope, const hir::StructuralSubroutineRef& u)
+    const ClassLowerer& lowerer, const hir::StructuralSubroutineRef& u)
     -> mir::Callee {
-  return scope.TranslateStructuralSubroutine(u.hops, u.subroutine);
+  return lowerer.TranslateStructuralSubroutine(u.hops, u.subroutine);
 }
 
 // The LRM 7.12 family shares one closure shape across every unpacked-array
@@ -440,7 +439,7 @@ auto BuildArrayMethodClosure(
     const hir::WithClause* with_clause) -> diag::Result<mir::Expr> {
   const auto& module = process.Module();
   const auto& hir_process = process.HirBody();
-  auto& outer_scope = *frame.current_procedural_scope;
+  auto& outer_block = *frame.current_block;
   const auto& hir_recv_ty = module.Hir().GetType(hir_receiver_type);
   const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
   if (!element_type.has_value()) {
@@ -454,20 +453,19 @@ auto BuildArrayMethodClosure(
           ? hir_process.procedural_vars.at(with_clause->iterator.value).name
           : std::string{"item"};
 
-  const mir::TypeId self_ptr_type =
-      frame.current_structural_scope->self_pointer_type;
-  mir::ProceduralScope body_scope;
-  const WalkFrame body_frame = frame.WithProceduralScope(&body_scope).Deeper();
-  const ProceduralDepth body_depth = body_frame.procedural_depth;
+  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
+  mir::Block body_block;
+  const WalkFrame body_frame = frame.WithBlock(&body_block).Deeper();
+  const BlockDepth body_depth = body_frame.block_depth;
 
-  const mir::ProceduralVarId self_binding = body_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+  const mir::LocalId self_binding = body_block.AddLocal(
+      mir::LocalDecl{.name = "self", .type = self_ptr_type});
   const mir::ExprId outer_self_read =
-      outer_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
-  const mir::ProceduralVarId item_binding = body_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = iterator_name, .type = item_type});
-  const mir::ProceduralVarId index_binding = body_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = "index", .type = index_type});
+      outer_block.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
+  const mir::LocalId item_binding = body_block.AddLocal(
+      mir::LocalDecl{.name = iterator_name, .type = item_type});
+  const mir::LocalId index_binding =
+      body_block.AddLocal(mir::LocalDecl{.name = "index", .type = index_type});
   if (with_clause != nullptr) {
     process.MapProceduralVar(
         with_clause->iterator,
@@ -476,7 +474,7 @@ auto BuildArrayMethodClosure(
   }
 
   CaptureSink sink{
-      body_depth, body_scope, outer_scope, process.Module().Unit()};
+      body_depth, body_block, outer_block, process.Module().Unit()};
   // A with-clause body is a synchronous predicate / projection closure -- it
   // never suspends; its trailing `return` renders as a plain `return`.
   const WalkFrame closure_frame = body_frame.WithCaptureSink(&sink)
@@ -491,18 +489,17 @@ auto BuildArrayMethodClosure(
         hir_process.exprs.at(with_clause->expr.value), closure_frame);
     if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
     return_type = body_expr_or->type;
-    body_return_value = body_scope.AddExpr(*std::move(body_expr_or));
+    body_return_value = body_block.AddExpr(*std::move(body_expr_or));
   } else {
     return_type = item_type;
-    body_return_value = body_scope.AddExpr(
+    body_return_value = body_block.AddExpr(
         mir::Expr{
             .data =
-                mir::ProceduralVarRef{
-                    .hops = mir::ProceduralHops{.value = 0},
-                    .var = item_binding},
+                mir::LocalRef{
+                    .hops = mir::BlockHops{.value = 0}, .var = item_binding},
             .type = item_type});
   }
-  body_scope.AppendStmt(
+  body_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
           .data = mir::ReturnStmt{.value = body_return_value}});
@@ -518,7 +515,7 @@ auto BuildArrayMethodClosure(
   closure.captures = std::move(captures);
   closure.params.push_back(mir::Parameter{.binding = item_binding});
   closure.params.push_back(mir::Parameter{.binding = index_binding});
-  closure.body = std::make_unique<mir::ProceduralScope>(std::move(body_scope));
+  closure.body = std::make_unique<mir::Block>(std::move(body_block));
   return mir::Expr{.data = std::move(closure), .type = return_type};
 }
 
@@ -588,9 +585,9 @@ auto LowerHirCallExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& module = process.Module();
-  const auto& scope = process.Scope();
+  const auto& lowerer = process.Owner();
   const auto& hir_process = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   return std::visit(
       Overloaded{
           [&](const hir::SystemSubroutineRef& sys) -> diag::Result<mir::Expr> {
@@ -605,7 +602,7 @@ auto LowerHirCallExprProc(
             // the actual and copy nothing back (LRM 13.5.2), so they are
             // fine as operands and fall through to the value-only lowering.
             const hir::StructuralSubroutineDecl& decl =
-                scope.LookupHirSubroutine(usr.hops, usr.subroutine);
+                lowerer.LookupHirSubroutine(usr.hops, usr.subroutine);
             for (const auto& param : decl.params) {
               if (hir::RequiresWriteback(param.direction)) {
                 return diag::Unsupported(
@@ -619,8 +616,8 @@ auto LowerHirCallExprProc(
             // (mir.md invariant 11); the SV actuals follow.
             std::vector<mir::ExprId> args;
             args.reserve(c.arguments.size() + 1);
-            args.push_back(proc_scope.AddExpr(BuildSelfRefExpr(
-                frame, frame.current_structural_scope->self_pointer_type)));
+            args.push_back(block.AddExpr(BuildSelfRefExpr(
+                frame, frame.current_class->self_pointer_type)));
             for (std::size_t i = 0; i < c.arguments.size(); ++i) {
               if (!c.arguments[i].has_value()) {
                 throw InternalError(
@@ -642,20 +639,19 @@ auto LowerHirCallExprProc(
                 if (!arg_or) {
                   return std::unexpected(std::move(arg_or.error()));
                 }
-                actual_id = proc_scope.AddExpr(*std::move(arg_or));
-                const mir::ExprId root_id =
-                    FindLhsRootId(proc_scope, actual_id);
+                actual_id = block.AddExpr(*std::move(arg_or));
+                const mir::ExprId root_id = FindLhsRootId(block, actual_id);
                 const bool root_is_cell = mir::IsObservableCellType(
-                    module.Unit().GetType(proc_scope.GetExpr(root_id).type));
+                    module.Unit().GetType(block.GetExpr(root_id).type));
                 if (root_is_cell && root_id != actual_id) {
                   // Selector / range on an observable cell -- the body sees
                   // a `Ref<T>` bound to a `ScopedMutation` snapshot of the
                   // selected element. Bare cells stay as-is so the body's
                   // `Ref<T>` binds the underlying `Var<T>` directly.
                   const mir::ExprId services_id =
-                      proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+                      block.AddExpr(BuildServicesCallExpr(process, frame));
                   actual_id = RewriteLhsRootWithMutate(
-                      module.Unit(), proc_scope, actual_id, services_id);
+                      module.Unit(), block, actual_id, services_id);
                 }
               } else {
                 auto arg_or = process.LowerExpr(
@@ -663,12 +659,12 @@ auto LowerHirCallExprProc(
                 if (!arg_or) {
                   return std::unexpected(std::move(arg_or.error()));
                 }
-                actual_id = proc_scope.AddExpr(*std::move(arg_or));
+                actual_id = block.AddExpr(*std::move(arg_or));
               }
               if (is_ref_formal) {
                 args.push_back(BuildReferenceArg(
-                    process.Module().Unit(), proc_scope, actual_id,
-                    proc_scope.GetExpr(actual_id).type));
+                    process.Module().Unit(), block, actual_id,
+                    block.GetExpr(actual_id).type));
               } else {
                 args.push_back(actual_id);
               }
@@ -676,7 +672,7 @@ auto LowerHirCallExprProc(
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = LowerUserCallee(scope, usr),
+                        .callee = LowerUserCallee(lowerer, usr),
                         .arguments = std::move(args)},
                 .type = result_type};
           },
@@ -693,8 +689,8 @@ auto LowerHirCallExprProc(
               }
               return mir::Expr{
                   .data =
-                      mir::ProceduralVarRef{
-                          .hops = mir::ProceduralHops{.value = 0},
+                      mir::LocalRef{
+                          .hops = mir::BlockHops{.value = 0},
                           .var = *index_binding},
                   .type = result_type};
             }
@@ -745,16 +741,15 @@ auto LowerHirCallExprProc(
               if (!recv_or) {
                 return std::unexpected(std::move(recv_or.error()));
               }
-              receiver_id = proc_scope.AddExpr(*std::move(recv_or));
-              const mir::ExprId root_id =
-                  FindLhsRootId(proc_scope, receiver_id);
+              receiver_id = block.AddExpr(*std::move(recv_or));
+              const mir::ExprId root_id = FindLhsRootId(block, receiver_id);
               const bool root_is_cell = mir::IsObservableCellType(
-                  module.Unit().GetType(proc_scope.GetExpr(root_id).type));
+                  module.Unit().GetType(block.GetExpr(root_id).type));
               if (root_is_cell) {
                 const mir::ExprId services_id =
-                    proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+                    block.AddExpr(BuildServicesCallExpr(process, frame));
                 receiver_id = RewriteLhsRootWithMutate(
-                    module.Unit(), proc_scope, receiver_id, services_id);
+                    module.Unit(), block, receiver_id, services_id);
               }
             } else {
               auto recv_or = process.LowerExpr(
@@ -762,7 +757,7 @@ auto LowerHirCallExprProc(
               if (!recv_or) {
                 return std::unexpected(std::move(recv_or.error()));
               }
-              receiver_id = proc_scope.AddExpr(*std::move(recv_or));
+              receiver_id = block.AddExpr(*std::move(recv_or));
             }
             args.push_back(receiver_id);
 
@@ -776,7 +771,7 @@ auto LowerHirCallExprProc(
               if (!arg_or) {
                 return std::unexpected(std::move(arg_or.error()));
               }
-              args.push_back(proc_scope.AddExpr(*std::move(arg_or)));
+              args.push_back(block.AddExpr(*std::move(arg_or)));
             }
             // LRM 7.12.1: reduction / ordering / locator array methods take a
             // closure. The user's `with` clause is used if present; otherwise
@@ -791,7 +786,7 @@ auto LowerHirCallExprProc(
               if (!closure_or) {
                 return std::unexpected(std::move(closure_or.error()));
               }
-              args.push_back(proc_scope.AddExpr(*std::move(closure_or)));
+              args.push_back(block.AddExpr(*std::move(closure_or)));
               // LRM 7.12.5: `map`'s result element type may differ from the
               // receiver's, so its shield is supplied here as that type's
               // canonical default -- the runtime shape is not recoverable from
@@ -799,7 +794,7 @@ auto LowerHirCallExprProc(
               if (*ak == hir::ArrayMethodKind::kMap) {
                 const mir::TypeId result_elem = ArrayContainerElementType(
                     module.Unit().GetType(result_type));
-                args.push_back(proc_scope.AddExpr(
+                args.push_back(block.AddExpr(
                     BuildDefaultValueExpr(module, frame, result_elem)));
               }
             } else if (c.with_clause.has_value()) {
@@ -817,7 +812,7 @@ auto LowerHirCallExprProc(
             if (const auto* ev = std::get_if<hir::EventMethodKind>(&b.method)) {
               if (*ev == hir::EventMethodKind::kTriggered) {
                 args.push_back(
-                    proc_scope.AddExpr(BuildServicesCallExpr(process, frame)));
+                    block.AddExpr(BuildServicesCallExpr(process, frame)));
               }
             }
             return mir::Expr{

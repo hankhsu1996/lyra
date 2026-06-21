@@ -54,7 +54,7 @@ auto LiftStringSource(
         "unpacked array of byte (LRM 21.3.4.3)");
   }
 
-  return frame.current_procedural_scope->AddExpr(
+  return frame.current_block->AddExpr(
       mir::Expr{
           .data =
               mir::ConversionExpr{
@@ -74,7 +74,7 @@ auto LiftStringFormat(
         "LiftStringFormat: scan format is not string or integral (LRM "
         "21.3.4.3)");
   }
-  return frame.current_procedural_scope->AddExpr(
+  return frame.current_block->AddExpr(
       mir::Expr{
           .data =
               mir::ConversionExpr{
@@ -98,7 +98,7 @@ auto LiftStringFormat(
 auto EmitIsUnknownGuard(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId bit_t,
     mir::ExprId operand_id) -> void {
-  auto& body = *frame.current_procedural_scope;
+  auto& body = *frame.current_block;
   const mir::ExprId guard_id = body.AddExpr(
       mir::Expr{
           .data =
@@ -111,7 +111,7 @@ auto EmitIsUnknownGuard(
                   .arguments = {operand_id}},
           .type = bit_t});
 
-  mir::ProceduralScope then_body;
+  mir::Block then_body;
   const mir::ExprId minus_one = then_body.AddExpr(
       mir::MakeIntegerLiteral(
           module.Unit().builtins.integer, static_cast<std::int64_t>(-1)));
@@ -204,7 +204,7 @@ auto LowerScanSystemSubroutineCall(
   // The body parses into procedural-local temps, conditionally writes them back
   // to the output lvalues, and yields the matched-conversion count.
   ClosureBuilder closure(process.Module().Unit(), frame, integer_t);
-  mir::ProceduralScope& body = closure.Body();
+  mir::Block& body = closure.Body();
   const WalkFrame& closure_frame = closure.Frame();
 
   // Source / format are rvalues inside the body. The leaf lowering routes
@@ -240,13 +240,13 @@ auto LowerScanSystemSubroutineCall(
   // conditional commit later reads them back into the original lvalue.
   // Default-init is a syntactic requirement for procedural locals; the value is
   // never observed because parse runs before commit.
-  std::vector<mir::ProceduralVarId> temp_ids;
+  std::vector<mir::LocalId> temp_ids;
   temp_ids.reserve(metas.size());
   for (std::size_t k = 0; k < metas.size(); ++k) {
     const mir::ExprId init_id = body.AddExpr(
         BuildDefaultValueExpr(module, closure_frame, metas[k].mir_type));
-    const mir::ProceduralVarRef temp_ref = body.AppendLocal(
-        mir::ProceduralVarDecl{
+    const mir::LocalRef temp_ref = body.AppendLocal(
+        mir::LocalDecl{
             .name = std::format("_lyra_scan_temp_{}", k),
             .type = metas[k].mir_type},
         init_id);
@@ -259,8 +259,8 @@ auto LowerScanSystemSubroutineCall(
   mir_slots.reserve(metas.size());
   for (std::size_t k = 0; k < metas.size(); ++k) {
     const mir::ExprId temp_ref_id = body.AddExpr(
-        mir::MakeProceduralVarRefExpr(
-            mir::ProceduralHops{.value = 0}, temp_ids[k], metas[k].mir_type));
+        mir::MakeLocalRefExpr(
+            mir::BlockHops{.value = 0}, temp_ids[k], metas[k].mir_type));
     if (metas[k].is_string) {
       mir_slots.emplace_back(mir::StringScanSlot{.temp = temp_ref_id});
     } else {
@@ -285,8 +285,8 @@ auto LowerScanSystemSubroutineCall(
                           .slots = std::move(mir_slots)}},
           .type = integer_t});
 
-  const mir::ProceduralVarRef count_ref = body.AppendLocal(
-      mir::ProceduralVarDecl{.name = "_lyra_scan_count", .type = integer_t},
+  const mir::LocalRef count_ref = body.AppendLocal(
+      mir::LocalDecl{.name = "_lyra_scan_count", .type = integer_t},
       parse_call_id);
 
   // Conditional commits: for each output arg k, lower the lvalue HIR freshly
@@ -309,16 +309,15 @@ auto LowerScanSystemSubroutineCall(
                     .rhs = k_lit_id},
             .type = bit_t});
 
-    mir::ProceduralScope then_body;
-    const WalkFrame then_frame =
-        closure_frame.WithProceduralScope(&then_body).Deeper();
+    mir::Block then_body;
+    const WalkFrame then_frame = closure_frame.WithBlock(&then_body).Deeper();
     auto lvalue_or = process.LowerLhsExpr(
         hir_proc.exprs.at(call.arguments[k + 2]->value), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId lvalue_id = then_body.AddExpr(*std::move(lvalue_or));
     const mir::ExprId temp_read_id = then_body.AddExpr(
-        mir::MakeProceduralVarRefExpr(
-            mir::ProceduralHops{.value = 1}, temp_ids[k], metas[k].mir_type));
+        mir::MakeLocalRefExpr(
+            mir::BlockHops{.value = 1}, temp_ids[k], metas[k].mir_type));
     const mir::ExprId services_id_then =
         then_body.AddExpr(BuildServicesCallExpr(process, then_frame));
     const mir::Expr assign_expr = BuildObservableAssignExpr(
@@ -334,8 +333,7 @@ auto LowerScanSystemSubroutineCall(
   // Yield the matched-conversion count.
   const mir::ExprId count_id =
       body.AddExpr(mir::Expr{.data = count_ref, .type = integer_t});
-  return BuildClosureCallExpr(
-      *frame.current_procedural_scope, closure.Build(count_id));
+  return BuildClosureCallExpr(*frame.current_block, closure.Build(count_id));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

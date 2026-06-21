@@ -33,7 +33,7 @@ struct RuntimeSubmitNbaCall {
 // `$display` produces -- items reference the enclosing scope's ExprIds
 // directly, so the LRM 21.2.2 "evaluate at end-of-slot" semantic falls
 // out of where the print is rendered (inside the postponed lambda).
-// Procedural-local references inside the items are by-value snapshotted
+// Block-local references inside the items are by-value snapshotted
 // at the C++ codegen boundary via the lambda's init-capture list; module
 // signals are reached through `this` and read at fire time.
 struct RuntimeSubmitPostponedCall {

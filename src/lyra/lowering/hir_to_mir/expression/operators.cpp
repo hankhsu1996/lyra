@@ -11,10 +11,10 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -157,7 +157,7 @@ auto LowerHirUnaryExprProc(
     return std::unexpected(std::move(operand_or.error()));
   }
   const mir::ExprId operand_id =
-      frame.current_procedural_scope->AddExpr(*std::move(operand_or));
+      frame.current_block->AddExpr(*std::move(operand_or));
   return mir::Expr{
       .data = mir::UnaryExpr{.op = LowerUnaryOp(u.op), .operand = operand_id},
       .type = result_type};
@@ -169,12 +169,10 @@ auto LowerHirBinaryExprProc(
   const auto& hir_process = process.HirBody();
   auto lhs_or = process.LowerExpr(hir_process.exprs.at(b.lhs.value), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id =
-      frame.current_procedural_scope->AddExpr(*std::move(lhs_or));
+  const mir::ExprId lhs_id = frame.current_block->AddExpr(*std::move(lhs_or));
   auto rhs_or = process.LowerExpr(hir_process.exprs.at(b.rhs.value), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::ExprId rhs_id =
-      frame.current_procedural_scope->AddExpr(*std::move(rhs_or));
+  const mir::ExprId rhs_id = frame.current_block->AddExpr(*std::move(rhs_or));
   return mir::Expr{
       .data =
           mir::BinaryExpr{
@@ -189,18 +187,15 @@ auto LowerHirConditionalExprProc(
   auto cond_or =
       process.LowerExpr(hir_process.exprs.at(c.condition.value), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id =
-      frame.current_procedural_scope->AddExpr(*std::move(cond_or));
+  const mir::ExprId cond_id = frame.current_block->AddExpr(*std::move(cond_or));
   auto then_or =
       process.LowerExpr(hir_process.exprs.at(c.then_value.value), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
-  const mir::ExprId then_id =
-      frame.current_procedural_scope->AddExpr(*std::move(then_or));
+  const mir::ExprId then_id = frame.current_block->AddExpr(*std::move(then_or));
   auto else_or =
       process.LowerExpr(hir_process.exprs.at(c.else_value.value), frame);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const mir::ExprId else_id =
-      frame.current_procedural_scope->AddExpr(*std::move(else_or));
+  const mir::ExprId else_id = frame.current_block->AddExpr(*std::move(else_or));
   return mir::Expr{
       .data =
           mir::ConditionalExpr{
@@ -214,24 +209,24 @@ auto LowerHirIncDecExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_process = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   // The target is written in place, so a queue element dispatches to its
   // write-side access just as an assignment target does.
   auto target_or = process.LowerLhsExpr(
       hir_process.exprs.at(inc.target.value), frame.WithLvalueTarget(true));
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  mir::ExprId target_id = proc_scope.AddExpr(*std::move(target_or));
+  mir::ExprId target_id = block.AddExpr(*std::move(target_or));
 
   // If the LHS reaches an observable storage cell, the mutation runs inside
   // a `ScopedMutation` snapshot so subscribers fire once on destructor commit
   // (`docs/decisions/value-type-concepts.md`).
-  const mir::ExprId root_id = FindLhsRootId(proc_scope, target_id);
+  const mir::ExprId root_id = FindLhsRootId(block, target_id);
   if (mir::IsObservableCellType(
-          process.Module().Unit().GetType(proc_scope.GetExpr(root_id).type))) {
+          process.Module().Unit().GetType(block.GetExpr(root_id).type))) {
     const mir::ExprId services_id =
-        proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+        block.AddExpr(BuildServicesCallExpr(process, frame));
     target_id = RewriteLhsRootWithMutate(
-        process.Module().Unit(), proc_scope, target_id, services_id);
+        process.Module().Unit(), block, target_id, services_id);
   }
 
   return mir::Expr{
@@ -249,7 +244,7 @@ auto LowerHirConversionExprProc(
     return std::unexpected(std::move(operand_or.error()));
   }
   const mir::ExprId operand_id =
-      frame.current_procedural_scope->AddExpr(*std::move(operand_or));
+      frame.current_block->AddExpr(*std::move(operand_or));
   return mir::Expr{
       .data =
           mir::ConversionExpr{
@@ -258,33 +253,31 @@ auto LowerHirConversionExprProc(
 }
 
 auto LowerHirUnaryExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::UnaryExpr& u, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_scope = scope.HirScope();
-  auto operand_or = scope.LowerExpr(hir_scope.GetExpr(u.operand), frame);
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::UnaryExpr& u,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& hir_scope = lowerer.HirScope();
+  auto operand_or = lowerer.LowerExpr(hir_scope.GetExpr(u.operand), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
   const mir::ExprId operand_id =
-      frame.current_procedural_scope->AddExpr(*std::move(operand_or));
+      frame.current_block->AddExpr(*std::move(operand_or));
   return mir::Expr{
       .data = mir::UnaryExpr{.op = LowerUnaryOp(u.op), .operand = operand_id},
       .type = result_type};
 }
 
 auto LowerHirBinaryExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::BinaryExpr& b, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_scope = scope.HirScope();
-  auto& proc_scope = *frame.current_procedural_scope;
-  auto lhs_or = scope.LowerExpr(hir_scope.GetExpr(b.lhs), frame);
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& hir_scope = lowerer.HirScope();
+  auto& block = *frame.current_block;
+  auto lhs_or = lowerer.LowerExpr(hir_scope.GetExpr(b.lhs), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = proc_scope.AddExpr(*std::move(lhs_or));
-  auto rhs_or = scope.LowerExpr(hir_scope.GetExpr(b.rhs), frame);
+  const mir::ExprId lhs_id = block.AddExpr(*std::move(lhs_or));
+  auto rhs_or = lowerer.LowerExpr(hir_scope.GetExpr(b.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::ExprId rhs_id = proc_scope.AddExpr(*std::move(rhs_or));
+  const mir::ExprId rhs_id = block.AddExpr(*std::move(rhs_or));
   return mir::Expr{
       .data =
           mir::BinaryExpr{
@@ -293,20 +286,19 @@ auto LowerHirBinaryExprStructural(
 }
 
 auto LowerHirConditionalExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::ConditionalExpr& c, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_scope = scope.HirScope();
-  auto& proc_scope = *frame.current_procedural_scope;
-  auto cond_or = scope.LowerExpr(hir_scope.GetExpr(c.condition), frame);
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& hir_scope = lowerer.HirScope();
+  auto& block = *frame.current_block;
+  auto cond_or = lowerer.LowerExpr(hir_scope.GetExpr(c.condition), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
-  auto then_or = scope.LowerExpr(hir_scope.GetExpr(c.then_value), frame);
+  const mir::ExprId cond_id = block.AddExpr(*std::move(cond_or));
+  auto then_or = lowerer.LowerExpr(hir_scope.GetExpr(c.then_value), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
-  const mir::ExprId then_id = proc_scope.AddExpr(*std::move(then_or));
-  auto else_or = scope.LowerExpr(hir_scope.GetExpr(c.else_value), frame);
+  const mir::ExprId then_id = block.AddExpr(*std::move(then_or));
+  auto else_or = lowerer.LowerExpr(hir_scope.GetExpr(c.else_value), frame);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const mir::ExprId else_id = proc_scope.AddExpr(*std::move(else_or));
+  const mir::ExprId else_id = block.AddExpr(*std::move(else_or));
   return mir::Expr{
       .data =
           mir::ConditionalExpr{
@@ -317,16 +309,15 @@ auto LowerHirConditionalExprStructural(
 }
 
 auto LowerHirConversionExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::ConversionExpr& cv, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_scope = scope.HirScope();
-  auto operand_or = scope.LowerExpr(hir_scope.GetExpr(cv.operand), frame);
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& hir_scope = lowerer.HirScope();
+  auto operand_or = lowerer.LowerExpr(hir_scope.GetExpr(cv.operand), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
   const mir::ExprId operand_id =
-      frame.current_procedural_scope->AddExpr(*std::move(operand_or));
+      frame.current_block->AddExpr(*std::move(operand_or));
   return mir::Expr{
       .data =
           mir::ConversionExpr{

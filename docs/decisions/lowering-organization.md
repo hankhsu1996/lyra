@@ -131,14 +131,14 @@ share only the pattern shape.
 
 - `UnitLoweringState` is replaced by per-purpose objects: the HIR-to-MIR type-translation map
   becomes a `TypeMap` registry; canonical TypeIds remain as `BuiltinMirTypes` facts. Their
-  composition into the surrounding `StructuralScopeLowerer` / `ProcessLowerer` classes is per pass;
-  no `UnitLoweringState`-equivalent god class survives.
+  composition into the surrounding `ClassLowerer` / `ProcessLowerer` classes is per pass; no
+  `UnitLoweringState`-equivalent god class survives.
 
 - `StructuralScopeLoweringState` and `ProceduralScopeLoweringState` are dissolved into their
-  corresponding IR scope types (`hir::StructuralScope`, `mir::ProceduralScope`, etc.), which gain
-  construction methods (`AddX` / `AppendX`) alongside their existing accessors -- the IR scope type
-  _is_ the builder, with no parallel wrapper. Nested scope instances are stack-allocated inside the
-  walker that opens them; the root output instance lives on the pass class. The walk frame carries a
+  corresponding IR scope types (`hir::StructuralScope`, `mir::Block`, etc.), which gain construction
+  methods (`AddX` / `AppendX`) alongside their existing accessors -- the IR scope type _is_ the
+  builder, with no parallel wrapper. Nested scope instances are stack-allocated inside the walker
+  that opens them; the root output instance lives on the pass class. The walk frame carries a
   pointer to the current nested write target.
 
 - `ScopeStack`, `ProceduralDepthGuard`, and `ScopeStackGuard` are absorbed by `WalkFrame`. No

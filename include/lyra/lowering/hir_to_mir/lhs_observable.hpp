@@ -12,8 +12,8 @@
 namespace lyra::lowering::hir_to_mir {
 
 // Walks through container-access CallExprs to the LHS chain's root primary.
-[[nodiscard]] auto FindLhsRootId(
-    const mir::ProceduralScope& scope, mir::ExprId lhs_id) -> mir::ExprId;
+[[nodiscard]] auto FindLhsRootId(const mir::Block& block, mir::ExprId lhs_id)
+    -> mir::ExprId;
 
 // Rebuilds the LHS chain with its root replaced by
 // `DerefExpr(CallExpr(ObservableMethod{kMutate}, [cell, services]))`. The
@@ -21,8 +21,8 @@ namespace lyra::lowering::hir_to_mir {
 // `Var::Set` at full-expression end. Precondition: the LHS root MIR type
 // satisfies `IsObservableCellType`.
 [[nodiscard]] auto RewriteLhsRootWithMutate(
-    const mir::CompilationUnit& unit, mir::ProceduralScope& scope,
-    mir::ExprId lhs_id, mir::ExprId services_id) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
+    mir::ExprId services_id) -> mir::ExprId;
 
 // Builds an `lhs op= rhs` (or simple `lhs = rhs`) expression, routing
 // through the observable wrapper API when the LHS root is an observable
@@ -34,7 +34,7 @@ namespace lyra::lowering::hir_to_mir {
 //                                        `Deref(Call(kMutate))`.
 // `services_id` is consumed only on the observable paths.
 [[nodiscard]] auto BuildObservableAssignExpr(
-    const mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    const mir::CompilationUnit& unit, mir::Block& block,
     mir::ExprId services_id, mir::ExprId lhs_id, mir::ExprId rhs_id,
     std::optional<mir::BinaryOp> compound_op, mir::TypeId result_type,
     mir::TypeId void_type) -> mir::Expr;

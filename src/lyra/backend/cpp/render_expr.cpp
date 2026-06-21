@@ -145,8 +145,7 @@ auto RenderIntegerLiteralExpr(
   auto body = RenderPackedArrayIntegerLiteral(ty.AsIntegralPacked(), lit.value);
   if (ty.IsEnum()) {
     return std::format(
-        "{}{{{}}}", RenderEnumClassName(view.StructuralScope(), expr.type),
-        body);
+        "{}{{{}}}", RenderEnumClassName(view.Class(), expr.type), body);
   }
   return body;
 }
@@ -179,50 +178,46 @@ auto RenderRealLiteralExpr(
       "lyra::value::{}{{{}}}", is_short ? "ShortReal" : "Real", body);
 }
 
-auto RenderStructuralParamExpr(
-    const ScopeView& view, const mir::StructuralParamRef& r)
+auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
     -> diag::Result<std::string> {
   if (r.hops.value != 0) {
     return diag::Unsupported(
         diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-        "cross-scope structural parameter access is not yet implemented in "
+        "cross-scope param access is not yet implemented in "
         "cpp emit",
         diag::UnsupportedCategory::kFeature);
   }
-  const std::string& name =
-      view.StructuralScope().GetStructuralParam(r.param).name;
+  const std::string& name = view.Class().GetParam(r.param).name;
   return "self->" + name;
 }
 
-auto LookupProceduralVarName(
-    const ScopeView& view, const mir::ProceduralVarRef& ref) -> std::string {
-  return view.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).name;
+auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
+    -> std::string {
+  return view.BlockAtHops(ref.hops).vars.at(ref.var.value).name;
 }
 
-// True iff the procedural var holds a reference (its type is a `RefType`),
+// True iff the local holds a reference (its type is a `RefType`),
 // rendered as a `Ref<T>` whose read is `.Get()` and whose write is
-// `.Set(Services(), ...)` (LRM 13.5.2), the same surface as a structural Var.
-auto IsReferenceProceduralVar(
-    const ScopeView& view, const mir::ProceduralVarRef& ref) -> bool {
+// `.Set(Services(), ...)` (LRM 13.5.2), the same surface as a member.
+auto IsReferenceLocal(const ScopeView& view, const mir::LocalRef& ref) -> bool {
   const mir::TypeId var_type =
-      view.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).type;
+      view.BlockAtHops(ref.hops).vars.at(ref.var.value).type;
   return std::holds_alternative<mir::RefType>(
       view.Unit().GetType(var_type).data);
 }
 
 }  // namespace
 
-auto RenderStructuralVarName(
-    const ScopeView& view, const mir::StructuralVarRef& ref)
+auto RenderMemberName(const ScopeView& view, const mir::MemberRef& ref)
     -> diag::Result<std::string> {
   if (ref.hops.value != 0) {
     return diag::Unsupported(
         diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-        "cross-scope structural var access is not yet implemented in cpp "
+        "cross-scope member access is not yet implemented in cpp "
         "emit",
         diag::UnsupportedCategory::kFeature);
   }
-  return "self->" + view.StructuralScope().GetStructuralVar(ref.var).name;
+  return "self->" + view.Class().GetMember(ref.var).name;
 }
 
 namespace {
@@ -574,8 +569,7 @@ auto RenderIntegralConversion(
   }
   if (dst_is_enum) {
     return std::format(
-        "{}{{{}}}", RenderEnumClassName(view.StructuralScope(), dst_type_id),
-        body);
+        "{}{{{}}}", RenderEnumClassName(view.Class(), dst_type_id), body);
   }
   if (src_is_enum) {
     return std::format("lyra::value::PackedArray{{{}}}", body);
@@ -1078,8 +1072,7 @@ auto RenderConstructorCall(
                                     view.Unit().GetType(result_type).data)) {
     return std::string{"nullptr"};
   }
-  auto type_or =
-      RenderTypeAsCpp(view.Unit(), view.StructuralScope(), result_type);
+  auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), result_type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   std::string args;
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
@@ -1100,18 +1093,17 @@ auto RenderCallExpr(
               -> diag::Result<std::string> {
             return RenderSystemSubroutineCall(view, call, s);
           },
-          [&](const mir::StructuralSubroutineRef& ref)
-              -> diag::Result<std::string> {
+          [&](const mir::MethodRef& ref) -> diag::Result<std::string> {
             if (ref.hops.value != 0) {
               return diag::Unsupported(
                   diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                  "subroutine call across structural scopes is not yet "
+                  "method call across classes is not yet "
                   "implemented in cpp emit",
                   diag::UnsupportedCategory::kFeature);
             }
-            const auto& scope = view.StructuralScopeAtHops(
-                mir::StructuralHops{.value = ref.hops.value});
-            const auto& decl = scope.GetStructuralSubroutine(ref.subroutine);
+            const auto& cls = view.EnclosingClassAtHops(
+                mir::EnclosingHops{.value = ref.hops.value});
+            const auto& decl = cls.GetMethod(ref.method);
             // arguments[0] is the callee's `self` handle (mir.md invariant 11);
             // a ref / const ref actual is already a reference-construct
             // (`Ref<T>(cell)`) in MIR, so every argument renders uniformly.
@@ -1151,8 +1143,7 @@ auto RenderCallExpr(
                       if (IsStaticEnumMethod(m.kind)) {
                         return std::format(
                             "{}::{}()",
-                            RenderEnumClassName(
-                                view.StructuralScope(), m.enum_type),
+                            RenderEnumClassName(view.Class(), m.enum_type),
                             member);
                       }
                       return RenderMethodCall(view, call, member);
@@ -1189,13 +1180,13 @@ auto RenderCallExpr(
                     [](const mir::IteratorMethodInfo&)
                         -> diag::Result<std::string> {
                       // LRM 7.12.4 `item.index` is resolved at HIR -> MIR to
-                      // a `ProceduralVarRef` on the closure's `index`
+                      // a `LocalRef` on the closure's `index`
                       // parameter binding; reaching the backend means
                       // closure synthesis failed to rewrite it.
                       throw InternalError(
                           "RenderCallExpr: IteratorMethodInfo reached the "
                           "backend (LRM 7.12.4 -- HIR -> MIR should have "
-                          "rewritten `item.index` to a ProceduralVarRef on "
+                          "rewritten `item.index` to a LocalRef on "
                           "the closure parameter binding)");
                     },
                     [&](const mir::ScopeMethodInfo& m)
@@ -1254,8 +1245,8 @@ auto RenderCallExpr(
                 // GetSignal returns an untyped storage pointer; the call's
                 // result type names the cell, so the cast is fixed by that
                 // type.
-                auto cell_or = RenderTypeAsCpp(
-                    view.Unit(), view.StructuralScope(), result_type);
+                auto cell_or =
+                    RenderTypeAsCpp(view.Unit(), view.Class(), result_type);
                 if (!cell_or)
                   return std::unexpected(std::move(cell_or.error()));
                 return "static_cast<" + *cell_or + ">(" + *base_or +
@@ -1297,12 +1288,12 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
             if (!receiver_or) {
               return std::unexpected(std::move(receiver_or.error()));
             }
-            const auto& scope = view.StructuralScopeAtHops(m.member.hops);
-            const auto& var = scope.GetStructuralVar(m.member.var);
+            const auto& cls = view.EnclosingClassAtHops(m.member.hops);
+            const auto& var = cls.GetMember(m.member.var);
             return *receiver_or + "->" + var.name;
           },
-          [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
-            return LookupProceduralVarName(view, l);
+          [&](const mir::LocalRef& l) -> diag::Result<std::string> {
+            return LookupLocalName(view, l);
           },
           // HIR-to-MIR lowers an LHS selector chain to a container-access
           // `CallExpr` (per `mir::IsContainerAccessCall`). The C++ surface
@@ -1350,17 +1341,17 @@ auto LhsRootPrimary(const ScopeView& view, const mir::Expr& expr)
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
   return std::holds_alternative<mir::MemberAccessExpr>(expr.data) ||
          std::holds_alternative<mir::DerefExpr>(expr.data) ||
-         std::holds_alternative<mir::ProceduralVarRef>(expr.data);
+         std::holds_alternative<mir::LocalRef>(expr.data);
 }
 
-// The root procedural var iff the LHS root is a `ref` / `const ref` formal,
+// The root local iff the LHS root is a `ref` / `const ref` formal,
 // else nullptr. A write whose root is a reference formal must route through
 // `Ref::Set` (LRM 13.5.2).
-auto LhsRootReferenceProceduralVar(const ScopeView& view, const mir::Expr& expr)
-    -> const mir::ProceduralVarRef* {
+auto LhsRootReferenceLocal(const ScopeView& view, const mir::Expr& expr)
+    -> const mir::LocalRef* {
   const auto* pvr =
-      std::get_if<mir::ProceduralVarRef>(&LhsRootPrimary(view, expr).data);
-  return pvr != nullptr && IsReferenceProceduralVar(view, *pvr) ? pvr : nullptr;
+      std::get_if<mir::LocalRef>(&LhsRootPrimary(view, expr).data);
+  return pvr != nullptr && IsReferenceLocal(view, *pvr) ? pvr : nullptr;
 }
 
 // Render a compound op suffix for the SV `op=` family. Arithmetic /
@@ -1416,7 +1407,7 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
   // routes through `Ref::Set` so the actual's update-event path fires (LRM
   // 13.5.2). Compound and partial writes through a ref formal are not yet
   // supported.
-  if (const auto* ref_root = LhsRootReferenceProceduralVar(view, lhs_expr)) {
+  if (const auto* ref_root = LhsRootReferenceLocal(view, lhs_expr)) {
     if (!IsLhsBarePrimary(lhs_expr) || a.compound_op.has_value()) {
       return diag::Unsupported(
           diag::DiagCode::kCppEmitExpressionFormNotImplemented,
@@ -1424,8 +1415,8 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
           "not yet implemented in cpp emit",
           diag::UnsupportedCategory::kFeature);
     }
-    return LookupProceduralVarName(view, *ref_root) + ".Set(" +
-           "self->Services()" + ", " + *value_or + ")";
+    return LookupLocalName(view, *ref_root) + ".Set(" + "self->Services()" +
+           ", " + *value_or + ")";
   }
 
   // Mechanical render: the observable cell's `Set` is now an explicit
@@ -1455,7 +1446,7 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
 auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
     -> diag::Result<std::string> {
   const mir::Expr& target_expr = view.Expr(inc.target);
-  if (LhsRootReferenceProceduralVar(view, target_expr) != nullptr) {
+  if (LhsRootReferenceLocal(view, target_expr) != nullptr) {
     return diag::Unsupported(
         diag::DiagCode::kCppEmitExpressionFormNotImplemented,
         "increment / decrement of a ref / const ref formal is not yet "
@@ -1482,11 +1473,9 @@ auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
 // Renders a binding's parameter declaration -- its type then its name. A
 // `RefType` binding renders as `Ref<T> name`, a value binding as `T name`;
 // the wrapper comes from the type alone (RenderTypeAsCpp), never hand-written.
-auto RenderBindingParamDecl(
-    const ScopeView& view, const mir::ProceduralVarDecl& bind)
+auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
     -> diag::Result<std::string> {
-  auto type_or =
-      RenderTypeAsCpp(view.Unit(), view.StructuralScope(), bind.type);
+  auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), bind.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   return *type_or + " " + bind.name;
 }
@@ -1503,14 +1492,13 @@ auto RenderClosureExpr(
     throw InternalError("RenderClosureExpr: closure has no body");
   }
 
-  auto result_ty_or =
-      RenderTypeAsCpp(view.Unit(), view.StructuralScope(), result_type);
+  auto result_ty_or = RenderTypeAsCpp(view.Unit(), view.Class(), result_type);
   if (!result_ty_or) return std::unexpected(std::move(result_ty_or.error()));
   const std::string return_clause = " -> " + *result_ty_or;
 
   const ScopeView body_view =
-      ScopeView::ForRoot(view.Unit(), view.StructuralScope(), *closure.body);
-  auto body_or = RenderProceduralScopeStatements(body_view, 1);
+      ScopeView::ForRoot(view.Unit(), view.Class(), *closure.body);
+  auto body_or = RenderBlockStatements(body_view, 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const std::string body = " {\n" + *body_or + "}";
 
@@ -1574,8 +1562,7 @@ auto RenderQueueConcat(
     -> diag::Result<std::string> {
   const mir::TypeId elem_type_id =
       std::get<mir::QueueType>(result_ty.data).element_type;
-  auto elem_cpp =
-      RenderTypeAsCpp(view.Unit(), view.StructuralScope(), elem_type_id);
+  auto elem_cpp = RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id);
   if (!elem_cpp) return std::unexpected(std::move(elem_cpp.error()));
   std::string out = "lyra::value::MakeQueueConcat<" + *elem_cpp + ">(";
   for (std::size_t i = 0; i < c.operands.size(); ++i) {
@@ -1655,8 +1642,7 @@ auto RenderArrayLiteralExpr(
         }
       },
       container_ty.data);
-  auto elem_type_or =
-      RenderTypeAsCpp(view.Unit(), view.StructuralScope(), elem_type_id);
+  auto elem_type_or = RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id);
   if (!elem_type_or) return std::unexpected(std::move(elem_type_or.error()));
   std::string out =
       std::format("std::array<{}, {}>{{", *elem_type_or, a.elements.size());
@@ -1729,12 +1715,12 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::RealLiteral& r) -> diag::Result<std::string> {
             return RenderRealLiteralExpr(view, expr, r);
           },
-          [&](const mir::StructuralParamRef& r) -> diag::Result<std::string> {
-            return RenderStructuralParamExpr(view, r);
+          [&](const mir::ParamRef& r) -> diag::Result<std::string> {
+            return RenderParamExpr(view, r);
           },
-          [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
-            const std::string name = LookupProceduralVarName(view, l);
-            return IsReferenceProceduralVar(view, l) ? name + ".Get()" : name;
+          [&](const mir::LocalRef& l) -> diag::Result<std::string> {
+            const std::string name = LookupLocalName(view, l);
+            return IsReferenceLocal(view, l) ? name + ".Get()" : name;
           },
           [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
             return RenderUnaryExpr(view, expr, u);
@@ -1764,8 +1750,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
             return RenderDerefExpr(view, d);
           },
           [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
-            const auto& scope = view.StructuralScopeAtHops(m.member.hops);
-            const auto& var = scope.GetStructuralVar(m.member.var);
+            const auto& cls = view.EnclosingClassAtHops(m.member.hops);
+            const auto& var = cls.GetMember(m.member.var);
             auto receiver_or = RenderExpr(view, view.Expr(m.receiver));
             if (!receiver_or) {
               return std::unexpected(std::move(receiver_or.error()));

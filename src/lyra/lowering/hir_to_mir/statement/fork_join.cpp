@@ -37,8 +37,8 @@ auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
 
 }  // namespace
 
-// LRM 9.3.2: a fork is a procedural scope. Its block_item_declarations lower
-// into that scope and initialize at block entry -- in the parent, before any
+// LRM 9.3.2: a fork is a block. Its block_item_declarations lower
+// into that block and initialize at block entry -- in the parent, before any
 // branch spawns. Each branch lowers to a coroutine-typed closure composed into
 // the fork scope's expr arena. The capture sink collects every enclosing
 // reference the body makes; a fork-scope-local snapshots by value, a
@@ -48,9 +48,9 @@ auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  mir::ProceduralScope fork_scope;
-  const WalkFrame fork_frame = frame.WithProceduralScope(&fork_scope).Deeper();
-  const ProceduralDepth fork_depth = fork_frame.procedural_depth;
+  mir::Block fork_block;
+  const WalkFrame fork_frame = frame.WithBlock(&fork_block).Deeper();
+  const BlockDepth fork_depth = fork_frame.block_depth;
 
   for (const hir::StmtId local_hir_id : f.locals) {
     auto lowered =
@@ -58,43 +58,41 @@ auto LowerForkStmt(
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    fork_scope.AppendStmt(*std::move(lowered));
+    fork_block.AppendStmt(*std::move(lowered));
   }
 
   std::vector<mir::ExprId> branches;
   branches.reserve(f.branches.size());
-  const mir::TypeId self_ptr_type =
-      frame.current_structural_scope->self_pointer_type;
+  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
   for (const hir::StmtId branch_hir_id : f.branches) {
     const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
-    mir::ProceduralScope branch_scope;
+    mir::Block branch_block;
 
-    const mir::ProceduralVarId branch_self_id = branch_scope.AddProceduralVar(
-        mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+    const mir::LocalId branch_self_id = branch_block.AddLocal(
+        mir::LocalDecl{.name = "self", .type = self_ptr_type});
     const mir::ExprId outer_self_read =
-        fork_scope.AddExpr(BuildSelfRefExpr(fork_frame, self_ptr_type));
+        fork_block.AddExpr(BuildSelfRefExpr(fork_frame, self_ptr_type));
 
     // A fork-scope local is snapshotted by value; a deeper enclosing variable
     // aliases through a reference capture (LRM 6.21).
     CaptureSink sink{
-        fork_frame.procedural_depth.Inner(), branch_scope, fork_scope,
+        fork_frame.block_depth.Inner(), branch_block, fork_block,
         process.Module().Unit(), fork_depth};
     // LRM 9.3.2: a branch is a concurrent thread whose body may suspend on
     // timing controls / event waits, so it lowers as a coroutine body --
     // returns inside it become `co_return`.
     const WalkFrame branch_frame =
         fork_frame.WithCaptureSink(&sink)
-            .WithProceduralScope(&branch_scope)
-            .WithSelfBinding(
-                branch_self_id, fork_frame.procedural_depth.Inner())
+            .WithBlock(&branch_block)
+            .WithSelfBinding(branch_self_id, fork_frame.block_depth.Inner())
             .WithCoroutineBody(true)
             .Deeper();
     auto lowered = process.LowerStmt(branch, branch_frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    branch_scope.AppendStmt(*std::move(lowered));
-    branch_scope.AppendStmt(
+    branch_block.AppendStmt(*std::move(lowered));
+    branch_block.AppendStmt(
         mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
 
     std::vector<mir::Capture> captures;
@@ -106,16 +104,15 @@ auto LowerForkStmt(
     }
     mir::ClosureExpr closure;
     closure.captures = std::move(captures);
-    closure.body =
-        std::make_unique<mir::ProceduralScope>(std::move(branch_scope));
-    branches.push_back(fork_scope.AddExpr(
+    closure.body = std::make_unique<mir::Block>(std::move(branch_block));
+    branches.push_back(fork_block.AddExpr(
         mir::Expr{
             .data = std::move(closure),
             .type = process.Module().Unit().builtins.coroutine}));
   }
 
-  const mir::ProceduralScopeId scope_id =
-      frame.current_procedural_scope->AddChildScope(std::move(fork_scope));
+  const mir::BlockId scope_id =
+      frame.current_block->AddChildScope(std::move(fork_block));
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::ForkStmt{

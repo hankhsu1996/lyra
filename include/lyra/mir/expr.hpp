@@ -13,11 +13,11 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/method_ref.hpp"
+#include "lyra/mir/param.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_scan.hpp"
 #include "lyra/mir/runtime_submit.hpp"
-#include "lyra/mir/structural_param.hpp"
-#include "lyra/mir/structural_subroutine_ref.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/mir/value_ref.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -89,7 +89,7 @@ struct SystemSubroutineCallee {
   support::SystemSubroutineId id;
 };
 
-// Calls a closure stored as an expression in the same procedural scope.
+// Calls a closure stored as an expression in the same block.
 // The backend renders the call as `(closure_lambda)(args)` -- the standard
 // IIFE shape when invoked synchronously. Used for SV expression-position
 // constructs whose evaluation has side effects (e.g., `$sscanf` writing
@@ -130,9 +130,8 @@ struct RuntimeNavCallee {
 struct ConstructorCallee {};
 
 using Callee = std::variant<
-    SystemSubroutineCallee, StructuralSubroutineRef, BuiltinMethodCallee,
-    BuiltinFnCallee, BuiltinStaticCallee, ClosureRef, RuntimeNavCallee,
-    ConstructorCallee>;
+    SystemSubroutineCallee, MethodRef, BuiltinMethodCallee, BuiltinFnCallee,
+    BuiltinStaticCallee, ClosureRef, RuntimeNavCallee, ConstructorCallee>;
 
 struct CallExpr {
   Callee callee;
@@ -155,12 +154,12 @@ struct DerefExpr {
 };
 
 // Class-member access through an explicit receiver expression. `receiver`
-// evaluates to a class-instance value (typically `ProceduralVarRef(self)`);
-// `member` names which structural var of the receiver's class to reach. The
+// evaluates to a class-instance value (typically `LocalRef(self)`);
+// `member` names which member of the receiver's class to reach. The
 // receiver is explicit -- a backend never asks "what is the current receiver?".
 struct MemberAccessExpr {
   ExprId receiver;
-  StructuralVarRef member;
+  MemberRef member;
 };
 
 struct ConcatExpr {
@@ -185,23 +184,23 @@ struct ArrayLiteralExpr {
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
-    ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
-    IncDecExpr, CallExpr, RuntimeCallExpr, DerefExpr, MemberAccessExpr,
-    ConversionExpr, ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr>;
+    IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, ParamRef, LocalRef,
+    UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr, CallExpr,
+    RuntimeCallExpr, DerefExpr, MemberAccessExpr, ConversionExpr, ClosureExpr,
+    ConcatExpr, ReplicationExpr, ArrayLiteralExpr>;
 
 struct Expr {
   ExprData data;
   TypeId type;
 };
 
-[[nodiscard]] inline auto MakeProceduralVarRefExpr(
-    ProceduralHops hops, ProceduralVarId var, TypeId type) -> Expr {
-  return Expr{.data = ProceduralVarRef{.hops = hops, .var = var}, .type = type};
+[[nodiscard]] inline auto MakeLocalRefExpr(
+    BlockHops hops, LocalId var, TypeId type) -> Expr {
+  return Expr{.data = LocalRef{.hops = hops, .var = var}, .type = type};
 }
 
 [[nodiscard]] inline auto MakeMemberAccessExpr(
-    ExprId receiver, StructuralVarRef member, TypeId type) -> Expr {
+    ExprId receiver, MemberRef member, TypeId type) -> Expr {
   return Expr{
       .data = MemberAccessExpr{.receiver = receiver, .member = member},
       .type = type};

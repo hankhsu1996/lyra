@@ -6,8 +6,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -43,20 +43,16 @@ auto LowerHirConversionExprProc(
 // assign). `IncDecExpr` and `AssignExpr` have no structural form -- those
 // kinds are diagnosed at the dispatcher.
 auto LowerHirUnaryExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::UnaryExpr& u, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::UnaryExpr& u,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 auto LowerHirBinaryExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::BinaryExpr& b, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 auto LowerHirConditionalExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::ConditionalExpr& c, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 auto LowerHirConversionExprStructural(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
-    const hir::ConversionExpr& cv, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

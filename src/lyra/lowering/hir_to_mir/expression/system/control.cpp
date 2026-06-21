@@ -69,9 +69,9 @@ auto LowerFinishSystemSubroutineCall(
     level = static_cast<int>(*literal);
   }
   const auto& builtins = process.Module().Unit().builtins;
-  const mir::ExprId services_id = frame.current_procedural_scope->AddExpr(
-      BuildServicesCallExpr(process, frame));
-  const mir::ExprId level_id = frame.current_procedural_scope->AddExpr(
+  const mir::ExprId services_id =
+      frame.current_block->AddExpr(BuildServicesCallExpr(process, frame));
+  const mir::ExprId level_id = frame.current_block->AddExpr(
       mir::MakeInt32Literal(builtins.int32, static_cast<std::int64_t>(level)));
   return mir::Expr{
       .data =

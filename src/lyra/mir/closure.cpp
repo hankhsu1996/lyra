@@ -13,18 +13,18 @@ auto ClosureExpr::operator=(ClosureExpr&&) noexcept -> ClosureExpr& = default;
 
 ClosureExpr::ClosureExpr(const ClosureExpr& other)
     : captures(other.captures),
+      params(other.params),
       body(
-          other.body == nullptr
-              ? nullptr
-              : std::make_unique<ProceduralScope>(*other.body)) {
+          other.body == nullptr ? nullptr
+                                : std::make_unique<Block>(*other.body)) {
 }
 
 auto ClosureExpr::operator=(const ClosureExpr& other) -> ClosureExpr& {
   if (this != &other) {
     captures = other.captures;
-    body = other.body == nullptr
-               ? nullptr
-               : std::make_unique<ProceduralScope>(*other.body);
+    params = other.params;
+    body =
+        other.body == nullptr ? nullptr : std::make_unique<Block>(*other.body);
   }
   return *this;
 }

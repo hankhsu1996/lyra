@@ -16,7 +16,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -38,10 +37,10 @@ auto BuildFileIoCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     support::SystemSubroutineId id, std::vector<mir::ExprId> operands,
     mir::TypeId result_type) -> mir::Expr {
-  auto& scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   std::vector<mir::ExprId> args;
   args.reserve(operands.size() + 1);
-  args.push_back(scope.AddExpr(BuildServicesCallExpr(process, frame)));
+  args.push_back(block.AddExpr(BuildServicesCallExpr(process, frame)));
   for (const mir::ExprId operand : operands) {
     args.push_back(operand);
   }
@@ -65,13 +64,13 @@ auto LowerFixedOperandCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     support::SystemSubroutineId id, std::size_t operand_count,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   std::vector<mir::ExprId> operands;
   operands.reserve(operand_count);
   for (std::size_t i = 0; i < operand_count; ++i) {
     auto operand_or = LowerOperand(process, frame, call, i);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-    operands.push_back(scope.AddExpr(*std::move(operand_or)));
+    operands.push_back(block.AddExpr(*std::move(operand_or)));
   }
   return BuildFileIoCall(process, frame, id, std::move(operands), result_type);
 }
@@ -81,14 +80,14 @@ auto LowerFixedOperandCall(
 auto LowerFileOpenCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     support::SystemSubroutineId id) -> diag::Result<mir::Expr> {
-  auto& scope = *frame.current_procedural_scope;
+  auto& block = *frame.current_block;
   auto name_or = LowerOperand(process, frame, call, 0);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
-  std::vector<mir::ExprId> operands{scope.AddExpr(*std::move(name_or))};
+  std::vector<mir::ExprId> operands{block.AddExpr(*std::move(name_or))};
   if (call.arguments.size() == 2) {
     auto mode_or = LowerOperand(process, frame, call, 1);
     if (!mode_or) return std::unexpected(std::move(mode_or.error()));
-    operands.push_back(scope.AddExpr(*std::move(mode_or)));
+    operands.push_back(block.AddExpr(*std::move(mode_or)));
   }
   return BuildFileIoCall(
       process, frame, id, std::move(operands),
@@ -104,8 +103,7 @@ auto LowerFileFlushCall(
   if (!call.arguments.empty()) {
     auto fd_or = LowerOperand(process, frame, call, 0);
     if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-    operands.push_back(
-        frame.current_procedural_scope->AddExpr(*std::move(fd_or)));
+    operands.push_back(frame.current_block->AddExpr(*std::move(fd_or)));
   }
   return BuildFileIoCall(
       process, frame, id, std::move(operands),
@@ -185,8 +183,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
   const auto& module = process.Module();
   const auto& hir_proc = process.HirBody();
 
-  mir::ProceduralScope wrapper;
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
+  mir::Block wrapper;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   std::vector<OutputArgSlot> slots;
   mir::Expr call_expr{};
