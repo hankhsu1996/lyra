@@ -22,6 +22,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
 
@@ -378,12 +379,12 @@ class MirDumper {
             },
             [](const BuiltinFnCallee& b) -> std::string {
               return std::format(
-                  "BuiltinFnCallee[id={}]", static_cast<int>(b.id));
+                  "BuiltinFnCallee[id=\"{}\"]", support::BuiltinFnName(b.id));
             },
             [](const BuiltinStaticCallee& b) -> std::string {
               return std::format(
-                  "BuiltinStaticCallee[id={}, type_qual=Type[{}]]",
-                  static_cast<int>(b.id), b.type_qual.value);
+                  "BuiltinStaticCallee[id=\"{}\", type_qual=Type[{}]]",
+                  support::BuiltinFnName(b.id), b.type_qual.value);
             },
             [](const ConstructorCallee&) -> std::string {
               return "ConstructorCallee";

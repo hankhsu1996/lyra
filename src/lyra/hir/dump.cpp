@@ -14,7 +14,6 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/method.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -99,148 +98,6 @@ class HirDumper {
         return "[priority]";
     }
     throw InternalError("HirDumper::FormatUniquePriorityCheck: unknown check");
-  }
-
-  static auto FormatBuiltinFn(support::BuiltinFn fn) -> std::string_view {
-    switch (fn) {
-      case support::BuiltinFn::kElement:
-        return "element";
-      case support::BuiltinFn::kElementRef:
-        return "element_ref";
-      case support::BuiltinFn::kSlice:
-        return "slice";
-      case support::BuiltinFn::kSliceRef:
-        return "slice_ref";
-      case support::BuiltinFn::kSize:
-        return "size";
-      case support::BuiltinFn::kLen:
-        return "len";
-      case support::BuiltinFn::kToOwned:
-        return "to_owned";
-      case support::BuiltinFn::kDelete:
-        return "delete";
-      case support::BuiltinFn::kReverse:
-        return "reverse";
-      case support::BuiltinFn::kSort:
-        return "sort";
-      case support::BuiltinFn::kRsort:
-        return "rsort";
-      case support::BuiltinFn::kSum:
-        return "sum";
-      case support::BuiltinFn::kProduct:
-        return "product";
-      case support::BuiltinFn::kAnd:
-        return "and";
-      case support::BuiltinFn::kOr:
-        return "or";
-      case support::BuiltinFn::kXor:
-        return "xor";
-      case support::BuiltinFn::kFind:
-        return "find";
-      case support::BuiltinFn::kFindIndex:
-        return "find_index";
-      case support::BuiltinFn::kFindFirst:
-        return "find_first";
-      case support::BuiltinFn::kFindFirstIndex:
-        return "find_first_index";
-      case support::BuiltinFn::kFindLast:
-        return "find_last";
-      case support::BuiltinFn::kFindLastIndex:
-        return "find_last_index";
-      case support::BuiltinFn::kMin:
-        return "min";
-      case support::BuiltinFn::kMax:
-        return "max";
-      case support::BuiltinFn::kUnique:
-        return "unique";
-      case support::BuiltinFn::kUniqueIndex:
-        return "unique_index";
-      case support::BuiltinFn::kMap:
-        return "map";
-      case support::BuiltinFn::kInsert:
-        return "insert";
-      case support::BuiltinFn::kPopFront:
-        return "pop_front";
-      case support::BuiltinFn::kPopBack:
-        return "pop_back";
-      case support::BuiltinFn::kPushFront:
-        return "push_front";
-      case support::BuiltinFn::kPushBack:
-        return "push_back";
-      case support::BuiltinFn::kExists:
-        return "exists";
-      case support::BuiltinFn::kAssocFirst:
-        return "assoc_first";
-      case support::BuiltinFn::kAssocLast:
-        return "assoc_last";
-      case support::BuiltinFn::kAssocNext:
-        return "assoc_next";
-      case support::BuiltinFn::kAssocPrev:
-        return "assoc_prev";
-      case support::BuiltinFn::kGetc:
-        return "getc";
-      case support::BuiltinFn::kPutc:
-        return "putc";
-      case support::BuiltinFn::kToupper:
-        return "toupper";
-      case support::BuiltinFn::kTolower:
-        return "tolower";
-      case support::BuiltinFn::kCompare:
-        return "compare";
-      case support::BuiltinFn::kIcompare:
-        return "icompare";
-      case support::BuiltinFn::kSubstr:
-        return "substr";
-      case support::BuiltinFn::kAtoi:
-        return "atoi";
-      case support::BuiltinFn::kAtohex:
-        return "atohex";
-      case support::BuiltinFn::kAtooct:
-        return "atooct";
-      case support::BuiltinFn::kAtobin:
-        return "atobin";
-      case support::BuiltinFn::kAtoreal:
-        return "atoreal";
-      case support::BuiltinFn::kItoa:
-        return "itoa";
-      case support::BuiltinFn::kHextoa:
-        return "hextoa";
-      case support::BuiltinFn::kOcttoa:
-        return "octtoa";
-      case support::BuiltinFn::kBintoa:
-        return "bintoa";
-      case support::BuiltinFn::kRealtoa:
-        return "realtoa";
-      case support::BuiltinFn::kTrigger:
-        return "trigger";
-      case support::BuiltinFn::kAwait:
-        return "await";
-      case support::BuiltinFn::kTriggered:
-        return "triggered";
-      case support::BuiltinFn::kEnumFirst:
-        return "enum_first";
-      case support::BuiltinFn::kEnumLast:
-        return "enum_last";
-      case support::BuiltinFn::kEnumNum:
-        return "enum_num";
-      case support::BuiltinFn::kEnumName:
-        return "enum_name";
-      case support::BuiltinFn::kEnumNext:
-        return "enum_next";
-      case support::BuiltinFn::kEnumPrev:
-        return "enum_prev";
-      case support::BuiltinFn::kIsUnknown:
-        return "is_unknown";
-      case support::BuiltinFn::kGet:
-        return "get";
-      case support::BuiltinFn::kSet:
-        return "set";
-      case support::BuiltinFn::kMutate:
-        return "mutate";
-      case support::BuiltinFn::kServices:
-        return "services";
-    }
-    throw InternalError("HirDumper::FormatBuiltinFn: unknown BuiltinFn");
   }
 
   static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
@@ -658,20 +515,11 @@ class HirDumper {
                   "SystemSubroutine[{}] \"{}\"", s.id.value, desc.name);
             },
             [](const BuiltinMethodRef& b) -> std::string {
-              return std::visit(
-                  Overloaded{
-                      [](support::BuiltinFn fn) -> std::string {
-                        return std::format(
-                            "BuiltinFn \"{}\"", FormatBuiltinFn(fn));
-                      },
-                      [](IteratorMethodKind k) -> std::string {
-                        return std::format(
-                            "IteratorMethod \"{}\"",
-                            k == IteratorMethodKind::kIndex ? "index"
-                                                            : "unknown");
-                      },
-                  },
-                  b.method);
+              return std::format(
+                  "BuiltinFn \"{}\"", support::BuiltinFnName(b.method));
+            },
+            [](const IteratorIndexRef&) -> std::string {
+              return "IteratorIndexRef";
             },
         },
         callee);

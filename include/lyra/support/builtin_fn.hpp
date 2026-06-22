@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 namespace lyra::support {
 
@@ -124,5 +125,22 @@ enum class BuiltinFn : std::uint16_t {
 // (rather than a value receiver). Used by LHS-chain walkers to reach the
 // root primary.
 [[nodiscard]] auto IsContainerAccessFn(BuiltinFn id) -> bool;
+
+// True iff the LRM 7.12 method takes a `with`-clause closure as its second
+// argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
+// `reverse`) take no closure.
+[[nodiscard]] auto ArrayMethodTakesClosure(BuiltinFn id) -> bool;
+
+// True iff `id` is an associative-array traversal entry (LRM 7.9.4 -- 7.9.7).
+// The traversal family lowers to an immediately-invoked closure (mutates the
+// index argument and runs the write-back inline).
+[[nodiscard]] auto IsAssociativeTraversalFn(BuiltinFn id) -> bool;
+
+// Short snake-case name for the id. Used for HIR / MIR dumps and any
+// diagnostic that names the runtime entry; aligns with the SV method
+// spelling where one exists (LRM 6.16 / 7.9 / 7.12 / 6.19.5) and a
+// descriptive name where there is no SV-side surface (`get` / `set` /
+// `mutate` / `services`).
+[[nodiscard]] auto BuiltinFnName(BuiltinFn id) -> std::string_view;
 
 }  // namespace lyra::support

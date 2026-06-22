@@ -20,9 +20,18 @@ runtime entry across every family. Receiver type carries the type-side context; 
 the function-side identity. Both HIR and MIR reference the same enum from the support layer (the
 same pattern that `support::SystemSubroutineId` already follows for `$xxx` calls).
 
-HIR's callee for a built-in method is `BuiltinMethodRef` carrying `support::BuiltinFn`. The HIR also
-keeps an `IteratorMethodKind` sibling arm for `item.index` (LRM 7.12.4), which HIR-to-MIR rewrites
-to a `LocalRef` on the closure's index binding and which never reaches MIR's vocabulary.
+HIR's callee for a built-in method is `BuiltinMethodRef` carrying `support::BuiltinFn`. The struct
+is a one-field wrapper, symmetric with `SystemSubroutineRef { id }`.
+
+LRM 7.12.4 `item.index` is a built-in method in the SV sense (LRM names it "the iterator index
+querying method"), but it is structurally distinct from runtime-backed built-in methods at the
+compiler level: the receiver value is discarded and the call resolves to the enclosing with-clause
+closure's index parameter (closures over LRM 7.12 array methods always carry both `item` and `index`
+as parameters, supplied by the runtime per iteration). No runtime function exists; HIR-to-MIR
+rewrites it to a `LocalRef` and no MIR `CallExpr` survives. HIR keeps the method-call shape (with a
+dedicated `IteratorIndexRef` arm in `SubroutineRef`, beside `BuiltinMethodRef`) so the SV grammar
+level is preserved; the separate arm encodes the "rewrites away" translation behaviour in the type,
+where it drives mechanical dispatch at HIR-to-MIR.
 
 MIR's callee is one of `BuiltinFnCallee{id: BuiltinFn}` (instance call: receiver is `args[0]`) or
 `BuiltinStaticCallee{id: BuiltinFn, type_qual: TypeId}` (type-namespace-qualified static call: no
@@ -103,11 +112,33 @@ LRM 7.12.
 - **Method-as-type-member (D1 in full).** Sketched above. Rejected because it cannot represent the
   LRM 7.12 cross-container family as one identity.
 
-- **Folding `IteratorMethodKind::kIndex` into the flat enum.** `item.index` is HIR-only: it is
-  rewritten at HIR-to-MIR into a `LocalRef` on the array-method closure's index binding (LRM 7.12.4
-  binding rule) and never appears in MIR. Putting an HIR-only entry in a shared support enum would
-  mean MIR carries a name for a value it cannot represent, so the iterator kind stays as a separate
-  variant arm in `hir::BuiltinMethodRef`.
+- **`item.index` as an inner variant arm inside `hir::BuiltinMethodRef`
+  (`variant<support::BuiltinFn, IteratorMethodKind>`).** The historical shape, set when slang's
+  parse choice (a `KnownSystemName::Index` system subroutine, syntactic-method-call form) was
+  carried into HIR without re-examination. Rejected because two structurally different things shared
+  one callee slot: `support::BuiltinFn` enumerates runtime entries (lower as identity-preserving
+  `CallExpr`), while `IteratorMethodKind::kIndex` is HIR-only sugar that rewrites to a `LocalRef`.
+  The HIR-to-MIR visitor had to switch on the inner kind to pick the translation path, and the
+  runtime-callee translation carried an unreachable "should have been rewritten" throw to handle the
+  case it could never see. Splitting `IteratorIndexRef` out as its own `SubroutineRef` arm makes the
+  dispatch decision pattern-match directly on the type with no inner case analysis.
+
+- **`item.index` as an HIR `Primary` (leaf-grammar arm).** Considered briefly to make HIR-to-MIR's
+  lowering particularly direct -- `Primary` already carries leaf references and the translation to
+  `LocalRef` was a one-arm visitor. Rejected because it over-flattens the SV grammar level: LRM 7.12
+  (Syntax 7-5) classifies `item.index` as an `array_method_call` (`expression . array_method_name`),
+  one level above LRM 11.2.1's primary atoms. Placing it in `Primary` would make it look identical
+  to `IntegerLiteral` / `StructuralVarRef` in HIR dumps and consumer visitors, violating HIR's
+  "preserve LRM-level constructs without flattening" identity (`hir.md` Core Invariant 3). The
+  dedicated `SubroutineRef` arm keeps it at its real grammar level.
+
+- **Folding `item.index` into the flat enum.** Considered as a way to keep "every built-in identity
+  in one place". Rejected because `item.index` is HIR-only -- it is rewritten at HIR-to-MIR into a
+  `LocalRef` on the array-method closure's index binding (LRM 7.12.4 binding rule) and never appears
+  in MIR. Putting an HIR-only entry in a shared support enum would mean MIR carries a name for a
+  value it cannot represent, and every MIR consumer (dump, backend, future LIR pass) would need a
+  dead `case kIteratorIndex` arm. Keeping it as a separate HIR `SubroutineRef` arm scopes the
+  identity to the layer that actually uses it.
 
 ## Backend rendering
 
@@ -167,7 +198,9 @@ applicable. No render-side special case for any entry.
   `support::BuiltinFn` directly. Adding a new receiver type (e.g. user-defined class methods) is a
   new name table, not a new HIR-level enum or variant arm.
 - The backend reads `BuiltinFn` plus receiver MIR type and renders without any family-axis switch.
-  `IsMutatingBuiltinFn` and `IsContainerAccessFn` are predicates on the flat enum.
+  Predicates on the flat enum (`IsStaticBuiltinFn`, `IsMutatingBuiltinFn`, `IsContainerAccessFn`,
+  `ArrayMethodTakesClosure`, `IsAssociativeTraversalFn`) all live in `support/builtin_fn.hpp`, so
+  classification of a built-in identity has one source of truth.
 - Neither layer carries a per-family variant arm or per-family enum. The per-family scaffolding (one
   `*MethodKind` enum and one `*MethodInfo` wrapper per LRM chapter) is gone from both HIR and MIR;
   the LRM-chapter organization survives only as comment-level grouping inside the flat

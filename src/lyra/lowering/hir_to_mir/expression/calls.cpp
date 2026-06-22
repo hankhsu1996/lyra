@@ -33,49 +33,32 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// True iff the LRM 7.12 method takes a `with`-clause closure as its second
-// argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
-// `reverse`) take no closure.
-auto ArrayMethodTakesClosure(support::BuiltinFn fn) -> bool {
-  switch (fn) {
-    case support::BuiltinFn::kSort:
-    case support::BuiltinFn::kRsort:
-    case support::BuiltinFn::kSum:
-    case support::BuiltinFn::kProduct:
-    case support::BuiltinFn::kAnd:
-    case support::BuiltinFn::kOr:
-    case support::BuiltinFn::kXor:
-    case support::BuiltinFn::kFind:
-    case support::BuiltinFn::kFindIndex:
-    case support::BuiltinFn::kFindFirst:
-    case support::BuiltinFn::kFindFirstIndex:
-    case support::BuiltinFn::kFindLast:
-    case support::BuiltinFn::kFindLastIndex:
-    case support::BuiltinFn::kMin:
-    case support::BuiltinFn::kMax:
-    case support::BuiltinFn::kUnique:
-    case support::BuiltinFn::kUniqueIndex:
-    case support::BuiltinFn::kMap:
-      return true;
-    default:
-      return false;
-  }
-}
-
-// True iff `fn` is an associative-array traversal entry. LRM 7.9.4 -- 7.9.7
-// lower to an immediately-invoked closure (mutates the index argument and
-// runs the write-back inline).
-auto IsAssociativeTraversalFn(support::BuiltinFn fn) -> bool {
-  return fn == support::BuiltinFn::kAssocFirst ||
-         fn == support::BuiltinFn::kAssocLast ||
-         fn == support::BuiltinFn::kAssocNext ||
-         fn == support::BuiltinFn::kAssocPrev;
+// If the lowered LHS chain `lhs_id` is rooted in an observable cell, wrap
+// the root with `Deref(Mutate(cell, services))` so the consumer operates on
+// a `ScopedMutation` snapshot whose destructor commits via `Var::Set`.
+// Returns `lhs_id` unchanged when no cell is at the root. Used by both the
+// mutating-method receiver path and the ref-formal actual path; the latter
+// gates its call on `root_id != lhs_id` because a bare observable cell
+// should bind `Ref<T>` directly to the underlying `Var<T>&`, not via a
+// snapshot.
+auto MaybeWrapObservableLhsWithMutate(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    mir::ExprId lhs_id) -> mir::ExprId {
+  const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
+  const bool root_is_cell = mir::IsObservableCellType(
+      process.Module().Unit().GetType(block.GetExpr(root_id).type));
+  if (!root_is_cell) return lhs_id;
+  const mir::ExprId services_id =
+      block.AddExpr(BuildServicesCallExpr(process, frame));
+  return RewriteLhsRootWithMutate(
+      process.Module().Unit(), block, lhs_id, services_id);
 }
 
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
@@ -153,38 +136,15 @@ auto LowerAssociativeTraversal(
 // Translates a HIR builtin-method ref to its MIR `Callee`. The identifier
 // is the flat `support::BuiltinFn`; the only decision here is whether the
 // id names a type-namespace-qualified static call (e.g. `MyEnum::first()`)
-// or an instance call. `IteratorMethodKind::kIndex` is rewritten upstream
-// to a `LocalRef` and never reaches this translation.
+// or an instance call.
 auto BuildBuiltinMirCallee(
     const ModuleLowerer& module, const hir::BuiltinMethodRef& b,
-    hir::TypeId hir_receiver_type) -> mir::Callee {
-  return std::visit(
-      Overloaded{
-          [&](support::BuiltinFn fn) -> mir::Callee {
-            if (support::IsStaticBuiltinFn(fn)) {
-              return mir::BuiltinStaticCallee{
-                  .id = fn,
-                  .type_qual = module.TranslateType(hir_receiver_type)};
-            }
-            return mir::BuiltinFnCallee{.id = fn};
-          },
-          [](hir::IteratorMethodKind) -> mir::Callee {
-            // LRM 7.12.4 `item.index` is rewritten to a `LocalRef` on the
-            // enclosing array-method closure's index binding before reaching
-            // the generic dispatch (see `LowerHirCallExprProc`), so the
-            // builtin-method translation is never invoked with it.
-            throw InternalError(
-                "BuildBuiltinMirCallee: IteratorMethodKind should have "
-                "been rewritten to a LocalRef");
-          },
-      },
-      b.method);
-}
-
-auto LowerUserCallee(
-    const ClassLowerer& lowerer, const hir::StructuralSubroutineRef& u)
-    -> mir::Callee {
-  return lowerer.TranslateStructuralSubroutine(u.hops, u.subroutine);
+    hir::TypeId hir_dispatch_type) -> mir::Callee {
+  if (support::IsStaticBuiltinFn(b.method)) {
+    return mir::BuiltinStaticCallee{
+        .id = b.method, .type_qual = module.TranslateType(hir_dispatch_type)};
+  }
+  return mir::BuiltinFnCallee{.id = b.method};
 }
 
 // The LRM 7.12 family shares one closure shape across every unpacked-array
@@ -226,8 +186,8 @@ auto ArrayContainerElementType(const mir::Type& ty) -> mir::TypeId {
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The iterator and
 // index are the closure's two parameters (LRM 7.12.4): the iterator HIR id
-// remaps to the `item` parameter and the index parameter resolves the `kIndex`
-// reference. The body is a normal expression lowered through
+// remaps to the `item` parameter and the index parameter resolves the
+// `IteratorIndexRef` callee. The body is a normal expression lowered through
 // `process.LowerExpr`. When the source has no `with` clause LRM 7.12.1 defines
 // the default as `with (item)`; this synthesises the identity closure (body
 // returns the iterator binding) so MIR always carries the closure argument and
@@ -341,15 +301,226 @@ auto LowerSystemSubroutineCall(
       desc.semantic);
 }
 
+// LRM 13.5 user-subroutine call (function or task). A call with output /
+// inout actuals is desugared to copy-in-copy-out at statement position;
+// reaching this lowering means the call is a nested expression operand,
+// where the copy-out statement has nowhere to be sequenced. ref / const
+// ref alias the actual and copy nothing back (LRM 13.5.2), so they fall
+// through to the value-only lowering. The callee body receives its
+// instance handle as `arguments[0]` (mir.md invariant 11); SV actuals
+// follow.
+auto LowerStructuralSubroutineCall(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
+    const hir::StructuralSubroutineRef& usr, diag::SourceSpan span,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& lowerer = process.Owner();
+  const auto& hir_process = process.HirBody();
+  auto& block = *frame.current_block;
+  const hir::StructuralSubroutineDecl& decl =
+      lowerer.LookupHirSubroutine(usr.hops, usr.subroutine);
+  for (const auto& param : decl.params) {
+    if (hir::RequiresWriteback(param.direction)) {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedSubroutineArgument,
+          "a call with output / inout arguments is only supported in "
+          "statement position, not as a nested expression",
+          diag::UnsupportedCategory::kFeature);
+    }
+  }
+  std::vector<mir::ExprId> args;
+  args.reserve(c.arguments.size() + 1);
+  args.push_back(block.AddExpr(
+      BuildSelfRefExpr(frame, frame.current_class->self_pointer_type)));
+  for (std::size_t i = 0; i < c.arguments.size(); ++i) {
+    if (!c.arguments[i].has_value()) {
+      throw InternalError("user-function call argument unexpectedly elided");
+    }
+    // A ref / const-ref formal aliases the actual's cell. The body's
+    // `Ref<T>` either binds the wrapped cell directly (bare observable
+    // actual -- `Ref<T>` to `Var<T>&`) or holds a `ScopedMutation`
+    // snapshot (selector / range on an observable actual). The bare-cell
+    // case skips the mutate wrap, since the helper would otherwise
+    // detach the body from the underlying cell.
+    const bool is_ref_formal =
+        i < decl.params.size() &&
+        (decl.params[i].direction == hir::ParamDirection::kRef ||
+         decl.params[i].direction == hir::ParamDirection::kConstRef);
+    mir::ExprId actual_id{};
+    if (is_ref_formal) {
+      auto arg_or = process.LowerLhsExpr(
+          hir_process.exprs.at(c.arguments[i]->value), frame);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      actual_id = block.AddExpr(*std::move(arg_or));
+      const mir::ExprId root_id = FindLhsRootId(block, actual_id);
+      if (root_id != actual_id) {
+        actual_id =
+            MaybeWrapObservableLhsWithMutate(process, frame, block, actual_id);
+      }
+      args.push_back(BuildReferenceArg(
+          process.Module().Unit(), block, actual_id,
+          block.GetExpr(actual_id).type));
+    } else {
+      auto arg_or =
+          process.LowerExpr(hir_process.exprs.at(c.arguments[i]->value), frame);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      args.push_back(block.AddExpr(*std::move(arg_or)));
+    }
+  }
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = lowerer.TranslateStructuralSubroutine(
+                  usr.hops, usr.subroutine),
+              .arguments = std::move(args)},
+      .type = result_type};
+}
+
+// Built-in method dispatch (LRM 6.16 / 6.19.5 / 7.9 / 7.10 / 7.12 / 15.5).
+// AST -> HIR puts a type-bearing expression at `c.arguments[0]`: for an
+// instance call it is the receiver itself, for a type-namespace static
+// call (`MyEnum::first()`) it is a discardable bearer whose type supplies
+// the static callee's `type_qual`. Either way, the for-loop below skips
+// index 0 and starts the real user-argument scan at index 1.
+auto LowerBuiltinMethodCall(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
+    const hir::BuiltinMethodRef& b, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  if (c.arguments.empty()) {
+    throw InternalError(
+        "BuiltinMethodRef call has no receiver / type-bearer argument");
+  }
+  if (!c.arguments.front().has_value()) {
+    throw InternalError(
+        "BuiltinMethodRef receiver / type-bearer unexpectedly elided");
+  }
+  // LRM 7.9.4 -- 7.9.7 traversal lowers to an immediately-invoked closure:
+  // it writes the index back through an observable assign and runs in
+  // expression position. The other associative methods are plain member
+  // calls handled by the generic path below.
+  if (support::IsAssociativeTraversalFn(b.method)) {
+    return LowerAssociativeTraversal(process, frame, c, b.method, result_type);
+  }
+  const auto& module = process.Module();
+  const auto& hir_process = process.HirBody();
+  auto& block = *frame.current_block;
+  const hir::TypeId hir_dispatch_type =
+      hir_process.exprs.at(c.arguments.front()->value).type;
+  std::vector<mir::ExprId> args;
+  args.reserve(c.arguments.size() + 1);
+
+  // Translate the callee up front so the same trait (`mir::IsMutatingCallee`)
+  // drives both lowering and backend rendering.
+  const mir::Callee mir_callee =
+      BuildBuiltinMirCallee(module, b, hir_dispatch_type);
+
+  // A static call has no value receiver -- `args[0]` is the discardable
+  // type-bearer, the type-namespace qualifier rides on the callee. An
+  // instance call lowers `args[0]` as the receiver, routing through
+  // `Var<T>::Mutate` when the method mutates and the LHS roots in an
+  // observable cell (so the method body operates on a `ScopedMutation`
+  // snapshot whose destructor commits via `Var::Set`); non-mutating
+  // methods consume a value, so the default value path (which auto-wraps
+  // in `Get`) applies.
+  const bool has_receiver =
+      !std::holds_alternative<mir::BuiltinStaticCallee>(mir_callee);
+  if (has_receiver) {
+    const bool method_mutates = mir::IsMutatingCallee(mir_callee);
+    mir::ExprId receiver_id{};
+    if (method_mutates) {
+      auto recv_or = process.LowerLhsExpr(
+          hir_process.exprs.at(c.arguments.front()->value), frame);
+      if (!recv_or) return std::unexpected(std::move(recv_or.error()));
+      receiver_id = block.AddExpr(*std::move(recv_or));
+      receiver_id =
+          MaybeWrapObservableLhsWithMutate(process, frame, block, receiver_id);
+    } else {
+      auto recv_or = process.LowerExpr(
+          hir_process.exprs.at(c.arguments.front()->value), frame);
+      if (!recv_or) return std::unexpected(std::move(recv_or.error()));
+      receiver_id = block.AddExpr(*std::move(recv_or));
+    }
+    args.push_back(receiver_id);
+  }
+
+  // Skip args[0] -- it was either pushed above as the lowered receiver
+  // (instance call) or discarded as the type-bearer (static call).
+  for (std::size_t i = 1; i < c.arguments.size(); ++i) {
+    if (!c.arguments[i].has_value()) {
+      throw InternalError("builtin-method call argument unexpectedly elided");
+    }
+    auto arg_or =
+        process.LowerExpr(hir_process.exprs.at(c.arguments[i]->value), frame);
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    args.push_back(block.AddExpr(*std::move(arg_or)));
+  }
+
+  // LRM 7.12.1: reduction / ordering / locator array methods take a
+  // closure. The user's `with` clause is used if present; otherwise LRM
+  // defines the default as `with (item)`, which HIR-to-MIR synthesises so
+  // MIR always carries the closure argument and downstream consumers see
+  // one uniform shape per kind.
+  if (support::ArrayMethodTakesClosure(b.method)) {
+    auto closure_or = BuildArrayMethodClosure(
+        process, frame, hir_dispatch_type,
+        c.with_clause.has_value() ? &*c.with_clause : nullptr);
+    if (!closure_or) return std::unexpected(std::move(closure_or.error()));
+    args.push_back(block.AddExpr(*std::move(closure_or)));
+    // LRM 7.12.5: `map`'s result element type may differ from the
+    // receiver's, so its shield is supplied here as that type's canonical
+    // default -- the runtime shape is not recoverable from the C++ type
+    // alone.
+    if (b.method == support::BuiltinFn::kMap) {
+      const mir::TypeId result_elem =
+          ArrayContainerElementType(module.Unit().GetType(result_type));
+      args.push_back(
+          block.AddExpr(BuildDefaultValueExpr(module, frame, result_elem)));
+    }
+  } else if (c.with_clause.has_value()) {
+    throw InternalError(
+        "BuiltinMethodRef with-clause on a method kind that does not "
+        "accept a with-clause (LRM 7.12.1 family only)");
+  }
+
+  // LRM 15.5.3: `e.triggered` reads the triggered flag out of
+  // RuntimeServices. The engine handle is a real trailing argument,
+  // threaded the same way every runtime effect threads it
+  // (docs/decisions/runtime-effects-as-generic-calls.md), not a backend-
+  // fabricated one. (`-> e` is the only producer of the trigger kind and
+  // lowers through LowerEventTriggerStmt; `await` takes no services.)
+  if (b.method == support::BuiltinFn::kTriggered) {
+    args.push_back(block.AddExpr(BuildServicesCallExpr(process, frame)));
+  }
+
+  return mir::Expr{
+      .data = mir::CallExpr{.callee = mir_callee, .arguments = std::move(args)},
+      .type = result_type};
+}
+
+// LRM 7.12.4 `item.index` reads the second parameter of the enclosing
+// array-method with-clause closure (LRM 7.12 closures pass both `item`
+// and `index` to each invocation). The binding is installed by
+// `BuildArrayMethodClosure`; reaching here without it is an upstream
+// lowering bug.
+auto LowerIteratorIndexCall(WalkFrame frame, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  if (!frame.active_index_binding.has_value()) {
+    throw InternalError(
+        "LowerIteratorIndexCall: IteratorIndexRef outside an array-method "
+        "`with` body (LRM 7.12.4)");
+  }
+  return mir::Expr{
+      .data =
+          mir::LocalRef{
+              .hops = mir::BlockHops{.value = 0},
+              .var = *frame.active_index_binding},
+      .type = result_type};
+}
+
 }  // namespace
 
 auto LowerHirCallExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& module = process.Module();
-  const auto& lowerer = process.Owner();
-  const auto& hir_process = process.HirBody();
-  auto& block = *frame.current_block;
   return std::visit(
       Overloaded{
           [&](const hir::SystemSubroutineRef& sys) -> diag::Result<mir::Expr> {
@@ -357,233 +528,14 @@ auto LowerHirCallExprProc(
           },
           [&](const hir::StructuralSubroutineRef& usr)
               -> diag::Result<mir::Expr> {
-            // LRM 13.5: a call with output / inout actuals is desugared to
-            // copy-in-copy-out at statement position. Reaching it here means
-            // the call is a nested expression operand, where the copy-out
-            // statement has nowhere to be sequenced. ref / const ref alias
-            // the actual and copy nothing back (LRM 13.5.2), so they are
-            // fine as operands and fall through to the value-only lowering.
-            const hir::StructuralSubroutineDecl& decl =
-                lowerer.LookupHirSubroutine(usr.hops, usr.subroutine);
-            for (const auto& param : decl.params) {
-              if (hir::RequiresWriteback(param.direction)) {
-                return diag::Unsupported(
-                    span, diag::DiagCode::kUnsupportedSubroutineArgument,
-                    "a call with output / inout arguments is only supported "
-                    "in statement position, not as a nested expression",
-                    diag::UnsupportedCategory::kFeature);
-              }
-            }
-            // The callee body takes its instance handle as `arguments[0]`
-            // (mir.md invariant 11); the SV actuals follow.
-            std::vector<mir::ExprId> args;
-            args.reserve(c.arguments.size() + 1);
-            args.push_back(block.AddExpr(BuildSelfRefExpr(
-                frame, frame.current_class->self_pointer_type)));
-            for (std::size_t i = 0; i < c.arguments.size(); ++i) {
-              if (!c.arguments[i].has_value()) {
-                throw InternalError(
-                    "user-function call argument unexpectedly elided");
-              }
-              // A ref / const-ref formal aliases the actual's cell. The
-              // body's `Ref<T>` either binds the wrapped cell directly
-              // (bare observable actual) or holds a `ScopedMutation` snapshot
-              // (selector / range on an observable actual) -- both routed by
-              // the LHS-form lowering plus the observable mutate rewrite.
-              const bool is_ref_formal =
-                  i < decl.params.size() &&
-                  (decl.params[i].direction == hir::ParamDirection::kRef ||
-                   decl.params[i].direction == hir::ParamDirection::kConstRef);
-              mir::ExprId actual_id{};
-              if (is_ref_formal) {
-                auto arg_or = process.LowerLhsExpr(
-                    hir_process.exprs.at(c.arguments[i]->value), frame);
-                if (!arg_or) {
-                  return std::unexpected(std::move(arg_or.error()));
-                }
-                actual_id = block.AddExpr(*std::move(arg_or));
-                const mir::ExprId root_id = FindLhsRootId(block, actual_id);
-                const bool root_is_cell = mir::IsObservableCellType(
-                    module.Unit().GetType(block.GetExpr(root_id).type));
-                if (root_is_cell && root_id != actual_id) {
-                  // Selector / range on an observable cell -- the body sees
-                  // a `Ref<T>` bound to a `ScopedMutation` snapshot of the
-                  // selected element. Bare cells stay as-is so the body's
-                  // `Ref<T>` binds the underlying `Var<T>` directly.
-                  const mir::ExprId services_id =
-                      block.AddExpr(BuildServicesCallExpr(process, frame));
-                  actual_id = RewriteLhsRootWithMutate(
-                      module.Unit(), block, actual_id, services_id);
-                }
-              } else {
-                auto arg_or = process.LowerExpr(
-                    hir_process.exprs.at(c.arguments[i]->value), frame);
-                if (!arg_or) {
-                  return std::unexpected(std::move(arg_or.error()));
-                }
-                actual_id = block.AddExpr(*std::move(arg_or));
-              }
-              if (is_ref_formal) {
-                args.push_back(BuildReferenceArg(
-                    process.Module().Unit(), block, actual_id,
-                    block.GetExpr(actual_id).type));
-              } else {
-                args.push_back(actual_id);
-              }
-            }
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = LowerUserCallee(lowerer, usr),
-                        .arguments = std::move(args)},
-                .type = result_type};
+            return LowerStructuralSubroutineCall(
+                process, frame, c, usr, span, result_type);
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
-            // LRM 7.12.4 `item.index` -> the closure's `index` parameter
-            // binding. Reaches here from a with-clause body and the binding
-            // was installed by `BuildArrayMethodClosure`.
-            if (std::holds_alternative<hir::IteratorMethodKind>(b.method)) {
-              const auto index_binding = frame.active_index_binding;
-              if (!index_binding.has_value()) {
-                throw InternalError(
-                    "LowerHirCallExprProc: IteratorMethodKind outside an "
-                    "array-method `with` body (LRM 7.12.4)");
-              }
-              return mir::Expr{
-                  .data =
-                      mir::LocalRef{
-                          .hops = mir::BlockHops{.value = 0},
-                          .var = *index_binding},
-                  .type = result_type};
-            }
-            if (c.arguments.empty()) {
-              throw InternalError(
-                  "BuiltinMethodRef call has no receiver argument");
-            }
-            if (!c.arguments.front().has_value()) {
-              throw InternalError(
-                  "BuiltinMethodRef receiver unexpectedly elided");
-            }
-            // LRM 7.9.4 -- 7.9.7 traversal lowers to an immediately-invoked
-            // closure: it writes the index back through an observable assign
-            // and runs in expression position. The other associative methods
-            // are plain member calls handled by the generic path below.
-            if (const auto* fn = std::get_if<support::BuiltinFn>(&b.method);
-                fn != nullptr && IsAssociativeTraversalFn(*fn)) {
-              return LowerAssociativeTraversal(
-                  process, frame, c, *fn, result_type);
-            }
-            const hir::TypeId hir_receiver_type =
-                hir_process.exprs.at(c.arguments.front()->value).type;
-            std::vector<mir::ExprId> args;
-            args.reserve(c.arguments.size() + 1);
-
-            // Translate to the MIR callee up front so the same trait
-            // (`mir::IsMutatingCallee`) drives both lowering and backend
-            // rendering.
-            const mir::Callee mir_callee =
-                BuildBuiltinMirCallee(module, b, hir_receiver_type);
-
-            // Lower the receiver. A mutating method against an observable
-            // cell routes through `Var<T>::Mutate` -- the receiver is the
-            // bare cell expression wrapped in
-            // `DerefExpr(CallExpr(ObservableMethod{kMutate}, [cell,
-            // services]))` so the method body operates on the snapshot and the
-            // destructor commits via `Var::Set`. A non-mutating method consumes
-            // the value, so the default `LowerExpr` path (which auto-wraps in
-            // `Get`) is correct.
-            const bool method_mutates = mir::IsMutatingCallee(mir_callee);
-            // A static call has no value receiver -- `args[0]` is a normal
-            // user argument, the type-namespace qualifier rides on the
-            // callee.
-            const bool has_receiver =
-                !std::holds_alternative<mir::BuiltinStaticCallee>(mir_callee);
-            if (has_receiver) {
-              mir::ExprId receiver_id{};
-              if (method_mutates) {
-                auto recv_or = process.LowerLhsExpr(
-                    hir_process.exprs.at(c.arguments.front()->value), frame);
-                if (!recv_or) {
-                  return std::unexpected(std::move(recv_or.error()));
-                }
-                receiver_id = block.AddExpr(*std::move(recv_or));
-                const mir::ExprId root_id = FindLhsRootId(block, receiver_id);
-                const bool root_is_cell = mir::IsObservableCellType(
-                    module.Unit().GetType(block.GetExpr(root_id).type));
-                if (root_is_cell) {
-                  const mir::ExprId services_id =
-                      block.AddExpr(BuildServicesCallExpr(process, frame));
-                  receiver_id = RewriteLhsRootWithMutate(
-                      module.Unit(), block, receiver_id, services_id);
-                }
-              } else {
-                auto recv_or = process.LowerExpr(
-                    hir_process.exprs.at(c.arguments.front()->value), frame);
-                if (!recv_or) {
-                  return std::unexpected(std::move(recv_or.error()));
-                }
-                receiver_id = block.AddExpr(*std::move(recv_or));
-              }
-              args.push_back(receiver_id);
-            }
-
-            for (std::size_t i = 1; i < c.arguments.size(); ++i) {
-              if (!c.arguments[i].has_value()) {
-                throw InternalError(
-                    "builtin-method call argument unexpectedly elided");
-              }
-              auto arg_or = process.LowerExpr(
-                  hir_process.exprs.at(c.arguments[i]->value), frame);
-              if (!arg_or) {
-                return std::unexpected(std::move(arg_or.error()));
-              }
-              args.push_back(block.AddExpr(*std::move(arg_or)));
-            }
-            // LRM 7.12.1: reduction / ordering / locator array methods take a
-            // closure. The user's `with` clause is used if present; otherwise
-            // LRM defines the default as `with (item)`, which HIR-to-MIR
-            // synthesises so MIR always carries the closure argument and
-            // downstream consumers see one uniform shape per kind.
-            const auto* fn = std::get_if<support::BuiltinFn>(&b.method);
-            if (fn != nullptr && ArrayMethodTakesClosure(*fn)) {
-              auto closure_or = BuildArrayMethodClosure(
-                  process, frame, hir_receiver_type,
-                  c.with_clause.has_value() ? &*c.with_clause : nullptr);
-              if (!closure_or) {
-                return std::unexpected(std::move(closure_or.error()));
-              }
-              args.push_back(block.AddExpr(*std::move(closure_or)));
-              // LRM 7.12.5: `map`'s result element type may differ from the
-              // receiver's, so its shield is supplied here as that type's
-              // canonical default -- the runtime shape is not recoverable from
-              // the C++ type alone.
-              if (*fn == support::BuiltinFn::kMap) {
-                const mir::TypeId result_elem = ArrayContainerElementType(
-                    module.Unit().GetType(result_type));
-                args.push_back(block.AddExpr(
-                    BuildDefaultValueExpr(module, frame, result_elem)));
-              }
-            } else if (c.with_clause.has_value()) {
-              throw InternalError(
-                  "BuiltinMethodRef with-clause on a method kind that does "
-                  "not accept a with-clause (LRM 7.12.1 family only)");
-            }
-            // LRM 15.5.3: `e.triggered` reads the triggered flag out of
-            // RuntimeServices. The engine handle is a real trailing argument,
-            // threaded the same way every runtime effect threads it
-            // (docs/decisions/runtime-effects-as-generic-calls.md), not a
-            // backend-fabricated one. (`-> e` is the only producer of the
-            // trigger kind and lowers through LowerEventTriggerStmt; `await`
-            // takes no services.)
-            if (fn != nullptr && *fn == support::BuiltinFn::kTriggered) {
-              args.push_back(
-                  block.AddExpr(BuildServicesCallExpr(process, frame)));
-            }
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = mir_callee, .arguments = std::move(args)},
-                .type = result_type};
+            return LowerBuiltinMethodCall(process, frame, c, b, result_type);
+          },
+          [&](const hir::IteratorIndexRef&) -> diag::Result<mir::Expr> {
+            return LowerIteratorIndexCall(frame, result_type);
           },
       },
       c.callee);
