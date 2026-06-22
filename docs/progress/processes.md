@@ -12,12 +12,12 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 
 ## Blocked
 
-| Item   | Blocked on                                                                                                                                                            |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P12    | Process generate; rides on the existing P1..P11 surface, mostly frontend elaboration.                                                                                 |
-| T2..T5 | Compound event expressions (concatenation, arithmetic, dynamic index): needs the snapshot + re-eval wrapper at HIR -> MIR plus a runtime edge-classifier helper.      |
-| T2..T5 | Ascending / negative-base packed ranges (`logic [0:7]`, `logic [-1:6]`): runtime `PackedArray::ElementAt` does not yet honor LRM direction translation on write side. |
-| T2..T5 | Multi-dim packed events (`logic [1:0][7:0] bus; @(bus[1])`): emit of the dim-stack initializer for multi-dim packed variables is broken.                              |
+| Item   | Blocked on                                                                                                                                                                                                                                                 |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P12    | Process generate; rides on the existing P1..P11 surface, mostly frontend elaboration.                                                                                                                                                                      |
+| T2..T5 | Compound event expressions (concatenation, arithmetic, dynamic index): needs the snapshot + re-eval wrapper at HIR -> MIR plus a runtime edge-classifier helper.                                                                                           |
+| T2..T5 | Ascending / negative-base packed ranges (`logic [0:7]`, `logic [-1:6]`): value-level bit / part-select (read and write) now honors LRM 11.5.1 direction translation; the event-control sensitivity-leaf projection for such ranges is the remaining piece. |
+| T2..T5 | Multi-dim packed events (`logic [1:0][7:0] bus; @(bus[1])`): emit of the dim-stack initializer for multi-dim packed variables is broken.                                                                                                                   |
 
 ## Sub-Steps
 
