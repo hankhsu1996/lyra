@@ -96,14 +96,14 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 ### Observability
 
 - [x] U8 -- Unpacked structural variables participate in value-change observability. They are
-      observable cells (`Var<UnpackedArray<T>>`), so always_comb / `@*` / level-sensitive `wait`
+      observable cells (`Var<UnpackedArray<T>>`), so `always_comb` / `@*` / level-sensitive `wait`
       reading an unpacked operand react to writes (a whole-array or element write fires the cell's
       any-change waiters), and a non-integral input port drives an unpacked child cell through the
       generic continuous-assign path. `@(arr)` on a whole unpacked array is frontend-rejected as a
       non-singular event expression (LRM 9.4.2); `@(arr[i])` on an element rides the shared
       value-change event-control path. (Selecting an unpacked element on the right-hand side of a
-      _structural_ continuous assignment is a separate structural-expression limitation, unrelated
-      to observability.)
+      structural continuous assignment is a separate structural-expression limitation, unrelated to
+      observability.)
 
 ### Array manipulation methods
 
