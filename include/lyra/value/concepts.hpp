@@ -20,9 +20,6 @@
 // - SV container-method contracts (LRM 7.x, 6.16): the integer-positioned
 //   methods (size, slice, element access, etc.) shared across the array
 //   families.
-//
-// See `docs/progress/refactor.md` R26 for the audit that derived the
-// container-method set and the conforming-container map for each protocol.
 
 namespace lyra::value {
 

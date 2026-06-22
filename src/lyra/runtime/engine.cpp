@@ -45,6 +45,13 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
   root_ = std::make_unique<Scope>(nullptr, "$root", services_);
   for (const auto& top : tops) {
     root_->AddChild(*top.scope);
+    // A `$root`-anchored absolute path descends from the root by name, so the
+    // root answers GetChild for each top under its name (LRM 23.6).
+    root_->RegisterChild(top.scope->Name(), {}, *top.scope);
+  }
+  // Link every top before binding any, so an upward climb at Bind sees the
+  // whole tree (the root and all sibling tops already exist).
+  for (const auto& top : tops) {
     top.scope->Bind();
   }
 }

@@ -65,9 +65,10 @@ auto RejectNonStringOutput(std::string_view name, diag::SourceSpan span)
   return diag::Unsupported(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
       std::format(
-          "{} output_var must be string-typed in this build (LRM 21.3.3 "
-          "allows integral and unpacked-byte-array outputs via LRM 5.9 "
-          "assignment rules; deferred)",
+          "{} output_var must be string-typed; integral and "
+          "unpacked-byte-array "
+          "outputs (LRM 21.3.3 via the LRM 5.9 assignment rules) are not yet "
+          "supported",
           std::string{name}),
       diag::UnsupportedCategory::kFeature);
 }

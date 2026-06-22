@@ -66,8 +66,10 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 
 ### References and construction
 
-- [upward-reference-resolution](upward-reference-resolution.md) -- upward hierarchical references
-  resolve by self-climb at construction time.
+- [hierarchical-reference-resolution](hierarchical-reference-resolution.md) -- how a cross-unit
+  hierarchical reference resolves once into a stored pointer: downward by emitted constructor
+  navigation, upward by a runtime self-climb at bind, both by name; and why the cross-unit hop is by
+  name, not a typed accessor.
 
 ## File Naming
 

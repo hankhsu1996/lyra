@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -144,10 +145,10 @@ auto LowerNamedValueProc(
 // LRM 23.6 hierarchical reference. The head of the navigation differs by
 // direction: a downward path (`c.x`, `c[1].x`, `g[1].u.x`) starts at a local
 // owned child -- an instance member or a generate block; an upward path
-// (`Top.g`, `Top.sib.y`) starts by climbing the parent chain at construction to
-// the named ancestor instance. The shared tail (`path.subspan(1)`) and the
-// resolve-once slot are common (reference_resolution.md,
-// docs/decisions/upward-reference-resolution.md).
+// (`Top.g`, `Top.sib.y`) starts by climbing the parent chain to the named
+// ancestor -- a module instance, a named generate block, or the root. The
+// shared tail (`path.subspan(1)`) reaches the leaf in both directions. See
+// reference_resolution.md, docs/decisions/hierarchical-reference-resolution.md.
 auto LowerHierarchicalValueProc(
     ModuleLowerer& module, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
@@ -202,31 +203,50 @@ auto LowerHierarchicalValueProc(
   const slang::ast::Symbol& head_sym = *ref.path.front().symbol;
 
   if (ref.isUpward()) {
-    // An upward reference (LRM 23.8) climbs the parent chain to the named
+    // An upward reference (LRM 23.8) climbs the parent chain to the matching
     // ancestor, then shares `path` with the downward direction to reach the
-    // leaf. A named generate / procedural block ancestor or a `$root`-anchored
-    // path (neither a module instance) is not yet supported.
-    if (head_sym.kind != slang::ast::SymbolKind::Instance) {
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "upward hierarchical reference whose target ancestor is not a module "
-          "instance is not yet supported",
-          diag::UnsupportedCategory::kOperation);
-    }
-    // The climb key is the ancestor's module name (LRM 23.8) -- class-level, so
-    // one artifact serves every instance regardless of depth. It comes from the
-    // resolved ancestor symbol, never from syntax (a wrapped sub-expression
-    // like `Top.g[3]` may carry none). The extern member is synthesized on the
-    // referrer's own structural scope (`frame.Current()`), whether that is the
-    // unit root or a generate block: its `ExternUp` climbs that object's own
-    // parent chain at Bind, so a reference written inside a generate block
+    // leaf. The head selects how the climb matches. A module instance keys on
+    // the ancestor's module definition name -- class-level, so one artifact
+    // serves every depth and a wrapped sub-expression like `Top.g[3]` needs no
+    // syntax. A named generate block or a `$root`-anchored absolute path keys
+    // on the ancestor scope's own name (LRM 23.6): the generate-block label, or
+    // the root's reserved name. The extern member is synthesized on the
+    // referrer's own structural scope (`frame.Current()`), whether the unit
+    // root or a generate block, so a reference written inside a generate block
     // resolves the same way (its member rides the generate-scope class).
-    std::string ancestor_name{
-        head_sym.as<slang::ast::InstanceSymbol>().getDefinition().name};
+    std::optional<hir::UpwardHead> head;
+    switch (head_sym.kind) {
+      case slang::ast::SymbolKind::Instance:
+        head = hir::UpwardHead{
+            .ancestor_name =
+                std::string{head_sym.as<slang::ast::InstanceSymbol>()
+                                .getDefinition()
+                                .name},
+            .match = hir::UpwardMatch::kDefName};
+        break;
+      case slang::ast::SymbolKind::GenerateBlock:
+        head = hir::UpwardHead{
+            .ancestor_name = std::string{head_sym.name},
+            .match = hir::UpwardMatch::kScopeName};
+        break;
+      case slang::ast::SymbolKind::Root:
+        head = hir::UpwardHead{
+            .ancestor_name = "$root", .match = hir::UpwardMatch::kScopeName};
+        break;
+      default:
+        // Any other head -- an indexed loop-generate block, or a named
+        // procedural block whose locals live on the enclosing unit rather than
+        // in a constructed scope -- does not resolve to a climb target yet.
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "upward hierarchical reference whose head is not a module "
+            "instance, "
+            "a named generate block, or $root is not yet supported",
+            diag::UnsupportedCategory::kOperation);
+    }
     return module.MakeCrossUnitMemberRef(
-        var, frame.Current(),
-        hir::UpwardHead{.ancestor_name = std::move(ancestor_name)},
-        std::move(path), *type_id, span);
+        var, frame.Current(), *std::move(head), std::move(path), *type_id,
+        span);
   }
 
   // Downward: the head is an owned child this unit's scope declares -- an

@@ -33,25 +33,29 @@ struct ChildStep {
 };
 
 // An upward hierarchical reference modeled as an extern member: it holds the
-// symbol -- the ancestor's instance or module name, the by-name tail down
-// through the ancestor's owned children, and the leaf signal name -- and at
-// Bind climbs to the ancestor, walks the tail, and binds a direct pointer to
-// the leaf. Reads, writes, and sensitivity forward to that resolved cell, so
-// the member behaves like the referenced `Var<T>` while naming no ancestor
-// type (docs/architecture/emission_model.md). Non-movable: it registers `this`,
-// and is owned by the stable scope node that declares it.
+// symbol -- the ancestor name, how that name is matched on the parent chain,
+// the by-name tail down through the ancestor's owned children, and the leaf
+// signal name -- and at Bind climbs to the ancestor, walks the tail, and binds
+// a direct pointer to the leaf. Reads, writes, and sensitivity forward to that
+// resolved cell, so the member behaves like the referenced `Var<T>` while
+// naming no ancestor type (docs/architecture/emission_model.md). Non-movable:
+// it registers `this`, and is owned by the stable scope node that declares it.
 template <value::LyraValue T>
 class ExternUp : public ExternBase {
  public:
   ExternUp(
-      Scope* owner, std::string_view ancestor,
+      Scope* owner, std::string_view ancestor, UpwardMatch match,
       std::initializer_list<ChildStep> tail, std::string_view signal)
-      : owner_(owner), ancestor_(ancestor), tail_(tail), signal_(signal) {
+      : owner_(owner),
+        ancestor_(ancestor),
+        match_(match),
+        tail_(tail),
+        signal_(signal) {
     owner_->RegisterExtern(this);
   }
 
   void Relocate() override {
-    Scope* scope = owner_->ResolveUpwardScope(ancestor_);
+    Scope* scope = owner_->ResolveUpwardScope(ancestor_, match_);
     for (const ChildStep& hop : tail_) {
       scope = scope->GetChild(hop.name, hop.indices);
     }
@@ -77,6 +81,7 @@ class ExternUp : public ExternBase {
  private:
   Scope* owner_;
   std::string_view ancestor_;
+  UpwardMatch match_;
   std::vector<ChildStep> tail_;
   std::string_view signal_;
   Var<T>* cell_ = nullptr;

@@ -190,9 +190,6 @@ auto RenderConstructOwnedObjectStmt(
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     trailing_args += ", " + *arg_or;
   }
-  const std::string make = "std::make_unique<" + target_scope.name +
-                           ">(self, \"" + target_scope.name +
-                           "\", self->Services()" + trailing_args + ")";
   const auto child = mir::GetChildScope(view.Unit(), var.type);
   if (!child.has_value() ||
       !std::holds_alternative<mir::GenerateScopeChild>(*child)) {
@@ -200,8 +197,14 @@ auto RenderConstructOwnedObjectStmt(
         "ConstructOwnedObjectStmt target is not an owned object var");
   }
   const std::string lhs = "self->" + var.name;
+  // The runtime scope name is the source-level label (LRM 27.6) -- the name an
+  // upward climb and a by-name child lookup match against -- not the emitted
+  // class name.
   const std::string reg_name =
       var.source_name.empty() ? var.name : var.source_name;
+  const std::string make = "std::make_unique<" + target_scope.name +
+                           ">(self, \"" + reg_name + "\", self->Services()" +
+                           trailing_args + ")";
   if (std::holds_alternative<mir::VectorType>(
           view.Unit().GetType(var.type).data)) {
     return Indent(indent) + lhs + ".push_back(" + make + ");\n" +

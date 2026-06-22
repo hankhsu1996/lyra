@@ -28,6 +28,12 @@ Scope::Scope(Scope* parent, std::string name, RuntimeServices& services)
 }
 
 void Scope::AddChild(Scope& child) {
+  // Linking establishes the full bidirectional edge. A child built under a
+  // parent already set `parent_` in its constructor; a top-level block is
+  // constructed parentless and adopts `$root` as its parent here, so an upward
+  // climb from inside a top reaches the root (LRM 23.6, hierarchy_and_generate
+  // invariant 8).
+  child.parent_ = this;
   children_.push_back(&child);
 }
 
@@ -91,17 +97,18 @@ void Scope::RegisterExtern(ExternBase* member) {
   externs_.push_back(member);
 }
 
-auto Scope::ResolveUpwardScope(std::string_view ancestor) -> Scope* {
-  Scope* s = parent_;
-  while (s != nullptr && s->DefName() != ancestor) {
-    s = s->Parent();
+auto Scope::ResolveUpwardScope(std::string_view key, UpwardMatch match)
+    -> Scope* {
+  for (Scope* s = parent_; s != nullptr; s = s->Parent()) {
+    const std::string_view name =
+        match == UpwardMatch::kDefName ? s->DefName() : s->Name();
+    if (name == key) {
+      return s;
+    }
   }
-  if (s == nullptr) {
-    throw InternalError(
-        "Scope::ResolveUpwardScope: no ancestor named " +
-        std::string(ancestor) + " on the parent chain");
-  }
-  return s;
+  throw InternalError(
+      "Scope::ResolveUpwardScope: no ancestor named " + std::string(key) +
+      " on the parent chain");
 }
 
 auto Scope::Services() -> RuntimeServices& {
