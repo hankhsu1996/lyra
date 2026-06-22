@@ -33,6 +33,10 @@ auto LowerHirAssignmentPatternReplicationExprProc(
 auto LowerHirDynamicArrayNewExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
+auto LowerHirAssociativeAssignmentPatternExprProc(
+    ProcessLowerer& process, WalkFrame frame,
+    const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 
 auto LowerHirConcatExprStructural(
     const ClassLowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
@@ -44,6 +48,10 @@ auto LowerHirAssignmentPatternExprStructural(
 auto LowerHirAssignmentPatternReplicationExprStructural(
     const ClassLowerer& lowerer, WalkFrame frame,
     const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
+auto LowerHirAssociativeAssignmentPatternExprStructural(
+    const ClassLowerer& lowerer, WalkFrame frame,
+    const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

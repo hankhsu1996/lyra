@@ -103,6 +103,11 @@ auto DispatchLowerExpr(
             return LowerHirDynamicArrayNewExprProc(
                 process, frame, n, result_type);
           },
+          [&](const hir::AssociativeAssignmentPatternExpr& a)
+              -> diag::Result<mir::Expr> {
+            return LowerHirAssociativeAssignmentPatternExprProc(
+                process, frame, a, result_type);
+          },
       },
       expr.data);
 }

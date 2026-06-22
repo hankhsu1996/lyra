@@ -718,6 +718,25 @@ class HirDumper {
               return std::format(
                   "DynamicArrayNewExpr size=Expr[{}]", n.size.value);
             },
+            [](const AssociativeAssignmentPatternExpr& a) -> std::string {
+              std::string entries;
+              for (std::size_t i = 0; i < a.entries.size(); ++i) {
+                if (i != 0) {
+                  entries += ", ";
+                }
+                entries += std::format(
+                    "Expr[{}]:Expr[{}]", a.entries[i].key.value,
+                    a.entries[i].value.value);
+              }
+              if (a.default_value.has_value()) {
+                return std::format(
+                    "AssociativeAssignmentPatternExpr entries=[{}] "
+                    "default=Expr[{}]",
+                    entries, a.default_value->value);
+              }
+              return std::format(
+                  "AssociativeAssignmentPatternExpr entries=[{}]", entries);
+            },
         },
         e.data);
     return std::format("type=Type[{}] {}", e.type.value, formatted);

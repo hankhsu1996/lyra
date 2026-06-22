@@ -214,6 +214,16 @@ class MirDumper {
             [](const VectorType& v) -> std::string {
               return std::format("Vector(elem=Type[{}])", v.element.value);
             },
+            [](const TupleType& t) -> std::string {
+              std::string elements;
+              for (std::size_t i = 0; i < t.elements.size(); ++i) {
+                if (i != 0) {
+                  elements += ", ";
+                }
+                elements += std::format("Type[{}]", t.elements[i].value);
+              }
+              return std::format("Tuple(elems=[{}])", elements);
+            },
             [](const ExternalRefType& e) -> std::string {
               std::string tail;
               for (const auto& hop : e.tail) {
@@ -583,6 +593,16 @@ class MirDumper {
                 elements += std::format("Expr[{}]", a.elements[i].value);
               }
               return std::format("ArrayLiteralExpr elements=[{}]", elements);
+            },
+            [](const TupleExpr& t) -> std::string {
+              std::string components;
+              for (std::size_t i = 0; i < t.components.size(); ++i) {
+                if (i != 0) {
+                  components += ", ";
+                }
+                components += std::format("Expr[{}]", t.components[i].value);
+              }
+              return std::format("TupleExpr components=[{}]", components);
             },
         },
         e.data);

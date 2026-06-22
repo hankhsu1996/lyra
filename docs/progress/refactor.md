@@ -484,6 +484,29 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       class and cannot descend, so this rests on a new member-access capability that touches the
       member-access model. **Trigger**: when that descend capability is designed and built.
 
+- [ ] R36 -- Split the container default-value slot's two roles so the read path stops mutating. The
+      four unpacked-container wrappers (fixed-size array, dynamic array, queue, associative array)
+      each carry one `mutable` slot that fuses three jobs: the immutable canonical default that also
+      carries the element's runtime shape (the construction prototype), the immutable value a read
+      of a nonexistent / invalid entry returns (LRM 7.4.5 / 7.8.6 / Table 7-1), and the mutable
+      discard target an invalid write lands on and that is thrown away. Because the read path is
+      `const` yet the slot doubles as the write sink a prior invalid write may have dirtied, the
+      const read must reset the slot before returning a reference to it -- a const method that
+      mutates, which is the sole reason the slot is `mutable` and the reason every read miss pays a
+      reset. The forcing constraint is correct and stays: SystemVerilog has no exceptions, so an
+      invalid read yields the element default and an invalid write is a no-op, both expressed as a
+      returned reference so codegen stays uniform (no per-site validity gate). Target shape:
+      separate the immutable default (prototype plus read-miss value) from the write-discard sink,
+      so the const read returns the pristine default with no reset, the sink is reset only on an
+      invalid write (where a compound op must read the default first), and the `mutable` qualifier
+      disappears from all four wrappers. The "two fields" this introduces are two distinct
+      responsibilities -- the element default versus the throwaway scratch -- not a duplicated
+      value. This reverses `../decisions/runtime-shape-and-default-value.md`, which chose one slot
+      to save one element-sized field per wrapper; that cost is one object per container instance
+      (not per element) and is negligible against the const-correctness and readability gain, and
+      the decision weighed only memory while omitting the mutable / reset-on-read cost. Revise that
+      decision doc alongside. **Trigger**: standalone; mechanical across the four wrappers.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,
