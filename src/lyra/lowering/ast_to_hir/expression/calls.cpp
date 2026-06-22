@@ -259,11 +259,16 @@ auto LowerCallExprProc(
       }
     }
 
-    // LRM 7.12.4 `item.index`: slang resolves to a SystemSubroutine with
-    // `KnownSystemName::Index`. Only legal inside an array-method `with`
-    // body; the call lowers to a `BuiltinMethodRef{IteratorMethodKind::
-    // kIndex}` and HIR -> MIR rewrites it to a `ProceduralVarRef` on the
-    // closure's `index` parameter binding.
+    // LRM 7.12.4 `item.index`: SV dresses the iteration-index access as a
+    // method on the iterator binding (slang parses it as a SystemSubroutine
+    // with `KnownSystemName::Index`), but no runtime function exists -- the
+    // receiver value is discarded and the call resolves to the enclosing
+    // closure's index parameter. HIR keeps the method-call shape (LRM 7.12
+    // grammar level) with a dedicated `IteratorIndexRef` callee; HIR-to-MIR
+    // rewrites it to a `LocalRef` on that parameter binding. The dedicated
+    // callee arm encodes the "rewrites away" translation behaviour in the
+    // type, so it is structurally distinct from runtime-backed builtin
+    // methods.
     if (info.subroutine != nullptr &&
         info.subroutine->knownNameId ==
             slang::parsing::KnownSystemName::Index) {
@@ -273,10 +278,8 @@ auto LowerCallExprProc(
           .type = *type_id,
           .data =
               hir::CallExpr{
-                  .callee =
-                      hir::BuiltinMethodRef{
-                          .method = hir::IteratorMethodKind::kIndex},
-                  .arguments = std::move(arg_ids),
+                  .callee = hir::IteratorIndexRef{},
+                  .arguments = {},
               },
           .span = span,
       };

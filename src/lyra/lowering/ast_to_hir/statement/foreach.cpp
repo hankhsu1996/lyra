@@ -16,7 +16,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
-#include "lyra/hir/method.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
