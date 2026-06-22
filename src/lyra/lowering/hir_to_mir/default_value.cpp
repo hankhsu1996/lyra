@@ -244,4 +244,59 @@ auto BuildArrayConstructionCall(
       .type = array_type};
 }
 
+auto BuildAssociativeConstructionCall(
+    ModuleLowerer& module, WalkFrame frame, mir::TypeId assoc_type,
+    std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
+    std::optional<mir::ExprId> user_default) -> mir::Expr {
+  auto& block = *frame.current_block;
+  const auto* assoc = std::get_if<mir::AssociativeArrayType>(
+      &module.Unit().GetType(assoc_type).data);
+  if (assoc == nullptr) {
+    throw InternalError(
+        "BuildAssociativeConstructionCall: result type is not "
+        "AssociativeArrayType");
+  }
+  if (!assoc->key_type.has_value()) {
+    throw InternalError(
+        "BuildAssociativeConstructionCall: associative array has no key type "
+        "(wildcard index); AST -> HIR rejects it");
+  }
+  const mir::TypeId key_type = *assoc->key_type;
+  const mir::TypeId element_type = assoc->element_type;
+
+  const mir::TypeId tuple_type = module.Unit().AddType(
+      mir::TupleType{.elements = {key_type, element_type}});
+  std::vector<mir::ExprId> tuple_ids;
+  tuple_ids.reserve(entries.size());
+  for (const auto& [key_id, value_id] : entries) {
+    tuple_ids.push_back(block.AddExpr(
+        mir::Expr{
+            .data = mir::TupleExpr{.components = {key_id, value_id}},
+            .type = tuple_type}));
+  }
+  const mir::TypeId entries_type = module.Unit().AddType(
+      mir::UnpackedArrayType{
+          .element_type = tuple_type,
+          .size = static_cast<std::uint64_t>(tuple_ids.size())});
+  const mir::ExprId entries_id = block.AddExpr(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(tuple_ids)},
+          .type = entries_type});
+
+  const mir::ExprId element_default =
+      block.AddExpr(BuildDefaultValueExpr(module, frame, element_type));
+  std::vector<mir::ExprId> args;
+  args.reserve(user_default.has_value() ? 3U : 2U);
+  args.push_back(element_default);
+  args.push_back(entries_id);
+  if (user_default.has_value()) {
+    args.push_back(*user_default);
+  }
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::ConstructorCallee{}, .arguments = std::move(args)},
+      .type = assoc_type};
+}
+
 }  // namespace lyra::lowering::hir_to_mir

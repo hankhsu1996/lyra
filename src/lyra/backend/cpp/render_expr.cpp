@@ -1488,6 +1488,25 @@ auto RenderArrayLiteralExpr(
   return out;
 }
 
+// Render the full `std::tuple<...>{...}` rather than a bare brace list so the
+// tuple's conditionally-explicit converting constructor is never in doubt,
+// including when the tuple is an element of an outer array literal.
+auto RenderTupleExpr(
+    const ScopeView& view, const mir::Expr& expr, const mir::TupleExpr& t)
+    -> diag::Result<std::string> {
+  auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), expr.type);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  std::string out = *type_or + "{";
+  for (std::size_t i = 0; i < t.components.size(); ++i) {
+    auto rendered = RenderExpr(view, view.Expr(t.components[i]));
+    if (!rendered) return std::unexpected(std::move(rendered.error()));
+    if (i != 0) out += ", ";
+    out += *rendered;
+  }
+  out += "}";
+  return out;
+}
+
 auto RenderReplicationExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ReplicationExpr& r)
     -> diag::Result<std::string> {
@@ -1601,6 +1620,9 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           },
           [&](const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
             return RenderArrayLiteralExpr(view, expr, a);
+          },
+          [&](const mir::TupleExpr& t) -> diag::Result<std::string> {
+            return RenderTupleExpr(view, expr, t);
           },
       },
       expr.data);

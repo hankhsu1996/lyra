@@ -232,21 +232,27 @@ auto LowerProcExpr(
     }
 
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
+      const auto& sap =
+          expr.as<slang::ast::StructuredAssignmentPatternExpression>();
+      const auto target_kind = expr.type->getCanonicalType().kind;
+      // LRM 7.9.11: an associative literal keeps its `index: value` pairs and
+      // optional default; lower the keyed form, not the positional one that
+      // would drop both.
+      if (target_kind == slang::ast::SymbolKind::AssociativeArrayType) {
+        return LowerAssociativeAssignmentPatternProc(proc, frame, sap, span);
+      }
       // Slang accepts `'{idx:val, ...}` for a dynamic-array target as long
       // as indices cover a dense `0..N-1`. The legal subset is equivalent to
       // positional and adds no expressive power; rejecting it here keeps the
       // dispatch narrow until a consumer needs the structured form.
-      if (expr.type->getCanonicalType().kind ==
-          slang::ast::SymbolKind::DynamicArrayType) {
+      if (target_kind == slang::ast::SymbolKind::DynamicArrayType) {
         return diag::Unsupported(
             span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
             "index-keyed assignment pattern on a dynamic array is not yet "
             "supported; use positional form",
             diag::UnsupportedCategory::kOperation);
       }
-      return LowerAssignmentPatternFromElementsProc(
-          proc, frame,
-          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), span);
+      return LowerAssignmentPatternFromElementsProc(proc, frame, sap, span);
     }
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
@@ -365,8 +371,14 @@ auto LowerStructuralExpr(
     }
 
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
-      if (expr.type->getCanonicalType().kind ==
-          slang::ast::SymbolKind::DynamicArrayType) {
+      const auto& sap =
+          expr.as<slang::ast::StructuredAssignmentPatternExpression>();
+      const auto target_kind = expr.type->getCanonicalType().kind;
+      if (target_kind == slang::ast::SymbolKind::AssociativeArrayType) {
+        return LowerAssociativeAssignmentPatternStructural(
+            scope, frame, sap, span);
+      }
+      if (target_kind == slang::ast::SymbolKind::DynamicArrayType) {
         return diag::Unsupported(
             span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
             "index-keyed assignment pattern on a dynamic array is not yet "
@@ -374,8 +386,7 @@ auto LowerStructuralExpr(
             diag::UnsupportedCategory::kOperation);
       }
       return LowerAssignmentPatternFromElementsStructural(
-          scope, frame,
-          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), span);
+          scope, frame, sap, span);
     }
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:

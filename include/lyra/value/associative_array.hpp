@@ -4,7 +4,9 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include "lyra/value/array_case_equal.hpp"
@@ -57,25 +59,51 @@ struct AssocKeyTraits<PackedArray> {
 // is an ordered `std::map` so iteration and `%p` formatting follow the LRM 7.8
 // key ordering and stay deterministic.
 //
-// `oob_slot_` seeds the element default (supplied at construction because
+// `type_default_` holds the element-type default -- the LRM Table 7-1 value
+// read from a nonexistent array entry (supplied at construction because
 // `V = PackedArray` carries runtime shape the C++ type cannot recover; see
-// `docs/decisions/runtime-shape-and-default-value.md`). It doubles as the
-// LRM 7.8.6 shield: a read of a nonexistent or invalid index returns it, and a
-// write through an invalid index lands on it and is discarded.
+// `docs/decisions/runtime-shape-and-default-value.md`). A read of a nonexistent
+// or invalid key (LRM 7.8.6) returns it unless `user_default_` overrides it
+// (LRM 7.9.11); an invalid-key write lands on it and is discarded. There is no
+// out-of-bounds concept here: an associative array has no index bounds, so the
+// trigger is a missing or invalid key, never a boundary.
 template <typename K, typename V>
 class AssociativeArray {
  public:
   using KeyType = K;
   using ElementType = V;
 
-  // Sentinel "uninitialized" form -- empty map with a default-constructed OOB
-  // slot, used as the declared default state of an associative field before
-  // the constructor scope seeds the element shape.
+  // Sentinel "uninitialized" form -- empty map with a default-constructed
+  // type-default slot, used as the declared default state of an associative
+  // field before the constructor scope seeds the element shape.
   AssociativeArray() = default;
 
-  // Empty map with the shield slot seeded, used for declarations like
+  // Empty map with the type-default slot seeded, used for declarations like
   // `int m[string];` where the element shape is known at lowering time.
-  explicit AssociativeArray(V oob_slot) : oob_slot_(std::move(oob_slot)) {
+  explicit AssociativeArray(V type_default)
+      : type_default_(std::move(type_default)) {
+  }
+
+  // LRM 7.9.11 associative literal `'{key: value, ...}`: seed the map from the
+  // (key, value) entries. The type-default slot still carries the element-type
+  // default for a read of an absent key.
+  AssociativeArray(V type_default, std::span<const std::tuple<K, V>> entries)
+      : type_default_(std::move(type_default)) {
+    for (const auto& [key, value] : entries) {
+      data_.insert_or_assign(key, value);
+    }
+  }
+
+  // LRM 7.9.11 with an explicit `default:`: the persistent fallback that a read
+  // of an absent key returns (LRM 7.8.6) and the seed for an entry allocated on
+  // a later write (LRM 7.8.7).
+  AssociativeArray(
+      V type_default, std::span<const std::tuple<K, V>> entries, V user_default)
+      : type_default_(std::move(type_default)),
+        user_default_(std::move(user_default)) {
+    for (const auto& [key, value] : entries) {
+      data_.insert_or_assign(key, value);
+    }
   }
 
   AssociativeArray(const AssociativeArray&) = default;
@@ -111,39 +139,43 @@ class AssociativeArray {
   }
 
   // LRM Table 6-7: an associative array's default is empty. When this container
-  // is itself the OOB shield slot of an outer container, the outer restores it
-  // to canonical state before handing out a reference.
+  // is itself the canonical-default slot of an outer container, the outer
+  // restores it to canonical state before handing out a reference.
   auto ResetToDefault() -> void {
     data_.clear();
   }
 
-  // LRM 7.8.6: a read of a nonexistent or invalid index returns the element
-  // default without allocating. The shield slot is restored first so a prior
-  // discarded write does not leak into the result.
+  // LRM 7.8.6 / 7.9.11: a read of a nonexistent or invalid key returns the
+  // user-specified default if one was set, otherwise the element-type default,
+  // without allocating.
   [[nodiscard]] auto Element(const K& key) const -> const V& {
     if (IsInvalidKey(key)) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      return MissValue();
     }
     auto it = data_.find(key);
     if (it == data_.end()) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      return MissValue();
     }
     return it->second;
   }
 
-  // LRM 7.8.7: a write target allocates the entry with the element default if
-  // absent, then yields a reference the caller stores into. An invalid index
-  // (LRM 7.8.6) yields the shield slot instead, so the write is discarded.
+  // LRM 7.8.7 / 7.9.11: a write target allocates the absent entry seeded with
+  // the user-specified default if one was set, otherwise the element-type
+  // default, then yields a reference the caller stores into. An invalid key
+  // (LRM 7.8.6) yields the type-default slot instead, so the write is
+  // discarded.
   [[nodiscard]] auto ElementRef(const K& key) -> V& {
     if (IsInvalidKey(key)) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      type_default_.ResetToDefault();
+      return type_default_;
     }
     auto it = data_.find(key);
     if (it == data_.end()) {
-      it = data_.emplace(key, oob_slot_).first;
+      it = data_
+               .emplace(
+                   key,
+                   user_default_.has_value() ? *user_default_ : type_default_)
+               .first;
     }
     return it->second;
   }
@@ -254,10 +286,18 @@ class AssociativeArray {
     return result;
   }
 
-  // LRM 9.4.2 update event predicate (engine change-detection hook): same key
-  // set and each paired value is bit-identical.
+  // LRM 9.4.2 update event predicate (engine change-detection hook): the
+  // persistent default, the key set, and each paired value all match. The
+  // default is part of the value, so changing it alone is an observable change.
   [[nodiscard]] auto IsBitIdentical(const AssociativeArray& other) const
       -> bool {
+    if (user_default_.has_value() != other.user_default_.has_value()) {
+      return false;
+    }
+    if (user_default_.has_value() &&
+        !user_default_->IsBitIdentical(*other.user_default_)) {
+      return false;
+    }
     if (data_.size() != other.data_.size()) {
       return false;
     }
@@ -305,7 +345,20 @@ class AssociativeArray {
     return PackedArray::Int(1);
   }
 
-  mutable V oob_slot_;
+  // The value a read of an absent or invalid key yields (LRM 7.8.6 / 7.9.11):
+  // the persistent user default when one was set, otherwise the element-type
+  // default. The type-default slot is restored first so a prior discarded write
+  // does not leak into the result.
+  [[nodiscard]] auto MissValue() const -> const V& {
+    if (user_default_.has_value()) {
+      return *user_default_;
+    }
+    type_default_.ResetToDefault();
+    return type_default_;
+  }
+
+  mutable V type_default_;
+  std::optional<V> user_default_;
   std::map<K, V, typename AssocKeyTraits<K>::Less> data_;
 };
 

@@ -43,7 +43,8 @@ what the construct means.
   for a member that owns a child, of its child-scope kind and cardinality.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
-  named); and two composing wrappers, owning pointer and vector.
+  named); two composing wrappers, owning pointer and vector; and the tuple, a heterogeneous product
+  of component types (the generic-language product type, distinct from the homogeneous vector).
 - Callables: functions, tasks, constructors, processes, and assertion actions. Every callable body's
   first binding is `self`, a pointer to the enclosing class; the body reaches every value it needs
   through its parameter list and captures, never through implicit context.

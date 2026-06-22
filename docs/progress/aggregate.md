@@ -1,10 +1,11 @@
 # Aggregate Data Types
 
 Tracks the variable-size aggregate types on the current pipeline: dynamic array (`int arr []`),
-queue (`int q [$]`), and associative array (`int m [string]`). Fixed-size unpacked arrays belong to
-`unpacked.md`. Struct and union are also aggregate types per LRM 6.5, but their storage and method
-concerns are unrelated to the variable-size storage problem and they will get their own file
-(`struct_union.md`) when that workstream opens; this file's scope is the variable-size subset only.
+queue (`int q [$]`), and associative array (`int m [string]`). Fixed-size unpacked arrays are a
+separate, completed workstream out of scope here. Struct and union are also aggregate types per LRM
+6.5, but their storage and method concerns are unrelated to the variable-size storage problem and
+they will get their own file (`struct_union.md`) when that workstream opens; this file's scope is
+the variable-size subset only.
 
 Done when:
 
@@ -39,7 +40,9 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | A1   | Done: string / integral index, element read / write, query methods.     |
 | A2   | Done: traversal protocol (`first` / `last` / `next` / `prev`).          |
 | A3   | Done: `foreach` over an associative array (any dimensionality).         |
-| A4.. | Open: literals, whole-array assignment, locators.                       |
+| A4   | Done: literals with optional default, whole-array assignment.           |
+| A5   | Open: locator / reduction / map manipulation methods (key-indexed).     |
+| A6   | Open: wildcard `[*]` index; struct / class index families.              |
 
 ## Dynamic Array
 
@@ -211,11 +214,33 @@ the lookup key and imposes an ordering.
       associative dimension nests freely with index-counted dimensions in one foreach (associative
       of associative, associative of fixed, and the reverse).
 
-- [ ] A4 -- Associative-array literals with an optional default (LRM 7.9.11) and whole-array
-      associative assignment (LRM 7.9.9); the wildcard `[*]`, class, and other user-defined index
-      families (LRM 7.8.1 / 7.8.3 / 7.8.5); the locator-family methods that return an index queue of
-      the key type (LRM 7.12.1); and the `map` projection (LRM 7.12.5), whose result is a same-key
-      associative array.
+- [x] A4 -- Associative-array literals with an optional default (LRM 7.9.11) and whole-array
+      associative assignment (LRM 7.9.9). The literal `'{index: value, ..., default: d}` initializes
+      entries by key, and a `default:` entry installs a persistent default that a read of a
+      nonexistent index returns with no warning; without it a read-miss returns the LRM Table 7-1
+      default. The default is a property of the array, not just the initializer, and does not affect
+      the associative methods (LRM 7.9). Whole-array assignment `A = B` between two associative
+      arrays of the same index type clears the target and copies every source entry (LRM 7.9.9); an
+      associative array is assignment-compatible only with an associative array.
+
+- [ ] A5 -- The associative-array manipulation-method family (LRM 7.12): the locator family (`find`,
+      `find_index`, `find_first`, `find_first_index`, `find_last`, `find_last_index`, `min`, `max`,
+      `unique`, `unique_index`), the reduction family (`sum`, `product`, `and`, `or`, `xor`), and
+      the `map` projection, each with the `with`-clause and iterator-index forms shared with the
+      dynamic-array and queue receivers. On an associative receiver the iterator index is the key,
+      so an index-returning locator returns a queue of the key type rather than `int` (LRM 7.12.1),
+      `item.index` inside a `with` clause is the key (LRM 7.12.4), and `map` yields a same-key
+      associative array whose element type is the `with`-expression type (LRM 7.12.5). Traversal
+      follows the array's index order (LRM 7.8). The ordering family (`reverse` / `sort` / `rsort` /
+      `shuffle`) is excluded for associative arrays (LRM 7.12.2) and is not part of this step;
+      reduction is included because LRM 7.12.3 permits it on any integral-valued unpacked array.
+
+- [ ] A6 -- The remaining associative index families. The wildcard `[*]` index admits any integral
+      expression, normalizing each index to its minimal-width canonical form (LRM 7.8.1); a
+      wildcard-indexed array is barred from `foreach` and from any manipulation method that returns
+      an index (LRM 7.8.1 / 7.12.1). The other user-defined index types (a packed struct key, LRM
+      7.8.5) require the index type's equality and ordering. The class index (LRM 7.8.3) is blocked
+      on class support and deferred to that workstream.
 
 ## Cross-references
 

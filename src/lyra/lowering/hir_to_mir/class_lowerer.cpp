@@ -1008,6 +1008,11 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
                 "expressions; LRM 7.5.1 restricts it to blocking assignments",
                 diag::UnsupportedCategory::kFeature);
           },
+          [&](const hir::AssociativeAssignmentPatternExpr& a)
+              -> diag::Result<mir::Expr> {
+            return LowerHirAssociativeAssignmentPatternExprStructural(
+                *this, frame, a, result_type);
+          },
       },
       expr.data);
   if (!raw_or) return raw_or;

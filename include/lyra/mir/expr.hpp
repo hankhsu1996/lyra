@@ -198,11 +198,19 @@ struct ArrayLiteralExpr {
   std::vector<ExprId> elements;
 };
 
+// A heterogeneous product value built from its component expressions in order
+// (`TupleExpr{key, value}` is a pair). `Expr::type` is the `TupleType`, off
+// which the component types are read at render time. The generic product
+// literal: an associative literal is an `ArrayLiteralExpr` of these.
+struct TupleExpr {
+  std::vector<ExprId> components;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, ParamRef, LocalRef,
     UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr, CallExpr,
     RuntimeCallExpr, DerefExpr, MemberAccessExpr, ConversionExpr, ClosureExpr,
-    ConcatExpr, ReplicationExpr, ArrayLiteralExpr>;
+    ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr>;
 
 struct Expr {
   ExprData data;

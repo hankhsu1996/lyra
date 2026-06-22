@@ -110,6 +110,42 @@ auto LowerAssignmentPatternFromElementsProc(
   };
 }
 
+auto LowerAssociativeAssignmentPatternProc(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::StructuredAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto type_id = proc.Module().InternType(*ap.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  std::vector<hir::AssociativeAssignmentPatternExpr::Entry> entries;
+  entries.reserve(ap.indexSetters.size());
+  for (const auto& setter : ap.indexSetters) {
+    auto key_or = proc.LowerExpr(*setter.index, frame);
+    if (!key_or) return std::unexpected(std::move(key_or.error()));
+    const hir::ExprId key_id =
+        frame.current_procedural_body->AddExpr(*std::move(key_or));
+    auto value_or = proc.LowerExpr(*setter.expr, frame);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    const hir::ExprId value_id =
+        frame.current_procedural_body->AddExpr(*std::move(value_or));
+    entries.push_back({.key = key_id, .value = value_id});
+  }
+  std::optional<hir::ExprId> default_id;
+  if (ap.defaultSetter != nullptr) {
+    auto default_or = proc.LowerExpr(*ap.defaultSetter, frame);
+    if (!default_or) return std::unexpected(std::move(default_or.error()));
+    default_id = frame.current_procedural_body->AddExpr(*std::move(default_or));
+  }
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::AssociativeAssignmentPatternExpr{
+              .entries = std::move(entries),
+              .default_value = default_id,
+          },
+      .span = span,
+  };
+}
+
 auto LowerReplicatedAssignmentPatternExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ReplicatedAssignmentPatternExpression& rp,
@@ -221,6 +257,43 @@ auto LowerAssignmentPatternFromElementsStructural(
   return hir::Expr{
       .type = *type_id,
       .data = hir::AssignmentPatternExpr{.elements = std::move(element_ids)},
+      .span = span,
+  };
+}
+
+auto LowerAssociativeAssignmentPatternStructural(
+    StructuralScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::StructuredAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto type_id = scope.Module().InternType(*ap.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  std::vector<hir::AssociativeAssignmentPatternExpr::Entry> entries;
+  entries.reserve(ap.indexSetters.size());
+  for (const auto& setter : ap.indexSetters) {
+    auto key_or = scope.LowerExpr(*setter.index, frame);
+    if (!key_or) return std::unexpected(std::move(key_or.error()));
+    const hir::ExprId key_id =
+        frame.current_structural_scope->AddExpr(*std::move(key_or));
+    auto value_or = scope.LowerExpr(*setter.expr, frame);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    const hir::ExprId value_id =
+        frame.current_structural_scope->AddExpr(*std::move(value_or));
+    entries.push_back({.key = key_id, .value = value_id});
+  }
+  std::optional<hir::ExprId> default_id;
+  if (ap.defaultSetter != nullptr) {
+    auto default_or = scope.LowerExpr(*ap.defaultSetter, frame);
+    if (!default_or) return std::unexpected(std::move(default_or.error()));
+    default_id =
+        frame.current_structural_scope->AddExpr(*std::move(default_or));
+  }
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::AssociativeAssignmentPatternExpr{
+              .entries = std::move(entries),
+              .default_value = default_id,
+          },
       .span = span,
   };
 }

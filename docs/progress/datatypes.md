@@ -8,14 +8,13 @@ file covers every other family: `datatypes/enum`, `datatypes/string`, `datatypes
 
 ## Actionable
 
-Enum, real, string, the integral-family declaration initializers, and parameter references in
-expressions are complete. Fixed-size unpacked arrays are in flight under `unpacked.md`. The
-variable-size aggregate family (dynamic array, queue, associative array) is in flight under
-`aggregate.md`. The default-init and representation families remain.
+Enum, real, string, fixed-size unpacked arrays, the integral-family declaration initializers, and
+parameter references in expressions are complete. The variable-size aggregate family (dynamic array,
+queue, associative array) is in flight under `aggregate.md`. The default-init and representation
+families remain.
 
 | Item | Status                                                  |
 | ---- | ------------------------------------------------------- |
-| -    | `datatypes/unpacked` -- `unpacked.md`.                  |
 | -    | `datatypes/general` -- `aggregate.md`.                  |
 | -    | `datatypes/default_init`, `datatypes/representation` -- |
 |      | no progress sub-steps opened yet.                       |

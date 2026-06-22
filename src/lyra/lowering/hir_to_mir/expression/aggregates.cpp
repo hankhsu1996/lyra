@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
@@ -201,6 +202,40 @@ auto LowerHirDynamicArrayNewExprProc(
       .type = result_type};
 }
 
+// LRM 7.9.11 associative literal. Each (key, value) entry is lowered into a
+// pair of MIR ExprIds and handed to the shared construction helper, which wraps
+// them as tuples and threads the optional persistent default through the
+// associative constructor.
+auto LowerHirAssociativeAssignmentPatternExprProc(
+    ProcessLowerer& process, WalkFrame frame,
+    const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  const auto& hir_process = process.HirBody();
+  auto& block = *frame.current_block;
+  std::vector<std::pair<mir::ExprId, mir::ExprId>> entries;
+  entries.reserve(a.entries.size());
+  for (const auto& entry : a.entries) {
+    auto key_or =
+        process.LowerExpr(hir_process.exprs.at(entry.key.value), frame);
+    if (!key_or) return std::unexpected(std::move(key_or.error()));
+    const mir::ExprId key_id = block.AddExpr(*std::move(key_or));
+    auto value_or =
+        process.LowerExpr(hir_process.exprs.at(entry.value.value), frame);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    const mir::ExprId value_id = block.AddExpr(*std::move(value_or));
+    entries.emplace_back(key_id, value_id);
+  }
+  std::optional<mir::ExprId> user_default;
+  if (a.default_value.has_value()) {
+    auto default_or =
+        process.LowerExpr(hir_process.exprs.at(a.default_value->value), frame);
+    if (!default_or) return std::unexpected(std::move(default_or.error()));
+    user_default = block.AddExpr(*std::move(default_or));
+  }
+  return BuildAssociativeConstructionCall(
+      process.Module(), frame, result_type, std::move(entries), user_default);
+}
+
 auto LowerHirConcatExprStructural(
     const ClassLowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -273,6 +308,34 @@ auto LowerHirAssignmentPatternReplicationExprStructural(
               .concat = inner_concat_id,
           },
       .type = result_type};
+}
+
+auto LowerHirAssociativeAssignmentPatternExprStructural(
+    const ClassLowerer& lowerer, WalkFrame frame,
+    const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  const auto& hir_scope = lowerer.HirScope();
+  auto& block = *frame.current_block;
+  std::vector<std::pair<mir::ExprId, mir::ExprId>> entries;
+  entries.reserve(a.entries.size());
+  for (const auto& entry : a.entries) {
+    auto key_or = lowerer.LowerExpr(hir_scope.GetExpr(entry.key), frame);
+    if (!key_or) return std::unexpected(std::move(key_or.error()));
+    const mir::ExprId key_id = block.AddExpr(*std::move(key_or));
+    auto value_or = lowerer.LowerExpr(hir_scope.GetExpr(entry.value), frame);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    const mir::ExprId value_id = block.AddExpr(*std::move(value_or));
+    entries.emplace_back(key_id, value_id);
+  }
+  std::optional<mir::ExprId> user_default;
+  if (a.default_value.has_value()) {
+    auto default_or =
+        lowerer.LowerExpr(hir_scope.GetExpr(*a.default_value), frame);
+    if (!default_or) return std::unexpected(std::move(default_or.error()));
+    user_default = block.AddExpr(*std::move(default_or));
+  }
+  return BuildAssociativeConstructionCall(
+      lowerer.Module(), frame, result_type, std::move(entries), user_default);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

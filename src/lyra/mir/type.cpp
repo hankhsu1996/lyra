@@ -81,6 +81,7 @@ auto Type::Kind() const -> TypeKind {
           [](const RefType&) { return TypeKind::kReference; },
           [](const PointerType&) { return TypeKind::kPointer; },
           [](const VectorType&) { return TypeKind::kVector; },
+          [](const TupleType&) { return TypeKind::kTuple; },
           [](const ExternalRefType&) { return TypeKind::kExternalRef; },
           [](const ObservableType&) { return TypeKind::kObservable; },
       },
