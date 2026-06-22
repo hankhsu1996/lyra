@@ -232,6 +232,10 @@ class DynamicArray {
     return false;
   }
 
+  [[nodiscard]] auto IsUnknown() const -> PackedArray {
+    return PackedArray::Bit(HasUnknown());
+  }
+
   // LRM 7.5.3: empties the array, resulting in a zero-sized array. Body is
   // identical to ResetToDefault (LRM Table 6-7 default for dynamic array is
   // the empty array), but the two surface names track distinct contracts:

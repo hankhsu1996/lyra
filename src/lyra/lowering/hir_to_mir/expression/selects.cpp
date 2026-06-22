@@ -17,7 +17,6 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/builtin_method.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -50,25 +49,10 @@ namespace {
 // see `include/lyra/value/concepts.hpp`.
 enum class AccessSide : std::uint8_t { kRead, kLhs };
 
-auto ElementAccessCallee(const hir::Type& base_hir_type, AccessSide side)
-    -> mir::BuiltinMethodCallee {
-  if (std::holds_alternative<hir::AssociativeArrayType>(base_hir_type.data)) {
-    return mir::BuiltinMethodCallee{
-        .method = mir::AssociativeMethodInfo{
-            .kind = side == AccessSide::kLhs
-                        ? mir::AssociativeMethodKind::kElementRef
-                        : mir::AssociativeMethodKind::kElement}};
-  }
-  if (std::holds_alternative<hir::QueueType>(base_hir_type.data)) {
-    return mir::BuiltinMethodCallee{
-        .method = mir::QueueMethodInfo{
-            .kind = side == AccessSide::kLhs ? mir::QueueMethodKind::kElementRef
-                                             : mir::QueueMethodKind::kElement}};
-  }
-  return mir::BuiltinMethodCallee{
-      .method = mir::ArrayMethodInfo{
-          .kind = side == AccessSide::kLhs ? mir::ArrayMethodKind::kElementRef
-                                           : mir::ArrayMethodKind::kElement}};
+auto ElementAccessCallee(AccessSide side) -> mir::BuiltinFnCallee {
+  return mir::BuiltinFnCallee{
+      .id = side == AccessSide::kLhs ? support::BuiltinFn::kElementRef
+                                     : support::BuiltinFn::kElement};
 }
 
 // LRM 7.2.1 / 7.2.2: packed struct or union field table accessor. Used by
@@ -98,10 +82,7 @@ auto WrapPackedAsOwned(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinMethodCallee{
-                      .method =
-                          mir::ArrayMethodInfo{
-                              .kind = mir::ArrayMethodKind::kToOwned}},
+                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kToOwned},
               .arguments = {access_id}},
       .type = result_type};
 }
@@ -444,9 +425,10 @@ auto SliceResultOuterCount(const mir::Type& result_ty) -> std::uint32_t {
 // caller (typically a `Lower*` entry point or an inner helper) is
 // responsible for `AddExpr` or further wrapping.
 
-// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). Picks the callee from
-// the receiver's container kind via `ElementAccessCallee(side)`; projects
-// the SV-source index through the declared range for unpacked arrays so the
+// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The callee carries
+// just read-vs-write (`kElement` / `kElementRef`); the receiver's container
+// kind picks the runtime overload at C++ render time. Projects the
+// SV-source index through the declared range for unpacked arrays so the
 // runtime sees a zero-based vector position.
 auto BuildElementAccessCallExpr(
     const ModuleLowerer& module, mir::Block& block,
@@ -460,7 +442,7 @@ auto BuildElementAccessCallExpr(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = ElementAccessCallee(hir_base_ty, side),
+              .callee = ElementAccessCallee(side),
               .arguments = {base_id, effective_idx}},
       .type = result_type};
 }
@@ -502,10 +484,7 @@ auto BuildRangeSliceCallExpr(
         .data =
             mir::CallExpr{
                 .callee =
-                    mir::BuiltinMethodCallee{
-                        .method =
-                            mir::QueueMethodInfo{
-                                .kind = mir::QueueMethodKind::kSlice}},
+                    mir::BuiltinFnCallee{.id = support::BuiltinFn::kSlice},
                 .arguments = {base_id, bounds_or->lo, bounds_or->hi}},
         .type = result_type};
   }
@@ -517,12 +496,10 @@ auto BuildRangeSliceCallExpr(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinMethodCallee{
-                      .method =
-                          mir::ArrayMethodInfo{
-                              .kind = side == AccessSide::kLhs
-                                          ? mir::ArrayMethodKind::kSliceRef
-                                          : mir::ArrayMethodKind::kSlice}},
+                  mir::BuiltinFnCallee{
+                      .id = side == AccessSide::kLhs
+                                ? support::BuiltinFn::kSliceRef
+                                : support::BuiltinFn::kSlice},
               .arguments = {base_id, bounds_or->lo, count_id}},
       .type = result_type};
 }
@@ -544,12 +521,10 @@ auto BuildFieldSliceCallExpr(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinMethodCallee{
-                      .method =
-                          mir::ArrayMethodInfo{
-                              .kind = side == AccessSide::kLhs
-                                          ? mir::ArrayMethodKind::kSliceRef
-                                          : mir::ArrayMethodKind::kSlice}},
+                  mir::BuiltinFnCallee{
+                      .id = side == AccessSide::kLhs
+                                ? support::BuiltinFn::kSliceRef
+                                : support::BuiltinFn::kSlice},
               .arguments = {base_id, offset_id, count_id}},
       .type = result_type};
 }
@@ -647,11 +622,7 @@ auto LowerHirElementSelectExprProc(
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee =
-                    mir::BuiltinMethodCallee{
-                        .method =
-                            mir::StringMethodInfo{
-                                .kind = mir::StringMethodKind::kGetc}},
+                .callee = mir::BuiltinFnCallee{.id = support::BuiltinFn::kGetc},
                 .arguments = {base_id, idx_id}},
         .type = result_type};
   }

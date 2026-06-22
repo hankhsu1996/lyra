@@ -39,210 +39,43 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto LowerEnumMethodKind(hir::EnumMethodKind k) -> mir::EnumMethodKind {
-  switch (k) {
-    case hir::EnumMethodKind::kFirst:
-      return mir::EnumMethodKind::kFirst;
-    case hir::EnumMethodKind::kLast:
-      return mir::EnumMethodKind::kLast;
-    case hir::EnumMethodKind::kNum:
-      return mir::EnumMethodKind::kNum;
-    case hir::EnumMethodKind::kNext:
-      return mir::EnumMethodKind::kNext;
-    case hir::EnumMethodKind::kPrev:
-      return mir::EnumMethodKind::kPrev;
-    case hir::EnumMethodKind::kName:
-      return mir::EnumMethodKind::kName;
-  }
-  throw InternalError("LowerEnumMethodKind: unknown hir::EnumMethodKind");
-}
-
-auto LowerStringMethodKind(hir::StringMethodKind k) -> mir::StringMethodKind {
-  switch (k) {
-    case hir::StringMethodKind::kLen:
-      return mir::StringMethodKind::kLen;
-    case hir::StringMethodKind::kGetc:
-      return mir::StringMethodKind::kGetc;
-    case hir::StringMethodKind::kPutc:
-      return mir::StringMethodKind::kPutc;
-    case hir::StringMethodKind::kToupper:
-      return mir::StringMethodKind::kToupper;
-    case hir::StringMethodKind::kTolower:
-      return mir::StringMethodKind::kTolower;
-    case hir::StringMethodKind::kCompare:
-      return mir::StringMethodKind::kCompare;
-    case hir::StringMethodKind::kIcompare:
-      return mir::StringMethodKind::kIcompare;
-    case hir::StringMethodKind::kSubstr:
-      return mir::StringMethodKind::kSubstr;
-    case hir::StringMethodKind::kAtoi:
-      return mir::StringMethodKind::kAtoi;
-    case hir::StringMethodKind::kAtohex:
-      return mir::StringMethodKind::kAtohex;
-    case hir::StringMethodKind::kAtooct:
-      return mir::StringMethodKind::kAtooct;
-    case hir::StringMethodKind::kAtobin:
-      return mir::StringMethodKind::kAtobin;
-    case hir::StringMethodKind::kAtoreal:
-      return mir::StringMethodKind::kAtoreal;
-    case hir::StringMethodKind::kItoa:
-      return mir::StringMethodKind::kItoa;
-    case hir::StringMethodKind::kHextoa:
-      return mir::StringMethodKind::kHextoa;
-    case hir::StringMethodKind::kOcttoa:
-      return mir::StringMethodKind::kOcttoa;
-    case hir::StringMethodKind::kBintoa:
-      return mir::StringMethodKind::kBintoa;
-    case hir::StringMethodKind::kRealtoa:
-      return mir::StringMethodKind::kRealtoa;
-  }
-  throw InternalError("LowerStringMethodKind: unknown hir::StringMethodKind");
-}
-
-auto LowerEventMethodKind(hir::EventMethodKind k) -> mir::EventMethodKind {
-  switch (k) {
-    case hir::EventMethodKind::kTrigger:
-      return mir::EventMethodKind::kTrigger;
-    case hir::EventMethodKind::kAwait:
-      return mir::EventMethodKind::kAwait;
-    case hir::EventMethodKind::kTriggered:
-      return mir::EventMethodKind::kTriggered;
-  }
-  throw InternalError("LowerEventMethodKind: unknown hir::EventMethodKind");
-}
-
-auto ArrayMethodTakesClosure(hir::ArrayMethodKind k) -> bool {
-  switch (k) {
-    case hir::ArrayMethodKind::kSize:
-    case hir::ArrayMethodKind::kDelete:
-    case hir::ArrayMethodKind::kReverse:
-      return false;
-    case hir::ArrayMethodKind::kSort:
-    case hir::ArrayMethodKind::kRsort:
-    case hir::ArrayMethodKind::kSum:
-    case hir::ArrayMethodKind::kProduct:
-    case hir::ArrayMethodKind::kAnd:
-    case hir::ArrayMethodKind::kOr:
-    case hir::ArrayMethodKind::kXor:
-    case hir::ArrayMethodKind::kFind:
-    case hir::ArrayMethodKind::kFindIndex:
-    case hir::ArrayMethodKind::kFindFirst:
-    case hir::ArrayMethodKind::kFindFirstIndex:
-    case hir::ArrayMethodKind::kFindLast:
-    case hir::ArrayMethodKind::kFindLastIndex:
-    case hir::ArrayMethodKind::kMin:
-    case hir::ArrayMethodKind::kMax:
-    case hir::ArrayMethodKind::kUnique:
-    case hir::ArrayMethodKind::kUniqueIndex:
-    case hir::ArrayMethodKind::kMap:
+// True iff the LRM 7.12 method takes a `with`-clause closure as its second
+// argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
+// `reverse`) take no closure.
+auto ArrayMethodTakesClosure(support::BuiltinFn fn) -> bool {
+  switch (fn) {
+    case support::BuiltinFn::kSort:
+    case support::BuiltinFn::kRsort:
+    case support::BuiltinFn::kSum:
+    case support::BuiltinFn::kProduct:
+    case support::BuiltinFn::kAnd:
+    case support::BuiltinFn::kOr:
+    case support::BuiltinFn::kXor:
+    case support::BuiltinFn::kFind:
+    case support::BuiltinFn::kFindIndex:
+    case support::BuiltinFn::kFindFirst:
+    case support::BuiltinFn::kFindFirstIndex:
+    case support::BuiltinFn::kFindLast:
+    case support::BuiltinFn::kFindLastIndex:
+    case support::BuiltinFn::kMin:
+    case support::BuiltinFn::kMax:
+    case support::BuiltinFn::kUnique:
+    case support::BuiltinFn::kUniqueIndex:
+    case support::BuiltinFn::kMap:
       return true;
+    default:
+      return false;
   }
-  throw InternalError("ArrayMethodTakesClosure: unknown hir::ArrayMethodKind");
 }
 
-auto LowerArrayMethodKind(hir::ArrayMethodKind k) -> mir::ArrayMethodKind {
-  switch (k) {
-    case hir::ArrayMethodKind::kSize:
-      return mir::ArrayMethodKind::kSize;
-    case hir::ArrayMethodKind::kDelete:
-      return mir::ArrayMethodKind::kDelete;
-    case hir::ArrayMethodKind::kReverse:
-      return mir::ArrayMethodKind::kReverse;
-    case hir::ArrayMethodKind::kSort:
-      return mir::ArrayMethodKind::kSort;
-    case hir::ArrayMethodKind::kRsort:
-      return mir::ArrayMethodKind::kRsort;
-    case hir::ArrayMethodKind::kSum:
-      return mir::ArrayMethodKind::kSum;
-    case hir::ArrayMethodKind::kProduct:
-      return mir::ArrayMethodKind::kProduct;
-    case hir::ArrayMethodKind::kAnd:
-      return mir::ArrayMethodKind::kAnd;
-    case hir::ArrayMethodKind::kOr:
-      return mir::ArrayMethodKind::kOr;
-    case hir::ArrayMethodKind::kXor:
-      return mir::ArrayMethodKind::kXor;
-    case hir::ArrayMethodKind::kFind:
-      return mir::ArrayMethodKind::kFind;
-    case hir::ArrayMethodKind::kFindIndex:
-      return mir::ArrayMethodKind::kFindIndex;
-    case hir::ArrayMethodKind::kFindFirst:
-      return mir::ArrayMethodKind::kFindFirst;
-    case hir::ArrayMethodKind::kFindFirstIndex:
-      return mir::ArrayMethodKind::kFindFirstIndex;
-    case hir::ArrayMethodKind::kFindLast:
-      return mir::ArrayMethodKind::kFindLast;
-    case hir::ArrayMethodKind::kFindLastIndex:
-      return mir::ArrayMethodKind::kFindLastIndex;
-    case hir::ArrayMethodKind::kMin:
-      return mir::ArrayMethodKind::kMin;
-    case hir::ArrayMethodKind::kMax:
-      return mir::ArrayMethodKind::kMax;
-    case hir::ArrayMethodKind::kUnique:
-      return mir::ArrayMethodKind::kUnique;
-    case hir::ArrayMethodKind::kUniqueIndex:
-      return mir::ArrayMethodKind::kUniqueIndex;
-    case hir::ArrayMethodKind::kMap:
-      return mir::ArrayMethodKind::kMap;
-  }
-  throw InternalError("LowerArrayMethodKind: unknown hir::ArrayMethodKind");
-}
-
-auto LowerQueueMethodKind(hir::QueueMethodKind k) -> mir::QueueMethodKind {
-  switch (k) {
-    case hir::QueueMethodKind::kSize:
-      return mir::QueueMethodKind::kSize;
-    case hir::QueueMethodKind::kInsert:
-      return mir::QueueMethodKind::kInsert;
-    case hir::QueueMethodKind::kDelete:
-      return mir::QueueMethodKind::kDelete;
-    case hir::QueueMethodKind::kPopFront:
-      return mir::QueueMethodKind::kPopFront;
-    case hir::QueueMethodKind::kPopBack:
-      return mir::QueueMethodKind::kPopBack;
-    case hir::QueueMethodKind::kPushFront:
-      return mir::QueueMethodKind::kPushFront;
-    case hir::QueueMethodKind::kPushBack:
-      return mir::QueueMethodKind::kPushBack;
-    case hir::QueueMethodKind::kElement:
-      return mir::QueueMethodKind::kElement;
-    case hir::QueueMethodKind::kElementRef:
-      return mir::QueueMethodKind::kElementRef;
-    case hir::QueueMethodKind::kSlice:
-      return mir::QueueMethodKind::kSlice;
-  }
-  throw InternalError("LowerQueueMethodKind: unknown hir::QueueMethodKind");
-}
-
-auto LowerAssociativeMethodKind(hir::AssociativeMethodKind k)
-    -> mir::AssociativeMethodKind {
-  switch (k) {
-    case hir::AssociativeMethodKind::kNum:
-      return mir::AssociativeMethodKind::kNum;
-    case hir::AssociativeMethodKind::kSize:
-      return mir::AssociativeMethodKind::kSize;
-    case hir::AssociativeMethodKind::kExists:
-      return mir::AssociativeMethodKind::kExists;
-    case hir::AssociativeMethodKind::kDelete:
-      return mir::AssociativeMethodKind::kDelete;
-    case hir::AssociativeMethodKind::kFirst:
-      return mir::AssociativeMethodKind::kFirst;
-    case hir::AssociativeMethodKind::kLast:
-      return mir::AssociativeMethodKind::kLast;
-    case hir::AssociativeMethodKind::kNext:
-      return mir::AssociativeMethodKind::kNext;
-    case hir::AssociativeMethodKind::kPrev:
-      return mir::AssociativeMethodKind::kPrev;
-  }
-  throw InternalError(
-      "LowerAssociativeMethodKind: unknown hir::AssociativeMethodKind");
-}
-
-auto IsAssociativeTraversalKind(hir::AssociativeMethodKind k) -> bool {
-  return k == hir::AssociativeMethodKind::kFirst ||
-         k == hir::AssociativeMethodKind::kLast ||
-         k == hir::AssociativeMethodKind::kNext ||
-         k == hir::AssociativeMethodKind::kPrev;
+// True iff `fn` is an associative-array traversal entry. LRM 7.9.4 -- 7.9.7
+// lower to an immediately-invoked closure (mutates the index argument and
+// runs the write-back inline).
+auto IsAssociativeTraversalFn(support::BuiltinFn fn) -> bool {
+  return fn == support::BuiltinFn::kAssocFirst ||
+         fn == support::BuiltinFn::kAssocLast ||
+         fn == support::BuiltinFn::kAssocNext ||
+         fn == support::BuiltinFn::kAssocPrev;
 }
 
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
@@ -255,8 +88,7 @@ auto IsAssociativeTraversalKind(hir::AssociativeMethodKind k) -> bool {
 // the ordinary observable write-back assignment, not in the query.
 auto LowerAssociativeTraversal(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
-    mir::AssociativeMethodKind kind, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+    support::BuiltinFn fn, mir::TypeId result_type) -> diag::Result<mir::Expr> {
   if (!c.arguments[1].has_value()) {
     throw InternalError(
         "LowerAssociativeTraversal: index argument unexpectedly elided");
@@ -292,9 +124,7 @@ auto LowerAssociativeTraversal(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee =
-                      mir::BuiltinMethodCallee{
-                          .method = mir::AssociativeMethodInfo{.kind = kind}},
+                  .callee = mir::BuiltinFnCallee{.id = fn},
                   .arguments = {map_read_id, probe_read_id}},
           .type = result_type});
   const mir::LocalRef found_ref = body.AppendLocal(
@@ -320,59 +150,32 @@ auto LowerAssociativeTraversal(
   return BuildClosureCallExpr(*frame.current_block, closure.Build(found_id));
 }
 
-auto LowerIteratorMethodKind(hir::IteratorMethodKind k)
-    -> mir::IteratorMethodKind {
-  switch (k) {
-    case hir::IteratorMethodKind::kIndex:
-      return mir::IteratorMethodKind::kIndex;
-  }
-  throw InternalError(
-      "LowerIteratorMethodKind: unknown hir::IteratorMethodKind");
-}
-
-// Translates a HIR builtin-method ref to its MIR `BuiltinMethodCallee`. The
-// receiver type is the original HIR type of `c.arguments[0]` so the enum-
-// method case can carry the enum type id MIR needs.
-auto BuildMirBuiltinMethodCallee(
+// Translates a HIR builtin-method ref to its MIR `Callee`. The identifier
+// is the flat `support::BuiltinFn`; the only decision here is whether the
+// id names a type-namespace-qualified static call (e.g. `MyEnum::first()`)
+// or an instance call. `IteratorMethodKind::kIndex` is rewritten upstream
+// to a `LocalRef` and never reaches this translation.
+auto BuildBuiltinMirCallee(
     const ModuleLowerer& module, const hir::BuiltinMethodRef& b,
-    hir::TypeId hir_receiver_type) -> mir::BuiltinMethodCallee {
+    hir::TypeId hir_receiver_type) -> mir::Callee {
   return std::visit(
       Overloaded{
-          [&](hir::EnumMethodKind k) -> mir::BuiltinMethodCallee {
-            return {
-                .method = mir::EnumMethodInfo{
-                    .enum_type = module.TranslateType(hir_receiver_type),
-                    .kind = LowerEnumMethodKind(k)}};
+          [&](support::BuiltinFn fn) -> mir::Callee {
+            if (support::IsStaticBuiltinFn(fn)) {
+              return mir::BuiltinStaticCallee{
+                  .id = fn,
+                  .type_qual = module.TranslateType(hir_receiver_type)};
+            }
+            return mir::BuiltinFnCallee{.id = fn};
           },
-          [](hir::StringMethodKind k) -> mir::BuiltinMethodCallee {
-            return {
-                .method =
-                    mir::StringMethodInfo{.kind = LowerStringMethodKind(k)}};
-          },
-          [](hir::EventMethodKind k) -> mir::BuiltinMethodCallee {
-            return {
-                .method =
-                    mir::EventMethodInfo{.kind = LowerEventMethodKind(k)}};
-          },
-          [](hir::ArrayMethodKind k) -> mir::BuiltinMethodCallee {
-            return {
-                .method =
-                    mir::ArrayMethodInfo{.kind = LowerArrayMethodKind(k)}};
-          },
-          [](hir::QueueMethodKind k) -> mir::BuiltinMethodCallee {
-            return {
-                .method =
-                    mir::QueueMethodInfo{.kind = LowerQueueMethodKind(k)}};
-          },
-          [](hir::AssociativeMethodKind k) -> mir::BuiltinMethodCallee {
-            return {
-                .method = mir::AssociativeMethodInfo{
-                    .kind = LowerAssociativeMethodKind(k)}};
-          },
-          [](hir::IteratorMethodKind k) -> mir::BuiltinMethodCallee {
-            return {
-                .method = mir::IteratorMethodInfo{
-                    .kind = LowerIteratorMethodKind(k)}};
+          [](hir::IteratorMethodKind) -> mir::Callee {
+            // LRM 7.12.4 `item.index` is rewritten to a `LocalRef` on the
+            // enclosing array-method closure's index binding before reaching
+            // the generic dispatch (see `LowerHirCallExprProc`), so the
+            // builtin-method translation is never invoked with it.
+            throw InternalError(
+                "BuildBuiltinMirCallee: IteratorMethodKind should have "
+                "been rewritten to a LocalRef");
           },
       },
       b.method);
@@ -665,12 +468,10 @@ auto LowerHirCallExprProc(
             // closure: it writes the index back through an observable assign
             // and runs in expression position. The other associative methods
             // are plain member calls handled by the generic path below.
-            if (const auto* assoc =
-                    std::get_if<hir::AssociativeMethodKind>(&b.method);
-                assoc != nullptr && IsAssociativeTraversalKind(*assoc)) {
+            if (const auto* fn = std::get_if<support::BuiltinFn>(&b.method);
+                fn != nullptr && IsAssociativeTraversalFn(*fn)) {
               return LowerAssociativeTraversal(
-                  process, frame, c, LowerAssociativeMethodKind(*assoc),
-                  result_type);
+                  process, frame, c, *fn, result_type);
             }
             const hir::TypeId hir_receiver_type =
                 hir_process.exprs.at(c.arguments.front()->value).type;
@@ -678,10 +479,10 @@ auto LowerHirCallExprProc(
             args.reserve(c.arguments.size() + 1);
 
             // Translate to the MIR callee up front so the same trait
-            // (`mir::IsMutatingBuiltinMethod`) drives both lowering and
-            // backend rendering.
-            const mir::BuiltinMethodCallee mir_callee =
-                BuildMirBuiltinMethodCallee(module, b, hir_receiver_type);
+            // (`mir::IsMutatingCallee`) drives both lowering and backend
+            // rendering.
+            const mir::Callee mir_callee =
+                BuildBuiltinMirCallee(module, b, hir_receiver_type);
 
             // Lower the receiver. A mutating method against an observable
             // cell routes through `Var<T>::Mutate` -- the receiver is the
@@ -691,34 +492,40 @@ auto LowerHirCallExprProc(
             // destructor commits via `Var::Set`. A non-mutating method consumes
             // the value, so the default `LowerExpr` path (which auto-wraps in
             // `Get`) is correct.
-            const bool method_mutates =
-                mir::IsMutatingBuiltinMethod(mir_callee);
-            mir::ExprId receiver_id{};
-            if (method_mutates) {
-              auto recv_or = process.LowerLhsExpr(
-                  hir_process.exprs.at(c.arguments.front()->value), frame);
-              if (!recv_or) {
-                return std::unexpected(std::move(recv_or.error()));
+            const bool method_mutates = mir::IsMutatingCallee(mir_callee);
+            // A static call has no value receiver -- `args[0]` is a normal
+            // user argument, the type-namespace qualifier rides on the
+            // callee.
+            const bool has_receiver =
+                !std::holds_alternative<mir::BuiltinStaticCallee>(mir_callee);
+            if (has_receiver) {
+              mir::ExprId receiver_id{};
+              if (method_mutates) {
+                auto recv_or = process.LowerLhsExpr(
+                    hir_process.exprs.at(c.arguments.front()->value), frame);
+                if (!recv_or) {
+                  return std::unexpected(std::move(recv_or.error()));
+                }
+                receiver_id = block.AddExpr(*std::move(recv_or));
+                const mir::ExprId root_id = FindLhsRootId(block, receiver_id);
+                const bool root_is_cell = mir::IsObservableCellType(
+                    module.Unit().GetType(block.GetExpr(root_id).type));
+                if (root_is_cell) {
+                  const mir::ExprId services_id =
+                      block.AddExpr(BuildServicesCallExpr(process, frame));
+                  receiver_id = RewriteLhsRootWithMutate(
+                      module.Unit(), block, receiver_id, services_id);
+                }
+              } else {
+                auto recv_or = process.LowerExpr(
+                    hir_process.exprs.at(c.arguments.front()->value), frame);
+                if (!recv_or) {
+                  return std::unexpected(std::move(recv_or.error()));
+                }
+                receiver_id = block.AddExpr(*std::move(recv_or));
               }
-              receiver_id = block.AddExpr(*std::move(recv_or));
-              const mir::ExprId root_id = FindLhsRootId(block, receiver_id);
-              const bool root_is_cell = mir::IsObservableCellType(
-                  module.Unit().GetType(block.GetExpr(root_id).type));
-              if (root_is_cell) {
-                const mir::ExprId services_id =
-                    block.AddExpr(BuildServicesCallExpr(process, frame));
-                receiver_id = RewriteLhsRootWithMutate(
-                    module.Unit(), block, receiver_id, services_id);
-              }
-            } else {
-              auto recv_or = process.LowerExpr(
-                  hir_process.exprs.at(c.arguments.front()->value), frame);
-              if (!recv_or) {
-                return std::unexpected(std::move(recv_or.error()));
-              }
-              receiver_id = block.AddExpr(*std::move(recv_or));
+              args.push_back(receiver_id);
             }
-            args.push_back(receiver_id);
 
             for (std::size_t i = 1; i < c.arguments.size(); ++i) {
               if (!c.arguments[i].has_value()) {
@@ -737,8 +544,8 @@ auto LowerHirCallExprProc(
             // LRM defines the default as `with (item)`, which HIR-to-MIR
             // synthesises so MIR always carries the closure argument and
             // downstream consumers see one uniform shape per kind.
-            if (const auto* ak = std::get_if<hir::ArrayMethodKind>(&b.method);
-                ak != nullptr && ArrayMethodTakesClosure(*ak)) {
+            const auto* fn = std::get_if<support::BuiltinFn>(&b.method);
+            if (fn != nullptr && ArrayMethodTakesClosure(*fn)) {
               auto closure_or = BuildArrayMethodClosure(
                   process, frame, hir_receiver_type,
                   c.with_clause.has_value() ? &*c.with_clause : nullptr);
@@ -750,7 +557,7 @@ auto LowerHirCallExprProc(
               // receiver's, so its shield is supplied here as that type's
               // canonical default -- the runtime shape is not recoverable from
               // the C++ type alone.
-              if (*ak == hir::ArrayMethodKind::kMap) {
+              if (*fn == support::BuiltinFn::kMap) {
                 const mir::TypeId result_elem = ArrayContainerElementType(
                     module.Unit().GetType(result_type));
                 args.push_back(block.AddExpr(
@@ -768,11 +575,9 @@ auto LowerHirCallExprProc(
             // backend-fabricated one. (`-> e` is the only producer of the
             // trigger kind and lowers through LowerEventTriggerStmt; `await`
             // takes no services.)
-            if (const auto* ev = std::get_if<hir::EventMethodKind>(&b.method)) {
-              if (*ev == hir::EventMethodKind::kTriggered) {
-                args.push_back(
-                    block.AddExpr(BuildServicesCallExpr(process, frame)));
-              }
+            if (fn != nullptr && *fn == support::BuiltinFn::kTriggered) {
+              args.push_back(
+                  block.AddExpr(BuildServicesCallExpr(process, frame)));
             }
             return mir::Expr{
                 .data =

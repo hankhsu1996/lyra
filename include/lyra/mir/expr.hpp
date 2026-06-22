@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/builtin_method.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -20,6 +19,7 @@
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/mir/value_ref.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
@@ -89,6 +89,21 @@ struct SystemSubroutineCallee {
   support::SystemSubroutineId id;
 };
 
+// Calls a compiler-recognized runtime entry whose identity is a closed-
+// namespace `support::BuiltinFn`. Instance form: `args[0]` is the value
+// receiver; remaining args are the SV arguments.
+struct BuiltinFnCallee {
+  support::BuiltinFn id;
+};
+
+// Type-namespace-qualified static call (e.g. `MyEnum::first()`). No value
+// receiver in `args`; `type_qual` is part of the symbol identity and rides
+// on the callee. Backends consume the qualifier directly.
+struct BuiltinStaticCallee {
+  support::BuiltinFn id;
+  TypeId type_qual;
+};
+
 // Calls a closure stored as an expression in the same block.
 // The backend renders the call as `(closure_lambda)(args)` -- the standard
 // IIFE shape when invoked synchronously. Used for SV expression-position
@@ -130,8 +145,8 @@ struct RuntimeNavCallee {
 struct ConstructorCallee {};
 
 using Callee = std::variant<
-    SystemSubroutineCallee, MethodRef, BuiltinMethodCallee, BuiltinFnCallee,
-    BuiltinStaticCallee, ClosureRef, RuntimeNavCallee, ConstructorCallee>;
+    SystemSubroutineCallee, MethodRef, BuiltinFnCallee, BuiltinStaticCallee,
+    ClosureRef, RuntimeNavCallee, ConstructorCallee>;
 
 struct CallExpr {
   Callee callee;
@@ -212,19 +227,22 @@ struct Expr {
       .data = AssignExpr{.target = target, .value = value}, .type = type};
 }
 
+// Whether the call's receiver is mutated by the dispatch. Dispatches across
+// the two builtin callee shapes; non-builtin callees return false.
+[[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
+
+// Whether the call's `args[0]` is the container being accessed (indexed or
+// sliced). LHS-chain walkers use this to reach the root primary.
+[[nodiscard]] auto IsContainerAccessCallee(const Callee& callee) -> bool;
+
 // `self.Services()` -- reaches the engine facade from the scope handle.
-// `self` is the receiver ExprId; `services` is ServicesType. The caller does
-// the AddExpr. Every runtime-effect call threads the result as its engine
-// handle.
+// Every runtime-effect call threads the result as its engine handle.
 [[nodiscard]] inline auto MakeServicesCallExpr(ExprId self, TypeId services)
     -> Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee =
-                  BuiltinMethodCallee{
-                      .method =
-                          ScopeMethodInfo{.kind = ScopeMethodKind::kServices}},
+              .callee = BuiltinFnCallee{.id = support::BuiltinFn::kServices},
               .arguments = {self}},
       .type = services};
 }
@@ -235,11 +253,7 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee =
-                  BuiltinMethodCallee{
-                      .method =
-                          ObservableMethodInfo{
-                              .kind = ObservableMethodKind::kGet}},
+              .callee = BuiltinFnCallee{.id = support::BuiltinFn::kGet},
               .arguments = {cell}},
       .type = value_type};
 }
@@ -251,11 +265,7 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee =
-                  BuiltinMethodCallee{
-                      .method =
-                          ObservableMethodInfo{
-                              .kind = ObservableMethodKind::kSet}},
+              .callee = BuiltinFnCallee{.id = support::BuiltinFn::kSet},
               .arguments = {cell, services, value}},
       .type = void_type};
 }
@@ -268,11 +278,7 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee =
-                  BuiltinMethodCallee{
-                      .method =
-                          ObservableMethodInfo{
-                              .kind = ObservableMethodKind::kMutate}},
+              .callee = BuiltinFnCallee{.id = support::BuiltinFn::kMutate},
               .arguments = {cell, services}},
       .type = value_type};
 }

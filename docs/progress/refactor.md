@@ -480,59 +480,11 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       LRM 7.10 defines no write-side queue slice. The `Writable` concept is intentionally not minted
       -- the bare-vs-`Ref` pair is now part of `Indexable` itself.
 
-- [ ] R29 -- Collapse `BuiltinMethodCallee` into closed-ID generic-call callees, and lift pointer
-      dereference into MIR structure. MIR is a generic programming-language IR (`mir.md`); it has no
-      node concept for "method call" versus "free function call" versus "static method" -- in LLVM
-      lowering all three are the same `call <symbol>(<args>)`, with any receiver passed as the first
-      argument. The current `BuiltinMethodCallee` arm with ten per-family `*MethodInfo` variants
-      encodes facts MIR does not need to carry: the family (already on the receiver expression's MIR
-      type) and a syntactic spelling preference (a per-backend localization, not a MIR axis --
-      invariant 10). Target shape:
-
-      - One flat `BuiltinFn` enum covering every compiler-internal runtime entry. Closed
-        namespace, same shape as `support::SystemSubroutineId`. Sections within the enum
-        mirror the `concepts.hpp` (R26) protocol grouping via comments; protocol membership
-        itself is a derived `ConceptOf(BuiltinFn)` helper, not a structural arm -- the source
-        of truth for the concept structure already lives in `concepts.hpp`, and encoding it
-        again as a MIR variant would put the same fact in two places.
-      - `BuiltinMethodCallee` retires. Two sibling callee arms replace it:
-        `BuiltinFnCallee { BuiltinFn id }` (receiver via `args[0]`, used for instance methods
-        and free functions alike) and `BuiltinStaticCallee { BuiltinFn id; TypeId type_qual }`
-        (no value receiver; `type_qual` is the type-namespace identity that LLVM also reads
-        for symbol mangling, not a render hint). Both sit beside `SystemSubroutineCallee` as
-        closed-ID runtime-entry callees.
-      - Pointer dereference becomes structural in MIR. A call whose receiver reaches the
-        pointee through a pointer wraps the receiver in `DerefExpr` at HIR-to-MIR; today
-        `MakeServicesCallExpr` and any sibling site that hands the C++ backend a pointer
-        receiver directly forces the backend to derive `->` vs `.` from receiver-type
-        inspection, which LIR / LLVM would have to repeat (invariant 10).
-      - No upstream constant folding of LRM type-static queries. Enum statics
-        (LRM 6.19.5 `first` / `last` / `num`) lower as ordinary `BuiltinStaticCallee` calls
-        whose symbols are `constexpr` / inlinable in the runtime; the C++ compiler and LLVM
-        fold them downstream. `$isunknown` (LRM 20.9) lowers as a uniform `BuiltinFnCallee`
-        call; the runtime exposes `HasUnknown()` on every packed value type (always-false
-        impl on 2-state), and downstream optimization folds the 2-state case. Follows the
-        `decisions/conversion-folding.md` precedent ("MIR is the program in primitives;
-        constant folding is the downstream optimizer's job, not HIR-to-MIR's") and removes
-        the `RenderIsUnknownCall` peephole, which was the same invariant-10 violation as the
-        retired literal-conversion peephole.
-      - Each backend owns a single `(BuiltinFn, receiver_type)` -> realization table for
-        `BuiltinFnCallee` and a `(BuiltinFn, type_qual)` -> realization table for
-        `BuiltinStaticCallee`. The C++ realization is `{ syntax: member / free / static,
-        name }`; the LLVM realization is a mangled symbol. MIR carries no syntactic hint. The
-        five `Render*MethodCall` wrappers, five `*MemberName` tables,
-        `RenderAssociativeTraversalCall`, `RenderServicesCall`, and `RenderIsUnknownCall`
-        all collapse into these realization tables.
-      - HIR's `BuiltinMethodRef` carries the same per-family enum redundancy and collapses
-        to a flat closed-namespace identifier in lockstep with the MIR-side change. The
-        per-family `Lower*MethodName` lookup tables in `slang_atoms` remain (the SV
-        spelling is the source-language identifier), but the resolved HIR callee is a
-        single id rather than a variant arm.
-
-      R25's render-handler collapse falls out mechanically once this lands. Subsumes the
-      earlier "shared kinds only" framing of R29 (rejected as a half-measure: a per-family
-      split kept around "non-shared" kinds restates receiver-type information the same way
-      the shared kinds do). **Trigger**: standalone after R26 / R28.
+- [x] R29 -- Built-in method calls and runtime entries carry one flat closed-namespace identifier
+      shared between HIR and MIR. Two MIR callee arms (instance, type-namespace-qualified static)
+      replace the per-family variant. The receiver's MIR type drives backend calling-convention
+      mechanically; SV-side `$isunknown` returns the SV `bit` type so no host-bool lift survives at
+      the backend. See `decisions/builtin-call-identity.md`.
 
 - [ ] R30 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
       same decision). Each of these lowers to a generic `CallExpr` over a compiler-synthesized

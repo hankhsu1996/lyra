@@ -151,10 +151,7 @@ auto LowerDestructuringAssign(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinMethodCallee{
-                            .method =
-                                mir::ArrayMethodInfo{
-                                    .kind = mir::ArrayMethodKind::kSlice}},
+                        mir::BuiltinFnCallee{.id = support::BuiltinFn::kSlice},
                     .arguments = {temp_ref, offset_id, count_id}},
             .type = slice_type});
     const mir::ExprId slice_id = wrapper.AddExpr(
@@ -162,10 +159,8 @@ auto LowerDestructuringAssign(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinMethodCallee{
-                            .method =
-                                mir::ArrayMethodInfo{
-                                    .kind = mir::ArrayMethodKind::kToOwned}},
+                        mir::BuiltinFnCallee{
+                            .id = support::BuiltinFn::kToOwned},
                     .arguments = {raw_slice_id}},
             .type = slice_type});
     mir::ExprId rhs_for_part = slice_id;
