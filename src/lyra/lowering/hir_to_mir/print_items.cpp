@@ -110,7 +110,7 @@ auto BuildPrintItemFromDirective(
     case support::FormatDirectiveKind::kModulePath:
       return diag::Unsupported(
           span, diag::DiagCode::kFormatModulePathNotImplemented,
-          "format specifier %m is not implemented in this build",
+          "format specifier %m is not yet supported",
           diag::UnsupportedCategory::kFeature);
 
     case support::FormatDirectiveKind::kTime:
@@ -268,16 +268,14 @@ auto BuildRuntimePrintItemsFromCallArgs(
     literal = TryGetHirStringLiteral(hir_proc, args[cursor]);
   }
   if (!literal.has_value() && fmt_req == FormatStringRequirement::kRequired) {
-    // LRM 21.3.3 NOTE permits non-literal format strings; this build defers
-    // them. Tracked under docs/progress/display.md "String-format family
-    // follow-ups".
+    // LRM 21.3.3 NOTE permits a non-literal format string; not yet supported.
     const diag::SourceSpan span =
         cursor < args.size() ? hir_proc.exprs.at(args[cursor].value).span
                              : call_span;
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedSubroutineArgument,
-        "format string must be a string literal in this build (LRM 21.3.3 "
-        "runtime-evaluated format strings deferred)",
+        "format string must be a string literal; a runtime-evaluated format "
+        "string is not yet supported (LRM 21.3.3)",
         diag::UnsupportedCategory::kFeature);
   }
   if (literal.has_value()) {

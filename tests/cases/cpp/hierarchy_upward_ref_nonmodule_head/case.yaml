@@ -1,0 +1,11 @@
+id: cpp.hierarchy_upward_ref_nonmodule_head
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "a=7 b=5 c=3 d=5\ntop g=7 blk.bg=9\n"

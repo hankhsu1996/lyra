@@ -110,7 +110,7 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       construction inside its own artifact: it climbs its parent chain to the ancestor named by the
       reference (matching the module name, LRM 23.8; a nearer ancestor whose instance name happens
       to equal that module name does not shadow the target) and fetches the signal by name, naming
-      no ancestor type (see `docs/decisions/upward-reference-resolution.md`,
+      no ancestor type (see `docs/decisions/hierarchical-reference-resolution.md`,
       `docs/architecture/emission_model.md`). A reference wrapped in a value-level operation
       (`Top.g[3]`, `Top.g + 1`) works -- the value part is ordinary expression handling. The
       remaining forms below are each rejected with a clean "unsupported" diagnostic, except D2d.
@@ -126,14 +126,29 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       generate-block scope and climbs that object's own parent chain -- including an upward write,
       per-iteration members in a loop block, and several blocks naming the same ancestor signal
       (each block gets its own resolution within its own scope).
-- [ ] D2c -- An upward reference whose first component is not a module instance: a named generate or
-      procedural block, or a `$root`-anchored absolute path.
+- [x] D2c -- An upward reference whose head is a `$root`-anchored absolute path (LRM 23.6) or a
+      named generate block (LRM 23.8), rather than a module instance. Both heads name a scope that
+      already exists in the object tree -- `$root` is the implicit root that owns every top-level
+      block, and a named generate block is a first-class constructed object -- so once the head
+      locates that scope the reference reads the leaf by name like any other hierarchical reference.
+      The head is the only new part: the climb matches an ancestor either by its module definition
+      name (a module head) or by the ancestor scope's own name (a generate-block label, or `$root`),
+      selected by the head; `$root` reaches the tree root and the rest of the path is a downward
+      by-name walk. A top-level block now adopts `$root` as its parent so an upward climb from
+      inside a top reaches the root. Covered for a scalar named generate block; an indexed
+      loop-generate head (`blk[i].x`) is rejected with a clean diagnostic and remains.
 - [ ] D2d -- LRM 23.9 instance-name precedence: when the first component is written as an instance
       name and several instances of the same module nest on the chain, the reference must bind the
       named instance. Today the climb keys on the module name, so it can silently bind the nearer
       same-module ancestor instead -- the one form that resolves wrong without an error. The common
       module-name form is correct at any depth; this gap needs the source-written first identifier,
       which the elaborated AST does not retain.
+- [ ] D2e -- An upward reference whose head is a named procedural block (a named `begin`/`end` or
+      `fork`/`join`, LRM 23.9). Unlike a module or generate scope, a named procedural block is not a
+      constructed object today: its static-lifetime locals live as members on the enclosing unit
+      (`docs/decisions/variable-lifetime-storage.md`), so there is no scope to climb to and no
+      by-name signal to fetch. This form needs either named procedural blocks to materialize as
+      navigable scopes or a member-name-aware resolution -- a model question deferred from D2c.
 - [x] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
       Landed for downward paths through scalar instances.
 - [ ] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced

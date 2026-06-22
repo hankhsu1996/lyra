@@ -222,9 +222,13 @@ class MirDumper {
                   tail += std::format("[{}]", index);
                 }
               }
+              const std::string_view match =
+                  e.match == ExternalRefMatch::kDefName ? "DefName"
+                                                        : "ScopeName";
               return std::format(
-                  "ExternalRef(elem=Type[{}], ancestor={}, tail={}, signal={})",
-                  e.element.value, e.ancestor, tail, e.signal);
+                  "ExternalRef(elem=Type[{}], ancestor={}, match={}, tail={}, "
+                  "signal={})",
+                  e.element.value, e.ancestor, match, tail, e.signal);
             },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);

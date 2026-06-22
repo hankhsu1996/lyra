@@ -56,8 +56,7 @@ auto LowerFinishSystemSubroutineCall(
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           std::format(
-              "{} argument must be an integer literal in this build",
-              std::string{name}),
+              "{} argument must be an integer literal", std::string{name}),
           diag::UnsupportedCategory::kOperation);
     }
     if (*literal != 0 && *literal != 1 && *literal != 2) {

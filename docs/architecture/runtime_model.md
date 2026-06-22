@@ -57,6 +57,14 @@ At program entry the runtime constructs every top-level block under the implicit
 (see `hierarchy_and_generate.md`). A single scheduler then drives the processes of all of them on
 one time axis; multiple top-level modules are one simulation, not several.
 
+Between construction and simulation -- still at t = 0, before any process runs -- the runtime links
+the constructed objects into the one `$root`-rooted tree and binds it. Binding resolves the
+cross-tree references a per-object constructor could not, because they need the whole tree to exist:
+an upward reference to an ancestor, a `$root`-anchored path (see `reference_resolution.md`,
+`emission_model.md`). A reference a constructor can reach from its own subtree (an owned child) is
+resolved in that constructor; one that needs the whole tree is resolved at bind. A constructor
+returning leaves its own subtree fixed, but the whole-design tree is fixed only after bind.
+
 ## Generate is not compile-time expansion
 
 A generate-for with 1024 iterations does not produce 1024 things at compile time. Compile-time

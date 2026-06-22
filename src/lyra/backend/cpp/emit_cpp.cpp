@@ -49,8 +49,12 @@ auto RenderField(
       tail += "}}";
     }
     tail += "}";
+    const std::string match = er->match == mir::ExternalRefMatch::kDefName
+                                  ? "lyra::runtime::UpwardMatch::kDefName"
+                                  : "lyra::runtime::UpwardMatch::kScopeName";
     return Indent(indent) + *type_or + " " + var.name + "{this, \"" +
-           er->ancestor + "\", " + tail + ", \"" + er->signal + "\"};\n";
+           er->ancestor + "\", " + match + ", " + tail + ", \"" + er->signal +
+           "\"};\n";
   }
   return Indent(indent) + *type_or + " " + var.name + "{};\n";
 }

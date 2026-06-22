@@ -24,6 +24,12 @@ class ExternBase;
 // purely structural node does not pull the simulation tick finer.
 inline constexpr std::int8_t kUnspecifiedTimePrecisionPower = 127;
 
+// How an upward hierarchical reference matches its ancestor while climbing the
+// parent chain (LRM 23.8): against the ancestor's module definition name
+// (`DefName()`, a module-instance head) or against the scope's own name
+// (`Name()`, a named generate block or `$root`).
+enum class UpwardMatch : std::uint8_t { kDefName, kScopeName };
+
 // A node in the one canonical object tree. Every constructed SystemVerilog
 // scope -- a module instance, a generate block, the implicit `$root` -- is a
 // Scope. It carries the scope's identity (name, parent), the services handle
@@ -73,13 +79,16 @@ class Scope {
   [[nodiscard]] auto GetChild(
       std::string_view name, std::span<const std::size_t> indices) -> Scope*;
 
-  // Climbs the parent chain to the nearest ancestor whose module definition
-  // name (`DefName()`) is `ancestor` and returns it (LRM 23.8). `ancestor` is
-  // always a definition name, so the match is on `DefName()` alone; an ancestor
-  // whose instance name merely equals it does not match. The shared start of an
+  // Climbs the parent chain to the nearest ancestor named `key` and returns it
+  // (LRM 23.8). `match` selects the name compared: `kDefName` matches an
+  // ancestor's module definition name (`DefName()`, a module-instance head), so
+  // an ancestor whose instance name merely equals it does not match;
+  // `kScopeName` matches the scope's own name (`Name()`, a named generate block
+  // or `$root`), whose name is itself the lookup key. The shared start of an
   // upward reference's runtime navigation; from there an `ExternUp` member
   // walks any by-name tail and fetches the leaf, once at Bind.
-  [[nodiscard]] auto ResolveUpwardScope(std::string_view ancestor) -> Scope*;
+  [[nodiscard]] auto ResolveUpwardScope(std::string_view key, UpwardMatch match)
+      -> Scope*;
 
   // An `ExternUp` member registers itself here from its constructor; Bind
   // relocates all registered members once the whole tree exists.
@@ -143,7 +152,8 @@ class Scope {
 
   Scope* parent_ = nullptr;
   std::string name_;
-  RuntimeServices* services_ = nullptr;  // borrowed; set in ctor.
+  // Borrowed; set in the constructor.
+  RuntimeServices* services_ = nullptr;
   // Non-owning child links; the typed members on the derived class own the
   // children. This is the object tree's own structure, not a parallel one.
   std::vector<Scope*> children_;
