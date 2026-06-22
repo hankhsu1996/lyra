@@ -55,12 +55,13 @@ Three questions surface:
    specified ... for that array's element type" -- there is no way to express that default cheaper
    than initializing N elements.
 
-4. **`ElementAt` returns `T&` directly; element-level proxy classes are absent.** Compound semantics
-   (`+=`, `&=`, the shift-assign family, the increment / decrement pair) live on `PackedArray` where
-   they belong; the container layer never reimplements them. OOB read is a reference to the shield
-   slot in canonical state, OOB write mutates the shield slot which is then reset on the next
-   access. The non-const overload returns `T&` for the write path; the const overload returns
-   `const T&` and is permitted by the `mutable` qualifier on `oob_slot_`.
+4. **The positional element accessor returns `T&` directly; element-level proxy classes are
+   absent.** Compound semantics (`+=`, `&=`, the shift-assign family, the increment / decrement
+   pair) live on `PackedArray` where they belong; the container layer never reimplements them. OOB
+   read is a reference to the shield slot in canonical state, OOB write mutates the shield slot
+   which is then reset on the next access. The non-const overload returns `T&` for the write path;
+   the const overload returns `const T&` and is permitted by the `mutable` qualifier on the shield
+   slot.
 
 5. **Container construction API aligns with `std::vector(n, value)`.** The canonical default is a
    required constructor argument, not optional. Wrappers offer a one-argument form for the
@@ -134,8 +135,8 @@ _Rejected alternatives:_
   unpacked-struct collection, and any future wrapper whose element type requires runtime
   construction parameters. Each new wrapper introduces an `oob_slot_` member following the same
   shape and implements its own `ResetToDefault`. Associative array's "auto-allocate on write" rule
-  (LRM 7.8.7) is a different ElementAt contract and requires its own design when that workstream
-  opens.
+  (LRM 7.8.7) is a different element-access contract and requires its own design when that
+  workstream opens.
 
 - Shape uniformity within a collection is enforced by convention -- lowering supplies the same
   canonical default for all writes and never mixes shapes in one container -- not by the C++ type

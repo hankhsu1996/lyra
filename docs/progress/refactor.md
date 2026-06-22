@@ -247,49 +247,30 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       in lockstep. See `docs/decisions/callable-receiver.md`. **Trigger**: scheduled in front of
       R18.
 
-- [x] R17 -- Selector and packed-struct field access lower to explicit
-      `Call(ArrayMethod{kElementAt|kSlice})` / `Call(AssociativeMethod{kRead|kElementRef})`, and
-      HIR-to-MIR materialises a borrowed `PackedArrayRef` chain with an explicit
-      `Call(ArrayMethod{kToOwned})` wrap. `mir::ElementSelectExpr` and `mir::RangeSelectExpr` are
-      retired; the render decides the emit shape from the callee alone. The runtime mirrors Rust's
-      `ToOwned` trait -- ref types expose `ToOwned()` for materialisation, owning types expose the
-      same name as an explicit copy.
+- [x] R17 -- Selector and packed-struct field access lower to explicit built-in method calls for
+      element access, slice, and the borrowed-to-owned materialisation. The dedicated element-select
+      and range-select MIR nodes are retired; the render decides the emit shape from the callee
+      alone. The runtime mirrors Rust's `ToOwned` trait -- ref types expose `ToOwned()` for
+      materialisation, owning types expose the same name as an explicit copy.
 
 - [x] R17a -- Signed-slice re-interpretation is explicit in MIR. HIR-to-MIR types a packed struct /
       union field slice with the runtime-honest unsigned signedness and wraps signed-field accesses
       with an explicit `ConversionExpr` re-tag to the declared field type. Render is a pure
       mechanical translation of `Call(kSlice)` / `Call(kToOwned)` / `ConversionExpr` independently.
 
-- [ ] R17b -- **SUBSUMED by R26.** The narrow "make `Slice`'s `count` argument a `PackedArray`"
-      target only fixes half of the slice asymmetry -- the underlying problem is that runtime
-      containers carry no formal protocol forcing `Slice` (and every other shared family) to one
-      signature shape. Original text retained for history: Stop window-projecting the `kSlice`
-      `count` argument from an `IntegerLiteral` in the C++ backend. Today `RenderArrayMethodCall`
-      peeks at the third argument of a `Call(ArrayMethod{kSlice})` and -- only when that argument is
-      a literal -- emits a raw `N U` integer, because the runtime `Slice` signature takes
-      `std::uint32_t`. The peek is a backend re-derivation that no other backend will replicate
-      uniformly, violating `mir.md` Core Invariant 10. Target shape: the runtime `Slice` accepts a
-      `PackedArray` for `count` and projects to `std::uint32_t` internally (matching how the
-      `offset` argument already flows); render renders the `Call` mechanically with no peek.
+- [x] R17b -- Slice's `count` argument flows as a `PackedArray` value end to end (subsumed by R26).
+      The backend-side window-projection peek that emitted a raw native integer for a literal count
+      is gone; render reads the call's argument list mechanically.
 
-- [x] R17c -- Render-side method-receiver dispatch is gone. `RenderMethodReceiver` retired and every
-      method-call render path (`String` / `Array` / `Queue` / `Associative` / `Observable`) renders
-      its receiver through plain `RenderExpr`. The read-vs-write decision lives entirely on the MIR
-      receiver chain (LHS-side callees, `Deref(Mutate)` wraps) produced by HIR-to-MIR.
+- [x] R17c -- Render-side method-receiver dispatch is gone; every method-call render path renders
+      its receiver through the generic expression renderer. The read-vs-write decision lives
+      entirely on the MIR receiver chain (LHS-side callees, mutate-deref wraps) produced by
+      HIR-to-MIR.
 
-- [ ] R17d -- Lift the remaining backend-side post-process wraps in the method-call render paths
-      into explicit MIR. Today `RenderArrayMethodCall` / `RenderQueueMethodCall` /
-      `RenderAssociativeMethodCall` synthesise `lyra::value::PackedArray::Int(...)` around the
-      result of size-style methods (`kSize` on Array / Queue; `kNum` / `kSize` / `kExists` on
-      Associative) because the runtime returns `std::size_t` / `bool`, and `RenderStringMethodCall`
-      projects integral string-method arguments through `static_cast<std::int32_t>((...).ToInt64())`
-      because the runtime method takes `std::int32_t`. Both are backend re-derivations of facts MIR
-      did not state, violating `mir.md` Core Invariant 10. Target shape: either the runtime APIs
-      change to take and return `PackedArray` uniformly (the cleanest bridge), or HIR-to-MIR wraps
-      the corresponding `Call(...)` with an explicit `ConversionExpr` so render is purely
-      mechanical. After this, the five method-call render paths share an identical 5-step shape
-      (receiver / `.` / name+`(` / args / `)`) and can collapse into one shared helper parameterised
-      by the per-family member-name table. **Trigger**: batches with R17b as one render-cleanup cut.
+- [x] R17d -- An SV-facing runtime method's signature carries the SV value types directly:
+      size-style queries return a `PackedArray`, and integral arguments to string methods arrive as
+      `PackedArray`. The backend post-process casts that wrapped a host integer back into an SV
+      shape are gone; render reads call result and argument types straight from MIR.
 
 - [ ] R18 -- Rewrite the MIR-to-C++ backend to free functions per node kind, with no
       `RenderContext`, no class hierarchy, and no `WalkFrame`. Once R11 has removed the mutable
@@ -361,127 +342,52 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       wrap at the read boundary; render is a mechanical translation. The `RenderExpr` /
       `RenderExprNatural` split and `ProducesPackedArrayRef` predicate are gone.
 
-- [ ] R24 -- Dispatch the "sized collection" concept (`.size()` / `.num()`) through one resolver
-      instead of branching on the concrete container at each call site. Today the element-count
-      query is a separate enum value on every container's method family (`ArrayMethodKind::kSize`,
-      `QueueMethodKind::kSize`, `AssociativeMethodKind::kSize` / `kNum`), and a caller that wants a
-      count branches on the receiver type to pick the right one -- the `foreach` synthetic bound
-      does exactly this (`isQueue() ? QueueMethodKind::kSize : ArrayMethodKind::kSize`). The concept
-      is "any collection with an element count exposes `size()`", and the key modeling point (from
-      how Rust generics, C++ templates + concepts, TypeScript interfaces, and Python protocols are
-      implemented) is that under **static dispatch** -- which is our regime, the receiver's concrete
-      type is always known at lowering -- the concept is a **compile-time resolver that is erased in
-      the backend IR**, not a persistent IR node. So the per-container method enums stay (they are
-      the concrete implementations, like Rust `impl` blocks / C++ members), and MIR keeps carrying
-      the concrete per-type method; the concept lives only as a single lowering-time
-      `ResolveSized(type) -> that type's size method` table -- the one place the type-to-method
-      branch lives. The earlier mistake to avoid: extracting `size` into a flat
-      `CollectionMethodKind` that removed it from each container's method set (that loses dimension
-      one -- an array genuinely has a `size` method -- and persists a concept node in MIR, which the
-      static-dispatch model says should be erased). **Why deferred**: only one consumer (`foreach`)
-      today, so the resolver is a one-caller function -- the interface payoff is multiple generic
-      callers sharing the table, which do not exist yet. **Trigger**: a second generic consumer of
-      collection-size dispatch (a locator / reduction lowering, an array-querying system function,
-      or a generic-algorithm pass). A separate, structural sub-question rides along: whether fixed
-      unpacked and packed arrays should also be "sized collections" with a runtime `.size()` (a
-      type-model decision, distinct from how `foreach` iterates them -- `foreach` over a fixed array
-      uses its declared range and direction, not a count, so that split is a real semantic
-      difference, not the same redundancy).
+- [ ] R24 -- Dispatch the "sized collection" concept through one resolver instead of branching on
+      the concrete container at each call site. R29 absorbed the cross-container collapse for the
+      shared method (every container's element count is one `BuiltinFn` identity now), so the only
+      remaining branch is `Size` (LRM 7.4.3 / 7.5 / 7.10.2 dynamic / associative / queue) vs `Len`
+      (LRM 6.16.1 string-mandated name); a single lowering site handles it today and serves as the
+      one place that translates "sized collection" to its container's element-count method. Under
+      static dispatch the concept is a compile-time resolver and never persists as an IR node. **Why
+      deferred**: only one consumer today, so the resolver is a one-caller function -- the interface
+      payoff is multiple generic callers sharing the table, which do not exist yet. **Trigger**: a
+      second generic consumer of collection-size dispatch (a locator / reduction lowering, an
+      array-querying system function, or a generic-algorithm pass). A separate, structural
+      sub-question rides along: whether fixed unpacked and packed arrays should also be "sized
+      collections" with a runtime element-count query (a type-model decision, distinct from how
+      `foreach` iterates them -- `foreach` over a fixed array uses its declared range and direction,
+      not a count, so that split is a real semantic difference, not the same redundancy).
 
-- [ ] R25 -- Collapse the per-data-type builtin-method render handlers onto the single generic
-      `(receiver).name(args)` rule (R20's rule, now also carrying user-subroutine calls and the
-      event family). **Value-model decision settled** (it was the blocker): an SV-facing runtime
-      method's return and parameter types _are_ the SV value types; the representation bridge lives
-      inside the method body, compiled once, an internal detail of the value layer. It is neither a
-      MIR `ConversionExpr` (the call's SV type does not change, so there is nothing to convert) nor
-      an emit-side wrap (forbidden by `decisions/integral-representation.md`: no native-scalar
-      bridges in emit). This follows from `mir.md` invariant 10 -- the backend reads the call's
-      stated result type and emits it, never re-deciding a representation. Internal native-count
-      callers use a separate `Raw*` accessor. **Landed on this thread**: the integral-query surface
-      (container `size`, associative `num` / `size` / `exists`, string `len` / `getc` / `compare` /
-      `atoi` family, enum `num`) and the integral-argument surface (string index / byte args, enum
-      next / prev step) now return / take SV value types directly; the member-shaped families
-      (string, array, queue, associative non-traversal, enum instance) render through one generic
-      handler whose only per-kind inputs are the member name and a mutates flag; all
-      `PackedArray::Int(...)` result wraps and `static_cast<...>(ToInt64())` argument casts are gone
-      from emit; user calls carry `self` and event trigger / triggered carry the engine handle as
-      real arguments. **Remaining**: three families do not fit `(receiver).name(args)` and still
-      need their own decision -- enum static methods (`Class::first()`, no receiver), associative
-      traversal (a free runtime call still splicing the engine handle, the one remaining services
-      fabrication), and value `$isunknown` (type-static, no call in the all-2-state case).
-      **Structural prerequisite**: R29 -- it collapses the per-family enums whose existence forces
-      R25's handler to keep per-family member-name tables; the per-family `Render*MethodCall`
-      wrappers then collapse mechanically. R29 itself rests on R26 / R28. **Trigger**: continuation
+- [ ] R25 -- Two families still do not fit the generic `(receiver).name(args)` member-call rule and
+      need their own lowering decision: enum type-static methods (no receiver -- the qualifier is
+      part of the symbol identity, surfaced as a static-callee arm) and the value-static
+      `$isunknown` query (type-static in the all-2-state case, constant-folded). The cross-cutting
+      value-model decision is settled: an SV-facing runtime method's return and parameter types are
+      the SV value types, the representation bridge lives inside the method body (an internal detail
+      of the value layer), and the backend reads the call's stated result type and emits it
+      mechanically. The integral-query surface and integral-argument surface flow through SV value
+      types directly; the member-shaped families (string, array, queue, associative including
+      traversal, enum instance) render through one generic handler; user calls carry `self` and
+      event trigger / triggered carry the engine handle as real arguments. **Trigger**: continuation
       of `decisions/runtime-effects-as-generic-calls.md`.
 
-- [ ] R26 -- Define runtime container protocols as explicit C++20 concepts, pin the
-      currently-conforming surface, and complete `Sliceable` alignment. Today five containers
-      (`PackedArray`, `DynamicArray`, `UnpackedArray`, `Queue`, `AssociativeArray`, plus `String` as
-      a sixth member-shaped surface) share method families with no compile-time contract forcing the
-      signatures into one shape. Most families already align de-facto (`ResetToDefault`, `ToOwned`,
-      the equality / case-equal / bit-identical surface, the with-clause reduction and search
-      families); two have drifted -- `Sliceable` is fixed in this entry, `Writable` defers to R28 (a
-      pure rename pass, independent). The full protocol inventory derived from the audit:
+- [x] R26 -- Runtime container protocols are pinned as explicit C++20 concepts in a single
+      value-layer concept header; each container `static_assert`s every protocol it satisfies. Slice
+      is aligned across the four conforming containers: the signature is
+      `Slice(PackedArray, PackedArray)`, with Queue's two arguments meaning inclusive bounds (LRM
+      7.10.1) and the three fixed-width containers meaning `(offset, count)` (LRM 7.4.5 / 11.5.2
+      require canonical-fill at the type-fixed width, which is not derivable from `(lo, hi)`). A
+      single HIR-to-MIR range-bounds unfolder dispatches by container kind; the call's argument list
+      flows through render with no type-dependent argument projection. Signature drift on any pinned
+      protocol is now a compile-time failure. Subsumes R17b.
 
-      - `Sized` -- `Size() -> PackedArray`: Dynamic / Unpacked / Queue / AA. PackedArray opts out
-        (its "size" is ambiguous between bit count, element count, and outer-dim count; SV does
-        not expose `.size()` on packed types).
-      - `Lengthable` -- `Len() -> PackedArray`: String (LRM 6.16.1 mandates the name).
-      - `Indexable` -- `ElementAt(pos) -> ConstView`: Packed / Dynamic / Unpacked / Queue; String
-        carries the LRM-named variant `Getc`.
-      - `Writable` -- `WriteRef(pos) -> MutView`: Queue conforms today, AA's `ElementRef(K)` is
-        the keyed sibling; the three array containers conform after R28's rename.
-      - `AssocRead` -- `Read(K) -> ConstView`: AA only (the key is not a position; separate
-        protocol from `Indexable`).
-      - `Sliceable` -- `Slice(PackedArray, PackedArray) -> Window`: after this entry's
-        alignment, Packed / Dynamic / Unpacked / Queue all conform structurally. The two
-        arguments mean different things per LRM contract: Queue takes inclusive bounds
-        `(lo, hi)` (LRM 7.10.1); Packed / Dynamic / Unpacked take `(offset, count)` because
-        LRM 7.4.5 / 11.5.2 require canonical-fill at the type-fixed width even when bounds
-        carry X/Z, and that width is not derivable from `(lo, hi)` alone. String's
-        `Substr(i, j)` uses the queue's `(lo, hi)` shape but does not claim the protocol
-        (the method name differs per LRM 6.16.8).
-      - `Ownable` -- `ToOwned() -> Self`: Packed / Dynamic / Unpacked / Queue.
-      - `Defaultable` -- `ResetToDefault()`: all five containers plus selected ref views.
-      - `Equatable` -- `==`, `!=`, `CaseEqual`, `IsBitIdentical`: universal.
-      - `Sortable` -- `Sort(F)`, `Rsort(F)`, `Reverse()`: Dynamic / Unpacked / Queue.
-      - `Reducible` -- `Sum/Product/And/Or/Xor(F)`: Dynamic / Unpacked / Queue.
-      - `Searchable` -- `Find/FindIndex/FindFirst/FindLast/Min/Max/Unique(F)`: Dynamic /
-        Unpacked / Queue.
-      - `KeyTraversal` -- `FirstKey/LastKey/NextKey/PrevKey -> optional<K>`: AA only.
-
-      Target shape:
-
-      - A new runtime header defines all 13 concepts in their final-aligned form
-      - Every container header carries a matching `static_assert(<Concept><...>)` for each
-        protocol it satisfies (12 of 13 pinnable after this entry; `Writable` waits for R28)
-      - `Sliceable` alignment: `PackedArray`, `DynamicArray`, and `UnpackedArray` change their
-        `Slice` signature's second argument from `std::uint32_t count` to
-        `const PackedArray& count`. The runtime projects to `std::uint32_t` internally at the
-        API boundary. Queue keeps its `(lo, hi)` form; both fixed-width and queue containers
-        now share the structural `Slice(PackedArray, PackedArray)` shape.
-      - HIR-to-MIR's three parallel range-unfold helpers collapse onto a single
-        `UnfoldRangeBoundsToLoHi` that dispatches by container kind. The MIR `Call(kSlice,
-        ...)` argument list carries `[base, offset, count_pa]` for fixed-width containers
-        (count is a PackedArray-typed literal for static-width slices) and `[base, lo, hi]`
-        for Queue.
-      - The backend's `RenderArrayMethodCall` Slice argument peek (the only emit-side
-        type-dependent argument projection) disappears; arguments render uniformly through
-        `RenderExpr`.
-
-      Subsumes R17b. After R26 + R28 lands, every signature drift becomes a compile-time
-      failure rather than a silent regression. **Trigger**: standalone; before R28 / R29.
-
-- [x] R28 -- The read-vs-write access surface is aligned across every container at the noun-level
-      naming axis: `Element(pos) -> value` for read, `ElementRef(pos) -> ref` for write. The earlier
-      `ElementAt` (read) / `WriteRef` (write) split is gone; the runtime, MIR's `ArrayMethodKind` /
-      `QueueMethodKind` / `AssociativeMethodKind`, and HIR's `QueueMethodKind` all use `kElement` /
-      `kElementRef`. The slice axis follows the same pattern -- `Slice` for read, `SliceRef` for
-      write -- so `MakeRangeSliceCallExpr` / `MakeFieldSliceCallExpr` route through one `AccessSide`
-      enum at the lowering boundary. `concepts.hpp` pins `Indexable` (bare + `Ref` pair),
-      `Sliceable` (bare), and `SliceableRef` (Ref form); Queue opts out of `SliceableRef` because
-      LRM 7.10 defines no write-side queue slice. The `Writable` concept is intentionally not minted
-      -- the bare-vs-`Ref` pair is now part of `Indexable` itself.
+- [x] R28 -- The read-vs-write access surface is aligned at the noun-level naming axis across every
+      container and across both lowering and runtime: bare `Element` / `Slice` for read,
+      `ElementRef` / `SliceRef` for write. Lowering carries the read-vs-write choice as one
+      access-side parameter at the slice-builder boundary; the runtime concepts pin the
+      bare-and-`Ref` pair as part of `Indexable` (write-side present on every keyed container) and
+      split `Sliceable` from `SliceableRef` because LRM 7.10 defines no write-side queue slice. No
+      separate `Writable` concept: the pair belongs with the read-side concept it shadows.
 
 - [x] R29 -- Built-in method calls and runtime entries carry one flat closed-namespace identifier
       shared between HIR and MIR. Two MIR callee arms (instance, type-namespace-qualified static)

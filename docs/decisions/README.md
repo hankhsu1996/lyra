@@ -37,8 +37,9 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 - [queue-operators](queue-operators.md) -- queue access operators (`$`, slice, concatenation,
   equality, append) lower to built-in method calls; read and write are different methods chosen at
   lowering.
-- [array-method-dispatch](array-method-dispatch.md) -- how the LRM 7.12 array-manipulation method
-  family dispatches per receiver type.
+- [array-method-dispatch](array-method-dispatch.md) -- LRM 7.12 array-method runtime semantics
+  (empty-reduction zero, selection sort over standard introsort); the original per-family dispatch
+  shape is superseded by [builtin-call-identity](builtin-call-identity.md).
 - [format-dispatch](format-dispatch.md) -- value formatting dispatches through `Formatter<T>` and
   `FormatArg`.
 
