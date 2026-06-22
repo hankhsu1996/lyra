@@ -48,11 +48,21 @@ auto LowerSignalEventTrigger(
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
-  if (!proc.Module().Unit().GetType(expr_or->type).IsPackedArray()) {
+  const auto& expr_type = proc.Module().Unit().GetType(expr_or->type);
+  if (sig.edge != slang::ast::EdgeKind::None) {
+    // The runtime classifies an edge only on a packed bit-vector cell (LRM
+    // 9.4.2 Table 9-2); slang already restricts an edge to an integral operand.
+    if (!expr_type.IsPackedArray()) {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedEventTriggerForm,
+          "edge event control is only supported on a packed bit-vector operand",
+          diag::UnsupportedCategory::kFeature);
+    }
+  } else if (!expr_type.IsValueChangeObservable()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "event trigger expression must have an integral type; non-integral "
-        "trigger types are not yet supported",
+        "value-change event control on a non-value operand is not yet "
+        "supported",
         diag::UnsupportedCategory::kFeature);
   }
 

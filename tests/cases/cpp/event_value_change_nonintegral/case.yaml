@@ -1,0 +1,13 @@
+id: cpp.event_value_change_nonintegral
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sw: 1
+    rw: 1
+    cw: 1

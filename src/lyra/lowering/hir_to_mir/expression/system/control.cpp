@@ -58,13 +58,13 @@ auto LowerFinishSystemSubroutineCall(
           std::format(
               "{} argument must be an integer literal in this build",
               std::string{name}),
-          diag::UnsupportedCategory::kFeature);
+          diag::UnsupportedCategory::kOperation);
     }
     if (*literal != 0 && *literal != 1 && *literal != 2) {
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           std::format("{} argument must be 0, 1, or 2", std::string{name}),
-          diag::UnsupportedCategory::kFeature);
+          diag::UnsupportedCategory::kOperation);
     }
     level = static_cast<int>(*literal);
   }

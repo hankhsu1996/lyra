@@ -136,6 +136,29 @@ auto Type::AsPackedUnion() const -> const PackedUnionType& {
   throw InternalError("Type::AsPackedUnion called on non-packed-union type");
 }
 
+auto Type::IsValueChangeObservable() const -> bool {
+  switch (Kind()) {
+    case TypeKind::kPackedArray:
+    case TypeKind::kPackedStruct:
+    case TypeKind::kPackedUnion:
+    case TypeKind::kEnum:
+    case TypeKind::kUnpackedArray:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
+    case TypeKind::kString:
+    case TypeKind::kReal:
+    case TypeKind::kShortReal:
+    case TypeKind::kRealTime:
+      return true;
+    case TypeKind::kEvent:
+    case TypeKind::kChandle:
+    case TypeKind::kVoid:
+      return false;
+  }
+  return false;
+}
+
 auto Type::IsEnum() const -> bool {
   return std::holds_alternative<EnumType>(data);
 }

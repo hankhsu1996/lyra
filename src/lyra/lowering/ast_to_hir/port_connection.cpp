@@ -93,9 +93,12 @@ auto PopulateInstancePortConnections(
           "port not bound to a connectable variable is not yet supported");
     }
     const auto& port_type = port.getType();
-    if (!port_type.isIntegral()) {
+    auto type_id = module.InternType(port_type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    if (!module.Unit().GetType(*type_id).IsValueChangeObservable()) {
       return PortConnectionUnsupported(
-          span, "non-integral port connection is not yet supported");
+          span,
+          "port connection of a handle / event type is not yet supported");
     }
     const auto* expr = conn->getExpression();
     if (expr == nullptr) {
@@ -105,8 +108,6 @@ auto PopulateInstancePortConnections(
       continue;
     }
 
-    auto type_id = module.InternType(port_type, span);
-    if (!type_id) return std::unexpected(std::move(type_id.error()));
     hir::Expr child_ref = module.MakeCrossUnitMemberRef(
         *internal, binding->home_frame, binding->head,
         {hir::MemberHop{std::string{internal->name}}}, *type_id, span);

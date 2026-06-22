@@ -52,11 +52,11 @@ LRM 6.12: `real` is IEEE 754 double, `shortreal` is IEEE 754 single, `realtime` 
 - [x] C4 -- LRM-illegal real forms (LRM 6.12 + 11.3.1 / Table 11-1) diagnose as `diag::Unsupported`
       with an LRM citation. Slang's frontend filters all but case equality (`===` / `!==`); the
       case-equality path is guarded at lowering.
-- [ ] C5 -- Observable storage for module-scope `real` / `shortreal` / `realtime` signals. Today a
-      module-scope floating-point variable lowers to plain value storage rather than an observable
-      cell, so `@(sig)`, `wait (sig == ...)`, and non-blocking writes do not propagate change events
-      for it. Blocked on first-class runtime support for the floating-point value family; once that
-      lands the observable-storage gate extends uniformly with no further special-casing.
+- [x] C5 -- Observable `real` / `shortreal` / `realtime` signals. A module-scope floating-point
+      signal is an observable cell (`Var<Real>`): `wait (sig == ...)`, `always_comb` / `@*` reads,
+      continuous assignment, non-blocking writes, and the explicit any-change `@(sig)` event control
+      all propagate change events. An edge form (`@(posedge sig)`) stays frontend-rejected per LRM
+      9.4.2 (an edge requires an integral LSB).
 
 ### Cross-references
 

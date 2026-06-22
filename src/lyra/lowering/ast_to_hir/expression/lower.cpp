@@ -322,7 +322,7 @@ auto LowerStructuralExpr(
             span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
             "increment / decrement is not legal outside procedural code "
             "(LRM 11.3.6, 11.4.2)",
-            diag::UnsupportedCategory::kOperation);
+            diag::UnsupportedCategory::kFeature);
       }
       return LowerUnaryExprStructural(scope, frame, un, span);
     }

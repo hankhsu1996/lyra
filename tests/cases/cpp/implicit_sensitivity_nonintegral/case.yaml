@@ -1,0 +1,15 @@
+id: cpp.implicit_sensitivity_nonintegral
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    clen: 6
+    rflag: 1
+    wgot: 1
+    ds2: "high"
+    usum: 12

@@ -159,13 +159,13 @@ auto LowerConditionalExprProc(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "conditional operator with `&&&` multi-condition is not yet "
         "supported",
-        diag::UnsupportedCategory::kFeature);
+        diag::UnsupportedCategory::kOperation);
   }
   if (cond.conditions[0].pattern != nullptr) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "conditional operator with `matches` pattern is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        diag::UnsupportedCategory::kOperation);
   }
   auto cond_or = proc.LowerExpr(*cond.conditions[0].expr, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));

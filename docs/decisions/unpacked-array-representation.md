@@ -202,9 +202,9 @@ Out of scope but unblocked by this design:
 
 - Variable-size container types (dynamic array, queue, associative array). They share the wrapper's
   `std::vector` storage spine and extend it with size-mutation semantics.
-- Element-level observability for whole-array `Var<>` wrapping. The wrapper's `operator==` already
-  returns a 1-bit `PackedArray` (X / Z propagating); observability sits on the same surface when
-  `refactor.md` R2 lands.
+- Whole-array `Var<UnpackedArray<T>>` wrapping is in place and an unpacked signal reacts under
+  `wait` / `always_comb` / `@*` (the wrapper's `IsBitIdentical` drives any-change detection); a
+  non-integral input port is admitted too. See `refactor.md` R2.
 
 ## Alternatives considered
 
