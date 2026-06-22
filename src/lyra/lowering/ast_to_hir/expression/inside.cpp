@@ -51,7 +51,7 @@ auto LowerInsideItemImpl(
           module.SourceMapper().SpanOf(vr.sourceRange),
           diag::DiagCode::kUnsupportedExpressionForm,
           "tolerance-range form in inside operator is not yet supported",
-          diag::UnsupportedCategory::kFeature);
+          diag::UnsupportedCategory::kOperation);
     }
     auto lo_or = proc.LowerExpr(vr.left(), frame);
     if (!lo_or) return std::unexpected(std::move(lo_or.error()));

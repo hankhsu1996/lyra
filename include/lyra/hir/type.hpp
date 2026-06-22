@@ -159,6 +159,10 @@ struct Type {
   [[nodiscard]] auto AsPackedUnion() const -> const PackedUnionType&;
   [[nodiscard]] auto IsEnum() const -> bool;
   [[nodiscard]] auto AsEnum() const -> const EnumType&;
+
+  // True for the value types -- those a value-change event can react to (LRM
+  // 9.4.2). A handle / event / void is not a value and drives no such event.
+  [[nodiscard]] auto IsValueChangeObservable() const -> bool;
 };
 
 }  // namespace lyra::hir

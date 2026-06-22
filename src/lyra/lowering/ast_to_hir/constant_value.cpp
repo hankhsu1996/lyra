@@ -41,7 +41,7 @@ auto MakeConstantValueExpr(
   return diag::Unsupported(
       span, diag::DiagCode::kUnsupportedExpressionForm,
       "constant of aggregate type is not yet supported",
-      diag::UnsupportedCategory::kFeature);
+      diag::UnsupportedCategory::kOperation);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

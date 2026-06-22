@@ -154,13 +154,13 @@ auto LowerMemberAccessExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  const auto* field = &sel.member.as<slang::ast::FieldSymbol>();
   if (sel.member.kind != slang::ast::SymbolKind::Field) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "member access target is not a struct field",
         diag::UnsupportedCategory::kOperation);
   }
+  const auto* field = &sel.member.as<slang::ast::FieldSymbol>();
   auto base_or = proc.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id =
@@ -182,11 +182,15 @@ auto LowerElementSelectExprStructural(
     StructuralScopeLowerer& scope, WalkFrame frame,
     const slang::ast::ElementSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  if (!sel.value().type->isIntegral()) {
+  // A string element-select needs the getc realization, which the structural
+  // expression path does not yet carry (LRM 6.16.3); only integral and unpacked
+  // bases lower here.
+  if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-        "element-select on non-integral operand is not yet supported",
-        diag::UnsupportedCategory::kOperation);
+        "element-select on this operand is not yet supported outside "
+        "procedural code",
+        diag::UnsupportedCategory::kFeature);
   }
   auto base_or = scope.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -214,7 +218,7 @@ auto LowerRangeSelectExprStructural(
         span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
         "range-select on non-integral, non-unpacked operand is not yet "
         "supported",
-        diag::UnsupportedCategory::kOperation);
+        diag::UnsupportedCategory::kFeature);
   }
   auto base_or = scope.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -262,7 +266,7 @@ auto LowerMemberAccessExprStructural(
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
         "member access target is not a struct field",
-        diag::UnsupportedCategory::kOperation);
+        diag::UnsupportedCategory::kFeature);
   }
   const auto& field = sel.member.as<slang::ast::FieldSymbol>();
   auto base_or = scope.LowerExpr(sel.value(), frame);

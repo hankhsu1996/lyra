@@ -232,6 +232,6 @@ the lookup key and imposes an ordering.
 - Decision: `../decisions/runtime-shape-and-default-value.md` -- runtime shape is retained on
   `PackedArray`; collection wrappers carry one `oob_slot_` member that doubles as canonical-default
   source and OOB-write discard target, reset via `T::ResetToDefault` on every OOB access.
-- Cross-cutting: `refactor.md` R2 -- value-typed structural fields uniformly wrapped for
-  observability (the U8 analogue for these container types once they participate in event control,
-  level-sensitive `wait`, `always_comb`, or continuous assignment).
+- Cross-cutting: `refactor.md` R2 (done) -- these container value types are observable cells and
+  react under `wait` / `always_comb` / `@*`, and a non-integral input port is admitted (the U8
+  analogue for these containers).

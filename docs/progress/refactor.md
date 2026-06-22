@@ -26,27 +26,31 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       canonical builtin TypeIds; at that point the per-consumer copy temptation is the smell that
       forces this move.
 
-- [ ] R2 -- Realign the `Var<T>` wrapping gate so the cpp backend stops mixing structural type
-      classification with runtime-capability gating. Today `IsObservableScalarType` returns true
-      only for `IsIntegralPacked()` and the backend uses it to silently skip the wrapper for every
-      other value type (`string`, `real`, unpacked array). The two questions it tangles together --
-      "should this field semantically be a value slot at all (vs an object / sub-hierarchy)?" and
-      "does the runtime currently support change-tracking for this T?" -- have different homes: the
-      first is an intrinsic MIR type classification (value family vs object family); the second is a
-      runtime capability gap that should manifest as an explicit `kUnsupported...` diagnostic at the
-      AST -> HIR / HIR -> MIR sensitivity-lowering sites when a `@(...)`, `wait`, or `always_comb`
-      sensitivity references a type whose `Var<T>` specialization does not yet exist. Target shape:
-      backend wraps every value-typed field uniformly in `Var<T>`, leaving object- family fields
-      plain; runtime grows minimal `Var<String>` / `Var<double>` / `Var<vector<T>>` specializations
-      (storage + assign at first, waiter paths throw `kUnsupportedFeature` until filled in); AST ->
-      HIR rejects the unsupported sensitivity uses upstream with a source span. The backend then
-      becomes a pure renderer, never asking a capability question. **Why deferred**: backend
-      currently sidesteps the issue silently and the sensitivity rejection at AST -> HIR for
-      non-integral leaves already keeps things consistent in practice; the proper fix touches
-      runtime, sensitivity lowering, and backend rendering together. **Trigger**: when the first
-      non-integral runtime change-tracking surface lands (named-event subscription, string
-      `wait (s == "x")`, real value-change detection) -- at that moment the `IsObservableScalarType`
-      shortcut becomes actively wrong and the layering fix has to happen alongside.
+- [x] R2 -- Non-integral value-change observability. The wrapping-gate realignment this entry
+      originally described had already landed under R12: observable storage is a first-class
+      `mir::ObservableType` (R12), `Var<T>` gates on the `LyraValue` concept rather than an
+      integral-packed predicate (`decisions/value-type-concepts.md`), `IsObservableScalarType` is
+      gone, and the runtime cell is uniformly generic over every value type (`PackedArray`,
+      `String`, `Real`, `UnpackedArray<T>`, `DynamicArray<T>`, `Queue<T>`, `AssociativeArray<K,V>`).
+      As a direct consequence of that generality, every implicit value-change construct --
+      `always_comb` / `always_latch`, `@*`, `wait`, and continuous assignment -- already subscribes
+      to and wakes on any value type with no per-type code: the change-detection hook is each type's
+      `IsBitIdentical`, and a non-`PackedArray` cell fires its any-change waiters on every real
+      change. The minimal `Var<String>` / `Var<double>` / `Var<vector<T>>` specializations this
+      entry once anticipated were never needed (the single generic template covers all), and the
+      "reject unsupported sensitivity uses at lowering" half proved unnecessary too -- the slang
+      frontend already rejects every LRM-illegal value-change event source: an edge qualifier on a
+      non-integral operand and an aggregate (non-singular) event expression both fail frontend
+      binding (LRM 9.4.2, "event expressions shall return singular values"). The work was the
+      inverse of the original framing -- two frontend lowering gates were over-broad and rejected
+      forms the architecture and the LRM both allow. Both are now lifted: the `@(expr)`
+      event-control path admits any value-change-observable operand as an any-change event (the
+      legal `@(string)` / `@(real)` / `@(enum)`) while still requiring a packed bit-vector for an
+      edge (the runtime classifies an edge only on a `PackedArray` cell), and the
+      input-port-connection path admits any value type (the driver rides the generic
+      continuous-assign path). `hir::Type::IsValueChangeObservable` is the single HIR-level
+      predicate both gates share. A value-type x construct coverage matrix backs it (`@`, `wait`,
+      `always_comb`, `@*`, continuous assignment, input port over string / real / enum / unpacked).
 
 - [x] R3 -- Collapse the runtime's dual hierarchy into a single object tree. The mirrored
       `RuntimeScope` tree and the bind-time `RuntimeBindContext` are gone; there is now one runtime
@@ -182,9 +186,8 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       value/storage duality -- a signal is read as a value but its cell is the target of a write or
       a reference binding -- is carried by which call wraps the cell, not by a render-time branch.
       The backend's `IsObservableScalarType` predicate is gone. See
-      `docs/decisions/value-type-concepts.md`. R2 still reworks the same observable surface from the
-      capability-gating angle (wrap every value type uniformly, push unsupported change-tracking to
-      explicit diagnostics).
+      `docs/decisions/value-type-concepts.md`. The uniform wrapping this entry set up is what makes
+      R2's residual small -- only two over-broad frontend event-source gates remain.
 
 - [x] R13 -- HIR-to-MIR per-LRM-family subsystem split. Per-kind handlers are now grouped by
       semantic family in
@@ -533,6 +536,40 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       the scope builder (it does the `AddExpr`, with the context argument first); a type-producing
       variant is `Make<X>Type(...) -> TypeId`. Audit every construction helper and rename it to the
       correct side. **Trigger**: standalone naming cleanup.
+
+- [ ] R33 -- Remove the redundant `UnsupportedCategory` argument from the `diag::Unsupported`
+      factory. The category is already declared once per `DiagCode` in the code table; the factory
+      additionally takes a `cat` argument, stores it, and cross-checks it against the table,
+      throwing an `InternalError` on mismatch. A call site that passes the wrong category therefore
+      _crashes_ on the unsupported path instead of emitting the clean diagnostic it intended -- a
+      latent landmine on every untested rejection. Eleven such drifts were found and corrected
+      pointwise, but the design keeps re-arming the class: the call-site category is a second source
+      of truth that can diverge. Target shape: the factory derives
+      `category = DiagCodeCategory(code)` from the table alone, the `cat` parameter and the
+      `RequireCategory` check are deleted, and the ~96 call sites drop their trailing category
+      argument. This is the universal diagnostic-metadata shape -- Clang keys severity / group to
+      the diagnostic id through TableGen records, Roslyn through a `DiagnosticDescriptor`, rustc
+      through the diagnostic's own level: metadata is a property of the id, derived at emit, never
+      re-supplied at the report site. The `diag_code.cpp` table already is that registry; the only
+      flaw is the factory re-takes a value it should read. The same shape applies to the sibling
+      `RequireKind` guard, which should fold in. The load-bearing principle: diagnostic construction
+      is the graceful-degradation path and must be infallible -- it must never throw, least of all
+      on the rarely-exercised unsupported branches. **Trigger**: standalone; mechanical sweep across
+      every lowering file, so it lands as its own cut.
+
+- [ ] R34 -- Unify the procedural and structural HIR expression-lowering paths. AST-to-HIR carries
+      parallel `Lower<Kind>ExprProc` / `Lower<Kind>ExprStructural` handlers that build the same HIR
+      node but guard their accepted operand types independently, so the two drift: the structural
+      element-select rejected an unpacked base the procedural one accepted (now aligned), and a
+      string element-select's getc realization (LRM 6.16.3) lives only on the procedural HIR-to-MIR
+      path, so a structural `assign b = s[i]` lowers to a non-existent `String::Element` instead of
+      `getc`. The realization a node needs (getc for a string base, element access for an array) is
+      a property of the node, not of the procedural-vs-structural origin. Target shape: one
+      select/member lowering shared across scopes, with the value realizations applied uniformly in
+      HIR-to-MIR regardless of origin -- after which a string element read works in a continuous
+      assignment exactly as it does in a process. **Trigger**: when a structural-context string /
+      aggregate element read is needed, or the next time a per-kind guard drifts between the two
+      paths.
 
 ## Out of Scope
 
