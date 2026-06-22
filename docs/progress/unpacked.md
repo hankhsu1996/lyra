@@ -13,8 +13,7 @@ Done when:
 
 ## Actionable
 
-U1..U7 are done. U8 records a cross-cutting observability gap surfaced by the unpacked-vs-packed
-asymmetry; the implementation lives under `refactor.md` R2. U9 (array manipulation) is done.
+U1..U9 are done. U8 (value-change observability) closed alongside `refactor.md` R2.
 
 | Item | Status                                                         |
 | ---- | -------------------------------------------------------------- |
@@ -25,7 +24,7 @@ asymmetry; the implementation lives under `refactor.md` R2. U9 (array manipulati
 | U5   | Done: array equality, inequality, case-equality                |
 | U6   | Done: constant-width slice (read and write)                    |
 | U7   | Done: invalid-index handling and non-canonical declared ranges |
-| U8   | Open: unpacked vars participate in value-change observability  |
+| U8   | Done: unpacked vars participate in value-change observability  |
 | U9   | Done: array manipulation methods (LRM 7.12)                    |
 
 ## Sub-Steps
@@ -96,15 +95,15 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 
 ### Observability
 
-- [ ] U8 -- Unpacked structural variables participate in value-change observability. Today an
-      unpacked-typed structural variable does not expose the value-change channel that packed
-      scalars use, so any construct that needs to react to a write on one -- event control (`@arr`,
-      `@(arr[i])`), level-sensitive `wait` reading an unpacked operand, always_comb / `@*` reading
-      an unpacked operand, continuous assignment with an unpacked source -- silently misses writes
-      or is rejected at the sensitivity-lowering boundary. The fix is cross-cutting (it also affects
-      strings, reals, and other non-integral value types) and is owned by `refactor.md` R2; this
-      item exists for visibility from the unpacked workstream. Triggered when a concrete consumer
-      needs the capability.
+- [x] U8 -- Unpacked structural variables participate in value-change observability. They are
+      observable cells (`Var<UnpackedArray<T>>`), so always_comb / `@*` / level-sensitive `wait`
+      reading an unpacked operand react to writes (a whole-array or element write fires the cell's
+      any-change waiters), and a non-integral input port drives an unpacked child cell through the
+      generic continuous-assign path. `@(arr)` on a whole unpacked array is frontend-rejected as a
+      non-singular event expression (LRM 9.4.2); `@(arr[i])` on an element rides the shared
+      value-change event-control path. (Selecting an unpacked element on the right-hand side of a
+      _structural_ continuous assignment is a separate structural-expression limitation, unrelated
+      to observability.)
 
 ### Array manipulation methods
 
@@ -127,8 +126,8 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 - Archive items: `datatypes/unpacked/{unpacked_arrays, unpacked_array_constants}`, the unpacked
   subset of `oob_bounds`.
 - Decision: `../decisions/unpacked-array-representation.md`.
-- Cross-cutting: `refactor.md` R2 -- value-typed structural fields uniformly wrapped for
-  observability (U8).
+- Cross-cutting: `refactor.md` R2 (done) -- unpacked fields are observable cells and react under
+  `wait` / `always_comb` / `@*`, and a non-integral input port is admitted (U8).
 - Unblocks: `control-flow.md` C9 / C10 (`foreach` over unpacked).
 - `display.md` DI7 (`%p` assignment-pattern format) delivered alongside this workstream and powers
   the test framework's whole-array `expect.variables` assertion path; init / pattern / whole-assign

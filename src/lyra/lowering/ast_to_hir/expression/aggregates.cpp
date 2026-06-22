@@ -183,7 +183,7 @@ auto LowerConcatExprStructural(
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
         "concatenation result type is neither string nor packed (LRM 11.4.12)",
-        diag::UnsupportedCategory::kOperation);
+        diag::UnsupportedCategory::kFeature);
   }
   std::vector<hir::ExprId> operand_ids;
   operand_ids.reserve(cc.operands().size());
