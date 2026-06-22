@@ -7,9 +7,11 @@ namespace lyra::support {
 
 // Closed namespace of compiler-recognized runtime entries. Same identity at
 // HIR and MIR; lives in the support layer so neither layer's vocabulary
-// imports the other's. Receiver type at the call site carries the
-// container / element shape; this enum carries only the function identity.
-// See `docs/decisions/builtin-call-identity.md`.
+// imports the other's. The receiver type at the call site names the runtime
+// library type whose method is being invoked (value-layer containers,
+// observable storage cells, runtime services, scope handle); this enum
+// carries only the method identity. See
+// `docs/decisions/builtin-call-identity.md`.
 enum class BuiltinFn : std::uint16_t {
   // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access. Bare returns value
   // form; `Ref` returns write-through reference. `Slice` is read,
@@ -105,6 +107,12 @@ enum class BuiltinFn : std::uint16_t {
   kSet,
   kMutate,
   kServices,
+  // Engine submit operations. `SubmitNba` is a `RuntimeServices` method
+  // taking a closure; `SubmitObserved` is a `Scope` method taking the
+  // deferred-check site id and a closure (LRM 16.14.6 last-write-wins
+  // settle).
+  kSubmitNba,
+  kSubmitObserved,
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,

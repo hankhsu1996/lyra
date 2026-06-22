@@ -3,30 +3,18 @@
 #include <compare>
 #include <cstdint>
 
-#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/runtime_print.hpp"
 
 namespace lyra::mir {
 
+// Identity for a deferred-check site (`$assert final` / unique-cascade
+// observed submit). Compile-time-allocated per site by the compilation unit;
+// the engine indexes its per-scope pending-closure table by the same id.
 struct DeferredCheckSiteId {
   std::uint32_t value;
 
   auto operator<=>(const DeferredCheckSiteId&) const
       -> std::strong_ordering = default;
-};
-
-// Re-submits at the same site_id within one time slot replace the prior
-// closure; this last-write-wins is the glitch-suppression mechanism for
-// deferred checks during combinational settle.
-struct RuntimeSubmitObservedCall {
-  DeferredCheckSiteId site_id;
-  ExprId closure;
-};
-
-// Append-only submit to the engine's global NBA queue; the closure commits
-// in the slot's NBA region in enqueue order (LRM 4.4.2).
-struct RuntimeSubmitNbaCall {
-  ExprId closure;
 };
 
 // LRM 21.2.2 `$strobe` payload. Holds the same `RuntimePrintCall` shape

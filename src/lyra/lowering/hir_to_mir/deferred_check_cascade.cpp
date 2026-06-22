@@ -13,6 +13,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -25,6 +26,7 @@
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/value_ref.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -309,13 +311,19 @@ auto BuildDeferredCheckCascade(
 
   const mir::DeferredCheckSiteId site_id =
       module.Unit().AllocateDeferredCheckSiteId();
+  const mir::ExprId self_id = wrapper.exprs.Add(BuildSelfRefExpr(
+      wrapper_frame, wrapper_frame.current_class->self_pointer_type));
+  const mir::ExprId site_id_expr = wrapper.exprs.Add(
+      mir::MakeInt32Literal(
+          int32_type, static_cast<std::int64_t>(site_id.value)));
   const mir::ExprId submit_expr_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
-              mir::RuntimeCallExpr{
-                  .call =
-                      mir::RuntimeSubmitObservedCall{
-                          .site_id = site_id, .closure = closure_expr_id}},
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{
+                          .id = support::BuiltinFn::kSubmitObserved},
+                  .arguments = {self_id, site_id_expr, closure_expr_id}},
           .type = void_type});
   wrapper.AppendStmt(
       mir::Stmt{

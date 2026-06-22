@@ -761,19 +761,6 @@ class MirDumper {
                   [&](const RuntimePrintCall& pc) {
                     DumpRuntimePrintCallItems(pc, scope);
                   },
-                  [&](const RuntimeSubmitObservedCall& sc) {
-                    Line(
-                        std::format(
-                            "RuntimeSubmitObservedCall site={} "
-                            "closure=Expr[{}]",
-                            sc.site_id.value, sc.closure.value));
-                  },
-                  [&](const RuntimeSubmitNbaCall& nc) {
-                    Line(
-                        std::format(
-                            "RuntimeSubmitNbaCall closure=Expr[{}]",
-                            nc.closure.value));
-                  },
                   [&](const RuntimeSubmitPostponedCall& pc) {
                     Line("RuntimeSubmitPostponedCall");
                     Indent();

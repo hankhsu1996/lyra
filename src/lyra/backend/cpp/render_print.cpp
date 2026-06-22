@@ -178,25 +178,6 @@ auto RenderRuntimeCallExpr(
           [&](const mir::RuntimePrintCall& pc) -> diag::Result<std::string> {
             return RenderRuntimePrintCall(view, pc);
           },
-          [&](const mir::RuntimeSubmitObservedCall& sc)
-              -> diag::Result<std::string> {
-            auto closure_or = RenderExpr(view, view.Expr(sc.closure));
-            if (!closure_or) {
-              return std::unexpected(std::move(closure_or.error()));
-            }
-            return std::format(
-                "{}SubmitObserved({}, {})", "self->", sc.site_id.value,
-                *closure_or);
-          },
-          [&](const mir::RuntimeSubmitNbaCall& nc)
-              -> diag::Result<std::string> {
-            auto closure_or = RenderExpr(view, view.Expr(nc.closure));
-            if (!closure_or) {
-              return std::unexpected(std::move(closure_or.error()));
-            }
-            return std::format(
-                "{}.SubmitNba({})", "self->Services()", *closure_or);
-          },
           [&](const mir::RuntimeSubmitPostponedCall& pc)
               -> diag::Result<std::string> {
             // LRM 21.2.2: defer the print to the postponed region via the

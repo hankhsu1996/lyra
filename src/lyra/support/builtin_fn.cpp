@@ -215,6 +215,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "mutate";
     case BuiltinFn::kServices:
       return "services";
+    case BuiltinFn::kSubmitNba:
+      return "submit_nba";
+    case BuiltinFn::kSubmitObserved:
+      return "submit_observed";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

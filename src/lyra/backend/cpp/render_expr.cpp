@@ -664,6 +664,10 @@ auto BuiltinFnMemberName(support::BuiltinFn id) -> std::string_view {
       return "Set";
     case support::BuiltinFn::kMutate:
       return "Mutate";
+    case support::BuiltinFn::kSubmitNba:
+      return "SubmitNba";
+    case support::BuiltinFn::kSubmitObserved:
+      return "SubmitObserved";
     case support::BuiltinFn::kTrigger:
       return "Trigger";
     case support::BuiltinFn::kAwait:

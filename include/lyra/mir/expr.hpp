@@ -153,9 +153,8 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-using RuntimeCall = std::variant<
-    RuntimePrintCall, RuntimeSubmitObservedCall, RuntimeSubmitNbaCall,
-    RuntimeSubmitPostponedCall, RuntimeScanCall>;
+using RuntimeCall =
+    std::variant<RuntimePrintCall, RuntimeSubmitPostponedCall, RuntimeScanCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;
