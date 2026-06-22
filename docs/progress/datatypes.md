@@ -96,9 +96,9 @@ frontend inserts an implicit conversion when a literal participates in an expres
       `!=`), and lexicographic relational comparison (`<`, `<=`, `>`, `>=`) on string-typed
       operands. The literal-vs-literal case keeps the integral path per the LRM exception.
 - [x] SC2 -- Concatenation `{a, b, ...}` and replication `{N{s}}` in string mode (LRM 11.4.12.2):
-      when the result type is `string` the entire expression evaluates to string. The literal-only
-      form (`{"foo", "bar"}`, integral result type with outer string conversion) stays blocked
-      behind `operators/concat` plus the bit-vector-to-string conversion path.
+      when the result type is `string` the entire expression evaluates to string. The all-literal
+      form (`{"foo", "bar"}`) types as a packed bit vector (LRM 5.9) and converts to string on
+      assignment to a string target.
 - [x] SC3 -- Built-in methods listed in LRM 6.16.1 -- 6.16.15: `.len()`, `.substr(i, j)`,
       `.compare(s)` / `.icompare(s)`, `.toupper()` / `.tolower()`, `.putc(i, c)` / `.getc(i)`, and
       the numeric conversion family (`.atoi()` / `.atohex()` / `.atooct()` / `.atobin()` /
@@ -108,9 +108,8 @@ frontend inserts an implicit conversion when a literal participates in an expres
 
 - [x] SC4 -- Indexing operator `s[i]` (LRM 6.16, Table 6-9) as a byte read and byte write, sharing
       the out-of-range no-op semantics of the `getc` / `putc` methods, plus `foreach (s[i])` which
-      walks the string by byte (LRM 6.16). A blocking write and its compound forms are covered; a
-      nonblocking write to a single byte is permitted by LRM 10.4.2 but diagnosed as not yet
-      supported.
+      walks the string by byte (LRM 6.16). Blocking, compound, and nonblocking writes are all
+      covered; the nonblocking write defers the byte update to the NBA region (LRM 10.4.2).
 
 - [x] SC5 -- A string literal carries its LRM 5.9 dual nature: slang types it as a packed bit vector
       in every context except a `string`-typed one, so it serves both as an integral constant (a

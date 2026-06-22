@@ -641,6 +641,20 @@ auto LowerHirElementSelectExprProc(
   const mir::ExprId idx_id = block.AddExpr(*std::move(idx_or));
 
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  // LRM 6.16.3: a string has no element lvalue, so an index read realizes as
+  // the getc query (the write side realizes as putc in the assignment path).
+  if (hir_base_ty.Kind() == hir::TypeKind::kString) {
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::BuiltinMethodCallee{
+                        .method =
+                            mir::StringMethodInfo{
+                                .kind = mir::StringMethodKind::kGetc}},
+                .arguments = {base_id, idx_id}},
+        .type = result_type};
+  }
   // LRM 7.10.1: queue's `q[$+1] = v` appends, so a queue element write
   // must dispatch as LHS even from this RHS entry point. The lvalue-target
   // marker carried on the walk frame surfaces that case. AA / packed /

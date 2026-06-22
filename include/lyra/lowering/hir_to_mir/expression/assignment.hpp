@@ -25,8 +25,8 @@ auto LowerHirAssignExprProc(
 // Builds an NBA-region closure: snapshots `rhs_id_in_outer` by value into
 // the body and writes it through `lhs_in_outer`. The returned Expr has type
 // `void`. `lhs_in_outer` must be addressable and rooted at a structural var
-// (procedural-local NBA is not supported). Used by the AssignExpr handler
-// and the LHS-destructuring desugar.
+// (procedural-local NBA is not supported). Used by the LHS-destructuring
+// desugar, which submits each part as its own NBA closure.
 auto BuildNbaSubmitClosureExpr(
     ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
     mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr;
