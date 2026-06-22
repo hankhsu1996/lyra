@@ -19,6 +19,7 @@ class ConcatenationExpression;
 class NewArrayExpression;
 class ReplicatedAssignmentPatternExpression;
 class ReplicationExpression;
+class StructuredAssignmentPatternExpression;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -44,6 +45,10 @@ auto LowerNewArrayExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NewArrayExpression& na, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
+auto LowerAssociativeAssignmentPatternProc(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::StructuredAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 // Structural-context handlers.
 auto LowerConcatExprStructural(
@@ -57,6 +62,10 @@ auto LowerAssignmentPatternFromElementsStructural(
 auto LowerReplicatedAssignmentPatternExprStructural(
     StructuralScopeLowerer& scope, WalkFrame frame,
     const slang::ast::ReplicatedAssignmentPatternExpression& rp,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+auto LowerAssociativeAssignmentPatternStructural(
+    StructuralScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::StructuredAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

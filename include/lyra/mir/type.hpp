@@ -33,6 +33,7 @@ enum class TypeKind {
   kReference,
   kPointer,
   kVector,
+  kTuple,
   kExternalRef,
   kObservable,
 };
@@ -222,6 +223,18 @@ struct VectorType {
   auto operator==(const VectorType&) const -> bool = default;
 };
 
+// A heterogeneous fixed product: an ordered list of component types, each
+// independent. MIR's only heterogeneous aggregate -- the generic-language
+// product type (the Rust / Python tuple, C++ `std::tuple` / `std::pair`),
+// where `VectorType` is the homogeneous one. Built by `TupleExpr`. It is what
+// lets an associative literal be a vector of `(key, value)` pairs instead of
+// two parallel lists, so no associative-specific construction node is needed.
+struct TupleType {
+  std::vector<TypeId> elements;
+
+  auto operator==(const TupleType&) const -> bool = default;
+};
+
 // Observable storage wrapper around a value type. Declares that a member's
 // storage is a module-scope cell that exposes Set / Get / Mutate
 // (LRM 9.4.2 update event) -- writes route through the engine so subscribers
@@ -279,7 +292,7 @@ using TypeData = std::variant<
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
     ScopeType, ServicesType, RuntimeLibraryType, CoroutineType, RefType,
-    PointerType, VectorType, ExternalRefType, ObservableType>;
+    PointerType, VectorType, TupleType, ExternalRefType, ObservableType>;
 
 struct Type {
   TypeData data;

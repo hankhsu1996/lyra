@@ -170,11 +170,27 @@ struct DynamicArrayNewExpr {
   std::optional<ExprId> initializer;
 };
 
+// LRM 7.9.11 associative-array literal `'{index: value, ..., default: d}`. Each
+// entry pairs a key expression with a value expression; the optional default is
+// the persistent fallback a read of an absent key returns (LRM 7.8.6). Slang
+// keeps this distinct from the positional pattern, so the key structure is
+// retained here rather than flattened into an element list. HIR-to-MIR builds
+// the associative value from a vector of (key, value) tuples plus the default.
+struct AssociativeAssignmentPatternExpr {
+  struct Entry {
+    ExprId key;
+    ExprId value;
+  };
+  std::vector<Entry> entries;
+  std::optional<ExprId> default_value;
+};
+
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr,
     MemberAccessExpr, ConcatExpr, ReplicationExpr, AssignmentPatternExpr,
-    AssignmentPatternReplicationExpr, DynamicArrayNewExpr>;
+    AssignmentPatternReplicationExpr, DynamicArrayNewExpr,
+    AssociativeAssignmentPatternExpr>;
 
 struct Expr {
   TypeId type;

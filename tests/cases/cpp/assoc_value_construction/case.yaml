@@ -1,0 +1,22 @@
+id: cpp.assoc_value_construction
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    dt_k: 5
+    dt_miss: 77
+    t_a: 1
+    t_b: 2
+    t_miss: 99
+    t_num: 2
+    c_inc: 2
+    c_miss: 1
+    c_num: 1
+    d_p: 7
+    d_miss: 88
+    d_num: 1

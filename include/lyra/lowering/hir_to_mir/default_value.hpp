@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
@@ -38,5 +40,18 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto BuildArrayConstructionCall(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr;
+
+// Builds the construction call for an associative-array literal (LRM 7.9.11).
+// Each (key, value) entry becomes a `TupleExpr`; the entries ride in an
+// `ArrayLiteralExpr` of those tuples (rendered `std::array<std::tuple<K, V>,
+// N>{...}`), and the constructor arguments are `[element_default, entries,
+// optional user_default]`. `user_default` is the LRM 7.9.11 persistent fallback
+// a read of an absent key returns; when absent the constructor seeds only the
+// element type default. Interns the tuple and tuple-array MIR types, so the
+// module must be the mutable in-progress unit.
+[[nodiscard]] auto BuildAssociativeConstructionCall(
+    ModuleLowerer& module, WalkFrame frame, mir::TypeId assoc_type,
+    std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
+    std::optional<mir::ExprId> user_default) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

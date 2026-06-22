@@ -165,6 +165,17 @@ auto RenderTypeAsCpp(
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "std::vector<" + *inner_or + ">";
           },
+          [&](const mir::TupleType& t) -> diag::Result<std::string> {
+            std::string inners;
+            for (std::size_t i = 0; i < t.elements.size(); ++i) {
+              auto inner_or = RenderTypeAsCpp(unit, owner_class, t.elements[i]);
+              if (!inner_or)
+                return std::unexpected(std::move(inner_or.error()));
+              if (i != 0) inners += ", ";
+              inners += *inner_or;
+            }
+            return "std::tuple<" + inners + ">";
+          },
           [&](const mir::ExternalRefType& e) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_class, e.element);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
