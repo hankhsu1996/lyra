@@ -7,11 +7,15 @@ module Child;
 endmodule
 
 module Top;
-  Child c();
+  Child a();
+  Child b();
   int r;
-  always_comb r = c.x;
+  always_comb r = a.x + b.x;
   initial begin
-    #2;
-    $display("r=%0d", r);
+    #2 $display("r=%0d", r);
+    a.x = 100;
+    #1 $display("r=%0d", r);
+    b.x = 200;
+    #1 $display("r=%0d", r);
   end
 endmodule

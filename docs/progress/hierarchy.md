@@ -151,10 +151,10 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       navigable scopes or a member-name-aware resolution -- a model question deferred from D2c.
 - [x] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
       Landed for downward paths through scalar instances.
-- [ ] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced
-      signal changes, including paths spanning multiple levels and reads from several instances.
-      Downward paths re-trigger today at any depth; reads from several instances within one process
-      remain.
+- [x] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced
+      signal changes, across paths spanning multiple levels, several instances read within one
+      process, and upward references alongside downward ones. The process subscribes to every
+      referenced signal regardless of direction or depth, and each source re-triggers independently.
 - [ ] D5 -- The hierarchical path of an instance (for `%m`, display, and scope queries) derives from
       object-tree ownership.
 - [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected

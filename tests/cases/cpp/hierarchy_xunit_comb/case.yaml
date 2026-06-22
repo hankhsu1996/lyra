@@ -8,4 +8,7 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: "r=7\n"
+    exact: |
+      r=14
+      r=107
+      r=300
