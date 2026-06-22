@@ -65,6 +65,15 @@ auto GetAggregateFields(const hir::Type& t)
       "GetAggregateFields: base type is not a packed struct or union");
 }
 
+// Compile-time map of a declared packed index to its LSB-relative offset.
+// Packed bit numbering counts from the LSB, which is the declared `right`
+// bound; a descending zero-based range is the identity.
+auto PackedPhysOffset(const hir::PackedRange& declared, std::int64_t index)
+    -> std::int64_t {
+  return declared.left >= declared.right ? index - declared.right
+                                         : declared.right - index;
+}
+
 // Read-side wrap that materialises a borrowed `PackedArrayRef` result into
 // an owning `PackedArray` (Rust's `&[T]::to_owned() -> Vec<T>` pattern).
 // LHS chains keep the view because they write through it; non-packed
@@ -138,6 +147,10 @@ struct RangeStrategy {
   // width).
   const hir::UnpackedRange* unpacked_declared = nullptr;
   std::uint32_t unpacked_count = 0;
+  // Only meaningful for `kPacked`. The declared SV range maps each part-select
+  // endpoint to its LSB-relative offset (LRM 11.5.2); a descending zero-based
+  // range is the identity.
+  const hir::PackedRange* packed_declared = nullptr;
 };
 
 auto MirIntegralConstantToInt64(const mir::IntegralConstant& c)
@@ -202,6 +215,33 @@ auto WrapUnpackedIndex(
           .type = idx_type});
 }
 
+// Translates an SV-declared packed bit-select index into the LSB-relative bit
+// offset the runtime element protocol consumes. The packed sibling of
+// `WrapUnpackedIndex`, but folding the `right` bound rather than `left`:
+// packed bit numbering counts from the LSB (the declared `right` end) while
+// unpacked memory order counts from the declared left. A descending
+// zero-based range (`[N:0]`) needs no rewrite. Commits and returns the
+// resulting `ExprId`.
+auto WrapPackedIndex(
+    const ModuleLowerer& module, mir::Block& block,
+    const hir::PackedRange& declared, mir::ExprId raw_idx, mir::TypeId idx_type)
+    -> mir::ExprId {
+  const bool descending = declared.left >= declared.right;
+  if (descending && declared.right == 0) {
+    return raw_idx;
+  }
+  const mir::ExprId literal_id = block.AddExpr(
+      mir::MakeInt32Literal(module.Unit().builtins.int32, declared.right));
+  return block.AddExpr(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kSub,
+                  .lhs = descending ? raw_idx : literal_id,
+                  .rhs = descending ? literal_id : raw_idx},
+          .type = idx_type});
+}
+
 // Emits `lo + (count - 1)`, committed. `count == 1` returns `lo` directly
 // (no zero delta). Used by the fixed-width range-bound projections where
 // the slice width is statically known.
@@ -211,6 +251,32 @@ auto BuildHiFromLoAndCount(
   if (count == 1) return lo;
   return block.AddExpr(
       BuildOffsetDeltaExpr(module, block, lo, count - 1, mir::BinaryOp::kAdd));
+}
+
+enum class IndexedDir : std::uint8_t { kUp, kDown };
+
+// LRM 11.5.1 packed indexed part-select (`base +: w` / `base -: w`). The base
+// index is mapped to its LSB-relative offset; the slice then extends toward
+// the MSB or LSB. The width grows upward exactly when the indexed direction
+// agrees with the declared range direction (`+:` on a descending range, or
+// `-:` on an ascending range), so a declared-ascending range mirrors the
+// growth direction a declared-descending range would take.
+auto PackedIndexedLoHi(
+    const ModuleLowerer& module, mir::Block& block,
+    const hir::PackedRange& declared, mir::ExprId base, std::int64_t count,
+    IndexedDir dir) -> RangeLoHi {
+  const bool descending = declared.left >= declared.right;
+  const mir::ExprId pbase =
+      WrapPackedIndex(module, block, declared, base, block.GetExpr(base).type);
+  const bool extend_up = (dir == IndexedDir::kUp) == descending;
+  if (extend_up) {
+    return RangeLoHi{
+        .lo = pbase, .hi = BuildHiFromLoAndCount(module, block, pbase, count)};
+  }
+  return RangeLoHi{
+      .lo = block.AddExpr(BuildOffsetDeltaExpr(
+          module, block, pbase, count - 1, mir::BinaryOp::kSub)),
+      .hi = pbase};
 }
 
 // LRM 7.10.1 queue slice projection. `q[a:b]` requires `a <= b`, so slang
@@ -275,15 +341,16 @@ auto BuildQueueRangeLoHi(
       bounds);
 }
 
-// LRM 11.5.2 packed-array slice projection. SV bounds are constants per the
-// LRM: `ConstantBounds` folds both sides and emits `[min, max]` literals so
-// the runtime needs no declared-direction awareness; indexed forms fold the
-// width to a delta on `base`.
+// LRM 11.5.2 packed-array slice projection. Bounds are constants per the LRM;
+// each declared endpoint maps through `declared` to its LSB-relative offset,
+// then `[min, max]` gives the physical range the runtime Slice consumes. A
+// descending zero-based range is the identity, so this is transparent for the
+// common case.
 template <typename LowerOne>
 auto BuildPackedRangeLoHi(
     const ModuleLowerer& module, mir::Block& block,
-    const hir::RangeBounds& bounds, LowerOne lower_one)
-    -> diag::Result<RangeLoHi> {
+    const hir::RangeBounds& bounds, const hir::PackedRange& declared,
+    LowerOne lower_one) -> diag::Result<RangeLoHi> {
   const mir::TypeId int32_type = module.Unit().builtins.int32;
   return std::visit(
       Overloaded{
@@ -292,13 +359,17 @@ auto BuildPackedRangeLoHi(
             if (!msb) return std::unexpected(std::move(msb.error()));
             auto lsb = lower_one(b.lsb_expr);
             if (!lsb) return std::unexpected(std::move(lsb.error()));
-            const auto msb_val = IntConstFromMirExpr(block.GetExpr(*msb));
-            const auto lsb_val = IntConstFromMirExpr(block.GetExpr(*lsb));
-            const auto lo_val = std::min(msb_val, lsb_val);
-            const auto hi_val = std::max(msb_val, lsb_val);
+            const auto msb_off = PackedPhysOffset(
+                declared, IntConstFromMirExpr(block.GetExpr(*msb)));
+            const auto lsb_off = PackedPhysOffset(
+                declared, IntConstFromMirExpr(block.GetExpr(*lsb)));
             return RangeLoHi{
-                .lo = block.AddExpr(mir::MakeInt32Literal(int32_type, lo_val)),
-                .hi = block.AddExpr(mir::MakeInt32Literal(int32_type, hi_val))};
+                .lo = block.AddExpr(
+                    mir::MakeInt32Literal(
+                        int32_type, std::min(msb_off, lsb_off))),
+                .hi = block.AddExpr(
+                    mir::MakeInt32Literal(
+                        int32_type, std::max(msb_off, lsb_off)))};
           },
           [&](const hir::RangeIndexedUpBounds& b) -> diag::Result<RangeLoHi> {
             auto base = lower_one(b.base_index);
@@ -306,9 +377,8 @@ auto BuildPackedRangeLoHi(
             auto width = lower_one(b.width);
             if (!width) return std::unexpected(std::move(width.error()));
             const auto count = IntConstFromMirExpr(block.GetExpr(*width));
-            return RangeLoHi{
-                .lo = *base,
-                .hi = BuildHiFromLoAndCount(module, block, *base, count)};
+            return PackedIndexedLoHi(
+                module, block, declared, *base, count, IndexedDir::kUp);
           },
           [&](const hir::RangeIndexedDownBounds& b) -> diag::Result<RangeLoHi> {
             auto base = lower_one(b.base_index);
@@ -316,9 +386,8 @@ auto BuildPackedRangeLoHi(
             auto width = lower_one(b.width);
             if (!width) return std::unexpected(std::move(width.error()));
             const auto count = IntConstFromMirExpr(block.GetExpr(*width));
-            const auto lo = block.AddExpr(BuildOffsetDeltaExpr(
-                module, block, *base, count - 1, mir::BinaryOp::kSub));
-            return RangeLoHi{.lo = lo, .hi = *base};
+            return PackedIndexedLoHi(
+                module, block, declared, *base, count, IndexedDir::kDown);
           },
       },
       bounds);
@@ -394,7 +463,8 @@ auto UnfoldRangeBoundsToLoHi(
     case RangeContainer::kQueue:
       return BuildQueueRangeLoHi(module, block, bounds, lower_one);
     case RangeContainer::kPacked:
-      return BuildPackedRangeLoHi(module, block, bounds, lower_one);
+      return BuildPackedRangeLoHi(
+          module, block, bounds, *strategy.packed_declared, lower_one);
     case RangeContainer::kUnpacked:
       return BuildUnpackedRangeLoHi(
           module, block, bounds, *strategy.unpacked_declared,
@@ -427,9 +497,10 @@ auto SliceResultOuterCount(const mir::Type& result_ty) -> std::uint32_t {
 
 // `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The callee carries
 // just read-vs-write (`kElement` / `kElementRef`); the receiver's container
-// kind picks the runtime overload at C++ render time. Projects the
-// SV-source index through the declared range for unpacked arrays so the
-// runtime sees a zero-based vector position.
+// kind picks the runtime overload at C++ render time. Projects the SV-source
+// index through the declared range -- to a zero-based vector position for an
+// unpacked array, to an LSB-relative bit offset for a packed one -- so the
+// runtime needs no declared-direction awareness.
 auto BuildElementAccessCallExpr(
     const ModuleLowerer& module, mir::Block& block,
     const hir::Type& hir_base_ty, mir::TypeId hir_idx_type, mir::ExprId base_id,
@@ -438,6 +509,10 @@ auto BuildElementAccessCallExpr(
   if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
     effective_idx =
         WrapUnpackedIndex(module, block, ua->dim, idx_id, hir_idx_type);
+  } else if (
+      const auto* pa = std::get_if<hir::PackedArrayType>(&hir_base_ty.data)) {
+    effective_idx =
+        WrapPackedIndex(module, block, pa->dims.front(), idx_id, hir_idx_type);
   }
   return mir::Expr{
       .data =
@@ -471,8 +546,17 @@ auto BuildRangeSliceCallExpr(
     strategy.unpacked_declared = &ua->dim;
     strategy.unpacked_count = static_cast<std::uint32_t>(
         std::get<mir::UnpackedArrayType>(result_ty.data).size);
-  } else {
+  } else if (
+      const auto* pa = std::get_if<hir::PackedArrayType>(&hir_base_ty.data)) {
     strategy.container = RangeContainer::kPacked;
+    strategy.packed_declared = &pa->dims.front();
+  } else {
+    // Dynamic arrays and a packed struct / union projected as a `[width-1:0]`
+    // vector index by raw zero-based offset, so their bounds are already
+    // physical; an identity declared range leaves them untranslated.
+    static constexpr hir::PackedRange kRawOffset{.left = 0, .right = 0};
+    strategy.container = RangeContainer::kPacked;
+    strategy.packed_declared = &kRawOffset;
   }
   auto bounds_or =
       UnfoldRangeBoundsToLoHi(module, block, bounds, strategy, lower_one);

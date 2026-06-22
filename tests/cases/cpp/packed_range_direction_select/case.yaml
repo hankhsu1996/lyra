@@ -1,0 +1,17 @@
+id: cpp.packed_range_direction_select
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    asc_bit_w: "8'b00100000"
+    asc_bit_r: "1'b1"
+    neg_bit_w: "8'b01000000"
+    asc_slice_w: "8'b00011100"
+    desc_nonzero_w: "6'b000100"
+    asc_pselect_up: "8'b00000011"
+    asc_pselect_dn: "8'b00000100"
