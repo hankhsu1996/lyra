@@ -27,7 +27,6 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_hops.hpp"
-#include "lyra/mir/builtin_method.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_submit.hpp"
@@ -50,9 +49,7 @@ auto IsExprRootedAtStructuralVar(const mir::Block& block, mir::ExprId expr_id)
           [](const mir::MemberAccessExpr&) { return true; },
           [](const mir::LocalRef&) { return false; },
           [&](const mir::CallExpr& c) {
-            const auto* callee =
-                std::get_if<mir::BuiltinMethodCallee>(&c.callee);
-            if (callee == nullptr || !mir::IsContainerAccessCall(*callee) ||
+            if (!mir::IsContainerAccessCallee(c.callee) ||
                 c.arguments.empty()) {
               return false;
             }
@@ -84,9 +81,7 @@ auto CloneLhsExprForNbaBody(
   return std::visit(
       Overloaded{
           [&](const mir::CallExpr& c) -> mir::ExprId {
-            const auto* callee =
-                std::get_if<mir::BuiltinMethodCallee>(&c.callee);
-            if (callee == nullptr || !mir::IsContainerAccessCall(*callee) ||
+            if (!mir::IsContainerAccessCallee(c.callee) ||
                 c.arguments.empty()) {
               throw InternalError(
                   "CloneLhsExprForNbaBody: CallExpr is not a container-access "
@@ -155,14 +150,12 @@ auto CloneLhsExprForNbaBody(
 }
 
 auto BuildStringMethodCallExpr(
-    mir::StringMethodKind kind, std::vector<mir::ExprId> args, mir::TypeId type)
+    support::BuiltinFn fn, std::vector<mir::ExprId> args, mir::TypeId type)
     -> mir::Expr {
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::BuiltinMethodCallee{
-                      .method = mir::StringMethodInfo{.kind = kind}},
+              .callee = mir::BuiltinFnCallee{.id = fn},
               .arguments = std::move(args)},
       .type = type};
 }
@@ -311,7 +304,7 @@ auto LowerStringElementAssign(
     if (!base_read_or) return std::unexpected(std::move(base_read_or.error()));
     const mir::ExprId base_read_id = block.AddExpr(*std::move(base_read_or));
     const mir::ExprId cur_id = block.AddExpr(BuildStringMethodCallExpr(
-        mir::StringMethodKind::kGetc, {base_read_id, idx_id}, result_type));
+        support::BuiltinFn::kGetc, {base_read_id, idx_id}, result_type));
     value_id = block.AddExpr(
         mir::Expr{
             .data =
@@ -334,7 +327,7 @@ auto LowerStringElementAssign(
           recv = RewriteLhsRootWithMutate(unit, blk, target, services);
         }
         return BuildStringMethodCallExpr(
-            mir::StringMethodKind::kPutc, {recv, ops[0], ops[1]},
+            support::BuiltinFn::kPutc, {recv, ops[0], ops[1]},
             unit.builtins.void_type);
       });
 }

@@ -196,6 +196,10 @@ class UnpackedArray {
     return false;
   }
 
+  [[nodiscard]] auto IsUnknown() const -> PackedArray {
+    return PackedArray::Bit(HasUnknown());
+  }
+
   // LRM 7.12 ordering and reduction, each a thin wrapper over the shared
   // `detail::Array*` algorithms. HIR-to-MIR always supplies the closure (the
   // `with`-clause body or the LRM-default identity), so the runtime exposes

@@ -80,9 +80,9 @@ class PackedArray {
   // Default integer shape (32-bit, signed, 4-state) per LRM 6.11 Table 6-8.
   [[nodiscard]] static auto Integer(std::int32_t value) -> PackedArray;
 
-  // 1-bit unsigned 2-state shape, used by the builtin-method renderer to
-  // lift a C++ `bool` result (e.g. `PackedArray::HasUnknown()`) into a
-  // PackedArray of SV `bit` type. Sibling of `Int(int32_t)` / `Byte`.
+  // 1-bit unsigned 2-state shape. Used to lift a host `bool` (e.g. from
+  // `HasUnknown()`) into the SV `bit` type at runtime-surface boundaries
+  // such as `IsUnknown()`. Sibling of `Int(int32_t)` / `Byte`.
   [[nodiscard]] static auto Bit(bool value) -> PackedArray;
 
   // Construct a narrow PackedArray (bit_width <= 64) from an integer value.
@@ -293,6 +293,14 @@ class PackedArray {
   // Drives LRM 11.4 X/Z propagation: arithmetic, comparison, shift, and
   // power return all-X (or 1-bit X) when any operand has HasUnknown().
   [[nodiscard]] auto HasUnknown() const -> bool;
+
+  // LRM 20.9 `$isunknown` -- the SV-surface query. Returns a 1-bit, 2-state
+  // `PackedArray` so the MIR call's result type matches the C++ return type
+  // with no backend lift. The host-bool `HasUnknown()` above is the
+  // internal X-check the operator implementations use.
+  [[nodiscard]] auto IsUnknown() const -> PackedArray {
+    return Bit(HasUnknown());
+  }
 
   // Operands are assumed to share the same shape (slang's promotion
   // contract). Comparison / logical results are 1-bit, 4-state when any

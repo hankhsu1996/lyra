@@ -154,7 +154,7 @@ auto LowerCallExprProc(
               hir::CallExpr{
                   .callee =
                       hir::BuiltinMethodRef{
-                          .method = hir::EventMethodKind::kTriggered,
+                          .method = support::BuiltinFn::kTriggered,
                       },
                   .arguments = std::move(arg_ids),
               },

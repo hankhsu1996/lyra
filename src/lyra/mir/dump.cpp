@@ -385,62 +385,6 @@ class MirDumper {
                   "BuiltinStaticCallee[id={}, type_qual=Type[{}]]",
                   static_cast<int>(b.id), b.type_qual.value);
             },
-            [](const BuiltinMethodCallee& b) -> std::string {
-              return std::visit(
-                  Overloaded{
-                      [](const EnumMethodInfo& m) -> std::string {
-                        return std::format(
-                            "EnumMethodInfo[enum_type=Type[{}], kind={}]",
-                            m.enum_type.value, static_cast<int>(m.kind));
-                      },
-                      [](const StringMethodInfo& m) -> std::string {
-                        return std::format(
-                            "StringMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                      [](const EventMethodInfo& m) -> std::string {
-                        return std::format(
-                            "EventMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                      [](const ArrayMethodInfo& m) -> std::string {
-                        return std::format(
-                            "ArrayMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                      [](const QueueMethodInfo& m) -> std::string {
-                        return std::format(
-                            "QueueMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                      [](const AssociativeMethodInfo& m) -> std::string {
-                        return std::format(
-                            "AssociativeMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                      [](const ValueMethodInfo& m) -> std::string {
-                        return std::format(
-                            "ValueMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                      [](const IteratorMethodInfo& m) -> std::string {
-                        return std::format(
-                            "IteratorMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                      [](const ScopeMethodInfo& m) -> std::string {
-                        return std::format(
-                            "ScopeMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                      [](const ObservableMethodInfo& m) -> std::string {
-                        return std::format(
-                            "ObservableMethodInfo[kind={}]",
-                            static_cast<int>(m.kind));
-                      },
-                  },
-                  b.method);
-            },
             [](const ConstructorCallee&) -> std::string {
               return "ConstructorCallee";
             },

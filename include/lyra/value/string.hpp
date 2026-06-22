@@ -87,6 +87,10 @@ class String {
     return false;
   }
 
+  [[nodiscard]] static auto IsUnknown() -> PackedArray {
+    return PackedArray::Bit(false);
+  }
+
   // LRM Table 6-7: the string default is the empty string. This is the
   // container OOB-shield contract shared with the other value types
   // (docs/decisions/runtime-shape-and-default-value.md), so a `string` can be

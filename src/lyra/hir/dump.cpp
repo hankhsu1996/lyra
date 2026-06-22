@@ -101,180 +101,146 @@ class HirDumper {
     throw InternalError("HirDumper::FormatUniquePriorityCheck: unknown check");
   }
 
-  static auto FormatEnumMethodKind(EnumMethodKind k) -> std::string_view {
-    switch (k) {
-      case EnumMethodKind::kFirst:
-        return "first";
-      case EnumMethodKind::kLast:
-        return "last";
-      case EnumMethodKind::kNum:
-        return "num";
-      case EnumMethodKind::kNext:
-        return "next";
-      case EnumMethodKind::kPrev:
-        return "prev";
-      case EnumMethodKind::kName:
-        return "name";
-    }
-    throw InternalError(
-        "HirDumper::FormatEnumMethodKind: unknown EnumMethodKind");
-  }
-
-  static auto FormatStringMethodKind(StringMethodKind k) -> std::string_view {
-    switch (k) {
-      case StringMethodKind::kLen:
-        return "len";
-      case StringMethodKind::kGetc:
-        return "getc";
-      case StringMethodKind::kPutc:
-        return "putc";
-      case StringMethodKind::kToupper:
-        return "toupper";
-      case StringMethodKind::kTolower:
-        return "tolower";
-      case StringMethodKind::kCompare:
-        return "compare";
-      case StringMethodKind::kIcompare:
-        return "icompare";
-      case StringMethodKind::kSubstr:
-        return "substr";
-      case StringMethodKind::kAtoi:
-        return "atoi";
-      case StringMethodKind::kAtohex:
-        return "atohex";
-      case StringMethodKind::kAtooct:
-        return "atooct";
-      case StringMethodKind::kAtobin:
-        return "atobin";
-      case StringMethodKind::kAtoreal:
-        return "atoreal";
-      case StringMethodKind::kItoa:
-        return "itoa";
-      case StringMethodKind::kHextoa:
-        return "hextoa";
-      case StringMethodKind::kOcttoa:
-        return "octtoa";
-      case StringMethodKind::kBintoa:
-        return "bintoa";
-      case StringMethodKind::kRealtoa:
-        return "realtoa";
-    }
-    throw InternalError(
-        "HirDumper::FormatStringMethodKind: unknown StringMethodKind");
-  }
-
-  static auto FormatEventMethodKind(EventMethodKind k) -> std::string_view {
-    switch (k) {
-      case EventMethodKind::kTrigger:
-        return "trigger";
-      case EventMethodKind::kAwait:
-        return "await";
-      case EventMethodKind::kTriggered:
-        return "triggered";
-    }
-    throw InternalError(
-        "HirDumper::FormatEventMethodKind: unknown EventMethodKind");
-  }
-
-  static auto FormatArrayMethodKind(ArrayMethodKind k) -> std::string_view {
-    switch (k) {
-      case ArrayMethodKind::kSize:
-        return "size";
-      case ArrayMethodKind::kDelete:
-        return "delete";
-      case ArrayMethodKind::kReverse:
-        return "reverse";
-      case ArrayMethodKind::kSort:
-        return "sort";
-      case ArrayMethodKind::kRsort:
-        return "rsort";
-      case ArrayMethodKind::kSum:
-        return "sum";
-      case ArrayMethodKind::kProduct:
-        return "product";
-      case ArrayMethodKind::kAnd:
-        return "and";
-      case ArrayMethodKind::kOr:
-        return "or";
-      case ArrayMethodKind::kXor:
-        return "xor";
-      case ArrayMethodKind::kFind:
-        return "find";
-      case ArrayMethodKind::kFindIndex:
-        return "find_index";
-      case ArrayMethodKind::kFindFirst:
-        return "find_first";
-      case ArrayMethodKind::kFindFirstIndex:
-        return "find_first_index";
-      case ArrayMethodKind::kFindLast:
-        return "find_last";
-      case ArrayMethodKind::kFindLastIndex:
-        return "find_last_index";
-      case ArrayMethodKind::kMin:
-        return "min";
-      case ArrayMethodKind::kMax:
-        return "max";
-      case ArrayMethodKind::kUnique:
-        return "unique";
-      case ArrayMethodKind::kUniqueIndex:
-        return "unique_index";
-      case ArrayMethodKind::kMap:
-        return "map";
-    }
-    throw InternalError(
-        "HirDumper::FormatArrayMethodKind: unknown ArrayMethodKind");
-  }
-
-  static auto FormatQueueMethodKind(QueueMethodKind k) -> std::string_view {
-    switch (k) {
-      case QueueMethodKind::kSize:
-        return "size";
-      case QueueMethodKind::kInsert:
-        return "insert";
-      case QueueMethodKind::kDelete:
-        return "delete";
-      case QueueMethodKind::kPopFront:
-        return "pop_front";
-      case QueueMethodKind::kPopBack:
-        return "pop_back";
-      case QueueMethodKind::kPushFront:
-        return "push_front";
-      case QueueMethodKind::kPushBack:
-        return "push_back";
-      case QueueMethodKind::kElement:
+  static auto FormatBuiltinFn(support::BuiltinFn fn) -> std::string_view {
+    switch (fn) {
+      case support::BuiltinFn::kElement:
         return "element";
-      case QueueMethodKind::kElementRef:
+      case support::BuiltinFn::kElementRef:
         return "element_ref";
-      case QueueMethodKind::kSlice:
+      case support::BuiltinFn::kSlice:
         return "slice";
-    }
-    throw InternalError(
-        "HirDumper::FormatQueueMethodKind: unknown QueueMethodKind");
-  }
-
-  static auto FormatAssociativeMethodKind(AssociativeMethodKind k)
-      -> std::string_view {
-    switch (k) {
-      case AssociativeMethodKind::kNum:
-        return "num";
-      case AssociativeMethodKind::kSize:
+      case support::BuiltinFn::kSliceRef:
+        return "slice_ref";
+      case support::BuiltinFn::kSize:
         return "size";
-      case AssociativeMethodKind::kExists:
-        return "exists";
-      case AssociativeMethodKind::kDelete:
+      case support::BuiltinFn::kLen:
+        return "len";
+      case support::BuiltinFn::kToOwned:
+        return "to_owned";
+      case support::BuiltinFn::kDelete:
         return "delete";
-      case AssociativeMethodKind::kFirst:
-        return "first";
-      case AssociativeMethodKind::kLast:
-        return "last";
-      case AssociativeMethodKind::kNext:
-        return "next";
-      case AssociativeMethodKind::kPrev:
-        return "prev";
+      case support::BuiltinFn::kReverse:
+        return "reverse";
+      case support::BuiltinFn::kSort:
+        return "sort";
+      case support::BuiltinFn::kRsort:
+        return "rsort";
+      case support::BuiltinFn::kSum:
+        return "sum";
+      case support::BuiltinFn::kProduct:
+        return "product";
+      case support::BuiltinFn::kAnd:
+        return "and";
+      case support::BuiltinFn::kOr:
+        return "or";
+      case support::BuiltinFn::kXor:
+        return "xor";
+      case support::BuiltinFn::kFind:
+        return "find";
+      case support::BuiltinFn::kFindIndex:
+        return "find_index";
+      case support::BuiltinFn::kFindFirst:
+        return "find_first";
+      case support::BuiltinFn::kFindFirstIndex:
+        return "find_first_index";
+      case support::BuiltinFn::kFindLast:
+        return "find_last";
+      case support::BuiltinFn::kFindLastIndex:
+        return "find_last_index";
+      case support::BuiltinFn::kMin:
+        return "min";
+      case support::BuiltinFn::kMax:
+        return "max";
+      case support::BuiltinFn::kUnique:
+        return "unique";
+      case support::BuiltinFn::kUniqueIndex:
+        return "unique_index";
+      case support::BuiltinFn::kMap:
+        return "map";
+      case support::BuiltinFn::kInsert:
+        return "insert";
+      case support::BuiltinFn::kPopFront:
+        return "pop_front";
+      case support::BuiltinFn::kPopBack:
+        return "pop_back";
+      case support::BuiltinFn::kPushFront:
+        return "push_front";
+      case support::BuiltinFn::kPushBack:
+        return "push_back";
+      case support::BuiltinFn::kExists:
+        return "exists";
+      case support::BuiltinFn::kAssocFirst:
+        return "assoc_first";
+      case support::BuiltinFn::kAssocLast:
+        return "assoc_last";
+      case support::BuiltinFn::kAssocNext:
+        return "assoc_next";
+      case support::BuiltinFn::kAssocPrev:
+        return "assoc_prev";
+      case support::BuiltinFn::kGetc:
+        return "getc";
+      case support::BuiltinFn::kPutc:
+        return "putc";
+      case support::BuiltinFn::kToupper:
+        return "toupper";
+      case support::BuiltinFn::kTolower:
+        return "tolower";
+      case support::BuiltinFn::kCompare:
+        return "compare";
+      case support::BuiltinFn::kIcompare:
+        return "icompare";
+      case support::BuiltinFn::kSubstr:
+        return "substr";
+      case support::BuiltinFn::kAtoi:
+        return "atoi";
+      case support::BuiltinFn::kAtohex:
+        return "atohex";
+      case support::BuiltinFn::kAtooct:
+        return "atooct";
+      case support::BuiltinFn::kAtobin:
+        return "atobin";
+      case support::BuiltinFn::kAtoreal:
+        return "atoreal";
+      case support::BuiltinFn::kItoa:
+        return "itoa";
+      case support::BuiltinFn::kHextoa:
+        return "hextoa";
+      case support::BuiltinFn::kOcttoa:
+        return "octtoa";
+      case support::BuiltinFn::kBintoa:
+        return "bintoa";
+      case support::BuiltinFn::kRealtoa:
+        return "realtoa";
+      case support::BuiltinFn::kTrigger:
+        return "trigger";
+      case support::BuiltinFn::kAwait:
+        return "await";
+      case support::BuiltinFn::kTriggered:
+        return "triggered";
+      case support::BuiltinFn::kEnumFirst:
+        return "enum_first";
+      case support::BuiltinFn::kEnumLast:
+        return "enum_last";
+      case support::BuiltinFn::kEnumNum:
+        return "enum_num";
+      case support::BuiltinFn::kEnumName:
+        return "enum_name";
+      case support::BuiltinFn::kEnumNext:
+        return "enum_next";
+      case support::BuiltinFn::kEnumPrev:
+        return "enum_prev";
+      case support::BuiltinFn::kIsUnknown:
+        return "is_unknown";
+      case support::BuiltinFn::kGet:
+        return "get";
+      case support::BuiltinFn::kSet:
+        return "set";
+      case support::BuiltinFn::kMutate:
+        return "mutate";
+      case support::BuiltinFn::kServices:
+        return "services";
     }
-    throw InternalError(
-        "HirDumper::FormatAssociativeMethodKind: unknown "
-        "AssociativeMethodKind");
+    throw InternalError("HirDumper::FormatBuiltinFn: unknown BuiltinFn");
   }
 
   static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
@@ -694,30 +660,9 @@ class HirDumper {
             [](const BuiltinMethodRef& b) -> std::string {
               return std::visit(
                   Overloaded{
-                      [](EnumMethodKind k) -> std::string {
+                      [](support::BuiltinFn fn) -> std::string {
                         return std::format(
-                            "EnumMethod \"{}\"", FormatEnumMethodKind(k));
-                      },
-                      [](StringMethodKind k) -> std::string {
-                        return std::format(
-                            "StringMethod \"{}\"", FormatStringMethodKind(k));
-                      },
-                      [](EventMethodKind k) -> std::string {
-                        return std::format(
-                            "EventMethod \"{}\"", FormatEventMethodKind(k));
-                      },
-                      [](ArrayMethodKind k) -> std::string {
-                        return std::format(
-                            "ArrayMethod \"{}\"", FormatArrayMethodKind(k));
-                      },
-                      [](QueueMethodKind k) -> std::string {
-                        return std::format(
-                            "QueueMethod \"{}\"", FormatQueueMethodKind(k));
-                      },
-                      [](AssociativeMethodKind k) -> std::string {
-                        return std::format(
-                            "AssociativeMethod \"{}\"",
-                            FormatAssociativeMethodKind(k));
+                            "BuiltinFn \"{}\"", FormatBuiltinFn(fn));
                       },
                       [](IteratorMethodKind k) -> std::string {
                         return std::format(

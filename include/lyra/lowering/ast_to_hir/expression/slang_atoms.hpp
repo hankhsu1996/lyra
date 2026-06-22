@@ -12,9 +12,9 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
-#include "lyra/hir/method.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 // Stateless slang -> HIR translators. Each function is a pure 1:1 mapping
@@ -44,19 +44,19 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
     -> support::SystemSubroutineKind;
 
 auto LowerEnumMethodName(std::string_view name)
-    -> std::optional<hir::EnumMethodKind>;
+    -> std::optional<support::BuiltinFn>;
 
 auto LowerStringMethodName(std::string_view name)
-    -> std::optional<hir::StringMethodKind>;
+    -> std::optional<support::BuiltinFn>;
 
 auto LowerArrayMethodName(std::string_view name)
-    -> std::optional<hir::ArrayMethodKind>;
+    -> std::optional<support::BuiltinFn>;
 
 auto LowerQueueMethodName(std::string_view name)
-    -> std::optional<hir::QueueMethodKind>;
+    -> std::optional<support::BuiltinFn>;
 
 auto LowerAssociativeMethodName(std::string_view name)
-    -> std::optional<hir::AssociativeMethodKind>;
+    -> std::optional<support::BuiltinFn>;
 
 // Recover the original user-written rhs from slang's compound expansion:
 // slang lowers `lhs op= e` to `right = Conv(lhs.type) { BinaryOp(op) {

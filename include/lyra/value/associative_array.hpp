@@ -283,6 +283,10 @@ class AssociativeArray {
     return false;
   }
 
+  [[nodiscard]] auto IsUnknown() const -> PackedArray {
+    return PackedArray::Bit(HasUnknown());
+  }
+
  private:
   [[nodiscard]] auto IsInvalidKey(const K& key) const -> bool {
     if constexpr (std::same_as<K, PackedArray>) {

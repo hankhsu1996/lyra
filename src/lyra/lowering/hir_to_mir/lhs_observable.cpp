@@ -2,7 +2,6 @@
 
 #include <variant>
 
-#include "lyra/mir/builtin_method.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -11,13 +10,11 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Yields the container access chain's base argument when `expr` is a
-// container access (per `mir::IsContainerAccessCall`); null otherwise.
+// container access (per `mir::IsContainerAccessCallee`); null otherwise.
 auto AsContainerAccessBase(const mir::Expr& expr) -> const mir::ExprId* {
   const auto* call = std::get_if<mir::CallExpr>(&expr.data);
   if (call == nullptr) return nullptr;
-  const auto* callee = std::get_if<mir::BuiltinMethodCallee>(&call->callee);
-  if (callee == nullptr) return nullptr;
-  if (!mir::IsContainerAccessCall(*callee)) return nullptr;
+  if (!mir::IsContainerAccessCallee(call->callee)) return nullptr;
   if (call->arguments.empty()) return nullptr;
   return &call->arguments.front();
 }

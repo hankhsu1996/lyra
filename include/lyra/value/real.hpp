@@ -143,6 +143,10 @@ class RealValue {
     return false;
   }
 
+  [[nodiscard]] static auto IsUnknown() -> PackedArray {
+    return PackedArray::Bit(false);
+  }
+
   // LRM Table 6-7: the real default is 0.0. This is the container OOB-shield
   // contract (docs/decisions/runtime-shape-and-default-value.md), so a real can
   // be an unpacked-array element.

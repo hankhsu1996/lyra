@@ -95,11 +95,7 @@ auto LowerNamedEventTimedStmt(
   mir::Expr await_call{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::BuiltinMethodCallee{
-                      .method =
-                          mir::EventMethodInfo{
-                              .kind = mir::EventMethodKind::kAwait}},
+              .callee = mir::BuiltinFnCallee{.id = support::BuiltinFn::kAwait},
               .arguments = {receiver_id},
           },
       .type = process.Module().Unit().builtins.void_type};
@@ -252,10 +248,7 @@ auto LowerEventTriggerStmt(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinMethodCallee{
-                      .method =
-                          mir::EventMethodInfo{
-                              .kind = mir::EventMethodKind::kTrigger}},
+                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kTrigger},
               .arguments = {receiver_id, services_id},
           },
       .type = process.Module().Unit().builtins.void_type};
