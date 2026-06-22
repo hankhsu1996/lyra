@@ -1,4 +1,4 @@
-id: cpp.string_concat_multiple
+id: cpp.string_index_nba
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -8,5 +8,6 @@ input:
 expect:
   exit: 0
   variables:
-    s: "one-two-three"
-    lit: "foobar"
+    pre: 104
+    post: 72
+    s: "Hello"
