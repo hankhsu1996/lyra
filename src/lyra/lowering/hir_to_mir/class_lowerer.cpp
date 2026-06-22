@@ -255,8 +255,9 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
   mir::Class& mir_class = *frame.current_class;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   std::vector<std::optional<mir::MemberId>> slot_vars;
-  std::uint32_t downward_slot = 0;
+  std::uint32_t slot_index = 0;
   for (const auto& cu : hir_scope.cross_unit_refs) {
+    std::string member_name = "xref" + std::to_string(slot_index++);
     if (const auto* up = std::get_if<hir::UpwardHead>(&cu.head)) {
       // `cu.path` runs from the ancestor down to the leaf, shared with the
       // downward direction. Fold it into by-name child hops (each member opens
@@ -272,20 +273,16 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
       std::string signal = std::move(tail.back().name);
       tail.pop_back();
 
-      std::string member_name = "up_" + up->ancestor_name;
-      for (const auto& hop : tail) {
-        member_name += "_" + hop.name;
-        for (const std::uint32_t index : hop.indices) {
-          member_name += std::to_string(index);
-        }
-      }
-      member_name += "_" + signal;
-
+      const mir::ExternalRefMatch match =
+          up->match == hir::UpwardMatch::kDefName
+              ? mir::ExternalRefMatch::kDefName
+              : mir::ExternalRefMatch::kScopeName;
       const mir::TypeId leaf = module.TranslateType(cu.type);
       const mir::TypeId ext_type = module.Unit().AddType(
           mir::ExternalRefType{
               .element = leaf,
               .ancestor = up->ancestor_name,
+              .match = match,
               .tail = std::move(tail),
               .signal = std::move(signal)});
       const mir::MemberId var = mir_class.AddMember(
@@ -304,13 +301,10 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
           mir::PointerType{
               .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed});
       const mir::MemberId slot = mir_class.AddMember(
-          mir::MemberDecl{
-              .name = "xref" + std::to_string(downward_slot),
-              .type = slot_type});
+          mir::MemberDecl{.name = std::move(member_name), .type = slot_type});
       lowerer.AddCrossUnitRefTarget(
           mir::MemberRef{.hops = {.value = 0}, .var = slot}, slot_type);
       slot_vars.emplace_back(slot);
-      ++downward_slot;
     }
   }
   return slot_vars;
@@ -477,10 +471,9 @@ void ValidateConstructOwnedObjectStmt(
   }
 }
 
-// The for-stmt body block is one level below the parent constructor block
-// where the induction var was declared, so a `LocalRef` to that var read from
-// inside the body always hops up once. This helper documents the +1 instead of
-// writing it inline.
+// The for-stmt body block is one level below the parent constructor block where
+// the induction var was declared, so a `LocalRef` to that var read from inside
+// the body hops up once.
 auto MakeForBodyInductionVarArg(mir::LocalId induction_var_id, mir::TypeId type)
     -> mir::Expr {
   return mir::Expr{
@@ -830,9 +823,10 @@ auto ClassLowerer::Run(
               .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
     }
 
-    // A value-typed var is a signal: record its address under its name so a
-    // cross-unit referrer resolves it by name at construction. Owned children
-    // (pointer / vector / object) and resolution slots register differently.
+    // A value signal, or a named event, records its address under its name so a
+    // cross-unit referrer resolves it by name at construction. The excluded
+    // members -- owned children and cross-unit reference slots -- are not
+    // signals.
     const bool is_signal =
         !std::holds_alternative<mir::PointerType>(var_data) &&
         !std::holds_alternative<mir::VectorType>(var_data) &&

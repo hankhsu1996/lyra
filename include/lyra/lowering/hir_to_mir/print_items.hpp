@@ -44,8 +44,8 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind;
 //   - else if `fmt_req == kOptional`, every argument from `arg_offset`
 //     onward is rendered with `default_radix` (LRM 21.2.1.1);
 //   - else (`fmt_req == kRequired`) lowering returns
-//     `diag::Unsupported` -- runtime-evaluated format strings are
-//     deferred and tracked under `docs/progress/display.md`.
+//     `diag::Unsupported` -- a runtime-evaluated format string is not
+//     yet supported.
 // `arg_offset` is 1 for file-output variants whose first call argument
 // is the MCD/FD descriptor, or for `$sformat` / `$swrite*` whose first
 // argument is the output_var lvalue; 0 otherwise.

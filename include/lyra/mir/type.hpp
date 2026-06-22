@@ -143,7 +143,7 @@ struct ExternalUnitObjectType {
 };
 
 // The runtime object-tree base class `lyra::runtime::Scope`, type-erased. A
-// by-name navigation handle (`GetChild` / `ResolveUpward` result) is a
+// by-name navigation handle (a `GetChild` result) is a
 // `PointerType{ScopeType, kBorrowed}`; the concrete child class is unknown
 // across the unit boundary, so only the runtime base is named.
 struct ScopeType {
@@ -250,16 +250,24 @@ struct ChildStep {
   auto operator==(const ChildStep&) const -> bool = default;
 };
 
+// How the climb matches the ancestor named `ancestor` (LRM 23.8): against the
+// ancestor's module definition name (a module-instance head) or against the
+// scope's own name (a named generate block, or the `$root` absolute-path
+// anchor). The two keys compare against different runtime accessors, so the
+// axis rides the type.
+enum class ExternalRefMatch : std::uint8_t { kDefName, kScopeName };
+
 // An upward hierarchical reference's storage: a resolved pointer to a leaf of
-// `element`, reached by climbing to the ancestor named `ancestor`, walking
-// `tail` down through its owned children by name, then fetching `signal` (LRM
-// 23.8). `tail` is empty when the leaf sits directly on the ancestor. Like
-// ExternalUnitObjectType it carries the cross-unit symbol on the type; the
-// address binds at construction, never the layout. Emitted as the runtime
-// `ExternUp<element>` member.
+// `element`, reached by climbing to the ancestor named `ancestor` (matched by
+// `match`), walking `tail` down through its owned children by name, then
+// fetching `signal` (LRM 23.8). `tail` is empty when the leaf sits directly on
+// the ancestor. Like ExternalUnitObjectType it carries the cross-unit symbol on
+// the type; the address binds at construction, never the layout. Emitted as the
+// runtime `ExternUp<element>` member.
 struct ExternalRefType {
   TypeId element;
   std::string ancestor;
+  ExternalRefMatch match;
   std::vector<ChildStep> tail;
   std::string signal;
 

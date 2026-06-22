@@ -15,16 +15,13 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 
 ## Sub-Steps
 
-- [ ] R1 -- Promote `Builtins` (canonical TypeIds for `int`, `bit[0]`, `string`, `void`, `realtime`)
-      out of `UnitLoweringState` and onto `mir::CompilationUnit`. Today the table lives on the HIR
-      -> MIR lowering state, which makes the canonical TypeIds invisible to any other MIR consumer.
-      The literal-synthesis helpers that sit on `UnitLoweringState` (currently just
-      `MakeInt32LiteralExpr`, sibling forms expected) follow it: they move into `lyra::mir` as free
-      functions taking a `mir::CompilationUnit&`. **Why deferred**: no non-HIR-to-MIR consumer
-      exists today; the lowering-state-scoped factory is sufficient until a second consumer arrives.
-      **Trigger**: when a MIR-to-LLVM lowering (or a MIR-level optimization pass) first needs the
-      canonical builtin TypeIds; at that point the per-consumer copy temptation is the smell that
-      forces this move.
+- [x] R1 -- The canonical builtin TypeIds (`int`, `bit[0]`, `string`, `void`, `realtime`, and the
+      runtime-library siblings) live on `mir::CompilationUnit`, populated by its constructor and
+      read off the unit by every MIR consumer rather than scoped to the lowering pass. The
+      literal-synthesis helpers are free functions in `lyra::mir` taking the canonical TypeId they
+      synthesize against, so any MIR consumer can build a literal without reaching into a
+      lowering-state factory. The former lowering-state table is gone with the lowering-state
+      god-objects it used to sit on (R9 / R10).
 
 - [x] R2 -- Non-integral value-change observability. The wrapping-gate realignment this entry
       originally described had already landed under R12: observable storage is a first-class
@@ -272,19 +269,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `PackedArray`. The backend post-process casts that wrapped a host integer back into an SV
       shape are gone; render reads call result and argument types straight from MIR.
 
-- [ ] R18 -- Rewrite the MIR-to-C++ backend to free functions per node kind, with no
-      `RenderContext`, no class hierarchy, and no `WalkFrame`. Once R11 has removed the mutable
-      escape hatch, and R14 + R15 + R16 + R17 + R12 have closed every render-time decision that
-      currently lives on the context, the render layer's per-task state collapses to a
-      procedural-scope chain (for hops resolution within one callable body) and a temp counter --
-      both local to one callable body, both plain locals in the callable's render function. Each
-      callable kind (process, task, function, constructor, fork-branch, deferred closure) becomes
-      one render function; per-node-kind handlers are free functions taking only what they read. The
-      result is the mechanical-translation shape rendering should always have had: a rendering fold,
-      not a construction pass. `lowering_organization.md` already reflects this distinction
-      (invariant 9, the "Rendering Folds" section, and the narrowed `*Context` forbidden shapes);
-      this cut brings the code to the fold shape the contract now describes. **Trigger**: R11, R12,
-      R14, R15, R16, R17 have all landed; ready to pick up.
+- [x] R18 -- The MIR-to-C++ backend is a rendering fold: per-node-kind handlers are free functions
+      that take only what they read, with no `RenderContext`, no render-pass class hierarchy, and no
+      `WalkFrame`. The render layer's only per-descent state is an immutable walk position carrying
+      the compilation unit and the enclosing-scope chain (for hops resolution within one callable
+      body), copied on descent and growing no member per concept. Each callable kind (process, task,
+      function, constructor, fork-branch, deferred closure) renders through one entry function. This
+      is the mechanical-translation shape rendering should always have had -- a fold, not a
+      construction pass -- matching the distinction `lowering_organization.md` draws (invariant 9
+      and the "Rendering Folds" section).
 
 - [x] R19 -- LRM 10.5 variable initialization lowers to an `AssignExpr` statement at the top of
       `constructor_block.root_stmts`, with the value being the user-supplied expression when present
@@ -476,6 +469,20 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       assignment exactly as it does in a process. **Trigger**: when a structural-context string /
       aggregate element read is needed, or the next time a per-kind guard drifts between the two
       paths.
+
+- [ ] R35 -- Resolve the intra-unit part of a hierarchical reference at compile time as typed member
+      access, not by name at construction. `reference_resolution.md` invariant 2 says an intra-unit
+      reference -- including one into a same-unit named generate scope -- resolves at compile time
+      as a constructed-object reference plus a compile-time offset. Today such a reference is
+      lowered like a cross-unit one: a borrowed-pointer slot filled by a runtime by-name navigation
+      (`GetChild` / `GetSignal`) from `self`, even though the whole path stays inside the unit and
+      its layout is known at compile time. Only the genuine cross-unit hop (into another unit's
+      internal) must stay by name. Target shape: the intra-unit prefix is typed member access, and a
+      fully intra-unit reference is a plain member access with no runtime slot. **Blocker**: this
+      needs a MIR member-access form that descends into an owned child object's member, resolving
+      the member against the receiver's type. Member access today is hops-relative to the enclosing
+      class and cannot descend, so this rests on a new member-access capability that touches the
+      member-access model. **Trigger**: when that descend capability is designed and built.
 
 ## Out of Scope
 

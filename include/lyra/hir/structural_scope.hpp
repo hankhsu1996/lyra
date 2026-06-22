@@ -59,12 +59,12 @@ using PathStep = std::variant<MemberHop, IndexHop>;
 // its position in the scope. Both resolve to one owned-child companion var at
 // construction, so the navigation past the head is identical. An upward
 // reference (LRM 23.6) climbs the parent chain at construction to the nearest
-// ancestor whose instance or module name is `ancestor_name`; from there both
-// directions share `path` to reach the leaf, by name across the unit boundary
-// -- the referrer never names the ancestor's unit type, which it does not
-// depend on (docs/architecture/emission_model.md). The child cannot know its
-// depth at compile time, so it locates the ancestor by name rather than a
-// baked-in offset.
+// matching ancestor named `ancestor_name`; from there both directions share
+// `path` to reach the leaf, by name across the unit boundary -- the referrer
+// never names the ancestor's unit type, which it does not depend on
+// (docs/architecture/emission_model.md). The child cannot know its depth at
+// compile time, so it locates the ancestor by name rather than a baked-in
+// offset.
 struct GenerateChildRef {
   GenerateId generate;
   StructuralScopeId scope;
@@ -72,8 +72,20 @@ struct GenerateChildRef {
 struct DownwardHead {
   std::variant<InstanceMemberId, GenerateChildRef> child;
 };
+
+// How an upward reference's head identifies its ancestor on the parent chain.
+// A module-instance head matches the ancestor's module definition name (LRM
+// 23.8): the key is class-level, so one artifact serves every depth, and an
+// ancestor whose instance name merely equals it does not match. A named
+// generate block or a `$root`-anchored path instead matches the ancestor
+// scope's own name -- the generate-block label or `$root` -- because that name
+// is itself the lookup key (LRM 23.6, 23.8). The two keys compare against
+// different scopes at runtime, so the axis rides the head.
+enum class UpwardMatch : std::uint8_t { kDefName, kScopeName };
+
 struct UpwardHead {
   std::string ancestor_name;
+  UpwardMatch match;
 };
 using CrossUnitRefHead = std::variant<DownwardHead, UpwardHead>;
 
