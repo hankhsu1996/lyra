@@ -127,18 +127,19 @@ Unpacked array support follows these invariants:
 
    `mir::UnpackedArrayType { dim, element_type }` -> `lyra::value::UnpackedArray<` +
    `render(element_type)` + `>`. The wrapper owns a private `std::vector<T>` and exposes a surface
-   symmetric with `PackedArray` -- `ElementAt(const PackedArray&)`, `Slice(offset, count)`,
-   `operator==` and `CaseEqual` returning a 1-bit `PackedArray` -- so the substrate-asymmetric
-   operations (equality with X / Z propagation, range selectors, observability hooks) live behind a
-   single uniform method surface. LRM 7.4.5 invalid-index handling lives in the wrapper too:
-   `ElementAt` returns `T&` (or `const T&` from the const overload); on an invalid index the
-   returned reference is to the wrapper's `oob_slot_` shield, restored to canonical state via
-   `T::ResetToDefault` immediately before being handed out so any prior OOB write is erased.
-   Element-level compound semantics live on `PackedArray` directly -- the wrapper carries no per-T
-   forwarder. `Slice` (non-const) returns an `UnpackedArrayRef<T>` proxy for slice writeback; slice
-   reads on partially-OOB positions handle the in-range and OOB elements per-element rather than at
-   slice granularity, matching `PackedArray::ExtractBits` / `AssignSlice`'s per-bit OOB treatment.
-   See `docs/decisions/runtime-shape-and-default-value.md` for the shield contract.
+   symmetric with `PackedArray` -- element access by position, slice, `operator==` and `CaseEqual`
+   returning a 1-bit `PackedArray` -- so the substrate-asymmetric operations (equality with X / Z
+   propagation, range selectors, observability hooks) live behind a single uniform method surface.
+   LRM 7.4.5 invalid-index handling lives in the wrapper too: positional access returns `T&` (or
+   `const T&` from the const overload); on an invalid index the returned reference is to the
+   wrapper's shield slot, restored to canonical state via `T::ResetToDefault` immediately before
+   being handed out so any prior OOB write is erased. Element-level compound semantics live on
+   `PackedArray` directly -- the wrapper carries no per-T forwarder. The write-side slice
+   (`SliceRef`) returns a write-through proxy whose destructor scatters back into the receiver's
+   storage; slice reads on partially-OOB positions handle the in-range and OOB elements per-element
+   rather than at slice granularity, matching the packed array's per-bit OOB treatment in
+   bit-extract and slice-assign. See `docs/decisions/runtime-shape-and-default-value.md` for the
+   shield contract.
 
 3. **Default initialization emits a `ConstructExpr` whose first positional argument is the
    canonical-default element and whose second is an `ArrayLiteralExpr` rendered as
@@ -193,8 +194,8 @@ Closed under this decision:
 - `UnpackedArrayType.dims: vector<UnpackedRange>` collapses to a single `dim: UnpackedRange` field
   at both HIR and MIR.
 - Backend cpp gains unpacked type rendering, unpacked default-init emit, and unpacked literal-init
-  emit. Element-read on unpacked bases routes through
-  `UnpackedArray<T>::ElementAt(const PackedArray&)`, symmetric with `PackedArray::ElementAt`.
+  emit. Element access on unpacked bases routes through the wrapper's positional accessor, symmetric
+  with the packed-array positional accessor.
 - 1D and multi-dim fall out at every layer from the recursive shape -- no separate code path per dim
   count.
 

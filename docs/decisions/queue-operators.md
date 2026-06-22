@@ -20,27 +20,27 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
 
 ## Decisions
 
-1. **A queue access operator is a built-in method call, not a select node.** `q[i]` and `q[a:b]`
-   have no native C++ expression -- each realizes as `receiver.Method(args)` on the runtime
-   `Queue<T>` (`ElementAt`, `WriteRef`, `Slice`). So they lower to the existing call primitive: a
-   `CallExpr` whose callee is a `QueueMethodKind` (the same first-class home as `size` /
-   `push_back`), with the receiver as `arguments[0]` and the index or bounds as the remaining
-   arguments. The element-access methods carry no SystemVerilog syntax -- they are compiler-internal
-   -- but they sit at the same level as the SV-callable queue methods because both are function
-   calls. The backend render is the one generic built-in-method-call render
-   (`(arg0).Name(arg1, ...)`); no queue-specific access node or render path exists. A dedicated MIR
-   node was rejected: it would duplicate an existing primitive (a select, or a call) and freeze one
-   receiver type's argument shape -- packed part-select's `(offset, compile-time width)` -- into the
-   IR, which is exactly what does not fit a queue's runtime `(lo, hi)` bounds. The LRM 7.10.1
-   clamping and the append-vs-discard rules live in the runtime method, the same way packed
-   bit-extraction lives in `PackedArray::Slice`; each backend realizes the method per receiver type.
+1. **A queue access operator is a built-in method call, not a select node.** Indexed and slice
+   access on a queue have no native C++ expression -- each realizes as a method call on the runtime
+   queue value. They therefore lower to the existing call primitive: a call whose callee is a
+   built-in method identifier (the same first-class home as `size` / `push_back`), with the receiver
+   as the first argument and the index or bounds as the remaining arguments. The element-access
+   entries carry no SystemVerilog syntax -- they are compiler-internal -- but they sit at the same
+   level as the SV-callable queue methods because both are function calls. The backend renders
+   through the one generic built-in-method-call rule; no queue-specific access node or render path
+   exists. A dedicated MIR node was rejected: it would duplicate an existing primitive (a select, or
+   a call) and freeze one receiver type's argument shape -- a packed part-select's
+   `(offset, compile-time width)` -- into the IR, which is exactly what does not fit a queue's
+   runtime `(lo, hi)` bounds. The LRM 7.10.1 clamping and the append-vs-discard rules live in the
+   runtime method, the same way packed bit-extraction lives in the packed array's slice method; each
+   backend realizes the method per receiver type.
 
 2. **Read and write are different methods, chosen at lowering.** A read takes the default-on-miss
-   `ElementAt`; a write (and the `q[$+1]` append) takes the append-aware `WriteRef`. The distinction
-   is resolved where it is known -- the assignment lowering marks its left-hand side as a write
-   target, and the queue element-select lowers to `WriteRef` under that flag and `ElementAt`
-   otherwise. Keeping the choice at lowering leaves the backend render purely mechanical: it emits
-   the method the node names and never re-decides read versus write.
+   element accessor; a write (and the `q[$+1]` append) takes the append-aware write-side accessor.
+   The distinction is resolved where it is known -- the assignment lowering marks its left-hand side
+   as a write target, and the queue element-select picks the write-side method under that flag and
+   the read-side otherwise. Keeping the choice at lowering leaves the backend render purely
+   mechanical: it emits the method the node names and never re-decides read versus write.
 
 3. **Unpacked concatenation reuses the concatenation value-build primitive.** Packed, string, and
    queue `{...}` are the same `ConcatExpr` primitive, realized per result type -- a bit join, a
@@ -90,5 +90,5 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
 - `value-assignment-and-moved-from.md` -- the type-vs-value distinction the queue's shape and bound
   follow.
 - `runtime-shape-and-default-value.md` -- the element-shape shield slot a queue carries.
-- `array-method-dispatch.md` -- the built-in method-call mechanism these operators reuse rather than
+- `builtin-call-identity.md` -- the built-in method-call mechanism these operators reuse rather than
   adding select nodes beside.

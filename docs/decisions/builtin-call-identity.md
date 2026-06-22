@@ -214,7 +214,7 @@ applicable. No render-side special case for any entry.
   `callee + arguments` with no family axis at MIR level).
 - `decisions/runtime-effects-as-generic-calls.md` (the flat-callee pattern this decision extends to
   built-in method calls).
-- `decisions/array-method-dispatch.md` (LRM 7.12 family dispatch; its "Subsequent revision" note
-  records this transition for the array family).
+- `decisions/array-method-dispatch.md` (LRM 7.12 array runtime semantics; its earlier per-family
+  dispatch shape is superseded here).
 - `decisions/callable-receiver.md` (`self`; the receiver mechanics this decision keeps unchanged).
 - `progress/refactor.md` R29 (tracking entry for the work that lands this shape).
