@@ -191,31 +191,6 @@ conversions. HIR-to-MIR's observable wrap rule treats `RealType` / `ShortRealTyp
 like any other value-storage type; a module-level `real` signal is observable through the same
 mechanism as a module-level `int` signal.
 
-## Implementation status
-
-- `Storable`, `LyraValue`, `CaseEqualComparable`, `WildcardComparable`, `Ordered` defined in
-  `include/lyra/value/concepts.hpp`.
-- `PackedArray`, `String`, `UnpackedArray`, `DynamicArray`, `Queue`, `AssociativeArray` updated to
-  satisfy the concepts LRM requires. Naming aligned: the host-bool predicate is `IsBitIdentical`
-  across every type.
-- `lyra::runtime::Var<T>` requires `LyraValue` and reads change-detection through `IsBitIdentical`.
-- `IsObservableScalarType` removed from `backend::cpp`.
-- `mir::ObservableType` added; HIR-to-MIR's structural-var lowering wraps eligible value types; the
-  C++ render emits `Var<T_cpp>` for an `ObservableType{T_mir}` field declaration.
-- The HIR-to-MIR generic-`CallExpr` lowering for observable reads / writes (the `Get` / `Set` /
-  `Mutate` shapes above) and the corresponding render simplification have not yet landed; the C++
-  backend currently re-derives the dispatch through a set of per-site predicates
-  (`IsObservableCell`, `LhsRootIsObservableScalar`, the four `MethodMutatesReceiver` tables,
-  `RenderMethodReceiver`). These predicates are transitional residue and retire with the lowering
-  change.
-- `lyra::value::Real` / `ShortReal` (a single `RealValue<Host>` template, with `RealTime` an alias
-  of `Real`) have landed and back every SV `real` / `shortreal` / `realtime`; the C++ backend
-  renders the real family as these value types rather than bare `double` / `float`. HIR-to-MIR's
-  wrap rule treats them as observable value-storage, so a module-level real signal is a `Var<Real>`,
-  and a real is a legal unpacked-array element. `===` / `!==` on a real (or real-leaf aggregate)
-  operand is rejected in HIR-to-MIR lowering with an error (LRM Table 11-1); the render path is
-  unchanged and never sees the form.
-
 ## Forbidden shapes
 
 - A method on `lyra::value::*` whose name borrows an LRM operator's terminology while serving the

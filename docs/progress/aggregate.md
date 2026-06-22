@@ -99,11 +99,10 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       `.size()` and `.delete()` (LRM 7.5.2 / 7.5.3); the LRM 7.12.2 ordering subset that takes no
       `with` clause (`.reverse()`, `.sort()`, `.rsort()`); the LRM 7.12.3 reduction subset that
       takes no `with` clause (`.sum()`, `.product()`, `.and()`, `.or()`, `.xor()`). Dispatch routes
-      receiver-type-bound calls through the existing `BuiltinMethodRef` first-class home alongside
-      enum / string / event methods; system-function array-querying counterparts (`$size`,
-      `$dimensions`, etc. -- LRM 7.11 / 20.7) are a separate dispatch path and not bundled here.
-      Slang gates element-type constraints upstream (integral element for reductions, comparable for
-      sort).
+      receiver-type-bound calls through the same built-in-method call mechanism that serves enum /
+      string / event methods; system-function array-querying counterparts (`$size`, `$dimensions`,
+      etc. -- LRM 7.11 / 20.7) are a separate dispatch path and not bundled here. Slang gates
+      element-type constraints upstream (integral element for reductions, comparable for sort).
 
 - [x] DA6b -- The `with`-clause variants of the methods that accept one (`sort`, `rsort`, and the
       reductions), plus the LRM 7.12.4 `item.index` iterator method. The `with` expression is
