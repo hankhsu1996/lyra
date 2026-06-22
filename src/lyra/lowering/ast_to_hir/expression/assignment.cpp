@@ -19,95 +19,10 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/hir/conversion.hpp"
-#include "lyra/hir/method.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
-
-namespace {
-
-// LRM 6.16.2: writing `s[i]` mutates one byte through putc, the symmetric
-// counterpart of the getc index read, because a string exposes no element
-// lvalue (include/lyra/value/concepts.hpp). A compound `s[i] op= rhs` reads the
-// current byte with getc, applies the operator, and writes the result back.
-auto LowerStringElementWrite(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::AssignmentExpression& as,
-    const slang::ast::ElementSelectExpression& sel, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  if (as.isNonBlocking()) {
-    // LRM 10.4.2 permits a nonblocking string-element write (a string is not a
-    // dynamically sized array), but scheduling a deferred putc into the NBA
-    // region is not yet modeled.
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedAssignmentTarget,
-        "nonblocking assignment to a string element is not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  auto& module = proc.Module();
-  auto& body = *frame.current_procedural_body;
-
-  auto base_or = proc.LowerExpr(sel.value(), frame);
-  if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const hir::ExprId base_id = body.AddExpr(*std::move(base_or));
-  auto idx_or = proc.LowerExpr(sel.selector(), frame);
-  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const hir::ExprId idx_id = body.AddExpr(*std::move(idx_or));
-
-  auto elem_type = module.InternType(*sel.type, span);
-  if (!elem_type) return std::unexpected(std::move(elem_type.error()));
-
-  hir::ExprId value_id{};
-  if (as.op.has_value()) {
-    const hir::ExprId cur_id = body.AddExpr(
-        hir::Expr{
-            .type = *elem_type,
-            .data =
-                hir::CallExpr{
-                    .callee =
-                        hir::BuiltinMethodRef{
-                            .method = hir::StringMethodKind::kGetc},
-                    .arguments = {base_id, idx_id}},
-            .span = span});
-    auto rhs_or = proc.LowerExpr(BareCompoundUserRhs(as.right()), frame);
-    if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-    hir::Expr rhs_expr = *std::move(rhs_or);
-    if (rhs_expr.type.value != elem_type->value) {
-      const hir::ExprId inner_id = body.AddExpr(std::move(rhs_expr));
-      rhs_expr = hir::Expr{
-          .type = *elem_type,
-          .data =
-              hir::ConversionExpr{
-                  .operand = inner_id, .kind = hir::ConversionKind::kImplicit},
-          .span = span};
-    }
-    const hir::ExprId rhs_id = body.AddExpr(std::move(rhs_expr));
-    value_id = body.AddExpr(
-        hir::Expr{
-            .type = *elem_type,
-            .data =
-                hir::BinaryExpr{
-                    .op = LowerBinaryOp(*as.op), .lhs = cur_id, .rhs = rhs_id},
-            .span = span});
-  } else {
-    auto rhs_or = proc.LowerExpr(as.right(), frame);
-    if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-    value_id = body.AddExpr(*std::move(rhs_or));
-  }
-
-  return hir::Expr{
-      .type = module.Unit().builtins.void_type,
-      .data =
-          hir::CallExpr{
-              .callee =
-                  hir::BuiltinMethodRef{.method = hir::StringMethodKind::kPutc},
-              .arguments = {base_id, idx_id, value_id}},
-      .span = span,
-  };
-}
-
-}  // namespace
 
 auto LowerAssignmentExprProc(
     ProcessLowerer& proc, WalkFrame frame,
@@ -116,13 +31,6 @@ auto LowerAssignmentExprProc(
   auto& module = proc.Module();
   auto validate = ValidateAssignableImpl(module, true, as.left());
   if (!validate) return std::unexpected(std::move(validate.error()));
-
-  if (as.left().kind == slang::ast::ExpressionKind::ElementSelect) {
-    const auto& sel = as.left().as<slang::ast::ElementSelectExpression>();
-    if (sel.value().type->getCanonicalType().isString()) {
-      return LowerStringElementWrite(proc, frame, as, sel, span);
-    }
-  }
 
   auto lhs_or = proc.LowerExpr(as.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
