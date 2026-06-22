@@ -191,6 +191,10 @@ class Queue {
     return false;
   }
 
+  [[nodiscard]] auto IsUnknown() const -> PackedArray {
+    return PackedArray::Bit(HasUnknown());
+  }
+
   // LRM Table 6-7: a queue's default is the empty queue. When this container
   // is itself an OOB shield slot of an outer container, the outer calls this
   // to restore canonical state before handing out a reference.

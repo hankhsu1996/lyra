@@ -153,20 +153,20 @@ wrapper method needs it (`Set` / `Mutate`):
 
 ```
 SV: x = sig;        // observable read
-MIR: ... = Call(BuiltinMethodCallee(ObservableMethod{Get}), [MemberAccess(self, sig)])
+MIR: ... = Call(BuiltinFnCallee{kGet}, [MemberAccess(self, sig)])
 
 SV: sig = v;        // observable whole-write
-MIR: ExprStmt(Call(BuiltinMethodCallee(ObservableMethod{Set}), [
+MIR: ExprStmt(Call(BuiltinFnCallee{kSet}, [
        MemberAccess(self, sig),
-       Call(BuiltinMethodCallee(ScopeMethod{kServices}), [self]),
+       Call(BuiltinFnCallee{kServices}, [self]),
        v
      ]))
 
 SV: sig.itoa(42);   // mutating method on observable receiver
-MIR: ExprStmt(Call(BuiltinMethodCallee(StringMethod{kItoa}), [
-       Call(BuiltinMethodCallee(ObservableMethod{Mutate}), [
+MIR: ExprStmt(Call(BuiltinFnCallee{kItoa}, [
+       Call(BuiltinFnCallee{kMutate}, [
          MemberAccess(self, sig),
-         Call(BuiltinMethodCallee(ScopeMethod{kServices}), [self])
+         Call(BuiltinFnCallee{kServices}, [self])
        ]),
        42
      ]))

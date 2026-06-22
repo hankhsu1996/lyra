@@ -51,12 +51,9 @@ struct LevelLoop {
 auto SizeMethodFor(const slang::ast::Type& array_type)
     -> hir::BuiltinMethodRef {
   if (array_type.getCanonicalType().isString()) {
-    return {.method = hir::StringMethodKind::kLen};
+    return {.method = support::BuiltinFn::kLen};
   }
-  if (array_type.isQueue()) {
-    return {.method = hir::QueueMethodKind::kSize};
-  }
-  return {.method = hir::ArrayMethodKind::kSize};
+  return {.method = support::BuiltinFn::kSize};
 }
 
 // Build the loop for one index-counted dimension. A fixed dimension iterates
@@ -175,7 +172,7 @@ auto BuildAssociativeLevel(
           .type = int32_type,
           .lifetime = hir::VariableLifetime::kAutomatic});
 
-  auto walk_call = [&](hir::AssociativeMethodKind method) -> hir::ExprId {
+  auto walk_call = [&](support::BuiltinFn method) -> hir::ExprId {
     const hir::ExprId key_ref =
         body.AddExpr(hir::MakeProcVarRefExpr(key_var, key_type, span));
     return body.AddExpr(
@@ -192,8 +189,7 @@ auto BuildAssociativeLevel(
   std::vector<hir::ForInit> init;
   init.emplace_back(
       hir::ForInitDecl{
-          .var = more_var,
-          .init = walk_call(hir::AssociativeMethodKind::kFirst)});
+          .var = more_var, .init = walk_call(support::BuiltinFn::kAssocFirst)});
   const hir::ExprId cond_id =
       body.AddExpr(hir::MakeProcVarRefExpr(more_var, int32_type, span));
   const hir::ExprId more_lhs =
@@ -206,7 +202,7 @@ auto BuildAssociativeLevel(
                   .kind = hir::AssignKind::kBlocking,
                   .lhs = more_lhs,
                   .compound_op = std::nullopt,
-                  .rhs = walk_call(hir::AssociativeMethodKind::kNext)},
+                  .rhs = walk_call(support::BuiltinFn::kAssocNext)},
           .span = span});
   return LevelLoop{
       .loop_var = key_var,

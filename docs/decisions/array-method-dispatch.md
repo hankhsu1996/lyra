@@ -38,14 +38,15 @@ semantics uniformly across container kinds; only the AST -> HIR receiver-detecti
 container. Fixed-unpacked, queue, and associative array workstreams extend the routing block, not
 the kind enum.
 
-**Subsequent revision.** This decision pinned `ArrayMethodKind` and its sibling per-family enums
-under `hir::BuiltinMethodRef` / `mir::BuiltinMethodCallee` at a time when container method APIs were
-unaligned and `runtime-effects-as-generic-calls.md` did not yet exist. Once R26
-(`progress/refactor.md`) formalized the cross-container concept system and the generic-call pattern
-became the MIR-wide rule, the per-family enum carries family information the receiver expression's
-type already states -- the same fact in two places, which the generic-call pattern forbids (`mir.md`
-invariant 10). The receiver-type dispatch in `LowerCallExprProc` still routes, but the resolved
-callee is a flat closed-namespace `BuiltinFn` ID; see `progress/refactor.md` R29.
+**Superseded by [builtin-call-identity](builtin-call-identity.md).** This decision pinned
+`ArrayMethodKind` and its sibling per-family enums under `hir::BuiltinMethodRef` /
+`mir::BuiltinMethodCallee` at a time when container method APIs were unaligned and
+`runtime-effects-as-generic-calls.md` did not yet exist. Both layers now share one flat
+closed-namespace `support::BuiltinFn` enum; the receiver-type dispatch in AST-to-HIR routes by
+container kind to the right name table, but the resolved callee is a single id rather than a
+per-family variant arm. The "Decision" paragraphs above stand on the dispatch direction (receiver
+type drives routing) and on the LRM 7.12 cross-container sharing semantics; the per-family enum
+structure they describe is no longer the IR shape.
 
 **Empty-array reduction returns element-shape zero.**
 

@@ -21,7 +21,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/builtin_method.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -652,164 +651,170 @@ auto RenderConversionExpr(
   return *std::move(operand_or);
 }
 
-auto EnumMethodMemberName(mir::EnumMethodKind k) -> std::string_view {
-  switch (k) {
-    case mir::EnumMethodKind::kFirst:
+// The C++ member name this backend names a builtin fn with. The receiver
+// drives `.` vs `->` mechanically off its MIR type at the call site; this
+// table is just the per-id member spelling.
+auto BuiltinFnMemberName(support::BuiltinFn id) -> std::string_view {
+  switch (id) {
+    case support::BuiltinFn::kServices:
+      return "Services";
+    case support::BuiltinFn::kGet:
+      return "Get";
+    case support::BuiltinFn::kSet:
+      return "Set";
+    case support::BuiltinFn::kMutate:
+      return "Mutate";
+    case support::BuiltinFn::kTrigger:
+      return "Trigger";
+    case support::BuiltinFn::kAwait:
+      return "Await";
+    case support::BuiltinFn::kTriggered:
+      return "Triggered";
+    case support::BuiltinFn::kIsUnknown:
+      return "IsUnknown";
+    case support::BuiltinFn::kEnumFirst:
       return "First";
-    case mir::EnumMethodKind::kLast:
+    case support::BuiltinFn::kEnumLast:
       return "Last";
-    case mir::EnumMethodKind::kNum:
+    case support::BuiltinFn::kEnumNum:
       return "Num";
-    case mir::EnumMethodKind::kName:
+    case support::BuiltinFn::kEnumName:
       return "Name";
-    case mir::EnumMethodKind::kNext:
+    case support::BuiltinFn::kEnumNext:
       return "Next";
-    case mir::EnumMethodKind::kPrev:
+    case support::BuiltinFn::kEnumPrev:
+      return "Prev";
+    case support::BuiltinFn::kLen:
+      return "Len";
+    case support::BuiltinFn::kGetc:
+      return "Getc";
+    case support::BuiltinFn::kPutc:
+      return "Putc";
+    case support::BuiltinFn::kToupper:
+      return "Toupper";
+    case support::BuiltinFn::kTolower:
+      return "Tolower";
+    case support::BuiltinFn::kCompare:
+      return "Compare";
+    case support::BuiltinFn::kIcompare:
+      return "Icompare";
+    case support::BuiltinFn::kSubstr:
+      return "Substr";
+    case support::BuiltinFn::kAtoi:
+      return "Atoi";
+    case support::BuiltinFn::kAtohex:
+      return "Atohex";
+    case support::BuiltinFn::kAtooct:
+      return "Atooct";
+    case support::BuiltinFn::kAtobin:
+      return "Atobin";
+    case support::BuiltinFn::kAtoreal:
+      return "Atoreal";
+    case support::BuiltinFn::kItoa:
+      return "Itoa";
+    case support::BuiltinFn::kHextoa:
+      return "Hextoa";
+    case support::BuiltinFn::kOcttoa:
+      return "Octtoa";
+    case support::BuiltinFn::kBintoa:
+      return "Bintoa";
+    case support::BuiltinFn::kRealtoa:
+      return "Realtoa";
+    case support::BuiltinFn::kElement:
+      return "Element";
+    case support::BuiltinFn::kElementRef:
+      return "ElementRef";
+    case support::BuiltinFn::kSlice:
+      return "Slice";
+    case support::BuiltinFn::kSliceRef:
+      return "SliceRef";
+    case support::BuiltinFn::kSize:
+      return "Size";
+    case support::BuiltinFn::kToOwned:
+      return "ToOwned";
+    case support::BuiltinFn::kDelete:
+      return "Delete";
+    case support::BuiltinFn::kReverse:
+      return "Reverse";
+    case support::BuiltinFn::kSort:
+      return "Sort";
+    case support::BuiltinFn::kRsort:
+      return "Rsort";
+    case support::BuiltinFn::kSum:
+      return "Sum";
+    case support::BuiltinFn::kProduct:
+      return "Product";
+    case support::BuiltinFn::kAnd:
+      return "And";
+    case support::BuiltinFn::kOr:
+      return "Or";
+    case support::BuiltinFn::kXor:
+      return "Xor";
+    case support::BuiltinFn::kFind:
+      return "Find";
+    case support::BuiltinFn::kFindIndex:
+      return "FindIndex";
+    case support::BuiltinFn::kFindFirst:
+      return "FindFirst";
+    case support::BuiltinFn::kFindFirstIndex:
+      return "FindFirstIndex";
+    case support::BuiltinFn::kFindLast:
+      return "FindLast";
+    case support::BuiltinFn::kFindLastIndex:
+      return "FindLastIndex";
+    case support::BuiltinFn::kMin:
+      return "Min";
+    case support::BuiltinFn::kMax:
+      return "Max";
+    case support::BuiltinFn::kUnique:
+      return "Unique";
+    case support::BuiltinFn::kUniqueIndex:
+      return "UniqueIndex";
+    case support::BuiltinFn::kMap:
+      return "Map";
+    case support::BuiltinFn::kInsert:
+      return "Insert";
+    case support::BuiltinFn::kPopFront:
+      return "PopFront";
+    case support::BuiltinFn::kPopBack:
+      return "PopBack";
+    case support::BuiltinFn::kPushFront:
+      return "PushFront";
+    case support::BuiltinFn::kPushBack:
+      return "PushBack";
+    case support::BuiltinFn::kExists:
+      return "Exists";
+    case support::BuiltinFn::kAssocFirst:
+      return "First";
+    case support::BuiltinFn::kAssocLast:
+      return "Last";
+    case support::BuiltinFn::kAssocNext:
+      return "Next";
+    case support::BuiltinFn::kAssocPrev:
       return "Prev";
   }
-  throw InternalError("EnumMethodMemberName: unknown kind");
+  throw InternalError("BuiltinFnMemberName: unknown BuiltinFn");
 }
 
-auto StringMethodMemberName(mir::StringMethodKind k) -> std::string_view {
-  switch (k) {
-    case mir::StringMethodKind::kLen:
-      return "Len";
-    case mir::StringMethodKind::kGetc:
-      return "Getc";
-    case mir::StringMethodKind::kPutc:
-      return "Putc";
-    case mir::StringMethodKind::kToupper:
-      return "Toupper";
-    case mir::StringMethodKind::kTolower:
-      return "Tolower";
-    case mir::StringMethodKind::kCompare:
-      return "Compare";
-    case mir::StringMethodKind::kIcompare:
-      return "Icompare";
-    case mir::StringMethodKind::kSubstr:
-      return "Substr";
-    case mir::StringMethodKind::kAtoi:
-      return "Atoi";
-    case mir::StringMethodKind::kAtohex:
-      return "Atohex";
-    case mir::StringMethodKind::kAtooct:
-      return "Atooct";
-    case mir::StringMethodKind::kAtobin:
-      return "Atobin";
-    case mir::StringMethodKind::kAtoreal:
-      return "Atoreal";
-    case mir::StringMethodKind::kItoa:
-      return "Itoa";
-    case mir::StringMethodKind::kHextoa:
-      return "Hextoa";
-    case mir::StringMethodKind::kOcttoa:
-      return "Octtoa";
-    case mir::StringMethodKind::kBintoa:
-      return "Bintoa";
-    case mir::StringMethodKind::kRealtoa:
-      return "Realtoa";
-  }
-  throw InternalError("StringMethodMemberName: unknown kind");
-}
-
-auto ArrayMethodMemberName(mir::ArrayMethodKind k) -> std::string_view {
-  switch (k) {
-    case mir::ArrayMethodKind::kElement:
-      return "Element";
-    case mir::ArrayMethodKind::kElementRef:
-      return "ElementRef";
-    case mir::ArrayMethodKind::kSlice:
-      return "Slice";
-    case mir::ArrayMethodKind::kSliceRef:
-      return "SliceRef";
-    case mir::ArrayMethodKind::kToOwned:
-      return "ToOwned";
-    case mir::ArrayMethodKind::kSize:
-      return "Size";
-    case mir::ArrayMethodKind::kDelete:
-      return "Delete";
-    case mir::ArrayMethodKind::kReverse:
-      return "Reverse";
-    case mir::ArrayMethodKind::kSort:
-      return "Sort";
-    case mir::ArrayMethodKind::kRsort:
-      return "Rsort";
-    case mir::ArrayMethodKind::kSum:
-      return "Sum";
-    case mir::ArrayMethodKind::kProduct:
-      return "Product";
-    case mir::ArrayMethodKind::kAnd:
-      return "And";
-    case mir::ArrayMethodKind::kOr:
-      return "Or";
-    case mir::ArrayMethodKind::kXor:
-      return "Xor";
-    case mir::ArrayMethodKind::kFind:
-      return "Find";
-    case mir::ArrayMethodKind::kFindIndex:
-      return "FindIndex";
-    case mir::ArrayMethodKind::kFindFirst:
-      return "FindFirst";
-    case mir::ArrayMethodKind::kFindFirstIndex:
-      return "FindFirstIndex";
-    case mir::ArrayMethodKind::kFindLast:
-      return "FindLast";
-    case mir::ArrayMethodKind::kFindLastIndex:
-      return "FindLastIndex";
-    case mir::ArrayMethodKind::kMin:
-      return "Min";
-    case mir::ArrayMethodKind::kMax:
-      return "Max";
-    case mir::ArrayMethodKind::kUnique:
-      return "Unique";
-    case mir::ArrayMethodKind::kUniqueIndex:
-      return "UniqueIndex";
-    case mir::ArrayMethodKind::kMap:
-      return "Map";
-  }
-  throw InternalError("ArrayMethodMemberName: unknown kind");
-}
-
-auto EventMethodMemberName(mir::EventMethodKind k) -> std::string_view {
-  switch (k) {
-    case mir::EventMethodKind::kTrigger:
-      return "Trigger";
-    case mir::EventMethodKind::kAwait:
-      return "Await";
-    case mir::EventMethodKind::kTriggered:
-      return "Triggered";
-  }
-  throw InternalError("EventMethodMemberName: unknown kind");
-}
-
-auto RenderMethodCall(
-    const ScopeView& view, const mir::CallExpr& call,
-    std::string_view member_name) -> diag::Result<std::string>;
-
-// True iff the enum method is a class-level static (LRM 6.19.5 `first` /
-// `last` / `num`). The other enum methods (`name` / `next` / `prev`) dispatch
-// on the receiver and render through the generic `(receiver).name(args)`
-// shape.
-auto IsStaticEnumMethod(mir::EnumMethodKind k) -> bool {
-  return k == mir::EnumMethodKind::kFirst || k == mir::EnumMethodKind::kLast ||
-         k == mir::EnumMethodKind::kNum;
-}
-
-// A method call renders generically as `(receiver).name(args)`: the receiver
-// is arguments[0]; every following argument renders uniformly. The decision
-// of whether the receiver is a write target or a value receiver is encoded
-// upstream in the MIR receiver chain by HIR-to-MIR (LHS-side callees,
-// `Deref(Mutate)` wraps for observable cells); the backend reads the chain
-// and emits it.
-auto RenderMethodCall(
-    const ScopeView& view, const mir::CallExpr& call,
-    std::string_view member_name) -> diag::Result<std::string> {
+// `recv.name(args)` or `recv->name(args)` -- the receiver's MIR type
+// (pointer vs value) selects the C++ separator. Reading the type is reading
+// a fact MIR already states (mir.md invariant 10); a backend never
+// re-derives, but mechanical translation of stated structure is its job.
+// See `docs/decisions/builtin-call-identity.md` for the rendering rationale.
+auto RenderBuiltinFnCall(
+    const ScopeView& view, const mir::CallExpr& call, support::BuiltinFn id)
+    -> diag::Result<std::string> {
   if (call.arguments.empty()) {
     throw InternalError(
-        "RenderMethodCall: a method call expects a receiver argument");
+        "RenderBuiltinFnCall: instance call expects a receiver argument");
   }
-  auto recv_or = RenderExpr(view, view.Expr(call.arguments[0]));
+  const mir::Expr& receiver = view.Expr(call.arguments[0]);
+  auto recv_or = RenderExpr(view, receiver);
   if (!recv_or) return std::unexpected(std::move(recv_or.error()));
+  const std::string_view sep =
+      view.Unit().GetType(receiver.type).Kind() == mir::TypeKind::kPointer
+          ? "->"
+          : ".";
   std::string args;
   for (std::size_t i = 1; i < call.arguments.size(); ++i) {
     auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
@@ -817,112 +822,23 @@ auto RenderMethodCall(
     if (i != 1) args += ", ";
     args += *std::move(arg_or);
   }
-  return std::format("({}).{}({})", *recv_or, member_name, args);
-}
-
-auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
-  switch (k) {
-    case mir::QueueMethodKind::kSize:
-      return "Size";
-    case mir::QueueMethodKind::kInsert:
-      return "Insert";
-    case mir::QueueMethodKind::kDelete:
-      return "Delete";
-    case mir::QueueMethodKind::kPopFront:
-      return "PopFront";
-    case mir::QueueMethodKind::kPopBack:
-      return "PopBack";
-    case mir::QueueMethodKind::kPushFront:
-      return "PushFront";
-    case mir::QueueMethodKind::kPushBack:
-      return "PushBack";
-    case mir::QueueMethodKind::kElement:
-      return "Element";
-    case mir::QueueMethodKind::kElementRef:
-      return "ElementRef";
-    case mir::QueueMethodKind::kSlice:
-      return "Slice";
-  }
-  throw InternalError("QueueMethodMemberName: unknown kind");
-}
-
-auto AssociativeMethodMemberName(mir::AssociativeMethodKind k)
-    -> std::string_view {
-  switch (k) {
-    case mir::AssociativeMethodKind::kElement:
-      return "Element";
-    case mir::AssociativeMethodKind::kElementRef:
-      return "ElementRef";
-    case mir::AssociativeMethodKind::kNum:
-    case mir::AssociativeMethodKind::kSize:
-      return "Size";
-    case mir::AssociativeMethodKind::kExists:
-      return "Exists";
-    case mir::AssociativeMethodKind::kDelete:
-      return "Delete";
-    case mir::AssociativeMethodKind::kFirst:
-      return "First";
-    case mir::AssociativeMethodKind::kLast:
-      return "Last";
-    case mir::AssociativeMethodKind::kNext:
-      return "Next";
-    case mir::AssociativeMethodKind::kPrev:
-      return "Prev";
-  }
-  throw InternalError("AssociativeMethodMemberName: unknown kind");
-}
-
-// LRM 20.9 `$isunknown`: side-effect-free per-value query. The result is
-// type-static for everything except 4-state integral packed: a string (LRM
-// 6.16) and a byte-element unpacked array have no unknown plane, and a
-// 2-state packed has its unknown plane fixed at zero. Emitting `Bit(false)`
-// for those cases keeps the closure-IIFE body shape uniform (`if
-// (.IsUnknown()) return -1;`) while making the guard a trivial constant the
-// C++ optimizer dead-code-eliminates. The runtime helper retains its
-// historical `HasUnknown` spelling.
-auto RenderIsUnknownCall(const ScopeView& view, const mir::CallExpr& call)
-    -> diag::Result<std::string> {
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "RenderIsUnknownCall: $isunknown expects a receiver argument");
-  }
-  const mir::Expr& receiver = view.Expr(call.arguments[0]);
-  const auto& ty = view.Unit().GetType(receiver.type);
-  if (!(ty.IsIntegralPacked() && ty.AsIntegralPacked().IsFourState())) {
-    return std::string{"lyra::value::PackedArray::Bit(false)"};
-  }
-  auto receiver_or = RenderExpr(view, receiver);
-  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
   return std::format(
-      "lyra::value::PackedArray::Bit(({}).HasUnknown())", *receiver_or);
+      "({}){}{}({})", *recv_or, sep, BuiltinFnMemberName(id), args);
 }
 
-// `self.Services()` -- reaches the engine facade from the scope handle. The
-// receiver (arguments[0]) is the `self` pointer, so the call is `->`. This
-// is the engine handle every runtime-effect call threads as a plain
-// argument.
-auto RenderServicesCall(const ScopeView& view, const mir::CallExpr& call)
-    -> diag::Result<std::string> {
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "RenderServicesCall: services accessor expects a receiver argument");
+auto RenderBuiltinStaticCall(
+    const ScopeView& view, const mir::CallExpr& call,
+    const mir::BuiltinStaticCallee& callee) -> diag::Result<std::string> {
+  std::string args;
+  for (std::size_t i = 0; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    if (i != 0) args += ", ";
+    args += *std::move(arg_or);
   }
-  auto receiver_or = RenderExpr(view, view.Expr(call.arguments[0]));
-  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  return std::format("({})->Services()", *receiver_or);
-}
-
-auto ObservableMethodMemberName(mir::ObservableMethodKind k)
-    -> std::string_view {
-  switch (k) {
-    case mir::ObservableMethodKind::kGet:
-      return "Get";
-    case mir::ObservableMethodKind::kSet:
-      return "Set";
-    case mir::ObservableMethodKind::kMutate:
-      return "Mutate";
-  }
-  throw InternalError("ObservableMethodMemberName: unknown kind");
+  return std::format(
+      "{}::{}({})", RenderEnumClassName(view.Class(), callee.type_qual),
+      BuiltinFnMemberName(callee.id), args);
 }
 
 // The C++ runtime entry this backend realizes a system subroutine with. Pure
@@ -1116,94 +1032,11 @@ auto RenderCallExpr(
             }
             return std::format("{}({})", decl.name, args);
           },
-          [&](const mir::BuiltinFnCallee&) -> diag::Result<std::string> {
-            throw InternalError(
-                "RenderCallExpr: BuiltinFnCallee has no realization path yet");
+          [&](const mir::BuiltinFnCallee& b) -> diag::Result<std::string> {
+            return RenderBuiltinFnCall(view, call, b.id);
           },
-          [&](const mir::BuiltinStaticCallee&) -> diag::Result<std::string> {
-            throw InternalError(
-                "RenderCallExpr: BuiltinStaticCallee has no realization path "
-                "yet");
-          },
-          [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
-            // Most method families fit the generic `(receiver).name(args)`
-            // shape and resolve through `RenderMethodCall` with a per-kind
-            // member-name table. Four families need different shapes:
-            //   - enum static methods (LRM 6.19.5 `first`/`last`/`num`):
-            //     `EnumClass::Method()` with no receiver
-            //   - associative traversal (LRM 7.9.4-7.9.7): a free runtime
-            //     call splicing services + `Ref<K>`
-            //   - value `$isunknown` (LRM 20.9): type-static optimization
-            //   - scope services accessor: `({receiver})->Services()`
-            return std::visit(
-                Overloaded{
-                    [&](const mir::EnumMethodInfo& m)
-                        -> diag::Result<std::string> {
-                      const auto member = EnumMethodMemberName(m.kind);
-                      if (IsStaticEnumMethod(m.kind)) {
-                        return std::format(
-                            "{}::{}()",
-                            RenderEnumClassName(view.Class(), m.enum_type),
-                            member);
-                      }
-                      return RenderMethodCall(view, call, member);
-                    },
-                    [&](const mir::StringMethodInfo& m) {
-                      return RenderMethodCall(
-                          view, call, StringMethodMemberName(m.kind));
-                    },
-                    [&](const mir::EventMethodInfo& m) {
-                      return RenderMethodCall(
-                          view, call, EventMethodMemberName(m.kind));
-                    },
-                    [&](const mir::ArrayMethodInfo& m) {
-                      return RenderMethodCall(
-                          view, call, ArrayMethodMemberName(m.kind));
-                    },
-                    [&](const mir::QueueMethodInfo& m) {
-                      return RenderMethodCall(
-                          view, call, QueueMethodMemberName(m.kind));
-                    },
-                    [&](const mir::AssociativeMethodInfo& m) {
-                      return RenderMethodCall(
-                          view, call, AssociativeMethodMemberName(m.kind));
-                    },
-                    [&](const mir::ValueMethodInfo& m)
-                        -> diag::Result<std::string> {
-                      switch (m.kind) {
-                        case mir::ValueMethodKind::kIsUnknown:
-                          return RenderIsUnknownCall(view, call);
-                      }
-                      throw InternalError(
-                          "RenderCallExpr: unknown ValueMethodKind");
-                    },
-                    [](const mir::IteratorMethodInfo&)
-                        -> diag::Result<std::string> {
-                      // LRM 7.12.4 `item.index` is resolved at HIR -> MIR to
-                      // a `LocalRef` on the closure's `index`
-                      // parameter binding; reaching the backend means
-                      // closure synthesis failed to rewrite it.
-                      throw InternalError(
-                          "RenderCallExpr: IteratorMethodInfo reached the "
-                          "backend (LRM 7.12.4 -- HIR -> MIR should have "
-                          "rewritten `item.index` to a LocalRef on "
-                          "the closure parameter binding)");
-                    },
-                    [&](const mir::ScopeMethodInfo& m)
-                        -> diag::Result<std::string> {
-                      switch (m.kind) {
-                        case mir::ScopeMethodKind::kServices:
-                          return RenderServicesCall(view, call);
-                      }
-                      throw InternalError(
-                          "RenderCallExpr: unknown ScopeMethodKind");
-                    },
-                    [&](const mir::ObservableMethodInfo& m) {
-                      return RenderMethodCall(
-                          view, call, ObservableMethodMemberName(m.kind));
-                    },
-                },
-                b.method);
+          [&](const mir::BuiltinStaticCallee& b) -> diag::Result<std::string> {
+            return RenderBuiltinStaticCall(view, call, b);
           },
           [&](const mir::ClosureRef& cr) -> diag::Result<std::string> {
             auto closure_or = RenderExpr(view, view.Expr(cr.closure));
@@ -1329,8 +1162,7 @@ auto LhsRootPrimary(const ScopeView& view, const mir::Expr& expr)
   while (true) {
     const auto* call = std::get_if<mir::CallExpr>(&current->data);
     if (call == nullptr) return *current;
-    const auto* callee = std::get_if<mir::BuiltinMethodCallee>(&call->callee);
-    if (callee == nullptr || !mir::IsContainerAccessCall(*callee) ||
+    if (!mir::IsContainerAccessCallee(call->callee) ||
         call->arguments.empty()) {
       return *current;
     }

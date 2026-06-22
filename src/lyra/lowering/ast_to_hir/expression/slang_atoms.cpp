@@ -186,87 +186,87 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
 }
 
 auto LowerEnumMethodName(std::string_view name)
-    -> std::optional<hir::EnumMethodKind> {
-  if (name == "first") return hir::EnumMethodKind::kFirst;
-  if (name == "last") return hir::EnumMethodKind::kLast;
-  if (name == "num") return hir::EnumMethodKind::kNum;
-  if (name == "next") return hir::EnumMethodKind::kNext;
-  if (name == "prev") return hir::EnumMethodKind::kPrev;
-  if (name == "name") return hir::EnumMethodKind::kName;
+    -> std::optional<support::BuiltinFn> {
+  if (name == "first") return support::BuiltinFn::kEnumFirst;
+  if (name == "last") return support::BuiltinFn::kEnumLast;
+  if (name == "num") return support::BuiltinFn::kEnumNum;
+  if (name == "next") return support::BuiltinFn::kEnumNext;
+  if (name == "prev") return support::BuiltinFn::kEnumPrev;
+  if (name == "name") return support::BuiltinFn::kEnumName;
   return std::nullopt;
 }
 
 auto LowerStringMethodName(std::string_view name)
-    -> std::optional<hir::StringMethodKind> {
-  if (name == "len") return hir::StringMethodKind::kLen;
-  if (name == "getc") return hir::StringMethodKind::kGetc;
-  if (name == "putc") return hir::StringMethodKind::kPutc;
-  if (name == "toupper") return hir::StringMethodKind::kToupper;
-  if (name == "tolower") return hir::StringMethodKind::kTolower;
-  if (name == "compare") return hir::StringMethodKind::kCompare;
-  if (name == "icompare") return hir::StringMethodKind::kIcompare;
-  if (name == "substr") return hir::StringMethodKind::kSubstr;
-  if (name == "atoi") return hir::StringMethodKind::kAtoi;
-  if (name == "atohex") return hir::StringMethodKind::kAtohex;
-  if (name == "atooct") return hir::StringMethodKind::kAtooct;
-  if (name == "atobin") return hir::StringMethodKind::kAtobin;
-  if (name == "atoreal") return hir::StringMethodKind::kAtoreal;
-  if (name == "itoa") return hir::StringMethodKind::kItoa;
-  if (name == "hextoa") return hir::StringMethodKind::kHextoa;
-  if (name == "octtoa") return hir::StringMethodKind::kOcttoa;
-  if (name == "bintoa") return hir::StringMethodKind::kBintoa;
-  if (name == "realtoa") return hir::StringMethodKind::kRealtoa;
+    -> std::optional<support::BuiltinFn> {
+  if (name == "len") return support::BuiltinFn::kLen;
+  if (name == "getc") return support::BuiltinFn::kGetc;
+  if (name == "putc") return support::BuiltinFn::kPutc;
+  if (name == "toupper") return support::BuiltinFn::kToupper;
+  if (name == "tolower") return support::BuiltinFn::kTolower;
+  if (name == "compare") return support::BuiltinFn::kCompare;
+  if (name == "icompare") return support::BuiltinFn::kIcompare;
+  if (name == "substr") return support::BuiltinFn::kSubstr;
+  if (name == "atoi") return support::BuiltinFn::kAtoi;
+  if (name == "atohex") return support::BuiltinFn::kAtohex;
+  if (name == "atooct") return support::BuiltinFn::kAtooct;
+  if (name == "atobin") return support::BuiltinFn::kAtobin;
+  if (name == "atoreal") return support::BuiltinFn::kAtoreal;
+  if (name == "itoa") return support::BuiltinFn::kItoa;
+  if (name == "hextoa") return support::BuiltinFn::kHextoa;
+  if (name == "octtoa") return support::BuiltinFn::kOcttoa;
+  if (name == "bintoa") return support::BuiltinFn::kBintoa;
+  if (name == "realtoa") return support::BuiltinFn::kRealtoa;
   return std::nullopt;
 }
 
 auto LowerArrayMethodName(std::string_view name)
-    -> std::optional<hir::ArrayMethodKind> {
-  if (name == "size") return hir::ArrayMethodKind::kSize;
-  if (name == "delete") return hir::ArrayMethodKind::kDelete;
-  if (name == "reverse") return hir::ArrayMethodKind::kReverse;
-  if (name == "sort") return hir::ArrayMethodKind::kSort;
-  if (name == "rsort") return hir::ArrayMethodKind::kRsort;
-  if (name == "sum") return hir::ArrayMethodKind::kSum;
-  if (name == "product") return hir::ArrayMethodKind::kProduct;
-  if (name == "and") return hir::ArrayMethodKind::kAnd;
-  if (name == "or") return hir::ArrayMethodKind::kOr;
-  if (name == "xor") return hir::ArrayMethodKind::kXor;
-  if (name == "find") return hir::ArrayMethodKind::kFind;
-  if (name == "find_index") return hir::ArrayMethodKind::kFindIndex;
-  if (name == "find_first") return hir::ArrayMethodKind::kFindFirst;
-  if (name == "find_first_index") return hir::ArrayMethodKind::kFindFirstIndex;
-  if (name == "find_last") return hir::ArrayMethodKind::kFindLast;
-  if (name == "find_last_index") return hir::ArrayMethodKind::kFindLastIndex;
-  if (name == "min") return hir::ArrayMethodKind::kMin;
-  if (name == "max") return hir::ArrayMethodKind::kMax;
-  if (name == "unique") return hir::ArrayMethodKind::kUnique;
-  if (name == "unique_index") return hir::ArrayMethodKind::kUniqueIndex;
-  if (name == "map") return hir::ArrayMethodKind::kMap;
+    -> std::optional<support::BuiltinFn> {
+  if (name == "size") return support::BuiltinFn::kSize;
+  if (name == "delete") return support::BuiltinFn::kDelete;
+  if (name == "reverse") return support::BuiltinFn::kReverse;
+  if (name == "sort") return support::BuiltinFn::kSort;
+  if (name == "rsort") return support::BuiltinFn::kRsort;
+  if (name == "sum") return support::BuiltinFn::kSum;
+  if (name == "product") return support::BuiltinFn::kProduct;
+  if (name == "and") return support::BuiltinFn::kAnd;
+  if (name == "or") return support::BuiltinFn::kOr;
+  if (name == "xor") return support::BuiltinFn::kXor;
+  if (name == "find") return support::BuiltinFn::kFind;
+  if (name == "find_index") return support::BuiltinFn::kFindIndex;
+  if (name == "find_first") return support::BuiltinFn::kFindFirst;
+  if (name == "find_first_index") return support::BuiltinFn::kFindFirstIndex;
+  if (name == "find_last") return support::BuiltinFn::kFindLast;
+  if (name == "find_last_index") return support::BuiltinFn::kFindLastIndex;
+  if (name == "min") return support::BuiltinFn::kMin;
+  if (name == "max") return support::BuiltinFn::kMax;
+  if (name == "unique") return support::BuiltinFn::kUnique;
+  if (name == "unique_index") return support::BuiltinFn::kUniqueIndex;
+  if (name == "map") return support::BuiltinFn::kMap;
   return std::nullopt;
 }
 
 auto LowerQueueMethodName(std::string_view name)
-    -> std::optional<hir::QueueMethodKind> {
-  if (name == "size") return hir::QueueMethodKind::kSize;
-  if (name == "insert") return hir::QueueMethodKind::kInsert;
-  if (name == "delete") return hir::QueueMethodKind::kDelete;
-  if (name == "pop_front") return hir::QueueMethodKind::kPopFront;
-  if (name == "pop_back") return hir::QueueMethodKind::kPopBack;
-  if (name == "push_front") return hir::QueueMethodKind::kPushFront;
-  if (name == "push_back") return hir::QueueMethodKind::kPushBack;
+    -> std::optional<support::BuiltinFn> {
+  if (name == "size") return support::BuiltinFn::kSize;
+  if (name == "insert") return support::BuiltinFn::kInsert;
+  if (name == "delete") return support::BuiltinFn::kDelete;
+  if (name == "pop_front") return support::BuiltinFn::kPopFront;
+  if (name == "pop_back") return support::BuiltinFn::kPopBack;
+  if (name == "push_front") return support::BuiltinFn::kPushFront;
+  if (name == "push_back") return support::BuiltinFn::kPushBack;
   return std::nullopt;
 }
 
 auto LowerAssociativeMethodName(std::string_view name)
-    -> std::optional<hir::AssociativeMethodKind> {
-  if (name == "num") return hir::AssociativeMethodKind::kNum;
-  if (name == "size") return hir::AssociativeMethodKind::kSize;
-  if (name == "exists") return hir::AssociativeMethodKind::kExists;
-  if (name == "delete") return hir::AssociativeMethodKind::kDelete;
-  if (name == "first") return hir::AssociativeMethodKind::kFirst;
-  if (name == "last") return hir::AssociativeMethodKind::kLast;
-  if (name == "next") return hir::AssociativeMethodKind::kNext;
-  if (name == "prev") return hir::AssociativeMethodKind::kPrev;
+    -> std::optional<support::BuiltinFn> {
+  // LRM 7.9 `num` is an alias of LRM 7.4.3 `size`; both flatten onto kSize.
+  if (name == "num" || name == "size") return support::BuiltinFn::kSize;
+  if (name == "exists") return support::BuiltinFn::kExists;
+  if (name == "delete") return support::BuiltinFn::kDelete;
+  if (name == "first") return support::BuiltinFn::kAssocFirst;
+  if (name == "last") return support::BuiltinFn::kAssocLast;
+  if (name == "next") return support::BuiltinFn::kAssocNext;
+  if (name == "prev") return support::BuiltinFn::kAssocPrev;
   return std::nullopt;
 }
 

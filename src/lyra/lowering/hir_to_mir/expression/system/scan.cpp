@@ -104,10 +104,8 @@ auto EmitIsUnknownGuard(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinMethodCallee{
-                          .method =
-                              mir::ValueMethodInfo{
-                                  .kind = mir::ValueMethodKind::kIsUnknown}},
+                      mir::BuiltinFnCallee{
+                          .id = support::BuiltinFn::kIsUnknown},
                   .arguments = {operand_id}},
           .type = bit_t});
 

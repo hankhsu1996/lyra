@@ -58,6 +58,9 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   argument.
 - [callable-receiver](callable-receiver.md) -- every callable body's first binding is `self`; how it
   is supplied differs per callable form.
+- [builtin-call-identity](builtin-call-identity.md) -- built-in method calls carry a flat
+  closed-namespace identifier (`support::BuiltinFn`) shared between HIR and MIR; per-family enum
+  splits are out.
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control.
 
 ### References and construction

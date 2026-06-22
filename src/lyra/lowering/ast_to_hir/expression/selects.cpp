@@ -42,7 +42,7 @@ auto LowerUnboundedLiteralProc(
           .data =
               hir::CallExpr{
                   .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
-                      .method = hir::QueueMethodKind::kSize}},
+                      .method = support::BuiltinFn::kSize}},
                   .arguments = {*frame.dollar_base}},
           .span = span});
   const hir::ExprId one_id =
