@@ -27,14 +27,13 @@ since the test harness can only probe a variable whose type has an implemented s
       scope. The test framework gained `expect.files` with strict matching (any undeclared file in
       the per-case sandbox fails the case) and per-case sandbox cwd so `$fopen("foo.txt")` writes
       inside the sandbox.
-- [x] DI6 -- `$strobe` / `$strobeb` / `$strobeh` / `$strobeo` (LRM 21.2.2). Lowers to the same
-      `RuntimePrintCall` `$display[bho]` produces, wrapped in a postponed-submit MIR node; the C++
-      backend renders the print inside a `services_->SubmitPostponed([=, this]() { ... })` lambda.
-      Lambda init-capture snapshots procedural locals by value (safe even when the issuing `initial`
-      frame has already returned), and module-signal operands resolve through `this->` and are read
-      at fire time -- so they see NBA-committed values, which is the LRM 21.2.2 semantic. The
-      postponed queue uses the same swap-and-drain shape NBA uses; re-entrant submission during the
-      drain is rejected.
+- [x] DI6 -- `$strobe` / `$strobeb` / `$strobeh` / `$strobeo` (LRM 21.2.2). Lowers to a closure
+      submitted via the postponed-region builtin; the closure body builds and writes the same print
+      items the `$display` family produces. Lambda init-capture snapshots procedural locals by value
+      (safe even when the issuing `initial` frame has already returned), and module-signal operands
+      resolve through the closure's `self` capture and are read at fire time -- so they see
+      NBA-committed values, which is the LRM 21.2.2 semantic. The postponed queue uses the same
+      swap-and-drain shape NBA uses; re-entrant submission during the drain is rejected.
 - [x] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Scope: fixed
       unpacked and dynamic array of integral elements, including mixed-container nesting
       (`int     arr[3][]`, `int arr[][3]`, `int arr[][]`). Output is `'{<elem>, <elem>, ...}` with

@@ -293,17 +293,14 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       their declaration shape itself fixes the field at construction. See
       `docs/decisions/variable-initialization.md`.
 
-- [ ] R20 -- **Runtime effects as generic calls** (design settled in
-      `decisions/runtime-effects-as-generic-calls.md`). Move every runtime effect off the dedicated
-      `RuntimeCallExpr` + payload-struct shape onto the one generic `CallExpr` (callee symbol plus
-      an argument vector, with services threaded as a plain `self.Services()` argument), then retire
-      `RuntimeCallExpr` and its payloads entirely. **Done**: `$finish`, the `$time` family, file
-      I/O, the print-to-sink family, diagnostics (`$info` / `$warning` / `$error`), the
-      string-format family (`$sformat` / `$swrite` / `$sformatf`), `$printtimescale`, and
-      `$timeformat` (the no-argument reset form restores a design-global default the runtime
-      resolves, so set and reset select different runtime entries). The closure-free effects are all
-      on the generic shape now; the closure-bearing effects are carved out to R30 below, and
-      retiring `RuntimeCallExpr` entirely depends on R30.
+- [x] R20 -- **Runtime effects as generic calls** (design settled in
+      `decisions/runtime-effects-as-generic-calls.md`). Every runtime effect is now an ordinary
+      `CallExpr` over a closed-namespace callee, services threaded as a plain `self.Services()`
+      argument; `RuntimeCallExpr` and its payloads are gone. The closure-bearing subset (NBA submit,
+      deferred-assertion submit, `$strobe`, `$sscanf` / `$fscanf`) is tracked separately under R30
+      -- all of its members are now on the generic shape too. The remaining migration debt (families
+      still routed via `SystemSubroutineCallee` rather than `BuiltinFnCallee` / `FreeFnCallee`) is
+      the subject of R37.
 
 - [x] R21 -- **Closed after review: no rename, follow-on rejected.** The proposed rename of the
       HIR-to-MIR structural-var-read helper assumed its name tracked the MIR structural-var-ref expr
@@ -388,15 +385,10 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       mechanically; SV-side `$isunknown` returns the SV `bit` type so no host-bool lift survives at
       the backend. See `decisions/builtin-call-identity.md`.
 
-- [ ] R30 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
-      same decision). Each of these lowers to a generic `CallExpr` over a compiler-synthesized
-      closure: the `$strobe` family (deferred print -- the last effect whose print items the backend
-      still constructs inline), the scan family (`$sscanf` / `$fscanf`, whose write-through output
-      slots are captured into the closure), and the synthesized non-blocking-assignment and
-      deferred-assertion submits (no system-subroutine id -- these need a callee for
-      compiler-synthesized effects). The MIR closure representation this once waited on has landed,
-      and the closure builder (R31) is the construction vehicle. **Trigger**: continuation of
-      `decisions/runtime-effects-as-generic-calls.md`.
+- [x] R30 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
+      same decision). The `$strobe` family, the scan family (`$sscanf` / `$fscanf`), and the
+      synthesized non-blocking-assignment and deferred-assertion submits each lower to a generic
+      `CallExpr` over a compiler-synthesized closure built through the one closure builder (R31).
 
 - [x] R27 -- **Associative-array traversal output write-back.** `first` / `last` / `next` / `prev`
       (LRM 7.9.4 -- 7.9.7) lower to an immediately-invoked closure that reads the index into a plain
@@ -469,6 +461,49 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       target, forcing the const read to scrub the slot a prior write may have dirtied before
       returning -- a const method that mutates. Split the read role from the write role so the read
       path is pure. See `../decisions/runtime-shape-and-default-value.md`.
+
+- [ ] R37 -- Retire `SystemSubroutineCallee` from MIR's Callee variant set. R20 declared every
+      runtime effect "generic" because each was an ordinary `CallExpr`; in practice the closure-free
+      families still route through `SystemSubroutineCallee`, whose identity is an SV system task id
+      -- an HIR / source-language concept that `mir.md` invariant 10 forbids carrying into MIR. Each
+      affected family decomposes into MIR-layer-correct primitives whose receiver matches the
+      operation's true subsystem ownership. The receiver is what fixes the layer; the SV system task
+      id stays at HIR / support as the dispatch key but does not survive as a MIR callee identity.
+
+  Sub-items, by family:
+  - Pure value-layer (no receiver, render as `lyra::value::Name(...)`):
+    - [x] `$sscanf` / `$fscanf`: pure `value::Scan(input, format, targets...)` + `files`-side
+          `PeekBuffered` / `AdvanceFd` primitives for the file form. The MIR shape of the two SV
+          system tasks differs by primitive composition, not by an enum tag on a unified call.
+    - [x] `$sformat` / `$sformatf` / `$swrite[bho]?`: route to the existing `Format` method (the one
+          print already uses) returning a string; for `$sformat` the call result is assigned to the
+          output lvalue. The dedicated `LyraSFormat` runtime entry retires.
+  - Diagnostic subsystem (`services.Diagnostic()`):
+    - [ ] `$info` / `$warning` / `$error` / `$fatal`: decompose to `services.Format(items)` for the
+          message text, then `services.Diagnostic().Emit{Info,Warning,Error,Fatal}(text)` for the
+          severity-tagged emit. The four severities are distinct methods (parallel to print's
+          `Write` / `Writeln` split), not a single `Emit(severity, text)` with a tag arg.
+  - File-IO subsystem (`services.Files()`):
+    - [ ] `$fopen` / `$fclose` / `$fread` / `$fwrite` / `$fseek` / `$fgetc` / `$fputc` / `$fgets` /
+          `$feof` / `$ferror` / `$ftell` / `$rewind` / `$fflush` / `$ungetc`: each becomes a
+          `BuiltinFnCallee` method on `files` (`files.Open`, `files.Close`, `files.Read`, ...).
+          Runtime free-function `Lyra*` entries retire; the methods are the only surface.
+  - Engine forwarders on `services`:
+    - [ ] `$time` / `$stime` / `$realtime`: read engine state through services methods.
+    - [ ] `$finish` / `$exit` / `$stop`: engine-side control through services methods (today the
+          control flow goes through an await-shape; that stays, the callee identity is what
+          changes).
+    - [ ] `$timeformat` / `$printtimescale`: state setter / formatted-print compositions through
+          services + files in the same shape as print.
+
+- [ ] R38 -- Move `Format` from `RuntimeServices` to the value layer. Today `services.Format(items)`
+      pulls `TimeFormat()` from engine state and runs a per-item value-format walk; the engine-state
+      pull is the only reason it lives on services rather than as a pure
+      `value::Format(items, time_format)` free function the caller threads explicitly. With R37
+      complete the pattern of "pure value ops live at `lyra::value`, engine state is reached through
+      `services`" is consistent everywhere except Format; this entry closes the exception.
+      **Trigger**: after R37 lands and the value-layer free-function surface is the established
+      pattern.
 
 ## Out of Scope
 

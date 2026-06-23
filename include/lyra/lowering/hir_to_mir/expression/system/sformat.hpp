@@ -22,7 +22,6 @@ namespace lyra::lowering::hir_to_mir {
 // violation and raises `InternalError`.
 auto LowerSFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id,
     const support::SFormatSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 
@@ -33,8 +32,7 @@ auto LowerSFormatSystemSubroutineCall(
 // discard.
 auto LowerSFormatSystemSubroutineCallStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    diag::SourceSpan span, const hir::CallExpr& call,
-    support::SystemSubroutineId id, std::string_view name,
+    diag::SourceSpan span, const hir::CallExpr& call, std::string_view name,
     const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Stmt>;
 

@@ -257,6 +257,12 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "write";
     case BuiltinFn::kWriteln:
       return "writeln";
+    case BuiltinFn::kScan:
+      return "scan";
+    case BuiltinFn::kPeekBuffered:
+      return "peek_buffered";
+    case BuiltinFn::kAdvanceFd:
+      return "advance_fd";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }
