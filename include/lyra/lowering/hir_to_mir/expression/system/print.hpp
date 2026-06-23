@@ -10,15 +10,11 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower a print-like system subroutine call into a `mir::Expr`. $display /
-// $write / $fdisplay / $fwrite become a generic `CallExpr` whose arguments are
-// the engine handle, an optional descriptor, and a constructed `PrintItem`
-// array; $strobe-family calls defer the same print through a postponed submit.
-// Returns a user diagnostic for unsupported shapes (%m, malformed format
-// string, etc.).
+// Lower a print-like system subroutine ($display / $write / $fdisplay /
+// $fwrite / $strobe family) into a generic `CallExpr`. Returns a user
+// diagnostic for unsupported shapes (`%m`, malformed format string, ...).
 auto LowerPrintSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id,
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 

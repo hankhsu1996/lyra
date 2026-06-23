@@ -33,12 +33,14 @@ dedicated `IteratorIndexRef` arm in `SubroutineRef`, beside `BuiltinMethodRef`) 
 level is preserved; the separate arm encodes the "rewrites away" translation behaviour in the type,
 where it drives mechanical dispatch at HIR-to-MIR.
 
-MIR's callee is one of `BuiltinFnCallee{id: BuiltinFn}` (instance call: receiver is `args[0]`) or
+MIR's callee is one of `BuiltinFnCallee{id: BuiltinFn}` (instance call: receiver is `args[0]`),
 `BuiltinStaticCallee{id: BuiltinFn, type_qual: TypeId}` (type-namespace-qualified static call: no
-receiver, the qualifier rides on the callee). The instance / static split is structural at MIR
-because the calling convention differs; static-vs-instance is recoverable from the `BuiltinFn` id
-itself, but pushing it into a separate variant arm spares every backend from re-deriving the
-distinction at render time.
+receiver, the SV-type qualifier rides on the callee), or `FreeFnCallee{id: BuiltinFn}` (free
+function: no receiver, no SV-type qualifier -- the function's C++ namespace is a per-id backend
+fact, orthogonal to the callee variant). The instance / static / free split is structural at MIR
+because the calling convention differs; the property is recoverable from the `BuiltinFn` id itself,
+but pushing it into a separate variant arm spares every backend from re-deriving the distinction at
+render time.
 
 HIR-to-MIR is a near-identity translation: pick the right MIR arm based on the id's
 static-vs-instance classification and pass the `BuiltinFn` through.
@@ -193,7 +195,7 @@ applicable. No render-side special case for any entry.
 - One closed-namespace enum (`support::BuiltinFn`) names every built-in runtime entry. The two
   layers (HIR, MIR) and every backend reference the same identity.
 - HIR-to-MIR's built-in method translation is near-identity: it inspects the id to decide
-  `BuiltinFnCallee` vs `BuiltinStaticCallee` and passes the id through.
+  `BuiltinFnCallee` vs `BuiltinStaticCallee` vs `FreeFnCallee` and passes the id through.
 - AST-to-HIR keeps its receiver-type dispatch. The per-receiver name tables return
   `support::BuiltinFn` directly. Adding a new receiver type (e.g. user-defined class methods) is a
   new name table, not a new HIR-level enum or variant arm.

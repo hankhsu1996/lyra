@@ -405,6 +405,10 @@ class MirDumper {
                   "BuiltinStaticCallee[id=\"{}\", type_qual=Type[{}]]",
                   support::BuiltinFnName(b.id), b.type_qual.value);
             },
+            [](const FreeFnCallee& f) -> std::string {
+              return std::format(
+                  "FreeFnCallee[id=\"{}\"]", support::BuiltinFnName(f.id));
+            },
             [](const ConstructorCallee&) -> std::string {
               return "ConstructorCallee";
             },
@@ -551,9 +555,6 @@ class MirDumper {
               }
               return std::format(
                   "CallExpr callee={} args=[{}]", FormatCallee(c.callee), args);
-            },
-            [](const RuntimeCallExpr&) -> std::string {
-              return "RuntimeCallExpr";
             },
             [](const MemberAccessExpr& m) -> std::string {
               return std::format(
@@ -759,47 +760,6 @@ class MirDumper {
         const ExprId id{static_cast<std::uint32_t>(i)};
         Line(std::format("Expr[{}] {}", i, FormatExpr(scope, id)));
         const auto& expr = scope.exprs.Get(id);
-        if (const auto* rc = std::get_if<RuntimeCallExpr>(&expr.data)) {
-          Indent();
-          std::visit(
-              Overloaded{
-                  [&](const RuntimeScanCall& ss) {
-                    std::string slot_list;
-                    for (std::size_t k = 0; k < ss.slots.size(); ++k) {
-                      if (k != 0) {
-                        slot_list += ", ";
-                      }
-                      slot_list += std::visit(
-                          Overloaded{
-                              [](const IntegralScanSlot& s) -> std::string {
-                                return std::format(
-                                    "Integral{{temp=Expr[{}], width={}, "
-                                    "signed={}, four_state={}}}",
-                                    s.temp.value, s.bit_width,
-                                    s.is_signed ? "true" : "false",
-                                    s.is_four_state ? "true" : "false");
-                              },
-                              [](const StringScanSlot& s) -> std::string {
-                                return std::format(
-                                    "String{{temp=Expr[{}]}}", s.temp.value);
-                              }},
-                          ss.slots[k]);
-                    }
-                    const std::string_view kind_text =
-                        ss.source_kind == support::ScanSourceKind::kString
-                            ? "string"
-                            : "file";
-                    Line(
-                        std::format(
-                            "RuntimeScanCall source_kind={} source=Expr[{}] "
-                            "format=Expr[{}] slots=[{}]",
-                            kind_text, ss.source.value, ss.format.value,
-                            slot_list));
-                  },
-              },
-              rc->call);
-          Dedent();
-        }
         if (const auto* cl = std::get_if<ClosureExpr>(&expr.data)) {
           Indent();
           DumpClosureExpr(*cl, scope);

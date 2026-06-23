@@ -1,11 +1,14 @@
 #include "lyra/runtime/file_table.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <ios>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -227,6 +230,94 @@ void FileTable::ClearError(std::int32_t fd) {
   const auto idx = FdPoolIndex(fd, fd_pool_.size());
   if (!idx.has_value()) return;
   fd_pool_.at(*idx).error = ErrorRecord{};
+}
+
+auto FileTable::PeekBuffered(const value::PackedArray& fd_pa) -> value::String {
+  const auto fd = static_cast<std::int32_t>(fd_pa.ToInt64());
+  auto* slot = ResolveSlot(fd);
+  if (slot == nullptr) {
+    SetError(fd, EBADF, "$fscanf: not an open file descriptor");
+    return value::String{};
+  }
+  if (!slot->permits_read) {
+    SetError(fd, EBADF, "$fscanf: file not open for reading");
+    return value::String{};
+  }
+  std::string out;
+  // LRM 21.3.4.1: any byte left by `$ungetc` (or a prior scan's offending
+  // character) is observable before the underlying stream.
+  if (slot->putback.has_value()) {
+    out.push_back(*slot->putback);
+  }
+  // Drain the rest of the file from the current stream position. Read the
+  // remainder in one shot via tellg/seekg + a sized buffer rather than
+  // byte-by-byte to keep the hot path linear in file length.
+  std::fstream* file = slot->file.get();
+  const auto here = file->tellg();
+  file->seekg(0, std::ios::end);
+  const auto end = file->tellg();
+  file->seekg(here);
+  std::size_t file_bytes = 0;
+  if (here != std::fstream::pos_type{-1} && end != std::fstream::pos_type{-1} &&
+      end > here) {
+    file_bytes = static_cast<std::size_t>(end - here);
+  }
+  if (file_bytes > 0) {
+    const std::size_t prefix = out.size();
+    out.resize(prefix + file_bytes);
+    const std::span<char> tail = std::span{out}.subspan(prefix);
+    file->read(tail.data(), static_cast<std::streamsize>(tail.size()));
+    const auto got = static_cast<std::size_t>(file->gcount());
+    out.resize(prefix + got);
+    file_bytes = got;
+  }
+  slot->peek_len = file_bytes;
+  // The `PeekBuffered` snapshot virtualises the putback byte into the
+  // returned string; only `AdvanceFd` decides whether to drain it. Clearing
+  // it here would lose the byte if the parser ultimately did not consume
+  // it. Leave putback intact; `AdvanceFd` consumes it explicitly.
+  return value::String(std::move(out));
+}
+
+void FileTable::AdvanceFd(
+    const value::PackedArray& fd_pa, const value::PackedArray& n_pa) {
+  const auto fd = static_cast<std::int32_t>(fd_pa.ToInt64());
+  auto* slot = ResolveSlot(fd);
+  if (slot == nullptr) return;
+  if (!slot->permits_read) return;
+  const auto n = static_cast<std::int32_t>(n_pa.ToInt64());
+  auto remaining = static_cast<std::size_t>(n < 0 ? 0 : n);
+  const std::size_t peek_len = slot->peek_len;
+  slot->peek_len = 0;
+  // Putback byte (if any) was the first byte the parser saw. Consume it
+  // first so the count we apply to the file stream is purely file-relative.
+  const bool had_putback = slot->putback.has_value();
+  if (had_putback) {
+    if (remaining > 0) {
+      slot->putback.reset();
+      --remaining;
+    }
+  }
+  // `remaining` is now the number of file bytes the parser consumed out of
+  // `peek_len`. Anything past that has to go back to the stream so the next
+  // read sees it again.
+  const std::size_t file_consumed = std::min(remaining, peek_len);
+  const std::size_t file_unconsumed = peek_len - file_consumed;
+  if (file_unconsumed == 0) return;
+  std::fstream* file = slot->file.get();
+  if (file_unconsumed == 1U && !slot->putback.has_value()) {
+    // LRM 21.3.4.1: a single leftover byte is the "offending input
+    // character" -- park it in the slot's putback so $fgetc / $fgets /
+    // $fread / the next scan-source see it without a stream seek.
+    file->seekg(-1, std::ios::cur);
+    const int ch = file->get();
+    if (ch != std::char_traits<char>::eof()) {
+      slot->putback = static_cast<char>(ch);
+    }
+    return;
+  }
+  // Multi-byte tail: rewind the stream by the unconsumed count.
+  file->seekg(-static_cast<std::streamoff>(file_unconsumed), std::ios::cur);
 }
 
 auto FileTable::CancellationFor(const lyra::value::PackedArray& descriptor)

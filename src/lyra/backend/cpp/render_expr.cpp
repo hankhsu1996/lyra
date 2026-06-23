@@ -10,7 +10,6 @@
 #include <utility>
 #include <variant>
 
-#include "lyra/backend/cpp/render_print.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -645,10 +644,11 @@ auto RenderConversionExpr(
   return *std::move(operand_or);
 }
 
-// The C++ member name this backend names a builtin fn with. The receiver
-// drives `.` vs `->` mechanically off its MIR type at the call site; this
-// table is just the per-id member spelling.
-auto BuiltinFnMemberName(support::BuiltinFn id) -> std::string_view {
+// The bare C++ identifier this backend declares the builtin fn as. One
+// of three orthogonal facts a render path composes (name, namespace,
+// receiver expression / type qualifier) -- see `BuiltinFnCppNamespace`
+// for the second.
+auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
   switch (id) {
     case support::BuiltinFn::kServices:
       return "Services";
@@ -676,6 +676,12 @@ auto BuiltinFnMemberName(support::BuiltinFn id) -> std::string_view {
       return "Write";
     case support::BuiltinFn::kWriteln:
       return "Writeln";
+    case support::BuiltinFn::kScan:
+      return "Scan";
+    case support::BuiltinFn::kPeekBuffered:
+      return "PeekBuffered";
+    case support::BuiltinFn::kAdvanceFd:
+      return "AdvanceFd";
     case support::BuiltinFn::kTrigger:
       return "Trigger";
     case support::BuiltinFn::kAwait:
@@ -805,7 +811,27 @@ auto BuiltinFnMemberName(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kAssocPrev:
       return "Prev";
   }
-  throw InternalError("BuiltinFnMemberName: unknown BuiltinFn");
+  throw InternalError("BuiltinFnCppName: unknown BuiltinFn");
+}
+
+// The C++ namespace path the builtin fn is declared in (e.g.
+// `lyra::value` for `lyra::value::Scan`). A separate axis from the bare
+// name in `BuiltinFnCppName` and from the calling shape in the MIR
+// `Callee` variant. Every id may declare one; render paths choose
+// whether to consume it -- a `FreeFnCallee` must (no receiver to supply
+// the scope), a `BuiltinFnCallee` need not (the receiver expression's
+// type already names the enclosing class), a `BuiltinStaticCallee` need
+// not (the `type_qual` already names the SV type). Returns empty for
+// ids whose render path never needs an explicit qualifier; extend this
+// table when adding a free function or any caller that wants to render
+// the fully-qualified path.
+auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
+  switch (id) {
+    case support::BuiltinFn::kScan:
+      return "lyra::value";
+    default:
+      return "";
+  }
 }
 
 // `recv.name(args)` or `recv->name(args)` -- the receiver's MIR type
@@ -834,8 +860,25 @@ auto RenderBuiltinFnCall(
     if (i != 1) args += ", ";
     args += *std::move(arg_or);
   }
-  return std::format(
-      "({}){}{}({})", *recv_or, sep, BuiltinFnMemberName(id), args);
+  return std::format("({}){}{}({})", *recv_or, sep, BuiltinFnCppName(id), args);
+}
+
+auto RenderFreeFnCall(
+    const ScopeView& view, const mir::CallExpr& call, support::BuiltinFn id)
+    -> diag::Result<std::string> {
+  const std::string_view ns = BuiltinFnCppNamespace(id);
+  if (ns.empty()) {
+    throw InternalError(
+        "RenderFreeFnCall: free-function id has no declared namespace");
+  }
+  std::string args;
+  for (std::size_t i = 0; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    if (i != 0) args += ", ";
+    args += *std::move(arg_or);
+  }
+  return std::format("{}::{}({})", ns, BuiltinFnCppName(id), args);
 }
 
 auto RenderBuiltinStaticCall(
@@ -850,7 +893,7 @@ auto RenderBuiltinStaticCall(
   }
   return std::format(
       "{}::{}({})", RenderEnumClassName(view.Class(), callee.type_qual),
-      BuiltinFnMemberName(callee.id), args);
+      BuiltinFnCppName(callee.id), args);
 }
 
 // The C++ runtime entry this backend realizes a system subroutine with. Pure
@@ -867,10 +910,6 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
           },
           [](const support::PrintSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
-            // Print system subroutines lower to BuiltinFn::kPrint /
-            // kPrintln / kFPrint / kFPrintln at HIR-to-MIR; no
-            // SystemSubroutineCallee should reach this renderer for the
-            // print family.
             throw InternalError(
                 "RenderSystemSubroutineEntryName: print id reached system "
                 "subroutine render path; print family is BuiltinFn-routed");
@@ -890,7 +929,9 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
           },
           [](const support::SFormatSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
-            return std::string_view{"lyra::runtime::LyraSFormat"};
+            throw InternalError(
+                "RenderSystemSubroutineEntryName: sformat id reached system "
+                "subroutine render path; sformat family is BuiltinFn-routed");
           },
           [](const support::PrintTimescaleSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
@@ -1046,6 +1087,9 @@ auto RenderCallExpr(
           },
           [&](const mir::BuiltinStaticCallee& b) -> diag::Result<std::string> {
             return RenderBuiltinStaticCall(view, call, b);
+          },
+          [&](const mir::FreeFnCallee& f) -> diag::Result<std::string> {
+            return RenderFreeFnCall(view, call, f.id);
           },
           [&](const mir::ClosureRef& cr) -> diag::Result<std::string> {
             auto closure_or = RenderExpr(view, view.Expr(cr.closure));
@@ -1598,9 +1642,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           },
           [&](const mir::CallExpr& call) -> diag::Result<std::string> {
             return RenderCallExpr(view, call, expr.type);
-          },
-          [&](const mir::RuntimeCallExpr& rc) -> diag::Result<std::string> {
-            return RenderRuntimeCallExpr(view, rc);
           },
           [&](const mir::DerefExpr& d) -> diag::Result<std::string> {
             return RenderDerefExpr(view, d);
