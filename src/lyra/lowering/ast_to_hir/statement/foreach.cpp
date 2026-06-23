@@ -61,23 +61,24 @@ auto SizeMethodFor(const slang::ast::Type& array_type)
 // (LRM 12.7.3) into a `setup` local that the condition then reads. The loop
 // variable is the counter, declared in the `for`.
 auto BuildIntegerLevel(
-    ProcessLowerer& proc, hir::ProceduralBody& body, const LoopDim& dim,
+    ProcessLowerer& proc, WalkFrame frame, const LoopDim& dim,
     std::optional<hir::ExprId> array, const slang::ast::Type* array_type,
     hir::TypeId int32_type, diag::SourceSpan span,
     std::vector<hir::StmtId>& setup) -> LevelLoop {
+  auto& body = *frame.current_procedural_body;
   hir::ExprId first_id{};
   hir::ExprId last_id{};
   bool ascending = true;
   if (dim.range.has_value()) {
     const auto& declared = *dim.range;
-    first_id =
-        body.exprs.Add(hir::MakeInt32Literal(declared.left, int32_type, span));
-    last_id =
-        body.exprs.Add(hir::MakeInt32Literal(declared.right, int32_type, span));
+    first_id = frame.Exprs().Add(
+        hir::MakeInt32Literal(declared.left, int32_type, span));
+    last_id = frame.Exprs().Add(
+        hir::MakeInt32Literal(declared.right, int32_type, span));
     ascending = declared.left <= declared.right;
   } else {
     hir::SubroutineRef size_callee = SizeMethodFor(*array_type);
-    const hir::ExprId size_id = body.exprs.Add(
+    const hir::ExprId size_id = frame.Exprs().Add(
         hir::Expr{
             .type = int32_type,
             .data =
@@ -85,8 +86,8 @@ auto BuildIntegerLevel(
                     .callee = std::move(size_callee), .arguments = {*array}},
             .span = span});
     const hir::ExprId one_id =
-        body.exprs.Add(hir::MakeInt32Literal(1, int32_type, span));
-    const hir::ExprId last_value_id = body.exprs.Add(
+        frame.Exprs().Add(hir::MakeInt32Literal(1, int32_type, span));
+    const hir::ExprId last_value_id = frame.Exprs().Add(
         hir::Expr{
             .type = int32_type,
             .data =
@@ -103,9 +104,9 @@ auto BuildIntegerLevel(
             .label = std::nullopt,
             .data = hir::VarDeclStmt{.var = last_var, .init = last_value_id},
             .span = span}));
-    first_id = body.exprs.Add(hir::MakeInt32Literal(0, int32_type, span));
+    first_id = frame.Exprs().Add(hir::MakeInt32Literal(0, int32_type, span));
     last_id =
-        body.exprs.Add(hir::MakeProcVarRefExpr(last_var, int32_type, span));
+        frame.Exprs().Add(hir::MakeProcVarRefExpr(last_var, int32_type, span));
   }
 
   const hir::ProceduralVarId loop_var =
@@ -113,8 +114,8 @@ auto BuildIntegerLevel(
   std::vector<hir::ForInit> init;
   init.emplace_back(hir::ForInitDecl{.var = loop_var, .init = first_id});
   const hir::ExprId cond_ref =
-      body.exprs.Add(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
-  const hir::ExprId cond_id = body.exprs.Add(
+      frame.Exprs().Add(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+  const hir::ExprId cond_id = frame.Exprs().Add(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -125,8 +126,8 @@ auto BuildIntegerLevel(
                   .rhs = last_id},
           .span = span});
   const hir::ExprId step_ref =
-      body.exprs.Add(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
-  const hir::ExprId step_id = body.exprs.Add(
+      frame.Exprs().Add(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+  const hir::ExprId step_id = frame.Exprs().Add(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -152,9 +153,10 @@ auto BuildIntegerLevel(
 // The key is declared in `setup` rather than the `for` init because its type
 // differs from the counter and cannot share one C++ init declaration.
 auto BuildAssociativeLevel(
-    ProcessLowerer& proc, hir::ProceduralBody& body, const LoopDim& dim,
+    ProcessLowerer& proc, WalkFrame frame, const LoopDim& dim,
     hir::ExprId array, hir::TypeId int32_type, diag::SourceSpan span,
     std::vector<hir::StmtId>& setup) -> diag::Result<LevelLoop> {
+  auto& body = *frame.current_procedural_body;
   auto key_type_or = proc.Module().InternType(dim.loopVar->getType(), span);
   if (!key_type_or) return std::unexpected(std::move(key_type_or.error()));
   const hir::TypeId key_type = *key_type_or;
@@ -174,8 +176,8 @@ auto BuildAssociativeLevel(
 
   auto walk_call = [&](support::BuiltinFn method) -> hir::ExprId {
     const hir::ExprId key_ref =
-        body.exprs.Add(hir::MakeProcVarRefExpr(key_var, key_type, span));
-    return body.exprs.Add(
+        frame.Exprs().Add(hir::MakeProcVarRefExpr(key_var, key_type, span));
+    return frame.Exprs().Add(
         hir::Expr{
             .type = int32_type,
             .data =
@@ -191,10 +193,10 @@ auto BuildAssociativeLevel(
       hir::ForInitDecl{
           .var = more_var, .init = walk_call(support::BuiltinFn::kAssocFirst)});
   const hir::ExprId cond_id =
-      body.exprs.Add(hir::MakeProcVarRefExpr(more_var, int32_type, span));
+      frame.Exprs().Add(hir::MakeProcVarRefExpr(more_var, int32_type, span));
   const hir::ExprId more_lhs =
-      body.exprs.Add(hir::MakeProcVarRefExpr(more_var, int32_type, span));
-  const hir::ExprId step_id = body.exprs.Add(
+      frame.Exprs().Add(hir::MakeProcVarRefExpr(more_var, int32_type, span));
+  const hir::ExprId step_id = frame.Exprs().Add(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -261,13 +263,13 @@ auto BuildForeachNest(
       array_type->getCanonicalType().isAssociativeArray();
   LevelLoop loop{};
   if (is_associative) {
-    auto loop_or =
-        BuildAssociativeLevel(proc, body, dim, *array, int32_type, span, stmts);
+    auto loop_or = BuildAssociativeLevel(
+        proc, frame, dim, *array, int32_type, span, stmts);
     if (!loop_or) return std::unexpected(std::move(loop_or.error()));
     loop = std::move(*loop_or);
   } else {
     loop = BuildIntegerLevel(
-        proc, body, dim, array, array_type, int32_type, span, stmts);
+        proc, frame, dim, array, array_type, int32_type, span, stmts);
   }
 
   // Descend: the inner levels iterate `array[loop_var]`, one type peel deeper.
@@ -283,9 +285,9 @@ auto BuildForeachNest(
     if (!inner_hir_type) {
       return std::unexpected(std::move(inner_hir_type.error()));
     }
-    const hir::ExprId index_id = body.exprs.Add(
+    const hir::ExprId index_id = frame.Exprs().Add(
         hir::MakeProcVarRefExpr(loop.loop_var, loop.loop_var_type, span));
-    inner_array = body.exprs.Add(
+    inner_array = frame.Exprs().Add(
         hir::Expr{
             .type = *inner_hir_type,
             .data =
@@ -358,7 +360,8 @@ auto ProcessLowerer::LowerForeachStmt(
     const auto array_eval_stmt = body.stmts.Add(
         hir::Stmt{
             .label = std::nullopt,
-            .data = hir::ExprStmt{.expr = body.exprs.Add(*std::move(array_or))},
+            .data =
+                hir::ExprStmt{.expr = frame.Exprs().Add(*std::move(array_or))},
             .span = span});
     auto body_or = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
     if (!body_or) return std::unexpected(std::move(body_or.error()));
@@ -377,7 +380,7 @@ auto ProcessLowerer::LowerForeachStmt(
   if (needs_array) {
     auto array_or = proc.LowerExpr(fs.arrayRef, frame);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
-    array = body.exprs.Add(*std::move(array_or));
+    array = frame.Exprs().Add(*std::move(array_or));
     array_type = fs.arrayRef.type;
   }
 

@@ -66,7 +66,7 @@ auto LowerVariableDeclStmt(
   if (const auto* init_expr = sym.getInitializer()) {
     auto init_or = proc.LowerExpr(*init_expr, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_id = frame.current_procedural_body->exprs.Add(*std::move(init_or));
+    init_id = frame.Exprs().Add(*std::move(init_or));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -80,8 +80,7 @@ auto LowerExpressionStmt(
     -> diag::Result<hir::Stmt> {
   auto expr = proc.LowerExpr(es.expr, frame);
   if (!expr) return std::unexpected(std::move(expr.error()));
-  const hir::ExprId id =
-      frame.current_procedural_body->exprs.Add(*std::move(expr));
+  const hir::ExprId id = frame.Exprs().Add(*std::move(expr));
   return hir::Stmt{
       .label = std::nullopt, .data = hir::ExprStmt{.expr = id}, .span = span};
 }
@@ -97,7 +96,7 @@ auto LowerReturnStmt(
   if (rs.expr != nullptr) {
     auto expr_or = proc.LowerExpr(*rs.expr, frame);
     if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-    value = frame.current_procedural_body->exprs.Add(*std::move(expr_or));
+    value = frame.Exprs().Add(*std::move(expr_or));
   }
   return hir::Stmt{
       .label = std::nullopt,

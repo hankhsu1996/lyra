@@ -131,8 +131,7 @@ auto StructuralScopeLowerer::BuildIfGenerate(
 
   auto cond_expr = LowerExpr(*cond, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id =
-      frame.current_structural_scope->exprs.Add(*std::move(cond_expr));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
 
   hir::Generate gen{};
   const ScopeFrameId gen_frame = frame_;
@@ -181,8 +180,7 @@ auto StructuralScopeLowerer::BuildCaseGenerate(
 
   auto cond_expr = LowerExpr(*discriminator, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id =
-      frame.current_structural_scope->exprs.Add(*std::move(cond_expr));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
 
   hir::Generate gen{};
   const ScopeFrameId gen_frame = frame_;
@@ -202,8 +200,7 @@ auto StructuralScopeLowerer::BuildCaseGenerate(
           if (!label_expr_lowered) {
             return std::unexpected(std::move(label_expr_lowered.error()));
           }
-          labels.push_back(frame.current_structural_scope->exprs.Add(
-              *std::move(label_expr_lowered)));
+          labels.push_back(frame.Exprs().Add(*std::move(label_expr_lowered)));
         }
         auto item_id =
             AddChildScope(*module_, gen, gen_frame, gen_id, *block, frame);
@@ -266,14 +263,12 @@ auto LowerLoopIterNextValue(
 
   auto read = parent.LowerExpr(assign.left(), frame);
   if (!read) return std::unexpected(std::move(read.error()));
-  const hir::ExprId read_id =
-      frame.current_structural_scope->exprs.Add(*std::move(read));
+  const hir::ExprId read_id = frame.Exprs().Add(*std::move(read));
 
   const auto& bare_rhs = BareCompoundUserRhs(assign.right());
   auto rhs = parent.LowerExpr(bare_rhs, frame);
   if (!rhs) return std::unexpected(std::move(rhs.error()));
-  const hir::ExprId rhs_id =
-      frame.current_structural_scope->exprs.Add(*std::move(rhs));
+  const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs));
 
   auto type_id = module.InternType(*iter.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
@@ -318,19 +313,16 @@ auto StructuralScopeLowerer::BuildLoopGenerate(
 
   auto initial_expr = LowerExpr(*array.initialExpression, frame);
   if (!initial_expr) return std::unexpected(std::move(initial_expr.error()));
-  const hir::ExprId initial_id =
-      frame.current_structural_scope->exprs.Add(*std::move(initial_expr));
+  const hir::ExprId initial_id = frame.Exprs().Add(*std::move(initial_expr));
 
   auto stop_expr = LowerExpr(*array.stopExpression, frame);
   if (!stop_expr) return std::unexpected(std::move(stop_expr.error()));
-  const hir::ExprId stop_id =
-      frame.current_structural_scope->exprs.Add(*std::move(stop_expr));
+  const hir::ExprId stop_id = frame.Exprs().Add(*std::move(stop_expr));
 
   auto iter_expr =
       LowerLoopIterNextValue(*this, *module_, *array.iterExpression, frame);
   if (!iter_expr) return std::unexpected(std::move(iter_expr.error()));
-  const hir::ExprId iter_id =
-      frame.current_structural_scope->exprs.Add(*std::move(iter_expr));
+  const hir::ExprId iter_id = frame.Exprs().Add(*std::move(iter_expr));
 
   hir::StructuralScope loop_scope;
   if (!array.entries.empty()) {
