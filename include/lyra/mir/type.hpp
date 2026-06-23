@@ -305,7 +305,8 @@ using TypeData = std::variant<
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
     ScopeType, ServicesType, FilesType, RuntimeLibraryType, CoroutineType,
-    RefType, PointerType, VectorType, TupleType, ExternalRefType, ObservableType>;
+    RefType, PointerType, VectorType, TupleType, ExternalRefType,
+    ObservableType>;
 
 struct Type {
   TypeData data;

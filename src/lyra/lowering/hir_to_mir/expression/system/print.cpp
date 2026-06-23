@@ -51,8 +51,8 @@ auto BuildStdoutFdLiteral(mir::Block& block, mir::TypeId int32_type)
 }
 
 auto LowerDescriptor(
-    ProcessLowerer& process, const WalkFrame& frame,
-    const hir::CallExpr& call) -> diag::Result<mir::Expr> {
+    ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call)
+    -> diag::Result<mir::Expr> {
   if (!call.arguments[0].has_value()) {
     throw InternalError("$f-print descriptor argument unexpectedly elided");
   }
