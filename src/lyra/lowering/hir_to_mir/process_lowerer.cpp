@@ -47,13 +47,13 @@ auto DispatchLowerExpr(
             return LowerHirPrimaryExprProc(process, frame, p.data, result_type);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
-            return LowerHirUnaryExprProc(process, frame, u, result_type);
+            return LowerHirUnaryExpr(process, frame, u, result_type);
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
-            return LowerHirBinaryExprProc(process, frame, b, result_type);
+            return LowerHirBinaryExpr(process, frame, b, result_type);
           },
           [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConditionalExprProc(process, frame, c, result_type);
+            return LowerHirConditionalExpr(process, frame, c, result_type);
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
             return LowerHirAssignExprProc(
@@ -63,7 +63,7 @@ auto DispatchLowerExpr(
             return LowerHirIncDecExprProc(process, frame, inc, result_type);
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
-            return LowerHirConversionExprProc(process, frame, cv, result_type);
+            return LowerHirConversionExpr(process, frame, cv, result_type);
           },
           [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirCallExprProc(
@@ -73,30 +73,27 @@ auto DispatchLowerExpr(
             return LowerHirInsideExprProc(process, frame, in, result_type);
           },
           [&](const hir::ElementSelectExpr& sel) -> diag::Result<mir::Expr> {
-            return LowerHirElementSelectExprProc(
-                process, frame, sel, result_type);
+            return LowerHirElementSelectExpr(process, frame, sel, result_type);
           },
           [&](const hir::RangeSelectExpr& sel) -> diag::Result<mir::Expr> {
-            return LowerHirRangeSelectExprProc(
-                process, frame, sel, result_type);
+            return LowerHirRangeSelectExpr(process, frame, sel, result_type);
           },
           [&](const hir::MemberAccessExpr& sel) -> diag::Result<mir::Expr> {
-            return LowerHirMemberAccessExprProc(
-                process, frame, sel, result_type);
+            return LowerHirMemberAccessExpr(process, frame, sel, result_type);
           },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExprProc(process, frame, c, result_type);
+            return LowerHirConcatExpr(process, frame, c, result_type);
           },
           [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
             return LowerHirReplicationExprProc(process, frame, r, result_type);
           },
           [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
-            return LowerHirAssignmentPatternExprProc(
+            return LowerHirAssignmentPatternExpr(
                 process, frame, a, result_type);
           },
           [&](const hir::AssignmentPatternReplicationExpr& a)
               -> diag::Result<mir::Expr> {
-            return LowerHirAssignmentPatternReplicationExprProc(
+            return LowerHirAssignmentPatternReplicationExpr(
                 process, frame, a, result_type);
           },
           [&](const hir::DynamicArrayNewExpr& n) -> diag::Result<mir::Expr> {
@@ -105,7 +102,7 @@ auto DispatchLowerExpr(
           },
           [&](const hir::AssociativeAssignmentPatternExpr& a)
               -> diag::Result<mir::Expr> {
-            return LowerHirAssociativeAssignmentPatternExprProc(
+            return LowerHirAssociativeAssignmentPatternExpr(
                 process, frame, a, result_type);
           },
       },
@@ -141,19 +138,16 @@ auto ProcessLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
             return LowerHirPrimaryExprProc(*this, frame, p.data, result_type);
           },
           [&](const hir::ElementSelectExpr& sel) -> diag::Result<mir::Expr> {
-            return LowerHirElementSelectExprProcLhs(
-                *this, frame, sel, result_type);
+            return LowerHirElementSelectExprLhs(*this, frame, sel, result_type);
           },
           [&](const hir::RangeSelectExpr& sel) -> diag::Result<mir::Expr> {
-            return LowerHirRangeSelectExprProcLhs(
-                *this, frame, sel, result_type);
+            return LowerHirRangeSelectExprLhs(*this, frame, sel, result_type);
           },
           [&](const hir::MemberAccessExpr& sel) -> diag::Result<mir::Expr> {
-            return LowerHirMemberAccessExprProcLhs(
-                *this, frame, sel, result_type);
+            return LowerHirMemberAccessExprLhs(*this, frame, sel, result_type);
           },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExprProc(*this, frame, c, result_type);
+            return LowerHirConcatExpr(*this, frame, c, result_type);
           },
           [](const auto&) -> diag::Result<mir::Expr> {
             throw InternalError(

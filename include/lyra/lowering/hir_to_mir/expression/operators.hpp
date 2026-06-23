@@ -6,7 +6,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -22,37 +22,32 @@ namespace lyra::lowering::hir_to_mir {
 // is a legitimate target).
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 
-// Procedural-context handlers.
-auto LowerHirUnaryExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::UnaryExpr& u,
+// An operator's meaning is independent of the enclosing scope, so one template
+// over the pass class serves both the procedural and structural contexts. The
+// pass class is reached through a uniform `HirExprs` / `LowerExpr` surface, so
+// the body deduces from the argument; explicit instantiations for the two pass
+// classes live in the implementation file.
+template <ExprLowerer Lowerer>
+auto LowerHirUnaryExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::UnaryExpr& u,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirBinaryExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::BinaryExpr& b,
+template <ExprLowerer Lowerer>
+auto LowerHirBinaryExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirConditionalExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::ConditionalExpr& c,
+template <ExprLowerer Lowerer>
+auto LowerHirConditionalExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirIncDecExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirConversionExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::ConversionExpr& cv,
+template <ExprLowerer Lowerer>
+auto LowerHirConversionExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
-// Structural-context handlers (constructor / generate-control / continuous
-// assign). `IncDecExpr` and `AssignExpr` have no structural form -- those
-// kinds are diagnosed at the dispatcher.
-auto LowerHirUnaryExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::UnaryExpr& u,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirBinaryExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirConditionalExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirConversionExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
+// Increment / decrement is a write (LRM 11.4.2) and has no structural form, so
+// it stays a procedural-only handler rather than a shared template.
+auto LowerHirIncDecExprProc(
+    ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

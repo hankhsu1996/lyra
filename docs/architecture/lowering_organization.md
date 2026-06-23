@@ -188,6 +188,21 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
     `lowerer.Module().InternType(...)`. `proc.Module()` returns the `ModuleLowerer&` the
     `ProcessLowerer` captured at construction.
 
+13. A per-kind handler whose logic is shared across pass classes is one function template
+    parameterized over the pass class, never a per-pass-class twin. A node's meaning that does not
+    depend on which pass class encloses it -- an expression operating on already-lowered operands --
+    is context-free, and its handler reaches the pass class through a uniform duck-typed surface
+    (the recursion entry point, the sub-node accessor) rather than a shared base class. A handler
+    stays per-pass-class only where the two genuinely differ: name resolution, where a bare name
+    maps to different storage depending on the enclosing scope, and kinds that exist in only one
+    context.
+
+    _Current implementation:_ the HIR-to-MIR expression handlers shared by `ProcessLowerer` and
+    `ClassLowerer` (operators, selects, aggregate value-builds) are single function templates over
+    the pass class, reaching sub-expressions through a uniform `HirExprs()` accessor and recursing
+    through `LowerExpr` / `LowerLhsExpr`; explicit instantiations for the two pass classes live in
+    the subsystem `.cpp`. Name resolution (`references.cpp`) stays a per-pass-class pair.
+
 ## The Walk Position
 
 Every pass over an IR is a recursion, and at each node the recursion needs context that is not in
@@ -339,6 +354,10 @@ structured-IR emit is a construction pass.
 - Per-kind handlers requiring narrowed access (separate facts / registry / builder references in the
   signature). The pass class instance is the single access pass for the task; narrowing the
   signature reproduces the sig-explosion shape this contract exists to escape.
+- A per-kind handler twin: two near-identical handlers for one node kind, one per pass class,
+  differing only in the pass type and how a sub-node is reached. When the logic is context-free, the
+  twin is one function template over the pass class (invariant 13); the twin shape lets the two
+  drift, the exact failure the template removes.
 
 ## Multi-File Organization Within a Pass Layer
 

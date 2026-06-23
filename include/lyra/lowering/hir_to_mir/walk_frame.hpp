@@ -165,6 +165,17 @@ struct WalkFrame {
     return next;
   }
 
+  // Descend `extras` block-nesting levels at once. A construct lowered as a
+  // chain of nested scopes (a case cascade's if-then-else chain) enters its
+  // Nth body `extras = N` levels below the wrapper.
+  [[nodiscard]] auto DeeperBy(std::size_t extras) const -> WalkFrame {
+    WalkFrame next = *this;
+    for (std::size_t i = 0; i < extras; ++i) {
+      next.block_depth = next.block_depth.Inner();
+    }
+    return next;
+  }
+
   [[nodiscard]] auto WithCaptureSink(CaptureSink* sink) const -> WalkFrame {
     WalkFrame next = *this;
     next.capture_sink = sink;

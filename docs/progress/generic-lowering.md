@@ -10,9 +10,11 @@ rejected alternatives.
 
 ## Actionable
 
-Phase 1 (the generic arena) is standalone and can start immediately. The arena swap is mechanical
-and behavior-preserving; the bulk of the work is paying down the existing accessor-bypass debt that
-the swap surfaces (see below). Phases 2 and 3 build on it.
+The generic arena (Phase 1) and the HIR-to-MIR handler-sharing it enables (Phase 2) have landed: the
+context-free HIR-to-MIR expression handlers shared by the procedural and structural pass classes are
+now single function templates. What remains is the AST-to-HIR slice -- unifying that pass's
+expression write target and collapsing its handler twins the same way -- which is gated on the
+in-flight drift-bug alignment (see Coordination).
 
 The arena's surface is fixed by what consumers actually do: a const lookup by typed id, an append
 that returns the id, a count and an emptiness check, and an indexed iteration (the dumper prints
@@ -27,30 +29,30 @@ underneath.
 
 ### Phase 1 -- Generic arena and uniform access
 
-- [ ] Introduce one generic append-only, id-indexed pool abstraction with the surface above (const
+- [x] Introduce one generic append-only, id-indexed pool abstraction with the surface above (const
       lookup, append, count, indexed iteration; no raw index, no mutable lookup).
-- [ ] Route every hand-rolled HIR pool through it: the procedural body's expression, statement, and
+- [x] Route every hand-rolled HIR pool through it: the procedural body's expression, statement, and
       local pools; every append-only pool on the structural scope.
-- [ ] Route every hand-rolled MIR pool through it: the block's expression, statement, and local
+- [x] Route every hand-rolled MIR pool through it: the block's expression, statement, and local
       pools, the class's pools, and the unit's append-only pools.
-- [ ] Replace the raw-index accessor bypass (sub-nodes read by indexing the pool's backing vector
+- [x] Replace the raw-index accessor bypass (sub-nodes read by indexing the pool's backing vector
       directly rather than through the typed lookup) with the typed lookup. This is pre-existing
       debt, not new work; fixing it also collapses the procedural/structural read-access divergence,
       so the read side of sub-node access is uniform once this lands.
 - [ ] AST-to-HIR: the walk position carries one expression write target instead of two parallel
       ones, with the statement and member write targets kept separate. With both scopes' expression
       pools now the same arena type, the read and write sides of sub-node access are both uniform.
-- [ ] Leave deduplicating pools (type interning), id-sequence fields, and composite append helpers
+- [x] Leave deduplicating pools (type interning), id-sequence fields, and composite append helpers
       in their own shapes (see Actionable).
 
 ### Phase 2 -- Share the expression handlers
 
-- [ ] HIR-to-MIR: each expression family's procedural and structural handlers become one function
+- [x] HIR-to-MIR: each expression family's procedural and structural handlers become one function
       template over the pass class. Pilot with the select family (the largest duplication), then the
       remaining families.
 - [ ] AST-to-HIR: the same collapse, sequenced after the in-flight drift-bug alignment lands (see
       Coordination).
-- [ ] `lowering_organization.md` records that a handler shared across pass classes is one template,
+- [x] `lowering_organization.md` records that a handler shared across pass classes is one template,
       never a duplicated twin.
 
 ## Coordination
