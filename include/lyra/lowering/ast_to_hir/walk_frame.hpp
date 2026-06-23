@@ -7,12 +7,14 @@
 #include <ranges>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/loop_label_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 
 namespace lyra::hir {
+struct Expr;
 struct StructuralScope;
 struct ProceduralBody;
 }  // namespace lyra::hir
@@ -50,14 +52,21 @@ struct WalkFrame {
   // hops: HopsTo(target) walks back to find target in the chain.
   std::vector<ScopeFrameId> structural_chain;
 
-  // The current structural-scope write target. Set when a StructuralScope
-  // task constructs its scope on the stack and entered via
-  // `WithStructuralFrame`. Null outside structural-scope handlers.
+  // The current expression write target: the expr arena every expression
+  // handler appends lowered sub-expressions into, regardless of procedural or
+  // structural context. Set alongside the owning write target on scope/body
+  // entry. Expression handlers reach it through `Exprs()` and never touch the
+  // owning pointers below.
+  base::Arena<hir::Expr, hir::ExprId>* current_exprs = nullptr;
+
+  // The current structural-scope write target for member and generate handlers.
+  // Set when a StructuralScope task constructs its scope on the stack and
+  // entered via `WithStructuralFrame`. Null outside structural-scope handlers.
   hir::StructuralScope* current_structural_scope = nullptr;
 
-  // The current procedural-body write target. Set when a ProcessLowerer
-  // constructs its body on the stack and entered via `WithProceduralBody`.
-  // Null outside a process or subroutine body.
+  // The current procedural-body write target for statement and local handlers.
+  // Set when a ProcessLowerer constructs its body on the stack and entered via
+  // `WithProceduralBody`. Null outside a process or subroutine body.
   hir::ProceduralBody* current_procedural_body = nullptr;
 
   // Nonzero while a fork-join branch body is being lowered. A procedural-var
@@ -105,16 +114,28 @@ struct WalkFrame {
     return std::nullopt;
   }
 
+  // The expr arena the current scope or body appends lowered sub-expressions
+  // into. Reached by every expression handler regardless of context.
+  [[nodiscard]] auto Exprs() const -> base::Arena<hir::Expr, hir::ExprId>& {
+    if (current_exprs == nullptr) {
+      throw InternalError("WalkFrame::Exprs: no expression write target");
+    }
+    return *current_exprs;
+  }
+
   // Pushes a new structural scope onto the chain and points
   // current_structural_scope at the new scope. The scope is owned by the
   // caller's stack frame (typically a Lowerer's Run); this frame just
-  // borrows it for the duration of the walk.
+  // borrows it for the duration of the walk. `exprs` is the scope's expr arena,
+  // passed by the caller (which holds the complete scope type) so this header
+  // stays free of the HIR scope definition.
   [[nodiscard]] auto WithStructuralFrame(
-      ScopeFrameId child_frame, hir::StructuralScope* scope) const
-      -> WalkFrame {
+      ScopeFrameId child_frame, hir::StructuralScope* scope,
+      base::Arena<hir::Expr, hir::ExprId>* exprs) const -> WalkFrame {
     WalkFrame next = *this;
     next.structural_chain.push_back(child_frame);
     next.current_structural_scope = scope;
+    next.current_exprs = exprs;
     return next;
   }
 
@@ -122,11 +143,14 @@ struct WalkFrame {
   // stack-allocates a hir::ProceduralBody and dispatches into it. The body
   // pointer is unchanged for the lifetime of the process / subroutine walk;
   // nested control flow does not push procedural bodies because HIR's
-  // procedural body is flat.
-  [[nodiscard]] auto WithProceduralBody(hir::ProceduralBody* body) const
-      -> WalkFrame {
+  // procedural body is flat. `exprs` is the body's expr arena, passed by the
+  // caller for the same reason as `WithStructuralFrame`.
+  [[nodiscard]] auto WithProceduralBody(
+      hir::ProceduralBody* body,
+      base::Arena<hir::Expr, hir::ExprId>* exprs) const -> WalkFrame {
     WalkFrame next = *this;
     next.current_procedural_body = body;
+    next.current_exprs = exprs;
     return next;
   }
 

@@ -79,7 +79,7 @@ auto LowerSignalEventTrigger(
   }
 
   return hir::EventTrigger{
-      .signal = frame.current_procedural_body->exprs.Add(*std::move(expr_or)),
+      .signal = frame.Exprs().Add(*std::move(expr_or)),
       .edge = edge_kind,
       .sensitivity_list = std::move(sensitivity_list),
   };
@@ -117,7 +117,7 @@ auto LowerNamedEventControl(
         diag::UnsupportedCategory::kFeature);
   }
   return hir::NamedEventControl{
-      .event = frame.current_procedural_body->exprs.Add(*std::move(expr_or)),
+      .event = frame.Exprs().Add(*std::move(expr_or)),
   };
 }
 
@@ -130,8 +130,7 @@ auto LowerTimingControl(
       auto duration = proc.LowerExpr(delay.expr, frame);
       if (!duration) return std::unexpected(std::move(duration.error()));
       return hir::TimingControl{hir::DelayControl{
-          .duration =
-              frame.current_procedural_body->exprs.Add(*std::move(duration))}};
+          .duration = frame.Exprs().Add(*std::move(duration))}};
     }
     case slang::ast::TimingControlKind::SignalEvent: {
       const auto& sig = tc.as<slang::ast::SignalEventControl>();
@@ -242,8 +241,7 @@ auto LowerEventTriggerStmt(
       .label = std::nullopt,
       .data =
           hir::EventTriggerStmt{
-              .event =
-                  frame.current_procedural_body->exprs.Add(*std::move(expr_or)),
+              .event = frame.Exprs().Add(*std::move(expr_or)),
           },
       .span = span};
 }
@@ -257,8 +255,7 @@ auto LowerWaitStmt(
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
   auto cond_or = proc.LowerExpr(w.cond, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id =
-      frame.current_procedural_body->exprs.Add(*std::move(cond_or));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
   auto body_or = proc.LowerStmt(w.stmt, frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
