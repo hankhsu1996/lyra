@@ -71,13 +71,13 @@ auto BuildIntegerLevel(
   if (dim.range.has_value()) {
     const auto& declared = *dim.range;
     first_id =
-        body.AddExpr(hir::MakeInt32Literal(declared.left, int32_type, span));
+        body.exprs.Add(hir::MakeInt32Literal(declared.left, int32_type, span));
     last_id =
-        body.AddExpr(hir::MakeInt32Literal(declared.right, int32_type, span));
+        body.exprs.Add(hir::MakeInt32Literal(declared.right, int32_type, span));
     ascending = declared.left <= declared.right;
   } else {
     hir::SubroutineRef size_callee = SizeMethodFor(*array_type);
-    const hir::ExprId size_id = body.AddExpr(
+    const hir::ExprId size_id = body.exprs.Add(
         hir::Expr{
             .type = int32_type,
             .data =
@@ -85,26 +85,27 @@ auto BuildIntegerLevel(
                     .callee = std::move(size_callee), .arguments = {*array}},
             .span = span});
     const hir::ExprId one_id =
-        body.AddExpr(hir::MakeInt32Literal(1, int32_type, span));
-    const hir::ExprId last_value_id = body.AddExpr(
+        body.exprs.Add(hir::MakeInt32Literal(1, int32_type, span));
+    const hir::ExprId last_value_id = body.exprs.Add(
         hir::Expr{
             .type = int32_type,
             .data =
                 hir::BinaryExpr{
                     .op = hir::BinaryOp::kSub, .lhs = size_id, .rhs = one_id},
             .span = span});
-    const hir::ProceduralVarId last_var = body.AddProceduralVar(
+    const hir::ProceduralVarId last_var = body.procedural_vars.Add(
         hir::ProceduralVarDecl{
             .name = std::string{kLastIndexName},
             .type = int32_type,
             .lifetime = hir::VariableLifetime::kAutomatic});
-    setup.push_back(body.AddStmt(
+    setup.push_back(body.stmts.Add(
         hir::Stmt{
             .label = std::nullopt,
             .data = hir::VarDeclStmt{.var = last_var, .init = last_value_id},
             .span = span}));
-    first_id = body.AddExpr(hir::MakeInt32Literal(0, int32_type, span));
-    last_id = body.AddExpr(hir::MakeProcVarRefExpr(last_var, int32_type, span));
+    first_id = body.exprs.Add(hir::MakeInt32Literal(0, int32_type, span));
+    last_id =
+        body.exprs.Add(hir::MakeProcVarRefExpr(last_var, int32_type, span));
   }
 
   const hir::ProceduralVarId loop_var =
@@ -112,8 +113,8 @@ auto BuildIntegerLevel(
   std::vector<hir::ForInit> init;
   init.emplace_back(hir::ForInitDecl{.var = loop_var, .init = first_id});
   const hir::ExprId cond_ref =
-      body.AddExpr(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
-  const hir::ExprId cond_id = body.AddExpr(
+      body.exprs.Add(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+  const hir::ExprId cond_id = body.exprs.Add(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -124,8 +125,8 @@ auto BuildIntegerLevel(
                   .rhs = last_id},
           .span = span});
   const hir::ExprId step_ref =
-      body.AddExpr(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
-  const hir::ExprId step_id = body.AddExpr(
+      body.exprs.Add(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+  const hir::ExprId step_id = body.exprs.Add(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -160,12 +161,12 @@ auto BuildAssociativeLevel(
 
   const hir::ProceduralVarId key_var =
       proc.AddProceduralVar(body, *dim.loopVar, key_type);
-  setup.push_back(body.AddStmt(
+  setup.push_back(body.stmts.Add(
       hir::Stmt{
           .label = std::nullopt,
           .data = hir::VarDeclStmt{.var = key_var, .init = std::nullopt},
           .span = span}));
-  const hir::ProceduralVarId more_var = body.AddProceduralVar(
+  const hir::ProceduralVarId more_var = body.procedural_vars.Add(
       hir::ProceduralVarDecl{
           .name = std::string{kMoreFlagName},
           .type = int32_type,
@@ -173,8 +174,8 @@ auto BuildAssociativeLevel(
 
   auto walk_call = [&](support::BuiltinFn method) -> hir::ExprId {
     const hir::ExprId key_ref =
-        body.AddExpr(hir::MakeProcVarRefExpr(key_var, key_type, span));
-    return body.AddExpr(
+        body.exprs.Add(hir::MakeProcVarRefExpr(key_var, key_type, span));
+    return body.exprs.Add(
         hir::Expr{
             .type = int32_type,
             .data =
@@ -190,10 +191,10 @@ auto BuildAssociativeLevel(
       hir::ForInitDecl{
           .var = more_var, .init = walk_call(support::BuiltinFn::kAssocFirst)});
   const hir::ExprId cond_id =
-      body.AddExpr(hir::MakeProcVarRefExpr(more_var, int32_type, span));
+      body.exprs.Add(hir::MakeProcVarRefExpr(more_var, int32_type, span));
   const hir::ExprId more_lhs =
-      body.AddExpr(hir::MakeProcVarRefExpr(more_var, int32_type, span));
-  const hir::ExprId step_id = body.AddExpr(
+      body.exprs.Add(hir::MakeProcVarRefExpr(more_var, int32_type, span));
+  const hir::ExprId step_id = body.exprs.Add(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -244,7 +245,7 @@ auto BuildForeachNest(
     auto body_or = proc.LowerStmt(
         fs.body, frame.WithBreakLabel(foreach_label, label_used));
     if (!body_or) return std::unexpected(std::move(body_or.error()));
-    return std::vector<hir::StmtId>{body.AddStmt(*std::move(body_or))};
+    return std::vector<hir::StmtId>{body.stmts.Add(*std::move(body_or))};
   }
 
   const LoopDim& dim = *levels[level];
@@ -282,9 +283,9 @@ auto BuildForeachNest(
     if (!inner_hir_type) {
       return std::unexpected(std::move(inner_hir_type.error()));
     }
-    const hir::ExprId index_id = body.AddExpr(
+    const hir::ExprId index_id = body.exprs.Add(
         hir::MakeProcVarRefExpr(loop.loop_var, loop.loop_var_type, span));
-    inner_array = body.AddExpr(
+    inner_array = body.exprs.Add(
         hir::Expr{
             .type = *inner_hir_type,
             .data =
@@ -299,13 +300,13 @@ auto BuildForeachNest(
   const hir::StmtId inner_body =
       inner_or->size() == 1
           ? inner_or->front()
-          : body.AddStmt(
+          : body.stmts.Add(
                 hir::Stmt{
                     .label = std::nullopt,
                     .data = hir::BlockStmt{.statements = std::move(*inner_or)},
                     .span = span});
 
-  stmts.push_back(body.AddStmt(
+  stmts.push_back(body.stmts.Add(
       hir::Stmt{
           .label = std::nullopt,
           .data =
@@ -354,14 +355,14 @@ auto ProcessLowerer::LowerForeachStmt(
   if (levels.empty()) {
     auto array_or = proc.LowerExpr(fs.arrayRef, frame);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
-    const auto array_eval_stmt = body.AddStmt(
+    const auto array_eval_stmt = body.stmts.Add(
         hir::Stmt{
             .label = std::nullopt,
-            .data = hir::ExprStmt{.expr = body.AddExpr(*std::move(array_or))},
+            .data = hir::ExprStmt{.expr = body.exprs.Add(*std::move(array_or))},
             .span = span});
     auto body_or = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
     if (!body_or) return std::unexpected(std::move(body_or.error()));
-    const auto body_stmt_id = body.AddStmt(*std::move(body_or));
+    const auto body_stmt_id = body.stmts.Add(*std::move(body_or));
     return hir::Stmt{
         .label = std::nullopt,
         .data = hir::BlockStmt{.statements = {array_eval_stmt, body_stmt_id}},
@@ -376,7 +377,7 @@ auto ProcessLowerer::LowerForeachStmt(
   if (needs_array) {
     auto array_or = proc.LowerExpr(fs.arrayRef, frame);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
-    array = body.AddExpr(*std::move(array_or));
+    array = body.exprs.Add(*std::move(array_or));
     array_type = fs.arrayRef.type;
   }
 

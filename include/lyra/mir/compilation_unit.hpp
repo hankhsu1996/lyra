@@ -104,8 +104,6 @@ struct CompilationUnit {
   }
 };
 
-// Synthesize a 32-bit signed two-state `int`-typed `IntegerLiteral` Expr. The
-// caller does the `AddExpr` on whichever scope they own.
 [[nodiscard]] inline auto MakeInt32Literal(
     TypeId int32_type, std::int64_t value) -> Expr {
   return Expr{

@@ -50,7 +50,7 @@ auto LowerConcatExprProc(
     auto operand_or = proc.LowerExpr(*op, frame);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     operand_ids.push_back(
-        frame.current_procedural_body->AddExpr(*std::move(operand_or)));
+        frame.current_procedural_body->exprs.Add(*std::move(operand_or)));
   }
   return hir::Expr{
       .type = *type_id,
@@ -77,11 +77,11 @@ auto LowerReplicationExprProc(
   auto count_or = proc.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const hir::ExprId count_id =
-      frame.current_procedural_body->AddExpr(*std::move(count_or));
+      frame.current_procedural_body->exprs.Add(*std::move(count_or));
   auto concat_or = proc.LowerExpr(rp.concat(), frame);
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const hir::ExprId concat_id =
-      frame.current_procedural_body->AddExpr(*std::move(concat_or));
+      frame.current_procedural_body->exprs.Add(*std::move(concat_or));
   return hir::Expr{
       .type = *type_id,
       .data = hir::ReplicationExpr{.count = count_id, .concat = concat_id},
@@ -101,7 +101,7 @@ auto LowerAssignmentPatternFromElementsProc(
     auto lowered = proc.LowerExpr(*elem, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(
-        frame.current_procedural_body->AddExpr(*std::move(lowered)));
+        frame.current_procedural_body->exprs.Add(*std::move(lowered)));
   }
   return hir::Expr{
       .type = *type_id,
@@ -122,18 +122,19 @@ auto LowerAssociativeAssignmentPatternProc(
     auto key_or = proc.LowerExpr(*setter.index, frame);
     if (!key_or) return std::unexpected(std::move(key_or.error()));
     const hir::ExprId key_id =
-        frame.current_procedural_body->AddExpr(*std::move(key_or));
+        frame.current_procedural_body->exprs.Add(*std::move(key_or));
     auto value_or = proc.LowerExpr(*setter.expr, frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const hir::ExprId value_id =
-        frame.current_procedural_body->AddExpr(*std::move(value_or));
+        frame.current_procedural_body->exprs.Add(*std::move(value_or));
     entries.push_back({.key = key_id, .value = value_id});
   }
   std::optional<hir::ExprId> default_id;
   if (ap.defaultSetter != nullptr) {
     auto default_or = proc.LowerExpr(*ap.defaultSetter, frame);
     if (!default_or) return std::unexpected(std::move(default_or.error()));
-    default_id = frame.current_procedural_body->AddExpr(*std::move(default_or));
+    default_id =
+        frame.current_procedural_body->exprs.Add(*std::move(default_or));
   }
   return hir::Expr{
       .type = *type_id,
@@ -155,14 +156,14 @@ auto LowerReplicatedAssignmentPatternExprProc(
   auto count_or = proc.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const hir::ExprId count_id =
-      frame.current_procedural_body->AddExpr(*std::move(count_or));
+      frame.current_procedural_body->exprs.Add(*std::move(count_or));
   std::vector<hir::ExprId> item_ids;
   item_ids.reserve(rp.elements().size());
   for (const auto* elem : rp.elements()) {
     auto lowered = proc.LowerExpr(*elem, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(
-        frame.current_procedural_body->AddExpr(*std::move(lowered)));
+        frame.current_procedural_body->exprs.Add(*std::move(lowered)));
   }
   return hir::Expr{
       .type = *type_id,
@@ -188,13 +189,13 @@ auto LowerNewArrayExprProc(
   auto size_or = proc.LowerExpr(na.sizeExpr(), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
   const hir::ExprId size_id =
-      frame.current_procedural_body->AddExpr(*std::move(size_or));
+      frame.current_procedural_body->exprs.Add(*std::move(size_or));
   std::optional<hir::ExprId> initializer_id;
   if (na.initExpr() != nullptr) {
     auto init_or = proc.LowerExpr(*na.initExpr(), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     initializer_id =
-        frame.current_procedural_body->AddExpr(*std::move(init_or));
+        frame.current_procedural_body->exprs.Add(*std::move(init_or));
   }
   return hir::Expr{
       .type = *type_id,
@@ -231,7 +232,7 @@ auto LowerConcatExprStructural(
     auto operand_or = scope.LowerExpr(*op, frame);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     operand_ids.push_back(
-        frame.current_structural_scope->AddExpr(*std::move(operand_or)));
+        frame.current_structural_scope->exprs.Add(*std::move(operand_or)));
   }
   return hir::Expr{
       .type = *type_id,
@@ -252,7 +253,7 @@ auto LowerAssignmentPatternFromElementsStructural(
     auto lowered = scope.LowerExpr(*elem, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(
-        frame.current_structural_scope->AddExpr(*std::move(lowered)));
+        frame.current_structural_scope->exprs.Add(*std::move(lowered)));
   }
   return hir::Expr{
       .type = *type_id,
@@ -273,11 +274,11 @@ auto LowerAssociativeAssignmentPatternStructural(
     auto key_or = scope.LowerExpr(*setter.index, frame);
     if (!key_or) return std::unexpected(std::move(key_or.error()));
     const hir::ExprId key_id =
-        frame.current_structural_scope->AddExpr(*std::move(key_or));
+        frame.current_structural_scope->exprs.Add(*std::move(key_or));
     auto value_or = scope.LowerExpr(*setter.expr, frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const hir::ExprId value_id =
-        frame.current_structural_scope->AddExpr(*std::move(value_or));
+        frame.current_structural_scope->exprs.Add(*std::move(value_or));
     entries.push_back({.key = key_id, .value = value_id});
   }
   std::optional<hir::ExprId> default_id;
@@ -285,7 +286,7 @@ auto LowerAssociativeAssignmentPatternStructural(
     auto default_or = scope.LowerExpr(*ap.defaultSetter, frame);
     if (!default_or) return std::unexpected(std::move(default_or.error()));
     default_id =
-        frame.current_structural_scope->AddExpr(*std::move(default_or));
+        frame.current_structural_scope->exprs.Add(*std::move(default_or));
   }
   return hir::Expr{
       .type = *type_id,
@@ -307,14 +308,14 @@ auto LowerReplicatedAssignmentPatternExprStructural(
   auto count_or = scope.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const hir::ExprId count_id =
-      frame.current_structural_scope->AddExpr(*std::move(count_or));
+      frame.current_structural_scope->exprs.Add(*std::move(count_or));
   std::vector<hir::ExprId> item_ids;
   item_ids.reserve(rp.elements().size());
   for (const auto* elem : rp.elements()) {
     auto lowered = scope.LowerExpr(*elem, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(
-        frame.current_structural_scope->AddExpr(*std::move(lowered)));
+        frame.current_structural_scope->exprs.Add(*std::move(lowered)));
   }
   return hir::Expr{
       .type = *type_id,

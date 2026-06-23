@@ -21,7 +21,7 @@ auto LowerInsideExprProc(
   auto lhs_or = proc.LowerExpr(in.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id =
-      frame.current_procedural_body->AddExpr(*std::move(lhs_or));
+      frame.current_procedural_body->exprs.Add(*std::move(lhs_or));
 
   std::vector<hir::InsideItem> items;
   items.reserve(in.rangeList().size());
@@ -56,16 +56,16 @@ auto LowerInsideItemImpl(
     auto lo_or = proc.LowerExpr(vr.left(), frame);
     if (!lo_or) return std::unexpected(std::move(lo_or.error()));
     const hir::ExprId lo_id =
-        frame.current_procedural_body->AddExpr(*std::move(lo_or));
+        frame.current_procedural_body->exprs.Add(*std::move(lo_or));
     auto hi_or = proc.LowerExpr(vr.right(), frame);
     if (!hi_or) return std::unexpected(std::move(hi_or.error()));
     const hir::ExprId hi_id =
-        frame.current_procedural_body->AddExpr(*std::move(hi_or));
+        frame.current_procedural_body->exprs.Add(*std::move(hi_or));
     return hir::InsideRangePair{.lo = lo_id, .hi = hi_id};
   }
   auto val_or = proc.LowerExpr(item_expr, frame);
   if (!val_or) return std::unexpected(std::move(val_or.error()));
-  return frame.current_procedural_body->AddExpr(*std::move(val_or));
+  return frame.current_procedural_body->exprs.Add(*std::move(val_or));
 }
 
 }  // namespace lyra::lowering::ast_to_hir

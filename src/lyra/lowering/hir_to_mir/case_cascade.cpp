@@ -14,12 +14,12 @@ auto AppendCaseSnapshot(
     const ModuleLowerer& module, WalkFrame frame, mir::ExprId cond_expr_id)
     -> CaseSnapshotRefs {
   auto& wrapper = *frame.current_block;
-  const mir::TypeId sel_type = wrapper.GetExpr(cond_expr_id).type;
+  const mir::TypeId sel_type = wrapper.exprs.Get(cond_expr_id).type;
 
-  const mir::LocalId sel_var = wrapper.AddLocal(
+  const mir::LocalId sel_var = wrapper.vars.Add(
       mir::LocalDecl{.name = "_lyra_case_sel", .type = sel_type});
   const mir::ExprId sel_default_init =
-      wrapper.AddExpr(BuildDefaultValueExpr(module, frame, sel_type));
+      wrapper.exprs.Add(BuildDefaultValueExpr(module, frame, sel_type));
   wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -29,12 +29,12 @@ auto AppendCaseSnapshot(
                       .hops = mir::BlockHops{.value = 0}, .var = sel_var},
               .init = sel_default_init}});
 
-  const mir::ExprId sel_target_id = wrapper.AddExpr(
+  const mir::ExprId sel_target_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = sel_var},
           .type = sel_type});
-  const mir::ExprId sel_assign_id = wrapper.AddExpr(
+  const mir::ExprId sel_assign_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::AssignExpr{.target = sel_target_id, .value = cond_expr_id},

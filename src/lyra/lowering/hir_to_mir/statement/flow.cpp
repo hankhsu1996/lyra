@@ -48,23 +48,23 @@ auto LowerStaticVarDeclStmt(
   const std::string mangled = std::format(
       "{}__{}_{}", process.CallableName(), hir_local.name, v.var.value);
   const mir::MemberId static_var =
-      owner_class->AddMember(mir::MemberDecl{.name = mangled, .type = type});
+      owner_class->members.Add(mir::MemberDecl{.name = mangled, .type = type});
   process.MapProceduralVar(v.var, StaticVarBinding{.var = static_var});
 
   mir::ExprId init_value{};
   if (v.init.has_value()) {
-    auto init_or = process.LowerExpr(
-        process.HirBody().exprs.at(v.init->value), ctor_frame);
+    auto init_or =
+        process.LowerExpr(process.HirBody().exprs.Get(*v.init), ctor_frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_value = ctor_block.AddExpr(*std::move(init_or));
+    init_value = ctor_block.exprs.Add(*std::move(init_or));
   } else {
-    init_value = ctor_block.AddExpr(
+    init_value = ctor_block.exprs.Add(
         BuildDefaultValueExpr(process.Module(), ctor_frame, type));
   }
 
   const mir::ExprId ctor_self_read =
-      ctor_block.AddExpr(BuildSelfRefExpr(ctor_frame, self_ptr_type));
-  const mir::ExprId target = ctor_block.AddExpr(
+      ctor_block.exprs.Add(BuildSelfRefExpr(ctor_frame, self_ptr_type));
+  const mir::ExprId target = ctor_block.exprs.Add(
       mir::MakeMemberAccessExpr(
           ctor_self_read,
           mir::MemberRef{
@@ -74,13 +74,13 @@ auto LowerStaticVarDeclStmt(
   // declared type is an observable cell wrapper the init must route through
   // `Var<T>::Set` so subscribers fire on its initial value (LRM 13.3.1 +
   // `docs/decisions/value-type-concepts.md`).
-  const mir::ExprId services_id = ctor_block.AddExpr(
+  const mir::ExprId services_id = ctor_block.exprs.Add(
       mir::MakeServicesCallExpr(
           ctor_self_read, process.Module().Unit().builtins.services));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
       process.Module().Unit(), ctor_block, services_id, target, init_value,
       std::nullopt, type, process.Module().Unit().builtins.void_type);
-  const mir::ExprId assign = ctor_block.AddExpr(assign_expr);
+  const mir::ExprId assign = ctor_block.exprs.Add(assign_expr);
   ctor_block.AppendStmt(
       mir::Stmt{.label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
   return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
@@ -92,7 +92,7 @@ auto LowerAutomaticVarDeclStmt(
     mir::TypeId type) -> diag::Result<mir::Stmt> {
   auto& block = *frame.current_block;
   const mir::LocalId local_id =
-      block.AddLocal(mir::LocalDecl{.name = hir_local.name, .type = type});
+      block.vars.Add(mir::LocalDecl{.name = hir_local.name, .type = type});
   process.MapProceduralVar(
       v.var,
       AutomaticVarBinding{
@@ -101,12 +101,12 @@ auto LowerAutomaticVarDeclStmt(
   mir::ExprId init_value{};
   if (v.init.has_value()) {
     auto init_or =
-        process.LowerExpr(process.HirBody().exprs.at(v.init->value), frame);
+        process.LowerExpr(process.HirBody().exprs.Get(*v.init), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_value = block.AddExpr(*std::move(init_or));
+    init_value = block.exprs.Add(*std::move(init_or));
   } else {
     init_value =
-        block.AddExpr(BuildDefaultValueExpr(process.Module(), frame, type));
+        block.exprs.Add(BuildDefaultValueExpr(process.Module(), frame, type));
   }
 
   return mir::Stmt{
@@ -123,7 +123,7 @@ auto LowerAutomaticVarDeclStmt(
 auto LowerVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
-  const auto& hir_local = process.HirBody().procedural_vars.at(v.var.value);
+  const auto& hir_local = process.HirBody().procedural_vars.Get(v.var);
   const mir::TypeId type = process.Module().TranslateType(hir_local.type);
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
     return LowerStaticVarDeclStmt(
@@ -140,9 +140,9 @@ auto LowerReturnStmt(
   std::optional<mir::ExprId> value;
   if (r.value.has_value()) {
     auto value_or =
-        process.LowerExpr(process.HirBody().exprs.at(r.value->value), frame);
+        process.LowerExpr(process.HirBody().exprs.Get(*r.value), frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    value = block.AddExpr(*std::move(value_or));
+    value = block.exprs.Add(*std::move(value_or));
   }
   return mir::Stmt{
       .label = std::move(label),

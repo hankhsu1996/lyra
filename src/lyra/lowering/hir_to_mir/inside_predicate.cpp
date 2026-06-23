@@ -20,11 +20,11 @@ auto BuildHirInsideItemPredicate(
   const auto& hir_body = proc.HirBody();
   auto& block = *frame.current_block;
   auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = proc.LowerExpr(hir_body.exprs.at(id.value), frame);
+    auto lowered = proc.LowerExpr(hir_body.exprs.Get(id), frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    return block.AddExpr(*std::move(lowered));
+    return block.exprs.Add(*std::move(lowered));
   };
 
   return std::visit(
@@ -32,7 +32,7 @@ auto BuildHirInsideItemPredicate(
           [&](const hir::ExprId& val_id) -> diag::Result<mir::ExprId> {
             auto v = lower_id(val_id);
             if (!v) return std::unexpected(std::move(v.error()));
-            return block.AddExpr(
+            return block.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
@@ -46,7 +46,7 @@ auto BuildHirInsideItemPredicate(
             if (!lo) return std::unexpected(std::move(lo.error()));
             auto hi = lower_id(r.hi);
             if (!hi) return std::unexpected(std::move(hi.error()));
-            const mir::ExprId ge_id = block.AddExpr(
+            const mir::ExprId ge_id = block.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
@@ -54,7 +54,7 @@ auto BuildHirInsideItemPredicate(
                             .lhs = lhs_id,
                             .rhs = *lo},
                     .type = result_type});
-            const mir::ExprId le_id = block.AddExpr(
+            const mir::ExprId le_id = block.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
@@ -62,7 +62,7 @@ auto BuildHirInsideItemPredicate(
                             .lhs = lhs_id,
                             .rhs = *hi},
                     .type = result_type});
-            return block.AddExpr(
+            return block.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{

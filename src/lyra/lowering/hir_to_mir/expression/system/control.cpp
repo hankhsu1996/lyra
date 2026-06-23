@@ -50,7 +50,7 @@ auto LowerFinishSystemSubroutineCall(
       throw InternalError("$finish argument unexpectedly elided");
     }
     const hir::ExprId arg_id = *call.arguments.front();
-    const hir::Expr& arg_expr = hir_proc.exprs.at(arg_id.value);
+    const hir::Expr& arg_expr = hir_proc.exprs.Get(arg_id);
     const auto literal = TryExtractLiteralInt(arg_expr);
     if (!literal.has_value()) {
       return diag::Unsupported(
@@ -69,8 +69,8 @@ auto LowerFinishSystemSubroutineCall(
   }
   const auto& builtins = process.Module().Unit().builtins;
   const mir::ExprId services_id =
-      frame.current_block->AddExpr(BuildServicesCallExpr(process, frame));
-  const mir::ExprId level_id = frame.current_block->AddExpr(
+      frame.current_block->exprs.Add(BuildServicesCallExpr(process, frame));
+  const mir::ExprId level_id = frame.current_block->exprs.Add(
       mir::MakeInt32Literal(builtins.int32, static_cast<std::int64_t>(level)));
   return mir::Expr{
       .data =

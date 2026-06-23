@@ -504,7 +504,7 @@ class HirDumper {
         Overloaded{
             [this](const StructuralSubroutineRef& u) -> std::string {
               const auto& owner = ResolveScope(u.hops);
-              const auto& decl = owner.GetStructuralSubroutine(u.subroutine);
+              const auto& decl = owner.structural_subroutines.Get(u.subroutine);
               return std::format(
                   "StructuralSubroutine[{}](hops={}) \"{}\"",
                   u.subroutine.value, u.hops.value, decl.name);
@@ -744,12 +744,12 @@ class HirDumper {
 
   [[nodiscard]] auto FormatProcExpr(const ProceduralBody& p, ExprId id) const
       -> std::string {
-    return FormatExpr(p.exprs.at(id.value));
+    return FormatExpr(p.exprs.Get(id));
   }
 
   [[nodiscard]] auto FormatScopeExpr(const StructuralScope& s, ExprId id) const
       -> std::string {
-    return FormatExpr(s.GetExpr(id));
+    return FormatExpr(s.exprs.Get(id));
   }
 
   void DumpUnit(const ModuleUnit& u) {
@@ -777,7 +777,8 @@ class HirDumper {
     Line("Scope:");
     Indent();
     for (std::size_t i = 0; i < s.structural_vars.size(); ++i) {
-      const auto& v = s.structural_vars[i];
+      const auto& v =
+          s.structural_vars.Get(StructuralVarId{static_cast<std::uint32_t>(i)});
       std::string init_suffix;
       if (v.initializer.has_value()) {
         init_suffix = std::format(" init=Expr[{}]", v.initializer->value);
@@ -788,19 +789,26 @@ class HirDumper {
               init_suffix));
     }
     for (std::size_t i = 0; i < s.loop_var_decls.size(); ++i) {
-      const auto& lv = s.loop_var_decls[i];
+      const auto& lv =
+          s.loop_var_decls.Get(LoopVarDeclId{static_cast<std::uint32_t>(i)});
       Line(
           std::format(
               "LoopVarDecl[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
     }
     for (std::size_t i = 0; i < s.structural_subroutines.size(); ++i) {
-      DumpStructuralSubroutine(i, s.structural_subroutines[i]);
+      DumpStructuralSubroutine(
+          i, s.structural_subroutines.Get(
+                 StructuralSubroutineId{static_cast<std::uint32_t>(i)}));
     }
     if (!s.exprs.empty()) {
       Line("Exprs:");
       Indent();
       for (std::size_t i = 0; i < s.exprs.size(); ++i) {
-        Line(std::format("Expr[{}] {}", i, FormatExpr(s.exprs[i])));
+        Line(
+            std::format(
+                "Expr[{}] {}", i,
+                FormatExpr(
+                    s.exprs.Get(ExprId{static_cast<std::uint32_t>(i)}))));
       }
       Dedent();
     }
@@ -814,7 +822,8 @@ class HirDumper {
       DumpGenerate(s, g);
     }
     for (std::size_t i = 0; i < s.instance_members.size(); ++i) {
-      const auto& im = s.instance_members[i];
+      const auto& im = s.instance_members.Get(
+          InstanceMemberId{static_cast<std::uint32_t>(i)});
       std::string array_suffix;
       for (const auto dim : im.array_dims) {
         array_suffix += std::format("[{}]", dim);
@@ -909,7 +918,8 @@ class HirDumper {
       Line("ProceduralVars:");
       Indent();
       for (std::size_t i = 0; i < body.procedural_vars.size(); ++i) {
-        const auto& lv = body.procedural_vars[i];
+        const auto& lv = body.procedural_vars.Get(
+            ProceduralVarId{static_cast<std::uint32_t>(i)});
         Line(
             std::format(
                 "ProceduralVar[{}] \"{}\" : Type[{}]{}", i, lv.name,
@@ -922,7 +932,11 @@ class HirDumper {
       Line("Exprs:");
       Indent();
       for (std::size_t i = 0; i < body.exprs.size(); ++i) {
-        Line(std::format("Expr[{}] {}", i, FormatExpr(body.exprs[i])));
+        Line(
+            std::format(
+                "Expr[{}] {}", i,
+                FormatExpr(
+                    body.exprs.Get(ExprId{static_cast<std::uint32_t>(i)}))));
       }
       Dedent();
     }
@@ -1259,7 +1273,7 @@ class HirDumper {
   }
 
   void DumpStmt(const ProceduralBody& p, StmtId id) {
-    const auto& s = p.stmts.at(id.value);
+    const auto& s = p.stmts.Get(id);
     std::visit(
         Overloaded{
             [&](const EmptyStmt&) {
@@ -1345,12 +1359,12 @@ class HirDumper {
     Indent();
     Line("then_scope:");
     Indent();
-    DumpScope(g.GetChildScope(ig.then_scope));
+    DumpScope(g.child_scopes.Get(ig.then_scope));
     Dedent();
     if (ig.else_scope.has_value()) {
       Line("else_scope:");
       Indent();
-      DumpScope(g.GetChildScope(*ig.else_scope));
+      DumpScope(g.child_scopes.Get(*ig.else_scope));
       Dedent();
     } else {
       Line("else_scope: <none>");
@@ -1374,13 +1388,13 @@ class HirDumper {
       }
       Line(std::format("item[{}] labels=[{}]", i, labels));
       Indent();
-      DumpScope(g.GetChildScope(item.scope));
+      DumpScope(g.child_scopes.Get(item.scope));
       Dedent();
     }
     if (cg.default_scope.has_value()) {
       Line("default_scope:");
       Indent();
-      DumpScope(g.GetChildScope(*cg.default_scope));
+      DumpScope(g.child_scopes.Get(*cg.default_scope));
       Dedent();
     } else {
       Line("default_scope: <none>");
@@ -1397,7 +1411,7 @@ class HirDumper {
     Indent();
     Line("scope:");
     Indent();
-    DumpScope(g.GetChildScope(lg.scope));
+    DumpScope(g.child_scopes.Get(lg.scope));
     Dedent();
     Dedent();
   }

@@ -53,10 +53,10 @@ auto MaybeWrapObservableLhsWithMutate(
     mir::ExprId lhs_id) -> mir::ExprId {
   const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
   const bool root_is_cell = mir::IsObservableCellType(
-      process.Module().Unit().GetType(block.GetExpr(root_id).type));
+      process.Module().Unit().GetType(block.exprs.Get(root_id).type));
   if (!root_is_cell) return lhs_id;
   const mir::ExprId services_id =
-      block.AddExpr(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process, frame));
   return RewriteLhsRootWithMutate(
       process.Module().Unit(), block, lhs_id, services_id);
 }
@@ -78,10 +78,10 @@ auto LowerAssociativeTraversal(
   }
   const auto& module = process.Module();
   const auto& hir_proc = process.HirBody();
-  const auto recv_hir = c.arguments[0]->value;
-  const auto idx_hir = c.arguments[1]->value;
+  const auto recv_hir = *c.arguments[0];
+  const auto idx_hir = *c.arguments[1];
   const mir::TypeId key_type =
-      module.TranslateType(hir_proc.exprs.at(idx_hir).type);
+      module.TranslateType(hir_proc.exprs.Get(idx_hir).type);
   const mir::TypeId void_t = module.Unit().builtins.void_type;
 
   ClosureBuilder closure(process.Module().Unit(), frame);
@@ -90,20 +90,20 @@ auto LowerAssociativeTraversal(
 
   // probe = idx -- snapshot the current index value into a plain local.
   auto idx_read_or =
-      process.LowerExpr(hir_proc.exprs.at(idx_hir), closure_frame);
+      process.LowerExpr(hir_proc.exprs.Get(idx_hir), closure_frame);
   if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
   const mir::LocalRef probe_ref = body.AppendLocal(
       mir::LocalDecl{.name = "_lyra_trav_probe", .type = key_type},
-      body.AddExpr(*std::move(idx_read_or)));
+      body.exprs.Add(*std::move(idx_read_or)));
 
   // found = (map).<kind>(probe) -- pure query: mutates probe, yields 1/0.
   auto map_read_or =
-      process.LowerExpr(hir_proc.exprs.at(recv_hir), closure_frame);
+      process.LowerExpr(hir_proc.exprs.Get(recv_hir), closure_frame);
   if (!map_read_or) return std::unexpected(std::move(map_read_or.error()));
-  const mir::ExprId map_read_id = body.AddExpr(*std::move(map_read_or));
+  const mir::ExprId map_read_id = body.exprs.Add(*std::move(map_read_or));
   const mir::ExprId probe_read_id =
-      body.AddExpr(mir::Expr{.data = probe_ref, .type = key_type});
-  const mir::ExprId query_id = body.AddExpr(
+      body.exprs.Add(mir::Expr{.data = probe_ref, .type = key_type});
+  const mir::ExprId query_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -116,20 +116,20 @@ auto LowerAssociativeTraversal(
 
   // idx = probe -- observable write-back fires the LRM 4.3 update event.
   auto idx_lhs_or =
-      process.LowerLhsExpr(hir_proc.exprs.at(idx_hir), closure_frame);
+      process.LowerLhsExpr(hir_proc.exprs.Get(idx_hir), closure_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
-  const mir::ExprId idx_lhs_id = body.AddExpr(*std::move(idx_lhs_or));
+  const mir::ExprId idx_lhs_id = body.exprs.Add(*std::move(idx_lhs_or));
   const mir::ExprId probe_writeback_id =
-      body.AddExpr(mir::Expr{.data = probe_ref, .type = key_type});
+      body.exprs.Add(mir::Expr{.data = probe_ref, .type = key_type});
   const mir::ExprId services_id =
-      body.AddExpr(BuildServicesCallExpr(process, closure_frame));
+      body.exprs.Add(BuildServicesCallExpr(process, closure_frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
       module.Unit(), body, services_id, idx_lhs_id, probe_writeback_id,
       std::nullopt, key_type, void_t);
-  body.AppendStmt(mir::ExprStmt{.expr = body.AddExpr(assign_expr)});
+  body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
 
   const mir::ExprId found_id =
-      body.AddExpr(mir::Expr{.data = found_ref, .type = result_type});
+      body.exprs.Add(mir::Expr{.data = found_ref, .type = result_type});
   return BuildClosureCallExpr(*frame.current_block, closure.Build(found_id));
 }
 
@@ -207,7 +207,7 @@ auto BuildArrayMethodClosure(
   const mir::TypeId index_type = module.Unit().builtins.int32;
   const std::string iterator_name =
       with_clause != nullptr
-          ? hir_process.procedural_vars.at(with_clause->iterator.value).name
+          ? hir_process.procedural_vars.Get(with_clause->iterator).name
           : std::string{"item"};
 
   ClosureBuilder closure(process.Module().Unit(), frame);
@@ -226,12 +226,12 @@ auto BuildArrayMethodClosure(
     // with-clause-specific role, so the body lowers through a frame carrying
     // that binding rather than the builder knowing about it.
     auto body_expr_or = process.LowerExpr(
-        hir_process.exprs.at(with_clause->expr.value),
+        hir_process.exprs.Get(with_clause->expr),
         closure.Frame().WithIndexBinding(index_binding));
     if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
-    body_return_value = body.AddExpr(*std::move(body_expr_or));
+    body_return_value = body.exprs.Add(*std::move(body_expr_or));
   } else {
-    body_return_value = body.AddExpr(
+    body_return_value = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
@@ -329,7 +329,7 @@ auto LowerStructuralSubroutineCall(
   }
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
-  args.push_back(block.AddExpr(
+  args.push_back(block.exprs.Add(
       BuildSelfRefExpr(frame, frame.current_class->self_pointer_type)));
   for (std::size_t i = 0; i < c.arguments.size(); ++i) {
     if (!c.arguments[i].has_value()) {
@@ -347,10 +347,10 @@ auto LowerStructuralSubroutineCall(
          decl.params[i].direction == hir::ParamDirection::kConstRef);
     mir::ExprId actual_id{};
     if (is_ref_formal) {
-      auto arg_or = process.LowerLhsExpr(
-          hir_process.exprs.at(c.arguments[i]->value), frame);
+      auto arg_or =
+          process.LowerLhsExpr(hir_process.exprs.Get(*c.arguments[i]), frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      actual_id = block.AddExpr(*std::move(arg_or));
+      actual_id = block.exprs.Add(*std::move(arg_or));
       const mir::ExprId root_id = FindLhsRootId(block, actual_id);
       if (root_id != actual_id) {
         actual_id =
@@ -358,12 +358,12 @@ auto LowerStructuralSubroutineCall(
       }
       args.push_back(BuildReferenceArg(
           process.Module().Unit(), block, actual_id,
-          block.GetExpr(actual_id).type));
+          block.exprs.Get(actual_id).type));
     } else {
       auto arg_or =
-          process.LowerExpr(hir_process.exprs.at(c.arguments[i]->value), frame);
+          process.LowerExpr(hir_process.exprs.Get(*c.arguments[i]), frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      args.push_back(block.AddExpr(*std::move(arg_or)));
+      args.push_back(block.exprs.Add(*std::move(arg_or)));
     }
   }
   return mir::Expr{
@@ -404,7 +404,7 @@ auto LowerBuiltinMethodCall(
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
   const hir::TypeId hir_dispatch_type =
-      hir_process.exprs.at(c.arguments.front()->value).type;
+      hir_process.exprs.Get(*c.arguments.front()).type;
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
 
@@ -428,16 +428,16 @@ auto LowerBuiltinMethodCall(
     mir::ExprId receiver_id{};
     if (method_mutates) {
       auto recv_or = process.LowerLhsExpr(
-          hir_process.exprs.at(c.arguments.front()->value), frame);
+          hir_process.exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver_id = block.AddExpr(*std::move(recv_or));
+      receiver_id = block.exprs.Add(*std::move(recv_or));
       receiver_id =
           MaybeWrapObservableLhsWithMutate(process, frame, block, receiver_id);
     } else {
-      auto recv_or = process.LowerExpr(
-          hir_process.exprs.at(c.arguments.front()->value), frame);
+      auto recv_or =
+          process.LowerExpr(hir_process.exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver_id = block.AddExpr(*std::move(recv_or));
+      receiver_id = block.exprs.Add(*std::move(recv_or));
     }
     args.push_back(receiver_id);
   }
@@ -449,9 +449,9 @@ auto LowerBuiltinMethodCall(
       throw InternalError("builtin-method call argument unexpectedly elided");
     }
     auto arg_or =
-        process.LowerExpr(hir_process.exprs.at(c.arguments[i]->value), frame);
+        process.LowerExpr(hir_process.exprs.Get(*c.arguments[i]), frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    args.push_back(block.AddExpr(*std::move(arg_or)));
+    args.push_back(block.exprs.Add(*std::move(arg_or)));
   }
 
   // LRM 7.12.1: reduction / ordering / locator array methods take a
@@ -464,7 +464,7 @@ auto LowerBuiltinMethodCall(
         process, frame, hir_dispatch_type,
         c.with_clause.has_value() ? &*c.with_clause : nullptr);
     if (!closure_or) return std::unexpected(std::move(closure_or.error()));
-    args.push_back(block.AddExpr(*std::move(closure_or)));
+    args.push_back(block.exprs.Add(*std::move(closure_or)));
     // LRM 7.12.5: `map`'s result element type may differ from the
     // receiver's, so its shield is supplied here as that type's canonical
     // default -- the runtime shape is not recoverable from the C++ type
@@ -473,7 +473,7 @@ auto LowerBuiltinMethodCall(
       const mir::TypeId result_elem =
           ArrayContainerElementType(module.Unit().GetType(result_type));
       args.push_back(
-          block.AddExpr(BuildDefaultValueExpr(module, frame, result_elem)));
+          block.exprs.Add(BuildDefaultValueExpr(module, frame, result_elem)));
     }
   } else if (c.with_clause.has_value()) {
     throw InternalError(
@@ -488,7 +488,7 @@ auto LowerBuiltinMethodCall(
   // fabricated one. (`-> e` is the only producer of the trigger kind and
   // lowers through LowerEventTriggerStmt; `await` takes no services.)
   if (b.method == support::BuiltinFn::kTriggered) {
-    args.push_back(block.AddExpr(BuildServicesCallExpr(process, frame)));
+    args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
   }
 
   return mir::Expr{

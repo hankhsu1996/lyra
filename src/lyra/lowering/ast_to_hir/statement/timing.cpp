@@ -79,7 +79,7 @@ auto LowerSignalEventTrigger(
   }
 
   return hir::EventTrigger{
-      .signal = frame.current_procedural_body->AddExpr(*std::move(expr_or)),
+      .signal = frame.current_procedural_body->exprs.Add(*std::move(expr_or)),
       .edge = edge_kind,
       .sensitivity_list = std::move(sensitivity_list),
   };
@@ -117,7 +117,7 @@ auto LowerNamedEventControl(
         diag::UnsupportedCategory::kFeature);
   }
   return hir::NamedEventControl{
-      .event = frame.current_procedural_body->AddExpr(*std::move(expr_or)),
+      .event = frame.current_procedural_body->exprs.Add(*std::move(expr_or)),
   };
 }
 
@@ -131,7 +131,7 @@ auto LowerTimingControl(
       if (!duration) return std::unexpected(std::move(duration.error()));
       return hir::TimingControl{hir::DelayControl{
           .duration =
-              frame.current_procedural_body->AddExpr(*std::move(duration))}};
+              frame.current_procedural_body->exprs.Add(*std::move(duration))}};
     }
     case slang::ast::TimingControlKind::SignalEvent: {
       const auto& sig = tc.as<slang::ast::SignalEventControl>();
@@ -202,7 +202,7 @@ auto LowerTimedStmt(
   auto inner_stmt = proc.LowerStmt(ts.stmt, frame);
   if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
   const hir::StmtId inner_id =
-      frame.current_procedural_body->AddStmt(*std::move(inner_stmt));
+      frame.current_procedural_body->stmts.Add(*std::move(inner_stmt));
   return hir::Stmt{
       .label = std::nullopt,
       .data = hir::TimedStmt{.timing = *std::move(timing), .stmt = inner_id},
@@ -243,7 +243,7 @@ auto LowerEventTriggerStmt(
       .data =
           hir::EventTriggerStmt{
               .event =
-                  frame.current_procedural_body->AddExpr(*std::move(expr_or)),
+                  frame.current_procedural_body->exprs.Add(*std::move(expr_or)),
           },
       .span = span};
 }
@@ -258,11 +258,11 @@ auto LowerWaitStmt(
   auto cond_or = proc.LowerExpr(w.cond, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id =
-      frame.current_procedural_body->AddExpr(*std::move(cond_or));
+      frame.current_procedural_body->exprs.Add(*std::move(cond_or));
   auto body_or = proc.LowerStmt(w.stmt, frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
-      frame.current_procedural_body->AddStmt(*std::move(body_or));
+      frame.current_procedural_body->stmts.Add(*std::move(body_or));
   const auto& reads =
       proc.Module().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
   auto sensitivity = proc.Module().TranslateSensitivityReads(reads, frame);

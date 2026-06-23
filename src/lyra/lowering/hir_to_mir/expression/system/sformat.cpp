@@ -45,11 +45,11 @@ auto BuildSFormatCallExpr(
   auto& block = *frame.current_block;
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
-  const mir::ExprId items_array = block.AddExpr(
+  const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   std::vector<mir::ExprId> args;
-  args.push_back(block.AddExpr(BuildServicesCallExpr(process, frame)));
+  args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
   args.push_back(items_array);
 
   return mir::Expr{
@@ -102,7 +102,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
     auto call_expr_or =
         BuildSFormatCallExpr(process, frame, call, id, info, 0, span);
     if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
-    const mir::ExprId expr_id = block.AddExpr(*std::move(call_expr_or));
+    const mir::ExprId expr_id = block.exprs.Add(*std::move(call_expr_or));
     return mir::Stmt{
         .label = std::move(label), .data = mir::ExprStmt{.expr = expr_id}};
   }
@@ -120,27 +120,27 @@ auto LowerSFormatSystemSubroutineCallStmt(
         "elided");
   }
   auto out_or =
-      process.LowerLhsExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
+      process.LowerLhsExpr(hir_proc.exprs.Get(*call.arguments[0]), frame);
   if (!out_or) return std::unexpected(std::move(out_or.error()));
   const mir::TypeId out_type = process.Module().TranslateType(
-      hir_proc.exprs.at(call.arguments[0]->value).type);
+      hir_proc.exprs.Get(*call.arguments[0]).type);
   if (process.Module().Unit().GetType(out_type).Kind() !=
       mir::TypeKind::kString) {
     return RejectNonStringOutput(name, span);
   }
-  const mir::ExprId out_id = block.AddExpr(*std::move(out_or));
+  const mir::ExprId out_id = block.exprs.Add(*std::move(out_or));
 
   auto call_expr_or =
       BuildSFormatCallExpr(process, frame, call, id, info, 1, span);
   if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
-  const mir::ExprId call_id = block.AddExpr(*std::move(call_expr_or));
+  const mir::ExprId call_id = block.exprs.Add(*std::move(call_expr_or));
 
   const mir::ExprId services_id =
-      block.AddExpr(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process, frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
       process.Module().Unit(), block, services_id, out_id, call_id,
       std::nullopt, out_type, process.Module().Unit().builtins.void_type);
-  const mir::ExprId assign_id = block.AddExpr(assign_expr);
+  const mir::ExprId assign_id = block.exprs.Add(assign_expr);
 
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = assign_id}};

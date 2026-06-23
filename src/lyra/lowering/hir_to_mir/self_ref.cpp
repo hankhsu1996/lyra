@@ -20,8 +20,8 @@ auto BuildSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
 auto BuildStructuralMemberAccessExpr(
     const WalkFrame& frame, const mir::MemberRef& member) -> mir::Expr {
   const mir::TypeId field_type =
-      frame.EnclosingClassAtHops(member.hops).GetMember(member.var).type;
-  const mir::ExprId receiver = frame.current_block->AddExpr(
+      frame.EnclosingClassAtHops(member.hops).members.Get(member.var).type;
+  const mir::ExprId receiver = frame.current_block->exprs.Add(
       BuildSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return mir::MakeMemberAccessExpr(receiver, member, field_type);
 }
@@ -38,7 +38,7 @@ auto BuildReferenceArg(
   }
   const mir::TypeId ref_type = unit.AddType(
       mir::TypeData{mir::RefType{.pointee = pointee, .is_const = false}});
-  return block.AddExpr(
+  return block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{

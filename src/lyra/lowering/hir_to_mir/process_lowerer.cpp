@@ -121,7 +121,7 @@ auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
   if (!raw_or) return raw_or;
   if (mir::IsObservableCellType(module_->Unit().GetType(raw_or->type))) {
     const mir::ExprId cell_id =
-        frame.current_block->AddExpr(*std::move(raw_or));
+        frame.current_block->exprs.Add(*std::move(raw_or));
     return mir::MakeObservableGetCallExpr(cell_id, result_type);
   }
   return raw_or;
@@ -233,7 +233,7 @@ namespace {
 auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
     -> diag::Result<void> {
   const hir::ProceduralBody& body = process.HirBody();
-  auto lowered = process.LowerStmt(body.stmts.at(body.root_stmt.value), frame);
+  auto lowered = process.LowerStmt(body.stmts.Get(body.root_stmt), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   auto& body_block = *frame.current_block;
   body_block.AppendStmt(*std::move(lowered));
@@ -244,7 +244,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
     -> diag::Result<mir::Process> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::Block process_block;
-  const mir::LocalId self_id = process_block.AddLocal(
+  const mir::LocalId self_id = process_block.vars.Add(
       mir::LocalDecl{
           .name = "self", .type = parent.current_class->self_pointer_type});
   const WalkFrame body_frame = parent.WithBlock(&process_block)
@@ -268,7 +268,7 @@ auto LowerForeverProcess(
     -> diag::Result<mir::Process> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::Block process_block;
-  const mir::LocalId self_id = process_block.AddLocal(
+  const mir::LocalId self_id = process_block.vars.Add(
       mir::LocalDecl{
           .name = "self", .type = parent.current_class->self_pointer_type});
   mir::Block body_block;
@@ -286,7 +286,7 @@ auto LowerForeverProcess(
   }
 
   const mir::BlockId body_scope_id =
-      process_block.AddChildScope(std::move(body_block));
+      process_block.child_scopes.Add(std::move(body_block));
   process_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -352,7 +352,7 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
     -> diag::Result<mir::MethodDecl> {
   const WalkFrame& parent = owner_ctor_frame_;
   mir::Block body_block;
-  const mir::LocalId self_id = body_block.AddLocal(
+  const mir::LocalId self_id = body_block.vars.Add(
       mir::LocalDecl{
           .name = "self", .type = parent.current_class->self_pointer_type});
   // A task body suspends on timing controls and renders as a coroutine; a
@@ -368,7 +368,7 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   std::vector<mir::MethodParam> params;
   params.reserve(src.params.size());
   for (const auto& param : src.params) {
-    const auto& hir_var = src.body.procedural_vars.at(param.var.value);
+    const auto& hir_var = src.body.procedural_vars.Get(param.var);
     const mir::TypeId value_type = module_->TranslateType(hir_var.type);
     // A `ref` / `const ref` formal's type is a `Ref<T>` over the value type
     // (LRM 13.5.2) -- the reference is itself the data type, so the direction
@@ -383,7 +383,7 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
                                            hir::ParamDirection::kConstRef}})
                      : value_type;
     const mir::LocalId mir_var =
-        body_block.AddLocal(mir::LocalDecl{.name = hir_var.name, .type = type});
+        body_block.vars.Add(mir::LocalDecl{.name = hir_var.name, .type = type});
     MapProceduralVar(
         param.var, AutomaticVarBinding{
                        .declaration_procedural_depth = body_frame.block_depth,
@@ -406,7 +406,7 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   const mir::TypeId result_type = module_->TranslateType(src.result_type);
   std::optional<mir::LocalRef> result_ref;
   if (src.result_var.has_value()) {
-    const mir::ExprId default_init = body_block.AddExpr(
+    const mir::ExprId default_init = body_block.exprs.Add(
         BuildDefaultValueExpr(*module_, body_frame, result_type));
     result_ref = body_block.AppendLocal(
         mir::LocalDecl{.name = "_lyra_result", .type = result_type},
@@ -422,8 +422,8 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   if (!lowered) return std::unexpected(std::move(lowered.error()));
 
   if (result_ref.has_value()) {
-    const mir::ExprId result_read =
-        body_block.AddExpr(mir::Expr{.data = *result_ref, .type = result_type});
+    const mir::ExprId result_read = body_block.exprs.Add(
+        mir::Expr{.data = *result_ref, .type = result_type});
     body_block.AppendStmt(
         mir::ReturnStmt{
             .value = result_read,

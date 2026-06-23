@@ -42,7 +42,7 @@ namespace {
 // target; procedural-local NBA is a known gap.
 auto IsExprRootedAtStructuralVar(const mir::Block& block, mir::ExprId expr_id)
     -> bool {
-  const auto& expr = block.GetExpr(expr_id);
+  const auto& expr = block.exprs.Get(expr_id);
   return std::visit(
       Overloaded{
           [](const mir::MemberRef&) { return true; },
@@ -77,7 +77,7 @@ auto CloneLhsExprForNbaBody(
     mir::ExprId outer_id) -> mir::ExprId {
   mir::Block& body = closure.Body();
   const mir::LocalId body_self_id = closure.SelfBinding();
-  const auto& outer_expr = outer_block.GetExpr(outer_id);
+  const auto& outer_expr = outer_block.exprs.Get(outer_id);
   return std::visit(
       Overloaded{
           [&](const mir::CallExpr& c) -> mir::ExprId {
@@ -97,7 +97,7 @@ auto CloneLhsExprForNbaBody(
                   c.arguments[i],
                   std::format("_lyra_nba_arg{}", snapshot_counter++)));
             }
-            return body.AddExpr(
+            return body.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -113,24 +113,24 @@ auto CloneLhsExprForNbaBody(
                   closure, outer_block, self_ptr_type, snapshot_counter,
                   op_id));
             }
-            return body.AddExpr(
+            return body.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::ConcatExpr{.operands = std::move(body_operands)},
                     .type = outer_expr.type});
           },
           [&](const mir::MemberRef&) -> mir::ExprId {
-            return body.AddExpr(outer_expr);
+            return body.exprs.Add(outer_expr);
           },
           [&](const mir::MemberAccessExpr& m) -> mir::ExprId {
-            const mir::ExprId body_receiver = body.AddExpr(
+            const mir::ExprId body_receiver = body.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::LocalRef{
                             .hops = mir::BlockHops{.value = 0},
                             .var = body_self_id},
                     .type = self_ptr_type});
-            return body.AddExpr(
+            return body.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::MemberAccessExpr{
@@ -138,7 +138,7 @@ auto CloneLhsExprForNbaBody(
                     .type = outer_expr.type});
           },
           [&](const mir::LocalRef&) -> mir::ExprId {
-            return body.AddExpr(outer_expr);
+            return body.exprs.Add(outer_expr);
           },
           [&](const auto&) -> mir::ExprId {
             throw InternalError(
@@ -187,17 +187,17 @@ auto BuildDeferredAssignClosure(
         op, std::format("_lyra_nba_arg{}", snapshot_counter++)));
   }
 
-  const mir::ExprId body_self_ref = body.AddExpr(
+  const mir::ExprId body_self_ref = body.exprs.Add(
       mir::Expr{
           .data =
               mir::LocalRef{
                   .hops = mir::BlockHops{.value = 0},
                   .var = closure.SelfBinding()},
           .type = self_ptr_type});
-  const mir::ExprId body_services = body.AddExpr(
+  const mir::ExprId body_services = body.exprs.Add(
       mir::MakeServicesCallExpr(
           body_self_ref, module.Unit().builtins.services));
-  const mir::ExprId effect_id = body.AddExpr(effect_fn(
+  const mir::ExprId effect_id = body.exprs.Add(effect_fn(
       body, body_target, std::span<const mir::ExprId>(body_operands),
       body_services));
   body.AppendStmt(
@@ -219,7 +219,7 @@ auto ApplyAssignEffect(
   auto& block = *frame.current_block;
   if (kind == hir::AssignKind::kBlocking) {
     const mir::ExprId services_id =
-        block.AddExpr(BuildServicesCallExpr(process, frame));
+        block.exprs.Add(BuildServicesCallExpr(process, frame));
     return effect_fn(block, target_in_outer, operands_in_outer, services_id);
   }
   if (!IsExprRootedAtStructuralVar(block, target_in_outer)) {
@@ -230,7 +230,7 @@ auto ApplyAssignEffect(
   }
   mir::Expr closure = BuildDeferredAssignClosure(
       process.Module(), frame, target_in_outer, operands_in_outer, effect_fn);
-  const mir::ExprId closure_id = block.AddExpr(std::move(closure));
+  const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
   return mir::Expr{
       .data =
           mir::RuntimeCallExpr{
@@ -247,13 +247,13 @@ auto LowerObservableAssign(
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
 
-  auto rhs_or = process.LowerExpr(hir_process.exprs.at(a.rhs.value), frame);
+  auto rhs_or = process.LowerExpr(hir_process.exprs.Get(a.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::ExprId rhs_id = block.AddExpr(*std::move(rhs_or));
+  const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
   auto lhs_or = process.LowerLhsExpr(
-      hir_process.exprs.at(a.lhs.value), frame.WithLvalueTarget(true));
+      hir_process.exprs.Get(a.lhs), frame.WithLvalueTarget(true));
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = block.AddExpr(*std::move(lhs_or));
+  const mir::ExprId lhs_id = block.exprs.Add(*std::move(lhs_or));
 
   const std::optional<mir::BinaryOp> compound_op =
       a.compound_op.has_value() ? std::optional{LowerBinaryOp(*a.compound_op)}
@@ -283,18 +283,18 @@ auto LowerStringElementAssign(
   const auto& unit = process.Module().Unit();
   auto& block = *frame.current_block;
 
-  const auto& base_hir = hir_process.exprs.at(sel.base_value.value);
+  const auto& base_hir = hir_process.exprs.Get(sel.base_value);
   auto cell_or = process.LowerLhsExpr(base_hir, frame.WithLvalueTarget(true));
   if (!cell_or) return std::unexpected(std::move(cell_or.error()));
-  const mir::ExprId cell_id = block.AddExpr(*std::move(cell_or));
+  const mir::ExprId cell_id = block.exprs.Add(*std::move(cell_or));
 
-  auto idx_or = process.LowerExpr(hir_process.exprs.at(sel.index.value), frame);
+  auto idx_or = process.LowerExpr(hir_process.exprs.Get(sel.index), frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.AddExpr(*std::move(idx_or));
+  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  auto rhs_or = process.LowerExpr(hir_process.exprs.at(a.rhs.value), frame);
+  auto rhs_or = process.LowerExpr(hir_process.exprs.Get(a.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  mir::ExprId value_id = block.AddExpr(*std::move(rhs_or));
+  mir::ExprId value_id = block.exprs.Add(*std::move(rhs_or));
 
   // A compound write only ever reaches here blocking (compound + NBA is not a
   // legal SV form, rejected upstream), so the read-modify lands in the active
@@ -302,10 +302,10 @@ auto LowerStringElementAssign(
   if (a.compound_op.has_value()) {
     auto base_read_or = process.LowerExpr(base_hir, frame);
     if (!base_read_or) return std::unexpected(std::move(base_read_or.error()));
-    const mir::ExprId base_read_id = block.AddExpr(*std::move(base_read_or));
-    const mir::ExprId cur_id = block.AddExpr(BuildStringMethodCallExpr(
+    const mir::ExprId base_read_id = block.exprs.Add(*std::move(base_read_or));
+    const mir::ExprId cur_id = block.exprs.Add(BuildStringMethodCallExpr(
         support::BuiltinFn::kGetc, {base_read_id, idx_id}, result_type));
-    value_id = block.AddExpr(
+    value_id = block.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
@@ -323,7 +323,7 @@ auto LowerStringElementAssign(
           mir::ExprId services) -> mir::Expr {
         mir::ExprId recv = target;
         const mir::ExprId root = FindLhsRootId(blk, target);
-        if (mir::IsObservableCellType(unit.GetType(blk.GetExpr(root).type))) {
+        if (mir::IsObservableCellType(unit.GetType(blk.exprs.Get(root).type))) {
           recv = RewriteLhsRootWithMutate(unit, blk, target, services);
         }
         return BuildStringMethodCallExpr(
@@ -347,10 +347,10 @@ auto LowerHirAssignExprProc(
   // it realizes as putc (LRM 6.16.2); every other target is an observable cell
   // or a local. Axis B (blocking vs deferred) is handled uniformly inside each.
   const auto& hir_process = process.HirBody();
-  const hir::Expr& hir_lhs = hir_process.exprs.at(a.lhs.value);
+  const hir::Expr& hir_lhs = hir_process.exprs.Get(a.lhs);
   if (const auto* sel = std::get_if<hir::ElementSelectExpr>(&hir_lhs.data)) {
     const hir::Type& base_ty = process.Module().Hir().GetType(
-        hir_process.exprs.at(sel->base_value.value).type);
+        hir_process.exprs.Get(sel->base_value).type);
     if (base_ty.Kind() == hir::TypeKind::kString) {
       return LowerStringElementAssign(
           process, frame, a, *sel, span, result_type);

@@ -11,9 +11,8 @@
 #include "lyra/hir/value_ref.hpp"
 
 // Pure builders for the synthetic HIR expressions a lowering reaches for
-// whenever it needs a counter, bound, or sentinel -- each a function of its
-// inputs plus a type and span, with no lowering state. The caller owns the
-// `AddExpr` into its body. The AST-to-HIR counterpart of
+// whenever it needs a counter, bound, or sentinel -- stateless, unlike the
+// lowering passes that own them. The AST-to-HIR counterpart of
 // `mir::MakeInt32Literal`.
 namespace lyra::hir {
 

@@ -73,7 +73,7 @@ auto BuildPrintValueItem(
     mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
   const auto& hir_proc = process.HirBody();
   auto& block = *frame.current_block;
-  auto lowered_or = process.LowerExpr(hir_proc.exprs.at(hir_arg.value), frame);
+  auto lowered_or = process.LowerExpr(hir_proc.exprs.Get(hir_arg), frame);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
 
@@ -85,7 +85,7 @@ auto BuildPrintValueItem(
   if (spec.kind == value::FormatKind::kString &&
       value_type.Kind() != mir::TypeKind::kString &&
       !value_type.IsIntegralPacked()) {
-    const mir::ExprId inner = block.AddExpr(std::move(lowered));
+    const mir::ExprId inner = block.exprs.Add(std::move(lowered));
     lowered = mir::Expr{
         .data =
             mir::ConversionExpr{
@@ -94,7 +94,7 @@ auto BuildPrintValueItem(
   }
 
   const mir::TypeId type = lowered.type;
-  const mir::ExprId value = block.AddExpr(std::move(lowered));
+  const mir::ExprId value = block.exprs.Add(std::move(lowered));
   return mir::RuntimePrintValue(value, type, std::move(spec));
 }
 
@@ -149,7 +149,7 @@ struct LiteralFormatStringRef {
 auto TryGetHirStringLiteral(
     const hir::ProceduralBody& proc, hir::ExprId expr_id)
     -> std::optional<LiteralFormatStringRef> {
-  const auto& expr = proc.exprs.at(expr_id.value);
+  const auto& expr = proc.exprs.Get(expr_id);
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
   if (primary == nullptr) return std::nullopt;
   const auto* sl = std::get_if<hir::StringLiteral>(&primary->data);
@@ -166,7 +166,7 @@ auto BuildFormatSpecExpr(
     mir::CompilationUnit& unit, mir::Block& block, const mir::FormatSpec& spec,
     std::int64_t time_unit_power) -> mir::Expr {
   const auto int_lit = [&](std::int64_t v) {
-    return block.AddExpr(mir::MakeInt32Literal(unit.builtins.int32, v));
+    return block.exprs.Add(mir::MakeInt32Literal(unit.builtins.int32, v));
   };
   std::vector<mir::ExprId> args;
   args.push_back(int_lit(static_cast<std::int64_t>(spec.kind)));
@@ -195,11 +195,11 @@ auto BuildPrintItemExpr(
   return std::visit(
       Overloaded{
           [&](const mir::RuntimePrintLiteral& lit) -> mir::Expr {
-            const mir::ExprId text_lit = block.AddExpr(
+            const mir::ExprId text_lit = block.exprs.Add(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = lit.text},
                     .type = unit.builtins.string});
-            const mir::ExprId text = block.AddExpr(
+            const mir::ExprId text = block.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -214,7 +214,7 @@ auto BuildPrintItemExpr(
                 .type = unit.builtins.print_literal_item};
           },
           [&](const mir::RuntimePrintValue& v) -> mir::Expr {
-            const mir::ExprId spec = block.AddExpr(
+            const mir::ExprId spec = block.exprs.Add(
                 BuildFormatSpecExpr(unit, block, v.spec, time_unit_power));
             return mir::Expr{
                 .data =
@@ -269,9 +269,9 @@ auto BuildRuntimePrintItemsFromCallArgs(
   }
   if (!literal.has_value() && fmt_req == FormatStringRequirement::kRequired) {
     // LRM 21.3.3 NOTE permits a non-literal format string; not yet supported.
-    const diag::SourceSpan span =
-        cursor < args.size() ? hir_proc.exprs.at(args[cursor].value).span
-                             : call_span;
+    const diag::SourceSpan span = cursor < args.size()
+                                      ? hir_proc.exprs.Get(args[cursor]).span
+                                      : call_span;
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedSubroutineArgument,
         "format string must be a string literal; a runtime-evaluated format "
@@ -315,8 +315,8 @@ auto BuildPrintItemsArray(
   std::vector<mir::ExprId> elements;
   elements.reserve(items.size());
   for (const mir::RuntimePrintItem& item : items) {
-    elements.push_back(
-        block.AddExpr(BuildPrintItemExpr(unit, block, item, time_unit_power)));
+    elements.push_back(block.exprs.Add(
+        BuildPrintItemExpr(unit, block, item, time_unit_power)));
   }
   const mir::TypeId array_type = unit.AddType(
       mir::TypeData{mir::UnpackedArrayType{

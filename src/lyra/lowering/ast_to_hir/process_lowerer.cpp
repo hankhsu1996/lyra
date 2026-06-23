@@ -90,7 +90,7 @@ auto ProcessLowerer::Run(
 
   auto root_stmt = LowerStmt(proc.getBody(), frame);
   if (!root_stmt) return std::unexpected(std::move(root_stmt.error()));
-  body.root_stmt = body.AddStmt(*std::move(root_stmt));
+  body.root_stmt = body.stmts.Add(*std::move(root_stmt));
 
   const auto& mapper = module_->SourceMapper();
   const auto span = mapper.PointSpanOf(proc.location);
@@ -123,7 +123,7 @@ auto ProcessLowerer::Run(
 auto ProcessLowerer::AddProceduralVar(
     hir::ProceduralBody& body, const slang::ast::VariableSymbol& var,
     hir::TypeId type) -> hir::ProceduralVarId {
-  const hir::ProceduralVarId id = body.AddProceduralVar(
+  const hir::ProceduralVarId id = body.procedural_vars.Add(
       hir::ProceduralVarDecl{
           .name = std::string{var.name},
           .type = type,

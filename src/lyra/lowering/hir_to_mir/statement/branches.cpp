@@ -36,22 +36,22 @@ auto LowerIfStmt(
   }
   auto& block = *frame.current_block;
   auto cond_expr_or =
-      process.LowerExpr(process.HirBody().exprs.at(i.condition.value), frame);
+      process.LowerExpr(process.HirBody().exprs.Get(i.condition), frame);
   if (!cond_expr_or) {
     return std::unexpected(std::move(cond_expr_or.error()));
   }
-  const mir::ExprId cond_id = block.AddExpr(*std::move(cond_expr_or));
+  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_expr_or));
 
   auto then_or = LowerStmtIntoChildScope(process, frame, i.then_stmt);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const mir::BlockId then_scope_id =
-      frame.current_block->AddChildScope(std::move(*then_or));
+      frame.current_block->child_scopes.Add(std::move(*then_or));
 
   std::optional<mir::BlockId> else_scope_id;
   if (i.else_stmt.has_value()) {
     auto else_or = LowerStmtIntoChildScope(process, frame, *i.else_stmt);
     if (!else_or) return std::unexpected(std::move(else_or.error()));
-    else_scope_id = frame.current_block->AddChildScope(std::move(*else_or));
+    else_scope_id = frame.current_block->child_scopes.Add(std::move(*else_or));
   }
 
   return mir::Stmt{
@@ -83,11 +83,11 @@ auto LowerCaseStmt(
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   auto cond_or =
-      process.LowerExpr(hir_proc.exprs.at(c.condition.value), wrapper_frame);
+      process.LowerExpr(hir_proc.exprs.Get(c.condition), wrapper_frame);
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  mir::ExprId cond_expr_id = wrapper.AddExpr(*std::move(cond_or));
+  mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
 
   // Peel an outer ConversionExpr widening the selector when state-kind is
   // preserved -- the cpp backend cannot init form=explicit from form=int,
@@ -105,9 +105,9 @@ auto LowerCaseStmt(
     return std::nullopt;
   };
   if (const auto* cv = std::get_if<mir::ConversionExpr>(
-          &wrapper.GetExpr(cond_expr_id).data)) {
-    const mir::TypeId dst_tid = wrapper.GetExpr(cond_expr_id).type;
-    const mir::TypeId src_tid = wrapper.GetExpr(cv->operand).type;
+          &wrapper.exprs.Get(cond_expr_id).data)) {
+    const mir::TypeId dst_tid = wrapper.exprs.Get(cond_expr_id).type;
+    const mir::TypeId src_tid = wrapper.exprs.Get(cv->operand).type;
     const auto dst_state = packed_state(dst_tid);
     const auto src_state = packed_state(src_tid);
     if (dst_state.has_value() && src_state.has_value() &&
@@ -163,11 +163,11 @@ auto LowerCaseStmt(
           [&](WalkFrame label_frame,
               std::size_t li) -> diag::Result<mir::ExprId> {
             auto lab_or = process.LowerExpr(
-                hir_proc.exprs.at(item.labels[li].value), label_frame);
+                hir_proc.exprs.Get(item.labels[li]), label_frame);
             if (!lab_or) {
               return std::unexpected(std::move(lab_or.error()));
             }
-            return label_frame.current_block->AddExpr(*std::move(lab_or));
+            return label_frame.current_block->exprs.Add(*std::move(lab_or));
           });
       if (!pred_or) return std::unexpected(std::move(pred_or.error()));
       predicates.push_back(*pred_or);
@@ -194,12 +194,11 @@ auto LowerCaseStmt(
         [&](WalkFrame label_frame,
             std::size_t li) -> diag::Result<mir::ExprId> {
           auto lab_or = process.LowerExpr(
-              hir_proc.exprs.at(c.items[item_idx].labels[li].value),
-              label_frame);
+              hir_proc.exprs.Get(c.items[item_idx].labels[li]), label_frame);
           if (!lab_or) {
             return std::unexpected(std::move(lab_or.error()));
           }
-          return label_frame.current_block->AddExpr(*std::move(lab_or));
+          return label_frame.current_block->exprs.Add(*std::move(lab_or));
         });
   };
 
@@ -218,12 +217,12 @@ auto LowerCaseInsideStmt(
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
   auto cond_or =
-      process.LowerExpr(hir_proc.exprs.at(c.condition.value), wrapper_frame);
+      process.LowerExpr(hir_proc.exprs.Get(c.condition), wrapper_frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  mir::ExprId cond_expr_id = wrapper.AddExpr(*std::move(cond_or));
+  mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
 
   if (const auto* cv = std::get_if<mir::ConversionExpr>(
-          &wrapper.GetExpr(cond_expr_id).data)) {
+          &wrapper.exprs.Get(cond_expr_id).data)) {
     cond_expr_id = cv->operand;
   }
 
@@ -266,7 +265,7 @@ auto LowerCaseInsideStmt(
           std::uint32_t sel_hops) -> diag::Result<mir::ExprId> {
     const WalkFrame level_frame = deeper_by(enc_frame, item_idx);
     auto& enc = *level_frame.current_block;
-    const mir::ExprId sel_ref = enc.AddExpr(
+    const mir::ExprId sel_ref = enc.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
@@ -284,7 +283,7 @@ auto LowerCaseInsideStmt(
           process, level_frame, sel_ref, inside_item, bit_type);
       if (!pred_or) return std::unexpected(std::move(pred_or.error()));
       if (acc.has_value()) {
-        acc = enc.AddExpr(
+        acc = enc.exprs.Add(
             mir::Expr{
                 .data =
                     mir::BinaryExpr{

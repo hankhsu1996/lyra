@@ -57,21 +57,21 @@ auto BuildEqualityChain(
       return std::unexpected(std::move(label_or.error()));
     }
     const mir::ExprId label_id = *label_or;
-    const mir::ExprId sel_ref = enc_scope.AddExpr(
+    const mir::ExprId sel_ref = enc_scope.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
                     .hops = mir::BlockHops{.value = sel_hops},
                     .var = snapshot.sel_var},
             .type = snapshot.sel_type});
-    const mir::ExprId cmp = enc_scope.AddExpr(
+    const mir::ExprId cmp = enc_scope.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
                     .op = compare_op, .lhs = sel_ref, .rhs = label_id},
             .type = bit_type});
     if (acc.has_value()) {
-      acc = enc_scope.AddExpr(
+      acc = enc_scope.exprs.Add(
           mir::Expr{
               .data =
                   mir::BinaryExpr{
@@ -119,10 +119,10 @@ auto BuildCaseCascade(
     }
 
     const mir::BlockId body_scope_id =
-        level_block.AddChildScope(std::move(body_scopes[i]));
+        level_block.child_scopes.Add(std::move(body_scopes[i]));
     std::optional<mir::BlockId> else_scope_id;
     if (tail.has_value()) {
-      else_scope_id = level_block.AddChildScope(std::move(*tail));
+      else_scope_id = level_block.child_scopes.Add(std::move(*tail));
     }
 
     level_block.AppendStmt(
@@ -145,10 +145,10 @@ auto BuildCaseCascade(
     }
 
     const mir::BlockId body0_id =
-        wrapper_block.AddChildScope(std::move(body_scopes[0]));
+        wrapper_block.child_scopes.Add(std::move(body_scopes[0]));
     std::optional<mir::BlockId> else0_id;
     if (tail.has_value()) {
-      else0_id = wrapper_block.AddChildScope(std::move(*tail));
+      else0_id = wrapper_block.child_scopes.Add(std::move(*tail));
     }
 
     wrapper_block.AppendStmt(
@@ -159,14 +159,15 @@ auto BuildCaseCascade(
                 .then_scope = body0_id,
                 .else_scope = else0_id}});
   } else if (tail.has_value()) {
-    const mir::BlockId def_id = wrapper_block.AddChildScope(std::move(*tail));
+    const mir::BlockId def_id =
+        wrapper_block.child_scopes.Add(std::move(*tail));
     wrapper_block.AppendStmt(
         mir::Stmt{
             .label = std::nullopt, .data = mir::BlockStmt{.scope = def_id}});
   }
 
   const mir::BlockId wrapper_scope_id =
-      frame.current_block->AddChildScope(std::move(wrapper_block));
+      frame.current_block->child_scopes.Add(std::move(wrapper_block));
 
   return mir::Stmt{
       .label = outer_label, .data = mir::BlockStmt{.scope = wrapper_scope_id}};

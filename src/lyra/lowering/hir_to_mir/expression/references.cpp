@@ -124,7 +124,7 @@ auto LowerHirStringLiteral(
   // `value::String` from the software literal via the constructor, on the
   // block that holds the surrounding expression.
   auto& block = *frame.current_block;
-  const mir::ExprId lit = block.AddExpr(
+  const mir::ExprId lit = block.exprs.Add(
       mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type});
   return mir::Expr{
       .data =
@@ -194,11 +194,11 @@ auto LowerCrossUnitVarRefExpr(
   const mir::MemberRef target = meta.target;
   const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
   const mir::ExprId self_ref =
-      frame.current_block->AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
+      frame.current_block->exprs.Add(BuildSelfRefExpr(frame, self_ptr_type));
   const auto* ptr = std::get_if<mir::PointerType>(
       &lowerer.Module().Unit().GetType(meta.slot_type).data);
   if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
-    const mir::ExprId pointer = frame.current_block->AddExpr(
+    const mir::ExprId pointer = frame.current_block->exprs.Add(
         mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type));
     return mir::Expr{
         .data = mir::DerefExpr{.pointer = pointer}, .type = ptr->pointee};

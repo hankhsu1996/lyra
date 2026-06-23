@@ -46,7 +46,7 @@ auto LowerForkStmt(
 
   for (const hir::StmtId local_hir_id : f.locals) {
     auto lowered =
-        process.LowerStmt(hir_proc.stmts.at(local_hir_id.value), fork_frame);
+        process.LowerStmt(hir_proc.stmts.Get(local_hir_id), fork_frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
@@ -56,7 +56,7 @@ auto LowerForkStmt(
   std::vector<mir::ExprId> branches;
   branches.reserve(f.branches.size());
   for (const hir::StmtId branch_hir_id : f.branches) {
-    const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
+    const hir::Stmt& branch = hir_proc.stmts.Get(branch_hir_id);
     // LRM 9.3.2: a branch is a concurrent thread whose body may suspend on
     // timing controls / event waits, so it lowers as a coroutine closure --
     // returns inside it become `co_return`. A fork-scope local is snapshotted
@@ -69,11 +69,11 @@ auto LowerForkStmt(
       return std::unexpected(std::move(lowered.error()));
     }
     closure.Body().AppendStmt(*std::move(lowered));
-    branches.push_back(fork_block.AddExpr(closure.BuildCoroutine()));
+    branches.push_back(fork_block.exprs.Add(closure.BuildCoroutine()));
   }
 
   const mir::BlockId scope_id =
-      frame.current_block->AddChildScope(std::move(fork_block));
+      frame.current_block->child_scopes.Add(std::move(fork_block));
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::ForkStmt{

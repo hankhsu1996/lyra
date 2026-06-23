@@ -73,7 +73,7 @@ auto BuildDefaultValueExpr(
           [&](const mir::StringType&) -> mir::Expr {
             // Software string literal -> `value::String("")` via the
             // constructor.
-            const mir::ExprId lit = block.AddExpr(
+            const mir::ExprId lit = block.exprs.Add(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = std::string{}},
                     .type = type});
@@ -99,7 +99,7 @@ auto BuildDefaultValueExpr(
             std::vector<mir::ExprId> elements;
             elements.reserve(ua.size);
             for (std::uint64_t i = 0; i < ua.size; ++i) {
-              elements.push_back(block.AddExpr(
+              elements.push_back(block.exprs.Add(
                   BuildDefaultValueExpr(module, frame, ua.element_type)));
             }
             return BuildArrayConstructionCall(
@@ -113,7 +113,7 @@ auto BuildDefaultValueExpr(
           // `DynamicArray<T>(...)` ctor that stores the value and leaves
           // `data_` empty.
           [&](const mir::DynamicArrayType& da) -> mir::Expr {
-            const mir::ExprId element_default = block.AddExpr(
+            const mir::ExprId element_default = block.exprs.Add(
                 BuildDefaultValueExpr(module, frame, da.element_type));
             return mir::Expr{
                 .data =
@@ -126,13 +126,13 @@ auto BuildDefaultValueExpr(
           // chain as the dynamic array -- the element default seeds the
           // wrapper's shield slot while storage starts empty.
           [&](const mir::QueueType& q) -> mir::Expr {
-            const mir::ExprId element_default = block.AddExpr(
+            const mir::ExprId element_default = block.exprs.Add(
                 BuildDefaultValueExpr(module, frame, q.element_type));
             std::vector<mir::ExprId> args = {element_default};
             // LRM 7.10.5: a bounded queue `int q[$:N]` carries its max index N
             // as a second construction argument so the runtime can enforce it.
             if (q.max_bound.has_value()) {
-              args.push_back(block.AddExpr(
+              args.push_back(block.exprs.Add(
                   mir::MakeInt32Literal(
                       module.Unit().builtins.int32,
                       static_cast<std::int64_t>(*q.max_bound))));
@@ -148,7 +148,7 @@ auto BuildDefaultValueExpr(
           // default seeds the wrapper's shield slot (the source of nonexistent-
           // entry reads, LRM 7.8.6) while storage starts empty.
           [&](const mir::AssociativeArrayType& a) -> mir::Expr {
-            const mir::ExprId element_default = block.AddExpr(
+            const mir::ExprId element_default = block.exprs.Add(
                 BuildDefaultValueExpr(module, frame, a.element_type));
             return mir::Expr{
                 .data =
@@ -221,8 +221,8 @@ auto BuildArrayConstructionCall(
       },
       ty.data);
   const mir::ExprId element_default =
-      block.AddExpr(BuildDefaultValueExpr(module, frame, element_type));
-  const mir::ExprId list_id = block.AddExpr(
+      block.exprs.Add(BuildDefaultValueExpr(module, frame, element_type));
+  const mir::ExprId list_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
           .type = array_type});
@@ -232,7 +232,7 @@ auto BuildArrayConstructionCall(
   // and the runtime trims an over-long initializer.
   if (const auto* q = std::get_if<mir::QueueType>(&ty.data);
       q != nullptr && q->max_bound.has_value()) {
-    args.push_back(block.AddExpr(
+    args.push_back(block.exprs.Add(
         mir::MakeInt32Literal(
             module.Unit().builtins.int32,
             static_cast<std::int64_t>(*q->max_bound))));
@@ -269,7 +269,7 @@ auto BuildAssociativeConstructionCall(
   std::vector<mir::ExprId> tuple_ids;
   tuple_ids.reserve(entries.size());
   for (const auto& [key_id, value_id] : entries) {
-    tuple_ids.push_back(block.AddExpr(
+    tuple_ids.push_back(block.exprs.Add(
         mir::Expr{
             .data = mir::TupleExpr{.components = {key_id, value_id}},
             .type = tuple_type}));
@@ -278,13 +278,13 @@ auto BuildAssociativeConstructionCall(
       mir::UnpackedArrayType{
           .element_type = tuple_type,
           .size = static_cast<std::uint64_t>(tuple_ids.size())});
-  const mir::ExprId entries_id = block.AddExpr(
+  const mir::ExprId entries_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(tuple_ids)},
           .type = entries_type});
 
   const mir::ExprId element_default =
-      block.AddExpr(BuildDefaultValueExpr(module, frame, element_type));
+      block.exprs.Add(BuildDefaultValueExpr(module, frame, element_type));
   std::vector<mir::ExprId> args;
   args.reserve(user_default.has_value() ? 3U : 2U);
   args.push_back(element_default);

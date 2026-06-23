@@ -39,7 +39,7 @@ auto LowerCaseInsideStmt(
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id =
-      frame.current_procedural_body->AddExpr(*std::move(cond_expr));
+      frame.current_procedural_body->exprs.Add(*std::move(cond_expr));
   std::vector<hir::CaseInsideItem> items;
   items.reserve(cs.items.size());
   for (const auto& item : cs.items) {
@@ -53,7 +53,7 @@ auto LowerCaseInsideStmt(
     auto item_stmt = proc.LowerStmt(*item.stmt, frame);
     if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
     const hir::StmtId item_id =
-        frame.current_procedural_body->AddStmt(*std::move(item_stmt));
+        frame.current_procedural_body->stmts.Add(*std::move(item_stmt));
     items.push_back(
         hir::CaseInsideItem{.items = std::move(inside_items), .stmt = item_id});
   }
@@ -62,7 +62,7 @@ auto LowerCaseInsideStmt(
     auto default_stmt = proc.LowerStmt(*cs.defaultCase, frame);
     if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
     default_id =
-        frame.current_procedural_body->AddStmt(*std::move(default_stmt));
+        frame.current_procedural_body->stmts.Add(*std::move(default_stmt));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -101,7 +101,7 @@ auto LowerCaseStmt(
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id =
-      frame.current_procedural_body->AddExpr(*std::move(cond_expr));
+      frame.current_procedural_body->exprs.Add(*std::move(cond_expr));
   std::vector<hir::CaseItem> items;
   items.reserve(cs.items.size());
   for (const auto& item : cs.items) {
@@ -111,12 +111,12 @@ auto LowerCaseStmt(
       auto label_or = proc.LowerExpr(*label_expr, frame);
       if (!label_or) return std::unexpected(std::move(label_or.error()));
       label_ids.push_back(
-          frame.current_procedural_body->AddExpr(*std::move(label_or)));
+          frame.current_procedural_body->exprs.Add(*std::move(label_or)));
     }
     auto item_stmt = proc.LowerStmt(*item.stmt, frame);
     if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
     const hir::StmtId item_id =
-        frame.current_procedural_body->AddStmt(*std::move(item_stmt));
+        frame.current_procedural_body->stmts.Add(*std::move(item_stmt));
     items.push_back(
         hir::CaseItem{.labels = std::move(label_ids), .stmt = item_id});
   }
@@ -125,7 +125,7 @@ auto LowerCaseStmt(
     auto default_stmt = proc.LowerStmt(*cs.defaultCase, frame);
     if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
     default_id =
-        frame.current_procedural_body->AddStmt(*std::move(default_stmt));
+        frame.current_procedural_body->stmts.Add(*std::move(default_stmt));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -160,16 +160,16 @@ auto LowerConditionalStmt(
   auto cond_expr = proc.LowerExpr(*cond.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id =
-      frame.current_procedural_body->AddExpr(*std::move(cond_expr));
+      frame.current_procedural_body->exprs.Add(*std::move(cond_expr));
   auto then_stmt = proc.LowerStmt(cs.ifTrue, frame);
   if (!then_stmt) return std::unexpected(std::move(then_stmt.error()));
   const hir::StmtId then_id =
-      frame.current_procedural_body->AddStmt(*std::move(then_stmt));
+      frame.current_procedural_body->stmts.Add(*std::move(then_stmt));
   std::optional<hir::StmtId> else_id;
   if (cs.ifFalse != nullptr) {
     auto else_stmt = proc.LowerStmt(*cs.ifFalse, frame);
     if (!else_stmt) return std::unexpected(std::move(else_stmt.error()));
-    else_id = frame.current_procedural_body->AddStmt(*std::move(else_stmt));
+    else_id = frame.current_procedural_body->stmts.Add(*std::move(else_stmt));
   }
   return hir::Stmt{
       .label = std::nullopt,

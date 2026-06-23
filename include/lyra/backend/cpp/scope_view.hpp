@@ -82,7 +82,7 @@ class ScopeView {
   }
 
   [[nodiscard]] auto Expr(mir::ExprId id) const -> const mir::Expr& {
-    return block_->GetExpr(id);
+    return block_->exprs.Get(id);
   }
 
  private:

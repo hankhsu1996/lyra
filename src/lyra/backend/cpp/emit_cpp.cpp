@@ -81,7 +81,7 @@ auto RenderConstructor(
                     "lyra::runtime::RuntimeServices& services";
   std::string init_list = base_class + "(parent, std::move(name), services)";
   for (std::size_t i = 0; i < s.params.size(); ++i) {
-    const auto& p = s.params[i];
+    const auto& p = s.params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
     const auto param_name = CtorParamName(i);
     auto type_or = RenderTypeAsCpp(scope_view.Unit(), s, p.type);
     if (!type_or) return std::unexpected(std::move(type_or.error()));

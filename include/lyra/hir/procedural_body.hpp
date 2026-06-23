@@ -1,7 +1,8 @@
 #pragma once
 
-#include <vector>
+#include <cstdint>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -14,38 +15,11 @@ namespace lyra::hir {
 // body (a process kind and sensitivity, or a subroutine signature).
 struct ProceduralBody {
   StmtId root_stmt{};
-  std::vector<Expr> exprs;
-  std::vector<Stmt> stmts;
-  std::vector<ProceduralVarDecl> procedural_vars;
+  base::Arena<Expr, ExprId> exprs;
+  base::Arena<Stmt, StmtId> stmts;
+  base::Arena<ProceduralVarDecl, ProceduralVarId> procedural_vars;
   std::uint32_t loop_label_count = 0;
 
-  [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr& {
-    return exprs.at(id.value);
-  }
-  [[nodiscard]] auto GetStmt(StmtId id) const -> const Stmt& {
-    return stmts.at(id.value);
-  }
-  [[nodiscard]] auto GetProceduralVar(ProceduralVarId id) const
-      -> const ProceduralVarDecl& {
-    return procedural_vars.at(id.value);
-  }
-
-  auto AddExpr(Expr expr) -> ExprId {
-    const ExprId id{static_cast<std::uint32_t>(exprs.size())};
-    exprs.push_back(std::move(expr));
-    return id;
-  }
-  auto AddStmt(Stmt stmt) -> StmtId {
-    const StmtId id{static_cast<std::uint32_t>(stmts.size())};
-    stmts.push_back(std::move(stmt));
-    return id;
-  }
-  auto AddProceduralVar(ProceduralVarDecl decl) -> ProceduralVarId {
-    const ProceduralVarId id{
-        static_cast<std::uint32_t>(procedural_vars.size())};
-    procedural_vars.push_back(std::move(decl));
-    return id;
-  }
   auto AddLoopLabel() -> LoopLabelId {
     return LoopLabelId{loop_label_count++};
   }

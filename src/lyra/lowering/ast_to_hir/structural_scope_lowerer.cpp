@@ -178,7 +178,9 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  scope.cross_unit_refs = module_->TakeCrossUnitRefsForFrame(frame_);
+  for (auto& ref : module_->TakeCrossUnitRefsForFrame(frame_)) {
+    scope.cross_unit_refs.Add(std::move(ref));
+  }
   return scope;
 }
 
@@ -253,10 +255,10 @@ auto StructuralScopeLowerer::PopulateVariableMember(
     auto init_or = LowerExpr(*init, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     initializer_id =
-        frame.current_structural_scope->AddExpr(*std::move(init_or));
+        frame.current_structural_scope->exprs.Add(*std::move(init_or));
   }
   const hir::StructuralVarId local =
-      frame.current_structural_scope->AddStructuralVar(
+      frame.current_structural_scope->structural_vars.Add(
           hir::StructuralVarDecl{
               .name = std::string{var.name},
               .type = *type_id_or,
@@ -305,7 +307,7 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
 
   auto body_stmt_or = sub_lowerer.LowerStmt(sym.getBody(), sub_frame);
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
-  sub_body.root_stmt = sub_body.AddStmt(*std::move(body_stmt_or));
+  sub_body.root_stmt = sub_body.stmts.Add(*std::move(body_stmt_or));
 
   const auto binding = module_->LookupSubroutineBinding(sym);
   if (!binding.has_value() ||
@@ -318,7 +320,7 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
         "reserved order; ReserveSubroutineBinding must run first in the same "
         "order");
   }
-  frame.current_structural_scope->AddStructuralSubroutine(
+  frame.current_structural_scope->structural_subroutines.Add(
       hir::StructuralSubroutineDecl{
           .name = std::string{sym.name},
           .kind = ToHirSubroutineKind(sym.subroutineKind),
@@ -335,7 +337,7 @@ auto StructuralScopeLowerer::PopulateProceduralBlockMember(
   ProcessLowerer proc_lowerer(*module_, proc);
   auto p = proc_lowerer.Run(proc, frame);
   if (!p) return std::unexpected(std::move(p.error()));
-  frame.current_structural_scope->AddProcess(*std::move(p));
+  frame.current_structural_scope->processes.Add(*std::move(p));
   return {};
 }
 
@@ -344,7 +346,7 @@ auto StructuralScopeLowerer::PopulateContinuousAssignMember(
     -> diag::Result<void> {
   auto ca = LowerContinuousAssign(sym, frame);
   if (!ca) return std::unexpected(std::move(ca.error()));
-  frame.current_structural_scope->AddContinuousAssign(*std::move(ca));
+  frame.current_structural_scope->continuous_assigns.Add(*std::move(ca));
   return {};
 }
 
@@ -353,7 +355,7 @@ auto StructuralScopeLowerer::PopulateLoopGenerateMember(
     -> diag::Result<void> {
   auto g = BuildLoopGenerate(array, frame);
   if (!g) return std::unexpected(std::move(g.error()));
-  frame.current_structural_scope->AddGenerate(*std::move(g));
+  frame.current_structural_scope->generates.Add(*std::move(g));
   return {};
 }
 
@@ -374,7 +376,7 @@ auto StructuralScopeLowerer::PopulateIfOrCaseGenerateMember(
   auto g = IsCaseConstruct(siblings) ? BuildCaseGenerate(siblings, frame)
                                      : BuildIfGenerate(siblings, frame);
   if (!g) return std::unexpected(std::move(g.error()));
-  frame.current_structural_scope->AddGenerate(*std::move(g));
+  frame.current_structural_scope->generates.Add(*std::move(g));
   return {};
 }
 
@@ -382,7 +384,7 @@ auto StructuralScopeLowerer::PopulateInstanceMember(
     const slang::ast::InstanceSymbol& inst, WalkFrame frame)
     -> diag::Result<void> {
   const hir::InstanceMemberId member_id =
-      frame.current_structural_scope->AddInstanceMember(
+      frame.current_structural_scope->instance_members.Add(
           hir::InstanceMemberDecl{
               .instance_name = std::string{inst.name},
               .target_unit = std::string{inst.getDefinition().name},
@@ -415,7 +417,7 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   }
   const auto& leaf = level->as<slang::ast::InstanceSymbol>();
   const hir::InstanceMemberId member_id =
-      frame.current_structural_scope->AddInstanceMember(
+      frame.current_structural_scope->instance_members.Add(
           hir::InstanceMemberDecl{
               .instance_name = std::string{array.name},
               .target_unit = std::string{leaf.getDefinition().name},

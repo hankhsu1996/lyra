@@ -377,7 +377,7 @@ class MirDumper {
             },
             [this](const MethodRef& r) -> std::string {
               const auto& owner = ResolveScopeAtHops(r.hops.value);
-              const auto& target = owner.GetMethod(r.method);
+              const auto& target = owner.methods.Get(r.method);
               return std::format(
                   "MethodRef[hops={}, method={}] \"{}\"", r.hops.value,
                   r.method.value, target.name);
@@ -463,7 +463,7 @@ class MirDumper {
 
   [[nodiscard]] auto FormatExpr(const Block& scope, ExprId id) const
       -> std::string {
-    const auto& e = scope.exprs.at(id.value);
+    const auto& e = scope.exprs.Get(id);
     std::string formatted = std::visit(
         Overloaded{
             [](const IntegerLiteral& lit) -> std::string {
@@ -483,14 +483,14 @@ class MirDumper {
             },
             [this](const ParamRef& r) -> std::string {
               const auto& owner = ResolveScopeAtHops(r.hops.value);
-              const auto& param = owner.GetParam(r.param);
+              const auto& param = owner.params.Get(r.param);
               return std::format(
                   "ParamRef[hops={}, param={}] \"{}\"", r.hops.value,
                   r.param.value, param.name);
             },
             [this](const LocalRef& r) -> std::string {
               const auto& owner = ResolveBlockAtHops(r.hops.value);
-              const auto& var = owner.vars.at(r.var.value);
+              const auto& var = owner.vars.Get(r.var);
               return std::format(
                   "LocalRef[hops={}, var={}] \"{}\"", r.hops.value, r.var.value,
                   var.name);
@@ -633,7 +633,7 @@ class MirDumper {
     for (std::size_t i = 0; i < s.nested_classes.size(); ++i) {
       Line(std::format("[{}]", i));
       Indent();
-      DumpClass(s.nested_classes[i]);
+      DumpClass(s.nested_classes.Get(ClassId{static_cast<std::uint32_t>(i)}));
       Dedent();
     }
     Dedent();
@@ -642,7 +642,7 @@ class MirDumper {
       Line("Params:");
       Indent();
       for (std::size_t i = 0; i < s.params.size(); ++i) {
-        const auto& p = s.params[i];
+        const auto& p = s.params.Get(ParamId{static_cast<std::uint32_t>(i)});
         Line(std::format("[{}] \"{}\" : {}", i, p.name, FormatVarType(p.type)));
       }
       Dedent();
@@ -651,7 +651,7 @@ class MirDumper {
     Line("Members:");
     Indent();
     for (std::size_t i = 0; i < s.members.size(); ++i) {
-      const auto& v = s.members[i];
+      const auto& v = s.members.Get(MemberId{static_cast<std::uint32_t>(i)});
       const std::string as =
           v.source_name.empty() ? "" : std::format(" as \"{}\"", v.source_name);
       Line(
@@ -663,7 +663,7 @@ class MirDumper {
     Line("Methods:");
     Indent();
     for (std::size_t i = 0; i < s.methods.size(); ++i) {
-      DumpMethod(s.methods[i], i);
+      DumpMethod(s.methods.Get(MethodId{static_cast<std::uint32_t>(i)}), i);
     }
     Dedent();
 
@@ -675,7 +675,7 @@ class MirDumper {
     Line("Processes:");
     Indent();
     for (std::size_t i = 0; i < s.processes.size(); ++i) {
-      DumpProcess(s.processes[i], i);
+      DumpProcess(s.processes.Get(ProcessId{static_cast<std::uint32_t>(i)}), i);
     }
     Dedent();
 
@@ -740,7 +740,7 @@ class MirDumper {
       Line("Locals:");
       Indent();
       for (std::size_t i = 0; i < scope.vars.size(); ++i) {
-        const auto& v = scope.vars[i];
+        const auto& v = scope.vars.Get(LocalId{static_cast<std::uint32_t>(i)});
         Line(
             std::format(
                 "Local[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
@@ -753,7 +753,7 @@ class MirDumper {
       for (std::size_t i = 0; i < scope.exprs.size(); ++i) {
         const ExprId id{static_cast<std::uint32_t>(i)};
         Line(std::format("Expr[{}] {}", i, FormatExpr(scope, id)));
-        const auto& expr = scope.exprs[i];
+        const auto& expr = scope.exprs.Get(id);
         if (const auto* rc = std::get_if<RuntimeCallExpr>(&expr.data)) {
           Indent();
           std::visit(
@@ -841,7 +841,7 @@ class MirDumper {
   void DumpLocalDeclStmt(
       const Block& enclosing, StmtId id, const LocalDeclStmt& s) {
     const auto& owner = ResolveBlockAtHops(s.target.hops.value);
-    const auto& var = owner.vars.at(s.target.var.value);
+    const auto& var = owner.vars.Get(s.target.var);
     Line(
         std::format(
             "Stmt[{}] LocalDeclStmt "
@@ -882,7 +882,7 @@ class MirDumper {
   }
 
   void DumpStmt(const Block& enclosing, StmtId id) {
-    const auto& stmt = enclosing.stmts.at(id.value);
+    const auto& stmt = enclosing.stmts.Get(id);
     if (stmt.label.has_value()) {
       Line(std::format("label: \"{}\"", *stmt.label));
     }
@@ -980,7 +980,7 @@ class MirDumper {
             FormatExpr(enclosing, s.condition)));
     Line(std::format("scope (BlockId={}):", s.scope.value));
     Indent();
-    DumpBlock(enclosing.GetChildScope(s.scope));
+    DumpBlock(enclosing.child_scopes.Get(s.scope));
     Dedent();
     Dedent();
   }
@@ -995,7 +995,7 @@ class MirDumper {
             FormatExpr(enclosing, s.condition)));
     Line(std::format("scope (BlockId={}):", s.scope.value));
     Indent();
-    DumpBlock(enclosing.GetChildScope(s.scope));
+    DumpBlock(enclosing.child_scopes.Get(s.scope));
     Dedent();
     Dedent();
   }
@@ -1196,7 +1196,7 @@ class MirDumper {
                     FormatExpr(enclosing, d.init));
                 const auto& owner =
                     ResolveBlockAtHops(d.induction_var.hops.value);
-                const auto& var = owner.vars.at(d.induction_var.var.value);
+                const auto& var = owner.vars.Get(d.induction_var.var);
                 Line(
                     std::format(
                         "[{}] decl LocalRef[hops={}, var={}] \"{}\"{}", i,
@@ -1232,7 +1232,7 @@ class MirDumper {
     Dedent();
     Line(std::format("scope (BlockId={}):", s.scope.value));
     Indent();
-    DumpBlock(enclosing.GetChildScope(s.scope));
+    DumpBlock(enclosing.child_scopes.Get(s.scope));
     Dedent();
     Dedent();
   }
@@ -1242,7 +1242,7 @@ class MirDumper {
         std::format(
             "Stmt[{}] BlockStmt scope=BlockId{{{}}}", id.value, s.scope.value));
     Indent();
-    DumpBlock(enclosing.GetChildScope(s.scope));
+    DumpBlock(enclosing.child_scopes.Get(s.scope));
     Dedent();
   }
 
@@ -1257,7 +1257,7 @@ class MirDumper {
     }
     Line(std::format("scope (BlockId={}):", s.scope.value));
     Indent();
-    DumpBlock(enclosing.GetChildScope(s.scope));
+    DumpBlock(enclosing.child_scopes.Get(s.scope));
     Dedent();
     Dedent();
   }
@@ -1280,12 +1280,12 @@ class MirDumper {
     Indent();
     Line(std::format("then_scope (BlockId={}):", s.then_scope.value));
     Indent();
-    DumpBlock(enclosing.GetChildScope(s.then_scope));
+    DumpBlock(enclosing.child_scopes.Get(s.then_scope));
     Dedent();
     if (s.else_scope.has_value()) {
       Line(std::format("else_scope (BlockId={}):", s.else_scope->value));
       Indent();
-      DumpBlock(enclosing.GetChildScope(*s.else_scope));
+      DumpBlock(enclosing.child_scopes.Get(*s.else_scope));
       Dedent();
     } else {
       Line("else_scope: <none>");

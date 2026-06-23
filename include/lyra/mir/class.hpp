@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/member.hpp"
@@ -22,55 +23,14 @@ struct Class {
   // class exposes the precision so the engine can take the design-global
   // minimum (LRM 3.14.3) and so delays scale to it.
   TimeResolution time_resolution;
-  std::vector<ParamDecl> params;
-  std::vector<MemberDecl> members;
+  base::Arena<ParamDecl, ParamId> params;
+  base::Arena<MemberDecl, MemberId> members;
   Block constructor_block;
-  std::vector<Process> processes;
-  std::vector<Class> nested_classes;
-  std::vector<MethodDecl> methods;
+  base::Arena<Process, ProcessId> processes;
+  base::Arena<Class, ClassId> nested_classes;
+  base::Arena<MethodDecl, MethodId> methods;
   std::vector<TypeAliasDecl> type_aliases;
 
-  [[nodiscard]] auto GetParam(ParamId id) const -> const ParamDecl& {
-    return params.at(id.value);
-  }
-  [[nodiscard]] auto GetMember(MemberId id) const -> const MemberDecl& {
-    return members.at(id.value);
-  }
-  [[nodiscard]] auto GetProcess(ProcessId id) const -> const Process& {
-    return processes.at(id.value);
-  }
-  [[nodiscard]] auto GetNestedClass(ClassId id) const -> const Class& {
-    return nested_classes.at(id.value);
-  }
-  [[nodiscard]] auto GetMethod(MethodId id) const -> const MethodDecl& {
-    return methods.at(id.value);
-  }
-
-  auto AddParam(ParamDecl decl) -> ParamId {
-    const ParamId id{static_cast<std::uint32_t>(params.size())};
-    params.push_back(std::move(decl));
-    return id;
-  }
-  auto AddMember(MemberDecl decl) -> MemberId {
-    const MemberId id{static_cast<std::uint32_t>(members.size())};
-    members.push_back(std::move(decl));
-    return id;
-  }
-  auto AddProcess(Process process) -> ProcessId {
-    const ProcessId id{static_cast<std::uint32_t>(processes.size())};
-    processes.push_back(std::move(process));
-    return id;
-  }
-  auto AddNestedClass(Class child) -> ClassId {
-    const ClassId id{static_cast<std::uint32_t>(nested_classes.size())};
-    nested_classes.push_back(std::move(child));
-    return id;
-  }
-  auto AddMethod(MethodDecl decl) -> MethodId {
-    const MethodId id{static_cast<std::uint32_t>(methods.size())};
-    methods.push_back(std::move(decl));
-    return id;
-  }
   void AddTypeAlias(TypeAliasDecl decl) {
     type_aliases.push_back(std::move(decl));
   }

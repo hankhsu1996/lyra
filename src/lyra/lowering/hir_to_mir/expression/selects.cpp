@@ -86,7 +86,7 @@ auto WrapPackedAsOwned(
           unit.GetType(result_type).data)) {
     return access_call;
   }
-  const mir::ExprId access_id = block.AddExpr(std::move(access_call));
+  const mir::ExprId access_id = block.exprs.Add(std::move(access_call));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -120,7 +120,7 @@ auto WrapSliceSignReTag(
     mir::Block& block, mir::Expr owned, mir::TypeId slice_type,
     mir::TypeId final_type) -> mir::Expr {
   if (slice_type == final_type) return owned;
-  const mir::ExprId owned_id = block.AddExpr(std::move(owned));
+  const mir::ExprId owned_id = block.exprs.Add(std::move(owned));
   return mir::Expr{
       .data =
           mir::ConversionExpr{
@@ -177,11 +177,11 @@ auto IntConstFromMirExpr(const mir::Expr& expr) -> std::int64_t {
 auto BuildOffsetDeltaExpr(
     const ModuleLowerer& module, mir::Block& block, mir::ExprId base,
     std::int64_t value, mir::BinaryOp op) -> mir::Expr {
-  const auto base_type = block.GetExpr(base).type;
+  const auto base_type = block.exprs.Get(base).type;
   const auto& base_ty = module.Unit().GetType(base_type);
   const bool four_state =
       base_ty.IsIntegralPacked() && base_ty.AsIntegralPacked().IsFourState();
-  const auto delta_lit = block.AddExpr(
+  const auto delta_lit = block.exprs.Add(
       four_state
           ? mir::MakeIntegerLiteral(module.Unit().builtins.integer, value)
           : mir::MakeInt32Literal(module.Unit().builtins.int32, value));
@@ -202,10 +202,10 @@ auto WrapUnpackedIndex(
   if (declared.left == 0 && declared.right >= 0) {
     return raw_idx;
   }
-  const mir::ExprId literal_id = block.AddExpr(
+  const mir::ExprId literal_id = block.exprs.Add(
       mir::MakeInt32Literal(module.Unit().builtins.int32, declared.left));
   const bool descending = declared.left >= declared.right;
-  return block.AddExpr(
+  return block.exprs.Add(
       mir::Expr{
           .data =
               mir::BinaryExpr{
@@ -230,9 +230,9 @@ auto WrapPackedIndex(
   if (descending && declared.right == 0) {
     return raw_idx;
   }
-  const mir::ExprId literal_id = block.AddExpr(
+  const mir::ExprId literal_id = block.exprs.Add(
       mir::MakeInt32Literal(module.Unit().builtins.int32, declared.right));
-  return block.AddExpr(
+  return block.exprs.Add(
       mir::Expr{
           .data =
               mir::BinaryExpr{
@@ -249,7 +249,7 @@ auto BuildHiFromLoAndCount(
     const ModuleLowerer& module, mir::Block& block, mir::ExprId lo,
     std::int64_t count) -> mir::ExprId {
   if (count == 1) return lo;
-  return block.AddExpr(
+  return block.exprs.Add(
       BuildOffsetDeltaExpr(module, block, lo, count - 1, mir::BinaryOp::kAdd));
 }
 
@@ -266,15 +266,15 @@ auto PackedIndexedLoHi(
     const hir::PackedRange& declared, mir::ExprId base, std::int64_t count,
     IndexedDir dir) -> RangeLoHi {
   const bool descending = declared.left >= declared.right;
-  const mir::ExprId pbase =
-      WrapPackedIndex(module, block, declared, base, block.GetExpr(base).type);
+  const mir::ExprId pbase = WrapPackedIndex(
+      module, block, declared, base, block.exprs.Get(base).type);
   const bool extend_up = (dir == IndexedDir::kUp) == descending;
   if (extend_up) {
     return RangeLoHi{
         .lo = pbase, .hi = BuildHiFromLoAndCount(module, block, pbase, count)};
   }
   return RangeLoHi{
-      .lo = block.AddExpr(BuildOffsetDeltaExpr(
+      .lo = block.exprs.Add(BuildOffsetDeltaExpr(
           module, block, pbase, count - 1, mir::BinaryOp::kSub)),
       .hi = pbase};
 }
@@ -294,16 +294,16 @@ auto BuildQueueRangeLoHi(
   // literal.
   auto build_base_at_width_offset = [&](mir::ExprId base, mir::ExprId width,
                                         mir::BinaryOp op) -> mir::ExprId {
-    const auto base_type = block.GetExpr(base).type;
-    const auto width_type = block.GetExpr(width).type;
-    const auto one = block.AddExpr(mir::MakeInt32Literal(int32_type, 1));
-    const auto w_minus_1 = block.AddExpr(
+    const auto base_type = block.exprs.Get(base).type;
+    const auto width_type = block.exprs.Get(width).type;
+    const auto one = block.exprs.Add(mir::MakeInt32Literal(int32_type, 1));
+    const auto w_minus_1 = block.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
                     .op = mir::BinaryOp::kSub, .lhs = width, .rhs = one},
             .type = width_type});
-    return block.AddExpr(
+    return block.exprs.Add(
         mir::Expr{
             .data = mir::BinaryExpr{.op = op, .lhs = base, .rhs = w_minus_1},
             .type = base_type});
@@ -360,14 +360,14 @@ auto BuildPackedRangeLoHi(
             auto lsb = lower_one(b.lsb_expr);
             if (!lsb) return std::unexpected(std::move(lsb.error()));
             const auto msb_off = PackedPhysOffset(
-                declared, IntConstFromMirExpr(block.GetExpr(*msb)));
+                declared, IntConstFromMirExpr(block.exprs.Get(*msb)));
             const auto lsb_off = PackedPhysOffset(
-                declared, IntConstFromMirExpr(block.GetExpr(*lsb)));
+                declared, IntConstFromMirExpr(block.exprs.Get(*lsb)));
             return RangeLoHi{
-                .lo = block.AddExpr(
+                .lo = block.exprs.Add(
                     mir::MakeInt32Literal(
                         int32_type, std::min(msb_off, lsb_off))),
-                .hi = block.AddExpr(
+                .hi = block.exprs.Add(
                     mir::MakeInt32Literal(
                         int32_type, std::max(msb_off, lsb_off)))};
           },
@@ -376,7 +376,7 @@ auto BuildPackedRangeLoHi(
             if (!base) return std::unexpected(std::move(base.error()));
             auto width = lower_one(b.width);
             if (!width) return std::unexpected(std::move(width.error()));
-            const auto count = IntConstFromMirExpr(block.GetExpr(*width));
+            const auto count = IntConstFromMirExpr(block.exprs.Get(*width));
             return PackedIndexedLoHi(
                 module, block, declared, *base, count, IndexedDir::kUp);
           },
@@ -385,7 +385,7 @@ auto BuildPackedRangeLoHi(
             if (!base) return std::unexpected(std::move(base.error()));
             auto width = lower_one(b.width);
             if (!width) return std::unexpected(std::move(width.error()));
-            const auto count = IntConstFromMirExpr(block.GetExpr(*width));
+            const auto count = IntConstFromMirExpr(block.exprs.Get(*width));
             return PackedIndexedLoHi(
                 module, block, declared, *base, count, IndexedDir::kDown);
           },
@@ -407,7 +407,7 @@ auto BuildUnpackedRangeLoHi(
   const std::int64_t count = count_u32;
   const bool descending = declared.left >= declared.right;
   auto project_sv = [&](mir::ExprId sv_expr) -> mir::ExprId {
-    const auto type = block.GetExpr(sv_expr).type;
+    const auto type = block.exprs.Get(sv_expr).type;
     return WrapUnpackedIndex(module, block, declared, sv_expr, type);
   };
   return std::visit(
@@ -425,7 +425,7 @@ auto BuildUnpackedRangeLoHi(
             if (!base) return std::unexpected(std::move(base.error()));
             const auto leftmost_sv =
                 descending
-                    ? block.AddExpr(BuildOffsetDeltaExpr(
+                    ? block.exprs.Add(BuildOffsetDeltaExpr(
                           module, block, *base, count - 1, mir::BinaryOp::kAdd))
                     : *base;
             const auto lo = project_sv(leftmost_sv);
@@ -438,7 +438,7 @@ auto BuildUnpackedRangeLoHi(
             if (!base) return std::unexpected(std::move(base.error()));
             const auto leftmost_sv = descending
                                          ? *base
-                                         : block.AddExpr(BuildOffsetDeltaExpr(
+                                         : block.exprs.Add(BuildOffsetDeltaExpr(
                                                module, block, *base, count - 1,
                                                mir::BinaryOp::kSub));
             const auto lo = project_sv(leftmost_sv);
@@ -490,10 +490,6 @@ auto SliceResultOuterCount(const mir::Type& result_ty) -> std::uint32_t {
   throw InternalError(
       "SliceResultOuterCount: result type is not a fixed-width slice");
 }
-
-// Per-kind MIR-node factories. None of these commit the returned node; the
-// caller (typically a `Lower*` entry point or an inner helper) is
-// responsible for `AddExpr` or further wrapping.
 
 // `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The callee carries
 // just read-vs-write (`kElement` / `kElementRef`); the receiver's container
@@ -573,7 +569,7 @@ auto BuildRangeSliceCallExpr(
         .type = result_type};
   }
   const auto count = SliceResultOuterCount(module.Unit().GetType(result_type));
-  const auto count_id = block.AddExpr(
+  const auto count_id = block.exprs.Add(
       mir::MakeInt32Literal(
           module.Unit().builtins.int32, static_cast<std::int64_t>(count)));
   return mir::Expr{
@@ -597,9 +593,9 @@ auto BuildFieldSliceCallExpr(
     std::uint32_t bit_offset, std::uint32_t bit_width, mir::TypeId result_type,
     AccessSide side) -> mir::Expr {
   const mir::TypeId int32_type = module.Unit().builtins.int32;
-  const auto offset_id = block.AddExpr(
+  const auto offset_id = block.exprs.Add(
       mir::MakeInt32Literal(int32_type, static_cast<std::int64_t>(bit_offset)));
-  const auto count_id = block.AddExpr(
+  const auto count_id = block.exprs.Add(
       mir::MakeInt32Literal(int32_type, static_cast<std::int64_t>(bit_width)));
   return mir::Expr{
       .data =
@@ -689,15 +685,15 @@ auto LowerHirElementSelectExprProc(
   const bool is_write = frame.is_lvalue_target;
   const WalkFrame sub_frame = frame.WithLvalueTarget(false);
 
-  const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
+  const auto& hir_base = hir_process.exprs.Get(sel.base_value);
   auto base_or = process.LowerExpr(hir_base, sub_frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
-  const auto& hir_idx = hir_process.exprs.at(sel.index.value);
+  const auto& hir_idx = hir_process.exprs.Get(sel.index);
   auto idx_or = process.LowerExpr(hir_idx, sub_frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.AddExpr(*std::move(idx_or));
+  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   // LRM 6.16.3: a string has no element lvalue, so an index read realizes as
@@ -731,15 +727,15 @@ auto LowerHirRangeSelectExprProc(
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
+  const auto& hir_base = hir_process.exprs.Get(sel.base_value);
   auto base_or = process.LowerExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = process.LowerExpr(hir_process.exprs.at(id.value), frame);
+    auto lowered = process.LowerExpr(hir_process.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.AddExpr(*std::move(lowered));
+    return block.exprs.Add(*std::move(lowered));
   };
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerRangeSelectInner(
@@ -757,7 +753,7 @@ auto LowerHirMemberAccessExprProc(
   auto& module = process.Module();
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
-  const auto& base_hir_expr = hir_process.exprs.at(sel.base_value.value);
+  const auto& base_hir_expr = hir_process.exprs.Get(sel.base_value);
   const auto& fields =
       GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
@@ -766,7 +762,7 @@ auto LowerHirMemberAccessExprProc(
   }
   auto base_or = process.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
       module, block, fields[sel.field_index], base_id, result_type,
       AccessSide::kRead);
@@ -779,15 +775,15 @@ auto LowerHirElementSelectExprProcLhs(
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
+  const auto& hir_base = hir_process.exprs.Get(sel.base_value);
   auto base_or = process.LowerLhsExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
-  const auto& hir_idx = hir_process.exprs.at(sel.index.value);
+  const auto& hir_idx = hir_process.exprs.Get(sel.index);
   auto idx_or = process.LowerExpr(hir_idx, frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.AddExpr(*std::move(idx_or));
+  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerElementSelectInner(
@@ -802,15 +798,15 @@ auto LowerHirRangeSelectExprProcLhs(
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
+  const auto& hir_base = hir_process.exprs.Get(sel.base_value);
   auto base_or = process.LowerLhsExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = process.LowerExpr(hir_process.exprs.at(id.value), frame);
+    auto lowered = process.LowerExpr(hir_process.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.AddExpr(*std::move(lowered));
+    return block.exprs.Add(*std::move(lowered));
   };
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerRangeSelectInner(
@@ -824,7 +820,7 @@ auto LowerHirMemberAccessExprProcLhs(
   auto& module = process.Module();
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
-  const auto& base_hir_expr = hir_process.exprs.at(sel.base_value.value);
+  const auto& base_hir_expr = hir_process.exprs.Get(sel.base_value);
   const auto& fields =
       GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
@@ -833,7 +829,7 @@ auto LowerHirMemberAccessExprProcLhs(
   }
   auto base_or = process.LowerLhsExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
       module, block, fields[sel.field_index], base_id, result_type,
       AccessSide::kLhs);
@@ -847,15 +843,15 @@ auto LowerHirElementSelectExprStructural(
   const auto& hir_scope = lowerer.HirScope();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_scope.GetExpr(sel.base_value);
+  const auto& hir_base = hir_scope.exprs.Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
-  const auto& hir_idx = hir_scope.GetExpr(sel.index);
+  const auto& hir_idx = hir_scope.exprs.Get(sel.index);
   auto idx_or = lowerer.LowerExpr(hir_idx, frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.AddExpr(*std::move(idx_or));
+  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
   // A queue element select cannot reach the structural path: slang forbids
   // referencing an element of a dynamic-typed variable outside a procedural
@@ -874,15 +870,15 @@ auto LowerHirRangeSelectExprStructural(
   const auto& hir_scope = lowerer.HirScope();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_scope.GetExpr(sel.base_value);
+  const auto& hir_base = hir_scope.exprs.Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = lowerer.LowerExpr(hir_scope.GetExpr(id), frame);
+    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.AddExpr(*std::move(lowered));
+    return block.exprs.Add(*std::move(lowered));
   };
   // Queue slice cannot reach the structural path for the same reason as the
   // element-select case above.
@@ -899,7 +895,7 @@ auto LowerHirMemberAccessExprStructural(
   auto& module = lowerer.Module();
   const auto& hir_scope = lowerer.HirScope();
   auto& block = *frame.current_block;
-  const auto& base_hir_expr = hir_scope.GetExpr(sel.base_value);
+  const auto& base_hir_expr = hir_scope.exprs.Get(sel.base_value);
   const auto& fields =
       GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
@@ -908,7 +904,7 @@ auto LowerHirMemberAccessExprStructural(
   }
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
       module, block, fields[sel.field_index], base_id, result_type,
       AccessSide::kRead);
@@ -922,15 +918,15 @@ auto LowerHirElementSelectExprStructuralLhs(
   const auto& hir_scope = lowerer.HirScope();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_scope.GetExpr(sel.base_value);
+  const auto& hir_base = hir_scope.exprs.Get(sel.base_value);
   auto base_or = lowerer.LowerLhsExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
-  const auto& hir_idx = hir_scope.GetExpr(sel.index);
+  const auto& hir_idx = hir_scope.exprs.Get(sel.index);
   auto idx_or = lowerer.LowerExpr(hir_idx, frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.AddExpr(*std::move(idx_or));
+  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerElementSelectInner(
@@ -946,15 +942,15 @@ auto LowerHirRangeSelectExprStructuralLhs(
   const auto& hir_scope = lowerer.HirScope();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_scope.GetExpr(sel.base_value);
+  const auto& hir_base = hir_scope.exprs.Get(sel.base_value);
   auto base_or = lowerer.LowerLhsExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = lowerer.LowerExpr(hir_scope.GetExpr(id), frame);
+    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.AddExpr(*std::move(lowered));
+    return block.exprs.Add(*std::move(lowered));
   };
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerRangeSelectInner(
@@ -969,7 +965,7 @@ auto LowerHirMemberAccessExprStructuralLhs(
   auto& module = lowerer.Module();
   const auto& hir_scope = lowerer.HirScope();
   auto& block = *frame.current_block;
-  const auto& base_hir_expr = hir_scope.GetExpr(sel.base_value);
+  const auto& base_hir_expr = hir_scope.exprs.Get(sel.base_value);
   const auto& fields =
       GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
@@ -978,7 +974,7 @@ auto LowerHirMemberAccessExprStructuralLhs(
   }
   auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.AddExpr(*std::move(base_or));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
       module, block, fields[sel.field_index], base_id, result_type,
       AccessSide::kLhs);

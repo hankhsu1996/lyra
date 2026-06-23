@@ -87,7 +87,7 @@ auto LowerCallExprProc(
       receiver_type = arg_or->type;
     }
     arg_ids.emplace_back(
-        frame.current_procedural_body->AddExpr(*std::move(arg_or)));
+        frame.current_procedural_body->exprs.Add(*std::move(arg_or)));
   }
 
   if (call.isSystemCall()) {
@@ -221,7 +221,7 @@ auto LowerCallExprProc(
           auto body_or = proc.LowerExpr(*iter_info.iterExpr, frame);
           if (!body_or) return std::unexpected(std::move(body_or.error()));
           const auto body_expr_id =
-              frame.current_procedural_body->AddExpr(*std::move(body_or));
+              frame.current_procedural_body->exprs.Add(*std::move(body_or));
           with_clause =
               hir::WithClause{.iterator = iterator_id, .expr = body_expr_id};
         }

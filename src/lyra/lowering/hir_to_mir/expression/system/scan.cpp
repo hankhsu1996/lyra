@@ -54,7 +54,7 @@ auto LiftStringSource(
         "unpacked array of byte (LRM 21.3.4.3)");
   }
 
-  return frame.current_block->AddExpr(
+  return frame.current_block->exprs.Add(
       mir::Expr{
           .data =
               mir::ConversionExpr{
@@ -74,7 +74,7 @@ auto LiftStringFormat(
         "LiftStringFormat: scan format is not string or integral (LRM "
         "21.3.4.3)");
   }
-  return frame.current_block->AddExpr(
+  return frame.current_block->exprs.Add(
       mir::Expr{
           .data =
               mir::ConversionExpr{
@@ -99,7 +99,7 @@ auto EmitIsUnknownGuard(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId bit_t,
     mir::ExprId operand_id) -> void {
   auto& body = *frame.current_block;
-  const mir::ExprId guard_id = body.AddExpr(
+  const mir::ExprId guard_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -110,7 +110,7 @@ auto EmitIsUnknownGuard(
           .type = bit_t});
 
   mir::Block then_body;
-  const mir::ExprId minus_one = then_body.AddExpr(
+  const mir::ExprId minus_one = then_body.exprs.Add(
       mir::MakeIntegerLiteral(
           module.Unit().builtins.integer, static_cast<std::int64_t>(-1)));
   then_body.AppendStmt(mir::ReturnStmt{.value = minus_one});
@@ -188,7 +188,7 @@ auto LowerScanSystemSubroutineCall(
     if (!call.arguments[i].has_value()) {
       throw InternalError("LowerScanSystemSubroutineCall: output arg elided");
     }
-    const auto& hir_arg = hir_proc.exprs.at(call.arguments[i]->value);
+    const auto& hir_arg = hir_proc.exprs.Get(*call.arguments[i]);
     const mir::TypeId mir_type = module.TranslateType(hir_arg.type);
     auto meta_or = ComputeSlotMeta(module.Unit(), mir_type, info.source, span);
     if (!meta_or) return std::unexpected(std::move(meta_or.error()));
@@ -211,11 +211,11 @@ auto LowerScanSystemSubroutineCall(
   // conversion lift to string. The guard reads the raw PackedArray; the lift is
   // post-guard because conversion to string silently drops x/z bits and would
   // defeat the LRM 21.3.4.3 EOF rule.
-  auto source_or = process.LowerExpr(
-      hir_proc.exprs.at(call.arguments[0]->value), closure_frame);
+  auto source_or =
+      process.LowerExpr(hir_proc.exprs.Get(*call.arguments[0]), closure_frame);
   if (!source_or) return std::unexpected(std::move(source_or.error()));
   const mir::TypeId source_type = source_or->type;
-  mir::ExprId source_id = body.AddExpr(*std::move(source_or));
+  mir::ExprId source_id = body.exprs.Add(*std::move(source_or));
   if (info.source == support::ScanSourceKind::kString) {
     EmitIsUnknownGuard(module, closure_frame, bit_t, source_id);
     source_id = LiftStringSource(module, closure_frame, source_type, source_id);
@@ -226,11 +226,11 @@ auto LowerScanSystemSubroutineCall(
         "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
   }
 
-  auto format_or = process.LowerExpr(
-      hir_proc.exprs.at(call.arguments[1]->value), closure_frame);
+  auto format_or =
+      process.LowerExpr(hir_proc.exprs.Get(*call.arguments[1]), closure_frame);
   if (!format_or) return std::unexpected(std::move(format_or.error()));
   const mir::TypeId format_type = format_or->type;
-  mir::ExprId format_id = body.AddExpr(*std::move(format_or));
+  mir::ExprId format_id = body.exprs.Add(*std::move(format_or));
   EmitIsUnknownGuard(module, closure_frame, bit_t, format_id);
   format_id = LiftStringFormat(module, closure_frame, format_type, format_id);
 
@@ -241,7 +241,7 @@ auto LowerScanSystemSubroutineCall(
   std::vector<mir::LocalId> temp_ids;
   temp_ids.reserve(metas.size());
   for (std::size_t k = 0; k < metas.size(); ++k) {
-    const mir::ExprId init_id = body.AddExpr(
+    const mir::ExprId init_id = body.exprs.Add(
         BuildDefaultValueExpr(module, closure_frame, metas[k].mir_type));
     const mir::LocalRef temp_ref = body.AppendLocal(
         mir::LocalDecl{
@@ -256,7 +256,7 @@ auto LowerScanSystemSubroutineCall(
   std::vector<mir::ScanSlotDesc> mir_slots;
   mir_slots.reserve(metas.size());
   for (std::size_t k = 0; k < metas.size(); ++k) {
-    const mir::ExprId temp_ref_id = body.AddExpr(
+    const mir::ExprId temp_ref_id = body.exprs.Add(
         mir::MakeLocalRefExpr(
             mir::BlockHops{.value = 0}, temp_ids[k], metas[k].mir_type));
     if (metas[k].is_string) {
@@ -271,7 +271,7 @@ auto LowerScanSystemSubroutineCall(
     }
   }
 
-  const mir::ExprId parse_call_id = body.AddExpr(
+  const mir::ExprId parse_call_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::RuntimeCallExpr{
@@ -294,11 +294,11 @@ auto LowerScanSystemSubroutineCall(
   // propagate to the caller's storage.
   for (std::size_t k = 0; k < metas.size(); ++k) {
     const mir::ExprId count_read_id =
-        body.AddExpr(mir::Expr{.data = count_ref, .type = integer_t});
-    const mir::ExprId k_lit_id = body.AddExpr(
+        body.exprs.Add(mir::Expr{.data = count_ref, .type = integer_t});
+    const mir::ExprId k_lit_id = body.exprs.Add(
         mir::MakeIntegerLiteral(
             module.Unit().builtins.integer, static_cast<std::int64_t>(k + 1)));
-    const mir::ExprId cond_id = body.AddExpr(
+    const mir::ExprId cond_id = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
@@ -310,19 +310,19 @@ auto LowerScanSystemSubroutineCall(
     mir::Block then_body;
     const WalkFrame then_frame = closure_frame.WithBlock(&then_body).Deeper();
     auto lvalue_or = process.LowerLhsExpr(
-        hir_proc.exprs.at(call.arguments[k + 2]->value), then_frame);
+        hir_proc.exprs.Get(*call.arguments[k + 2]), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
-    const mir::ExprId lvalue_id = then_body.AddExpr(*std::move(lvalue_or));
-    const mir::ExprId temp_read_id = then_body.AddExpr(
+    const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
+    const mir::ExprId temp_read_id = then_body.exprs.Add(
         mir::MakeLocalRefExpr(
             mir::BlockHops{.value = 1}, temp_ids[k], metas[k].mir_type));
     const mir::ExprId services_id_then =
-        then_body.AddExpr(BuildServicesCallExpr(process, then_frame));
+        then_body.exprs.Add(BuildServicesCallExpr(process, then_frame));
     const mir::Expr assign_expr = BuildObservableAssignExpr(
         process.Module().Unit(), then_body, services_id_then, lvalue_id,
         temp_read_id, std::nullopt, metas[k].mir_type,
         process.Module().Unit().builtins.void_type);
-    const mir::ExprId assign_id = then_body.AddExpr(assign_expr);
+    const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
     body.AppendIfThen(cond_id, std::move(then_body));
@@ -330,7 +330,7 @@ auto LowerScanSystemSubroutineCall(
 
   // Yield the matched-conversion count.
   const mir::ExprId count_id =
-      body.AddExpr(mir::Expr{.data = count_ref, .type = integer_t});
+      body.exprs.Add(mir::Expr{.data = count_ref, .type = integer_t});
   return BuildClosureCallExpr(*frame.current_block, closure.Build(count_id));
 }
 
