@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <span>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -51,6 +53,12 @@ class RuntimeServices {
 
   void SubmitNba(std::function<void()> closure);
   void SubmitPostponed(std::function<void()> closure);
+
+  // Formats the SV print items into a string per their FormatSpec, honoring
+  // the engine's current $timeformat state for `%t` directives (LRM 20.4.3 /
+  // 21.2.1). Pure-value step that pairs with a separate sink write.
+  [[nodiscard]] auto Format(std::span<const value::PrintItem> items) const
+      -> value::String;
 
   void TriggerValueChange(
       Observable& observable, const EdgeClassifier& classify);

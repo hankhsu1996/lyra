@@ -1,9 +1,5 @@
 #pragma once
 
-#include <functional>
-#include <span>
-
-#include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -36,28 +32,6 @@ auto LyraFOpen(
 // MCD closes every set-bit channel.
 void LyraFClose(
     RuntimeServices& services, const value::PackedArray& descriptor);
-
-// Writes the formatted record to a descriptor's sink, iterating set bits per
-// LRM 21.3.1. Bit 0 of an MCD (or the pre-bound STDOUT FD 32'h8000_0001) routes
-// through RuntimeServices::Stream() so test-harness stdout matching stays
-// consistent with $display output ordering; other bits go directly to
-// FileTable's owned FILE* handles. Invalid bits silently no-op. A trailing
-// newline is appended for the newline kind (kFDisplay, LRM 21.2.1.1).
-void LyraFPrint(
-    RuntimeServices& services, value::PrintKind kind,
-    const value::PackedArray& descriptor,
-    std::span<const value::PrintItem> items);
-
-// LRM 21.2.2 + 21.3.2 $fstrobe-family runtime entry. Defers `print_action`
-// to the postponed region and wires up LRM 21.3.2 implicit cancel:
-// acquires a ChannelCancellation for `descriptor` at submit time; the
-// wrapped action short-circuits if any participating channel is closed
-// before the postponed region fires. Channel-reuse is safe -- a dead
-// submission's observer keeps seeing the old (permanently stopped) state
-// regardless of what the integer descriptor value later points at.
-void LyraSubmitFStrobe(
-    RuntimeServices& services, const value::PackedArray& descriptor,
-    std::function<void()> print_action);
 
 // LRM 21.3.4.1 $fgetc(fd). Returns the next byte as an int32 PackedArray, or
 // -1 on EOF / error. Errors stamp FileTable's per-fd error slot.

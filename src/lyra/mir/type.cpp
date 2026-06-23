@@ -76,6 +76,7 @@ auto Type::Kind() const -> TypeKind {
           },
           [](const ScopeType&) { return TypeKind::kScope; },
           [](const ServicesType&) { return TypeKind::kServices; },
+          [](const FilesType&) { return TypeKind::kFiles; },
           [](const RuntimeLibraryType&) { return TypeKind::kRuntimeLibrary; },
           [](const CoroutineType&) { return TypeKind::kCoroutine; },
           [](const RefType&) { return TypeKind::kReference; },

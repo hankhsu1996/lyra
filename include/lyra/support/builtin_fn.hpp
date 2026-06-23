@@ -107,12 +107,33 @@ enum class BuiltinFn : std::uint16_t {
   kSet,
   kMutate,
   kServices,
-  // Engine submit operations. `SubmitNba` is a `RuntimeServices` method
-  // taking a closure; `SubmitObserved` is a `Scope` method taking the
+  // Engine submit operations. `SubmitNba` and `SubmitPostponed` are
+  // `RuntimeServices` methods taking a closure -- the NBA region commit
+  // (LRM 4.4.2) and the postponed region commit (LRM 4.4.2 / 21.2.2)
+  // respectively. `SubmitObserved` is a `Scope` method taking the
   // deferred-check site id and a closure (LRM 16.14.6 last-write-wins
   // settle).
   kSubmitNba,
+  kSubmitPostponed,
   kSubmitObserved,
+  // File-IO subsystem accessor and cancellation token operations. `Files`
+  // is a `RuntimeServices` method returning the `FileTable` broker.
+  // `CancellationFor` is a `FileTable` method taking a file descriptor and
+  // returning a `ChannelCancellation` token snapshotted to the channel
+  // currently bound at the descriptor. `IsCancelled` queries that token
+  // (LRM 21.3.1 cancel-on-close), returning an SV bit.
+  kFiles,
+  kCancellationFor,
+  kIsCancelled,
+  // Print decomposes into a pure-value format step and a sink-write step.
+  // `Format` is a `RuntimeServices` method that walks the items, honoring
+  // the engine's `$timeformat` for `%t`, and yields an SV `string`.
+  // `Write` / `Writeln` are `FileTable` methods that emit that string to
+  // the descriptor's sink (LRM 21.2.1 / 21.3.1); the `ln` variant appends
+  // a trailing newline.
+  kFormat,
+  kWrite,
+  kWriteln,
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,

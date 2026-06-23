@@ -14,9 +14,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/method_ref.hpp"
 #include "lyra/mir/param.hpp"
-#include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_scan.hpp"
-#include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/mir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -153,8 +151,7 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-using RuntimeCall =
-    std::variant<RuntimePrintCall, RuntimeSubmitPostponedCall, RuntimeScanCall>;
+using RuntimeCall = std::variant<RuntimeScanCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;

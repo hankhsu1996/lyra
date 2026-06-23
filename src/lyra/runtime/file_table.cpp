@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/support/file_descriptor.hpp"
+
 namespace lyra::runtime {
 
 namespace {
@@ -75,9 +77,11 @@ ChannelCancellation::ChannelCancellation(std::vector<std::stop_token> tokens)
     : tokens_(std::move(tokens)) {
 }
 
-auto ChannelCancellation::IsCancelled() const noexcept -> bool {
-  return std::ranges::any_of(
+auto ChannelCancellation::IsCancelled() const noexcept
+    -> lyra::value::PackedArray {
+  const bool cancelled = std::ranges::any_of(
       tokens_, [](const std::stop_token& t) { return t.stop_requested(); });
+  return lyra::value::PackedArray::Bit(cancelled);
 }
 
 auto FileTable::Open(
@@ -97,7 +101,7 @@ auto FileTable::Open(
         fd_pool_.at(i).error = ErrorRecord{};
         fd_pool_.at(i).permits_read = parsed->permits_read;
         fd_pool_.at(i).permits_write = parsed->permits_write;
-        return kFdHighBit | static_cast<std::int32_t>(i);
+        return support::kFdHighBit | static_cast<std::int32_t>(i);
       }
     }
     fd_pool_.emplace_back(
@@ -108,7 +112,7 @@ auto FileTable::Open(
             .putback = std::nullopt,
             .permits_read = parsed->permits_read,
             .permits_write = parsed->permits_write});
-    return kFdHighBit | static_cast<std::int32_t>(fd_pool_.size() - 1);
+    return support::kFdHighBit | static_cast<std::int32_t>(fd_pool_.size() - 1);
   }
   // MCD path: open write-truncate (LRM 21.3.1 omits the type for MCD form).
   auto stream = std::make_unique<std::fstream>(
@@ -225,11 +229,12 @@ void FileTable::ClearError(std::int32_t fd) {
   fd_pool_.at(*idx).error = ErrorRecord{};
 }
 
-auto FileTable::CancellationFor(std::int32_t descriptor)
+auto FileTable::CancellationFor(const lyra::value::PackedArray& descriptor)
     -> ChannelCancellation {
   std::vector<std::stop_token> tokens;
-  if (descriptor == 0) return ChannelCancellation{std::move(tokens)};
-  const auto raw = static_cast<std::uint32_t>(descriptor);
+  const auto raw_signed = static_cast<std::int32_t>(descriptor.ToInt64());
+  if (raw_signed == 0) return ChannelCancellation{std::move(tokens)};
+  const auto raw = static_cast<std::uint32_t>(raw_signed);
   if ((raw & (1U << 31U)) != 0U) {
     const std::size_t idx = raw & 0x7FFF'FFFFU;
     // Stdio sentinels (0/1/2) and out-of-range indexes have no observable
