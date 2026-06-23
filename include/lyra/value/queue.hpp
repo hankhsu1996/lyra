@@ -7,9 +7,9 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 #include "lyra/value/array_case_equal.hpp"
@@ -335,12 +335,9 @@ class Queue {
     data_.erase(data_.begin() + static_cast<std::ptrdiff_t>(index.ToInt64()));
   }
 
-  // LRM 7.12 ordering and reduction (queues are unpacked arrays, LRM 7.10.1),
-  // each a thin wrapper over the shared `detail::Array*` algorithms. HIR-to-MIR
-  // always supplies the closure (the `with`-clause body or the LRM-default
-  // identity); `reverse` takes none -- its `with` clause is a compiler error
-  // filtered upstream by slang. The reduction result type follows the closure's
-  // return type, so a width-widening `with`-expression widens the result.
+  // LRM 7.12.2 ordering: an in-place positional permutation (queues are
+  // unpacked arrays, LRM 7.10.1). `reverse` takes no closure; `sort` / `rsort`
+  // order by the closure-projected key with the ordinal position as index.
   auto Reverse() -> void {
     detail::ArrayReverse(data_);
   }
@@ -352,108 +349,117 @@ class Queue {
   auto Rsort(F&& key) -> void {
     detail::ArraySortByKey(data_, std::forward<F>(key), std::greater<>{});
   }
-  template <typename F>
-  [[nodiscard]] auto Sum(F&& key) const
-      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+
+  // LRM 7.12.3 reduction over the entry stream. `proto` is the
+  // producer-supplied result default for an empty receiver and carries the
+  // result shape otherwise.
+  template <typename F, typename R>
+  [[nodiscard]] auto Sum(F&& key, R proto) const -> R {
     return detail::ArrayFold(
-        data_, element_default_, std::forward<F>(key),
-        [](auto& acc, auto& v) { acc = acc + v; });
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a + v; });
   }
-  template <typename F>
-  [[nodiscard]] auto Product(F&& key) const
-      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+  template <typename F, typename R>
+  [[nodiscard]] auto Product(F&& key, R proto) const -> R {
     return detail::ArrayFold(
-        data_, element_default_, std::forward<F>(key),
-        [](auto& acc, auto& v) { acc = acc * v; });
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a * v; });
   }
-  template <typename F>
-  [[nodiscard]] auto And(F&& key) const
-      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+  template <typename F, typename R>
+  [[nodiscard]] auto And(F&& key, R proto) const -> R {
     return detail::ArrayFold(
-        data_, element_default_, std::forward<F>(key),
-        [](auto& acc, auto& v) { acc = acc & v; });
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a & v; });
   }
-  template <typename F>
-  [[nodiscard]] auto Or(F&& key) const
-      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+  template <typename F, typename R>
+  [[nodiscard]] auto Or(F&& key, R proto) const -> R {
     return detail::ArrayFold(
-        data_, element_default_, std::forward<F>(key),
-        [](auto& acc, auto& v) { acc = acc | v; });
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a | v; });
   }
-  template <typename F>
-  [[nodiscard]] auto Xor(F&& key) const
-      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+  template <typename F, typename R>
+  [[nodiscard]] auto Xor(F&& key, R proto) const -> R {
     return detail::ArrayFold(
-        data_, element_default_, std::forward<F>(key),
-        [](auto& acc, auto& v) { acc = acc ^ v; });
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a ^ v; });
   }
 
-  // LRM 7.12.1 locator methods. Value locators return a queue of elements
-  // carrying this queue's element shape via `element_default_`; index locators
-  // return a queue of `int`. No match or an empty receiver yields an empty
-  // queue.
+  // LRM 7.12.1 locator methods over the entry stream. Value locators return a
+  // queue of elements; index locators return a queue of the ordinal index.
+  // Both seed the result with the producer-supplied `proto`. No match or an
+  // empty receiver yields an empty queue.
   template <typename F>
-  [[nodiscard]] auto Find(F pred) const -> Queue<T> {
+  [[nodiscard]] auto Find(F pred, T proto) const -> Queue<T> {
+    return Queue<T>(std::move(proto), detail::ArrayFind(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindIndex(F pred, PackedArray proto) const
+      -> Queue<PackedArray> {
+    return Queue<PackedArray>(
+        std::move(proto), detail::ArrayFindIndex(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindFirst(F pred, T proto) const -> Queue<T> {
+    return Queue<T>(std::move(proto), detail::ArrayFindFirst(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindFirstIndex(F pred, PackedArray proto) const
+      -> Queue<PackedArray> {
+    return Queue<PackedArray>(
+        std::move(proto), detail::ArrayFindFirstIndex(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindLast(F pred, T proto) const -> Queue<T> {
+    return Queue<T>(std::move(proto), detail::ArrayFindLast(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindLastIndex(F pred, PackedArray proto) const
+      -> Queue<PackedArray> {
+    return Queue<PackedArray>(
+        std::move(proto), detail::ArrayFindLastIndex(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto Min(F&& key, T proto) const -> Queue<T> {
     return Queue<T>(
-        element_default_, detail::ArrayFind(data_, std::move(pred)));
+        std::move(proto), detail::ArrayMin(Entries(), std::forward<F>(key)));
   }
   template <typename F>
-  [[nodiscard]] auto FindIndex(F pred) const -> Queue<PackedArray> {
-    return {
-        PackedArray::Int(0), detail::ArrayFindIndex(data_, std::move(pred))};
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirst(F pred) const -> Queue<T> {
+  [[nodiscard]] auto Max(F&& key, T proto) const -> Queue<T> {
     return Queue<T>(
-        element_default_, detail::ArrayFindFirst(data_, std::move(pred)));
+        std::move(proto), detail::ArrayMax(Entries(), std::forward<F>(key)));
   }
   template <typename F>
-  [[nodiscard]] auto FindFirstIndex(F pred) const -> Queue<PackedArray> {
-    return {
-        PackedArray::Int(0),
-        detail::ArrayFindFirstIndex(data_, std::move(pred))};
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLast(F pred) const -> Queue<T> {
+  [[nodiscard]] auto Unique(F key, T proto) const -> Queue<T> {
     return Queue<T>(
-        element_default_, detail::ArrayFindLast(data_, std::move(pred)));
+        std::move(proto), detail::ArrayUnique(Entries(), std::move(key)));
   }
   template <typename F>
-  [[nodiscard]] auto FindLastIndex(F pred) const -> Queue<PackedArray> {
-    return {
-        PackedArray::Int(0),
-        detail::ArrayFindLastIndex(data_, std::move(pred))};
-  }
-  template <typename F>
-  [[nodiscard]] auto Min(F&& key) const -> Queue<T> {
-    return Queue<T>(
-        element_default_, detail::ArrayMin(data_, std::forward<F>(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Max(F&& key) const -> Queue<T> {
-    return Queue<T>(
-        element_default_, detail::ArrayMax(data_, std::forward<F>(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Unique(F key) const -> Queue<T> {
-    return Queue<T>(
-        element_default_, detail::ArrayUnique(data_, std::move(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto UniqueIndex(F key) const -> Queue<PackedArray> {
-    return {
-        PackedArray::Int(0), detail::ArrayUniqueIndex(data_, std::move(key))};
+  [[nodiscard]] auto UniqueIndex(F key, PackedArray proto) const
+      -> Queue<PackedArray> {
+    return Queue<PackedArray>(
+        std::move(proto), detail::ArrayUniqueIndex(Entries(), std::move(key)));
   }
 
-  // LRM 7.12.5 projection into a same-shape queue; `element_default` seeds the
-  // result element type's canonical default.
+  // LRM 7.12.5 projection into a same-shape queue; `proto` seeds the result
+  // element type's canonical default (producer-supplied, since the result
+  // element type may differ from this queue's).
   template <typename F, typename U>
-  [[nodiscard]] auto Map(F closure, U element_default) const -> Queue<U> {
-    return Queue<U>(
-        std::move(element_default), detail::ArrayMap(data_, closure));
+  [[nodiscard]] auto Map(F closure, U proto) const -> Queue<U> {
+    return Queue<U>(std::move(proto), detail::ArrayMap(Entries(), closure));
   }
 
  private:
+  // The LRM 7.12 entry stream (decision: array-manipulation-entry-stream): a
+  // lazy view pairing each element with its ordinal index, front-to-back.
+  [[nodiscard]] auto Entries() const {
+    return std::views::enumerate(data_) |
+           std::views::transform([](auto&& pair) {
+             auto&& [i, e] = pair;
+             return detail::Entry<PackedArray, T>{
+                 PackedArray::Int(static_cast<int>(i)), &e};
+           });
+  }
+
   [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
     if (idx.HasUnknown()) {
       return true;
