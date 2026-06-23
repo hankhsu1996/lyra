@@ -59,36 +59,41 @@ struct AssocKeyTraits<PackedArray> {
 // is an ordered `std::map` so iteration and `%p` formatting follow the LRM 7.8
 // key ordering and stay deterministic.
 //
-// `type_default_` holds the element-type default -- the LRM Table 7-1 value
-// read from a nonexistent array entry (supplied at construction because
-// `V = PackedArray` carries runtime shape the C++ type cannot recover; see
-// `docs/decisions/runtime-shape-and-default-value.md`). A read of a nonexistent
-// or invalid key (LRM 7.8.6) returns it unless `user_default_` overrides it
-// (LRM 7.9.11); an invalid-key write lands on it and is discarded. There is no
-// out-of-bounds concept here: an associative array has no index bounds, so the
-// trigger is a missing or invalid key, never a boundary.
+// `element_default_` holds the element-type default -- the LRM Table 7-1 value
+// read from a nonexistent array entry. It carries the element's runtime shape
+// (supplied at construction because `V = PackedArray` carries shape the C++
+// type cannot recover; see `docs/decisions/runtime-shape-and-default-value.md`)
+// and is only ever read or copied, never written, so a read returns it
+// directly. A read of a nonexistent or invalid key (LRM 7.8.6) returns it
+// unless `user_default_` overrides it (LRM 7.9.11). `discard_sink_` is the
+// throwaway an invalid-key write lands on, scrubbed to canonical by the
+// non-const write path. There is no out-of-bounds concept here: an associative
+// array has no index bounds, so the trigger is a missing or invalid key, never
+// a boundary.
 template <typename K, typename V>
 class AssociativeArray {
  public:
   using KeyType = K;
   using ElementType = V;
 
-  // Sentinel "uninitialized" form -- empty map with a default-constructed
-  // type-default slot, used as the declared default state of an associative
+  // Sentinel "uninitialized" form -- empty map with default-constructed
+  // default / sink slots, used as the declared default state of an associative
   // field before the constructor scope seeds the element shape.
   AssociativeArray() = default;
 
-  // Empty map with the type-default slot seeded, used for declarations like
+  // Empty map with the default / sink slots seeded, used for declarations like
   // `int m[string];` where the element shape is known at lowering time.
-  explicit AssociativeArray(V type_default)
-      : type_default_(std::move(type_default)) {
+  explicit AssociativeArray(V element_default)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)) {
   }
 
   // LRM 7.9.11 associative literal `'{key: value, ...}`: seed the map from the
-  // (key, value) entries. The type-default slot still carries the element-type
+  // (key, value) entries. The default slots still carry the element-type
   // default for a read of an absent key.
-  AssociativeArray(V type_default, std::span<const std::tuple<K, V>> entries)
-      : type_default_(std::move(type_default)) {
+  AssociativeArray(V element_default, std::span<const std::tuple<K, V>> entries)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)) {
     for (const auto& [key, value] : entries) {
       data_.insert_or_assign(key, value);
     }
@@ -98,8 +103,10 @@ class AssociativeArray {
   // of an absent key returns (LRM 7.8.6) and the seed for an entry allocated on
   // a later write (LRM 7.8.7).
   AssociativeArray(
-      V type_default, std::span<const std::tuple<K, V>> entries, V user_default)
-      : type_default_(std::move(type_default)),
+      V element_default, std::span<const std::tuple<K, V>> entries,
+      V user_default)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)),
         user_default_(std::move(user_default)) {
     for (const auto& [key, value] : entries) {
       data_.insert_or_assign(key, value);
@@ -162,19 +169,18 @@ class AssociativeArray {
   // LRM 7.8.7 / 7.9.11: a write target allocates the absent entry seeded with
   // the user-specified default if one was set, otherwise the element-type
   // default, then yields a reference the caller stores into. An invalid key
-  // (LRM 7.8.6) yields the type-default slot instead, so the write is
-  // discarded.
+  // (LRM 7.8.6) yields the discard sink instead, so the write is discarded.
   [[nodiscard]] auto ElementRef(const K& key) -> V& {
     if (IsInvalidKey(key)) {
-      type_default_.ResetToDefault();
-      return type_default_;
+      discard_sink_.ResetToDefault();
+      return discard_sink_;
     }
     auto it = data_.find(key);
     if (it == data_.end()) {
       it = data_
                .emplace(
-                   key,
-                   user_default_.has_value() ? *user_default_ : type_default_)
+                   key, user_default_.has_value() ? *user_default_
+                                                  : element_default_)
                .first;
     }
     return it->second;
@@ -347,17 +353,13 @@ class AssociativeArray {
 
   // The value a read of an absent or invalid key yields (LRM 7.8.6 / 7.9.11):
   // the persistent user default when one was set, otherwise the element-type
-  // default. The type-default slot is restored first so a prior discarded write
-  // does not leak into the result.
+  // default. `element_default_` is never written, so it is returned directly.
   [[nodiscard]] auto MissValue() const -> const V& {
-    if (user_default_.has_value()) {
-      return *user_default_;
-    }
-    type_default_.ResetToDefault();
-    return type_default_;
+    return user_default_.has_value() ? *user_default_ : element_default_;
   }
 
-  mutable V type_default_;
+  V element_default_;
+  V discard_sink_;
   std::optional<V> user_default_;
   std::map<K, V, typename AssocKeyTraits<K>::Less> data_;
 };
