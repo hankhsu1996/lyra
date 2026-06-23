@@ -25,55 +25,65 @@ namespace lyra::value {
 // `std::deque<T>` rather than the `std::vector<T>` the dynamic array uses.
 // Default value is the empty queue (LRM Table 6-7).
 //
-// `oob_slot_` is the LRM 7.4.5 invalid-index shield seed, supplied at
-// construction because `T = PackedArray` carries runtime shape parameters
-// (bit width, signedness, 2/4-state) that cannot be recovered from the C++
-// type alone. See `docs/decisions/runtime-shape-and-default-value.md`. It
-// holds the element's canonical default for construction and the OOB-shield
-// protocol (`ResetToDefault`) shared with the other container wrappers.
+// `element_default_` holds the LRM Table 7-1 default an invalid-index read
+// returns (LRM 7.4.5 / 7.10.1) and the prototype that seeds construction,
+// growth (the `q[$+1]` append), slice / locator results, and an empty-queue
+// pop. It carries the element's runtime shape (bit width, signedness,
+// 2/4-state for `T = PackedArray`) that the C++ type alone cannot recover, so
+// it is supplied at construction; it is only ever read or copied, never
+// written, so a const read returns it directly with no scrub. `discard_sink_`
+// is the throwaway an invalid-index write lands on; the non-const write path
+// scrubs it to canonical via `T::ResetToDefault` before handing out the
+// reference. See `docs/decisions/runtime-shape-and-default-value.md`.
 template <typename T>
 class Queue {
  public:
   using ElementType = T;
 
-  // Sentinel "uninitialized" form -- empty queue with a default-constructed
-  // OOB slot. Used as the declared default state of a queue field; the first
-  // MIR-level assignment overwrites the whole queue (LRM 10.5 variable
-  // initialization).
+  // Sentinel "uninitialized" form -- empty queue with default-constructed
+  // default / sink slots. Used as the declared default state of a queue field;
+  // the first MIR-level assignment overwrites the whole queue (LRM 10.5
+  // variable initialization).
   Queue() = default;
 
-  // Empty queue with the shield slot seeded. Used for declarations like
-  // `int q[$];` where the queue starts empty but the element shape is known
-  // at lowering time.
-  explicit Queue(T oob_slot)
-      : oob_slot_(std::move(oob_slot)), oob_seeded_(true) {
+  // Empty queue with the default / sink slots seeded. Used for declarations
+  // like `int q[$];` where the queue starts empty but the element shape is
+  // known at lowering time.
+  explicit Queue(T element_default)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)),
+        default_seeded_(true) {
   }
 
-  // LRM 10.9.1 assignment-pattern construction: shield slot seeded, elements
-  // taken from the pattern's list. The list is a span so the emit side hands
-  // in a `std::array<T, N>{...}` literal, mirroring `DynamicArray`.
-  Queue(T oob_slot, std::span<const T> init)
-      : oob_slot_(std::move(oob_slot)),
+  // LRM 10.9.1 assignment-pattern construction: default / sink slots seeded,
+  // elements taken from the pattern's list. The list is a span so the emit side
+  // hands in a `std::array<T, N>{...}` literal, mirroring `DynamicArray`.
+  Queue(T element_default, std::span<const T> init)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)),
         data_(init.begin(), init.end()),
-        oob_seeded_(true) {
+        default_seeded_(true) {
   }
 
   // LRM 7.10.5 bounded queue `int q[$:N]`: the empty start is unchanged, but
   // the maximum index N is recorded so growth past N+1 elements is discarded
   // with a warning. The bound arrives as a PackedArray construction argument.
-  Queue(T oob_slot, const PackedArray& max_bound)
-      : oob_slot_(std::move(oob_slot)),
+  Queue(T element_default, const PackedArray& max_bound)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)),
         max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())),
-        oob_seeded_(true) {
+        default_seeded_(true) {
   }
 
   // LRM 7.10.5 bounded queue initialized by an assignment pattern: take the
   // pattern's elements, record the bound, and trim any overflow on entry.
-  Queue(T oob_slot, std::span<const T> init, const PackedArray& max_bound)
-      : oob_slot_(std::move(oob_slot)),
+  Queue(
+      T element_default, std::span<const T> init, const PackedArray& max_bound)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)),
         data_(init.begin(), init.end()),
         max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())),
-        oob_seeded_(true) {
+        default_seeded_(true) {
     EnforceBound();
   }
 
@@ -89,9 +99,10 @@ class Queue {
   // concat result preserves the variable's shape rather than overwriting it.
   auto operator=(const Queue& other) -> Queue& {
     if (this != &other) {
-      if (!oob_seeded_ && other.oob_seeded_) {
-        oob_slot_ = other.oob_slot_;
-        oob_seeded_ = true;
+      if (!default_seeded_ && other.default_seeded_) {
+        element_default_ = other.element_default_;
+        discard_sink_ = other.element_default_;
+        default_seeded_ = true;
       }
       data_ = other.data_;
       if (!max_bound_.has_value()) {
@@ -103,9 +114,10 @@ class Queue {
   }
   auto operator=(Queue&& other) noexcept -> Queue& {
     if (this != &other) {
-      if (!oob_seeded_ && other.oob_seeded_) {
-        oob_slot_ = std::move(other.oob_slot_);
-        oob_seeded_ = true;
+      if (!default_seeded_ && other.default_seeded_) {
+        element_default_ = other.element_default_;
+        discard_sink_ = std::move(other.element_default_);
+        default_seeded_ = true;
       }
       data_ = std::move(other.data_);
       if (!max_bound_.has_value()) {
@@ -196,35 +208,34 @@ class Queue {
   }
 
   // LRM Table 6-7: a queue's default is the empty queue. When this container
-  // is itself an OOB shield slot of an outer container, the outer calls this
-  // to restore canonical state before handing out a reference.
+  // is itself the discard sink of an outer container, the outer scrubs it to
+  // canonical state before handing out a reference.
   auto ResetToDefault() -> void {
     data_.clear();
   }
 
-  // LRM 7.10.1 / 7.4.5 read: an index outside `0..size-1` (or carrying
-  // x/z) routes through `oob_slot_`, restored to canonical state first.
-  // Reads never grow the queue -- the write path owns the `q[$+1]` append
-  // semantic.
+  // LRM 7.10.1 / 7.4.5 read: an index outside `0..size-1` (or carrying x/z)
+  // misses. Reads never grow the queue -- the write path owns the `q[$+1]`
+  // append semantic. The non-const overload returns the writable scratch sink;
+  // the const overload returns the element default by direct reference.
   [[nodiscard]] auto Element(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      discard_sink_.ResetToDefault();
+      return discard_sink_;
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
   [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
     if (IsInvalidIndex(idx)) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      return element_default_;
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
   // LRM 7.10.1 write: `q[$+1] = v` (index == size) appends a default-shaped
   // slot and returns it. An x/z, negative, or beyond-`$+1` index lands on
-  // the discarded shield so the write is ignored. The backend routes here
+  // the discard sink so the write is ignored. The backend routes here
   // only for an element-write lvalue, so a read of `index == size` still
   // sees the default rather than growing the queue.
   [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
@@ -234,27 +245,27 @@ class Queue {
         return data_[static_cast<std::size_t>(v)];
       }
       if (v >= 0 && static_cast<std::uint64_t>(v) == data_.size()) {
-        oob_slot_.ResetToDefault();
-        data_.push_back(oob_slot_);
+        data_.push_back(element_default_);
         EnforceBound();
         if (static_cast<std::uint64_t>(v) < data_.size()) {
           return data_[static_cast<std::size_t>(v)];
         }
-        oob_slot_.ResetToDefault();
-        return oob_slot_;
+        discard_sink_.ResetToDefault();
+        return discard_sink_;
       }
     }
-    oob_slot_.ResetToDefault();
-    return oob_slot_;
+    discard_sink_.ResetToDefault();
+    return discard_sink_;
   }
 
   // LRM 7.10.1 queue slice `q[lo:hi]`. An x/z bound, or `lo > hi` after
   // clamping, yields the empty queue. `lo` clamps up to 0 and `hi` clamps down
   // to the last index (`q[a:b]` with `a < 0` is `q[0:b]`, with `b > $` is
-  // `q[a:$]`). The result carries this queue's element shape via `oob_slot_`.
+  // `q[a:$]`). The result carries this queue's element shape via
+  // `element_default_`.
   [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
       -> Queue {
-    Queue out(oob_slot_);
+    Queue out(element_default_);
     if (lo.HasUnknown() || hi.HasUnknown() || data_.empty()) {
       return out;
     }
@@ -278,12 +289,11 @@ class Queue {
   }
 
   // LRM 7.10.2.4 / 7.10.2.5: remove and return the first / last element. On an
-  // empty queue the result is the element type's LRM Table 7-1 default (the
-  // canonical seed held by `oob_slot_`) and the queue is left unchanged.
+  // empty queue the result is the element type's LRM Table 7-1 default (a copy
+  // of `element_default_`) and the queue is left unchanged.
   auto PopFront() -> T {
     if (data_.empty()) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      return element_default_;
     }
     T front = std::move(data_.front());
     data_.pop_front();
@@ -291,8 +301,7 @@ class Queue {
   }
   auto PopBack() -> T {
     if (data_.empty()) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      return element_default_;
     }
     T back = std::move(data_.back());
     data_.pop_back();
@@ -347,44 +356,46 @@ class Queue {
   [[nodiscard]] auto Sum(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc + v; });
   }
   template <typename F>
   [[nodiscard]] auto Product(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc * v; });
   }
   template <typename F>
   [[nodiscard]] auto And(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc & v; });
   }
   template <typename F>
   [[nodiscard]] auto Or(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc | v; });
   }
   template <typename F>
   [[nodiscard]] auto Xor(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc ^ v; });
   }
 
   // LRM 7.12.1 locator methods. Value locators return a queue of elements
-  // carrying this queue's element shape via `oob_slot_`; index locators return
-  // a queue of `int`. No match or an empty receiver yields an empty queue.
+  // carrying this queue's element shape via `element_default_`; index locators
+  // return a queue of `int`. No match or an empty receiver yields an empty
+  // queue.
   template <typename F>
   [[nodiscard]] auto Find(F pred) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayFind(data_, std::move(pred)));
+    return Queue<T>(
+        element_default_, detail::ArrayFind(data_, std::move(pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindIndex(F pred) const -> Queue<PackedArray> {
@@ -393,7 +404,8 @@ class Queue {
   }
   template <typename F>
   [[nodiscard]] auto FindFirst(F pred) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayFindFirst(data_, std::move(pred)));
+    return Queue<T>(
+        element_default_, detail::ArrayFindFirst(data_, std::move(pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindFirstIndex(F pred) const -> Queue<PackedArray> {
@@ -403,7 +415,8 @@ class Queue {
   }
   template <typename F>
   [[nodiscard]] auto FindLast(F pred) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayFindLast(data_, std::move(pred)));
+    return Queue<T>(
+        element_default_, detail::ArrayFindLast(data_, std::move(pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindLastIndex(F pred) const -> Queue<PackedArray> {
@@ -413,15 +426,18 @@ class Queue {
   }
   template <typename F>
   [[nodiscard]] auto Min(F&& key) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayMin(data_, std::forward<F>(key)));
+    return Queue<T>(
+        element_default_, detail::ArrayMin(data_, std::forward<F>(key)));
   }
   template <typename F>
   [[nodiscard]] auto Max(F&& key) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayMax(data_, std::forward<F>(key)));
+    return Queue<T>(
+        element_default_, detail::ArrayMax(data_, std::forward<F>(key)));
   }
   template <typename F>
   [[nodiscard]] auto Unique(F key) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayUnique(data_, std::move(key)));
+    return Queue<T>(
+        element_default_, detail::ArrayUnique(data_, std::move(key)));
   }
   template <typename F>
   [[nodiscard]] auto UniqueIndex(F key) const -> Queue<PackedArray> {
@@ -429,11 +445,12 @@ class Queue {
         PackedArray::Int(0), detail::ArrayUniqueIndex(data_, std::move(key))};
   }
 
-  // LRM 7.12.5 projection into a same-shape queue; `shield` seeds the result
-  // element type's canonical default.
+  // LRM 7.12.5 projection into a same-shape queue; `element_default` seeds the
+  // result element type's canonical default.
   template <typename F, typename U>
-  [[nodiscard]] auto Map(F closure, U shield) const -> Queue<U> {
-    return Queue<U>(std::move(shield), detail::ArrayMap(data_, closure));
+  [[nodiscard]] auto Map(F closure, U element_default) const -> Queue<U> {
+    return Queue<U>(
+        std::move(element_default), detail::ArrayMap(data_, closure));
   }
 
  private:
@@ -461,10 +478,11 @@ class Queue {
     }
   }
 
-  mutable T oob_slot_;
+  T element_default_;
+  T discard_sink_;
   std::deque<T> data_;
   std::optional<std::uint64_t> max_bound_ = std::nullopt;
-  bool oob_seeded_ = false;
+  bool default_seeded_ = false;
 };
 
 // LRM 10.10 unpacked array concatenation builder. The backend wraps each part
