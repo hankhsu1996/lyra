@@ -23,10 +23,8 @@ auto BuildContinuousAssign(
     ModuleLowerer& module, WalkFrame frame, diag::SourceSpan span,
     hir::Expr lhs, hir::Expr rhs, const std::vector<SensitivityRead>& reads)
     -> hir::ContinuousAssign {
-  const hir::ExprId lhs_id =
-      frame.current_structural_scope->exprs.Add(std::move(lhs));
-  const hir::ExprId rhs_id =
-      frame.current_structural_scope->exprs.Add(std::move(rhs));
+  const hir::ExprId lhs_id = frame.Exprs().Add(std::move(lhs));
+  const hir::ExprId rhs_id = frame.Exprs().Add(std::move(rhs));
   return hir::ContinuousAssign{
       .span = span,
       .lhs = lhs_id,

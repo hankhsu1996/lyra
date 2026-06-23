@@ -86,7 +86,7 @@ auto ProcessLowerer::Run(
     const slang::ast::ProceduralBlockSymbol& proc, WalkFrame parent_frame)
     -> diag::Result<hir::Process> {
   hir::ProceduralBody body;
-  const WalkFrame frame = parent_frame.WithProceduralBody(&body);
+  const WalkFrame frame = parent_frame.WithProceduralBody(&body, &body.exprs);
 
   auto root_stmt = LowerStmt(proc.getBody(), frame);
   if (!root_stmt) return std::unexpected(std::move(root_stmt.error()));

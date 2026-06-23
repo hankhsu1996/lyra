@@ -38,8 +38,7 @@ auto LowerCaseInsideStmt(
   const auto case_check = LowerUniquePriorityCheck(cs.check);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id =
-      frame.current_procedural_body->exprs.Add(*std::move(cond_expr));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
   std::vector<hir::CaseInsideItem> items;
   items.reserve(cs.items.size());
   for (const auto& item : cs.items) {
@@ -100,8 +99,7 @@ auto LowerCaseStmt(
   const auto case_check = LowerUniquePriorityCheck(cs.check);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id =
-      frame.current_procedural_body->exprs.Add(*std::move(cond_expr));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
   std::vector<hir::CaseItem> items;
   items.reserve(cs.items.size());
   for (const auto& item : cs.items) {
@@ -110,8 +108,7 @@ auto LowerCaseStmt(
     for (const auto* label_expr : item.expressions) {
       auto label_or = proc.LowerExpr(*label_expr, frame);
       if (!label_or) return std::unexpected(std::move(label_or.error()));
-      label_ids.push_back(
-          frame.current_procedural_body->exprs.Add(*std::move(label_or)));
+      label_ids.push_back(frame.Exprs().Add(*std::move(label_or)));
     }
     auto item_stmt = proc.LowerStmt(*item.stmt, frame);
     if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
@@ -159,8 +156,7 @@ auto LowerConditionalStmt(
   }
   auto cond_expr = proc.LowerExpr(*cond.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id =
-      frame.current_procedural_body->exprs.Add(*std::move(cond_expr));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
   auto then_stmt = proc.LowerStmt(cs.ifTrue, frame);
   if (!then_stmt) return std::unexpected(std::move(then_stmt.error()));
   const hir::StmtId then_id =

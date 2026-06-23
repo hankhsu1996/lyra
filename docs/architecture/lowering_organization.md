@@ -140,6 +140,19 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
    `frame.current_*_scope->Add...`; writes to the root output go through the pass class's narrow
    methods (see invariant 5).
 
+   _Current implementation:_ AST-to-HIR splits the walk position's write target by what the write
+   needs, not into one uniform handle. Lowering an expression is a single arena append and is
+   identical in either pass class, so the frame carries one shared expression sink (the current expr
+   arena, reached through `Exprs()` and set on scope/body entry) that every expression handler
+   appends into regardless of context -- this is precisely what lets the expression handlers be one
+   template per kind rather than a procedural/structural pair (invariant 13). Statements, locals,
+   and members stay behind the owning write target (the procedural body or the structural scope)
+   because their writes are compound, not bare arena appends: declaring a local also registers a
+   symbol binding on the pass class, a loop label bumps a counter on the body, a member append feeds
+   scope-specific arenas. The asymmetry is intended -- the expression sink is shared because the
+   write is context-free; the statement and member targets stay context-bound because the writes are
+   not.
+
 7. Adding a new fact is a class-member addition and a constructor-parameter addition. It does not
    change dispatcher or per-kind-handler signatures. Adding a new traversal-time concept is a
    `WalkFrame` struct-field addition. It does not change dispatcher or per-kind-handler signatures

@@ -25,23 +25,20 @@ auto LowerForLoopStmt(
     auto init_or = proc.LowerExpr(*init_expr, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     hir_init.emplace_back(
-        hir::ForInitExpr{
-            .expr =
-                frame.current_procedural_body->exprs.Add(*std::move(init_or))});
+        hir::ForInitExpr{.expr = frame.Exprs().Add(*std::move(init_or))});
   }
   std::optional<hir::ExprId> cond_id;
   if (fs.stopExpr != nullptr) {
     auto cond_or = proc.LowerExpr(*fs.stopExpr, frame);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    cond_id = frame.current_procedural_body->exprs.Add(*std::move(cond_or));
+    cond_id = frame.Exprs().Add(*std::move(cond_or));
   }
   std::vector<hir::ExprId> step_ids;
   step_ids.reserve(fs.steps.size());
   for (const auto* step_expr : fs.steps) {
     auto step_or = proc.LowerExpr(*step_expr, frame);
     if (!step_or) return std::unexpected(std::move(step_or.error()));
-    step_ids.push_back(
-        frame.current_procedural_body->exprs.Add(*std::move(step_or)));
+    step_ids.push_back(frame.Exprs().Add(*std::move(step_or)));
   }
   auto body_stmt = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
   if (!body_stmt) return std::unexpected(std::move(body_stmt.error()));
@@ -64,8 +61,7 @@ auto LowerWhileLoopStmt(
     -> diag::Result<hir::Stmt> {
   auto cond_or = proc.LowerExpr(ws.cond, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id =
-      frame.current_procedural_body->exprs.Add(*std::move(cond_or));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
   auto body_or = proc.LowerStmt(ws.body, frame.WithoutBreakLabel());
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
@@ -82,8 +78,7 @@ auto LowerRepeatLoopStmt(
     -> diag::Result<hir::Stmt> {
   auto count_or = proc.LowerExpr(rs.count, frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const hir::ExprId count_id =
-      frame.current_procedural_body->exprs.Add(*std::move(count_or));
+  const hir::ExprId count_id = frame.Exprs().Add(*std::move(count_or));
   auto body_or = proc.LowerStmt(rs.body, frame.WithoutBreakLabel());
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
@@ -104,8 +99,7 @@ auto LowerDoWhileLoopStmt(
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
   auto cond_or = proc.LowerExpr(ds.cond, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id =
-      frame.current_procedural_body->exprs.Add(*std::move(cond_or));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
   return hir::Stmt{
       .label = std::nullopt,
       .data = hir::DoWhileStmt{.condition = cond_id, .body = body_id},

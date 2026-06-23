@@ -97,7 +97,8 @@ StructuralScopeLowerer::StructuralScopeLowerer(
 auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     -> diag::Result<hir::StructuralScope> {
   hir::StructuralScope scope;
-  const WalkFrame frame = parent_frame.WithStructuralFrame(frame_, &scope);
+  const WalkFrame frame =
+      parent_frame.WithStructuralFrame(frame_, &scope, &scope.exprs);
   scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
   // Apply any loop-generate entry bindings (loop-generate body inherits the
   // loop var from its parent's frame so body refs compute correct hops up).
@@ -254,8 +255,7 @@ auto StructuralScopeLowerer::PopulateVariableMember(
   if (const auto* init = var.getInitializer(); init != nullptr) {
     auto init_or = LowerExpr(*init, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    initializer_id =
-        frame.current_structural_scope->exprs.Add(*std::move(init_or));
+    initializer_id = frame.Exprs().Add(*std::move(init_or));
   }
   const hir::StructuralVarId local =
       frame.current_structural_scope->structural_vars.Add(
@@ -279,7 +279,8 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
 
   hir::ProceduralBody sub_body;
   ProcessLowerer sub_lowerer(*module_, sym);
-  const WalkFrame sub_frame = frame.WithProceduralBody(&sub_body);
+  const WalkFrame sub_frame =
+      frame.WithProceduralBody(&sub_body, &sub_body.exprs);
 
   std::vector<hir::SubroutineParam> params;
   params.reserve(sym.getArguments().size());
