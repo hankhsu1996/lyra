@@ -374,13 +374,10 @@ auto RenderSensitivityWaitStmt(
     auto ptr_or = RenderSensitivityRefPtr(view, read.ref);
     if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
     if (i != 0) result += ", ";
-    // bit_range follows slang's `(lo_bit, hi_bit)` inclusive convention; the
-    // runtime Trigger takes `(lsb_offset, width)`.
-    const auto lsb = read.bit_range.first;
-    const auto width = read.bit_range.second - read.bit_range.first + 1;
     result += "{" + *ptr_or + ", " +
               std::string{RenderEventEdgeAsRuntime(read.edge_kind)} + ", " +
-              std::to_string(lsb) + "ULL, " + std::to_string(width) + "ULL}";
+              std::to_string(read.lsb_bit_offset) + "ULL, " +
+              std::to_string(read.bit_width) + "ULL}";
   }
   result += "});\n";
   return result;

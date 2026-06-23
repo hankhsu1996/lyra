@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -20,10 +21,13 @@ class ValueSymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
-// One leaf read produced by `SensitivityAnalyzer`.
+// One leaf read produced by `SensitivityAnalyzer`. `footprint` is the flat-bit
+// range of the read within the symbol's encoding; an absent footprint means the
+// whole signal is observed on any change, the form a non-bit-addressed
+// observation (e.g. a port connection) produces.
 struct SensitivityRead {
-  const slang::ast::ValueSymbol* symbol;
-  std::pair<std::uint64_t, std::uint64_t> bit_range;
+  const slang::ast::ValueSymbol* symbol = nullptr;
+  std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
 };
 
 // Reports every value read inside an arbitrary `slang::ast::Expression` or
