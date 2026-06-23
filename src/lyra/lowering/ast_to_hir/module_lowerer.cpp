@@ -24,6 +24,7 @@
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -31,7 +32,7 @@ namespace lyra::lowering::ast_to_hir {
 
 ModuleLowerer::ModuleLowerer(
     const LoweringFacts& facts, const slang::ast::InstanceBodySymbol& body)
-    : facts_(facts), body_(&body), unit_{std::string{body.name}} {
+    : facts_(facts), body_(&body), unit_{SpecializationName(body)} {
 }
 
 auto ModuleLowerer::Run() -> diag::Result<hir::ModuleUnit> {

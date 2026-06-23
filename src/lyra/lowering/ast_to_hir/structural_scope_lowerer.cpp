@@ -31,6 +31,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -387,7 +388,7 @@ auto StructuralScopeLowerer::PopulateInstanceMember(
       frame.current_structural_scope->instance_members.Add(
           hir::InstanceMemberDecl{
               .instance_name = std::string{inst.name},
-              .target_unit = std::string{inst.getDefinition().name},
+              .target_unit = SpecializationName(inst),
               .array_dims = {}});
   // A downward cross-unit reference (`c.x`) resolves the leading `c` to
   // this member; the binding lets process-body lowering find it regardless
@@ -420,7 +421,7 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
       frame.current_structural_scope->instance_members.Add(
           hir::InstanceMemberDecl{
               .instance_name = std::string{array.name},
-              .target_unit = std::string{leaf.getDefinition().name},
+              .target_unit = SpecializationName(leaf),
               .array_dims = std::move(dims)});
   module_->MapOwnedChildBinding(
       array, frame_, hir::DownwardHead{.child = member_id});
