@@ -58,14 +58,20 @@ C  Non-local access substrate
       scheduler on one shared time axis -- there is no single "main" block. This is end-to-end
       testable with no instantiation edge: two independent top modules each run their own processes
       under the shared schedule.
-- [ ] A2 -- Inputs are classified into code-shape-affecting (enter the specialization key) versus
-      constructor/config inputs (flow in at construction). One compiled artifact exists per distinct
-      code shape, not per instance.
-- [ ] A3 -- Two instances whose code-shape inputs match share one compiled artifact; value-only
-      parameters differ per instance without forking the artifact.
+- [ ] A2 -- A module instantiated with different parameter values yields distinct specializations
+      that each behave according to their own values. Parameters are elaborated per instance, so
+      distinct parameter bindings produce distinct compiled artifacts; the open gap is that two
+      specializations of one module are currently indistinguishable because their identity is the
+      module name alone, so emitting more than one collapses them. A specialization needs an
+      identity that separates differing parameter bindings (see
+      `docs/decisions/specialization-identity.md`). Sharing one artifact across bindings whose
+      generated code is identical is a compile-performance optimization, not a functional
+      requirement -- it lives in `performance.md`. Covers value parameters of any type, including
+      unpacked aggregate values (LRM 6.20.2), and type parameters (LRM 6.20.3); an unbounded `$`
+      value (LRM 6.20.7) is just one more distinct binding to the identity and rides on the same
+      path.
 
-Unlocks the compile-time side of `instantiation/specialization_grouping` and
-`instantiation/param_slots`.
+Unlocks the runtime side of `instantiation/param_slots`.
 
 ### Stage B -- Object-graph construction (instantiation)
 
@@ -214,8 +220,6 @@ Unlocks the `ports/*` archive group.
 
 ## Open Questions
 
-- How much of the specialization-key classification (which inputs are code-shape-affecting) is
-  pinned in A2 versus refined as later stages reveal more code-shape-affecting inputs.
 - Connection shorthands (`.*`, `.name` implicit) resolve to the same connection set as explicit
   named connections in the frontend; whether any need distinct handling is open. Positional and
   explicit named connections are both supported.
@@ -226,6 +230,9 @@ Unlocks the `ports/*` archive group.
   `compilation_unit_model.md` but are a separate workstream from module hierarchy. A hierarchical
   reference resolved via an interface port belongs to that workstream.
 - Primitive and gate-level instances (UDPs, built-in gates).
+- Specify parameters (`specparam`, LRM 6.20.5). They carry timing and delay values for specify
+  blocks and belong to the timing domain, not the parameter-specialization path; they wait for a
+  specify-block workstream rather than blocking this one.
 - Bind directives and configuration (`config` / `bind`).
 - Net resolution and net merging: multi-driver resolved nets and net collapsing across ports. A
   single-driver net port behaves as a continuous assignment and is in scope; multi-driver net
