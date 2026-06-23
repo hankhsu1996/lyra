@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -18,9 +19,9 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
-#include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/continuous_assign.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -36,32 +37,17 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
       diag::UnsupportedCategory::kFeature);
 }
 
-// Descends nested array dimensions to the per-element instance.
-auto ArrayElementInstance(const slang::ast::InstanceArraySymbol& array)
-    -> const slang::ast::InstanceSymbol* {
-  if (array.elements.empty()) {
-    return nullptr;
-  }
-  const auto* first = array.elements.front();
-  if (first->kind == slang::ast::SymbolKind::InstanceArray) {
-    return ArrayElementInstance(first->as<slang::ast::InstanceArraySymbol>());
-  }
-  return &first->as<slang::ast::InstanceSymbol>();
-}
-
-auto PopulateInstancePortConnections(
+// Connects one instance's ports, the instance reached from its owning scope by
+// navigating `head` then `index_prefix` (empty for a scalar instance, one
+// `IndexHop` per dimension for an array element). Each port appends its own
+// member hop, so a connection is the same continuous assignment whether the
+// instance stands alone or sits at `c[i][j]` in an array.
+auto ConnectElementPorts(
     StructuralScopeLowerer& scope, ModuleLowerer& module,
-    const slang::ast::InstanceSymbol& inst, WalkFrame frame)
-    -> diag::Result<void> {
+    const slang::ast::InstanceSymbol& inst, hir::DownwardHead head,
+    ScopeFrameId home_frame, const std::vector<hir::PathStep>& index_prefix,
+    WalkFrame frame) -> diag::Result<void> {
   const auto span = module.SourceMapper().PointSpanOf(inst.location);
-
-  // The instance member is bound in the pre-pass; a downward port reach
-  // cannot miss it, so absence is a compiler-bug invariant.
-  const auto binding = module.LookupOwnedChildBinding(inst);
-  if (!binding.has_value()) {
-    throw InternalError(
-        "PopulateInstancePortConnections: instance member has no binding");
-  }
 
   for (const auto* conn : inst.getPortConnections()) {
     if (conn->port.kind != slang::ast::SymbolKind::Port) {
@@ -108,9 +94,10 @@ auto PopulateInstancePortConnections(
       continue;
     }
 
+    std::vector<hir::PathStep> path = index_prefix;
+    path.emplace_back(hir::MemberHop{std::string{internal->name}});
     hir::Expr child_ref = module.MakeCrossUnitMemberRef(
-        *internal, binding->home_frame, binding->head,
-        {hir::MemberHop{std::string{internal->name}}}, *type_id, span);
+        *internal, home_frame, head, std::move(path), *type_id, span);
 
     if (port.direction == slang::ast::ArgumentDirection::In) {
       // The child port is driven by the connection's value: the parent-side
@@ -126,7 +113,7 @@ auto PopulateInstancePortConnections(
         const auto* constant = expr->getConstant();
         if (constant == nullptr) {
           throw InternalError(
-              "PopulateInstancePortConnections: port default did not fold to a "
+              "ConnectElementPorts: port default did not fold to a "
               "constant");
         }
         auto rhs_or = MakeConstantValueExpr(*constant, *type_id, span);
@@ -138,17 +125,10 @@ auto PopulateInstancePortConnections(
         rhs = *std::move(rhs_or);
         reads = module.Sensitivity().AnalyzeReads(*expr, inst);
       }
-      const hir::ExprId lhs_id =
-          frame.current_structural_scope->exprs.Add(std::move(child_ref));
-      const hir::ExprId rhs_id =
-          frame.current_structural_scope->exprs.Add(std::move(rhs));
       frame.current_structural_scope->continuous_assigns.Add(
-          hir::ContinuousAssign{
-              .span = span,
-              .lhs = lhs_id,
-              .rhs = rhs_id,
-              .sensitivity_list =
-                  module.TranslateSensitivityReads(reads, frame)});
+          BuildContinuousAssign(
+              module, frame, span, std::move(child_ref), std::move(rhs),
+              reads));
       continue;
     }
 
@@ -157,28 +137,50 @@ auto PopulateInstancePortConnections(
     // the parent target.
     if (expr->kind != slang::ast::ExpressionKind::Assignment) {
       throw InternalError(
-          "PopulateInstancePortConnections: output port connection expression "
+          "ConnectElementPorts: output port connection expression "
           "is not an assignment");
     }
     const auto& assign = expr->as<slang::ast::AssignmentExpression>();
     auto lhs_or = scope.LowerExpr(assign.left(), frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-    const hir::ExprId lhs_id =
-        frame.current_structural_scope->exprs.Add(*std::move(lhs_or));
-    const hir::ExprId rhs_id =
-        frame.current_structural_scope->exprs.Add(std::move(child_ref));
     // The output port observes the child's whole internal signal on any change.
     // It is not a bit-addressed read, so it carries no footprint regardless of
     // the port's data type.
     const std::vector<SensitivityRead> reads{
         SensitivityRead{.symbol = internal, .footprint = std::nullopt}};
     frame.current_structural_scope->continuous_assigns.Add(
-        hir::ContinuousAssign{
-            .span = span,
-            .lhs = lhs_id,
-            .rhs = rhs_id,
-            .sensitivity_list =
-                module.TranslateSensitivityReads(reads, frame)});
+        BuildContinuousAssign(
+            module, frame, span, *std::move(lhs_or), std::move(child_ref),
+            reads));
+  }
+  return {};
+}
+
+// Walks an instance array's elements, extending `index_prefix` by one
+// `IndexHop` per dimension, and connects each leaf element's ports. slang
+// distributes the connection per element (LRM 23.3.3.5), so each element
+// carries its own already index-matched connection expressions; this only
+// routes each to the right cell.
+auto ConnectArrayElements(
+    StructuralScopeLowerer& scope, ModuleLowerer& module,
+    const slang::ast::InstanceArraySymbol& array, hir::DownwardHead head,
+    ScopeFrameId home_frame, const std::vector<hir::PathStep>& index_prefix,
+    WalkFrame frame) -> diag::Result<void> {
+  for (std::uint32_t i = 0; i < array.elements.size(); ++i) {
+    std::vector<hir::PathStep> element_prefix = index_prefix;
+    element_prefix.emplace_back(hir::IndexHop{i});
+    const auto* element = array.elements[i];
+    if (element->kind == slang::ast::SymbolKind::InstanceArray) {
+      auto r = ConnectArrayElements(
+          scope, module, element->as<slang::ast::InstanceArraySymbol>(), head,
+          home_frame, element_prefix, frame);
+      if (!r) return std::unexpected(std::move(r.error()));
+      continue;
+    }
+    auto r = ConnectElementPorts(
+        scope, module, element->as<slang::ast::InstanceSymbol>(), head,
+        home_frame, element_prefix, frame);
+    if (!r) return std::unexpected(std::move(r.error()));
   }
   return {};
 }
@@ -190,17 +192,28 @@ auto StructuralScopeLowerer::PopulatePortConnections(
     -> diag::Result<void> {
   for (const auto& member : slang_scope.members()) {
     if (member.kind == slang::ast::SymbolKind::Instance) {
-      auto r = PopulateInstancePortConnections(
-          *this, *module_, member.as<slang::ast::InstanceSymbol>(), frame);
+      // The instance member is bound in the pre-pass; a downward port reach
+      // cannot miss it, so absence is a compiler-bug invariant.
+      const auto binding = module_->LookupOwnedChildBinding(member);
+      if (!binding.has_value()) {
+        throw InternalError(
+            "PopulatePortConnections: instance member has no binding");
+      }
+      auto r = ConnectElementPorts(
+          *this, *module_, member.as<slang::ast::InstanceSymbol>(),
+          binding->head, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
-      const auto& array = member.as<slang::ast::InstanceArraySymbol>();
-      const auto* element = ArrayElementInstance(array);
-      if (element != nullptr && !element->getPortConnections().empty()) {
-        return PortConnectionUnsupported(
-            module_->SourceMapper().PointSpanOf(array.location),
-            "instance-array port connection is not yet supported");
+      // A zero-element array (`Child c[0]`, LRM 23.3.2) constructs no element
+      // and binds no member, so there is nothing to connect.
+      const auto binding = module_->LookupOwnedChildBinding(member);
+      if (!binding.has_value()) {
+        continue;
       }
+      auto r = ConnectArrayElements(
+          *this, *module_, member.as<slang::ast::InstanceArraySymbol>(),
+          binding->head, binding->home_frame, {}, frame);
+      if (!r) return std::unexpected(std::move(r.error()));
     }
   }
   return {};

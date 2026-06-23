@@ -1,7 +1,8 @@
-#include "lyra/hir/continuous_assign.hpp"
+#include "lyra/lowering/ast_to_hir/continuous_assign.hpp"
 
 #include <expected>
 #include <utility>
+#include <vector>
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -11,10 +12,28 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
+#include "lyra/hir/continuous_assign.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+auto BuildContinuousAssign(
+    ModuleLowerer& module, WalkFrame frame, diag::SourceSpan span,
+    hir::Expr lhs, hir::Expr rhs, const std::vector<SensitivityRead>& reads)
+    -> hir::ContinuousAssign {
+  const hir::ExprId lhs_id =
+      frame.current_structural_scope->exprs.Add(std::move(lhs));
+  const hir::ExprId rhs_id =
+      frame.current_structural_scope->exprs.Add(std::move(rhs));
+  return hir::ContinuousAssign{
+      .span = span,
+      .lhs = lhs_id,
+      .rhs = rhs_id,
+      .sensitivity_list = module.TranslateSensitivityReads(reads, frame),
+  };
+}
 
 auto StructuralScopeLowerer::LowerContinuousAssign(
     const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
@@ -51,26 +70,17 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   }
   auto lhs_or = LowerExpr(assign.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const hir::ExprId lhs_id =
-      frame.current_structural_scope->exprs.Add(*std::move(lhs_or));
 
   auto rhs_or = LowerExpr(assign.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const hir::ExprId rhs_id =
-      frame.current_structural_scope->exprs.Add(*std::move(rhs_or));
 
   // LRM 10.3.2: continuous assignment sensitivity is the read set of the
   // RHS expression. slang treats the ContinuousAssignSymbol as the
   // procedural scope for analysis purposes.
   const auto& reads = module_->Sensitivity().AnalyzeReads(assignment_expr, sym);
-  auto sensitivity = module_->TranslateSensitivityReads(reads, frame);
 
-  return hir::ContinuousAssign{
-      .span = span,
-      .lhs = lhs_id,
-      .rhs = rhs_id,
-      .sensitivity_list = std::move(sensitivity),
-  };
+  return BuildContinuousAssign(
+      *module_, frame, span, *std::move(lhs_or), *std::move(rhs_or), reads);
 }
 
 }  // namespace lyra::lowering::ast_to_hir
