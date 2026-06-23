@@ -8,8 +8,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
@@ -20,37 +19,31 @@ class RangeSelectExpression;
 
 namespace lyra::lowering::ast_to_hir {
 
+class ProcessLowerer;
+
 // LRM 7.10 `$` (UnboundedLiteral) in a queue index / slice bound. Resolves to
-// the queue's last index via the base bound on the walk frame.
+// the queue's last index via the base bound on the walk frame. A queue is a
+// dynamic type, so `$` only ever appears in procedural code (LRM 7.10.1).
 auto LowerUnboundedLiteralProc(
     ProcessLowerer& proc, WalkFrame frame, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
 
-// Procedural-context handlers.
-auto LowerElementSelectExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+// An access/projection's meaning is independent of the enclosing scope, so one
+// template over the pass class serves both the procedural and structural
+// contexts; explicit instantiations live in the implementation file.
+template <ExprLowerer Lowerer>
+auto LowerElementSelectExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ElementSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
-auto LowerRangeSelectExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerRangeSelectExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::RangeSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
-auto LowerMemberAccessExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
-    -> diag::Result<hir::Expr>;
-
-// Structural-context handlers.
-auto LowerElementSelectExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::ElementSelectExpression& sel, diag::SourceSpan span)
-    -> diag::Result<hir::Expr>;
-auto LowerRangeSelectExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::RangeSelectExpression& sel, diag::SourceSpan span)
-    -> diag::Result<hir::Expr>;
-auto LowerMemberAccessExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerMemberAccessExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
 

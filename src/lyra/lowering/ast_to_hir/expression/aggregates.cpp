@@ -19,11 +19,12 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerConcatExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerConcatExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ConcatenationExpression& cc, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto& module = proc.Module();
+  auto& module = lowerer.Module();
   auto type_id = module.InternType(*cc.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const auto kind = module.Unit().GetType(*type_id).Kind();
@@ -47,7 +48,7 @@ auto LowerConcatExprProc(
         op->type->isVoid()) {
       continue;
     }
-    auto operand_or = proc.LowerExpr(*op, frame);
+    auto operand_or = lowerer.LowerExpr(*op, frame);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     operand_ids.push_back(frame.Exprs().Add(*std::move(operand_or)));
   }
@@ -86,16 +87,17 @@ auto LowerReplicationExprProc(
   };
 }
 
-auto LowerAssignmentPatternFromElementsProc(
-    ProcessLowerer& proc, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerAssignmentPatternFromElements(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::AssignmentPatternExpressionBase& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = proc.Module().InternType(*ap.type, span);
+  auto type_id = lowerer.Module().InternType(*ap.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   std::vector<hir::ExprId> element_ids;
   element_ids.reserve(ap.elements().size());
   for (const auto* elem : ap.elements()) {
-    auto lowered = proc.LowerExpr(*elem, frame);
+    auto lowered = lowerer.LowerExpr(*elem, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(frame.Exprs().Add(*std::move(lowered)));
   }
@@ -106,26 +108,27 @@ auto LowerAssignmentPatternFromElementsProc(
   };
 }
 
-auto LowerAssociativeAssignmentPatternProc(
-    ProcessLowerer& proc, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerAssociativeAssignmentPattern(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::StructuredAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = proc.Module().InternType(*ap.type, span);
+  auto type_id = lowerer.Module().InternType(*ap.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   std::vector<hir::AssociativeAssignmentPatternExpr::Entry> entries;
   entries.reserve(ap.indexSetters.size());
   for (const auto& setter : ap.indexSetters) {
-    auto key_or = proc.LowerExpr(*setter.index, frame);
+    auto key_or = lowerer.LowerExpr(*setter.index, frame);
     if (!key_or) return std::unexpected(std::move(key_or.error()));
     const hir::ExprId key_id = frame.Exprs().Add(*std::move(key_or));
-    auto value_or = proc.LowerExpr(*setter.expr, frame);
+    auto value_or = lowerer.LowerExpr(*setter.expr, frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const hir::ExprId value_id = frame.Exprs().Add(*std::move(value_or));
     entries.push_back({.key = key_id, .value = value_id});
   }
   std::optional<hir::ExprId> default_id;
   if (ap.defaultSetter != nullptr) {
-    auto default_or = proc.LowerExpr(*ap.defaultSetter, frame);
+    auto default_or = lowerer.LowerExpr(*ap.defaultSetter, frame);
     if (!default_or) return std::unexpected(std::move(default_or.error()));
     default_id = frame.Exprs().Add(*std::move(default_or));
   }
@@ -140,19 +143,20 @@ auto LowerAssociativeAssignmentPatternProc(
   };
 }
 
-auto LowerReplicatedAssignmentPatternExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerReplicatedAssignmentPatternExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ReplicatedAssignmentPatternExpression& rp,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = proc.Module().InternType(*rp.type, span);
+  auto type_id = lowerer.Module().InternType(*rp.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto count_or = proc.LowerExpr(rp.count(), frame);
+  auto count_or = lowerer.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const hir::ExprId count_id = frame.Exprs().Add(*std::move(count_or));
   std::vector<hir::ExprId> item_ids;
   item_ids.reserve(rp.elements().size());
   for (const auto* elem : rp.elements()) {
-    auto lowered = proc.LowerExpr(*elem, frame);
+    auto lowered = lowerer.LowerExpr(*elem, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(frame.Exprs().Add(*std::move(lowered)));
   }
@@ -197,117 +201,38 @@ auto LowerNewArrayExprProc(
   };
 }
 
-auto LowerConcatExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::ConcatenationExpression& cc, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  auto& module = scope.Module();
-  auto type_id = module.InternType(*cc.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  const auto kind = module.Unit().GetType(*type_id).Kind();
-  if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kPackedArray) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-        "concatenation result type is neither string nor packed (LRM 11.4.12)",
-        diag::UnsupportedCategory::kFeature);
-  }
-  std::vector<hir::ExprId> operand_ids;
-  operand_ids.reserve(cc.operands().size());
-  for (const auto* op : cc.operands()) {
-    if (op->kind == slang::ast::ExpressionKind::Replication &&
-        op->type->isVoid()) {
-      continue;
-    }
-    auto operand_or = scope.LowerExpr(*op, frame);
-    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-    operand_ids.push_back(frame.Exprs().Add(*std::move(operand_or)));
-  }
-  return hir::Expr{
-      .type = *type_id,
-      .data = hir::ConcatExpr{.operands = std::move(operand_ids)},
-      .span = span,
-  };
-}
-
-auto LowerAssignmentPatternFromElementsStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::AssignmentPatternExpressionBase& ap,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = scope.Module().InternType(*ap.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  std::vector<hir::ExprId> element_ids;
-  element_ids.reserve(ap.elements().size());
-  for (const auto* elem : ap.elements()) {
-    auto lowered = scope.LowerExpr(*elem, frame);
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-    element_ids.push_back(frame.Exprs().Add(*std::move(lowered)));
-  }
-  return hir::Expr{
-      .type = *type_id,
-      .data = hir::AssignmentPatternExpr{.elements = std::move(element_ids)},
-      .span = span,
-  };
-}
-
-auto LowerAssociativeAssignmentPatternStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::StructuredAssignmentPatternExpression& ap,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = scope.Module().InternType(*ap.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  std::vector<hir::AssociativeAssignmentPatternExpr::Entry> entries;
-  entries.reserve(ap.indexSetters.size());
-  for (const auto& setter : ap.indexSetters) {
-    auto key_or = scope.LowerExpr(*setter.index, frame);
-    if (!key_or) return std::unexpected(std::move(key_or.error()));
-    const hir::ExprId key_id = frame.Exprs().Add(*std::move(key_or));
-    auto value_or = scope.LowerExpr(*setter.expr, frame);
-    if (!value_or) return std::unexpected(std::move(value_or.error()));
-    const hir::ExprId value_id = frame.Exprs().Add(*std::move(value_or));
-    entries.push_back({.key = key_id, .value = value_id});
-  }
-  std::optional<hir::ExprId> default_id;
-  if (ap.defaultSetter != nullptr) {
-    auto default_or = scope.LowerExpr(*ap.defaultSetter, frame);
-    if (!default_or) return std::unexpected(std::move(default_or.error()));
-    default_id = frame.Exprs().Add(*std::move(default_or));
-  }
-  return hir::Expr{
-      .type = *type_id,
-      .data =
-          hir::AssociativeAssignmentPatternExpr{
-              .entries = std::move(entries),
-              .default_value = default_id,
-          },
-      .span = span,
-  };
-}
-
-auto LowerReplicatedAssignmentPatternExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::ReplicatedAssignmentPatternExpression& rp,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = scope.Module().InternType(*rp.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto count_or = scope.LowerExpr(rp.count(), frame);
-  if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const hir::ExprId count_id = frame.Exprs().Add(*std::move(count_or));
-  std::vector<hir::ExprId> item_ids;
-  item_ids.reserve(rp.elements().size());
-  for (const auto* elem : rp.elements()) {
-    auto lowered = scope.LowerExpr(*elem, frame);
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-    item_ids.push_back(frame.Exprs().Add(*std::move(lowered)));
-  }
-  return hir::Expr{
-      .type = *type_id,
-      .data =
-          hir::AssignmentPatternReplicationExpr{
-              .count = count_id,
-              .items = std::move(item_ids),
-          },
-      .span = span,
-  };
-}
+// One concrete instantiation per pass class; the templates are defined here so
+// the dispatchers in lower.cpp link against the symbols emitted in this file.
+template auto LowerConcatExpr(
+    ProcessLowerer&, WalkFrame, const slang::ast::ConcatenationExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerConcatExpr(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::ConcatenationExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerAssignmentPatternFromElements(
+    ProcessLowerer&, WalkFrame,
+    const slang::ast::AssignmentPatternExpressionBase&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerAssignmentPatternFromElements(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::AssignmentPatternExpressionBase&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerReplicatedAssignmentPatternExpr(
+    ProcessLowerer&, WalkFrame,
+    const slang::ast::ReplicatedAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerReplicatedAssignmentPatternExpr(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::ReplicatedAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerAssociativeAssignmentPattern(
+    ProcessLowerer&, WalkFrame,
+    const slang::ast::StructuredAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerAssociativeAssignmentPattern(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::StructuredAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

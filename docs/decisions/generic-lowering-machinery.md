@@ -98,4 +98,4 @@ Make the machinery generic; keep the nodes typed.
 - `architecture/lowering_organization.md` (the pass / dispatcher / handler / walk-frame shape this
   refines).
 - `progress/generic-lowering.md` (the staged migration).
-- `progress/refactor.md` R34 (the AST-to-HIR drift-bug slice, in flight separately).
+- `progress/refactor.md` R34 (the AST-to-HIR drift-bug slice).

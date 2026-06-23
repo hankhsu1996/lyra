@@ -9,8 +9,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
@@ -24,48 +23,41 @@ class StructuredAssignmentPatternExpression;
 
 namespace lyra::lowering::ast_to_hir {
 
-// Procedural-context handlers.
-auto LowerConcatExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+class ProcessLowerer;
+
+// An aggregate's value-construction is independent of the enclosing scope, so
+// one template over the pass class serves both the procedural and structural
+// contexts; explicit instantiations live in the implementation file.
+template <ExprLowerer Lowerer>
+auto LowerConcatExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ConcatenationExpression& cc, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
+template <ExprLowerer Lowerer>
+auto LowerAssignmentPatternFromElements(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::AssignmentPatternExpressionBase& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+template <ExprLowerer Lowerer>
+auto LowerReplicatedAssignmentPatternExpr(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::ReplicatedAssignmentPatternExpression& rp,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+template <ExprLowerer Lowerer>
+auto LowerAssociativeAssignmentPattern(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::StructuredAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+
+// Replication (LRM 11.4.12.1) and the dynamic-array constructor `new[N]`
+// (LRM 7.5.1) have no structural form, so they stay procedural-only handlers.
 auto LowerReplicationExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ReplicationExpression& rp, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
-auto LowerAssignmentPatternFromElementsProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::AssignmentPatternExpressionBase& ap,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
-auto LowerReplicatedAssignmentPatternExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::ReplicatedAssignmentPatternExpression& rp,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 auto LowerNewArrayExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NewArrayExpression& na, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
-auto LowerAssociativeAssignmentPatternProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::StructuredAssignmentPatternExpression& ap,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
-
-// Structural-context handlers.
-auto LowerConcatExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::ConcatenationExpression& cc, diag::SourceSpan span)
-    -> diag::Result<hir::Expr>;
-auto LowerAssignmentPatternFromElementsStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::AssignmentPatternExpressionBase& ap,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
-auto LowerReplicatedAssignmentPatternExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::ReplicatedAssignmentPatternExpression& rp,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
-auto LowerAssociativeAssignmentPatternStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::StructuredAssignmentPatternExpression& ap,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -456,19 +456,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       on the rarely-exercised unsupported branches. **Trigger**: standalone; mechanical sweep across
       every lowering file, so it lands as its own cut.
 
-- [ ] R34 -- Unify the procedural and structural HIR expression-lowering paths. AST-to-HIR carries
-      parallel `Lower<Kind>ExprProc` / `Lower<Kind>ExprStructural` handlers that build the same HIR
-      node but guard their accepted operand types independently, so the two drift: the structural
-      element-select rejected an unpacked base the procedural one accepted (now aligned), and a
-      string element-select's getc realization (LRM 6.16.3) lives only on the procedural HIR-to-MIR
-      path, so a structural `assign b = s[i]` lowers to a non-existent `String::Element` instead of
-      `getc`. The realization a node needs (getc for a string base, element access for an array) is
-      a property of the node, not of the procedural-vs-structural origin. Target shape: one
-      select/member lowering shared across scopes, with the value realizations applied uniformly in
-      HIR-to-MIR regardless of origin -- after which a string element read works in a continuous
-      assignment exactly as it does in a process. **Trigger**: when a structural-context string /
-      aggregate element read is needed, or the next time a per-kind guard drifts between the two
-      paths.
+- [x] R34 -- Unify the procedural and structural AST-to-HIR expression-lowering paths. The two
+      carried parallel handlers per expression family that built the same HIR node but guarded their
+      accepted operand types independently, so the two drifted. Resolved as the AST-to-HIR slice of
+      `generic-lowering.md` Phase 2: each context-free family is now one function template over the
+      pass class, so there is a single guard and the drift cannot recur. The specific string
+      element-select concern turned out to need no separate fix -- slang rejects an element of a
+      dynamic type outside procedural code, so a structural string `s[i]` never reaches lowering,
+      and the value realization (getc for a string base, element access for an array) was already a
+      property of the node at HIR-to-MIR, applied regardless of origin.
 
 - [ ] R35 -- Resolve the intra-unit part of a hierarchical reference at compile time as typed member
       access, not by name at construction. `reference_resolution.md` invariant 2 says an intra-unit
