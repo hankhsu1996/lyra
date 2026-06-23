@@ -27,11 +27,11 @@ Rules:
         Scope: every .hpp under src/lyra/lowering/**.
 
   A006  No `support::Unsupported(...)` helper. Unsupported features go
-        through diag::Unsupported(...).
+        through diag::Fail(...).
 
   A007  std::unexpected(...) is allowed only for direct propagation. New
-        diagnostics must be built via diag::Unsupported / diag::Error /
-        diag::HostError.
+        diagnostics must be built via diag::Fail (or diag::Make for the
+        report-and-continue path).
 
   A008  A function whose name starts with `Lower` and returns an ID
         (`...Id`) must include Append|Add|Intern|Declare|Insert in its
@@ -52,7 +52,7 @@ Rules:
 
   A012  Append* function bodies in the lowering layer must be thin
         storage. They may not call `Lower*(`, inspect `.kind`, downcast
-        `.as<`, emit `diag::Unsupported`/`Error`/`HostError`, or throw
+        `.as<`, emit `diag::Fail`/`diag::Make`, or throw
         `support::InternalError`. Pure semantic lowering happens before
         Append; Append only stores already-lowered objects.
         Scope: src/lyra/lowering/**, include/lyra/lowering/**.
@@ -133,8 +133,8 @@ FORBIDDEN_IN_APPEND = (
      "inspects .kind; AST/HIR inspection belongs in Lower*"),
     (re.compile(r"\.as<"),
      "downcasts via .as<>; Append must store already-lowered objects"),
-    (re.compile(r"\bdiag::(?:Unsupported|Error|HostError)\b"),
-     "emits diag::Unsupported|Error|HostError; Append must not error"),
+    (re.compile(r"\bdiag::(?:Fail|Make)\b"),
+     "emits diag::Fail|Make; Append must not error"),
     (re.compile(r"\bthrow\s+support::InternalError\b"),
      "throws support::InternalError; Append must not enforce semantic "
      "invariants -- check those at the lowering boundary"),
@@ -187,8 +187,8 @@ This usually means:
 - append/add/insert functions must only store already-lowered objects
   and return IDs;
 - raw std::expected must be wrapped as diag::Result;
-- diagnostics must be built with diag::Unsupported / diag::Error /
-  diag::HostError, not std::unexpected of a raw Diagnostic;
+- diagnostics must be built with diag::Fail (or diag::Make), not
+  std::unexpected of a raw Diagnostic;
 - arena allocation belongs at the owner boundary, not inside semantic
   lowering.
 
@@ -299,7 +299,7 @@ def check_a006(repo_root: Path) -> list[str]:
             code = strip_comment(line)
             if SUPPORT_UNSUPPORTED_PATTERN.search(code):
                 errors.append(
-                    f"  {rel}:{lineno}: A006 use diag::Unsupported(...) instead"
+                    f"  {rel}:{lineno}: A006 use diag::Fail(...) instead"
                 )
     return errors
 
@@ -492,13 +492,13 @@ def run_self_tests() -> bool:
     ok &= expect(
         SUPPORT_UNSUPPORTED_PATTERN.search("support::Unsupported(\"x\");"),
         "A006 helper")
-    ok &= expect(not SUPPORT_UNSUPPORTED_PATTERN.search("diag::Unsupported(...)"),
+    ok &= expect(not SUPPORT_UNSUPPORTED_PATTERN.search("diag::Fail(...)"),
                  "A006 false-pos")
 
     # A007
     ok &= expect(
         RAW_UNEXPECTED_PATTERN.search(
-            "return std::unexpected(diag::Diagnostic::Error(...));"),
+            "return std::unexpected(diag::Diagnostic{...});"),
         "A007 raw construction")
     ok &= expect(
         not RAW_UNEXPECTED_PATTERN.search(
@@ -604,13 +604,13 @@ def run_self_tests() -> bool:
         FORBIDDEN_IN_APPEND[2][0].search("e.as<slang::ast::Foo>()") is not None,
         "A012 detects .as<>")
     ok &= expect(
-        FORBIDDEN_IN_APPEND[3][0].search("return diag::Unsupported(\"x\")")
+        FORBIDDEN_IN_APPEND[3][0].search("return diag::Fail(\"x\")")
         is not None,
-        "A012 detects diag::Unsupported")
+        "A012 detects diag::Fail")
     ok &= expect(
-        FORBIDDEN_IN_APPEND[3][0].search("return diag::Error(span, \"x\")")
+        FORBIDDEN_IN_APPEND[3][0].search("return diag::Make(span, \"x\")")
         is not None,
-        "A012 detects diag::Error")
+        "A012 detects diag::Make")
     ok &= expect(
         FORBIDDEN_IN_APPEND[4][0].search(
             "throw support::InternalError(\"oops\");") is not None,

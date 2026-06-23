@@ -100,10 +100,9 @@ auto LowerNamedValueProc(
   if (sym.kind != slang::ast::SymbolKind::Variable &&
       sym.kind != slang::ast::SymbolKind::FormalArgument &&
       sym.kind != slang::ast::SymbolKind::Iterator) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
-        "reference to non-variable declaration is not supported",
-        diag::UnsupportedCategory::kFeature);
+        "reference to non-variable declaration is not supported");
   }
   const auto& var = sym.as<slang::ast::VariableSymbol>();
 
@@ -115,11 +114,10 @@ auto LowerNamedValueProc(
     // spawned branches.
     if (frame.InForkBranch() &&
         proc.ContainingSymbol().kind == slang::ast::SymbolKind::Subroutine) {
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedForkJoinForm,
           "a fork-join branch inside a task referencing a procedural variable "
-          "is not yet supported",
-          diag::UnsupportedCategory::kFeature);
+          "is not yet supported");
     }
     const hir::TypeId type_id =
         frame.current_procedural_body->procedural_vars.Get(*local).type;
@@ -157,19 +155,17 @@ auto LowerHierarchicalValueProc(
   const auto& ref = hve.ref;
 
   if (ref.isViaIfacePort()) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "interface-port hierarchical reference is not yet supported",
-        diag::UnsupportedCategory::kOperation);
+        "interface-port hierarchical reference is not yet supported");
   }
 
   const auto& target = hve.symbol;
   if (target.kind != slang::ast::SymbolKind::Variable) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "cross-unit reference to a non-variable declaration is not yet "
-        "supported",
-        diag::UnsupportedCategory::kOperation);
+        "supported");
   }
 
   auto type_id = module.InternType(*hve.type, span);
@@ -191,11 +187,10 @@ auto LowerHierarchicalValueProc(
           hir::IndexHop{static_cast<std::uint32_t>(
               std::get<std::int32_t>(step.selector))});
     } else {
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "instance-array range select in a hierarchical path is not yet "
-          "supported",
-          diag::UnsupportedCategory::kOperation);
+          "supported");
     }
   }
 
@@ -237,12 +232,11 @@ auto LowerHierarchicalValueProc(
         // Any other head -- an indexed loop-generate block, or a named
         // procedural block whose locals live on the enclosing unit rather than
         // in a constructed scope -- does not resolve to a climb target yet.
-        return diag::Unsupported(
+        return diag::Fail(
             span, diag::DiagCode::kUnsupportedExpressionForm,
             "upward hierarchical reference whose head is not a module "
             "instance, "
-            "a named generate block, or $root is not yet supported",
-            diag::UnsupportedCategory::kOperation);
+            "a named generate block, or $root is not yet supported");
     }
     return module.MakeCrossUnitMemberRef(
         var, frame.Current(), *std::move(head), std::move(path), *type_id,
@@ -259,10 +253,9 @@ auto LowerHierarchicalValueProc(
       head_sym.kind == slang::ast::SymbolKind::GenerateBlock ||
       head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray;
   if (!head_is_owned_child) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "hierarchical reference through this scope kind is not yet supported",
-        diag::UnsupportedCategory::kOperation);
+        "hierarchical reference through this scope kind is not yet supported");
   }
   const auto binding = module.LookupOwnedChildBinding(head_sym);
   if (!binding.has_value()) {
@@ -275,11 +268,10 @@ auto LowerHierarchicalValueProc(
   // generate frame (`hops != 0`) is a separate, unsupported case.
   const auto hops = frame.HopsTo(binding->home_frame);
   if (!hops.has_value() || hops->value != 0) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "hierarchical reference reaching an owned child from a nested generate "
-        "scope is not yet supported",
-        diag::UnsupportedCategory::kOperation);
+        "scope is not yet supported");
   }
   return module.MakeCrossUnitMemberRef(
       var, binding->home_frame, binding->head, std::move(path), *type_id, span);
@@ -319,10 +311,9 @@ auto LowerNamedValueStructural(
         sym.as<slang::ast::ParameterSymbol>().getValue(), *type_id, span);
   }
   if (sym.kind != slang::ast::SymbolKind::Variable) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
-        "reference to non-variable declaration is not supported",
-        diag::UnsupportedCategory::kFeature);
+        "reference to non-variable declaration is not supported");
   }
   const auto& var = sym.as<slang::ast::VariableSymbol>();
   const auto binding = module.LookupStructuralVarBinding(var);

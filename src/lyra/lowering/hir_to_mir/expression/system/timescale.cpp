@@ -26,10 +26,9 @@ auto LowerTimeFormatSystemSubroutineCall(
   auto& body = *frame.current_block;
   const auto& args = call.arguments;
   if (!args.empty() && args.size() != 4) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedSubroutineArgument,
-        "$timeformat takes either no arguments or exactly four (LRM 20.4.3)",
-        diag::UnsupportedCategory::kFeature);
+        "$timeformat takes either no arguments or exactly four (LRM 20.4.3)");
   }
 
   std::vector<mir::ExprId> call_args;

@@ -32,9 +32,8 @@ namespace {
 
 auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
     -> diag::Result<void> {
-  return diag::Unsupported(
-      span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message),
-      diag::UnsupportedCategory::kFeature);
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message));
 }
 
 // Connects one instance's ports, the instance reached from its owning scope by

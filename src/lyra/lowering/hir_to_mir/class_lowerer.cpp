@@ -967,16 +967,14 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
             return LowerHirConversionExpr(*this, frame, cv, result_type);
           },
           [](const hir::CallExpr&) -> diag::Result<mir::Expr> {
-            return diag::Unsupported(
+            return diag::Fail(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                "calls are not allowed in constructor expressions",
-                diag::UnsupportedCategory::kFeature);
+                "calls are not allowed in constructor expressions");
           },
           [](const hir::InsideExpr&) -> diag::Result<mir::Expr> {
-            return diag::Unsupported(
+            return diag::Fail(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                "inside operator is not allowed in constructor expressions",
-                diag::UnsupportedCategory::kFeature);
+                "inside operator is not allowed in constructor expressions");
           },
           [&](const hir::ElementSelectExpr& s) -> diag::Result<mir::Expr> {
             return LowerHirElementSelectExpr(*this, frame, s, result_type);
@@ -991,10 +989,9 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
             return LowerHirConcatExpr(*this, frame, c, result_type);
           },
           [](const hir::ReplicationExpr&) -> diag::Result<mir::Expr> {
-            return diag::Unsupported(
+            return diag::Fail(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                "replication in constructor expressions is not yet supported",
-                diag::UnsupportedCategory::kFeature);
+                "replication in constructor expressions is not yet supported");
           },
           [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
             return LowerHirAssignmentPatternExpr(*this, frame, a, result_type);
@@ -1005,11 +1002,10 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
                 *this, frame, a, result_type);
           },
           [](const hir::DynamicArrayNewExpr&) -> diag::Result<mir::Expr> {
-            return diag::Unsupported(
+            return diag::Fail(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "dynamic-array new[] is not allowed in constructor "
-                "expressions; LRM 7.5.1 restricts it to blocking assignments",
-                diag::UnsupportedCategory::kFeature);
+                "expressions; LRM 7.5.1 restricts it to blocking assignments");
           },
           [&](const hir::AssociativeAssignmentPatternExpr& a)
               -> diag::Result<mir::Expr> {

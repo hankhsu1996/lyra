@@ -53,17 +53,15 @@ auto LowerFinishSystemSubroutineCall(
     const hir::Expr& arg_expr = hir_proc.exprs.Get(arg_id);
     const auto literal = TryExtractLiteralInt(arg_expr);
     if (!literal.has_value()) {
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           std::format(
-              "{} argument must be an integer literal", std::string{name}),
-          diag::UnsupportedCategory::kOperation);
+              "{} argument must be an integer literal", std::string{name}));
     }
     if (*literal != 0 && *literal != 1 && *literal != 2) {
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          std::format("{} argument must be 0, 1, or 2", std::string{name}),
-          diag::UnsupportedCategory::kOperation);
+          std::format("{} argument must be 0, 1, or 2", std::string{name}));
     }
     level = static_cast<int>(*literal);
   }

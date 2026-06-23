@@ -35,13 +35,13 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedSubroutineArgument,
   kUnsupportedForkJoinForm,
 
-  kDelayValueOutOfRange,
-  kCaseEqualityOnRealOperand,
-  kFormatStringTrailingPercent,
-  kFormatStringMissingSpecifier,
-  kFormatStringWidthOverflow,
-  kFormatStringUnknownSpecifier,
-  kDisplayMissingArg,
+  kErrorDelayValueOutOfRange,
+  kErrorCaseEqualityOnRealOperand,
+  kErrorFormatStringTrailingPercent,
+  kErrorFormatStringMissingSpecifier,
+  kErrorFormatStringWidthOverflow,
+  kErrorFormatStringUnknownSpecifier,
+  kErrorDisplayMissingArg,
   kFormatModulePathNotImplemented,
   kSystemSubroutineExecutionNotImplemented,
 
@@ -58,14 +58,12 @@ enum class DiagCode : std::uint32_t {
 
 struct DiagCodeInfo {
   DiagKind kind;
-  std::optional<UnsupportedCategory> category;
   std::string_view name;
 };
 
 auto Info(DiagCode code) -> const DiagCodeInfo&;
 auto DiagCodeName(DiagCode code) -> std::string_view;
 auto DiagCodeKind(DiagCode code) -> DiagKind;
-auto DiagCodeCategory(DiagCode code) -> std::optional<UnsupportedCategory>;
 auto ParseDiagCode(std::string_view text) -> std::optional<DiagCode>;
 
 }  // namespace lyra::diag

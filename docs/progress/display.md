@@ -66,8 +66,8 @@ since the test harness can only probe a variable whose type has an implemented s
 ## Scan family follow-ups
 
 Tracks remaining LRM 21.3.4.3 corners explicitly rejected by the scan family. Each item is a
-user-observable feature gap (lowering-time `diag::Unsupported` or runtime rejection) that should
-close as the corresponding behaviour lands.
+user-observable feature gap (a lowering-time unsupported diagnostic or runtime rejection) that
+should close as the corresponding behaviour lands.
 
 - [x] Expression-position `$sscanf` / `$fscanf` (if-condition, blocking assign-RHS, case selector,
       arithmetic operand). The scan family is modelled per LRM 21.3.4.3 as a system function whose
@@ -120,8 +120,8 @@ close as the corresponding behaviour lands.
 ## String-format family follow-ups
 
 Tracks remaining LRM 21.3.3 corners explicitly rejected by `$sformat` / `$sformatf` / `$swrite*`.
-Each item is a user-observable feature gap (lowering-time `diag::Unsupported`) that should close as
-the corresponding behaviour lands.
+Each item is a user-observable feature gap (a lowering-time unsupported diagnostic) that should
+close as the corresponding behaviour lands.
 
 - [ ] Runtime-evaluated format string for `$sformat` / `$sformatf` (LRM 21.3.3 NOTE: format string
       may be a non-constant expression). Non-literal format expressions are rejected at lowering; a

@@ -180,11 +180,10 @@ auto RenderRealLiteralExpr(
 auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
     -> diag::Result<std::string> {
   if (r.hops.value != 0) {
-    return diag::Unsupported(
+    return diag::Fail(
         diag::DiagCode::kCppEmitExpressionFormNotImplemented,
         "cross-scope param access is not yet implemented in "
-        "cpp emit",
-        diag::UnsupportedCategory::kFeature);
+        "cpp emit");
   }
   const std::string& name = view.Class().params.Get(r.param).name;
   return "self->" + name;
@@ -210,11 +209,10 @@ auto IsReferenceLocal(const ScopeView& view, const mir::LocalRef& ref) -> bool {
 auto RenderMemberName(const ScopeView& view, const mir::MemberRef& ref)
     -> diag::Result<std::string> {
   if (ref.hops.value != 0) {
-    return diag::Unsupported(
+    return diag::Fail(
         diag::DiagCode::kCppEmitExpressionFormNotImplemented,
         "cross-scope member access is not yet implemented in cpp "
-        "emit",
-        diag::UnsupportedCategory::kFeature);
+        "emit");
   }
   return "self->" + view.Class().members.Get(ref.var).name;
 }
@@ -259,10 +257,9 @@ auto RenderBinaryOpString(
     default:
       break;
   }
-  return diag::Unsupported(
+  return diag::Fail(
       diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-      "binary operator is not legal on string operands per LRM 6.16",
-      diag::UnsupportedCategory::kFeature);
+      "binary operator is not legal on string operands per LRM 6.16");
 }
 
 auto RenderBinaryOpReal(
@@ -310,10 +307,9 @@ auto RenderBinaryOpReal(
     default:
       break;
   }
-  return diag::Unsupported(
+  return diag::Fail(
       diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-      "binary operator is not legal on real operands per LRM 11.3.1",
-      diag::UnsupportedCategory::kFeature);
+      "binary operator is not legal on real operands per LRM 11.3.1");
 }
 
 // LRM 11.2.2 + 11.4.5: aggregate equality / inequality / case-equality /
@@ -338,10 +334,9 @@ auto RenderBinaryOpArray(
     default:
       break;
   }
-  return diag::Unsupported(
+  return diag::Fail(
       diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-      "binary operator is not legal on aggregate operands per LRM 11.2.2",
-      diag::UnsupportedCategory::kFeature);
+      "binary operator is not legal on aggregate operands per LRM 11.2.2");
 }
 
 auto RenderBinaryOpIntegral(
@@ -438,10 +433,9 @@ auto RenderUnaryOpReal(
     default:
       break;
   }
-  return diag::Unsupported(
+  return diag::Fail(
       diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-      "unary operator is not legal on real operands per LRM 11.3.1",
-      diag::UnsupportedCategory::kFeature);
+      "unary operator is not legal on real operands per LRM 11.3.1");
 }
 
 auto RenderUnaryOpIntegral(mir::UnaryOp op, const std::string& operand)
@@ -954,13 +948,12 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
                 "RenderSystemSubroutineEntryName: unknown FileIOKind");
           },
           [&](const auto&) -> diag::Result<std::string_view> {
-            return diag::Unsupported(
+            return diag::Fail(
                 diag::DiagCode::kCppEmitExpressionFormNotImplemented,
                 std::format(
                     "system subroutine '{}' is not yet lowered to a generic "
                     "call",
-                    desc.name),
-                diag::UnsupportedCategory::kFeature);
+                    desc.name));
           },
       },
       desc.semantic);
@@ -1028,11 +1021,10 @@ auto RenderCallExpr(
           },
           [&](const mir::MethodRef& ref) -> diag::Result<std::string> {
             if (ref.hops.value != 0) {
-              return diag::Unsupported(
+              return diag::Fail(
                   diag::DiagCode::kCppEmitExpressionFormNotImplemented,
                   "method call across classes is not yet "
-                  "implemented in cpp emit",
-                  diag::UnsupportedCategory::kFeature);
+                  "implemented in cpp emit");
             }
             const auto& cls = view.EnclosingClassAtHops(
                 mir::EnclosingHops{.value = ref.hops.value});
@@ -1258,11 +1250,10 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
   // supported.
   if (const auto* ref_root = LhsRootReferenceLocal(view, lhs_expr)) {
     if (!IsLhsBarePrimary(lhs_expr) || a.compound_op.has_value()) {
-      return diag::Unsupported(
+      return diag::Fail(
           diag::DiagCode::kCppEmitExpressionFormNotImplemented,
           "compound or partial assignment through a ref / const ref formal is "
-          "not yet implemented in cpp emit",
-          diag::UnsupportedCategory::kFeature);
+          "not yet implemented in cpp emit");
     }
     return LookupLocalName(view, *ref_root) + ".Set(" + "self->Services()" +
            ", " + *value_or + ")";
@@ -1296,11 +1287,10 @@ auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
     -> diag::Result<std::string> {
   const mir::Expr& target_expr = view.Expr(inc.target);
   if (LhsRootReferenceLocal(view, target_expr) != nullptr) {
-    return diag::Unsupported(
+    return diag::Fail(
         diag::DiagCode::kCppEmitExpressionFormNotImplemented,
         "increment / decrement of a ref / const ref formal is not yet "
-        "implemented in cpp emit",
-        diag::UnsupportedCategory::kFeature);
+        "implemented in cpp emit");
   }
   auto lhs_or = RenderLhsExpr(view, target_expr);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
@@ -1574,10 +1564,9 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
             return RenderCStringLiteral(s.value);
           },
           [](const mir::TimeLiteral&) -> diag::Result<std::string> {
-            return diag::Unsupported(
+            return diag::Fail(
                 diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                "TimeLiteral is not yet implemented in cpp emit",
-                diag::UnsupportedCategory::kFeature);
+                "TimeLiteral is not yet implemented in cpp emit");
           },
           [&](const mir::RealLiteral& r) -> diag::Result<std::string> {
             return RenderRealLiteralExpr(view, expr, r);
