@@ -27,7 +27,7 @@ ClosureBuilder::ClosureBuilder(
   self_binding_ =
       body_.vars.Add(mir::LocalDecl{.name = "self", .type = self_pointer_type});
   const mir::ExprId outer_self_read =
-      outer_->exprs.Add(BuildSelfRefExpr(enclosing, self_pointer_type));
+      outer_->exprs.Add(MakeSelfRefExpr(enclosing, self_pointer_type));
   captures_.push_back(
       mir::Capture{.value = outer_self_read, .binding = self_binding_});
   frame_ = enclosing.WithBlock(&body_)

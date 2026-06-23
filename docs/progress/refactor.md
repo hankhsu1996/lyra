@@ -421,20 +421,17 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       exactly one place. The result type left the constructor -- a synchronous terminal derives it
       from the result expression, since a closure's result type is just its returned value's type.
 
-- [ ] R32 -- Unify the Expr- / value-construction helper naming, which is ad hoc today (`Make*` and
-      `Build*` are both used for the same job). Establish one rule, grounded in the cross-language
-      norm: every IR / value system separates a **pure node factory** -- assembles a node from
-      ready-made parts, no scope or arena side effect, returns by value -- from a **scope-using
-      builder** -- allocates sub-nodes into a scope and assembles, side-effecting. C++ `std::make_*`
-      (pure) versus the builder pattern; LLVM `Type::get` / `ConstantInt::get` (pure, interned)
-      versus `IRBuilder::Create*` (inserts into a block); rustc `T::new` versus `tcx.mk_*` (interns
-      into the arena); MLIR / Clang `builder.create` / `Expr::Create(ctx, ...)` (arena). Keep both
-      -- the pure-versus-stateful split is load-bearing, since it tells the reader whether the
-      helper mutates a scope -- and pin the rule: `Make<Node>(parts...) -> Expr` is the pure factory
-      (the caller does the `AddExpr`); `Build<Node>(scope-or-frame, inputs...) -> Expr | ExprId` is
-      the scope builder (it does the `AddExpr`, with the context argument first); a type-producing
-      variant is `Make<X>Type(...) -> TypeId`. Audit every construction helper and rename it to the
-      correct side. **Trigger**: standalone naming cleanup.
+- [x] R32 -- The Expr- / value-construction helper naming is pinned to one load-bearing rule: a
+      `Make<Node>` is a pure factory (assembles a node from ready-made parts, reads at most a
+      `const` frame for the body's `self` or a builtin type, interns nothing -- the caller does the
+      `AddExpr`), and a `Build<Node>` is a scope builder (interns one or more child nodes into the
+      scope as it builds, returning the top node detached or its id, context argument first); a
+      type-producing variant is `Make<X>Type`. The distinguishing axis is the scope side effect, not
+      whether the helper consults the frame -- a factory that reads `self` off a `const` frame and
+      interns nothing is `Make`. A full audit of the construction helpers found the codebase already
+      largely conformant; the few pure factories mislabelled `Build` were renamed to `Make`. The
+      rule now lives as an invariant in `lowering_organization.md` (Expression-Builder Helpers), so
+      it outlives this entry.
 
 - [ ] R33 -- Remove the redundant `UnsupportedCategory` argument from the `diag::Unsupported`
       factory. The category is already declared once per `DiagCode` in the code table; the factory

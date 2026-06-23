@@ -31,7 +31,7 @@ auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
 
 }  // namespace
 
-auto BuildSensitivityWaitStmt(
+auto MakeSensitivityWaitStmt(
     const ClassLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {
   std::vector<mir::SensitivityRead> reads;

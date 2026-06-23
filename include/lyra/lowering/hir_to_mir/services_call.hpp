@@ -7,7 +7,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 // Builds the engine-handle expression `self.Services()`: a `Services`
-// scope-method call whose receiver is the body's self read (BuildSelfRefExpr,
+// scope-method call whose receiver is the body's self read (MakeSelfRefExpr,
 // interned as a child). Returns the call node detached; the caller interns it.
 // Runtime-effect generic calls -- $finish, the $time family, named-event
 // trigger / triggered -- thread it as the engine handle
