@@ -75,14 +75,15 @@ auto CheckBinaryOperands(
 
 }  // namespace
 
-auto LowerConversionExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerConversionExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ConversionExpression& conv, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto operand_or = proc.LowerExpr(conv.operand(), frame);
+  auto operand_or = lowerer.LowerExpr(conv.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
-  auto type_id = proc.Module().InternType(*conv.type, span);
+  auto type_id = lowerer.Module().InternType(*conv.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -95,15 +96,15 @@ auto LowerConversionExprProc(
   };
 }
 
-auto LowerUnaryExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::UnaryExpression& un, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+template <ExprLowerer Lowerer>
+auto LowerUnaryExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::UnaryExpression& un,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
   const hir::UnaryOp op = LowerUnaryOp(un.op);
-  auto operand_or = proc.LowerExpr(un.operand(), frame);
+  auto operand_or = lowerer.LowerExpr(un.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
-  auto type_id = proc.Module().InternType(*un.type, span);
+  auto type_id = lowerer.Module().InternType(*un.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -112,20 +113,20 @@ auto LowerUnaryExprProc(
   };
 }
 
-auto LowerBinaryExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::BinaryExpression& bin, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+template <ExprLowerer Lowerer>
+auto LowerBinaryExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::BinaryExpression& bin,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
   if (auto check = CheckBinaryOperands(bin, span); !check) {
     return std::unexpected(std::move(check.error()));
   }
-  auto lhs_or = proc.LowerExpr(bin.left(), frame);
+  auto lhs_or = lowerer.LowerExpr(bin.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(lhs_or));
-  auto rhs_or = proc.LowerExpr(bin.right(), frame);
+  auto rhs_or = lowerer.LowerExpr(bin.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
-  auto type_id = proc.Module().InternType(*bin.type, span);
+  auto type_id = lowerer.Module().InternType(*bin.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -139,8 +140,9 @@ auto LowerBinaryExprProc(
   };
 }
 
-auto LowerConditionalExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerConditionalExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ConditionalExpression& cond, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (cond.conditions.size() != 1) {
@@ -156,16 +158,16 @@ auto LowerConditionalExprProc(
         "conditional operator with `matches` pattern is not yet supported",
         diag::UnsupportedCategory::kOperation);
   }
-  auto cond_or = proc.LowerExpr(*cond.conditions[0].expr, frame);
+  auto cond_or = lowerer.LowerExpr(*cond.conditions[0].expr, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
-  auto then_or = proc.LowerExpr(cond.left(), frame);
+  auto then_or = lowerer.LowerExpr(cond.left(), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const hir::ExprId then_id = frame.Exprs().Add(*std::move(then_or));
-  auto else_or = proc.LowerExpr(cond.right(), frame);
+  auto else_or = lowerer.LowerExpr(cond.right(), frame);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const hir::ExprId else_id = frame.Exprs().Add(*std::move(else_or));
-  auto type_id = proc.Module().InternType(*cond.type, span);
+  auto type_id = lowerer.Module().InternType(*cond.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -179,108 +181,33 @@ auto LowerConditionalExprProc(
   };
 }
 
-auto LowerConversionExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::ConversionExpression& conv, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  auto operand_or = scope.LowerExpr(conv.operand(), frame);
-  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-  const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
-  auto type_id = scope.Module().InternType(*conv.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return hir::Expr{
-      .type = *type_id,
-      .data =
-          hir::ConversionExpr{
-              .operand = operand_id,
-              .kind = LowerConversionKind(conv.conversionKind),
-          },
-      .span = span,
-  };
-}
-
-auto LowerUnaryExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::UnaryExpression& un, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  const hir::UnaryOp op = LowerUnaryOp(un.op);
-  auto operand_or = scope.LowerExpr(un.operand(), frame);
-  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-  const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
-  auto type_id = scope.Module().InternType(*un.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return hir::Expr{
-      .type = *type_id,
-      .data = hir::UnaryExpr{.op = op, .operand = operand_id},
-      .span = span,
-  };
-}
-
-auto LowerBinaryExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::BinaryExpression& bin, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  if (auto check = CheckBinaryOperands(bin, span); !check) {
-    return std::unexpected(std::move(check.error()));
-  }
-  auto lhs_or = scope.LowerExpr(bin.left(), frame);
-  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(lhs_or));
-  auto rhs_or = scope.LowerExpr(bin.right(), frame);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
-  auto type_id = scope.Module().InternType(*bin.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return hir::Expr{
-      .type = *type_id,
-      .data =
-          hir::BinaryExpr{
-              .op = LowerBinaryOp(bin.op),
-              .lhs = lhs_id,
-              .rhs = rhs_id,
-          },
-      .span = span,
-  };
-}
-
-auto LowerConditionalExprStructural(
-    StructuralScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::ConditionalExpression& cond, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  if (cond.conditions.size() != 1) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-        "conditional operator with `&&&` multi-condition is not yet "
-        "supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  if (cond.conditions[0].pattern != nullptr) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-        "conditional operator with `matches` pattern is not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  auto cond_or = scope.LowerExpr(*cond.conditions[0].expr, frame);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
-  auto then_or = scope.LowerExpr(cond.left(), frame);
-  if (!then_or) return std::unexpected(std::move(then_or.error()));
-  const hir::ExprId then_id = frame.Exprs().Add(*std::move(then_or));
-  auto else_or = scope.LowerExpr(cond.right(), frame);
-  if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const hir::ExprId else_id = frame.Exprs().Add(*std::move(else_or));
-  auto type_id = scope.Module().InternType(*cond.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return hir::Expr{
-      .type = *type_id,
-      .data =
-          hir::ConditionalExpr{
-              .condition = cond_id,
-              .then_value = then_id,
-              .else_value = else_id,
-          },
-      .span = span,
-  };
-}
+// One concrete instantiation per pass class. The handler templates are defined
+// in this file rather than the header so the file-local helpers stay private;
+// the dispatchers in lower.cpp link against the symbols emitted here.
+template auto LowerConversionExpr(
+    ProcessLowerer&, WalkFrame, const slang::ast::ConversionExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerConversionExpr(
+    StructuralScopeLowerer&, WalkFrame, const slang::ast::ConversionExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerUnaryExpr(
+    ProcessLowerer&, WalkFrame, const slang::ast::UnaryExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerUnaryExpr(
+    StructuralScopeLowerer&, WalkFrame, const slang::ast::UnaryExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerBinaryExpr(
+    ProcessLowerer&, WalkFrame, const slang::ast::BinaryExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerBinaryExpr(
+    StructuralScopeLowerer&, WalkFrame, const slang::ast::BinaryExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerConditionalExpr(
+    ProcessLowerer&, WalkFrame, const slang::ast::ConditionalExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerConditionalExpr(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::ConditionalExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir
