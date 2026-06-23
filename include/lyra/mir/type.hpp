@@ -28,6 +28,7 @@ enum class TypeKind {
   kExternalUnitObject,
   kScope,
   kServices,
+  kFiles,
   kRuntimeLibrary,
   kCoroutine,
   kReference,
@@ -158,6 +159,14 @@ struct ServicesType {
   auto operator==(const ServicesType&) const -> bool = default;
 };
 
+// The file-IO subsystem handle `lyra::runtime::FileTable`, reached from
+// `RuntimeServices` through its `Files` method. A by-name navigation handle
+// like ServicesType; the receiver of file-layer methods (`CancellationFor`,
+// future `Open` / `Close` / ...). Opaque, never inspected by MIR.
+struct FilesType {
+  auto operator==(const FilesType&) const -> bool = default;
+};
+
 // A pass-through value type from the runtime library that MIR never inspects:
 // it is constructed (via ConstructExpr) and forwarded to a runtime-effect call,
 // and MIR makes no decision on its contents. The branch selects which library
@@ -169,6 +178,10 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kPrintLiteralItem,
   kPrintValueItem,
   kFormatSpec,
+  // LRM 21.3.2 cancel-on-close token: `lyra::runtime::ChannelCancellation`,
+  // acquired by `FileTable::CancellationFor(fd)` at `$fstrobe` submit time
+  // and queried in the postponed-body guard.
+  kChannelCancellation,
 };
 
 struct RuntimeLibraryType {
@@ -291,8 +304,9 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, ServicesType, RuntimeLibraryType, CoroutineType, RefType,
-    PointerType, VectorType, TupleType, ExternalRefType, ObservableType>;
+    ScopeType, ServicesType, FilesType, RuntimeLibraryType, CoroutineType,
+    RefType, PointerType, VectorType, TupleType, ExternalRefType,
+    ObservableType>;
 
 struct Type {
   TypeData data;

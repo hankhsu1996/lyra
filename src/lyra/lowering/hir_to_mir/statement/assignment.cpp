@@ -29,7 +29,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -188,11 +187,16 @@ auto LowerDestructuringAssign(
           process.Module(), wrapper_frame, part_lhs_id, rhs_for_part,
           part_mir_type);
       const mir::ExprId closure_id = wrapper.exprs.Add(std::move(closure_expr));
+      const mir::ExprId services_id =
+          wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
       per_part_expr_id = wrapper.exprs.Add(
           mir::Expr{
               .data =
-                  mir::RuntimeCallExpr{
-                      .call = mir::RuntimeSubmitNbaCall{.closure = closure_id}},
+                  mir::CallExpr{
+                      .callee =
+                          mir::BuiltinFnCallee{
+                              .id = support::BuiltinFn::kSubmitNba},
+                      .arguments = {services_id, closure_id}},
               .type = process.Module().Unit().builtins.void_type});
     }
     wrapper.AppendStmt(mir::ExprStmt{.expr = per_part_expr_id});

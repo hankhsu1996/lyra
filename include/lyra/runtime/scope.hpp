@@ -13,6 +13,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -109,8 +110,12 @@ class Scope {
   void Bind();
 
   // Last-write-wins per site within a time slot: re-submit at the same site
-  // overwrites the prior closure, which suppresses settle-time glitches.
-  void SubmitObserved(std::uint32_t site_id, std::function<void()> fn);
+  // overwrites the prior closure, which suppresses settle-time glitches. The
+  // site id is the compile-time-fixed slot index passed as an SV integer
+  // (`value-type-concepts.md`); the runtime projects to `std::size_t`
+  // internally at the API boundary.
+  void SubmitObserved(
+      const lyra::value::PackedArray& site_id, std::function<void()> fn);
   void DrainObserved();
 
   // Links a child into this scope. Owned children register themselves here

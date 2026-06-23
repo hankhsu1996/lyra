@@ -168,7 +168,7 @@ class Engine {
 
   StreamDispatcher stream_;
   DiagnosticDispatcher diagnostic_;
-  FileTable files_;
+  FileTable files_{stream_};
   RuntimeServices services_{stream_, diagnostic_, files_, *this};
   std::unique_ptr<Scope> root_;
   // Processes created during simulation (fork-join branches), owned for their

@@ -3,7 +3,6 @@
 #include <cerrno>
 #include <cstdint>
 #include <fstream>
-#include <functional>
 #include <ios>
 #include <iostream>
 #include <optional>
@@ -12,13 +11,12 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
-#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
+#include "lyra/support/file_descriptor.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -26,26 +24,6 @@
 namespace lyra::runtime {
 
 namespace {
-
-auto FormatItemsToString(
-    RuntimeServices& services, std::span<const value::PrintItem> items)
-    -> std::string {
-  const value::FormatContext ctx{.time_format = &services.TimeFormat()};
-  std::string out;
-  for (const value::PrintItem& item : items) {
-    std::visit(
-        Overloaded{
-            [&](const value::PrintLiteralItem& lit) {
-              out.append(std::string_view{lit.data, lit.size});
-            },
-            [&](const value::PrintValueItem& v) {
-              out.append(value::Format(v.spec, v.arg, ctx));
-            },
-        },
-        item);
-  }
-  return out;
-}
 
 void WriteToFile(
     std::ostream& sink, std::string_view body, bool append_newline) {
@@ -79,60 +57,59 @@ void LyraFClose(
   services.Files().Close(static_cast<std::int32_t>(descriptor.ToInt64()));
 }
 
-void LyraSubmitFStrobe(
-    RuntimeServices& services, const value::PackedArray& descriptor,
-    std::function<void()> print_action) {
-  auto cancel = services.Files().CancellationFor(
-      static_cast<std::int32_t>(descriptor.ToInt64()));
-  services.SubmitPostponed(
-      [cancel = std::move(cancel), action = std::move(print_action)]() mutable {
-        if (cancel.IsCancelled()) return;
-        action();
-      });
-}
+namespace {
 
-void LyraFPrint(
-    RuntimeServices& services, value::PrintKind kind,
-    const value::PackedArray& descriptor_pa,
-    std::span<const value::PrintItem> items) {
+void DispatchWrite(
+    FileTable& files, StreamDispatcher& stream,
+    const value::PackedArray& descriptor_pa, std::string_view body,
+    bool append_newline) {
   const auto descriptor = static_cast<std::int32_t>(descriptor_pa.ToInt64());
   if (descriptor == 0) return;
-  const bool append_newline =
-      kind == value::PrintKind::kDisplay || kind == value::PrintKind::kFDisplay;
-  const std::string body = FormatItemsToString(services, items);
   const auto raw = static_cast<std::uint32_t>(descriptor);
 
   // FD path: bit 31 set => single descriptor. Stdio sentinels route through
-  // services.Stream() / std::cerr so test-harness ordering with $display is
-  // preserved; other FDs go to their owned fstream.
+  // the stream dispatcher / std::cerr so test-harness ordering with stdout
+  // prints is preserved; other FDs go to their owned fstream.
   if ((raw & (1U << 31U)) != 0U) {
-    if (descriptor == FileTable::kStdoutFd) {
-      WriteToStream(services.Stream(), body, append_newline);
+    if (descriptor == support::kStdoutFd) {
+      WriteToStream(stream, body, append_newline);
       return;
     }
-    if (descriptor == FileTable::kStderrFd) {
+    if (descriptor == support::kStderrFd) {
       WriteToFile(std::cerr, body, append_newline);
       return;
     }
-    std::fstream* sink = services.Files().Resolve(descriptor);
+    std::fstream* sink = files.Resolve(descriptor);
     if (sink == nullptr) return;
     WriteToFile(*sink, body, append_newline);
     return;
   }
 
   // MCD path: iterate bits 0..30 in ascending order. Bit 0 -> stream sink.
-  // Bits 1..30 -> FileTable. Unset / unmapped bits silently no-op.
+  // Bits 1..30 -> FileTable slots. Unset / unmapped bits silently no-op.
   for (std::uint32_t bit = 0; bit <= 30U; ++bit) {
     if ((raw & (1U << bit)) == 0U) continue;
     if (bit == 0U) {
-      WriteToStream(services.Stream(), body, append_newline);
+      WriteToStream(stream, body, append_newline);
       continue;
     }
     const auto channel = static_cast<std::int32_t>(1U << bit);
-    std::fstream* sink = services.Files().Resolve(channel);
+    std::fstream* sink = files.Resolve(channel);
     if (sink == nullptr) continue;
     WriteToFile(*sink, body, append_newline);
   }
+}
+
+}  // namespace
+
+void FileTable::Write(
+    const value::PackedArray& descriptor, const value::String& text) {
+  DispatchWrite(*this, *stream_, descriptor, text.View(), false);
+}
+
+void FileTable::Writeln(
+    const value::PackedArray& descriptor, const value::String& text) {
+  DispatchWrite(*this, *stream_, descriptor, text.View(), true);
 }
 
 namespace {

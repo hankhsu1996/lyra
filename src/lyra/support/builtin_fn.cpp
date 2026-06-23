@@ -215,6 +215,24 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "mutate";
     case BuiltinFn::kServices:
       return "services";
+    case BuiltinFn::kSubmitNba:
+      return "submit_nba";
+    case BuiltinFn::kSubmitPostponed:
+      return "submit_postponed";
+    case BuiltinFn::kSubmitObserved:
+      return "submit_observed";
+    case BuiltinFn::kFiles:
+      return "files";
+    case BuiltinFn::kCancellationFor:
+      return "cancellation_for";
+    case BuiltinFn::kIsCancelled:
+      return "is_cancelled";
+    case BuiltinFn::kFormat:
+      return "format";
+    case BuiltinFn::kWrite:
+      return "write";
+    case BuiltinFn::kWriteln:
+      return "writeln";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

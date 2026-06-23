@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <memory>
 #include <span>
@@ -122,11 +121,13 @@ auto Scope::AddProcess(ProcessKind kind, Coroutine coroutine)
   return *processes_.back();
 }
 
-void Scope::SubmitObserved(std::uint32_t site_id, std::function<void()> fn) {
-  if (site_id >= observed_pending_.size()) {
-    observed_pending_.resize(site_id + 1);
+void Scope::SubmitObserved(
+    const lyra::value::PackedArray& site_id, std::function<void()> fn) {
+  const auto slot = static_cast<std::size_t>(site_id.ToInt64());
+  if (slot >= observed_pending_.size()) {
+    observed_pending_.resize(slot + 1);
   }
-  observed_pending_[site_id] = std::move(fn);
+  observed_pending_[slot] = std::move(fn);
 }
 
 void Scope::DrainObserved() {

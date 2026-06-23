@@ -664,6 +664,24 @@ auto BuiltinFnMemberName(support::BuiltinFn id) -> std::string_view {
       return "Set";
     case support::BuiltinFn::kMutate:
       return "Mutate";
+    case support::BuiltinFn::kSubmitNba:
+      return "SubmitNba";
+    case support::BuiltinFn::kSubmitPostponed:
+      return "SubmitPostponed";
+    case support::BuiltinFn::kSubmitObserved:
+      return "SubmitObserved";
+    case support::BuiltinFn::kFiles:
+      return "Files";
+    case support::BuiltinFn::kCancellationFor:
+      return "CancellationFor";
+    case support::BuiltinFn::kIsCancelled:
+      return "IsCancelled";
+    case support::BuiltinFn::kFormat:
+      return "Format";
+    case support::BuiltinFn::kWrite:
+      return "Write";
+    case support::BuiltinFn::kWriteln:
+      return "Writeln";
     case support::BuiltinFn::kTrigger:
       return "Trigger";
     case support::BuiltinFn::kAwait:
@@ -853,16 +871,15 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
               -> diag::Result<std::string_view> {
             return std::string_view{"lyra::runtime::Finish"};
           },
-          [](const support::PrintSystemSubroutineInfo& print)
+          [](const support::PrintSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
-            if (print.sink_kind == support::PrintSinkKind::kStdout) {
-              return print.append_newline
-                         ? std::string_view{"lyra::runtime::LyraDisplay"}
-                         : std::string_view{"lyra::runtime::LyraWrite"};
-            }
-            return print.append_newline
-                       ? std::string_view{"lyra::runtime::LyraFDisplay"}
-                       : std::string_view{"lyra::runtime::LyraFWrite"};
+            // Print system subroutines lower to BuiltinFn::kPrint /
+            // kPrintln / kFPrint / kFPrintln at HIR-to-MIR; no
+            // SystemSubroutineCallee should reach this renderer for the
+            // print family.
+            throw InternalError(
+                "RenderSystemSubroutineEntryName: print id reached system "
+                "subroutine render path; print family is BuiltinFn-routed");
           },
           [](const support::DiagnosticSystemSubroutineInfo& diagnostic)
               -> diag::Result<std::string_view> {

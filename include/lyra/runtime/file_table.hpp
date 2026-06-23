@@ -10,7 +10,12 @@
 #include <string_view>
 #include <vector>
 
+#include "lyra/value/packed_array.hpp"
+#include "lyra/value/string.hpp"
+
 namespace lyra::runtime {
+
+class StreamDispatcher;
 
 // LRM 21.3.2 cancellation observable. One or more output channels' joint
 // cancel state; `IsCancelled()` returns true once any participating channel
@@ -23,7 +28,7 @@ namespace lyra::runtime {
 // multichannel descriptor are implicitly cancelled".
 class ChannelCancellation {
  public:
-  [[nodiscard]] auto IsCancelled() const noexcept -> bool;
+  [[nodiscard]] auto IsCancelled() const noexcept -> lyra::value::PackedArray;
 
  private:
   friend class FileTable;
@@ -90,7 +95,8 @@ class FileTable {
     bool permits_write = false;
   };
 
-  FileTable() = default;
+  explicit FileTable(StreamDispatcher& stream) : stream_(&stream) {
+  }
   ~FileTable() = default;
   FileTable(const FileTable&) = delete;
   auto operator=(const FileTable&) -> FileTable& = delete;
@@ -150,15 +156,19 @@ class FileTable {
   // even if the slot is later reused (the new open installs a fresh
   // source -- the old token still observes the old, permanently-stopped
   // state through its own refcount).
-  [[nodiscard]] auto CancellationFor(std::int32_t descriptor)
+  [[nodiscard]] auto CancellationFor(const lyra::value::PackedArray& descriptor)
       -> ChannelCancellation;
 
-  // FD encoding constants exposed for dispatch-site value comparisons.
-  static constexpr std::int32_t kFdHighBit =
-      static_cast<std::int32_t>(static_cast<std::uint32_t>(1) << 31U);
-  static constexpr std::int32_t kStdinFd = kFdHighBit | 0;
-  static constexpr std::int32_t kStdoutFd = kFdHighBit | 1;
-  static constexpr std::int32_t kStderrFd = kFdHighBit | 2;
+  // LRM 21.2.1 / 21.3.2 sink write. Dispatches by descriptor: stdout
+  // sentinel routes through the stream dispatcher, stderr sentinel through
+  // std::cerr, owned FDs / MCDs through this table's fstreams. `Writeln`
+  // appends a trailing newline.
+  void Write(
+      const lyra::value::PackedArray& descriptor,
+      const lyra::value::String& text);
+  void Writeln(
+      const lyra::value::PackedArray& descriptor,
+      const lyra::value::String& text);
 
  private:
   // LRM 21.3.1: at most 31 MCD slots (bits 1..30); bit 0 is stdout-sentinel.
@@ -172,6 +182,7 @@ class FileTable {
     std::stop_source cancel_source;
   };
 
+  StreamDispatcher* stream_ = nullptr;
   std::array<McdSlot, kMcdSlotCount> mcd_slots_{};
   std::vector<FdSlot> fd_pool_{kFdReservedSlots};
 };

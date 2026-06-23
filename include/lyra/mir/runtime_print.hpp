@@ -1,11 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
-#include <vector>
 
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -43,17 +41,5 @@ struct RuntimePrintValue {
 };
 
 using RuntimePrintItem = std::variant<RuntimePrintLiteral, RuntimePrintValue>;
-
-struct RuntimePrintCall {
-  value::PrintKind kind;
-  std::optional<ExprId> descriptor;
-  std::vector<RuntimePrintItem> items;
-
-  RuntimePrintCall(
-      value::PrintKind k, std::optional<ExprId> d,
-      std::vector<RuntimePrintItem> i)
-      : kind(k), descriptor(d), items(std::move(i)) {
-  }
-};
 
 }  // namespace lyra::mir

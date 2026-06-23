@@ -118,6 +118,9 @@ auto RenderTypeAsCpp(
           [](const mir::ServicesType&) -> diag::Result<std::string> {
             return std::string{"lyra::runtime::RuntimeServices&"};
           },
+          [](const mir::FilesType&) -> diag::Result<std::string> {
+            return std::string{"lyra::runtime::FileTable&"};
+          },
           [](const mir::RuntimeLibraryType& r) -> diag::Result<std::string> {
             switch (r.kind) {
               case mir::RuntimeLibraryKind::kPrintItem:
@@ -128,6 +131,8 @@ auto RenderTypeAsCpp(
                 return std::string{"lyra::value::PrintValueItem"};
               case mir::RuntimeLibraryKind::kFormatSpec:
                 return std::string{"lyra::value::FormatSpec"};
+              case mir::RuntimeLibraryKind::kChannelCancellation:
+                return std::string{"lyra::runtime::ChannelCancellation"};
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },

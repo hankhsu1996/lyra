@@ -30,7 +30,6 @@
 #include "lyra/runtime/file_table.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/finish.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/fork.hpp"               // IWYU pragma: keep
-#include "lyra/runtime/io.hpp"                 // IWYU pragma: keep
 #include "lyra/runtime/named_event.hpp"        // IWYU pragma: keep
 #include "lyra/runtime/process_kind.hpp"       // IWYU pragma: keep
 #include "lyra/runtime/runtime_process.hpp"    // IWYU pragma: keep
