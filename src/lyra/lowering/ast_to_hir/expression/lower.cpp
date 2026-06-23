@@ -29,6 +29,8 @@
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -165,7 +167,7 @@ auto LowerProcExpr(
           "constructed is discarded at AST -> HIR");
 
     case slang::ast::ExpressionKind::Conversion:
-      return LowerConversionExprProc(
+      return LowerConversionExpr(
           proc, frame, expr.as<slang::ast::ConversionExpression>(), span);
 
     case slang::ast::ExpressionKind::UnaryOp: {
@@ -173,15 +175,15 @@ auto LowerProcExpr(
       if (slang::ast::OpInfo::isLValue(un.op)) {
         return LowerIncDecExprProc(proc, frame, un, span);
       }
-      return LowerUnaryExprProc(proc, frame, un, span);
+      return LowerUnaryExpr(proc, frame, un, span);
     }
 
     case slang::ast::ExpressionKind::BinaryOp:
-      return LowerBinaryExprProc(
+      return LowerBinaryExpr(
           proc, frame, expr.as<slang::ast::BinaryExpression>(), span);
 
     case slang::ast::ExpressionKind::ConditionalOp:
-      return LowerConditionalExprProc(
+      return LowerConditionalExpr(
           proc, frame, expr.as<slang::ast::ConditionalExpression>(), span);
 
     case slang::ast::ExpressionKind::Call:
@@ -197,22 +199,22 @@ auto LowerProcExpr(
           proc, frame, expr.as<slang::ast::InsideExpression>(), span);
 
     case slang::ast::ExpressionKind::ElementSelect:
-      return LowerElementSelectExprProc(
+      return LowerElementSelectExpr(
           proc, frame, expr.as<slang::ast::ElementSelectExpression>(), span);
 
     case slang::ast::ExpressionKind::RangeSelect:
-      return LowerRangeSelectExprProc(
+      return LowerRangeSelectExpr(
           proc, frame, expr.as<slang::ast::RangeSelectExpression>(), span);
 
     case slang::ast::ExpressionKind::MemberAccess:
-      return LowerMemberAccessExprProc(
+      return LowerMemberAccessExpr(
           proc, frame, expr.as<slang::ast::MemberAccessExpression>(), span);
 
     case slang::ast::ExpressionKind::UnboundedLiteral:
       return LowerUnboundedLiteralProc(proc, frame, span);
 
     case slang::ast::ExpressionKind::Concatenation:
-      return LowerConcatExprProc(
+      return LowerConcatExpr(
           proc, frame, expr.as<slang::ast::ConcatenationExpression>(), span);
 
     case slang::ast::ExpressionKind::Replication:
@@ -228,7 +230,7 @@ auto LowerProcExpr(
             "assignment pattern as LHS destructuring is not yet supported",
             diag::UnsupportedCategory::kOperation);
       }
-      return LowerAssignmentPatternFromElementsProc(proc, frame, sap, span);
+      return LowerAssignmentPatternFromElements(proc, frame, sap, span);
     }
 
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
@@ -239,7 +241,7 @@ auto LowerProcExpr(
       // optional default; lower the keyed form, not the positional one that
       // would drop both.
       if (target_kind == slang::ast::SymbolKind::AssociativeArrayType) {
-        return LowerAssociativeAssignmentPatternProc(proc, frame, sap, span);
+        return LowerAssociativeAssignmentPattern(proc, frame, sap, span);
       }
       // Slang accepts `'{idx:val, ...}` for a dynamic-array target as long
       // as indices cover a dense `0..N-1`. The legal subset is equivalent to
@@ -252,11 +254,11 @@ auto LowerProcExpr(
             "supported; use positional form",
             diag::UnsupportedCategory::kOperation);
       }
-      return LowerAssignmentPatternFromElementsProc(proc, frame, sap, span);
+      return LowerAssignmentPatternFromElements(proc, frame, sap, span);
     }
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
-      return LowerReplicatedAssignmentPatternExprProc(
+      return LowerReplicatedAssignmentPatternExpr(
           proc, frame,
           expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), span);
 
@@ -318,7 +320,7 @@ auto LowerStructuralExpr(
           "directly");
 
     case slang::ast::ExpressionKind::Conversion:
-      return LowerConversionExprStructural(
+      return LowerConversionExpr(
           scope, frame, expr.as<slang::ast::ConversionExpression>(), span);
 
     case slang::ast::ExpressionKind::UnaryOp: {
@@ -330,31 +332,31 @@ auto LowerStructuralExpr(
             "(LRM 11.3.6, 11.4.2)",
             diag::UnsupportedCategory::kFeature);
       }
-      return LowerUnaryExprStructural(scope, frame, un, span);
+      return LowerUnaryExpr(scope, frame, un, span);
     }
 
     case slang::ast::ExpressionKind::BinaryOp:
-      return LowerBinaryExprStructural(
+      return LowerBinaryExpr(
           scope, frame, expr.as<slang::ast::BinaryExpression>(), span);
 
     case slang::ast::ExpressionKind::ConditionalOp:
-      return LowerConditionalExprStructural(
+      return LowerConditionalExpr(
           scope, frame, expr.as<slang::ast::ConditionalExpression>(), span);
 
     case slang::ast::ExpressionKind::ElementSelect:
-      return LowerElementSelectExprStructural(
+      return LowerElementSelectExpr(
           scope, frame, expr.as<slang::ast::ElementSelectExpression>(), span);
 
     case slang::ast::ExpressionKind::RangeSelect:
-      return LowerRangeSelectExprStructural(
+      return LowerRangeSelectExpr(
           scope, frame, expr.as<slang::ast::RangeSelectExpression>(), span);
 
     case slang::ast::ExpressionKind::MemberAccess:
-      return LowerMemberAccessExprStructural(
+      return LowerMemberAccessExpr(
           scope, frame, expr.as<slang::ast::MemberAccessExpression>(), span);
 
     case slang::ast::ExpressionKind::Concatenation:
-      return LowerConcatExprStructural(
+      return LowerConcatExpr(
           scope, frame, expr.as<slang::ast::ConcatenationExpression>(), span);
 
     case slang::ast::ExpressionKind::SimpleAssignmentPattern: {
@@ -366,8 +368,7 @@ auto LowerStructuralExpr(
             "assignment pattern as LHS destructuring is not yet supported",
             diag::UnsupportedCategory::kOperation);
       }
-      return LowerAssignmentPatternFromElementsStructural(
-          scope, frame, sap, span);
+      return LowerAssignmentPatternFromElements(scope, frame, sap, span);
     }
 
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
@@ -375,8 +376,7 @@ auto LowerStructuralExpr(
           expr.as<slang::ast::StructuredAssignmentPatternExpression>();
       const auto target_kind = expr.type->getCanonicalType().kind;
       if (target_kind == slang::ast::SymbolKind::AssociativeArrayType) {
-        return LowerAssociativeAssignmentPatternStructural(
-            scope, frame, sap, span);
+        return LowerAssociativeAssignmentPattern(scope, frame, sap, span);
       }
       if (target_kind == slang::ast::SymbolKind::DynamicArrayType) {
         return diag::Unsupported(
@@ -385,12 +385,11 @@ auto LowerStructuralExpr(
             "supported; use positional form",
             diag::UnsupportedCategory::kOperation);
       }
-      return LowerAssignmentPatternFromElementsStructural(
-          scope, frame, sap, span);
+      return LowerAssignmentPatternFromElements(scope, frame, sap, span);
     }
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
-      return LowerReplicatedAssignmentPatternExprStructural(
+      return LowerReplicatedAssignmentPatternExpr(
           scope, frame,
           expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), span);
 

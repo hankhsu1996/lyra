@@ -10,12 +10,12 @@ rejected alternatives.
 
 ## Actionable
 
-The generic arena (Phase 1) has landed in full, including the AST-to-HIR walk position now carrying
-a single expression write target. The HIR-to-MIR handler-sharing it enables (Phase 2) has also
-landed: the context-free HIR-to-MIR expression handlers shared by the procedural and structural pass
-classes are now single function templates. What remains is the AST-to-HIR half of Phase 2 --
-collapsing that pass's handler twins the same way -- which is gated on the in-flight drift-bug
-alignment (see Coordination).
+The generic arena (Phase 1) and the handler-sharing it enables (Phase 2) have landed in full on both
+lowering boundaries. The context-free expression handlers shared by the procedural and structural
+pass classes are single function templates over the pass class -- never duplicated twins -- at
+HIR-to-MIR and at AST-to-HIR alike. The procedural/structural distinction survives only where the
+two genuinely differ (statements versus members and generates, and name resolution) and is gone from
+the expression layer, where they are identical. This workstream is complete.
 
 The arena's surface is fixed by what consumers actually do: a const lookup by typed id, an append
 that returns the id, a count and an emptiness check, and an indexed iteration (the dumper prints
@@ -51,17 +51,18 @@ underneath.
 - [x] HIR-to-MIR: each expression family's procedural and structural handlers become one function
       template over the pass class. Pilot with the select family (the largest duplication), then the
       remaining families.
-- [ ] AST-to-HIR: the same collapse, sequenced after the in-flight drift-bug alignment lands (see
-      Coordination).
+- [x] AST-to-HIR: the same collapse. Each context-free expression family's procedural and structural
+      handlers become one function template over the pass class, reached through the uniform
+      recursion entry point; name resolution and single-context kinds stay per-pass.
 - [x] `lowering_organization.md` records that a handler shared across pass classes is one template,
       never a duplicated twin.
 
 ## Coordination
 
-- The AST-to-HIR slice overlaps `refactor.md` R34 (the procedural/structural HIR expression-lowering
-  drift bugs, in flight separately). Sequence the AST-to-HIR templating after R34's operand-guard
-  and value-realization alignment lands, so the two efforts do not edit the same handlers at once.
-  The HIR-to-MIR slice is independent and unblocked.
+- The AST-to-HIR slice and `refactor.md` R34 (the procedural/structural expression-lowering drift
+  bugs) were the same work and landed together: collapsing each twin to one template per family
+  removes the drift surface by construction, so there is no separate guard-alignment step to
+  sequence before it. The HIR-to-MIR slice landed independently earlier.
 
 ## Out of Scope
 

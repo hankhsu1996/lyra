@@ -210,11 +210,16 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
     maps to different storage depending on the enclosing scope, and kinds that exist in only one
     context.
 
-    _Current implementation:_ the HIR-to-MIR expression handlers shared by `ProcessLowerer` and
-    `ClassLowerer` (operators, selects, aggregate value-builds) are single function templates over
-    the pass class, reaching sub-expressions through a uniform `HirExprs()` accessor and recursing
-    through `LowerExpr` / `LowerLhsExpr`; explicit instantiations for the two pass classes live in
-    the subsystem `.cpp`. Name resolution (`references.cpp`) stays a per-pass-class pair.
+    _Current implementation:_ the context-free expression handlers (operators, selects, aggregate
+    value-builds) are single function templates over the pass class on both lowering boundaries. At
+    HIR-to-MIR the template recurses through `LowerExpr` / `LowerLhsExpr` and reaches
+    sub-expressions through a uniform `HirExprs()` accessor; at AST-to-HIR it recurses through
+    `LowerExpr` and interns through the walk position's single expression arena, so the pass class's
+    own surface is just `LowerExpr` and `Module()`. Each is constrained on an `ExprLowerer` concept,
+    with explicit instantiations for the two pass classes in the subsystem `.cpp`. Name resolution
+    (`references.cpp` on each boundary) stays a per-pass-class pair, and kinds that exist in only
+    one context (increment / decrement, replication, the dynamic-array constructor, queue `$`) stay
+    procedural-only handlers.
 
 ## The Walk Position
 
