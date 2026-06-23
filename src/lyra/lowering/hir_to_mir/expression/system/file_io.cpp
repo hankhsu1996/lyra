@@ -40,7 +40,7 @@ auto BuildFileIoCall(
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> args;
   args.reserve(operands.size() + 1);
-  args.push_back(block.AddExpr(BuildServicesCallExpr(process, frame)));
+  args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
   for (const mir::ExprId operand : operands) {
     args.push_back(operand);
   }
@@ -56,8 +56,7 @@ auto LowerOperand(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
     std::size_t index) -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
-  return process.LowerExpr(
-      hir_proc.exprs.at(call.arguments[index]->value), frame);
+  return process.LowerExpr(hir_proc.exprs.Get(*call.arguments[index]), frame);
 }
 
 auto LowerFixedOperandCall(
@@ -70,7 +69,7 @@ auto LowerFixedOperandCall(
   for (std::size_t i = 0; i < operand_count; ++i) {
     auto operand_or = LowerOperand(process, frame, call, i);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-    operands.push_back(block.AddExpr(*std::move(operand_or)));
+    operands.push_back(block.exprs.Add(*std::move(operand_or)));
   }
   return BuildFileIoCall(process, frame, id, std::move(operands), result_type);
 }
@@ -83,11 +82,11 @@ auto LowerFileOpenCall(
   auto& block = *frame.current_block;
   auto name_or = LowerOperand(process, frame, call, 0);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
-  std::vector<mir::ExprId> operands{block.AddExpr(*std::move(name_or))};
+  std::vector<mir::ExprId> operands{block.exprs.Add(*std::move(name_or))};
   if (call.arguments.size() == 2) {
     auto mode_or = LowerOperand(process, frame, call, 1);
     if (!mode_or) return std::unexpected(std::move(mode_or.error()));
-    operands.push_back(block.AddExpr(*std::move(mode_or)));
+    operands.push_back(block.exprs.Add(*std::move(mode_or)));
   }
   return BuildFileIoCall(
       process, frame, id, std::move(operands),
@@ -103,7 +102,7 @@ auto LowerFileFlushCall(
   if (!call.arguments.empty()) {
     auto fd_or = LowerOperand(process, frame, call, 0);
     if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-    operands.push_back(frame.current_block->AddExpr(*std::move(fd_or)));
+    operands.push_back(frame.current_block->exprs.Add(*std::move(fd_or)));
   }
   return BuildFileIoCall(
       process, frame, id, std::move(operands),
@@ -197,10 +196,10 @@ auto LowerFileIOSystemSubroutineCallStmt(
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
       auto fd_or = process.LowerExpr(
-          hir_proc.exprs.at(call.arguments[1]->value), wrapper_frame);
+          hir_proc.exprs.Get(*call.arguments[1]), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-      const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
-      const mir::ExprId temp_ref = wrapper.AddExpr(
+      const mir::ExprId fd_id = wrapper.exprs.Add(*std::move(fd_or));
+      const mir::ExprId temp_ref = wrapper.exprs.Add(
           mir::Expr{.data = slots[0].temp, .type = slots[0].type});
       call_expr = BuildFileIoCall(
           process, wrapper_frame, id, {temp_ref, fd_id},
@@ -213,7 +212,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
       // so both round-trip through a copy-out temp; the runtime call is a
       // generic CallExpr whose operands are the temp, the descriptor, and --
       // for the memory form -- the declared bounds plus start / count.
-      const auto& dest_hir = hir_proc.exprs.at(call.arguments[0]->value);
+      const auto& dest_hir = hir_proc.exprs.Get(*call.arguments[0]);
       const auto& dest_hir_ty = module.Hir().GetType(dest_hir.type);
       const auto& builtins = process.Module().Unit().builtins;
       const auto* unpacked =
@@ -246,42 +245,42 @@ auto LowerFileIOSystemSubroutineCallStmt(
       }
 
       auto fd_or = process.LowerExpr(
-          hir_proc.exprs.at(call.arguments[1]->value), wrapper_frame);
+          hir_proc.exprs.Get(*call.arguments[1]), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-      const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
+      const mir::ExprId fd_id = wrapper.exprs.Add(*std::move(fd_or));
 
       auto slot_or = BuildOutputArgSlot(
           process, wrapper_frame, *call.arguments[0], "_lyra_fread_dest");
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
-      const mir::ExprId temp_ref = wrapper.AddExpr(
+      const mir::ExprId temp_ref = wrapper.exprs.Add(
           mir::Expr{.data = slots[0].temp, .type = slots[0].type});
 
       std::vector<mir::ExprId> operands{temp_ref, fd_id};
       if (unpacked != nullptr) {
-        operands.push_back(wrapper.AddExpr(
+        operands.push_back(wrapper.exprs.Add(
             mir::MakeInt32Literal(builtins.int32, unpacked->dim.left)));
-        operands.push_back(wrapper.AddExpr(
+        operands.push_back(wrapper.exprs.Add(
             mir::MakeInt32Literal(builtins.int32, unpacked->dim.right)));
         // start: the SV index, or the lowest declared index when omitted
         // (LRM 21.3.4.4 default). Synthesizing it keeps count the only
         // trailing-optional operand.
         if (call.arguments.size() > 2 && call.arguments[2].has_value()) {
           auto start_or = process.LowerExpr(
-              hir_proc.exprs.at(call.arguments[2]->value), wrapper_frame);
+              hir_proc.exprs.Get(*call.arguments[2]), wrapper_frame);
           if (!start_or) return std::unexpected(std::move(start_or.error()));
-          operands.push_back(wrapper.AddExpr(*std::move(start_or)));
+          operands.push_back(wrapper.exprs.Add(*std::move(start_or)));
         } else {
-          operands.push_back(wrapper.AddExpr(
+          operands.push_back(wrapper.exprs.Add(
               mir::MakeInt32Literal(
                   builtins.int32,
                   std::min(unpacked->dim.left, unpacked->dim.right))));
         }
         if (call.arguments.size() > 3 && call.arguments[3].has_value()) {
           auto count_or = process.LowerExpr(
-              hir_proc.exprs.at(call.arguments[3]->value), wrapper_frame);
+              hir_proc.exprs.Get(*call.arguments[3]), wrapper_frame);
           if (!count_or) return std::unexpected(std::move(count_or.error()));
-          operands.push_back(wrapper.AddExpr(*std::move(count_or)));
+          operands.push_back(wrapper.exprs.Add(*std::move(count_or)));
         }
       }
       call_expr = BuildFileIoCall(
@@ -291,14 +290,14 @@ auto LowerFileIOSystemSubroutineCallStmt(
     case support::FileIOKind::kError: {
       // $ferror(fd, str_lvalue) -- arg[1] is the output string lvalue.
       auto fd_or = process.LowerExpr(
-          hir_proc.exprs.at(call.arguments[0]->value), wrapper_frame);
+          hir_proc.exprs.Get(*call.arguments[0]), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-      const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
+      const mir::ExprId fd_id = wrapper.exprs.Add(*std::move(fd_or));
       auto slot_or = BuildOutputArgSlot(
           process, wrapper_frame, *call.arguments[1], "_lyra_ferror_dest");
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
-      const mir::ExprId temp_ref = wrapper.AddExpr(
+      const mir::ExprId temp_ref = wrapper.exprs.Add(
           mir::Expr{.data = slots[0].temp, .type = slots[0].type});
       call_expr = BuildFileIoCall(
           process, wrapper_frame, id, {fd_id, temp_ref},
@@ -312,14 +311,14 @@ auto LowerFileIOSystemSubroutineCallStmt(
 
   std::optional<mir::ExprId> assign_target_id = std::nullopt;
   if (assign_target.has_value()) {
-    auto lhs_or = process.LowerLhsExpr(
-        hir_proc.exprs.at(assign_target->value), wrapper_frame);
+    auto lhs_or =
+        process.LowerLhsExpr(hir_proc.exprs.Get(*assign_target), wrapper_frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-    assign_target_id = wrapper.AddExpr(*std::move(lhs_or));
+    assign_target_id = wrapper.exprs.Add(*std::move(lhs_or));
   }
 
   const mir::ExprId services_id =
-      wrapper.AddExpr(BuildServicesCallExpr(process, wrapper_frame));
+      wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
   return BuildCopyOutBlock(
       process.Module().Unit(), services_id, frame, std::move(wrapper),
       std::move(label), result_type, std::move(call_expr), false,

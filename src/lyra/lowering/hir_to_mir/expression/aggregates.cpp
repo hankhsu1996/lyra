@@ -73,9 +73,9 @@ auto LowerHirConcatExprProc(
   std::vector<mir::ExprId> operand_ids;
   operand_ids.reserve(c.operands.size());
   for (const auto& id : c.operands) {
-    auto lowered = process.LowerExpr(hir_process.exprs.at(id.value), frame);
+    auto lowered = process.LowerExpr(hir_process.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    operand_ids.push_back(block.AddExpr(*std::move(lowered)));
+    operand_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   return mir::Expr{
       .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
@@ -87,13 +87,12 @@ auto LowerHirReplicationExprProc(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
-  auto count_or = process.LowerExpr(hir_process.exprs.at(r.count.value), frame);
+  auto count_or = process.LowerExpr(hir_process.exprs.Get(r.count), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const mir::ExprId count_id = block.AddExpr(*std::move(count_or));
-  auto concat_or =
-      process.LowerExpr(hir_process.exprs.at(r.concat.value), frame);
+  const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
+  auto concat_or = process.LowerExpr(hir_process.exprs.Get(r.concat), frame);
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
-  const mir::ExprId concat_id = block.AddExpr(*std::move(concat_or));
+  const mir::ExprId concat_id = block.exprs.Add(*std::move(concat_or));
   return mir::Expr{
       .data = mir::ReplicationExpr{.count = count_id, .concat = concat_id},
       .type = result_type};
@@ -113,9 +112,9 @@ auto LowerHirAssignmentPatternExprProc(
   std::vector<mir::ExprId> element_ids;
   element_ids.reserve(a.elements.size());
   for (const auto& id : a.elements) {
-    auto lowered = process.LowerExpr(hir_process.exprs.at(id.value), frame);
+    auto lowered = process.LowerExpr(hir_process.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    element_ids.push_back(block.AddExpr(*std::move(lowered)));
+    element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   if (IsArrayContainerType(process.Module().Unit().GetType(result_type))) {
     return BuildArrayConstructionCall(
@@ -135,23 +134,23 @@ auto LowerHirAssignmentPatternReplicationExprProc(
   std::vector<mir::ExprId> item_ids;
   item_ids.reserve(a.items.size());
   for (const auto& id : a.items) {
-    auto lowered = process.LowerExpr(hir_process.exprs.at(id.value), frame);
+    auto lowered = process.LowerExpr(hir_process.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    item_ids.push_back(block.AddExpr(*std::move(lowered)));
+    item_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   if (IsArrayContainerType(process.Module().Unit().GetType(result_type))) {
     const std::uint64_t count =
-        ExtractHirLiteralUint64(hir_process.exprs.at(a.count.value));
+        ExtractHirLiteralUint64(hir_process.exprs.Get(a.count));
     return BuildArrayReplicationFlatList(
         process.Module(), frame, item_ids, count, result_type);
   }
-  const mir::ExprId inner_concat_id = block.AddExpr(
+  const mir::ExprId inner_concat_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ConcatExpr{.operands = std::move(item_ids)},
           .type = result_type});
-  auto count_or = process.LowerExpr(hir_process.exprs.at(a.count.value), frame);
+  auto count_or = process.LowerExpr(hir_process.exprs.Get(a.count), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const mir::ExprId count_id = block.AddExpr(*std::move(count_or));
+  const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
   return mir::Expr{
       .data =
           mir::ReplicationExpr{
@@ -172,9 +171,9 @@ auto LowerHirDynamicArrayNewExprProc(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
-  auto size_or = process.LowerExpr(hir_process.exprs.at(n.size.value), frame);
+  auto size_or = process.LowerExpr(hir_process.exprs.Get(n.size), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
-  const mir::ExprId size_id = block.AddExpr(*std::move(size_or));
+  const mir::ExprId size_id = block.exprs.Add(*std::move(size_or));
 
   const auto& result_ty = process.Module().Unit().GetType(result_type);
   const auto* da = std::get_if<mir::DynamicArrayType>(&result_ty.data);
@@ -182,7 +181,7 @@ auto LowerHirDynamicArrayNewExprProc(
     throw InternalError(
         "LowerHirDynamicArrayNewExprProc: result type is not DynamicArrayType");
   }
-  const mir::ExprId prototype_id = block.AddExpr(
+  const mir::ExprId prototype_id = block.exprs.Add(
       BuildDefaultValueExpr(process.Module(), frame, da->element_type));
 
   std::vector<mir::ExprId> args;
@@ -191,9 +190,9 @@ auto LowerHirDynamicArrayNewExprProc(
   args.push_back(prototype_id);
   if (n.initializer.has_value()) {
     auto init_or =
-        process.LowerExpr(hir_process.exprs.at(n.initializer->value), frame);
+        process.LowerExpr(hir_process.exprs.Get(*n.initializer), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    args.push_back(block.AddExpr(*std::move(init_or)));
+    args.push_back(block.exprs.Add(*std::move(init_or)));
   }
   return mir::Expr{
       .data =
@@ -215,22 +214,21 @@ auto LowerHirAssociativeAssignmentPatternExprProc(
   std::vector<std::pair<mir::ExprId, mir::ExprId>> entries;
   entries.reserve(a.entries.size());
   for (const auto& entry : a.entries) {
-    auto key_or =
-        process.LowerExpr(hir_process.exprs.at(entry.key.value), frame);
+    auto key_or = process.LowerExpr(hir_process.exprs.Get(entry.key), frame);
     if (!key_or) return std::unexpected(std::move(key_or.error()));
-    const mir::ExprId key_id = block.AddExpr(*std::move(key_or));
+    const mir::ExprId key_id = block.exprs.Add(*std::move(key_or));
     auto value_or =
-        process.LowerExpr(hir_process.exprs.at(entry.value.value), frame);
+        process.LowerExpr(hir_process.exprs.Get(entry.value), frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    const mir::ExprId value_id = block.AddExpr(*std::move(value_or));
+    const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
     entries.emplace_back(key_id, value_id);
   }
   std::optional<mir::ExprId> user_default;
   if (a.default_value.has_value()) {
     auto default_or =
-        process.LowerExpr(hir_process.exprs.at(a.default_value->value), frame);
+        process.LowerExpr(hir_process.exprs.Get(*a.default_value), frame);
     if (!default_or) return std::unexpected(std::move(default_or.error()));
-    user_default = block.AddExpr(*std::move(default_or));
+    user_default = block.exprs.Add(*std::move(default_or));
   }
   return BuildAssociativeConstructionCall(
       process.Module(), frame, result_type, std::move(entries), user_default);
@@ -244,9 +242,9 @@ auto LowerHirConcatExprStructural(
   std::vector<mir::ExprId> operand_ids;
   operand_ids.reserve(c.operands.size());
   for (const auto& id : c.operands) {
-    auto lowered = lowerer.LowerExpr(hir_scope.GetExpr(id), frame);
+    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    operand_ids.push_back(block.AddExpr(*std::move(lowered)));
+    operand_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   return mir::Expr{
       .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
@@ -262,9 +260,9 @@ auto LowerHirAssignmentPatternExprStructural(
   std::vector<mir::ExprId> element_ids;
   element_ids.reserve(a.elements.size());
   for (const auto& id : a.elements) {
-    auto lowered = lowerer.LowerExpr(hir_scope.GetExpr(id), frame);
+    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    element_ids.push_back(block.AddExpr(*std::move(lowered)));
+    element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   if (IsArrayContainerType(lowerer.Module().Unit().GetType(result_type))) {
     return BuildArrayConstructionCall(
@@ -284,23 +282,23 @@ auto LowerHirAssignmentPatternReplicationExprStructural(
   std::vector<mir::ExprId> item_ids;
   item_ids.reserve(a.items.size());
   for (const auto& id : a.items) {
-    auto lowered = lowerer.LowerExpr(hir_scope.GetExpr(id), frame);
+    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    item_ids.push_back(block.AddExpr(*std::move(lowered)));
+    item_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   if (IsArrayContainerType(lowerer.Module().Unit().GetType(result_type))) {
     const std::uint64_t count =
-        ExtractHirLiteralUint64(hir_scope.GetExpr(a.count));
+        ExtractHirLiteralUint64(hir_scope.exprs.Get(a.count));
     return BuildArrayReplicationFlatList(
         lowerer.Module(), frame, item_ids, count, result_type);
   }
-  const mir::ExprId inner_concat_id = block.AddExpr(
+  const mir::ExprId inner_concat_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ConcatExpr{.operands = std::move(item_ids)},
           .type = result_type});
-  auto count_or = lowerer.LowerExpr(hir_scope.GetExpr(a.count), frame);
+  auto count_or = lowerer.LowerExpr(hir_scope.exprs.Get(a.count), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const mir::ExprId count_id = block.AddExpr(*std::move(count_or));
+  const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
   return mir::Expr{
       .data =
           mir::ReplicationExpr{
@@ -319,20 +317,20 @@ auto LowerHirAssociativeAssignmentPatternExprStructural(
   std::vector<std::pair<mir::ExprId, mir::ExprId>> entries;
   entries.reserve(a.entries.size());
   for (const auto& entry : a.entries) {
-    auto key_or = lowerer.LowerExpr(hir_scope.GetExpr(entry.key), frame);
+    auto key_or = lowerer.LowerExpr(hir_scope.exprs.Get(entry.key), frame);
     if (!key_or) return std::unexpected(std::move(key_or.error()));
-    const mir::ExprId key_id = block.AddExpr(*std::move(key_or));
-    auto value_or = lowerer.LowerExpr(hir_scope.GetExpr(entry.value), frame);
+    const mir::ExprId key_id = block.exprs.Add(*std::move(key_or));
+    auto value_or = lowerer.LowerExpr(hir_scope.exprs.Get(entry.value), frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    const mir::ExprId value_id = block.AddExpr(*std::move(value_or));
+    const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
     entries.emplace_back(key_id, value_id);
   }
   std::optional<mir::ExprId> user_default;
   if (a.default_value.has_value()) {
     auto default_or =
-        lowerer.LowerExpr(hir_scope.GetExpr(*a.default_value), frame);
+        lowerer.LowerExpr(hir_scope.exprs.Get(*a.default_value), frame);
     if (!default_or) return std::unexpected(std::move(default_or.error()));
-    user_default = block.AddExpr(*std::move(default_or));
+    user_default = block.exprs.Add(*std::move(default_or));
   }
   return BuildAssociativeConstructionCall(
       lowerer.Module(), frame, result_type, std::move(entries), user_default);

@@ -57,7 +57,7 @@ auto LowerDestructuringAssign(
   bool any_four_state = false;
   std::uint64_t total_width = 0;
   for (const hir::ExprId op_id : lhs_concat.operands) {
-    const hir::Expr& op = hir_proc.exprs.at(op_id.value);
+    const hir::Expr& op = hir_proc.exprs.Get(op_id);
     const hir::Type& op_ty = process.Module().Hir().GetType(op.type);
     if (!op_ty.IsPackedArray()) {
       throw InternalError(
@@ -83,7 +83,7 @@ auto LowerDestructuringAssign(
               .left = static_cast<std::int64_t>(total_width) - 1, .right = 0}},
           .form = mir::PackedArrayForm::kExplicit}});
 
-  const mir::ExprId temp_default_init = wrapper.AddExpr(
+  const mir::ExprId temp_default_init = wrapper.exprs.Add(
       BuildDefaultValueExpr(process.Module(), wrapper_frame, temp_type));
   const mir::LocalRef snapshot_ref = wrapper.AppendLocal(
       mir::LocalDecl{.name = "_lyra_destruct_rhs", .type = temp_type},
@@ -92,11 +92,11 @@ auto LowerDestructuringAssign(
   // RHS is evaluated once; the snapshot temp is what gets distributed,
   // which is what makes `{a, b} = {b, a}` swap correctly.
   auto rhs_or =
-      process.LowerExpr(hir_proc.exprs.at(assign.rhs.value), wrapper_frame);
+      process.LowerExpr(hir_proc.exprs.Get(assign.rhs), wrapper_frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  mir::ExprId rhs_id = wrapper.AddExpr(*std::move(rhs_or));
-  if (wrapper.GetExpr(rhs_id).type != temp_type) {
-    rhs_id = wrapper.AddExpr(
+  mir::ExprId rhs_id = wrapper.exprs.Add(*std::move(rhs_or));
+  if (wrapper.exprs.Get(rhs_id).type != temp_type) {
+    rhs_id = wrapper.exprs.Add(
         mir::Expr{
             .data =
                 mir::ConversionExpr{
@@ -105,8 +105,8 @@ auto LowerDestructuringAssign(
   }
 
   const mir::ExprId temp_assign_target =
-      wrapper.AddExpr(mir::Expr{.data = snapshot_ref, .type = temp_type});
-  const mir::ExprId temp_assign_id = wrapper.AddExpr(
+      wrapper.exprs.Add(mir::Expr{.data = snapshot_ref, .type = temp_type});
+  const mir::ExprId temp_assign_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::AssignExpr{.target = temp_assign_target, .value = rhs_id},
@@ -121,24 +121,24 @@ auto LowerDestructuringAssign(
     offset -= w;
 
     auto part_lhs_or = process.LowerLhsExpr(
-        hir_proc.exprs.at(lhs_concat.operands[i].value), wrapper_frame);
+        hir_proc.exprs.Get(lhs_concat.operands[i]), wrapper_frame);
     if (!part_lhs_or) {
       return std::unexpected(std::move(part_lhs_or.error()));
     }
     const mir::TypeId part_mir_type = process.Module().TranslateType(
-        hir_proc.exprs.at(lhs_concat.operands[i].value).type);
-    const mir::ExprId part_lhs_id = wrapper.AddExpr(*std::move(part_lhs_or));
+        hir_proc.exprs.Get(lhs_concat.operands[i]).type);
+    const mir::ExprId part_lhs_id = wrapper.exprs.Add(*std::move(part_lhs_or));
 
-    const mir::ExprId offset_id = wrapper.AddExpr(
+    const mir::ExprId offset_id = wrapper.exprs.Add(
         mir::MakeInt32Literal(
             process.Module().Unit().builtins.int32,
             static_cast<std::int64_t>(offset)));
-    const mir::ExprId count_id = wrapper.AddExpr(
+    const mir::ExprId count_id = wrapper.exprs.Add(
         mir::MakeInt32Literal(
             process.Module().Unit().builtins.int32,
             static_cast<std::int64_t>(w)));
     const mir::ExprId temp_ref =
-        wrapper.AddExpr(mir::Expr{.data = snapshot_ref, .type = temp_type});
+        wrapper.exprs.Add(mir::Expr{.data = snapshot_ref, .type = temp_type});
     const mir::TypeId slice_type = process.Module().Unit().AddType(
         mir::TypeData{mir::PackedArrayType{
             .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
@@ -146,7 +146,7 @@ auto LowerDestructuringAssign(
             .dims = {mir::PackedRange{
                 .left = static_cast<std::int64_t>(w) - 1, .right = 0}},
             .form = mir::PackedArrayForm::kExplicit}});
-    const mir::ExprId raw_slice_id = wrapper.AddExpr(
+    const mir::ExprId raw_slice_id = wrapper.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -154,7 +154,7 @@ auto LowerDestructuringAssign(
                         mir::BuiltinFnCallee{.id = support::BuiltinFn::kSlice},
                     .arguments = {temp_ref, offset_id, count_id}},
             .type = slice_type});
-    const mir::ExprId slice_id = wrapper.AddExpr(
+    const mir::ExprId slice_id = wrapper.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -165,7 +165,7 @@ auto LowerDestructuringAssign(
             .type = slice_type});
     mir::ExprId rhs_for_part = slice_id;
     if (part_mir_type != slice_type) {
-      rhs_for_part = wrapper.AddExpr(
+      rhs_for_part = wrapper.exprs.Add(
           mir::Expr{
               .data =
                   mir::ConversionExpr{
@@ -177,18 +177,18 @@ auto LowerDestructuringAssign(
     mir::ExprId per_part_expr_id{};
     if (assign.kind == hir::AssignKind::kBlocking) {
       const mir::ExprId services_id =
-          wrapper.AddExpr(BuildServicesCallExpr(process, wrapper_frame));
+          wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
       const mir::Expr part_assign_expr = BuildObservableAssignExpr(
           process.Module().Unit(), wrapper, services_id, part_lhs_id,
           rhs_for_part, std::nullopt, part_mir_type,
           process.Module().Unit().builtins.void_type);
-      per_part_expr_id = wrapper.AddExpr(part_assign_expr);
+      per_part_expr_id = wrapper.exprs.Add(part_assign_expr);
     } else {
       mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
           process.Module(), wrapper_frame, part_lhs_id, rhs_for_part,
           part_mir_type);
-      const mir::ExprId closure_id = wrapper.AddExpr(std::move(closure_expr));
-      per_part_expr_id = wrapper.AddExpr(
+      const mir::ExprId closure_id = wrapper.exprs.Add(std::move(closure_expr));
+      per_part_expr_id = wrapper.exprs.Add(
           mir::Expr{
               .data =
                   mir::RuntimeCallExpr{
@@ -199,7 +199,7 @@ auto LowerDestructuringAssign(
   }
 
   const mir::BlockId wrapper_scope_id =
-      frame.current_block->AddChildScope(std::move(wrapper));
+      frame.current_block->child_scopes.Add(std::move(wrapper));
 
   return mir::Stmt{
       .label = std::move(label),
@@ -254,7 +254,7 @@ auto LowerSubroutineCallWithWritebacks(
   // invariant 11); the SV actuals (with output / inout temps) follow.
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size() + 1);
-  call_args.push_back(wrapper.AddExpr(BuildSelfRefExpr(
+  call_args.push_back(wrapper.exprs.Add(BuildSelfRefExpr(
       wrapper_frame, wrapper_frame.current_class->self_pointer_type)));
   std::vector<OutputArgSlot> writebacks;
 
@@ -265,7 +265,7 @@ auto LowerSubroutineCallWithWritebacks(
           "LowerSubroutineCallWithWritebacks: user-call positional arg "
           "unexpectedly elided");
     }
-    const hir::Expr& hir_arg = hir_proc.exprs.at(call.arguments[i]->value);
+    const hir::Expr& hir_arg = hir_proc.exprs.Get(*call.arguments[i]);
 
     if (!hir::RequiresWriteback(dir)) {
       // A ref / const-ref formal aliases the actual's cell -- pass the cell
@@ -276,42 +276,42 @@ auto LowerSubroutineCallWithWritebacks(
       if (is_ref) {
         auto arg_or = process.LowerLhsExpr(hir_arg, wrapper_frame);
         if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        mir::ExprId actual_id = wrapper.AddExpr(*std::move(arg_or));
+        mir::ExprId actual_id = wrapper.exprs.Add(*std::move(arg_or));
         const mir::ExprId root_id = FindLhsRootId(wrapper, actual_id);
         const bool root_is_cell = mir::IsObservableCellType(
-            process.Module().Unit().GetType(wrapper.GetExpr(root_id).type));
+            process.Module().Unit().GetType(wrapper.exprs.Get(root_id).type));
         if (root_is_cell && root_id != actual_id) {
           const mir::ExprId services_id =
-              wrapper.AddExpr(BuildServicesCallExpr(process, wrapper_frame));
+              wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
           actual_id = RewriteLhsRootWithMutate(
               process.Module().Unit(), wrapper, actual_id, services_id);
         }
         call_args.push_back(BuildReferenceArg(
             process.Module().Unit(), wrapper, actual_id,
-            wrapper.GetExpr(actual_id).type));
+            wrapper.exprs.Get(actual_id).type));
         continue;
       }
       auto arg_or = process.LowerExpr(hir_arg, wrapper_frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      call_args.push_back(wrapper.AddExpr(*std::move(arg_or)));
+      call_args.push_back(wrapper.exprs.Add(*std::move(arg_or)));
       continue;
     }
 
     const mir::TypeId formal_type = process.Module().TranslateType(
-        decl.body.GetProceduralVar(decl.params[i].var).type);
+        decl.body.procedural_vars.Get(decl.params[i].var).type);
     // The actual is the writeback target: lower it as a cell-typed lvalue
     // so an observable destination's writeback fires `Var<T>::Set`.
     auto target_or = process.LowerLhsExpr(hir_arg, wrapper_frame);
     if (!target_or) return std::unexpected(std::move(target_or.error()));
-    const mir::ExprId actual_id = wrapper.AddExpr(*std::move(target_or));
+    const mir::ExprId actual_id = wrapper.exprs.Add(*std::move(target_or));
 
     mir::ExprId init{};
     if (dir == hir::ParamDirection::kInOut) {
       auto value_or = process.LowerExpr(hir_arg, wrapper_frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
-      init = wrapper.AddExpr(*std::move(value_or));
+      init = wrapper.exprs.Add(*std::move(value_or));
     } else {
-      init = wrapper.AddExpr(
+      init = wrapper.exprs.Add(
           BuildDefaultValueExpr(process.Module(), wrapper_frame, formal_type));
     }
     const mir::LocalRef temp = wrapper.AppendLocal(
@@ -319,7 +319,7 @@ auto LowerSubroutineCallWithWritebacks(
             .name = "_lyra_arg" + std::to_string(i), .type = formal_type},
         init);
     call_args.push_back(
-        wrapper.AddExpr(mir::Expr{.data = temp, .type = formal_type}));
+        wrapper.exprs.Add(mir::Expr{.data = temp, .type = formal_type}));
     writebacks.push_back(
         {.actual = actual_id, .temp = temp, .type = formal_type});
   }
@@ -334,14 +334,14 @@ auto LowerSubroutineCallWithWritebacks(
 
   std::optional<mir::ExprId> assign_target_id = std::nullopt;
   if (assign_target.has_value()) {
-    auto lhs_or = process.LowerLhsExpr(
-        hir_proc.exprs.at(assign_target->value), wrapper_frame);
+    auto lhs_or =
+        process.LowerLhsExpr(hir_proc.exprs.Get(*assign_target), wrapper_frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-    assign_target_id = wrapper.AddExpr(*std::move(lhs_or));
+    assign_target_id = wrapper.exprs.Add(*std::move(lhs_or));
   }
 
   const mir::ExprId services_id =
-      wrapper.AddExpr(BuildServicesCallExpr(process, wrapper_frame));
+      wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
   return BuildCopyOutBlock(
       process.Module().Unit(), services_id, frame, std::move(wrapper),
       std::move(label), result_type, std::move(call_expr),
@@ -358,9 +358,9 @@ auto LowerExprStmt(
 
   // LRM 11.4.12 LHS destructuring: detect AssignExpr-with-ConcatExpr-LHS
   // and dispatch to the snapshot+distribute desugar.
-  const hir::Expr& inner = hir_proc.exprs.at(e.expr.value);
+  const hir::Expr& inner = hir_proc.exprs.Get(e.expr);
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
-    const hir::Expr& lhs = hir_proc.exprs.at(assign->lhs.value);
+    const hir::Expr& lhs = hir_proc.exprs.Get(assign->lhs);
     if (const auto* concat = std::get_if<hir::ConcatExpr>(&lhs.data)) {
       if (assign->compound_op.has_value()) {
         throw InternalError(
@@ -414,7 +414,7 @@ auto LowerExprStmt(
     }
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));
-    const mir::ExprId call_id = block.AddExpr(*std::move(call_or));
+    const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
     if (suspends) {
       return mir::Stmt{
           .label = std::move(label),
@@ -429,12 +429,12 @@ auto LowerExprStmt(
       // Peek through an implicit conversion wrapper that slang inserts when
       // the call's return type does not match the LHS type bit-for-bit.
       hir::ExprId rhs_id = assign->rhs;
-      const hir::Expr* rhs = &hir_proc.exprs.at(rhs_id.value);
+      const hir::Expr* rhs = &hir_proc.exprs.Get(rhs_id);
       const hir::Expr* call_carrier = rhs;
       std::optional<hir::TypeId> conv_target_type = std::nullopt;
       if (const auto* conv = std::get_if<hir::ConversionExpr>(&rhs->data)) {
         rhs_id = conv->operand;
-        call_carrier = &hir_proc.exprs.at(rhs_id.value);
+        call_carrier = &hir_proc.exprs.Get(rhs_id);
         conv_target_type = rhs->type;
       }
       if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
@@ -466,13 +466,13 @@ auto LowerExprStmt(
     }
   }
 
-  auto expr_or = process.LowerExpr(hir_proc.exprs.at(e.expr.value), frame);
+  auto expr_or = process.LowerExpr(hir_proc.exprs.Get(e.expr), frame);
   if (!expr_or) {
     return std::unexpected(std::move(expr_or.error()));
   }
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::ExprStmt{.expr = block.AddExpr(*std::move(expr_or))}};
+      .data = mir::ExprStmt{.expr = block.exprs.Add(*std::move(expr_or))}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

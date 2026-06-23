@@ -186,13 +186,13 @@ auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
         "cpp emit",
         diag::UnsupportedCategory::kFeature);
   }
-  const std::string& name = view.Class().GetParam(r.param).name;
+  const std::string& name = view.Class().params.Get(r.param).name;
   return "self->" + name;
 }
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
-  return view.BlockAtHops(ref.hops).vars.at(ref.var.value).name;
+  return view.BlockAtHops(ref.hops).vars.Get(ref.var).name;
 }
 
 // True iff the local holds a reference (its type is a `RefType`),
@@ -200,7 +200,7 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
 // `.Set(Services(), ...)` (LRM 13.5.2), the same surface as a member.
 auto IsReferenceLocal(const ScopeView& view, const mir::LocalRef& ref) -> bool {
   const mir::TypeId var_type =
-      view.BlockAtHops(ref.hops).vars.at(ref.var.value).type;
+      view.BlockAtHops(ref.hops).vars.Get(ref.var).type;
   return std::holds_alternative<mir::RefType>(
       view.Unit().GetType(var_type).data);
 }
@@ -216,7 +216,7 @@ auto RenderMemberName(const ScopeView& view, const mir::MemberRef& ref)
         "emit",
         diag::UnsupportedCategory::kFeature);
   }
-  return "self->" + view.Class().GetMember(ref.var).name;
+  return "self->" + view.Class().members.Get(ref.var).name;
 }
 
 namespace {
@@ -1019,7 +1019,7 @@ auto RenderCallExpr(
             }
             const auto& cls = view.EnclosingClassAtHops(
                 mir::EnclosingHops{.value = ref.hops.value});
-            const auto& decl = cls.GetMethod(ref.method);
+            const auto& decl = cls.methods.Get(ref.method);
             // arguments[0] is the callee's `self` handle (mir.md invariant 11);
             // a ref / const ref actual is already a reference-construct
             // (`Ref<T>(cell)`) in MIR, so every argument renders uniformly.
@@ -1122,7 +1122,7 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
               return std::unexpected(std::move(receiver_or.error()));
             }
             const auto& cls = view.EnclosingClassAtHops(m.member.hops);
-            const auto& var = cls.GetMember(m.member.var);
+            const auto& var = cls.members.Get(m.member.var);
             return *receiver_or + "->" + var.name;
           },
           [&](const mir::LocalRef& l) -> diag::Result<std::string> {
@@ -1343,8 +1343,7 @@ auto RenderClosureExpr(
     std::string params;
     std::string args;
     for (std::size_t i = 0; i < closure.captures.size(); ++i) {
-      const auto& bind =
-          closure.body->vars.at(closure.captures[i].binding.value);
+      const auto& bind = closure.body->vars.Get(closure.captures[i].binding);
       auto decl_or = RenderBindingParamDecl(view, bind);
       if (!decl_or) return std::unexpected(std::move(decl_or.error()));
       auto arg_or = RenderExpr(view, view.Expr(closure.captures[i].value));
@@ -1365,7 +1364,7 @@ auto RenderClosureExpr(
   std::string captures_text;
   for (std::size_t i = 0; i < closure.captures.size(); ++i) {
     const std::string& bind_name =
-        closure.body->vars.at(closure.captures[i].binding.value).name;
+        closure.body->vars.Get(closure.captures[i].binding).name;
     auto source_or = RenderExpr(view, view.Expr(closure.captures[i].value));
     if (!source_or) return std::unexpected(std::move(source_or.error()));
     if (i != 0) captures_text += ", ";
@@ -1374,7 +1373,7 @@ auto RenderClosureExpr(
 
   std::string params_text;
   for (std::size_t i = 0; i < closure.params.size(); ++i) {
-    const auto& bind = closure.body->vars.at(closure.params[i].binding.value);
+    const auto& bind = closure.body->vars.Get(closure.params[i].binding);
     auto decl_or = RenderBindingParamDecl(view, bind);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     if (i != 0) params_text += ", ";
@@ -1602,7 +1601,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           },
           [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
             const auto& cls = view.EnclosingClassAtHops(m.member.hops);
-            const auto& var = cls.GetMember(m.member.var);
+            const auto& var = cls.members.Get(m.member.var);
             auto receiver_or = RenderExpr(view, view.Expr(m.receiver));
             if (!receiver_or) {
               return std::unexpected(std::move(receiver_or.error()));

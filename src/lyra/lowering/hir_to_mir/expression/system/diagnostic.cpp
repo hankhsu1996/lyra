@@ -33,11 +33,11 @@ auto LowerDiagnosticSystemSubroutineCall(
   auto& block = *frame.current_block;
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
-  const mir::ExprId items_array = block.AddExpr(
+  const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   std::vector<mir::ExprId> args;
-  args.push_back(block.AddExpr(BuildServicesCallExpr(process, frame)));
+  args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
   args.push_back(items_array);
 
   return mir::Expr{

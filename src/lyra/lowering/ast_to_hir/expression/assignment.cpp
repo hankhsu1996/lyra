@@ -35,7 +35,7 @@ auto LowerAssignmentExprProc(
   auto lhs_or = proc.LowerExpr(as.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id =
-      frame.current_procedural_body->AddExpr(*std::move(lhs_or));
+      frame.current_procedural_body->exprs.Add(*std::move(lhs_or));
 
   auto type_id = module.InternType(*as.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
@@ -47,7 +47,7 @@ auto LowerAssignmentExprProc(
     auto rhs_or = proc.LowerExpr(as.right(), frame);
     if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
     const hir::ExprId rhs_id =
-        frame.current_procedural_body->AddExpr(*std::move(rhs_or));
+        frame.current_procedural_body->exprs.Add(*std::move(rhs_or));
     return hir::Expr{
         .type = *type_id,
         .data =
@@ -72,7 +72,7 @@ auto LowerAssignmentExprProc(
   hir::Expr rhs_expr = *std::move(rhs_or);
   if (rhs_expr.type.value != type_id->value) {
     const hir::ExprId inner_id =
-        frame.current_procedural_body->AddExpr(std::move(rhs_expr));
+        frame.current_procedural_body->exprs.Add(std::move(rhs_expr));
     rhs_expr = hir::Expr{
         .type = *type_id,
         .data =
@@ -82,7 +82,7 @@ auto LowerAssignmentExprProc(
     };
   }
   const hir::ExprId rhs_id =
-      frame.current_procedural_body->AddExpr(std::move(rhs_expr));
+      frame.current_procedural_body->exprs.Add(std::move(rhs_expr));
   return hir::Expr{
       .type = *type_id,
       .data =
@@ -106,7 +106,7 @@ auto LowerIncDecExprProc(
   auto target_or = proc.LowerExpr(un.operand(), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   const hir::ExprId target_id =
-      frame.current_procedural_body->AddExpr(*std::move(target_or));
+      frame.current_procedural_body->exprs.Add(*std::move(target_or));
 
   auto type_id = module.InternType(*un.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));

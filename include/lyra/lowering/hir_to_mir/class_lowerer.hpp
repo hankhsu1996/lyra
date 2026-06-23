@@ -110,7 +110,7 @@ class ClassLowerer {
       hir::StructuralHops hops, hir::StructuralSubroutineId id) const
       -> const hir::StructuralSubroutineDecl& {
     if (hops.value == 0) {
-      return hir_scope_->structural_subroutines.at(id.value);
+      return hir_scope_->structural_subroutines.Get(id);
     }
     if (parent_ == nullptr) {
       throw InternalError(

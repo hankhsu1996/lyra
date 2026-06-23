@@ -32,8 +32,8 @@ auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
             // exact same type as spelling it out -- and reads as the idiomatic
             // loop counter.
             const auto& lv = view.BlockAtHops(d.induction_var.hops)
-                                 .vars.at(d.induction_var.var.value);
-            const auto& init_expr = view.Block().exprs.at(d.init.value);
+                                 .vars.Get(d.induction_var.var);
+            const auto& init_expr = view.Block().exprs.Get(d.init);
             auto rendered_or = RenderExpr(view, init_expr);
             if (!rendered_or) {
               return std::unexpected(std::move(rendered_or.error()));
@@ -41,7 +41,7 @@ auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
             return "auto " + lv.name + " = " + *rendered_or;
           },
           [&](const mir::ForInitExpr& e) -> diag::Result<std::string> {
-            const auto& expr = view.Block().exprs.at(e.expr.value);
+            const auto& expr = view.Block().exprs.Get(e.expr);
             return RenderExpr(view, expr);
           },
       },
@@ -65,10 +65,10 @@ auto RenderEventEdgeAsRuntime(mir::EventEdge edge) -> std::string_view {
 auto RenderLocalDeclStmt(
     const ScopeView& view, const mir::LocalDeclStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& lv = view.BlockAtHops(s.target.hops).vars.at(s.target.var.value);
+  const auto& lv = view.BlockAtHops(s.target.hops).vars.Get(s.target.var);
   auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), lv.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  const auto& init_expr = view.Block().exprs.at(s.init.value);
+  const auto& init_expr = view.Block().exprs.Get(s.init);
   auto init_or = RenderExpr(view, init_expr);
   if (!init_or) return std::unexpected(std::move(init_or.error()));
   return Indent(indent) + *type_or + " " + lv.name + " = " + *init_or + ";\n";
@@ -77,7 +77,7 @@ auto RenderLocalDeclStmt(
 auto RenderExprStmt(
     const ScopeView& view, const mir::ExprStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& expr = view.Block().exprs.at(s.expr.value);
+  const auto& expr = view.Block().exprs.Get(s.expr);
   auto rendered_or = RenderExpr(view, expr);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   return Indent(indent) + *rendered_or + ";\n";
@@ -89,7 +89,7 @@ auto RenderExprStmt(
 auto RenderAwaitStmt(
     const ScopeView& view, const mir::AwaitStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& expr = view.Block().exprs.at(s.awaitable.value);
+  const auto& expr = view.Block().exprs.Get(s.awaitable);
   auto rendered_or = RenderExpr(view, expr);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   return Indent(indent) + "co_await " + *rendered_or + ";\n";
@@ -98,7 +98,7 @@ auto RenderAwaitStmt(
 auto RenderBlockStmtNode(
     const ScopeView& view, const mir::BlockStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& child = view.Block().GetChildScope(s.scope);
+  const auto& child = view.Block().child_scopes.Get(s.scope);
   std::string result = Indent(indent) + "{\n";
   auto child_or = RenderNestedBlock(view, child, indent + 1);
   if (!child_or) return std::unexpected(std::move(child_or.error()));
@@ -135,7 +135,7 @@ auto RenderForkStmtNode(
   // its own `fork_branches` in its own C++ scope.
   const std::string vec = "fork_branches";
   const ScopeView fork_view =
-      view.WithBlock(view.Block().GetChildScope(s.scope));
+      view.WithBlock(view.Block().child_scopes.Get(s.scope));
   std::string out = Indent(indent) + "{\n";
   auto locals_or = RenderBlockStatements(fork_view, indent + 1);
   if (!locals_or) return std::unexpected(std::move(locals_or.error()));
@@ -157,8 +157,8 @@ auto RenderForkStmtNode(
 auto RenderIfStmtNode(
     const ScopeView& view, const mir::IfStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& cond_expr = view.Block().exprs.at(s.condition.value);
-  const auto& then_scope = view.Block().GetChildScope(s.then_scope);
+  const auto& cond_expr = view.Block().exprs.Get(s.condition);
+  const auto& then_scope = view.Block().child_scopes.Get(s.then_scope);
   auto cond_or = RenderConditionAsBool(view, cond_expr);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   auto then_or = RenderNestedBlock(view, then_scope, indent + 1);
@@ -168,7 +168,7 @@ auto RenderIfStmtNode(
   result += *then_or;
   result += Indent(indent) + "}";
   if (s.else_scope.has_value()) {
-    const auto& else_scope = view.Block().GetChildScope(*s.else_scope);
+    const auto& else_scope = view.Block().child_scopes.Get(*s.else_scope);
     auto else_or = RenderNestedBlock(view, else_scope, indent + 1);
     if (!else_or) return std::unexpected(std::move(else_or.error()));
     result += " else {\n";
@@ -182,8 +182,8 @@ auto RenderIfStmtNode(
 auto RenderConstructOwnedObjectStmt(
     const ScopeView& view, const mir::ConstructOwnedObjectStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
-  const auto& var = view.Class().GetMember(s.target);
-  const auto& target_scope = view.Class().GetNestedClass(s.scope_id);
+  const auto& var = view.Class().members.Get(s.target);
+  const auto& target_scope = view.Class().nested_classes.Get(s.scope_id);
   std::string trailing_args;
   for (const auto arg_id : s.args) {
     auto arg_or = RenderExpr(view, view.Expr(arg_id));
@@ -259,7 +259,7 @@ auto RenderExternalUnitFill(
 auto RenderConstructExternalUnitStmt(
     const ScopeView& view, const mir::ConstructExternalUnitStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
-  const auto& var = view.Class().GetMember(s.target);
+  const auto& var = view.Class().members.Get(s.target);
   return RenderExternalUnitFill(
       view, "self->" + var.name, var.type, s.unit_name, var.name, s.dims, 0,
       indent);
@@ -284,7 +284,7 @@ auto RenderForStmtNode(
   }
   std::string cond;
   if (s.condition.has_value()) {
-    const auto& cond_expr = view.Block().exprs.at(s.condition->value);
+    const auto& cond_expr = view.Block().exprs.Get(*s.condition);
     auto cond_or = RenderConditionAsBool(view, cond_expr);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
     cond = *std::move(cond_or);
@@ -292,12 +292,12 @@ auto RenderForStmtNode(
   std::string step;
   for (std::size_t i = 0; i < s.step.size(); ++i) {
     if (i != 0) step += ", ";
-    const auto& step_expr = view.Block().exprs.at(s.step[i].value);
+    const auto& step_expr = view.Block().exprs.Get(s.step[i]);
     auto step_or = RenderExpr(view, step_expr);
     if (!step_or) return std::unexpected(std::move(step_or.error()));
     step += *step_or;
   }
-  const auto& block = view.Block().GetChildScope(s.scope);
+  const auto& block = view.Block().child_scopes.Get(s.scope);
   auto body_or = RenderNestedBlock(view, block, indent + 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   std::string result =
@@ -313,10 +313,10 @@ auto RenderForStmtNode(
 auto RenderWhileStmtNode(
     const ScopeView& view, const mir::WhileStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& cond_expr = view.Block().exprs.at(s.condition.value);
+  const auto& cond_expr = view.Block().exprs.Get(s.condition);
   auto cond_or = RenderConditionAsBool(view, cond_expr);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const auto& block = view.Block().GetChildScope(s.scope);
+  const auto& block = view.Block().child_scopes.Get(s.scope);
   auto body_or = RenderNestedBlock(view, block, indent + 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   std::string result =
@@ -329,10 +329,10 @@ auto RenderWhileStmtNode(
 auto RenderDoWhileStmtNode(
     const ScopeView& view, const mir::DoWhileStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const auto& cond_expr = view.Block().exprs.at(s.condition.value);
+  const auto& cond_expr = view.Block().exprs.Get(s.condition);
   auto cond_or = RenderConditionAsBool(view, cond_expr);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const auto& block = view.Block().GetChildScope(s.scope);
+  const auto& block = view.Block().child_scopes.Get(s.scope);
   auto body_or = RenderNestedBlock(view, block, indent + 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   std::string result = Indent(indent) + "do {\n";
@@ -350,7 +350,7 @@ auto RenderSensitivityRefPtr(
     -> diag::Result<std::string> {
   auto name = RenderMemberName(view, ref);
   if (!name) return std::unexpected(std::move(name.error()));
-  const auto& var = view.EnclosingClassAtHops(ref.hops).GetMember(ref.var);
+  const auto& var = view.EnclosingClassAtHops(ref.hops).members.Get(ref.var);
   if (std::holds_alternative<mir::ExternalRefType>(
           view.Unit().GetType(var.type).data)) {
     return *name + ".AsObservable()";
@@ -483,15 +483,15 @@ auto RenderBlockStatements(const ScopeView& view, std::size_t indent)
   // scope it; render the block's body directly instead of emitting a redundant
   // `{ }`. Recursing collapses a chain of such blocks.
   if (block.root_stmts.size() == 1) {
-    const auto& only = block.stmts.at(block.root_stmts.front().value);
+    const auto& only = block.stmts.Get(block.root_stmts.front());
     if (const auto* block_stmt = std::get_if<mir::BlockStmt>(&only.data)) {
-      const auto& inner = block.GetChildScope(block_stmt->scope);
+      const auto& inner = block.child_scopes.Get(block_stmt->scope);
       return RenderBlockStatements(view.WithBlock(inner), indent);
     }
   }
   std::string out;
   for (const auto& sid : block.root_stmts) {
-    auto rendered_or = RenderStmt(view, block.stmts.at(sid.value), indent);
+    auto rendered_or = RenderStmt(view, block.stmts.Get(sid), indent);
     if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
     out += *rendered_or;
   }
