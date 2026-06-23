@@ -8,7 +8,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -16,42 +16,35 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto LowerHirConcatExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::ConcatExpr& c,
+// An aggregate value-build's meaning is independent of the enclosing scope, so
+// one template over the pass class serves both contexts. Explicit
+// instantiations for the two pass classes live in the implementation file.
+template <ExprLowerer Lowerer>
+auto LowerHirConcatExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirReplicationExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::ReplicationExpr& r,
+template <ExprLowerer Lowerer>
+auto LowerHirAssignmentPatternExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirAssignmentPatternExprProc(
-    ProcessLowerer& process, WalkFrame frame,
-    const hir::AssignmentPatternExpr& a, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
-auto LowerHirAssignmentPatternReplicationExprProc(
-    ProcessLowerer& process, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerHirAssignmentPatternReplicationExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
-auto LowerHirDynamicArrayNewExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirAssociativeAssignmentPatternExprProc(
-    ProcessLowerer& process, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerHirAssociativeAssignmentPatternExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
-auto LowerHirConcatExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
+// Replication and `new[]` appear only in procedural value-build positions, so
+// they stay procedural-only handlers rather than shared templates.
+auto LowerHirReplicationExprProc(
+    ProcessLowerer& process, WalkFrame frame, const hir::ReplicationExpr& r,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
-auto LowerHirAssignmentPatternExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::AssignmentPatternExpr& a, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
-auto LowerHirAssignmentPatternReplicationExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
-auto LowerHirAssociativeAssignmentPatternExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+auto LowerHirDynamicArrayNewExprProc(
+    ProcessLowerer& process, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

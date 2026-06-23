@@ -77,44 +77,60 @@ auto ResolveDelayTicks(ProcessLowerer& process, const hir::DelayControl& d)
       resolver, process.HirBody().exprs.Get(d.duration));
 }
 
-// LRM 15.5.2 `@e body;`. HIR -> MIR expands the timed statement into a
-// Block { AwaitStmt(MethodCall(Await)); body; } inside a fresh child scope --
-// the same shape used for `@*` (LRM 9.4.2.2), substituting a suspending
-// named-event await in place of SensitivityWaitStmt.
-auto LowerNamedEventTimedStmt(
+// LRM 9.4.2.2 `@*`-shaped timed statement: a fresh child scope holding a
+// prepended wait / control statement followed by the lowered body. The four
+// timing forms differ only in that control statement; `build_wait` produces it
+// and may lower sub-expressions into the child block (the named-event form
+// awaits a lowered event expression).
+auto LowerTimedWaitWrapper(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::TimedStmt& t, const hir::NamedEventControl& nec)
-    -> diag::Result<mir::Stmt> {
-  const hir::ProceduralBody& hir_proc = process.HirBody();
+    hir::StmtId inner_stmt, auto build_wait) -> diag::Result<mir::Stmt> {
   mir::Block child_block;
   const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
-  auto receiver_or =
-      process.LowerExpr(hir_proc.exprs.Get(nec.event), child_frame);
-  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::ExprId receiver_id =
-      child_block.exprs.Add(*std::move(receiver_or));
-  mir::Expr await_call{
-      .data =
-          mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = support::BuiltinFn::kAwait},
-              .arguments = {receiver_id},
-          },
-      .type = process.Module().Unit().builtins.void_type};
-  const mir::ExprId await_id = child_block.exprs.Add(std::move(await_call));
-  child_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::AwaitStmt{.awaitable = await_id}});
-  const hir::Stmt& inner_hir = hir_proc.stmts.Get(t.stmt);
+  auto wait_or = build_wait(child_block, child_frame);
+  if (!wait_or) return std::unexpected(std::move(wait_or.error()));
+  child_block.AppendStmt(*std::move(wait_or));
+  const hir::Stmt& inner_hir = process.HirBody().stmts.Get(inner_stmt);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
-  if (!inner_or) {
-    return std::unexpected(std::move(inner_or.error()));
-  }
+  if (!inner_or) return std::unexpected(std::move(inner_or.error()));
   child_block.AppendStmt(*std::move(inner_or));
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
+}
+
+// LRM 15.5.2 `@e body;`: a suspending named-event await in place of the `@*`
+// SensitivityWaitStmt.
+auto LowerNamedEventTimedStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::TimedStmt& t, const hir::NamedEventControl& nec)
+    -> diag::Result<mir::Stmt> {
+  return LowerTimedWaitWrapper(
+      process, frame, std::move(label), t.stmt,
+      [&](mir::Block& child_block,
+          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
+        auto receiver_or = process.LowerExpr(
+            process.HirBody().exprs.Get(nec.event), child_frame);
+        if (!receiver_or) {
+          return std::unexpected(std::move(receiver_or.error()));
+        }
+        const mir::ExprId receiver_id =
+            child_block.exprs.Add(*std::move(receiver_or));
+        mir::Expr await_call{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinFnCallee{.id = support::BuiltinFn::kAwait},
+                    .arguments = {receiver_id},
+                },
+            .type = process.Module().Unit().builtins.void_type};
+        const mir::ExprId await_id =
+            child_block.exprs.Add(std::move(await_call));
+        return mir::Stmt{
+            .label = std::nullopt,
+            .data = mir::AwaitStmt{.awaitable = await_id}};
+      });
 }
 
 // LRM 9.4.2 `@(...) body`. Single-leaf trigger expressions lower directly to
@@ -124,42 +140,33 @@ auto LowerEventTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     diag::SourceSpan span, const hir::TimedStmt& t, const hir::EventControl& ec)
     -> diag::Result<mir::Stmt> {
-  std::vector<hir::SensitivityEntry> union_reads;
-  union_reads.reserve(ec.triggers.size());
-  for (const auto& trigger : ec.triggers) {
-    if (trigger.sensitivity_list.size() > 1) {
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedEventTriggerForm,
-          "compound event expressions (concatenation, arithmetic, dynamic "
-          "index) are not yet supported",
-          diag::UnsupportedCategory::kFeature);
-    }
-    for (auto leaf : trigger.sensitivity_list) {
-      // LRM 9.4.2 LSB-reduce: an edge event monitors only the LSB of the
-      // expression. A whole-signal footprint already reduces to the LSB at the
-      // runtime trigger, so only a bit-addressed footprint needs collapsing.
-      if (leaf.edge_kind != hir::EventEdge::kAnyChange &&
-          leaf.footprint.has_value()) {
-        leaf.footprint = {{leaf.footprint->first, leaf.footprint->first}};
-      }
-      union_reads.push_back(leaf);
-    }
-  }
-
-  mir::Block child_block;
-  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
-  child_block.AppendStmt(
-      BuildSensitivityWaitStmt(process.Owner(), union_reads));
-  const hir::Stmt& inner_hir = process.HirBody().stmts.Get(t.stmt);
-  auto inner_or = process.LowerStmt(inner_hir, child_frame);
-  if (!inner_or) {
-    return std::unexpected(std::move(inner_or.error()));
-  }
-  child_block.AppendStmt(*std::move(inner_or));
-  const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(child_block));
-  return mir::Stmt{
-      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
+  return LowerTimedWaitWrapper(
+      process, frame, std::move(label), t.stmt,
+      [&](mir::Block&, WalkFrame) -> diag::Result<mir::Stmt> {
+        std::vector<hir::SensitivityEntry> union_reads;
+        union_reads.reserve(ec.triggers.size());
+        for (const auto& trigger : ec.triggers) {
+          if (trigger.sensitivity_list.size() > 1) {
+            return diag::Unsupported(
+                span, diag::DiagCode::kUnsupportedEventTriggerForm,
+                "compound event expressions (concatenation, arithmetic, "
+                "dynamic index) are not yet supported",
+                diag::UnsupportedCategory::kFeature);
+          }
+          for (auto leaf : trigger.sensitivity_list) {
+            // LRM 9.4.2 LSB-reduce: an edge event monitors only the LSB of
+            // the expression. A whole-signal footprint already reduces to the
+            // LSB at the runtime trigger, so only a bit-addressed footprint
+            // needs collapsing.
+            if (leaf.edge_kind != hir::EventEdge::kAnyChange &&
+                leaf.footprint.has_value()) {
+              leaf.footprint = {{leaf.footprint->first, leaf.footprint->first}};
+            }
+            union_reads.push_back(leaf);
+          }
+        }
+        return BuildSensitivityWaitStmt(process.Owner(), union_reads);
+      });
 }
 
 // LRM 9.4.2.2 `@* body`.
@@ -167,20 +174,11 @@ auto LowerImplicitEventTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t, const hir::ImplicitEventControl& ie)
     -> diag::Result<mir::Stmt> {
-  mir::Block child_block;
-  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
-  child_block.AppendStmt(
-      BuildSensitivityWaitStmt(process.Owner(), ie.sensitivity_list));
-  const hir::Stmt& inner_hir = process.HirBody().stmts.Get(t.stmt);
-  auto inner_or = process.LowerStmt(inner_hir, child_frame);
-  if (!inner_or) {
-    return std::unexpected(std::move(inner_or.error()));
-  }
-  child_block.AppendStmt(*std::move(inner_or));
-  const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(child_block));
-  return mir::Stmt{
-      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
+  return LowerTimedWaitWrapper(
+      process, frame, std::move(label), t.stmt,
+      [&](mir::Block&, WalkFrame) -> diag::Result<mir::Stmt> {
+        return BuildSensitivityWaitStmt(process.Owner(), ie.sensitivity_list);
+      });
 }
 
 // LRM 9.4.1 `#N body`.
@@ -188,26 +186,15 @@ auto LowerDelayTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t, const hir::DelayControl& d)
     -> diag::Result<mir::Stmt> {
-  auto ticks_or = ResolveDelayTicks(process, d);
-  if (!ticks_or) {
-    return std::unexpected(std::move(ticks_or.error()));
-  }
-  mir::Block child_block;
-  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
-  child_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::DelayStmt{.duration = *ticks_or}});
-  const hir::Stmt& inner_hir = process.HirBody().stmts.Get(t.stmt);
-  auto inner_or = process.LowerStmt(inner_hir, child_frame);
-  if (!inner_or) {
-    return std::unexpected(std::move(inner_or.error()));
-  }
-  child_block.AppendStmt(*std::move(inner_or));
-  const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(child_block));
-  return mir::Stmt{
-      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
+  return LowerTimedWaitWrapper(
+      process, frame, std::move(label), t.stmt,
+      [&](mir::Block&, WalkFrame) -> diag::Result<mir::Stmt> {
+        auto ticks_or = ResolveDelayTicks(process, d);
+        if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
+        return mir::Stmt{
+            .label = std::nullopt,
+            .data = mir::DelayStmt{.duration = *ticks_or}};
+      });
 }
 
 }  // namespace

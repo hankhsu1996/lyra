@@ -7,6 +7,7 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -48,14 +49,10 @@ auto LowerContinuousAssign(
 
   // Build `self.Services()` in the body so an observable LHS routes through
   // `Var<T>::Set` (or `Mutate` for a selector chain). The body's `self` is
-  // already bound at depth 0 via `WithSelfBinding(self_id, ...)` above.
-  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
+  // already bound via `WithSelfBinding(self_id, ...)` above, so the self read
+  // resolves through the frame the same way a process body's does.
   const mir::ExprId body_self_ref = body_block.exprs.Add(
-      mir::MakeLocalRefExpr(
-          mir::BlockHops{
-              .value = body_frame.block_depth.value -
-                       body_frame.self_decl_depth.value},
-          self_id, self_ptr_type));
+      BuildSelfRefExpr(body_frame, frame.current_class->self_pointer_type));
   const mir::ExprId body_services_id = body_block.exprs.Add(
       mir::MakeServicesCallExpr(
           body_self_ref, lowerer.Module().Unit().builtins.services));
