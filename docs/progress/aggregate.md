@@ -41,7 +41,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | A2   | Done: traversal protocol (`first` / `last` / `next` / `prev`).          |
 | A3   | Done: `foreach` over an associative array (any dimensionality).         |
 | A4   | Done: literals with optional default, whole-array assignment.           |
-| A5   | Open: locator / reduction / map manipulation methods (key-indexed).     |
+| A5   | Done: locator / reduction / map manipulation methods (key-indexed).     |
 | A6   | Open: wildcard `[*]` index; struct / class index families.              |
 
 ## Dynamic Array
@@ -223,7 +223,7 @@ the lookup key and imposes an ordering.
       arrays of the same index type clears the target and copies every source entry (LRM 7.9.9); an
       associative array is assignment-compatible only with an associative array.
 
-- [ ] A5 -- The associative-array manipulation-method family (LRM 7.12): the locator family (`find`,
+- [x] A5 -- The associative-array manipulation-method family (LRM 7.12): the locator family (`find`,
       `find_index`, `find_first`, `find_first_index`, `find_last`, `find_last_index`, `min`, `max`,
       `unique`, `unique_index`), the reduction family (`sum`, `product`, `and`, `or`, `xor`), and
       the `map` projection, each with the `with`-clause and iterator-index forms shared with the
@@ -254,8 +254,11 @@ the lookup key and imposes an ordering.
 - Archive items: `datatypes/general/*`.
 - Unblocks: `control-flow.md` C10 (foreach over dynamic / queue / associative subset).
 - Decision: `../decisions/runtime-shape-and-default-value.md` -- runtime shape is retained on
-  `PackedArray`; collection wrappers carry one `oob_slot_` member that doubles as canonical-default
-  source and OOB-write discard target, reset via `T::ResetToDefault` on every OOB access.
+  `PackedArray`; each collection wrapper carries an immutable element-default prototype and a
+  separate write-discard sink, so the read path is pure.
+- Decision: `../decisions/array-manipulation-entry-stream.md` -- the LRM 7.12 locator / reduction /
+  map family runs over an ordered `(index, element)` entry stream the container supplies (the key
+  for an associative receiver), and the producer supplies every result's default prototype.
 - Cross-cutting: `refactor.md` R2 (done) -- these container value types are observable cells and
   react under `wait` / `always_comb` / `@*`, and a non-integral input port is admitted (the U8
   analogue for these containers).

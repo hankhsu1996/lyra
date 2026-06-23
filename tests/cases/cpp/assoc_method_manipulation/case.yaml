@@ -1,0 +1,29 @@
+id: cpp.assoc_method_manipulation
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_sum: 6
+    r_prod: 6
+    r_xor: 0
+    r_and: 0
+    r_or: 3
+    v_find: [2, 3]
+    v_find_idx: ["b", "c"]
+    v_first: [2]
+    v_first_idx: ["b"]
+    v_last: [3]
+    v_last_idx: ["c"]
+    v_min: [1]
+    v_max: [3]
+    v_unique: [1, 2, 3]
+    i_find_idx: [20, 30]
+    i_sum_key: 60
+    m_a: 11
+    m_b: 12
+    m_c: 13

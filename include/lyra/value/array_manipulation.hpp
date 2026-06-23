@@ -3,26 +3,50 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <ranges>
 #include <type_traits>
-#include <utility>
 #include <vector>
 
 #include "lyra/value/packed_array.hpp"
 
-// LRM 7.12 array manipulation algorithms, shared by every indexable sequence
-// container (dynamic array, queue, and -- when wired -- fixed unpacked array).
-// The algorithms read the receiver only through `data[i]` and `data.size()`, so
-// one template body serves `std::vector` and `std::deque` element storage
-// alike. Each container exposes the LRM-named methods as thin wrappers over
-// these; the value/index shaping (a result queue of elements vs of `int`) is
-// the container's concern, so the algorithms return a plain `std::vector` or a
-// scalar and never name a container type.
+// LRM 7.12 array manipulation algorithms. The locator / reduction / map family
+// runs over a container's entry stream -- a lazily iterated sequence of
+// `(index, element)` pairs in the container's natural order. The index is the
+// container's index type (an ordinal int for the sequence containers, the key
+// for an associative array), so these algorithms never synthesize it and never
+// name a container type; they are generic combinators over any range whose
+// element is an `Entry`. The container supplies that range (see each
+// container's `Entries()`), and shapes the result. The ordering family
+// (`reverse` / `sort`) is a separate, sequence-only in-place permutation that
+// needs random-access storage; it stays on the positional `Seq&` form below.
+// See `docs/decisions/array-manipulation-entry-stream.md`.
 namespace lyra::value::detail {
+
+// One entry of a container's 7.12 stream: the element by const pointer (a
+// Regular non-owning handle, so an Entry composes with every generic algorithm)
+// and its index value. The handle is a pointer rather than a reference because
+// the algorithms below feed entries through `std::ranges` machinery that
+// assumes a Regular (copyable, assignable) value; a reference member would
+// forfeit that.
+template <typename Index, typename Element>
+struct Entry {
+  using IndexType = Index;
+  using ElementType = Element;
+  Index index;
+  const Element* element;
+};
+
+template <typename R>
+using EntryOf = std::ranges::range_value_t<std::remove_cvref_t<R>>;
+template <typename R>
+using IndexOf = typename EntryOf<R>::IndexType;
+template <typename R>
+using ElementOf = typename EntryOf<R>::ElementType;
 
 // LRM 7.12.1 locator comparison over a key type (the element itself for the
 // no-`with` form, or the `with`-expression result otherwise). `PackedArray`
 // returns a 1-bit truth value whose X/Z collapses to false in a boolean
-// context; `String` / `double` return a plain `bool`.
+// context; `String` / `Real` return a plain `bool`.
 template <typename K>
 [[nodiscard]] auto LocatorKeyLess(const K& a, const K& b) -> bool {
   return static_cast<bool>(a < b);
@@ -40,84 +64,6 @@ template <typename K>
   }
 }
 
-// The per-element index handed to every `with`-clause closure. A `PackedArray`
-// so `item.index` reads as a regular integral value in SV semantics (LRM
-// 7.12.4).
-[[nodiscard]] inline auto LocatorIndex(std::size_t i) -> PackedArray {
-  return PackedArray::Int(static_cast<int>(i));
-}
-
-template <typename Seq>
-[[nodiscard]] auto ElementsAtIndices(
-    const Seq& data, const std::vector<std::size_t>& indices)
-    -> std::vector<typename Seq::value_type> {
-  std::vector<typename Seq::value_type> out;
-  out.reserve(indices.size());
-  for (std::size_t i : indices) {
-    out.push_back(data[i]);
-  }
-  return out;
-}
-
-[[nodiscard]] inline auto IndicesAsPacked(
-    const std::vector<std::size_t>& indices) -> std::vector<PackedArray> {
-  std::vector<PackedArray> out;
-  out.reserve(indices.size());
-  for (std::size_t i : indices) {
-    out.push_back(LocatorIndex(i));
-  }
-  return out;
-}
-
-enum class LocatorScan : std::uint8_t { kAll, kFirst, kLast };
-
-// LRM 7.12.1 find family core: positions satisfying `pred`, collecting every
-// match (`kAll`), the leftmost (`kFirst`), or the rightmost (`kLast`).
-template <typename Seq, typename F>
-[[nodiscard]] auto MatchingIndices(const Seq& data, F& pred, LocatorScan scan)
-    -> std::vector<std::size_t> {
-  std::vector<std::size_t> out;
-  if (scan == LocatorScan::kLast) {
-    for (std::size_t i = data.size(); i-- > 0;) {
-      if (static_cast<bool>(pred(data[i], LocatorIndex(i)))) {
-        out.push_back(i);
-        break;
-      }
-    }
-    return out;
-  }
-  for (std::size_t i = 0; i < data.size(); ++i) {
-    if (static_cast<bool>(pred(data[i], LocatorIndex(i)))) {
-      out.push_back(i);
-      if (scan == LocatorScan::kFirst) {
-        break;
-      }
-    }
-  }
-  return out;
-}
-
-// LRM 7.12.1 min / max core: the single position whose key the `prefer`
-// comparator ranks first. Empty receiver yields no position.
-template <typename Seq, typename F, typename Prefer>
-[[nodiscard]] auto ExtremumIndex(const Seq& data, F& key, Prefer prefer)
-    -> std::vector<std::size_t> {
-  std::vector<std::size_t> out;
-  if (!data.empty()) {
-    std::size_t pick = 0;
-    auto best = key(data[0], LocatorIndex(0));
-    for (std::size_t i = 1; i < data.size(); ++i) {
-      auto k = key(data[i], LocatorIndex(i));
-      if (prefer(k, best)) {
-        best = k;
-        pick = i;
-      }
-    }
-    out.push_back(pick);
-  }
-  return out;
-}
-
 template <typename K>
 [[nodiscard]] auto SeenContains(const std::vector<K>& seen, const K& k)
     -> bool {
@@ -129,84 +75,158 @@ template <typename K>
   return false;
 }
 
-// LRM 7.12.1 unique / unique_index core: the position of the first occurrence
-// of each distinct key value, in first-seen order.
-template <typename Seq, typename F>
-[[nodiscard]] auto UniqueRepresentativeIndices(const Seq& data, F& key)
-    -> std::vector<std::size_t> {
-  using KeyT = std::invoke_result_t<
-      F&, const typename Seq::value_type&, const PackedArray&>;
-  std::vector<std::size_t> out;
-  std::vector<KeyT> seen;
-  for (std::size_t i = 0; i < data.size(); ++i) {
-    auto k = key(data[i], LocatorIndex(i));
-    if (!SeenContains(seen, k)) {
-      seen.push_back(k);
-      out.push_back(i);
-    }
+// Collect a lazy view into a vector. The value layer is built under two
+// toolchains (the emit clang and the bazel GCC); `std::ranges::to` is absent on
+// the GCC libstdc++ the bazel build uses, and a 7.12 result is shaped into an
+// SV container by the caller anyway, so the projected values are gathered here.
+template <typename V>
+[[nodiscard]] auto ToVector(V view)
+    -> std::vector<std::ranges::range_value_t<V>> {
+  std::vector<std::ranges::range_value_t<V>> out;
+  for (auto&& x : view) {
+    out.push_back(static_cast<decltype(x)>(x));
   }
   return out;
 }
 
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayFind(const Seq& data, F pred)
-    -> std::vector<typename Seq::value_type> {
-  return ElementsAtIndices(
-      data, MatchingIndices(data, pred, LocatorScan::kAll));
-}
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayFindIndex(const Seq& data, F pred)
-    -> std::vector<PackedArray> {
-  return IndicesAsPacked(MatchingIndices(data, pred, LocatorScan::kAll));
-}
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayFindFirst(const Seq& data, F pred)
-    -> std::vector<typename Seq::value_type> {
-  return ElementsAtIndices(
-      data, MatchingIndices(data, pred, LocatorScan::kFirst));
-}
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayFindFirstIndex(const Seq& data, F pred)
-    -> std::vector<PackedArray> {
-  return IndicesAsPacked(MatchingIndices(data, pred, LocatorScan::kFirst));
-}
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayFindLast(const Seq& data, F pred)
-    -> std::vector<typename Seq::value_type> {
-  return ElementsAtIndices(
-      data, MatchingIndices(data, pred, LocatorScan::kLast));
-}
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayFindLastIndex(const Seq& data, F pred)
-    -> std::vector<PackedArray> {
-  return IndicesAsPacked(MatchingIndices(data, pred, LocatorScan::kLast));
+// LRM 7.12.1 find core: the entries satisfying `pred`, as a lazy view. The
+// locator family composes over it -- `find` collects every match, `find_first`
+// is `take(1)`, `find_last` is `reverse | take(1)` -- so "leftmost" and
+// "rightmost" are view adaptors rather than a hand-rolled scan mode.
+template <typename R, typename Pred>
+[[nodiscard]] auto Matching(R entries, Pred pred) {
+  return entries | std::views::filter([pred](const auto& e) {
+           return static_cast<bool>(pred(*e.element, e.index));
+         });
 }
 
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayMin(const Seq& data, F key)
-    -> std::vector<typename Seq::value_type> {
-  return ElementsAtIndices(
-      data, ExtremumIndex(data, key, [](const auto& a, const auto& b) {
-        return LocatorKeyLess(a, b);
-      }));
+template <typename R, typename F>
+[[nodiscard]] auto ArrayFind(R entries, F pred) -> std::vector<ElementOf<R>> {
+  return ToVector(
+      Matching(entries, pred) |
+      std::views::transform([](const auto& e) { return *e.element; }));
 }
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayMax(const Seq& data, F key)
-    -> std::vector<typename Seq::value_type> {
-  return ElementsAtIndices(
-      data, ExtremumIndex(data, key, [](const auto& a, const auto& b) {
-        return LocatorKeyLess(b, a);
-      }));
+template <typename R, typename F>
+[[nodiscard]] auto ArrayFindIndex(R entries, F pred)
+    -> std::vector<IndexOf<R>> {
+  return ToVector(
+      Matching(entries, pred) |
+      std::views::transform([](const auto& e) { return e.index; }));
 }
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayUnique(const Seq& data, F key)
-    -> std::vector<typename Seq::value_type> {
-  return ElementsAtIndices(data, UniqueRepresentativeIndices(data, key));
+template <typename R, typename F>
+[[nodiscard]] auto ArrayFindFirst(R entries, F pred)
+    -> std::vector<ElementOf<R>> {
+  return ToVector(
+      Matching(entries, pred) | std::views::take(1) |
+      std::views::transform([](const auto& e) { return *e.element; }));
 }
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayUniqueIndex(const Seq& data, F key)
-    -> std::vector<PackedArray> {
-  return IndicesAsPacked(UniqueRepresentativeIndices(data, key));
+template <typename R, typename F>
+[[nodiscard]] auto ArrayFindFirstIndex(R entries, F pred)
+    -> std::vector<IndexOf<R>> {
+  return ToVector(
+      Matching(entries, pred) | std::views::take(1) |
+      std::views::transform([](const auto& e) { return e.index; }));
+}
+template <typename R, typename F>
+[[nodiscard]] auto ArrayFindLast(R entries, F pred)
+    -> std::vector<ElementOf<R>> {
+  return ToVector(
+      Matching(entries, pred) | std::views::reverse | std::views::take(1) |
+      std::views::transform([](const auto& e) { return *e.element; }));
+}
+template <typename R, typename F>
+[[nodiscard]] auto ArrayFindLastIndex(R entries, F pred)
+    -> std::vector<IndexOf<R>> {
+  return ToVector(
+      Matching(entries, pred) | std::views::reverse | std::views::take(1) |
+      std::views::transform([](const auto& e) { return e.index; }));
+}
+
+// LRM 7.12.1 min / max: the element of the entry whose projected key is least
+// (`min`) or greatest (`max`), first on ties. Empty receiver yields an empty
+// queue.
+template <typename R, typename F>
+[[nodiscard]] auto ArrayMin(R entries, F key) -> std::vector<ElementOf<R>> {
+  auto proj = [&](const auto& e) { return key(*e.element, e.index); };
+  auto cmp = [](const auto& a, const auto& b) { return LocatorKeyLess(a, b); };
+  std::vector<ElementOf<R>> out;
+  auto it = std::ranges::min_element(entries, cmp, proj);
+  if (it != std::ranges::end(entries)) {
+    auto e = *it;
+    out.push_back(*e.element);
+  }
+  return out;
+}
+template <typename R, typename F>
+[[nodiscard]] auto ArrayMax(R entries, F key) -> std::vector<ElementOf<R>> {
+  auto proj = [&](const auto& e) { return key(*e.element, e.index); };
+  auto cmp = [](const auto& a, const auto& b) { return LocatorKeyLess(a, b); };
+  std::vector<ElementOf<R>> out;
+  auto it = std::ranges::max_element(entries, cmp, proj);
+  if (it != std::ranges::end(entries)) {
+    auto e = *it;
+    out.push_back(*e.element);
+  }
+  return out;
+}
+
+// LRM 7.12.1 unique core: the first-occurrence entry of each distinct
+// projected-key value, in first-seen order. The standard library offers only
+// adjacent de-duplication, so the first-occurrence pass is explicit; the
+// element / index split is then the same `transform` the find family uses.
+template <typename R, typename F>
+[[nodiscard]] auto UniqueEntries(R entries, F key) -> std::vector<EntryOf<R>> {
+  using KeyT = std::invoke_result_t<F&, const ElementOf<R>&, const IndexOf<R>&>;
+  std::vector<EntryOf<R>> out;
+  std::vector<KeyT> seen;
+  for (const auto& e : entries) {
+    auto k = key(*e.element, e.index);
+    if (!SeenContains(seen, k)) {
+      seen.push_back(k);
+      out.push_back(e);
+    }
+  }
+  return out;
+}
+template <typename R, typename F>
+[[nodiscard]] auto ArrayUnique(R entries, F key) -> std::vector<ElementOf<R>> {
+  return ToVector(
+      UniqueEntries(entries, key) |
+      std::views::transform([](const auto& e) { return *e.element; }));
+}
+template <typename R, typename F>
+[[nodiscard]] auto ArrayUniqueIndex(R entries, F key)
+    -> std::vector<IndexOf<R>> {
+  return ToVector(
+      UniqueEntries(entries, key) |
+      std::views::transform([](const auto& e) { return e.index; }));
+}
+
+// LRM 7.12.3 reduction: fold the closure-projected values with `comb`, seeded
+// by the first projected value so an empty receiver yields `proto` (LRM is
+// silent on empty input; the producer supplies the result-shaped zero -- see
+// the decision doc). The result type follows the closure's return type, so a
+// width-widening `with`-expression widens the result.
+template <typename R, typename Key, typename Comb, typename Acc>
+[[nodiscard]] auto ArrayFold(R entries, Acc proto, Key key, Comb comb) -> Acc {
+  auto vals = entries | std::views::transform([&](const auto& e) {
+                return key(*e.element, e.index);
+              });
+  return std::ranges::fold_left_first(vals, comb).value_or(std::move(proto));
+}
+
+// LRM 7.12.5 projection into the closure's return type, in entry order. The
+// caller pairs the result with each entry's index when the result container is
+// keyed (associative); a sequence container drops the index.
+template <typename R, typename F>
+[[nodiscard]] auto ArrayMap(R entries, F closure) -> std::vector<
+    std::invoke_result_t<F&, const ElementOf<R>&, const IndexOf<R>&>> {
+  using U = std::invoke_result_t<F&, const ElementOf<R>&, const IndexOf<R>&>;
+  std::vector<U> out;
+  for (const auto& e : entries) {
+    out.push_back(closure(*e.element, e.index));
+  }
+  return out;
 }
 
 // LRM 7.12.2 reverse: in-place reversal. `iter_swap` exchanges element storage
@@ -222,7 +242,9 @@ auto ArrayReverse(Seq& data) -> void {
 // introsort move-assigns elements, which trips `PackedArray`'s
 // shape-preservation invariant; exchanging storage via the ADL `swap` stays
 // shape-safe, and test-sized arrays make the asymptotic cost a non-issue. The
-// per-element key is materialised once, then the elements move in sync.
+// per-element key is materialised once, then the elements move in sync. The
+// ordering family is positional (LRM 7.12.2 is sequence-only), so the index
+// passed to the key closure is the ordinal position.
 template <typename Seq, typename F, typename Compare>
 auto ArraySortByKey(Seq& data, F key, Compare cmp) -> void {
   using KeyT = std::invoke_result_t<
@@ -230,7 +252,7 @@ auto ArraySortByKey(Seq& data, F key, Compare cmp) -> void {
   std::vector<KeyT> keys;
   keys.reserve(data.size());
   for (std::size_t i = 0; i < data.size(); ++i) {
-    keys.push_back(key(data[i], LocatorIndex(i)));
+    keys.push_back(key(data[i], PackedArray::Int(static_cast<int>(i))));
   }
   using std::swap;
   for (std::size_t i = 0; i + 1 < data.size(); ++i) {
@@ -245,47 +267,6 @@ auto ArraySortByKey(Seq& data, F key, Compare cmp) -> void {
       swap(data[i], data[pick]);
     }
   }
-}
-
-// LRM 7.12.3 reduction: fold the closure-projected values with `combine`. The
-// result type follows the closure's return type, so a width-widening
-// `with`-expression (`sum with (int'(item))`) widens the result (LRM 7.12.3).
-// An empty receiver yields the closure-shaped zero (slang behaviour; LRM is
-// silent), synthesised from the element shield slot.
-template <typename Seq, typename T, typename F, typename Combine>
-[[nodiscard]] auto ArrayFold(
-    const Seq& data, const T& oob_slot, F key, Combine combine)
-    -> std::invoke_result_t<F&, const T&, const PackedArray&> {
-  if (data.empty()) {
-    T zero = oob_slot;
-    zero.ResetToDefault();
-    auto acc = key(zero, LocatorIndex(0));
-    acc.ResetToDefault();
-    return acc;
-  }
-  auto acc = key(data[0], LocatorIndex(0));
-  for (std::size_t i = 1; i < data.size(); ++i) {
-    auto v = key(data[i], LocatorIndex(i));
-    combine(acc, v);
-  }
-  return acc;
-}
-
-// LRM 7.12.5 projection into the closure's return type. The caller seeds the
-// result container with a producer-supplied shield because that element type's
-// runtime shape is not recoverable from the C++ type alone.
-template <typename Seq, typename F>
-[[nodiscard]] auto ArrayMap(const Seq& data, F& closure)
-    -> std::vector<std::invoke_result_t<
-        F&, const typename Seq::value_type&, const PackedArray&>> {
-  using U = std::invoke_result_t<
-      F&, const typename Seq::value_type&, const PackedArray&>;
-  std::vector<U> out;
-  out.reserve(data.size());
-  for (std::size_t i = 0; i < data.size(); ++i) {
-    out.push_back(closure(data[i], LocatorIndex(i)));
-  }
-  return out;
 }
 
 // LRM 7.4.5 contiguous-range gather. The slice is `count` elements starting at

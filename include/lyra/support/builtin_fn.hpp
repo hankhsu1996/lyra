@@ -160,6 +160,11 @@ enum class BuiltinFn : std::uint16_t {
 // `reverse`) take no closure.
 [[nodiscard]] auto ArrayMethodTakesClosure(BuiltinFn id) -> bool;
 
+// True iff the LRM 7.12 method yields a new value whose result shape the
+// producer supplies (the reduction, locator, and map families). The ordering
+// family (`sort` / `rsort` / `reverse`) mutates in place and yields none.
+[[nodiscard]] auto ArrayMethodProducesValue(BuiltinFn id) -> bool;
+
 // True iff `id` is an associative-array traversal entry (LRM 7.9.4 -- 7.9.7).
 // The traversal family lowers to an immediately-invoked closure (mutates the
 // index argument and runs the write-back inline).

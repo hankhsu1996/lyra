@@ -65,6 +65,30 @@ auto ArrayMethodTakesClosure(BuiltinFn id) -> bool {
   }
 }
 
+auto ArrayMethodProducesValue(BuiltinFn id) -> bool {
+  switch (id) {
+    case BuiltinFn::kSum:
+    case BuiltinFn::kProduct:
+    case BuiltinFn::kAnd:
+    case BuiltinFn::kOr:
+    case BuiltinFn::kXor:
+    case BuiltinFn::kFind:
+    case BuiltinFn::kFindIndex:
+    case BuiltinFn::kFindFirst:
+    case BuiltinFn::kFindFirstIndex:
+    case BuiltinFn::kFindLast:
+    case BuiltinFn::kFindLastIndex:
+    case BuiltinFn::kMin:
+    case BuiltinFn::kMax:
+    case BuiltinFn::kUnique:
+    case BuiltinFn::kUniqueIndex:
+    case BuiltinFn::kMap:
+      return true;
+    default:
+      return false;
+  }
+}
+
 auto IsAssociativeTraversalFn(BuiltinFn id) -> bool {
   switch (id) {
     case BuiltinFn::kAssocFirst:
