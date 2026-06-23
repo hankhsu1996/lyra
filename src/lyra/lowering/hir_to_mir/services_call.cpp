@@ -11,7 +11,7 @@ auto BuildServicesCallExpr(
   auto& body = *frame.current_block;
   const auto& builtins = process.Module().Unit().builtins;
   const mir::ExprId self_id = body.exprs.Add(
-      BuildSelfRefExpr(frame, frame.current_class->self_pointer_type));
+      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return mir::MakeServicesCallExpr(self_id, builtins.services);
 }
 

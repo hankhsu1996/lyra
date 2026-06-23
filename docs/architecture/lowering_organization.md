@@ -421,12 +421,23 @@ keyed on an input `mir::ExprId`:
 
 - **Factory** -- builds a fresh node (or a subtree whose top is a fresh node) from inputs that are
   not an arena handle: a `mir::TypeId`, an HIR node, a literal value, or the body's `self`. A
-  factory returns the top node as a detached `mir::Expr`; the caller interns it with
-  `scope.AddExpr(...)`. A composite factory interns its own children into `frame.current_block` as
-  it builds and returns only the top detached, so interning the result yields a self-contained arena
-  subtree. The `mir::Make*Expr` family (pure stateless constructors) and the lowering `Build*Expr`
-  family (frame-aware) are factories. Examples: `MakeLocalRefExpr`, `BuildSelfRefExpr`,
-  `BuildServicesCallExpr`, `BuildDefaultValueExpr`, `BuildArrayConstructExpr`.
+  factory carries one of two prefixes, split by whether it mutates a scope -- not by whether it
+  reads the frame:
+  - **`Make*`** is pure: it interns nothing. It assembles the returned node from ready-made parts
+    and may read a `const` frame (the `self` hop count, a builtin `mir::TypeId`), but it touches no
+    arena. The caller interns the single returned node with `scope.AddExpr(...)`. Examples:
+    `MakeLocalRefExpr`, `MakeSelfRefExpr`, `MakeServicesCallExpr`.
+  - **`Build*`** is composite: it interns one or more child nodes into a scope
+    (`frame.current_block` or a passed `mir::Block&`) as it builds, then returns the top node --
+    detached as a `mir::Expr` for the caller to intern, or already interned as a `mir::ExprId`.
+    Examples: `BuildServicesCallExpr` (interns the `self` child that `MakeServicesCallExpr` takes
+    ready-made), `BuildDefaultValueExpr`, `BuildElementAccessCallExpr`,
+    `BuildArrayConstructionCall`.
+
+  The distinguishing test is the scope side effect: a helper that reads `self` off a
+  `const WalkFrame&` and returns the node for the caller to intern is `Make*` however much frame
+  state it consults, while one that interns even a single child is `Build*`.
+
 - **Transform** -- keyed on an input `mir::ExprId`: it reads `scope.GetExpr(id)` to decide what to
   build, or may return the input unchanged (pass-through). A transform returns a `mir::ExprId`,
   because it operates on already-interned arena nodes. Examples: `WrapUnpackedIndex` (returns its

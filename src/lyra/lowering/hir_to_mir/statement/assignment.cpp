@@ -258,7 +258,7 @@ auto LowerSubroutineCallWithWritebacks(
   // invariant 11); the SV actuals (with output / inout temps) follow.
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size() + 1);
-  call_args.push_back(wrapper.exprs.Add(BuildSelfRefExpr(
+  call_args.push_back(wrapper.exprs.Add(MakeSelfRefExpr(
       wrapper_frame, wrapper_frame.current_class->self_pointer_type)));
   std::vector<OutputArgSlot> writebacks;
 

@@ -52,7 +52,7 @@ auto LowerContinuousAssign(
   // already bound via `WithSelfBinding(self_id, ...)` above, so the self read
   // resolves through the frame the same way a process body's does.
   const mir::ExprId body_self_ref = body_block.exprs.Add(
-      BuildSelfRefExpr(body_frame, frame.current_class->self_pointer_type));
+      MakeSelfRefExpr(body_frame, frame.current_class->self_pointer_type));
   const mir::ExprId body_services_id = body_block.exprs.Add(
       mir::MakeServicesCallExpr(
           body_self_ref, lowerer.Module().Unit().builtins.services));
@@ -65,8 +65,7 @@ auto LowerContinuousAssign(
       mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
 
-  body_block.AppendStmt(
-      BuildSensitivityWaitStmt(lowerer, src.sensitivity_list));
+  body_block.AppendStmt(MakeSensitivityWaitStmt(lowerer, src.sensitivity_list));
 
   const mir::BlockId body_scope_id =
       process_block.child_scopes.Add(std::move(body_block));

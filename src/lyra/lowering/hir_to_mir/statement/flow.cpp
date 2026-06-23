@@ -63,7 +63,7 @@ auto LowerStaticVarDeclStmt(
   }
 
   const mir::ExprId ctor_self_read =
-      ctor_block.exprs.Add(BuildSelfRefExpr(ctor_frame, self_ptr_type));
+      ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type));
   const mir::ExprId target = ctor_block.exprs.Add(
       mir::MakeMemberAccessExpr(
           ctor_self_read,

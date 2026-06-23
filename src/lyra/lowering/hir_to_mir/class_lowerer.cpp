@@ -344,8 +344,7 @@ auto BuildDownwardNavValue(
         "owned child");
   }
 
-  mir::ExprId cur =
-      ctor_block.exprs.Add(BuildSelfRefExpr(frame, self_ptr_type));
+  mir::ExprId cur = ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
   for (std::size_t i = 0; i + 1 < hops.size(); ++i) {
     std::vector<mir::ExprId> args;
     args.push_back(cur);
@@ -415,7 +414,7 @@ void InstallCrossUnitRefs(
     const mir::ExprId nav = ctor_block.exprs.Add(BuildDownwardNavValue(
         module, frame, head_name, cu.path, slot_type, scope_ptr_type));
     const mir::ExprId self_for_target = ctor_block.exprs.Add(
-        BuildSelfRefExpr(frame, mir_class.self_pointer_type));
+        MakeSelfRefExpr(frame, mir_class.self_pointer_type));
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::Expr{
             .data =
@@ -770,7 +769,7 @@ auto ClassLowerer::Run(
   const mir::TypeId void_type = module.Unit().AddType(mir::VoidType{});
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
   const auto self_read = [&]() -> mir::ExprId {
-    return ctor_block.exprs.Add(BuildSelfRefExpr(scope_frame, self_ptr_type));
+    return ctor_block.exprs.Add(MakeSelfRefExpr(scope_frame, self_ptr_type));
   };
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};

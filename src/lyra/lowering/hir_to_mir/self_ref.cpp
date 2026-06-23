@@ -10,7 +10,7 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto BuildSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
+auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr {
   return mir::MakeLocalRefExpr(
       frame.block_depth - frame.self_decl_depth, *frame.self_binding,
@@ -22,7 +22,7 @@ auto BuildStructuralMemberAccessExpr(
   const mir::TypeId field_type =
       frame.EnclosingClassAtHops(member.hops).members.Get(member.var).type;
   const mir::ExprId receiver = frame.current_block->exprs.Add(
-      BuildSelfRefExpr(frame, frame.current_class->self_pointer_type));
+      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return mir::MakeMemberAccessExpr(receiver, member, field_type);
 }
 

@@ -137,7 +137,7 @@ auto LowerAssociativeTraversal(
 // is the flat `support::BuiltinFn`; the only decision here is whether the
 // id names a type-namespace-qualified static call (e.g. `MyEnum::first()`)
 // or an instance call.
-auto BuildBuiltinMirCallee(
+auto MakeBuiltinMirCallee(
     const ModuleLowerer& module, const hir::BuiltinMethodRef& b,
     hir::TypeId hir_dispatch_type) -> mir::Callee {
   if (support::IsStaticBuiltinFn(b.method)) {
@@ -338,7 +338,7 @@ auto LowerStructuralSubroutineCall(
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
   args.push_back(block.exprs.Add(
-      BuildSelfRefExpr(frame, frame.current_class->self_pointer_type)));
+      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)));
   for (std::size_t i = 0; i < c.arguments.size(); ++i) {
     if (!c.arguments[i].has_value()) {
       throw InternalError("user-function call argument unexpectedly elided");
@@ -419,7 +419,7 @@ auto LowerBuiltinMethodCall(
   // Translate the callee up front so the same trait (`mir::IsMutatingCallee`)
   // drives both lowering and backend rendering.
   const mir::Callee mir_callee =
-      BuildBuiltinMirCallee(module, b, hir_dispatch_type);
+      MakeBuiltinMirCallee(module, b, hir_dispatch_type);
 
   // A static call has no value receiver -- `args[0]` is the discardable
   // type-bearer, the type-namespace qualifier rides on the callee. An

@@ -14,7 +14,7 @@ class ClassLowerer;
 // an expression for explicit `@(...)`). The single point where always_comb /
 // always_latch (LRM 9.2.2.2.1, procedure-attached) and `@*` (LRM 9.4.2.2,
 // TimedStmt-attached) converge onto the same MIR runtime construct.
-auto BuildSensitivityWaitStmt(
+auto MakeSensitivityWaitStmt(
     const ClassLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt;
 

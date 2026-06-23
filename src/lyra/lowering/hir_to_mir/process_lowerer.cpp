@@ -337,7 +337,7 @@ auto ProcessLowerer::Run(const hir::Process& src)
     case hir::ProcessKind::kAlwaysLatch:
       return LowerForeverProcess(
           *this,
-          BuildSensitivityWaitStmt(*owner_, src.implicit_sensitivity_list));
+          MakeSensitivityWaitStmt(*owner_, src.implicit_sensitivity_list));
   }
   throw InternalError("ProcessLowerer::Run: unknown HIR ProcessKind");
 }
