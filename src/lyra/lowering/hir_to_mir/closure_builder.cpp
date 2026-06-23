@@ -25,9 +25,9 @@ ClosureBuilder::ClosureBuilder(
   const mir::TypeId self_pointer_type =
       enclosing.current_class->self_pointer_type;
   self_binding_ =
-      body_.AddLocal(mir::LocalDecl{.name = "self", .type = self_pointer_type});
+      body_.vars.Add(mir::LocalDecl{.name = "self", .type = self_pointer_type});
   const mir::ExprId outer_self_read =
-      outer_->AddExpr(BuildSelfRefExpr(enclosing, self_pointer_type));
+      outer_->exprs.Add(BuildSelfRefExpr(enclosing, self_pointer_type));
   captures_.push_back(
       mir::Capture{.value = outer_self_read, .binding = self_binding_});
   frame_ = enclosing.WithBlock(&body_)
@@ -40,21 +40,21 @@ ClosureBuilder::ClosureBuilder(
 auto ClosureBuilder::AddParam(std::string_view name, mir::TypeId type)
     -> mir::LocalId {
   const mir::LocalId binding =
-      body_.AddLocal(mir::LocalDecl{.name = std::string(name), .type = type});
+      body_.vars.Add(mir::LocalDecl{.name = std::string(name), .type = type});
   params_.push_back(mir::Parameter{.binding = binding});
   return binding;
 }
 
 auto ClosureBuilder::CaptureByValue(mir::ExprId outer_id, std::string_view name)
     -> mir::ExprId {
-  const mir::Expr& outer_expr = outer_->GetExpr(outer_id);
+  const mir::Expr& outer_expr = outer_->exprs.Get(outer_id);
   if (std::holds_alternative<mir::IntegerLiteral>(outer_expr.data)) {
-    return body_.AddExpr(outer_expr);
+    return body_.exprs.Add(outer_expr);
   }
-  const mir::LocalId binding = body_.AddLocal(
+  const mir::LocalId binding = body_.vars.Add(
       mir::LocalDecl{.name = std::string(name), .type = outer_expr.type});
   captures_.push_back(mir::Capture{.value = outer_id, .binding = binding});
-  return body_.AddExpr(
+  return body_.exprs.Add(
       mir::Expr{
           .data =
               mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = binding},
@@ -74,7 +74,7 @@ auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
 }
 
 auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
-  const mir::TypeId result_type = body_.GetExpr(result).type;
+  const mir::TypeId result_type = body_.exprs.Get(result).type;
   body_.AppendStmt(mir::ReturnStmt{.value = result});
   return Finish(result_type);
 }
@@ -91,7 +91,7 @@ auto ClosureBuilder::BuildVoid() -> mir::Expr {
 
 auto BuildClosureCallExpr(mir::Block& block, mir::Expr closure) -> mir::Expr {
   const mir::TypeId result_type = closure.type;
-  const mir::ExprId closure_id = block.AddExpr(std::move(closure));
+  const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
   return mir::Expr{
       .data =
           mir::CallExpr{

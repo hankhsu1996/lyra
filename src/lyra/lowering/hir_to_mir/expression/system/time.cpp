@@ -27,8 +27,8 @@ auto LowerTimeSystemSubroutineCall(
   }
   auto& body = *frame.current_block;
   const mir::ExprId services_id =
-      body.AddExpr(BuildServicesCallExpr(process, frame));
-  const mir::ExprId unit_power_id = body.AddExpr(
+      body.exprs.Add(BuildServicesCallExpr(process, frame));
+  const mir::ExprId unit_power_id = body.exprs.Add(
       mir::MakeInt32Literal(
           builtins.int32,
           static_cast<std::int64_t>(process.Resolution().unit_power)));

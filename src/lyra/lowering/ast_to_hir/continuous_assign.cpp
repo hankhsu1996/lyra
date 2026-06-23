@@ -52,12 +52,12 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   auto lhs_or = LowerExpr(assign.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id =
-      frame.current_structural_scope->AddExpr(*std::move(lhs_or));
+      frame.current_structural_scope->exprs.Add(*std::move(lhs_or));
 
   auto rhs_or = LowerExpr(assign.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id =
-      frame.current_structural_scope->AddExpr(*std::move(rhs_or));
+      frame.current_structural_scope->exprs.Add(*std::move(rhs_or));
 
   // LRM 10.3.2: continuous assignment sensitivity is the read set of the
   // RHS expression. slang treats the ContinuousAssignSymbol as the

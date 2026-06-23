@@ -122,7 +122,7 @@ auto LowerNamedValueProc(
           diag::UnsupportedCategory::kFeature);
     }
     const hir::TypeId type_id =
-        frame.current_procedural_body->procedural_vars.at(local->value).type;
+        frame.current_procedural_body->procedural_vars.Get(*local).type;
     return MakeRefExpr(hir::ProceduralVarRef{.var = *local}, type_id, span);
   }
 

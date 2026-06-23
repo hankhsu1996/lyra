@@ -139,10 +139,10 @@ auto PopulateInstancePortConnections(
         reads = module.Sensitivity().AnalyzeReads(*expr, inst);
       }
       const hir::ExprId lhs_id =
-          frame.current_structural_scope->AddExpr(std::move(child_ref));
+          frame.current_structural_scope->exprs.Add(std::move(child_ref));
       const hir::ExprId rhs_id =
-          frame.current_structural_scope->AddExpr(std::move(rhs));
-      frame.current_structural_scope->AddContinuousAssign(
+          frame.current_structural_scope->exprs.Add(std::move(rhs));
+      frame.current_structural_scope->continuous_assigns.Add(
           hir::ContinuousAssign{
               .span = span,
               .lhs = lhs_id,
@@ -164,13 +164,13 @@ auto PopulateInstancePortConnections(
     auto lhs_or = scope.LowerExpr(assign.left(), frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
     const hir::ExprId lhs_id =
-        frame.current_structural_scope->AddExpr(*std::move(lhs_or));
+        frame.current_structural_scope->exprs.Add(*std::move(lhs_or));
     const hir::ExprId rhs_id =
-        frame.current_structural_scope->AddExpr(std::move(child_ref));
+        frame.current_structural_scope->exprs.Add(std::move(child_ref));
     const std::uint64_t width = port_type.getBitWidth();
     const std::vector<SensitivityRead> reads{
         SensitivityRead{.symbol = internal, .bit_range = {0, width - 1}}};
-    frame.current_structural_scope->AddContinuousAssign(
+    frame.current_structural_scope->continuous_assigns.Add(
         hir::ContinuousAssign{
             .span = span,
             .lhs = lhs_id,

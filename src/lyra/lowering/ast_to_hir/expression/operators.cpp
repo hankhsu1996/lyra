@@ -89,7 +89,7 @@ auto LowerConversionExprProc(
   auto operand_or = proc.LowerExpr(conv.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id =
-      frame.current_procedural_body->AddExpr(*std::move(operand_or));
+      frame.current_procedural_body->exprs.Add(*std::move(operand_or));
   auto type_id = proc.Module().InternType(*conv.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -111,7 +111,7 @@ auto LowerUnaryExprProc(
   auto operand_or = proc.LowerExpr(un.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id =
-      frame.current_procedural_body->AddExpr(*std::move(operand_or));
+      frame.current_procedural_body->exprs.Add(*std::move(operand_or));
   auto type_id = proc.Module().InternType(*un.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -131,11 +131,11 @@ auto LowerBinaryExprProc(
   auto lhs_or = proc.LowerExpr(bin.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id =
-      frame.current_procedural_body->AddExpr(*std::move(lhs_or));
+      frame.current_procedural_body->exprs.Add(*std::move(lhs_or));
   auto rhs_or = proc.LowerExpr(bin.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id =
-      frame.current_procedural_body->AddExpr(*std::move(rhs_or));
+      frame.current_procedural_body->exprs.Add(*std::move(rhs_or));
   auto type_id = proc.Module().InternType(*bin.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -170,15 +170,15 @@ auto LowerConditionalExprProc(
   auto cond_or = proc.LowerExpr(*cond.conditions[0].expr, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id =
-      frame.current_procedural_body->AddExpr(*std::move(cond_or));
+      frame.current_procedural_body->exprs.Add(*std::move(cond_or));
   auto then_or = proc.LowerExpr(cond.left(), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const hir::ExprId then_id =
-      frame.current_procedural_body->AddExpr(*std::move(then_or));
+      frame.current_procedural_body->exprs.Add(*std::move(then_or));
   auto else_or = proc.LowerExpr(cond.right(), frame);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const hir::ExprId else_id =
-      frame.current_procedural_body->AddExpr(*std::move(else_or));
+      frame.current_procedural_body->exprs.Add(*std::move(else_or));
   auto type_id = proc.Module().InternType(*cond.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -200,7 +200,7 @@ auto LowerConversionExprStructural(
   auto operand_or = scope.LowerExpr(conv.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id =
-      frame.current_structural_scope->AddExpr(*std::move(operand_or));
+      frame.current_structural_scope->exprs.Add(*std::move(operand_or));
   auto type_id = scope.Module().InternType(*conv.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -222,7 +222,7 @@ auto LowerUnaryExprStructural(
   auto operand_or = scope.LowerExpr(un.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id =
-      frame.current_structural_scope->AddExpr(*std::move(operand_or));
+      frame.current_structural_scope->exprs.Add(*std::move(operand_or));
   auto type_id = scope.Module().InternType(*un.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -242,11 +242,11 @@ auto LowerBinaryExprStructural(
   auto lhs_or = scope.LowerExpr(bin.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id =
-      frame.current_structural_scope->AddExpr(*std::move(lhs_or));
+      frame.current_structural_scope->exprs.Add(*std::move(lhs_or));
   auto rhs_or = scope.LowerExpr(bin.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id =
-      frame.current_structural_scope->AddExpr(*std::move(rhs_or));
+      frame.current_structural_scope->exprs.Add(*std::move(rhs_or));
   auto type_id = scope.Module().InternType(*bin.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -281,15 +281,15 @@ auto LowerConditionalExprStructural(
   auto cond_or = scope.LowerExpr(*cond.conditions[0].expr, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id =
-      frame.current_structural_scope->AddExpr(*std::move(cond_or));
+      frame.current_structural_scope->exprs.Add(*std::move(cond_or));
   auto then_or = scope.LowerExpr(cond.left(), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const hir::ExprId then_id =
-      frame.current_structural_scope->AddExpr(*std::move(then_or));
+      frame.current_structural_scope->exprs.Add(*std::move(then_or));
   auto else_or = scope.LowerExpr(cond.right(), frame);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const hir::ExprId else_id =
-      frame.current_structural_scope->AddExpr(*std::move(else_or));
+      frame.current_structural_scope->exprs.Add(*std::move(else_or));
   auto type_id = scope.Module().InternType(*cond.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{

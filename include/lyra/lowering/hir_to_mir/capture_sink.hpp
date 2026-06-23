@@ -85,7 +85,7 @@ class CaptureSink {
     }
     // The cell read is evaluated one scope outside the body (where the capture
     // is spawned), so its hops run from there down to the variable.
-    const mir::ExprId cell = outer_->AddExpr(
+    const mir::ExprId cell = outer_->exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
@@ -96,14 +96,14 @@ class CaptureSink {
     mir::ExprId source{};
     if (by_value_depth_ == decl_depth) {
       // By-value snapshot: the binding owns a copy; the source is the read.
-      binding = body_->AddLocal(mir::LocalDecl{.name = name, .type = type});
+      binding = body_->vars.Add(mir::LocalDecl{.name = name, .type = type});
       source = cell;
     } else {
       // By-reference alias: the source constructs a reference to the cell and
       // the binding holds that reference (its `RefType`).
       source = BuildReferenceArg(*unit_, *outer_, cell, type);
-      binding = body_->AddLocal(
-          mir::LocalDecl{.name = name, .type = outer_->GetExpr(source).type});
+      binding = body_->vars.Add(
+          mir::LocalDecl{.name = name, .type = outer_->exprs.Get(source).type});
     }
     requests_.push_back(
         CaptureRequest{

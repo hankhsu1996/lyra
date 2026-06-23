@@ -27,7 +27,7 @@ auto LowerContinuousAssign(
     const ClassLowerer& lowerer, WalkFrame frame, std::string name,
     const hir::ContinuousAssign& src) -> diag::Result<mir::Process> {
   mir::Block process_block;
-  const mir::LocalId self_id = process_block.AddLocal(
+  const mir::LocalId self_id = process_block.vars.Add(
       mir::LocalDecl{
           .name = "self", .type = frame.current_class->self_pointer_type});
   mir::Block body_block;
@@ -37,33 +37,33 @@ auto LowerContinuousAssign(
 
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
 
-  auto rhs_or = lowerer.LowerExpr(hir_scope.GetExpr(src.rhs), body_frame);
+  auto rhs_or = lowerer.LowerExpr(hir_scope.exprs.Get(src.rhs), body_frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::TypeId assign_type = (*rhs_or).type;
-  const mir::ExprId rhs_id = body_block.AddExpr(*std::move(rhs_or));
+  const mir::ExprId rhs_id = body_block.exprs.Add(*std::move(rhs_or));
 
-  auto lhs_or = lowerer.LowerLhsExpr(hir_scope.GetExpr(src.lhs), body_frame);
+  auto lhs_or = lowerer.LowerLhsExpr(hir_scope.exprs.Get(src.lhs), body_frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = body_block.AddExpr(*std::move(lhs_or));
+  const mir::ExprId lhs_id = body_block.exprs.Add(*std::move(lhs_or));
 
   // Build `self.Services()` in the body so an observable LHS routes through
   // `Var<T>::Set` (or `Mutate` for a selector chain). The body's `self` is
   // already bound at depth 0 via `WithSelfBinding(self_id, ...)` above.
   const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
-  const mir::ExprId body_self_ref = body_block.AddExpr(
+  const mir::ExprId body_self_ref = body_block.exprs.Add(
       mir::MakeLocalRefExpr(
           mir::BlockHops{
               .value = body_frame.block_depth.value -
                        body_frame.self_decl_depth.value},
           self_id, self_ptr_type));
-  const mir::ExprId body_services_id = body_block.AddExpr(
+  const mir::ExprId body_services_id = body_block.exprs.Add(
       mir::MakeServicesCallExpr(
           body_self_ref, lowerer.Module().Unit().builtins.services));
 
   const mir::Expr assign_expr = BuildObservableAssignExpr(
       lowerer.Module().Unit(), body_block, body_services_id, lhs_id, rhs_id,
       std::nullopt, assign_type, lowerer.Module().Unit().builtins.void_type);
-  const mir::ExprId assign_id = body_block.AddExpr(assign_expr);
+  const mir::ExprId assign_id = body_block.exprs.Add(assign_expr);
   body_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
@@ -72,7 +72,7 @@ auto LowerContinuousAssign(
       BuildSensitivityWaitStmt(lowerer, src.sensitivity_list));
 
   const mir::BlockId body_scope_id =
-      process_block.AddChildScope(std::move(body_block));
+      process_block.child_scopes.Add(std::move(body_block));
   process_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,

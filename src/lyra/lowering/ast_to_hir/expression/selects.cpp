@@ -35,7 +35,7 @@ auto LowerUnboundedLiteralProc(
   }
   auto& body = *frame.current_procedural_body;
   const hir::TypeId int32_type = proc.Module().Unit().builtins.int32;
-  const hir::ExprId size_id = body.AddExpr(
+  const hir::ExprId size_id = body.exprs.Add(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -45,7 +45,7 @@ auto LowerUnboundedLiteralProc(
                   .arguments = {*frame.dollar_base}},
           .span = span});
   const hir::ExprId one_id =
-      body.AddExpr(hir::MakeInt32Literal(1, int32_type, span));
+      body.exprs.Add(hir::MakeInt32Literal(1, int32_type, span));
   return hir::Expr{
       .type = int32_type,
       .data =
@@ -69,14 +69,14 @@ auto LowerElementSelectExprProc(
   auto base_or = proc.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id =
-      frame.current_procedural_body->AddExpr(*std::move(base_or));
+      frame.current_procedural_body->exprs.Add(*std::move(base_or));
 
   const WalkFrame idx_frame =
       sel.value().type->isQueue() ? frame.WithDollarBase(base_id) : frame;
   auto idx_or = proc.LowerExpr(sel.selector(), idx_frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const hir::ExprId idx_id =
-      frame.current_procedural_body->AddExpr(*std::move(idx_or));
+      frame.current_procedural_body->exprs.Add(*std::move(idx_or));
 
   auto type_id = proc.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
@@ -106,19 +106,19 @@ auto LowerRangeSelectExprProc(
   auto base_or = proc.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id =
-      frame.current_procedural_body->AddExpr(*std::move(base_or));
+      frame.current_procedural_body->exprs.Add(*std::move(base_or));
 
   const WalkFrame bound_frame =
       sel.value().type->isQueue() ? frame.WithDollarBase(base_id) : frame;
   auto left_or = proc.LowerExpr(sel.left(), bound_frame);
   if (!left_or) return std::unexpected(std::move(left_or.error()));
   const hir::ExprId left_id =
-      frame.current_procedural_body->AddExpr(*std::move(left_or));
+      frame.current_procedural_body->exprs.Add(*std::move(left_or));
 
   auto right_or = proc.LowerExpr(sel.right(), bound_frame);
   if (!right_or) return std::unexpected(std::move(right_or.error()));
   const hir::ExprId right_id =
-      frame.current_procedural_body->AddExpr(*std::move(right_or));
+      frame.current_procedural_body->exprs.Add(*std::move(right_or));
 
   hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
     switch (sel.getSelectionKind()) {
@@ -163,7 +163,7 @@ auto LowerMemberAccessExprProc(
   auto base_or = proc.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id =
-      frame.current_procedural_body->AddExpr(*std::move(base_or));
+      frame.current_procedural_body->exprs.Add(*std::move(base_or));
   auto type_id = proc.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -194,11 +194,11 @@ auto LowerElementSelectExprStructural(
   auto base_or = scope.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id =
-      frame.current_structural_scope->AddExpr(*std::move(base_or));
+      frame.current_structural_scope->exprs.Add(*std::move(base_or));
   auto idx_or = scope.LowerExpr(sel.selector(), frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const hir::ExprId idx_id =
-      frame.current_structural_scope->AddExpr(*std::move(idx_or));
+      frame.current_structural_scope->exprs.Add(*std::move(idx_or));
   auto type_id = scope.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
@@ -222,15 +222,15 @@ auto LowerRangeSelectExprStructural(
   auto base_or = scope.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id =
-      frame.current_structural_scope->AddExpr(*std::move(base_or));
+      frame.current_structural_scope->exprs.Add(*std::move(base_or));
   auto left_or = scope.LowerExpr(sel.left(), frame);
   if (!left_or) return std::unexpected(std::move(left_or.error()));
   const hir::ExprId left_id =
-      frame.current_structural_scope->AddExpr(*std::move(left_or));
+      frame.current_structural_scope->exprs.Add(*std::move(left_or));
   auto right_or = scope.LowerExpr(sel.right(), frame);
   if (!right_or) return std::unexpected(std::move(right_or.error()));
   const hir::ExprId right_id =
-      frame.current_structural_scope->AddExpr(*std::move(right_or));
+      frame.current_structural_scope->exprs.Add(*std::move(right_or));
   hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
     switch (sel.getSelectionKind()) {
       case slang::ast::RangeSelectionKind::Simple:
@@ -271,7 +271,7 @@ auto LowerMemberAccessExprStructural(
   auto base_or = scope.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id =
-      frame.current_structural_scope->AddExpr(*std::move(base_or));
+      frame.current_structural_scope->exprs.Add(*std::move(base_or));
   auto type_id = scope.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{

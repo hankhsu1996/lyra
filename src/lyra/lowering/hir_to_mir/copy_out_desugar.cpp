@@ -27,15 +27,14 @@ auto BuildOutputArgSlot(
   // typed lvalue so an observable destination's writeback routes through
   // `Var<T>::Set`. For the copy-in initializer the temp wants the current
   // value, so a separate `LowerExpr` lowering wraps the cell in `Get`.
-  auto target_or =
-      proc.LowerLhsExpr(hir_body.exprs.at(actual_hir.value), frame);
+  auto target_or = proc.LowerLhsExpr(hir_body.exprs.Get(actual_hir), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   const mir::TypeId actual_type =
-      proc.Module().TranslateType(hir_body.exprs.at(actual_hir.value).type);
-  const mir::ExprId actual_id = wrapper.AddExpr(*std::move(target_or));
-  auto value_or = proc.LowerExpr(hir_body.exprs.at(actual_hir.value), frame);
+      proc.Module().TranslateType(hir_body.exprs.Get(actual_hir).type);
+  const mir::ExprId actual_id = wrapper.exprs.Add(*std::move(target_or));
+  auto value_or = proc.LowerExpr(hir_body.exprs.Get(actual_hir), frame);
   if (!value_or) return std::unexpected(std::move(value_or.error()));
-  const mir::ExprId init_id = wrapper.AddExpr(*std::move(value_or));
+  const mir::ExprId init_id = wrapper.exprs.Add(*std::move(value_or));
   const mir::LocalRef temp = wrapper.AppendLocal(
       mir::LocalDecl{.name = std::string{temp_name}, .type = actual_type},
       init_id);
@@ -50,13 +49,13 @@ auto BuildCopyOutBlock(
     std::optional<mir::ExprId> assign_target_id,
     const std::vector<OutputArgSlot>& slots) -> mir::Stmt {
   const mir::TypeId call_type = call_expr.type;
-  const mir::ExprId call_id = wrapper.AddExpr(std::move(call_expr));
+  const mir::ExprId call_id = wrapper.exprs.Add(std::move(call_expr));
   const mir::TypeId void_type = unit.builtins.void_type;
 
   if (assign_target_id.has_value()) {
     mir::ExprId value_id = call_id;
     if (call_type != result_type) {
-      value_id = wrapper.AddExpr(
+      value_id = wrapper.exprs.Add(
           mir::Expr{
               .data =
                   mir::ConversionExpr{
@@ -67,7 +66,7 @@ auto BuildCopyOutBlock(
     const mir::Expr assign_expr = BuildObservableAssignExpr(
         unit, wrapper, services_id, *assign_target_id, value_id, std::nullopt,
         result_type, void_type);
-    const mir::ExprId assign_id = wrapper.AddExpr(assign_expr);
+    const mir::ExprId assign_id = wrapper.exprs.Add(assign_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
   } else if (call_suspends) {
     wrapper.AppendStmt(mir::AwaitStmt{.awaitable = call_id});
@@ -77,16 +76,16 @@ auto BuildCopyOutBlock(
 
   for (const OutputArgSlot& slot : slots) {
     const mir::ExprId temp_read =
-        wrapper.AddExpr(mir::Expr{.data = slot.temp, .type = slot.type});
+        wrapper.exprs.Add(mir::Expr{.data = slot.temp, .type = slot.type});
     const mir::Expr copy_out_expr = BuildObservableAssignExpr(
         unit, wrapper, services_id, slot.actual, temp_read, std::nullopt,
         slot.type, void_type);
-    const mir::ExprId copy_out = wrapper.AddExpr(copy_out_expr);
+    const mir::ExprId copy_out = wrapper.exprs.Add(copy_out_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = copy_out});
   }
 
   const mir::BlockId scope_id =
-      parent_frame.current_block->AddChildScope(std::move(wrapper));
+      parent_frame.current_block->child_scopes.Add(std::move(wrapper));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }

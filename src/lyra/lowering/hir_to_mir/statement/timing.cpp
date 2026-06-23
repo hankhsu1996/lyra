@@ -74,7 +74,7 @@ auto ResolveDelayTicks(ProcessLowerer& process, const hir::DelayControl& d)
     -> diag::Result<SimDuration> {
   const DelayTimeResolver resolver{process.Resolution()};
   return ResolveDelayDuration(
-      resolver, process.HirBody().exprs.at(d.duration.value));
+      resolver, process.HirBody().exprs.Get(d.duration));
 }
 
 // LRM 15.5.2 `@e body;`. HIR -> MIR expands the timed statement into a
@@ -89,9 +89,10 @@ auto LowerNamedEventTimedStmt(
   mir::Block child_block;
   const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
   auto receiver_or =
-      process.LowerExpr(hir_proc.exprs.at(nec.event.value), child_frame);
+      process.LowerExpr(hir_proc.exprs.Get(nec.event), child_frame);
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::ExprId receiver_id = child_block.AddExpr(*std::move(receiver_or));
+  const mir::ExprId receiver_id =
+      child_block.exprs.Add(*std::move(receiver_or));
   mir::Expr await_call{
       .data =
           mir::CallExpr{
@@ -99,19 +100,19 @@ auto LowerNamedEventTimedStmt(
               .arguments = {receiver_id},
           },
       .type = process.Module().Unit().builtins.void_type};
-  const mir::ExprId await_id = child_block.AddExpr(std::move(await_call));
+  const mir::ExprId await_id = child_block.exprs.Add(std::move(await_call));
   child_block.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
           .data = mir::AwaitStmt{.awaitable = await_id}});
-  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
+  const hir::Stmt& inner_hir = hir_proc.stmts.Get(t.stmt);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
   child_block.AppendStmt(*std::move(inner_or));
   const mir::BlockId scope_id =
-      frame.current_block->AddChildScope(std::move(child_block));
+      frame.current_block->child_scopes.Add(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -147,14 +148,14 @@ auto LowerEventTimedStmt(
   const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
   child_block.AppendStmt(
       BuildSensitivityWaitStmt(process.Owner(), union_reads));
-  const hir::Stmt& inner_hir = process.HirBody().stmts.at(t.stmt.value);
+  const hir::Stmt& inner_hir = process.HirBody().stmts.Get(t.stmt);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
   child_block.AppendStmt(*std::move(inner_or));
   const mir::BlockId scope_id =
-      frame.current_block->AddChildScope(std::move(child_block));
+      frame.current_block->child_scopes.Add(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -168,14 +169,14 @@ auto LowerImplicitEventTimedStmt(
   const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
   child_block.AppendStmt(
       BuildSensitivityWaitStmt(process.Owner(), ie.sensitivity_list));
-  const hir::Stmt& inner_hir = process.HirBody().stmts.at(t.stmt.value);
+  const hir::Stmt& inner_hir = process.HirBody().stmts.Get(t.stmt);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
   child_block.AppendStmt(*std::move(inner_or));
   const mir::BlockId scope_id =
-      frame.current_block->AddChildScope(std::move(child_block));
+      frame.current_block->child_scopes.Add(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -195,14 +196,14 @@ auto LowerDelayTimedStmt(
       mir::Stmt{
           .label = std::nullopt,
           .data = mir::DelayStmt{.duration = *ticks_or}});
-  const hir::Stmt& inner_hir = process.HirBody().stmts.at(t.stmt.value);
+  const hir::Stmt& inner_hir = process.HirBody().stmts.Get(t.stmt);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
   child_block.AppendStmt(*std::move(inner_or));
   const mir::BlockId scope_id =
-      frame.current_block->AddChildScope(std::move(child_block));
+      frame.current_block->child_scopes.Add(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -235,15 +236,15 @@ auto LowerEventTriggerStmt(
     const hir::EventTriggerStmt& et) -> diag::Result<mir::Stmt> {
   auto& block = *frame.current_block;
   auto receiver_or =
-      process.LowerExpr(process.HirBody().exprs.at(et.event.value), frame);
+      process.LowerExpr(process.HirBody().exprs.Get(et.event), frame);
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::ExprId receiver_id = block.AddExpr(*std::move(receiver_or));
+  const mir::ExprId receiver_id = block.exprs.Add(*std::move(receiver_or));
   // LRM 15.5.1: triggering reaches RuntimeServices to wake subscribers. The
   // engine handle is a real trailing argument, threaded the same way every
   // runtime effect threads it
   // (docs/decisions/runtime-effects-as-generic-calls.md).
   const mir::ExprId services_id =
-      block.AddExpr(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process, frame));
   mir::Expr call{
       .data =
           mir::CallExpr{
@@ -252,7 +253,7 @@ auto LowerEventTriggerStmt(
               .arguments = {receiver_id, services_id},
           },
       .type = process.Module().Unit().builtins.void_type};
-  const mir::ExprId call_id = block.AddExpr(std::move(call));
+  const mir::ExprId call_id = block.exprs.Add(std::move(call));
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};
 }
@@ -265,15 +266,15 @@ auto LowerWaitStmt(
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
-  const hir::Expr& hir_cond = hir_proc.exprs.at(w.cond.value);
+  const hir::Expr& hir_cond = hir_proc.exprs.Get(w.cond);
   auto cond_or = process.LowerExpr(hir_cond, wrapper_frame);
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  const mir::ExprId cond_id = wrapper.AddExpr(*std::move(cond_or));
-  const mir::TypeId cond_type = wrapper.GetExpr(cond_id).type;
+  const mir::ExprId cond_id = wrapper.exprs.Add(*std::move(cond_or));
+  const mir::TypeId cond_type = wrapper.exprs.Get(cond_id).type;
 
-  const mir::ExprId not_cond_id = wrapper.AddExpr(
+  const mir::ExprId not_cond_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::UnaryExpr{
@@ -286,7 +287,7 @@ auto LowerWaitStmt(
   inner_block.AppendStmt(BuildSensitivityWaitStmt(process.Owner(), reads));
 
   const mir::BlockId inner_scope_id =
-      wrapper.AddChildScope(std::move(inner_block));
+      wrapper.child_scopes.Add(std::move(inner_block));
 
   wrapper.AppendStmt(
       mir::Stmt{
@@ -294,7 +295,7 @@ auto LowerWaitStmt(
           .data = mir::WhileStmt{
               .condition = not_cond_id, .scope = inner_scope_id}});
 
-  const hir::Stmt& body_hir = hir_proc.stmts.at(w.body.value);
+  const hir::Stmt& body_hir = hir_proc.stmts.Get(w.body);
   auto body_or = process.LowerStmt(body_hir, wrapper_frame);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
@@ -302,7 +303,7 @@ auto LowerWaitStmt(
   wrapper.AppendStmt(*std::move(body_or));
 
   const mir::BlockId wrapper_scope_id =
-      frame.current_block->AddChildScope(std::move(wrapper));
+      frame.current_block->child_scopes.Add(std::move(wrapper));
 
   return mir::Stmt{
       .label = std::move(label),

@@ -82,7 +82,7 @@ auto LowerForkStmt(
         return std::unexpected(std::move(local_stmt.error()));
       }
       locals.push_back(
-          frame.current_procedural_body->AddStmt(*std::move(local_stmt)));
+          frame.current_procedural_body->stmts.Add(*std::move(local_stmt)));
     } else {
       branch_stmts.push_back(child);
     }
@@ -94,8 +94,8 @@ auto LowerForkStmt(
   for (const auto* child : branch_stmts) {
     auto child_stmt = proc.LowerStmt(*child, branch_frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-    branches.push_back(
-        branch_frame.current_procedural_body->AddStmt(*std::move(child_stmt)));
+    branches.push_back(branch_frame.current_procedural_body->stmts.Add(
+        *std::move(child_stmt)));
   }
 
   return hir::Stmt{
@@ -120,7 +120,7 @@ auto LowerStatementListStmt(
     auto child_stmt = proc.LowerStmt(*child, frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
     kids.push_back(
-        frame.current_procedural_body->AddStmt(*std::move(child_stmt)));
+        frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -143,13 +143,13 @@ auto LowerBlockStmt(
       auto child_stmt = proc.LowerStmt(*child, frame);
       if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
       kids.push_back(
-          frame.current_procedural_body->AddStmt(*std::move(child_stmt)));
+          frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
     }
   } else {
     auto child_stmt = proc.LowerStmt(block.body, frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
     kids.push_back(
-        frame.current_procedural_body->AddStmt(*std::move(child_stmt)));
+        frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
   }
   return hir::Stmt{
       .label = std::nullopt,

@@ -20,9 +20,9 @@ auto LowerHirInsideExprProc(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
-  auto lhs_or = process.LowerExpr(hir_process.exprs.at(in.lhs.value), frame);
+  auto lhs_or = process.LowerExpr(hir_process.exprs.Get(in.lhs), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = block.AddExpr(*std::move(lhs_or));
+  const mir::ExprId lhs_id = block.exprs.Add(*std::move(lhs_or));
 
   if (in.items.empty()) {
     throw InternalError(
@@ -34,7 +34,7 @@ auto LowerHirInsideExprProc(
         BuildHirInsideItemPredicate(process, frame, lhs_id, item, result_type);
     if (!pred_or) return std::unexpected(std::move(pred_or.error()));
     if (acc.has_value()) {
-      acc = block.AddExpr(
+      acc = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::BinaryExpr{
@@ -46,7 +46,7 @@ auto LowerHirInsideExprProc(
       acc = *pred_or;
     }
   }
-  return mir::Expr{block.GetExpr(*acc)};
+  return mir::Expr{block.exprs.Get(*acc)};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

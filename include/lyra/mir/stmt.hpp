@@ -8,6 +8,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
@@ -213,7 +214,7 @@ struct Stmt {
   StmtData data;
 };
 
-// `{...}` in MIR: an arena for the four kinds of locally-owned IR nodes (vars,
+// `{...}` in MIR: arenas for the four kinds of locally-owned IR nodes (vars,
 // exprs, stmts, child scopes) plus the ordered execution sequence at this
 // brace level (`root_stmts`). All four IDs are scope-local: `ExprId`, `StmtId`,
 // `LocalId`, and `BlockId` resolve against the same
@@ -221,63 +222,28 @@ struct Stmt {
 // hops; cross-scope statement / expression / scope references do not exist --
 // each Block is a self-contained subtree.
 struct Block {
-  std::vector<LocalDecl> vars;
-  std::vector<Expr> exprs;
-  std::vector<Stmt> stmts;
-  std::vector<Block> child_scopes;
+  base::Arena<LocalDecl, LocalId> vars;
+  base::Arena<Expr, ExprId> exprs;
+  base::Arena<Stmt, StmtId> stmts;
+  base::Arena<Block, BlockId> child_scopes;
   std::vector<StmtId> root_stmts;
 
-  [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr& {
-    return exprs.at(id.value);
-  }
-
   [[nodiscard]] auto GetExprType(ExprId id) const -> TypeId {
-    return GetExpr(id).type;
+    return exprs.Get(id).type;
   }
 
-  [[nodiscard]] auto GetStmt(StmtId id) const -> const Stmt& {
-    return stmts.at(id.value);
-  }
-
-  [[nodiscard]] auto GetChildScope(BlockId id) const -> const Block& {
-    return child_scopes.at(id.value);
-  }
-
-  auto AddLocal(LocalDecl decl) -> LocalId {
-    const LocalId id{static_cast<std::uint32_t>(vars.size())};
-    vars.push_back(std::move(decl));
-    return id;
-  }
-  [[nodiscard]] auto GetLocal(LocalId id) const -> const LocalDecl& {
-    return vars.at(id.value);
-  }
-  auto AddExpr(Expr expr) -> ExprId {
-    const ExprId id{static_cast<std::uint32_t>(exprs.size())};
-    exprs.push_back(std::move(expr));
-    return id;
-  }
-  auto AddStmt(Stmt stmt) -> StmtId {
-    const StmtId id{static_cast<std::uint32_t>(stmts.size())};
-    stmts.push_back(std::move(stmt));
-    return id;
-  }
-  auto AddChildScope(Block scope) -> BlockId {
-    const BlockId id{static_cast<std::uint32_t>(child_scopes.size())};
-    child_scopes.push_back(std::move(scope));
-    return id;
-  }
   void AddRootStmt(StmtId id) {
     root_stmts.push_back(id);
   }
   auto AppendStmt(Stmt stmt) -> StmtId {
-    const StmtId id = AddStmt(std::move(stmt));
+    const StmtId id = stmts.Add(std::move(stmt));
     root_stmts.push_back(id);
     return id;
   }
 
   // Append a label-less statement to the body in one step: stage it in the
   // stmts arena and register it as a root statement. Encapsulates the
-  // AddStmt-then-push pairing so a synthesized statement cannot be added to
+  // stage-then-register pairing so a synthesized statement cannot be added to
   // the arena yet left out of the executed sequence.
   auto AppendStmt(StmtData data) -> StmtId {
     return AppendStmt(Stmt{.label = std::nullopt, .data = std::move(data)});
@@ -286,9 +252,10 @@ struct Block {
   // Declare a body-local variable: register it in the var arena and emit its
   // declaration statement in the body. The two must co-occur for a genuine
   // local, so they are exposed as one operation. (A method formal is a local
-  // declared in the signature, not the body, and uses bare AddLocal instead.)
+  // declared in the signature, not the body, so it is registered without a
+  // declaration statement.)
   auto AppendLocal(LocalDecl decl, ExprId init) -> LocalRef {
-    const LocalId var = AddLocal(std::move(decl));
+    const LocalId var = vars.Add(std::move(decl));
     const LocalRef ref{.hops = BlockHops{.value = 0}, .var = var};
     AppendStmt(LocalDeclStmt{.target = ref, .init = init});
     return ref;
@@ -298,7 +265,7 @@ struct Block {
   // child scope of this scope and consuming it. The IfStmt's then_scope id
   // resolves against this scope's child_scopes.
   auto AppendIfThen(ExprId cond, Block then_body) -> StmtId {
-    const BlockId then_scope_id = AddChildScope(std::move(then_body));
+    const BlockId then_scope_id = child_scopes.Add(std::move(then_body));
     return AppendStmt(
         IfStmt{
             .condition = cond,

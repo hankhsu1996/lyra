@@ -33,15 +33,15 @@ auto LowerTimeFormatSystemSubroutineCall(
   }
 
   std::vector<mir::ExprId> call_args;
-  call_args.push_back(body.AddExpr(BuildServicesCallExpr(process, frame)));
+  call_args.push_back(body.exprs.Add(BuildServicesCallExpr(process, frame)));
   for (const auto& arg : args) {
     if (!arg.has_value()) {
       throw InternalError(
           "$timeformat positional argument unexpectedly elided");
     }
-    auto lowered = process.LowerExpr(hir_proc.exprs.at(arg->value), frame);
+    auto lowered = process.LowerExpr(hir_proc.exprs.Get(*arg), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    call_args.push_back(body.AddExpr(*std::move(lowered)));
+    call_args.push_back(body.exprs.Add(*std::move(lowered)));
   }
 
   return mir::Expr{
@@ -60,23 +60,23 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   const auto resolution = process.Resolution();
 
   const mir::ExprId services_id =
-      body.AddExpr(BuildServicesCallExpr(process, frame));
-  const mir::ExprId scope_name_lit = body.AddExpr(
+      body.exprs.Add(BuildServicesCallExpr(process, frame));
+  const mir::ExprId scope_name_lit = body.exprs.Add(
       mir::Expr{
           .data =
               mir::StringLiteral{.value = std::string(process.Owner().Name())},
           .type = builtins.string});
-  const mir::ExprId scope_name_id = body.AddExpr(
+  const mir::ExprId scope_name_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::ConstructorCallee{},
                   .arguments = {scope_name_lit}},
           .type = builtins.string});
-  const mir::ExprId unit_power_id = body.AddExpr(
+  const mir::ExprId unit_power_id = body.exprs.Add(
       mir::MakeInt32Literal(
           builtins.int32, static_cast<std::int64_t>(resolution.unit_power)));
-  const mir::ExprId precision_power_id = body.AddExpr(
+  const mir::ExprId precision_power_id = body.exprs.Add(
       mir::MakeInt32Literal(
           builtins.int32,
           static_cast<std::int64_t>(resolution.precision_power)));

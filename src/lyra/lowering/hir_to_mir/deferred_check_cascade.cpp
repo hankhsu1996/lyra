@@ -45,7 +45,7 @@ auto FlattenUniqueCascade(
   out.bodies.push_back(root.then_stmt);
   std::optional<hir::StmtId> cur_else = root.else_stmt;
   while (cur_else.has_value()) {
-    const hir::Stmt& s = proc.stmts.at(cur_else->value);
+    const hir::Stmt& s = proc.stmts.Get(*cur_else);
     const auto* nested = std::get_if<hir::IfStmt>(&s.data);
     if (nested == nullptr || nested->check.has_value()) {
       out.tail_else = cur_else;
@@ -99,10 +99,10 @@ auto SnapshotPredicate(
     std::size_t index, mir::TypeId predicate_type,
     mir::ExprId predicate_expr_id) -> mir::LocalId {
   const std::string var_name = std::format("_lyra_unique_cond_{}", index);
-  const mir::LocalId snap_var = wrapper.AddLocal(
+  const mir::LocalId snap_var = wrapper.vars.Add(
       mir::LocalDecl{.name = var_name, .type = predicate_type});
   const mir::ExprId snap_default_init =
-      wrapper.AddExpr(BuildDefaultValueExpr(module, frame, predicate_type));
+      wrapper.exprs.Add(BuildDefaultValueExpr(module, frame, predicate_type));
   wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -112,13 +112,13 @@ auto SnapshotPredicate(
                       .hops = mir::BlockHops{.value = 0}, .var = snap_var},
               .init = snap_default_init}});
 
-  const mir::ExprId snap_target_id = wrapper.AddExpr(
+  const mir::ExprId snap_target_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::LocalRef{
                   .hops = mir::BlockHops{.value = 0}, .var = snap_var},
           .type = predicate_type});
-  const mir::ExprId assign_id = wrapper.AddExpr(
+  const mir::ExprId assign_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::AssignExpr{
@@ -141,7 +141,7 @@ auto BuildDiagnosticThenScope(
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.prefix_text});
   if (verdict.include_count_value) {
-    const mir::ExprId count_read_id = block.AddExpr(
+    const mir::ExprId count_read_id = block.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
@@ -158,17 +158,17 @@ auto BuildDiagnosticThenScope(
   // The verdict text is fixed-format decimal, so no %t directive is possible
   // and the time-unit power is unread.
   const mir::ExprId items_array =
-      block.AddExpr(BuildPrintItemsArray(unit, block, items, 0));
+      block.exprs.Add(BuildPrintItemsArray(unit, block, items, 0));
 
   // `self` lives in the enclosing closure body; this then-scope sits one level
   // deeper, so the read climbs one hop -- matching the count_var read above.
-  const mir::ExprId self_read = block.AddExpr(
+  const mir::ExprId self_read = block.exprs.Add(
       mir::Expr{
           .data =
               mir::LocalRef{
                   .hops = mir::BlockHops{.value = 1}, .var = self_binding},
           .type = self_pointer_type});
-  const mir::ExprId services = block.AddExpr(
+  const mir::ExprId services = block.exprs.Add(
       mir::MakeServicesCallExpr(self_read, unit.builtins.services));
 
   const support::SystemSubroutineDesc* warning_desc =
@@ -179,7 +179,7 @@ auto BuildDiagnosticThenScope(
   }
 
   std::vector<mir::ExprId> args{services, items_array};
-  const mir::ExprId diag_call_id = block.AddExpr(
+  const mir::ExprId diag_call_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -205,8 +205,8 @@ auto BuildUniqueCheckClosure(
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
   for (std::size_t i = 0; i < snapshot_vars.size(); ++i) {
-    const mir::TypeId snap_type = wrapper.GetLocal(snapshot_vars[i]).type;
-    const mir::ExprId outer_read_id = wrapper.AddExpr(
+    const mir::TypeId snap_type = wrapper.vars.Get(snapshot_vars[i]).type;
+    const mir::ExprId outer_read_id = wrapper.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
@@ -217,11 +217,11 @@ auto BuildUniqueCheckClosure(
         outer_read_id, std::format("_lyra_unique_bind_{}", i)));
   }
 
-  const mir::LocalId count_var = body.AddLocal(
+  const mir::LocalId count_var = body.vars.Add(
       mir::LocalDecl{.name = "_lyra_unique_count", .type = int32_type});
 
   const mir::ExprId zero_init_id =
-      body.AddExpr(mir::MakeInt32Literal(int32_type, 0));
+      body.exprs.Add(mir::MakeInt32Literal(int32_type, 0));
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target =
@@ -231,10 +231,10 @@ auto BuildUniqueCheckClosure(
 
   for (const mir::ExprId bit_read : inner_reads) {
     const mir::ExprId one_lit =
-        body.AddExpr(mir::MakeInt32Literal(int32_type, 1));
+        body.exprs.Add(mir::MakeInt32Literal(int32_type, 1));
     const mir::ExprId zero_lit =
-        body.AddExpr(mir::MakeInt32Literal(int32_type, 0));
-    const mir::ExprId cond_value = body.AddExpr(
+        body.exprs.Add(mir::MakeInt32Literal(int32_type, 0));
+    const mir::ExprId cond_value = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
@@ -242,13 +242,13 @@ auto BuildUniqueCheckClosure(
                     .then_value = one_lit,
                     .else_value = zero_lit},
             .type = int32_type});
-    const mir::ExprId count_read = body.AddExpr(
+    const mir::ExprId count_read = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
                     .hops = mir::BlockHops{.value = 0}, .var = count_var},
             .type = int32_type});
-    const mir::ExprId added = body.AddExpr(
+    const mir::ExprId added = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
@@ -256,13 +256,13 @@ auto BuildUniqueCheckClosure(
                     .lhs = count_read,
                     .rhs = cond_value},
             .type = int32_type});
-    const mir::ExprId count_target = body.AddExpr(
+    const mir::ExprId count_target = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
                     .hops = mir::BlockHops{.value = 0}, .var = count_var},
             .type = int32_type});
-    const mir::ExprId assign = body.AddExpr(
+    const mir::ExprId assign = body.exprs.Add(
         mir::Expr{
             .data = mir::AssignExpr{.target = count_target, .value = added},
             .type = int32_type});
@@ -271,16 +271,16 @@ auto BuildUniqueCheckClosure(
 
   const CheckVerdict verdict = VerdictFor(check, snapshot_vars.size());
 
-  const mir::ExprId final_count_read = body.AddExpr(
+  const mir::ExprId final_count_read = body.exprs.Add(
       mir::Expr{
           .data =
               mir::LocalRef{
                   .hops = mir::BlockHops{.value = 0}, .var = count_var},
           .type = int32_type});
-  const mir::ExprId expected_lit = body.AddExpr(
+  const mir::ExprId expected_lit = body.exprs.Add(
       mir::MakeInt32Literal(
           int32_type, static_cast<std::int64_t>(verdict.expected)));
-  const mir::ExprId predicate_id = body.AddExpr(
+  const mir::ExprId predicate_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::BinaryExpr{
@@ -292,7 +292,8 @@ auto BuildUniqueCheckClosure(
   mir::Block diag_block = BuildDiagnosticThenScope(
       module.Unit(), self_ptr_type, self_binding, count_var, verdict);
 
-  const mir::BlockId diag_scope_id = body.AddChildScope(std::move(diag_block));
+  const mir::BlockId diag_scope_id =
+      body.child_scopes.Add(std::move(diag_block));
 
   body.AppendStmt(
       mir::IfStmt{
@@ -324,7 +325,7 @@ auto BuildDeferredCheckCascade(
   snapshot_vars.reserve(branches.size());
   for (std::size_t i = 0; i < branches.size(); ++i) {
     const mir::TypeId predicate_type =
-        wrapper.GetExpr(branches[i].predicate).type;
+        wrapper.exprs.Get(branches[i].predicate).type;
     snapshot_vars.push_back(SnapshotPredicate(
         module, wrapper_frame, wrapper, i, predicate_type,
         branches[i].predicate));
@@ -332,11 +333,11 @@ auto BuildDeferredCheckCascade(
 
   mir::Expr closure = BuildUniqueCheckClosure(
       module, wrapper_frame, wrapper, check, snapshot_vars);
-  const mir::ExprId closure_expr_id = wrapper.AddExpr(std::move(closure));
+  const mir::ExprId closure_expr_id = wrapper.exprs.Add(std::move(closure));
 
   const mir::DeferredCheckSiteId site_id =
       module.Unit().AllocateDeferredCheckSiteId();
-  const mir::ExprId submit_expr_id = wrapper.AddExpr(
+  const mir::ExprId submit_expr_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::RuntimeCallExpr{
@@ -353,7 +354,7 @@ auto BuildDeferredCheckCascade(
   std::optional<mir::Block> tail = std::move(tail_else);
   for (std::size_t i = branches.size(); i-- > 1;) {
     mir::Block level_block;
-    const mir::ExprId cond_read = level_block.AddExpr(
+    const mir::ExprId cond_read = level_block.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
@@ -363,10 +364,10 @@ auto BuildDeferredCheckCascade(
             .type = int32_type});
 
     const mir::BlockId body_scope_id =
-        level_block.AddChildScope(std::move(branches[i].body));
+        level_block.child_scopes.Add(std::move(branches[i].body));
     std::optional<mir::BlockId> else_scope_id;
     if (tail.has_value()) {
-      else_scope_id = level_block.AddChildScope(std::move(*tail));
+      else_scope_id = level_block.child_scopes.Add(std::move(*tail));
     }
 
     level_block.AppendStmt(
@@ -380,7 +381,7 @@ auto BuildDeferredCheckCascade(
   }
 
   if (!branches.empty()) {
-    const mir::ExprId cond_read0 = wrapper.AddExpr(
+    const mir::ExprId cond_read0 = wrapper.exprs.Add(
         mir::Expr{
             .data =
                 mir::LocalRef{
@@ -389,10 +390,10 @@ auto BuildDeferredCheckCascade(
             .type = int32_type});
 
     const mir::BlockId body0_id =
-        wrapper.AddChildScope(std::move(branches[0].body));
+        wrapper.child_scopes.Add(std::move(branches[0].body));
     std::optional<mir::BlockId> else0_id;
     if (tail.has_value()) {
-      else0_id = wrapper.AddChildScope(std::move(*tail));
+      else0_id = wrapper.child_scopes.Add(std::move(*tail));
     }
 
     wrapper.AppendStmt(
@@ -405,7 +406,7 @@ auto BuildDeferredCheckCascade(
   }
 
   const mir::BlockId wrapper_scope_id =
-      frame.current_block->AddChildScope(std::move(wrapper));
+      frame.current_block->child_scopes.Add(std::move(wrapper));
 
   return mir::Stmt{
       .label = std::move(outer_label),
@@ -427,9 +428,9 @@ auto LowerUniqueIfStmt(
   predicates.reserve(cascade.conditions.size());
   for (const hir::ExprId hir_cond : cascade.conditions) {
     auto cond_or =
-        process.LowerExpr(hir_proc.exprs.at(hir_cond.value), wrapper_frame);
+        process.LowerExpr(hir_proc.exprs.Get(hir_cond), wrapper_frame);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    predicates.push_back(wrapper.AddExpr(*std::move(cond_or)));
+    predicates.push_back(wrapper.exprs.Add(*std::move(cond_or)));
   }
 
   // Lower each body into its own child scope. Cascade level i sits i scopes

@@ -25,7 +25,7 @@ auto LowerBlockStmt(
   mir::Block child_block;
   const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
   for (const hir::StmtId child_hir_id : b.statements) {
-    const hir::Stmt& child = hir_proc.stmts.at(child_hir_id.value);
+    const hir::Stmt& child = hir_proc.stmts.Get(child_hir_id);
     auto lowered = process.LowerStmt(child, child_frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
@@ -33,7 +33,7 @@ auto LowerBlockStmt(
     child_block.AppendStmt(*std::move(lowered));
   }
   const mir::BlockId scope_id =
-      frame.current_block->AddChildScope(std::move(child_block));
+      frame.current_block->child_scopes.Add(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -43,7 +43,7 @@ auto LowerStmtIntoChildScope(
     -> diag::Result<mir::Block> {
   mir::Block child_block;
   const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
-  const hir::Stmt& hir_stmt = process.HirBody().stmts.at(hir_stmt_id.value);
+  const hir::Stmt& hir_stmt = process.HirBody().stmts.Get(hir_stmt_id);
   auto lowered = process.LowerStmt(hir_stmt, child_frame);
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
