@@ -46,11 +46,10 @@ auto LowerInsideItemImpl(
   if (item_expr.kind == slang::ast::ExpressionKind::ValueRange) {
     const auto& vr = item_expr.as<slang::ast::ValueRangeExpression>();
     if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
-      return diag::Unsupported(
+      return diag::Fail(
           module.SourceMapper().SpanOf(vr.sourceRange),
           diag::DiagCode::kUnsupportedExpressionForm,
-          "tolerance-range form in inside operator is not yet supported",
-          diag::UnsupportedCategory::kOperation);
+          "tolerance-range form in inside operator is not yet supported");
     }
     auto lo_or = proc.LowerExpr(vr.left(), frame);
     if (!lo_or) return std::unexpected(std::move(lo_or.error()));

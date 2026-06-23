@@ -142,17 +142,15 @@ auto LowerConditionalStmt(
     -> diag::Result<hir::Stmt> {
   const auto if_check = LowerUniquePriorityCheck(cs.check);
   if (cs.conditions.size() != 1) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "multi-condition if expressions are not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "multi-condition if expressions are not yet supported");
   }
   const auto& cond = cs.conditions.front();
   if (cond.pattern != nullptr) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "pattern matching in if conditions is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "pattern matching in if conditions is not yet supported");
   }
   auto cond_expr = proc.LowerExpr(*cond.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));

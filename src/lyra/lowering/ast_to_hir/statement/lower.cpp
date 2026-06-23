@@ -186,10 +186,9 @@ auto LowerStatement(
           proc, frame, stmt.as<slang::ast::ReturnStatement>(), span);
 
     default:
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedStatementForm,
-          "this statement form is not supported yet",
-          diag::UnsupportedCategory::kFeature);
+          "this statement form is not supported yet");
   }
 }
 

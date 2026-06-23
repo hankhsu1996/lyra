@@ -104,10 +104,9 @@ auto LowerExplicitPackedArray(
     cur = &pa.elementType.getCanonicalType();
   }
   if (cur->kind != slang::ast::SymbolKind::ScalarType) {
-    return diag::Unsupported(
+    return diag::Fail(
         decl_span, diag::DiagCode::kUnsupportedPackedArrayElementType,
-        "packed array element must be a bit, logic, or reg scalar",
-        diag::UnsupportedCategory::kType);
+        "packed array element must be a bit, logic, or reg scalar");
   }
   const auto& scalar = cur->as<slang::ast::ScalarType>();
   return hir::PackedArrayType{
@@ -163,10 +162,9 @@ auto LowerPackedUnion(
     const slang::ast::PackedUnionType& union_type, diag::SourceSpan decl_span,
     ModuleLowerer& module) -> diag::Result<hir::PackedUnionType> {
   if (union_type.isTagged) {
-    return diag::Unsupported(
+    return diag::Fail(
         decl_span, diag::DiagCode::kUnsupportedTaggedPackedUnion,
-        "tagged packed unions are not yet supported",
-        diag::UnsupportedCategory::kType);
+        "tagged packed unions are not yet supported");
   }
   const auto width = static_cast<std::int64_t>(union_type.bitWidth);
   if (width <= 0) {
@@ -345,11 +343,10 @@ auto TranslateTypeData(
       // (LRM 7.8.2) and integral (LRM 7.8.4) index families are in scope.
       if (aa.indexType == nullptr ||
           !(aa.indexType->isIntegral() || aa.indexType->isString())) {
-        return diag::Unsupported(
+        return diag::Fail(
             decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
             "associative arrays are only supported with a string or integral "
-            "index type",
-            diag::UnsupportedCategory::kType);
+            "index type");
       }
       auto elem_id_or = module.InternType(aa.elementType, decl_span);
       if (!elem_id_or) {
@@ -365,19 +362,17 @@ auto TranslateTypeData(
       }};
     }
     case slang::ast::SymbolKind::UnpackedStructType:
-      return diag::Unsupported(
+      return diag::Fail(
           decl_span, diag::DiagCode::kUnsupportedUnpackedStructType,
-          "unpacked struct types are not supported",
-          diag::UnsupportedCategory::kType);
+          "unpacked struct types are not supported");
     case slang::ast::SymbolKind::UnpackedUnionType:
-      return diag::Unsupported(
+      return diag::Fail(
           decl_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
-          "unpacked union types are not supported",
-          diag::UnsupportedCategory::kType);
+          "unpacked union types are not supported");
     default:
-      return diag::Unsupported(
+      return diag::Fail(
           decl_span, diag::DiagCode::kUnsupportedTypeKind,
-          "unsupported type kind", diag::UnsupportedCategory::kType);
+          "unsupported type kind");
   }
 }
 

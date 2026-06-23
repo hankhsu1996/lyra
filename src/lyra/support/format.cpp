@@ -158,8 +158,8 @@ auto ParseLiteralFormatString(
         mods.width = 0;
         // Fall through to spec char read below; do not parse a width run.
         if (pos >= text.size()) {
-          return diag::Error(
-              format_span, diag::DiagCode::kFormatStringMissingSpecifier,
+          return diag::Fail(
+              format_span, diag::DiagCode::kErrorFormatStringMissingSpecifier,
               "format directive '%' is missing its specifier character");
         }
       }
@@ -167,8 +167,8 @@ auto ParseLiteralFormatString(
       if (mods.width != 0) {
         auto width_or = ParseInt32(text, pos);
         if (!width_or.has_value()) {
-          return diag::Error(
-              format_span, diag::DiagCode::kFormatStringWidthOverflow,
+          return diag::Fail(
+              format_span, diag::DiagCode::kErrorFormatStringWidthOverflow,
               "format directive width does not fit in int32");
         }
         if (*width_or != -1) {
@@ -180,29 +180,29 @@ auto ParseLiteralFormatString(
         ++pos;
         auto prec_or = ParseInt32(text, pos);
         if (!prec_or.has_value()) {
-          return diag::Error(
-              format_span, diag::DiagCode::kFormatStringWidthOverflow,
+          return diag::Fail(
+              format_span, diag::DiagCode::kErrorFormatStringWidthOverflow,
               "format directive precision does not fit in int32");
         }
         if (*prec_or == -1) {
-          return diag::Error(
-              format_span, diag::DiagCode::kFormatStringMissingSpecifier,
+          return diag::Fail(
+              format_span, diag::DiagCode::kErrorFormatStringMissingSpecifier,
               "format directive '.' is missing precision digits");
         }
         mods.precision = *prec_or;
       }
 
       if (pos >= text.size()) {
-        return diag::Error(
-            format_span, diag::DiagCode::kFormatStringTrailingPercent,
+        return diag::Fail(
+            format_span, diag::DiagCode::kErrorFormatStringTrailingPercent,
             "format string ends with unfinished '%' directive");
       }
 
       const char spec_char = text[pos];
       auto kind_or = SpecCharToKind(spec_char);
       if (!kind_or.has_value()) {
-        return diag::Error(
-            format_span, diag::DiagCode::kFormatStringUnknownSpecifier,
+        return diag::Fail(
+            format_span, diag::DiagCode::kErrorFormatStringUnknownSpecifier,
             std::format("unknown format specifier '%{}'", spec_char));
       }
       ++pos;

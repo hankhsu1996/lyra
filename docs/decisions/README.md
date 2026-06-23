@@ -71,6 +71,12 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   navigation, upward by a runtime self-climb at bind, both by name; and why the cross-unit hop is by
   name, not a typed accessor.
 
+### Diagnostics
+
+- [diagnostic-construction](diagnostic-construction.md) -- a diagnostic's kind is a property of its
+  code, derived at construction; construction is infallible (no re-supplied value, no validating
+  guard); the consumer-less `UnsupportedCategory` axis is removed.
+
 ## File Naming
 
 `kebab-case.md`. The name describes the decision, not when it was made; the date lives inside the

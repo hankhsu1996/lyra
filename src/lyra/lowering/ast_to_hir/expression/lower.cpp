@@ -225,10 +225,9 @@ auto LowerProcExpr(
       const auto& sap =
           expr.as<slang::ast::SimpleAssignmentPatternExpression>();
       if (sap.isLValue) {
-        return diag::Unsupported(
+        return diag::Fail(
             span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
-            "assignment pattern as LHS destructuring is not yet supported",
-            diag::UnsupportedCategory::kOperation);
+            "assignment pattern as LHS destructuring is not yet supported");
       }
       return LowerAssignmentPatternFromElements(proc, frame, sap, span);
     }
@@ -248,11 +247,10 @@ auto LowerProcExpr(
       // positional and adds no expressive power; rejecting it here keeps the
       // dispatch narrow until a consumer needs the structured form.
       if (target_kind == slang::ast::SymbolKind::DynamicArrayType) {
-        return diag::Unsupported(
+        return diag::Fail(
             span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
             "index-keyed assignment pattern on a dynamic array is not yet "
-            "supported; use positional form",
-            diag::UnsupportedCategory::kOperation);
+            "supported; use positional form");
       }
       return LowerAssignmentPatternFromElements(proc, frame, sap, span);
     }
@@ -267,10 +265,9 @@ auto LowerProcExpr(
           proc, frame, expr.as<slang::ast::NewArrayExpression>(), span);
 
     default:
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "this expression form is not supported yet",
-          diag::UnsupportedCategory::kOperation);
+          "this expression form is not supported yet");
   }
 }
 
@@ -326,11 +323,10 @@ auto LowerStructuralExpr(
     case slang::ast::ExpressionKind::UnaryOp: {
       const auto& un = expr.as<slang::ast::UnaryExpression>();
       if (slang::ast::OpInfo::isLValue(un.op)) {
-        return diag::Unsupported(
+        return diag::Fail(
             span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
             "increment / decrement is not legal outside procedural code "
-            "(LRM 11.3.6, 11.4.2)",
-            diag::UnsupportedCategory::kFeature);
+            "(LRM 11.3.6, 11.4.2)");
       }
       return LowerUnaryExpr(scope, frame, un, span);
     }
@@ -363,10 +359,9 @@ auto LowerStructuralExpr(
       const auto& sap =
           expr.as<slang::ast::SimpleAssignmentPatternExpression>();
       if (sap.isLValue) {
-        return diag::Unsupported(
+        return diag::Fail(
             span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
-            "assignment pattern as LHS destructuring is not yet supported",
-            diag::UnsupportedCategory::kOperation);
+            "assignment pattern as LHS destructuring is not yet supported");
       }
       return LowerAssignmentPatternFromElements(scope, frame, sap, span);
     }
@@ -379,11 +374,10 @@ auto LowerStructuralExpr(
         return LowerAssociativeAssignmentPattern(scope, frame, sap, span);
       }
       if (target_kind == slang::ast::SymbolKind::DynamicArrayType) {
-        return diag::Unsupported(
+        return diag::Fail(
             span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
             "index-keyed assignment pattern on a dynamic array is not yet "
-            "supported; use positional form",
-            diag::UnsupportedCategory::kOperation);
+            "supported; use positional form");
       }
       return LowerAssignmentPatternFromElements(scope, frame, sap, span);
     }
@@ -394,10 +388,9 @@ auto LowerStructuralExpr(
           expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), span);
 
     default:
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-          "this structural expression form is not supported yet",
-          diag::UnsupportedCategory::kFeature);
+          "this structural expression form is not supported yet");
   }
 }
 

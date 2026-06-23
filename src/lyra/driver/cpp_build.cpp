@@ -24,7 +24,7 @@ namespace lyra::driver {
 namespace {
 
 auto IoError(std::string message) {
-  return diag::HostError(diag::DiagCode::kHostIoError, std::move(message));
+  return diag::Fail(diag::DiagCode::kHostIoError, std::move(message));
 }
 
 auto WriteFile(const std::filesystem::path& path, std::string_view content)
@@ -196,7 +196,7 @@ auto CompileProgram(
     return IoError(std::move(result_or.error()));
   }
   if (result_or->exit_code != 0) {
-    return diag::HostError(
+    return diag::Fail(
         diag::DiagCode::kHostBuildFailed,
         std::format(
             "C++ compiler exited with {}:\n{}", result_or->exit_code,

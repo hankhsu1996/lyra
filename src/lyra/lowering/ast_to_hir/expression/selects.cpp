@@ -28,10 +28,9 @@ auto LowerUnboundedLiteralProc(
     ProcessLowerer& proc, WalkFrame frame, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (!frame.dollar_base.has_value()) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "`$` is only supported as a queue index or slice bound (LRM 7.10)",
-        diag::UnsupportedCategory::kOperation);
+        "`$` is only supported as a queue index or slice bound (LRM 7.10)");
   }
   const hir::TypeId int32_type = proc.Module().Unit().builtins.int32;
   const hir::ExprId size_id = frame.Exprs().Add(
@@ -66,10 +65,9 @@ auto LowerElementSelectExpr(
   const auto& base_canonical = sel.value().type->getCanonicalType();
   if (!base_canonical.isString() && !sel.value().type->isIntegral() &&
       !sel.value().type->isUnpackedArray()) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "element-select on non-integral operand is not yet supported",
-        diag::UnsupportedCategory::kOperation);
+        "element-select on non-integral operand is not yet supported");
   }
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -100,11 +98,10 @@ auto LowerRangeSelectExpr(
     const slang::ast::RangeSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "range-select on non-integral, non-unpacked operand is not yet "
-        "supported",
-        diag::UnsupportedCategory::kOperation);
+        "supported");
   }
 
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
@@ -156,10 +153,9 @@ auto LowerMemberAccessExpr(
     const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (sel.member.kind != slang::ast::SymbolKind::Field) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "member access target is not a struct field",
-        diag::UnsupportedCategory::kOperation);
+        "member access target is not a struct field");
   }
   const auto* field = &sel.member.as<slang::ast::FieldSymbol>();
   auto base_or = lowerer.LowerExpr(sel.value(), frame);

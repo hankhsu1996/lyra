@@ -329,11 +329,10 @@ auto LowerStructuralSubroutineCall(
       lowerer.LookupHirSubroutine(usr.hops, usr.subroutine);
   for (const auto& param : decl.params) {
     if (hir::RequiresWriteback(param.direction)) {
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedSubroutineArgument,
           "a call with output / inout arguments is only supported in "
-          "statement position, not as a nested expression",
-          diag::UnsupportedCategory::kFeature);
+          "statement position, not as a nested expression");
     }
   }
   std::vector<mir::ExprId> args;

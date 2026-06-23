@@ -436,25 +436,13 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       variant is `Make<X>Type(...) -> TypeId`. Audit every construction helper and rename it to the
       correct side. **Trigger**: standalone naming cleanup.
 
-- [ ] R33 -- Remove the redundant `UnsupportedCategory` argument from the `diag::Unsupported`
-      factory. The category is already declared once per `DiagCode` in the code table; the factory
-      additionally takes a `cat` argument, stores it, and cross-checks it against the table,
-      throwing an `InternalError` on mismatch. A call site that passes the wrong category therefore
-      _crashes_ on the unsupported path instead of emitting the clean diagnostic it intended -- a
-      latent landmine on every untested rejection. Eleven such drifts were found and corrected
-      pointwise, but the design keeps re-arming the class: the call-site category is a second source
-      of truth that can diverge. Target shape: the factory derives
-      `category = DiagCodeCategory(code)` from the table alone, the `cat` parameter and the
-      `RequireCategory` check are deleted, and the ~96 call sites drop their trailing category
-      argument. This is the universal diagnostic-metadata shape -- Clang keys severity / group to
-      the diagnostic id through TableGen records, Roslyn through a `DiagnosticDescriptor`, rustc
-      through the diagnostic's own level: metadata is a property of the id, derived at emit, never
-      re-supplied at the report site. The `diag_code.cpp` table already is that registry; the only
-      flaw is the factory re-takes a value it should read. The same shape applies to the sibling
-      `RequireKind` guard, which should fold in. The load-bearing principle: diagnostic construction
-      is the graceful-degradation path and must be infallible -- it must never throw, least of all
-      on the rarely-exercised unsupported branches. **Trigger**: standalone; mechanical sweep across
-      every lowering file, so it lands as its own cut.
+- [x] R33 -- A diagnostic's metadata is a property of its code, derived at construction, never
+      re-supplied at the report site, and construction never throws. The per-kind factories and the
+      `RequireKind` / `RequireCategory` cross-check guards (which threw on the rarely-exercised
+      unsupported path) are gone; one kind-neutral surface (`diag::Fail` for the recoverable-failure
+      path, `diag::Make` for report-and-continue) reads the kind from the code table. The
+      consumer-less `UnsupportedCategory` classification axis is removed in full rather than
+      retained. See `../decisions/diagnostic-construction.md`.
 
 - [x] R34 -- Unify the procedural and structural AST-to-HIR expression-lowering paths. The two
       carried parallel handlers per expression family that built the same HIR node but guarded their

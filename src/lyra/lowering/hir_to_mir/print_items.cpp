@@ -108,10 +108,9 @@ auto BuildPrintItemFromDirective(
       return mir::RuntimePrintLiteral{.text = directive.literal};
 
     case support::FormatDirectiveKind::kModulePath:
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kFormatModulePathNotImplemented,
-          "format specifier %m is not yet supported",
-          diag::UnsupportedCategory::kFeature);
+          "format specifier %m is not yet supported");
 
     case support::FormatDirectiveKind::kTime:
     case support::FormatDirectiveKind::kChar:
@@ -125,8 +124,8 @@ auto BuildPrintItemFromDirective(
     case support::FormatDirectiveKind::kRealGeneral:
     case support::FormatDirectiveKind::kAssignmentPattern: {
       if (value_index >= args.size()) {
-        return diag::Error(
-            span, diag::DiagCode::kDisplayMissingArg,
+        return diag::Fail(
+            span, diag::DiagCode::kErrorDisplayMissingArg,
             "format string consumes more arguments than provided");
       }
       const hir::ExprId hir_arg = args[value_index++];
@@ -272,11 +271,10 @@ auto BuildRuntimePrintItemsFromCallArgs(
     const diag::SourceSpan span = cursor < args.size()
                                       ? hir_proc.exprs.Get(args[cursor]).span
                                       : call_span;
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedSubroutineArgument,
         "format string must be a string literal; a runtime-evaluated format "
-        "string is not yet supported (LRM 21.3.3)",
-        diag::UnsupportedCategory::kFeature);
+        "string is not yet supported (LRM 21.3.3)");
   }
   if (literal.has_value()) {
     auto parsed_or =
