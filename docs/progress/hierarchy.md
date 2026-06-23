@@ -197,7 +197,12 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       at the data type's default initial value (LRM 23.3.2.2 / 23.3.3.2), as does an unconnected
       port with no default; an explicit expression overrides. Defaults are permitted only on input
       ports (LRM 23.2.2.4), which the frontend enforces.
-- [ ] E9 -- A port connection on an instance array drives each element.
+- [x] E9 -- A port connection on an instance array drives each element's own cell (LRM 23.3.3.5).
+      The connection is distributed per element -- replicated to every element when its size matches
+      a single port, or mapped element to element when it matches the array dimensions -- and each
+      element's port is then the same implied continuous assignment a scalar instance gets, in
+      either direction. Covered for one- and multi-dimensional arrays, replicated and array-matched
+      connections, on inputs and outputs.
 - [x] E10 -- A port connection whose type is non-integral resolves as the same implied continuous
       assignment an integral port does (LRM 23.3.3), with no dependence on the data type: the child
       cell is driven from, or drives, the parent-side storage, and the output side re-triggers the
