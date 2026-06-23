@@ -119,18 +119,11 @@ auto LowerCaseStmt(
   const CaseSnapshotRefs snapshot =
       AppendCaseSnapshot(process.Module(), wrapper_frame, cond_expr_id);
 
-  auto deeper_by = [](WalkFrame f, std::size_t extras) {
-    for (std::size_t i = 0; i < extras; ++i) {
-      f = f.Deeper();
-    }
-    return f;
-  };
-
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(c.items.size());
   for (std::size_t i = 0; i < c.items.size(); ++i) {
     auto body_or = LowerStmtIntoChildScope(
-        process, deeper_by(wrapper_frame, i), c.items[i].stmt);
+        process, wrapper_frame.DeeperBy(i), c.items[i].stmt);
     if (!body_or) {
       return std::unexpected(std::move(body_or.error()));
     }
@@ -143,7 +136,7 @@ auto LowerCaseStmt(
   // degenerate `if (true) default` form at the wrapper depth.
   const WalkFrame default_enter_frame =
       c.items.empty() ? wrapper_frame
-                      : deeper_by(wrapper_frame, c.items.size() - 1);
+                      : wrapper_frame.DeeperBy(c.items.size() - 1);
   std::optional<mir::Block> default_scope;
   if (c.default_stmt.has_value()) {
     auto def_or =
@@ -187,7 +180,7 @@ auto LowerCaseStmt(
 
   auto build_predicate = [&](WalkFrame enc_frame, std::size_t item_idx,
                              std::uint32_t sel_hops) {
-    const WalkFrame level_frame = deeper_by(enc_frame, item_idx);
+    const WalkFrame level_frame = enc_frame.DeeperBy(item_idx);
     return BuildEqualityChain(
         level_frame, snapshot, bit_type, compare_op, sel_hops,
         c.items[item_idx].labels.size(),
@@ -229,18 +222,11 @@ auto LowerCaseInsideStmt(
   const CaseSnapshotRefs snapshot =
       AppendCaseSnapshot(process.Module(), wrapper_frame, cond_expr_id);
 
-  auto deeper_by = [](WalkFrame f, std::size_t extras) {
-    for (std::size_t i = 0; i < extras; ++i) {
-      f = f.Deeper();
-    }
-    return f;
-  };
-
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(c.items.size());
   for (std::size_t i = 0; i < c.items.size(); ++i) {
     auto body_or = LowerStmtIntoChildScope(
-        process, deeper_by(wrapper_frame, i), c.items[i].stmt);
+        process, wrapper_frame.DeeperBy(i), c.items[i].stmt);
     if (!body_or) {
       return std::unexpected(std::move(body_or.error()));
     }
@@ -249,7 +235,7 @@ auto LowerCaseInsideStmt(
 
   const WalkFrame default_enter_frame =
       c.items.empty() ? wrapper_frame
-                      : deeper_by(wrapper_frame, c.items.size() - 1);
+                      : wrapper_frame.DeeperBy(c.items.size() - 1);
   std::optional<mir::Block> default_scope;
   if (c.default_stmt.has_value()) {
     auto def_or =
@@ -263,7 +249,7 @@ auto LowerCaseInsideStmt(
   auto build_item_predicate =
       [&](WalkFrame enc_frame, std::size_t item_idx,
           std::uint32_t sel_hops) -> diag::Result<mir::ExprId> {
-    const WalkFrame level_frame = deeper_by(enc_frame, item_idx);
+    const WalkFrame level_frame = enc_frame.DeeperBy(item_idx);
     auto& enc = *level_frame.current_block;
     const mir::ExprId sel_ref = enc.exprs.Add(
         mir::Expr{

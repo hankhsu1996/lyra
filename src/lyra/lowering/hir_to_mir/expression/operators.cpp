@@ -8,8 +8,6 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
@@ -147,11 +145,11 @@ auto LowerHirConversionKind(hir::ConversionKind k) -> mir::ConversionKind {
 
 }  // namespace
 
-auto LowerHirUnaryExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::UnaryExpr& u,
+template <ExprLowerer Lowerer>
+auto LowerHirUnaryExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::UnaryExpr& u,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_process = process.HirBody();
-  auto operand_or = process.LowerExpr(hir_process.exprs.Get(u.operand), frame);
+  auto operand_or = lowerer.LowerExpr(lowerer.HirExprs().Get(u.operand), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
@@ -162,16 +160,17 @@ auto LowerHirUnaryExprProc(
       .type = result_type};
 }
 
-auto LowerHirBinaryExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::BinaryExpr& b,
+template <ExprLowerer Lowerer>
+auto LowerHirBinaryExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_process = process.HirBody();
-  auto lhs_or = process.LowerExpr(hir_process.exprs.Get(b.lhs), frame);
+  auto& block = *frame.current_block;
+  auto lhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(b.lhs), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = frame.current_block->exprs.Add(*std::move(lhs_or));
-  auto rhs_or = process.LowerExpr(hir_process.exprs.Get(b.rhs), frame);
+  const mir::ExprId lhs_id = block.exprs.Add(*std::move(lhs_or));
+  auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(b.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::ExprId rhs_id = frame.current_block->exprs.Add(*std::move(rhs_or));
+  const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
   return mir::Expr{
       .data =
           mir::BinaryExpr{
@@ -179,22 +178,20 @@ auto LowerHirBinaryExprProc(
       .type = result_type};
 }
 
-auto LowerHirConditionalExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::ConditionalExpr& c,
+template <ExprLowerer Lowerer>
+auto LowerHirConditionalExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_process = process.HirBody();
-  auto cond_or = process.LowerExpr(hir_process.exprs.Get(c.condition), frame);
+  auto& block = *frame.current_block;
+  auto cond_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.condition), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id =
-      frame.current_block->exprs.Add(*std::move(cond_or));
-  auto then_or = process.LowerExpr(hir_process.exprs.Get(c.then_value), frame);
+  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
+  auto then_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.then_value), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
-  const mir::ExprId then_id =
-      frame.current_block->exprs.Add(*std::move(then_or));
-  auto else_or = process.LowerExpr(hir_process.exprs.Get(c.else_value), frame);
+  const mir::ExprId then_id = block.exprs.Add(*std::move(then_or));
+  auto else_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.else_value), frame);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const mir::ExprId else_id =
-      frame.current_block->exprs.Add(*std::move(else_or));
+  const mir::ExprId else_id = block.exprs.Add(*std::move(else_or));
   return mir::Expr{
       .data =
           mir::ConditionalExpr{
@@ -207,12 +204,11 @@ auto LowerHirConditionalExprProc(
 auto LowerHirIncDecExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_process = process.HirBody();
   auto& block = *frame.current_block;
   // The target is written in place, so a queue element dispatches to its
   // write-side access just as an assignment target does.
   auto target_or = process.LowerLhsExpr(
-      hir_process.exprs.Get(inc.target), frame.WithLvalueTarget(true));
+      process.HirExprs().Get(inc.target), frame.WithLvalueTarget(true));
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   mir::ExprId target_id = block.exprs.Add(*std::move(target_or));
 
@@ -233,11 +229,12 @@ auto LowerHirIncDecExprProc(
       .type = result_type};
 }
 
-auto LowerHirConversionExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::ConversionExpr& cv,
+template <ExprLowerer Lowerer>
+auto LowerHirConversionExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_process = process.HirBody();
-  auto operand_or = process.LowerExpr(hir_process.exprs.Get(cv.operand), frame);
+  auto operand_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(cv.operand), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
@@ -250,77 +247,33 @@ auto LowerHirConversionExprProc(
       .type = result_type};
 }
 
-auto LowerHirUnaryExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::UnaryExpr& u,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_scope = lowerer.HirScope();
-  auto operand_or = lowerer.LowerExpr(hir_scope.exprs.Get(u.operand), frame);
-  if (!operand_or) {
-    return std::unexpected(std::move(operand_or.error()));
-  }
-  const mir::ExprId operand_id =
-      frame.current_block->exprs.Add(*std::move(operand_or));
-  return mir::Expr{
-      .data = mir::UnaryExpr{.op = LowerUnaryOp(u.op), .operand = operand_id},
-      .type = result_type};
-}
-
-auto LowerHirBinaryExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_scope = lowerer.HirScope();
-  auto& block = *frame.current_block;
-  auto lhs_or = lowerer.LowerExpr(hir_scope.exprs.Get(b.lhs), frame);
-  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = block.exprs.Add(*std::move(lhs_or));
-  auto rhs_or = lowerer.LowerExpr(hir_scope.exprs.Get(b.rhs), frame);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
-  return mir::Expr{
-      .data =
-          mir::BinaryExpr{
-              .op = LowerBinaryOp(b.op), .lhs = lhs_id, .rhs = rhs_id},
-      .type = result_type};
-}
-
-auto LowerHirConditionalExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_scope = lowerer.HirScope();
-  auto& block = *frame.current_block;
-  auto cond_or = lowerer.LowerExpr(hir_scope.exprs.Get(c.condition), frame);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
-  auto then_or = lowerer.LowerExpr(hir_scope.exprs.Get(c.then_value), frame);
-  if (!then_or) return std::unexpected(std::move(then_or.error()));
-  const mir::ExprId then_id = block.exprs.Add(*std::move(then_or));
-  auto else_or = lowerer.LowerExpr(hir_scope.exprs.Get(c.else_value), frame);
-  if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const mir::ExprId else_id = block.exprs.Add(*std::move(else_or));
-  return mir::Expr{
-      .data =
-          mir::ConditionalExpr{
-              .condition = cond_id,
-              .then_value = then_id,
-              .else_value = else_id},
-      .type = result_type};
-}
-
-auto LowerHirConversionExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_scope = lowerer.HirScope();
-  auto operand_or = lowerer.LowerExpr(hir_scope.exprs.Get(cv.operand), frame);
-  if (!operand_or) {
-    return std::unexpected(std::move(operand_or.error()));
-  }
-  const mir::ExprId operand_id =
-      frame.current_block->exprs.Add(*std::move(operand_or));
-  return mir::Expr{
-      .data =
-          mir::ConversionExpr{
-              .operand = operand_id, .kind = LowerHirConversionKind(cv.kind)},
-      .type = result_type};
-}
+// One concrete instantiation per pass class. The handler templates are defined
+// in this file rather than the header so the file-local helpers stay private,
+// so the dispatchers in process_lowerer.cpp / class_lowerer.cpp link against
+// the symbols emitted here.
+template auto LowerHirUnaryExpr(
+    ProcessLowerer&, WalkFrame, const hir::UnaryExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirUnaryExpr(
+    const ClassLowerer&, WalkFrame, const hir::UnaryExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirBinaryExpr(
+    ProcessLowerer&, WalkFrame, const hir::BinaryExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirBinaryExpr(
+    const ClassLowerer&, WalkFrame, const hir::BinaryExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirConditionalExpr(
+    ProcessLowerer&, WalkFrame, const hir::ConditionalExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirConditionalExpr(
+    const ClassLowerer&, WalkFrame, const hir::ConditionalExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirConversionExpr(
+    ProcessLowerer&, WalkFrame, const hir::ConversionExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirConversionExpr(
+    const ClassLowerer&, WalkFrame, const hir::ConversionExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

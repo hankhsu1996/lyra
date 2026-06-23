@@ -101,6 +101,14 @@ class ClassLowerer {
     return *hir_scope_;
   }
 
+  // The expression arena of the scope being lowered. The single uniform
+  // sub-expression accessor the context-free expression handler templates
+  // reach through, identical in shape to `ProcessLowerer::HirExprs`.
+  [[nodiscard]] auto HirExprs() const
+      -> const base::Arena<hir::Expr, hir::ExprId>& {
+    return hir_scope_->exprs;
+  }
+
   // Resolve a subroutine reference to its HIR declaration by walking `hops`
   // scopes outward. The HIR declaration is complete before any body is lowered,
   // so a call can read a peer's formals even when the peer's MIR declaration is

@@ -12,8 +12,8 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_hops.hpp"
@@ -98,37 +98,9 @@ auto SnapshotPredicate(
     const ModuleLowerer& module, WalkFrame frame, mir::Block& wrapper,
     std::size_t index, mir::TypeId predicate_type,
     mir::ExprId predicate_expr_id) -> mir::LocalId {
-  const std::string var_name = std::format("_lyra_unique_cond_{}", index);
-  const mir::LocalId snap_var = wrapper.vars.Add(
-      mir::LocalDecl{.name = var_name, .type = predicate_type});
-  const mir::ExprId snap_default_init =
-      wrapper.exprs.Add(BuildDefaultValueExpr(module, frame, predicate_type));
-  wrapper.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::LocalDeclStmt{
-              .target =
-                  mir::LocalRef{
-                      .hops = mir::BlockHops{.value = 0}, .var = snap_var},
-              .init = snap_default_init}});
-
-  const mir::ExprId snap_target_id = wrapper.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::LocalRef{
-                  .hops = mir::BlockHops{.value = 0}, .var = snap_var},
-          .type = predicate_type});
-  const mir::ExprId assign_id = wrapper.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::AssignExpr{
-                  .target = snap_target_id, .value = predicate_expr_id},
-          .type = predicate_type});
-  wrapper.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
-
-  return snap_var;
+  return SnapshotExprToLocal(
+      module, frame, wrapper, std::format("_lyra_unique_cond_{}", index),
+      predicate_type, predicate_expr_id);
 }
 
 auto BuildDiagnosticThenScope(
@@ -436,18 +408,11 @@ auto LowerUniqueIfStmt(
   // Lower each body into its own child scope. Cascade level i sits i scopes
   // deeper than wrapper, so each body lowering descends i extra frames before
   // opening its own child scope (LowerStmtIntoChildScope adds one more).
-  auto deeper_by = [](WalkFrame f, std::size_t extras) {
-    for (std::size_t i = 0; i < extras; ++i) {
-      f = f.Deeper();
-    }
-    return f;
-  };
-
   std::vector<DeferredCheckBranch> branches;
   branches.reserve(cascade.bodies.size());
   for (std::size_t i = 0; i < cascade.bodies.size(); ++i) {
     auto body_or = LowerStmtIntoChildScope(
-        process, deeper_by(wrapper_frame, i), cascade.bodies[i]);
+        process, wrapper_frame.DeeperBy(i), cascade.bodies[i]);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
     branches.push_back(
         DeferredCheckBranch{
@@ -462,7 +427,7 @@ auto LowerUniqueIfStmt(
     const WalkFrame tail_enter_frame =
         cascade.bodies.empty()
             ? wrapper_frame
-            : deeper_by(wrapper_frame, cascade.bodies.size() - 1);
+            : wrapper_frame.DeeperBy(cascade.bodies.size() - 1);
     auto tail_or =
         LowerStmtIntoChildScope(process, tail_enter_frame, *cascade.tail_else);
     if (!tail_or) return std::unexpected(std::move(tail_or.error()));

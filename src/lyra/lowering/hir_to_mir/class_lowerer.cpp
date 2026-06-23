@@ -943,14 +943,13 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
                 *this, frame, p.data, result_type);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
-            return LowerHirUnaryExprStructural(*this, frame, u, result_type);
+            return LowerHirUnaryExpr(*this, frame, u, result_type);
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
-            return LowerHirBinaryExprStructural(*this, frame, b, result_type);
+            return LowerHirBinaryExpr(*this, frame, b, result_type);
           },
           [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConditionalExprStructural(
-                *this, frame, c, result_type);
+            return LowerHirConditionalExpr(*this, frame, c, result_type);
           },
           [](const hir::AssignExpr&) -> diag::Result<mir::Expr> {
             throw InternalError(
@@ -965,8 +964,7 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
                 "no increment / decrement");
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
-            return LowerHirConversionExprStructural(
-                *this, frame, cv, result_type);
+            return LowerHirConversionExpr(*this, frame, cv, result_type);
           },
           [](const hir::CallExpr&) -> diag::Result<mir::Expr> {
             return diag::Unsupported(
@@ -981,19 +979,16 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
                 diag::UnsupportedCategory::kFeature);
           },
           [&](const hir::ElementSelectExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirElementSelectExprStructural(
-                *this, frame, s, result_type);
+            return LowerHirElementSelectExpr(*this, frame, s, result_type);
           },
           [&](const hir::RangeSelectExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirRangeSelectExprStructural(
-                *this, frame, s, result_type);
+            return LowerHirRangeSelectExpr(*this, frame, s, result_type);
           },
           [&](const hir::MemberAccessExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirMemberAccessExprStructural(
-                *this, frame, s, result_type);
+            return LowerHirMemberAccessExpr(*this, frame, s, result_type);
           },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExprStructural(*this, frame, c, result_type);
+            return LowerHirConcatExpr(*this, frame, c, result_type);
           },
           [](const hir::ReplicationExpr&) -> diag::Result<mir::Expr> {
             return diag::Unsupported(
@@ -1002,12 +997,11 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
                 diag::UnsupportedCategory::kFeature);
           },
           [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
-            return LowerHirAssignmentPatternExprStructural(
-                *this, frame, a, result_type);
+            return LowerHirAssignmentPatternExpr(*this, frame, a, result_type);
           },
           [&](const hir::AssignmentPatternReplicationExpr& a)
               -> diag::Result<mir::Expr> {
-            return LowerHirAssignmentPatternReplicationExprStructural(
+            return LowerHirAssignmentPatternReplicationExpr(
                 *this, frame, a, result_type);
           },
           [](const hir::DynamicArrayNewExpr&) -> diag::Result<mir::Expr> {
@@ -1019,7 +1013,7 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
           },
           [&](const hir::AssociativeAssignmentPatternExpr& a)
               -> diag::Result<mir::Expr> {
-            return LowerHirAssociativeAssignmentPatternExprStructural(
+            return LowerHirAssociativeAssignmentPatternExpr(
                 *this, frame, a, result_type);
           },
       },
@@ -1046,19 +1040,16 @@ auto ClassLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
                 *this, frame, p.data, result_type);
           },
           [&](const hir::ElementSelectExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirElementSelectExprStructuralLhs(
-                *this, frame, s, result_type);
+            return LowerHirElementSelectExprLhs(*this, frame, s, result_type);
           },
           [&](const hir::RangeSelectExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirRangeSelectExprStructuralLhs(
-                *this, frame, s, result_type);
+            return LowerHirRangeSelectExprLhs(*this, frame, s, result_type);
           },
           [&](const hir::MemberAccessExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirMemberAccessExprStructuralLhs(
-                *this, frame, s, result_type);
+            return LowerHirMemberAccessExprLhs(*this, frame, s, result_type);
           },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExprStructural(*this, frame, c, result_type);
+            return LowerHirConcatExpr(*this, frame, c, result_type);
           },
           [](const auto&) -> diag::Result<mir::Expr> {
             throw InternalError(

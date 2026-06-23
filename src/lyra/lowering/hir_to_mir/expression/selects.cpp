@@ -10,8 +10,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -23,11 +21,11 @@
 #include "lyra/mir/type.hpp"
 
 // HIR-to-MIR lowering for the three select families (`a[i]`, `a[hi:lo]`,
-// `s.field`). Each family has four entry points: read / write side and
-// procedural / structural source context. The four-axis surface arises only
-// because the source side and lowerer differ; the underlying MIR shape is
-// identical, so the bodies fan into a single per-family `Build*` factory plus
-// a per-family inner helper that handles the wrapping decisions.
+// `s.field`). Each family has a read-side and a write-side entry point; a
+// select's meaning is independent of whether a process or a structural scope
+// encloses it, so each entry point is one template over the pass class. The
+// bodies fan into a single per-family `Build*` factory plus a per-family inner
+// helper that handles the wrapping decisions.
 //
 // Naming convention used here, matching the rest of HIR-to-MIR:
 //   - `Lower*` -- top-level HIR-to-MIR for a HIR construct, returns
@@ -668,30 +666,23 @@ auto LowerMemberAccessInner(
 
 }  // namespace
 
-// The twelve entry points below all share the same skeleton: lower
-// container-specific sub-expressions (base, index, bound expressions) via
-// the appropriate lowerer, commit them into the current block,
-// then delegate to one of the inner helpers above. The four-axis surface
-// (3 kinds * 2 sides * 2 source contexts) arises only because the
-// `ProcessLowerer` / `ClassLowerer` interfaces differ slightly;
-// the underlying MIR shape is identical across all twelve.
-
-auto LowerHirElementSelectExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::ElementSelectExpr& sel,
+template <ExprLowerer Lowerer>
+auto LowerHirElementSelectExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& module = process.Module();
-  const auto& hir_process = process.HirBody();
+  const auto& module = lowerer.Module();
+  const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const bool is_write = frame.is_lvalue_target;
   const WalkFrame sub_frame = frame.WithLvalueTarget(false);
 
-  const auto& hir_base = hir_process.exprs.Get(sel.base_value);
-  auto base_or = process.LowerExpr(hir_base, sub_frame);
+  const auto& hir_base = exprs.Get(sel.base_value);
+  auto base_or = lowerer.LowerExpr(hir_base, sub_frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
-  const auto& hir_idx = hir_process.exprs.Get(sel.index);
-  auto idx_or = process.LowerExpr(hir_idx, sub_frame);
+  const auto& hir_idx = exprs.Get(sel.index);
+  auto idx_or = lowerer.LowerExpr(hir_idx, sub_frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
@@ -708,9 +699,10 @@ auto LowerHirElementSelectExprProc(
   }
   // LRM 7.10.1: queue's `q[$+1] = v` appends, so a queue element write
   // must dispatch as LHS even from this RHS entry point. The lvalue-target
-  // marker carried on the walk frame surfaces that case. AA / packed /
-  // unpacked already route their write side through the explicit LHS
-  // lowerers below.
+  // marker carried on the walk frame surfaces that case. The string and queue
+  // arms are reachable only in a procedural scope: slang forbids referencing
+  // an element of a dynamic-typed variable outside a procedural context, so a
+  // structural instantiation never takes them.
   const AccessSide side =
       (is_write && std::holds_alternative<hir::QueueType>(hir_base_ty.data))
           ? AccessSide::kLhs
@@ -720,20 +712,21 @@ auto LowerHirElementSelectExprProc(
       idx_id, side, result_type, true);
 }
 
-auto LowerHirRangeSelectExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::RangeSelectExpr& sel,
+template <ExprLowerer Lowerer>
+auto LowerHirRangeSelectExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& module = process.Module();
-  const auto& hir_process = process.HirBody();
+  const auto& module = lowerer.Module();
+  const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_process.exprs.Get(sel.base_value);
-  auto base_or = process.LowerExpr(hir_base, frame);
+  const auto& hir_base = exprs.Get(sel.base_value);
+  auto base_or = lowerer.LowerExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = process.LowerExpr(hir_process.exprs.Get(id), frame);
+    auto lowered = lowerer.LowerExpr(exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return block.exprs.Add(*std::move(lowered));
   };
@@ -747,160 +740,18 @@ auto LowerHirRangeSelectExprProc(
 // were a packed array". HIR -> MIR resolves the field-table index to a
 // concrete `(offset, count)` slice -- the same MIR shape `s[hi:lo]`
 // produces.
-auto LowerHirMemberAccessExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::MemberAccessExpr& sel,
+template <ExprLowerer Lowerer>
+auto LowerHirMemberAccessExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = process.Module();
-  const auto& hir_process = process.HirBody();
-  auto& block = *frame.current_block;
-  const auto& base_hir_expr = hir_process.exprs.Get(sel.base_value);
-  const auto& fields =
-      GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
-  if (sel.field_index >= fields.size()) {
-    throw InternalError(
-        "LowerHirMemberAccessExprProc: field_index out of range");
-  }
-  auto base_or = process.LowerExpr(base_hir_expr, frame);
-  if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-  return LowerMemberAccessInner(
-      module, block, fields[sel.field_index], base_id, result_type,
-      AccessSide::kRead);
-}
-
-auto LowerHirElementSelectExprProcLhs(
-    ProcessLowerer& process, WalkFrame frame, const hir::ElementSelectExpr& sel,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& module = process.Module();
-  const auto& hir_process = process.HirBody();
-  auto& block = *frame.current_block;
-
-  const auto& hir_base = hir_process.exprs.Get(sel.base_value);
-  auto base_or = process.LowerLhsExpr(hir_base, frame);
-  if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-
-  const auto& hir_idx = hir_process.exprs.Get(sel.index);
-  auto idx_or = process.LowerExpr(hir_idx, frame);
-  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
-
-  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
-  return LowerElementSelectInner(
-      module, block, hir_base_ty, module.TranslateType(hir_idx.type), base_id,
-      idx_id, AccessSide::kLhs, result_type, false);
-}
-
-auto LowerHirRangeSelectExprProcLhs(
-    ProcessLowerer& process, WalkFrame frame, const hir::RangeSelectExpr& sel,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& module = process.Module();
-  const auto& hir_process = process.HirBody();
-  auto& block = *frame.current_block;
-
-  const auto& hir_base = hir_process.exprs.Get(sel.base_value);
-  auto base_or = process.LowerLhsExpr(hir_base, frame);
-  if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-
-  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = process.LowerExpr(hir_process.exprs.Get(id), frame);
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.exprs.Add(*std::move(lowered));
-  };
-  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
-  return LowerRangeSelectInner(
-      module, block, hir_base_ty, sel.bounds, base_id, result_type, lower_one,
-      AccessSide::kLhs);
-}
-
-auto LowerHirMemberAccessExprProcLhs(
-    ProcessLowerer& process, WalkFrame frame, const hir::MemberAccessExpr& sel,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = process.Module();
-  const auto& hir_process = process.HirBody();
-  auto& block = *frame.current_block;
-  const auto& base_hir_expr = hir_process.exprs.Get(sel.base_value);
-  const auto& fields =
-      GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
-  if (sel.field_index >= fields.size()) {
-    throw InternalError(
-        "LowerHirMemberAccessExprProcLhs: field_index out of range");
-  }
-  auto base_or = process.LowerLhsExpr(base_hir_expr, frame);
-  if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-  return LowerMemberAccessInner(
-      module, block, fields[sel.field_index], base_id, result_type,
-      AccessSide::kLhs);
-}
-
-auto LowerHirElementSelectExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::ElementSelectExpr& sel, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& module = lowerer.Module();
-  const auto& hir_scope = lowerer.HirScope();
-  auto& block = *frame.current_block;
-
-  const auto& hir_base = hir_scope.exprs.Get(sel.base_value);
-  auto base_or = lowerer.LowerExpr(hir_base, frame);
-  if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-
-  const auto& hir_idx = hir_scope.exprs.Get(sel.index);
-  auto idx_or = lowerer.LowerExpr(hir_idx, frame);
-  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
-
-  // A queue element select cannot reach the structural path: slang forbids
-  // referencing an element of a dynamic-typed variable outside a procedural
-  // context, so no queue branch is needed here.
-  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
-  return LowerElementSelectInner(
-      module, block, hir_base_ty, module.TranslateType(hir_idx.type), base_id,
-      idx_id, AccessSide::kRead, result_type, true);
-}
-
-auto LowerHirRangeSelectExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::RangeSelectExpr& sel, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& module = lowerer.Module();
-  const auto& hir_scope = lowerer.HirScope();
-  auto& block = *frame.current_block;
-
-  const auto& hir_base = hir_scope.exprs.Get(sel.base_value);
-  auto base_or = lowerer.LowerExpr(hir_base, frame);
-  if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-
-  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(id), frame);
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.exprs.Add(*std::move(lowered));
-  };
-  // Queue slice cannot reach the structural path for the same reason as the
-  // element-select case above.
-  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
-  return LowerRangeSelectInner(
-      module, block, hir_base_ty, sel.bounds, base_id, result_type, lower_one,
-      AccessSide::kRead);
-}
-
-auto LowerHirMemberAccessExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::MemberAccessExpr& sel, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
   auto& module = lowerer.Module();
-  const auto& hir_scope = lowerer.HirScope();
+  const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
-  const auto& base_hir_expr = hir_scope.exprs.Get(sel.base_value);
+  const auto& base_hir_expr = exprs.Get(sel.base_value);
   const auto& fields =
       GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
-    throw InternalError(
-        "LowerHirMemberAccessExprStructural: field_index out of range");
+    throw InternalError("LowerHirMemberAccessExpr: field_index out of range");
   }
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -910,20 +761,20 @@ auto LowerHirMemberAccessExprStructural(
       AccessSide::kRead);
 }
 
-auto LowerHirElementSelectExprStructuralLhs(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::ElementSelectExpr& sel, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+template <ExprLowerer Lowerer>
+auto LowerHirElementSelectExprLhs(
+    Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& module = lowerer.Module();
-  const auto& hir_scope = lowerer.HirScope();
+  const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_scope.exprs.Get(sel.base_value);
+  const auto& hir_base = exprs.Get(sel.base_value);
   auto base_or = lowerer.LowerLhsExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
-  const auto& hir_idx = hir_scope.exprs.Get(sel.index);
+  const auto& hir_idx = exprs.Get(sel.index);
   auto idx_or = lowerer.LowerExpr(hir_idx, frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
@@ -934,21 +785,21 @@ auto LowerHirElementSelectExprStructuralLhs(
       idx_id, AccessSide::kLhs, result_type, false);
 }
 
-auto LowerHirRangeSelectExprStructuralLhs(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::RangeSelectExpr& sel, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+template <ExprLowerer Lowerer>
+auto LowerHirRangeSelectExprLhs(
+    Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& module = lowerer.Module();
-  const auto& hir_scope = lowerer.HirScope();
+  const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
-  const auto& hir_base = hir_scope.exprs.Get(sel.base_value);
+  const auto& hir_base = exprs.Get(sel.base_value);
   auto base_or = lowerer.LowerLhsExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(id), frame);
+    auto lowered = lowerer.LowerExpr(exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return block.exprs.Add(*std::move(lowered));
   };
@@ -958,19 +809,19 @@ auto LowerHirRangeSelectExprStructuralLhs(
       AccessSide::kLhs);
 }
 
-auto LowerHirMemberAccessExprStructuralLhs(
-    const ClassLowerer& lowerer, WalkFrame frame,
-    const hir::MemberAccessExpr& sel, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+template <ExprLowerer Lowerer>
+auto LowerHirMemberAccessExprLhs(
+    Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& module = lowerer.Module();
-  const auto& hir_scope = lowerer.HirScope();
+  const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
-  const auto& base_hir_expr = hir_scope.exprs.Get(sel.base_value);
+  const auto& base_hir_expr = exprs.Get(sel.base_value);
   const auto& fields =
       GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
     throw InternalError(
-        "LowerHirMemberAccessExprStructuralLhs: field_index out of range");
+        "LowerHirMemberAccessExprLhs: field_index out of range");
   }
   auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -979,5 +830,46 @@ auto LowerHirMemberAccessExprStructuralLhs(
       module, block, fields[sel.field_index], base_id, result_type,
       AccessSide::kLhs);
 }
+
+// One concrete instantiation per pass class. The handler templates are defined
+// in this file rather than the header so the file-local helpers stay private,
+// so the dispatchers in process_lowerer.cpp / class_lowerer.cpp link against
+// the symbols emitted here.
+template auto LowerHirElementSelectExpr(
+    ProcessLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirElementSelectExpr(
+    const ClassLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirRangeSelectExpr(
+    ProcessLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirRangeSelectExpr(
+    const ClassLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirMemberAccessExpr(
+    ProcessLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirMemberAccessExpr(
+    const ClassLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirElementSelectExprLhs(
+    ProcessLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirElementSelectExprLhs(
+    const ClassLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirRangeSelectExprLhs(
+    ProcessLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirRangeSelectExprLhs(
+    const ClassLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirMemberAccessExprLhs(
+    ProcessLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirMemberAccessExprLhs(
+    const ClassLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

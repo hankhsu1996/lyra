@@ -106,6 +106,14 @@ class ProcessLowerer {
     return *hir_body_;
   }
 
+  // The expression arena of the body being lowered. The single uniform
+  // sub-expression accessor the context-free expression handler templates
+  // reach through, identical in shape to `ClassLowerer::HirExprs`.
+  [[nodiscard]] auto HirExprs() const
+      -> const base::Arena<hir::Expr, hir::ExprId>& {
+    return hir_body_->exprs;
+  }
+
   [[nodiscard]] auto Module() -> ModuleLowerer& {
     return *module_;
   }
