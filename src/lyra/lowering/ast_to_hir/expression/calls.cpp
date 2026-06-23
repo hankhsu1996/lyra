@@ -187,19 +187,24 @@ auto LowerCallExprProc(
 
     // LRM 7.12 array-manipulation family, defined for any unpacked array: a
     // fixed-size unpacked array (LRM 7.12.1 / 7.12.2 operate on "any unpacked
-    // array"), a dynamic array, and a queue (LRM 7.10.1 gives it the same
-    // operations as an unpacked array). For dynamic array and queue the LRM
-    // 7.5.2 / 7.5.3 / 7.10.2 `size` / `delete` are resolved earlier as native
-    // methods; slang rejects them on a fixed array. The no-`with` form takes
-    // only the receiver; the `with` form (LRM 7.12.4) binds an iterator and a
-    // body expression carried as the optional `WithClause`, which HIR -> MIR
-    // turns into a closure argument.
+    // array"), a dynamic array, a queue (LRM 7.10.1 gives it the same
+    // operations as an unpacked array), and an associative array (LRM 7.12.1 /
+    // 7.12.3 / 7.12.5 reduction / locator / map; the ordering family is
+    // rejected on it by slang). For dynamic array and queue the LRM 7.5.2 /
+    // 7.5.3 / 7.10.2 `size` / `delete` are resolved earlier as native methods,
+    // and the associative-array LRM 7.9 methods (`exists` / traversal / `num`)
+    // resolve in the block below; only the 7.12 names reach this dispatch. The
+    // no-`with` form takes only the receiver; the `with` form (LRM 7.12.4)
+    // binds an iterator and a body expression carried as the optional
+    // `WithClause`, which HIR -> MIR turns into a closure argument.
     if (receiver_type.has_value() &&
         (std::holds_alternative<hir::UnpackedArrayType>(
              module.Unit().GetType(*receiver_type).data) ||
          std::holds_alternative<hir::DynamicArrayType>(
              module.Unit().GetType(*receiver_type).data) ||
          std::holds_alternative<hir::QueueType>(
+             module.Unit().GetType(*receiver_type).data) ||
+         std::holds_alternative<hir::AssociativeArrayType>(
              module.Unit().GetType(*receiver_type).data))) {
       if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
         auto type_id = module.InternType(*call.type, span);

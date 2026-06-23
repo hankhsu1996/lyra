@@ -4,15 +4,19 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "lyra/value/array_case_equal.hpp"
+#include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/queue.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::value {
@@ -246,6 +250,107 @@ class AssociativeArray {
     return WriteVisited(probe, PrevKey(probe));
   }
 
+  // LRM 7.12.3 reduction over the entry stream. LRM 7.12.3 permits reduction on
+  // any integral-valued unpacked array, the associative array included; the
+  // ordering family (LRM 7.12.2) is excluded and rejected upstream by slang.
+  // The closure receives each value and its key; `proto` is the
+  // producer-supplied result default returned for an empty array.
+  template <typename F, typename R>
+  [[nodiscard]] auto Sum(F&& key, R proto) const -> R {
+    return detail::ArrayFold(
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a + v; });
+  }
+  template <typename F, typename R>
+  [[nodiscard]] auto Product(F&& key, R proto) const -> R {
+    return detail::ArrayFold(
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a * v; });
+  }
+  template <typename F, typename R>
+  [[nodiscard]] auto And(F&& key, R proto) const -> R {
+    return detail::ArrayFold(
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a & v; });
+  }
+  template <typename F, typename R>
+  [[nodiscard]] auto Or(F&& key, R proto) const -> R {
+    return detail::ArrayFold(
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a | v; });
+  }
+  template <typename F, typename R>
+  [[nodiscard]] auto Xor(F&& key, R proto) const -> R {
+    return detail::ArrayFold(
+        Entries(), std::move(proto), std::forward<F>(key),
+        [](auto a, auto v) { return a ^ v; });
+  }
+
+  // LRM 7.12.1 locator family over the entry stream. Value locators return a
+  // queue of values; index locators return a queue of the KEY, since an
+  // associative receiver's index is its key (LRM 7.12.1), not an ordinal int.
+  // Both seed the result with the producer-supplied `proto`.
+  template <typename F>
+  [[nodiscard]] auto Find(F pred, V proto) const -> Queue<V> {
+    return Queue<V>(std::move(proto), detail::ArrayFind(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindIndex(F pred, K proto) const -> Queue<K> {
+    return Queue<K>(std::move(proto), detail::ArrayFindIndex(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindFirst(F pred, V proto) const -> Queue<V> {
+    return Queue<V>(std::move(proto), detail::ArrayFindFirst(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindFirstIndex(F pred, K proto) const -> Queue<K> {
+    return Queue<K>(
+        std::move(proto), detail::ArrayFindFirstIndex(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindLast(F pred, V proto) const -> Queue<V> {
+    return Queue<V>(std::move(proto), detail::ArrayFindLast(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindLastIndex(F pred, K proto) const -> Queue<K> {
+    return Queue<K>(
+        std::move(proto), detail::ArrayFindLastIndex(Entries(), pred));
+  }
+  template <typename F>
+  [[nodiscard]] auto Min(F&& key, V proto) const -> Queue<V> {
+    return Queue<V>(
+        std::move(proto), detail::ArrayMin(Entries(), std::forward<F>(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto Max(F&& key, V proto) const -> Queue<V> {
+    return Queue<V>(
+        std::move(proto), detail::ArrayMax(Entries(), std::forward<F>(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto Unique(F key, V proto) const -> Queue<V> {
+    return Queue<V>(
+        std::move(proto), detail::ArrayUnique(Entries(), std::move(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto UniqueIndex(F key, K proto) const -> Queue<K> {
+    return Queue<K>(
+        std::move(proto), detail::ArrayUniqueIndex(Entries(), std::move(key)));
+  }
+
+  // LRM 7.12.5 projection into a same-key associative array: each value maps
+  // through the closure and keeps its key, so the result is keyed identically
+  // with the `with`-expression's element type. `proto` seeds that element
+  // type's canonical default (producer-supplied).
+  template <typename F, typename U>
+  [[nodiscard]] auto Map(F closure, U proto) const -> AssociativeArray<K, U> {
+    std::vector<std::tuple<K, U>> pairs;
+    for (const auto& [k, v] : data_) {
+      pairs.emplace_back(k, closure(v, k));
+    }
+    return AssociativeArray<K, U>(
+        std::move(proto), std::span<const std::tuple<K, U>>{pairs});
+  }
+
   // LRM 11.2.2 aggregate equality / 11.4.5: same key set and each paired value
   // compares equal. A different key set or a different size yields 0; matching
   // empties yield 1. `==` / `!=` propagate X / Z through the per-value `==`;
@@ -356,6 +461,17 @@ class AssociativeArray {
   // default. `element_default_` is never written, so it is returned directly.
   [[nodiscard]] auto MissValue() const -> const V& {
     return user_default_.has_value() ? *user_default_ : element_default_;
+  }
+
+  // The LRM 7.12 entry stream (decision: array-manipulation-entry-stream): a
+  // lazy view pairing each value with its key, in LRM 7.8 key order (the map's
+  // iteration order). The key is the entry index, so an index locator yields
+  // keys and `item.index` reads the key. The map already stores (key, value)
+  // pairs, so the view is a direct transform over its entries.
+  [[nodiscard]] auto Entries() const {
+    return data_ | std::views::transform([](const auto& kv) {
+             return detail::Entry<K, V>{kv.first, &kv.second};
+           });
   }
 
   V element_default_;

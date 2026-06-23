@@ -161,27 +161,29 @@ auto ArrayMethodReceiverElementType(const hir::Type& ty)
   if (const auto* q = std::get_if<hir::QueueType>(&ty.data)) {
     return q->element_type;
   }
+  if (const auto* aa = std::get_if<hir::AssociativeArrayType>(&ty.data)) {
+    return aa->element_type;
+  }
   return std::nullopt;
 }
 
-// The element type of `map`'s result container (LRM 7.12.5), used to build its
-// shield.
-auto ArrayContainerElementType(const mir::Type& ty) -> mir::TypeId {
+// The canonical-default prototype type for a value-producing LRM 7.12 method
+// (decision: array-manipulation-entry-stream): a locator / map result is a
+// container, so its element type is the prototype; a reduction result is the
+// scalar itself. The producer supplies the prototype because the result shape
+// (an index locator's key, a map's chosen element, an empty reduction's zero)
+// is not always recoverable from the receiver.
+auto ArrayMethodResultProtoType(
+    const ModuleLowerer& module, mir::TypeId result_type) -> mir::TypeId {
   return std::visit(
-      [](const auto& t) -> mir::TypeId {
-        using TyT = std::decay_t<decltype(t)>;
-        if constexpr (
-            std::same_as<TyT, mir::UnpackedArrayType> ||
-            std::same_as<TyT, mir::DynamicArrayType> ||
-            std::same_as<TyT, mir::QueueType>) {
-          return t.element_type;
-        } else {
-          throw InternalError(
-              "ArrayContainerElementType: map result is not an unpacked-array "
-              "container type");
-        }
+      Overloaded{
+          [](const mir::UnpackedArrayType& t) { return t.element_type; },
+          [](const mir::DynamicArrayType& t) { return t.element_type; },
+          [](const mir::QueueType& t) { return t.element_type; },
+          [](const mir::AssociativeArrayType& t) { return t.element_type; },
+          [result_type](const auto&) { return result_type; },
       },
-      ty.data);
+      module.Unit().GetType(result_type).data);
 }
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The iterator and
@@ -204,7 +206,14 @@ auto BuildArrayMethodClosure(
         "BuildArrayMethodClosure: receiver is not an unpacked-array type");
   }
   const mir::TypeId item_type = module.TranslateType(*element_type);
-  const mir::TypeId index_type = module.Unit().builtins.int32;
+  // LRM 7.12.4 `item.index`: the ordinal position for a sequence container, the
+  // key for an associative receiver.
+  mir::TypeId index_type = module.Unit().builtins.int32;
+  if (const auto* assoc =
+          std::get_if<hir::AssociativeArrayType>(&hir_recv_ty.data);
+      assoc != nullptr && assoc->key_type.has_value()) {
+    index_type = module.TranslateType(*assoc->key_type);
+  }
   const std::string iterator_name =
       with_clause != nullptr
           ? hir_process.procedural_vars.Get(with_clause->iterator).name
@@ -465,15 +474,16 @@ auto LowerBuiltinMethodCall(
         c.with_clause.has_value() ? &*c.with_clause : nullptr);
     if (!closure_or) return std::unexpected(std::move(closure_or.error()));
     args.push_back(block.exprs.Add(*std::move(closure_or)));
-    // LRM 7.12.5: `map`'s result element type may differ from the
-    // receiver's, so its shield is supplied here as that type's canonical
-    // default -- the runtime shape is not recoverable from the C++ type
-    // alone.
-    if (b.method == support::BuiltinFn::kMap) {
-      const mir::TypeId result_elem =
-          ArrayContainerElementType(module.Unit().GetType(result_type));
+    // LRM 7.12 reduction / locator / map: the producer supplies the result's
+    // canonical default, since the result shape (an index locator's key, a
+    // map's chosen element, an empty reduction's zero) is not recoverable from
+    // the receiver (decision: array-manipulation-entry-stream). The ordering
+    // family produces no value and takes none.
+    if (support::ArrayMethodProducesValue(b.method)) {
+      const mir::TypeId proto_type =
+          ArrayMethodResultProtoType(module, result_type);
       args.push_back(
-          block.exprs.Add(BuildDefaultValueExpr(module, frame, result_elem)));
+          block.exprs.Add(BuildDefaultValueExpr(module, frame, proto_type)));
     }
   } else if (c.with_clause.has_value()) {
     throw InternalError(
