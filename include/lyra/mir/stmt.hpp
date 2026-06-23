@@ -184,14 +184,17 @@ struct AwaitStmt {
   ExprId awaitable;
 };
 
-// One leaf entry of a wait's projection set. Identity-only: which member,
-// which flat bit range of its packed encoding, and what edge
-// polarity the leaf was subscribed under (LRM 9.4.2 / 9.4.2.2 / 9.4.3). slang
-// DFA produces the (var, bit_range) pairs; the SV edge identifier (or
-// `kAnyChange` for implicit sensitivity) attaches per leaf at AST lowering.
+// One leaf entry of a wait's projection set. Identity-only: which member, the
+// observed bit projection of its packed encoding as a `(lsb_bit_offset,
+// bit_width)` pair, and what edge polarity the leaf was subscribed under (LRM
+// 9.4.2 / 9.4.2.2 / 9.4.3). A `bit_width` of 0 is the whole signal observed on
+// any change; an edge reduces to the bit at `lsb_bit_offset`. The projection is
+// resolved at HIR-to-MIR from the SV-level footprint so a backend emits the
+// pair directly. `kAnyChange` is the edge for implicit sensitivity.
 struct SensitivityRead {
   SensitivityRef ref;
-  std::pair<std::uint64_t, std::uint64_t> bit_range;
+  std::uint64_t lsb_bit_offset = 0;
+  std::uint64_t bit_width = 0;
   EventEdge edge_kind = EventEdge::kAnyChange;
 };
 

@@ -962,8 +962,8 @@ class MirDumper {
                     r.ref.var.value);
                 Line(
                     std::format(
-                        "{} bits=[{}:{}] edge={}", ref_str, r.bit_range.first,
-                        r.bit_range.second, FormatEventEdge(r.edge_kind)));
+                        "{} lsb={} width={} edge={}", ref_str, r.lsb_bit_offset,
+                        r.bit_width, FormatEventEdge(r.edge_kind)));
               }
               Dedent();
             },

@@ -136,9 +136,11 @@ auto LowerEventTimedStmt(
     }
     for (auto leaf : trigger.sensitivity_list) {
       // LRM 9.4.2 LSB-reduce: an edge event monitors only the LSB of the
-      // expression.
-      if (leaf.edge_kind != hir::EventEdge::kAnyChange) {
-        leaf.bit_range = {leaf.bit_range.first, leaf.bit_range.first};
+      // expression. A whole-signal footprint already reduces to the LSB at the
+      // runtime trigger, so only a bit-addressed footprint needs collapsing.
+      if (leaf.edge_kind != hir::EventEdge::kAnyChange &&
+          leaf.footprint.has_value()) {
+        leaf.footprint = {{leaf.footprint->first, leaf.footprint->first}};
       }
       union_reads.push_back(leaf);
     }

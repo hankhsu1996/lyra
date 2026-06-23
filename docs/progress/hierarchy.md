@@ -198,7 +198,12 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       port with no default; an explicit expression overrides. Defaults are permitted only on input
       ports (LRM 23.2.2.4), which the frontend enforces.
 - [ ] E9 -- A port connection on an instance array drives each element.
-- [ ] E10 -- A port connection whose type is non-integral (an unpacked struct or array).
+- [x] E10 -- A port connection whose type is non-integral resolves as the same implied continuous
+      assignment an integral port does (LRM 23.3.3), with no dependence on the data type: the child
+      cell is driven from, or drives, the parent-side storage, and the output side re-triggers the
+      parent when the child re-drives the whole signal. Covered for a string and an unpacked array
+      connected in both directions. An unpacked struct port rides on unpacked-struct type support
+      and lands with it.
 
 Unlocks the `ports/*` archive group.
 

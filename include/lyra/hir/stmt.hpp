@@ -180,14 +180,16 @@ enum class EventEdge : std::uint8_t {
 };
 
 // One leaf entry of a wait's projection set. Identity-only: which structural
-// variable, which flat bit range of its packed encoding, and what edge
-// polarity the leaf was subscribed under. Implicit sensitivity sources
-// (always_comb / always_latch / `@*` / wait cond / continuous assignment)
-// supply leaves with `edge_kind == kAnyChange`. Explicit event control
-// `@(posedge ...)` / `@(negedge ...)` / `@(edge ...)` set the per-leaf edge.
+// variable, the flat-bit footprint of its packed encoding the leaf observes,
+// and what edge polarity the leaf was subscribed under. An absent footprint
+// means the whole signal is observed; an edge then reduces to its LSB. Implicit
+// sensitivity sources (always_comb / always_latch / `@*` / wait cond /
+// continuous assignment) supply leaves with `edge_kind == kAnyChange`. Explicit
+// event control `@(posedge ...)` / `@(negedge ...)` / `@(edge ...)` set the
+// per-leaf edge.
 struct SensitivityEntry {
   SensitivityRef ref;
-  std::pair<std::uint64_t, std::uint64_t> bit_range;
+  std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
   EventEdge edge_kind = EventEdge::kAnyChange;
 };
 
