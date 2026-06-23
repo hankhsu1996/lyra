@@ -70,6 +70,10 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   hierarchical reference resolves once into a stored pointer: downward by emitted constructor
   navigation, upward by a runtime self-climb at bind, both by name; and why the cross-unit hop is by
   name, not a typed accessor.
+- [specialization-identity](specialization-identity.md) -- a specialization's identity is a
+  deterministic name (module name + content hash of a canonical, structural serialization of its
+  parameter bindings), computed independently by producer and consumer and matched by name;
+  injective mangling, body fingerprinting, and a design-global key map are rejected.
 
 ### Diagnostics
 

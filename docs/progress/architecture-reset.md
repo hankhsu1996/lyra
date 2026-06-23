@@ -27,6 +27,11 @@ the dedicated file is the source of truth for "what is done, in what order, what
 - [x] R7 -- Test framework variable assertions (`expect.variables`). `tests/framework/runner.cpp`
       rewrites the source with a synthetic `final` probe block keyed on sentinel markers in stdout
       and matches each entry against scalar / SV-literal expectations.
+- [ ] R8 -- Per-unit artifact emission. The C++ backend emits one artifact per unit specialization,
+      assembled into the program by linking, rather than collapsing every unit into one translation
+      unit. Contract in `../architecture/emission_model.md` (inv 1); the current single-`main.cpp`
+      aggregation that transitively includes every unit header is the transitional shortcut that doc
+      marks for removal.
 
 ## SystemVerilog Features
 

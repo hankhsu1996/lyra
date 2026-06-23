@@ -13,6 +13,7 @@
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -89,7 +90,7 @@ auto TopLevelUnitNames(slang::ast::Compilation& compilation)
   std::vector<std::string> names;
   names.reserve(root.topInstances.size());
   for (const auto* inst : root.topInstances) {
-    names.emplace_back(inst->body.name);
+    names.emplace_back(SpecializationName(*inst));
   }
   return names;
 }
