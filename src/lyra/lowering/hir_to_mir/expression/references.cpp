@@ -194,7 +194,7 @@ auto LowerCrossUnitVarRefExpr(
   const mir::MemberRef target = meta.target;
   const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
   const mir::ExprId self_ref =
-      frame.current_block->exprs.Add(BuildSelfRefExpr(frame, self_ptr_type));
+      frame.current_block->exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
   const auto* ptr = std::get_if<mir::PointerType>(
       &lowerer.Module().Unit().GetType(meta.slot_type).data);
   if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {

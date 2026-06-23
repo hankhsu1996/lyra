@@ -148,7 +148,7 @@ auto CloneLhsExprForNbaBody(
       outer_expr.data);
 }
 
-auto BuildStringMethodCallExpr(
+auto MakeStringMethodCallExpr(
     support::BuiltinFn fn, std::vector<mir::ExprId> args, mir::TypeId type)
     -> mir::Expr {
   return mir::Expr{
@@ -305,7 +305,7 @@ auto LowerStringElementAssign(
     auto base_read_or = process.LowerExpr(base_hir, frame);
     if (!base_read_or) return std::unexpected(std::move(base_read_or.error()));
     const mir::ExprId base_read_id = block.exprs.Add(*std::move(base_read_or));
-    const mir::ExprId cur_id = block.exprs.Add(BuildStringMethodCallExpr(
+    const mir::ExprId cur_id = block.exprs.Add(MakeStringMethodCallExpr(
         support::BuiltinFn::kGetc, {base_read_id, idx_id}, result_type));
     value_id = block.exprs.Add(
         mir::Expr{
@@ -328,7 +328,7 @@ auto LowerStringElementAssign(
         if (mir::IsObservableCellType(unit.GetType(blk.exprs.Get(root).type))) {
           recv = RewriteLhsRootWithMutate(unit, blk, target, services);
         }
-        return BuildStringMethodCallExpr(
+        return MakeStringMethodCallExpr(
             support::BuiltinFn::kPutc, {recv, ops[0], ops[1]},
             unit.builtins.void_type);
       });

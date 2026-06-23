@@ -311,7 +311,7 @@ auto BuildDeferredCheckCascade(
 
   const mir::DeferredCheckSiteId site_id =
       module.Unit().AllocateDeferredCheckSiteId();
-  const mir::ExprId self_id = wrapper.exprs.Add(BuildSelfRefExpr(
+  const mir::ExprId self_id = wrapper.exprs.Add(MakeSelfRefExpr(
       wrapper_frame, wrapper_frame.current_class->self_pointer_type));
   const mir::ExprId site_id_expr = wrapper.exprs.Add(
       mir::MakeInt32Literal(
