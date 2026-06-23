@@ -1,5 +1,5 @@
-#include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -167,9 +167,11 @@ auto PopulateInstancePortConnections(
         frame.current_structural_scope->exprs.Add(*std::move(lhs_or));
     const hir::ExprId rhs_id =
         frame.current_structural_scope->exprs.Add(std::move(child_ref));
-    const std::uint64_t width = port_type.getBitWidth();
+    // The output port observes the child's whole internal signal on any change.
+    // It is not a bit-addressed read, so it carries no footprint regardless of
+    // the port's data type.
     const std::vector<SensitivityRead> reads{
-        SensitivityRead{.symbol = internal, .bit_range = {0, width - 1}}};
+        SensitivityRead{.symbol = internal, .footprint = std::nullopt}};
     frame.current_structural_scope->continuous_assigns.Add(
         hir::ContinuousAssign{
             .span = span,

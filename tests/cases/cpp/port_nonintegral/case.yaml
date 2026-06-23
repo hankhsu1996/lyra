@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: "len=5\n"
+    exact: "back=hello sum=34\n"

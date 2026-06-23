@@ -201,6 +201,16 @@ auto ModuleLowerer::TranslateSensitivityReads(
   for (const auto& read : reads) {
     const auto* var = read.symbol->as_if<slang::ast::VariableSymbol>();
     if (var == nullptr) continue;
+    // A footprint is meaningful only for a signal the runtime bit-addresses: a
+    // packed bit vector, which renders to one observable cell whose change set
+    // is read per bit. For an enum, unpacked aggregate, string, or real the
+    // runtime observes the whole signal on any change, so the read carries no
+    // footprint regardless of the flat-bit view the DFA computed over its own
+    // encoding.
+    const auto& read_type = var->getType();
+    const std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint =
+        read_type.isIntegral() && !read_type.isEnum() ? read.footprint
+                                                      : std::nullopt;
     if (const auto binding = LookupStructuralVarBinding(*var)) {
       const auto hops = frame.HopsTo(binding->home_frame);
       if (!hops.has_value()) continue;
@@ -208,7 +218,7 @@ auto ModuleLowerer::TranslateSensitivityReads(
           hir::SensitivityEntry{
               .ref =
                   hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
-              .bit_range = read.bit_range});
+              .footprint = footprint});
       continue;
     }
     // A read of a cross-unit member resolves to the slot that body lowering
@@ -218,7 +228,7 @@ auto ModuleLowerer::TranslateSensitivityReads(
       out.push_back(
           hir::SensitivityEntry{
               .ref = hir::CrossUnitVarRef{.id = *slot},
-              .bit_range = read.bit_range});
+              .footprint = footprint});
     }
   }
   return out;

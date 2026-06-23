@@ -417,6 +417,15 @@ class HirDumper {
         ref);
   }
 
+  static auto FormatFootprint(
+      const std::optional<std::pair<std::uint64_t, std::uint64_t>>& footprint)
+      -> std::string {
+    if (!footprint.has_value()) {
+      return "[whole]";
+    }
+    return std::format("[{}:{}]", footprint->first, footprint->second);
+  }
+
   static auto FormatEventEdge(EventEdge edge) -> std::string_view {
     switch (edge) {
       case EventEdge::kAnyChange:
@@ -452,9 +461,9 @@ class HirDumper {
                   if (j != 0) out += ", ";
                   const auto& r = e.triggers[i].sensitivity_list[j];
                   out += std::format(
-                      "{{{} bits=[{}:{}] edge={}}}",
-                      FormatSensitivityRef(r.ref), r.bit_range.first,
-                      r.bit_range.second, FormatEventEdge(r.edge_kind));
+                      "{{{} bits={} edge={}}}", FormatSensitivityRef(r.ref),
+                      FormatFootprint(r.footprint),
+                      FormatEventEdge(r.edge_kind));
                 }
                 out += "]}";
               }
@@ -467,9 +476,8 @@ class HirDumper {
                 if (i != 0) out += ", ";
                 const auto& r = ie.sensitivity_list[i];
                 out += std::format(
-                    "{{{} bits=[{}:{}] edge={}}}", FormatSensitivityRef(r.ref),
-                    r.bit_range.first, r.bit_range.second,
-                    FormatEventEdge(r.edge_kind));
+                    "{{{} bits={} edge={}}}", FormatSensitivityRef(r.ref),
+                    FormatFootprint(r.footprint), FormatEventEdge(r.edge_kind));
               }
               out += "]";
               return out;
@@ -904,8 +912,8 @@ class HirDumper {
       for (const auto& r : p.implicit_sensitivity_list) {
         Line(
             std::format(
-                "{} bits=[{}:{}]", FormatSensitivityRef(r.ref),
-                r.bit_range.first, r.bit_range.second));
+                "{} bits={}", FormatSensitivityRef(r.ref),
+                FormatFootprint(r.footprint)));
       }
       Dedent();
     }
@@ -955,8 +963,8 @@ class HirDumper {
       for (const auto& r : ca.sensitivity_list) {
         Line(
             std::format(
-                "{} bits=[{}:{}]", FormatSensitivityRef(r.ref),
-                r.bit_range.first, r.bit_range.second));
+                "{} bits={}", FormatSensitivityRef(r.ref),
+                FormatFootprint(r.footprint)));
       }
       Dedent();
     }
@@ -1331,8 +1339,8 @@ class HirDumper {
                 if (i != 0) sens += ", ";
                 const auto& r = w.sensitivity_list[i];
                 sens += std::format(
-                    "{{{} bits=[{}:{}]}}", FormatSensitivityRef(r.ref),
-                    r.bit_range.first, r.bit_range.second);
+                    "{{{} bits={}}}", FormatSensitivityRef(r.ref),
+                    FormatFootprint(r.footprint));
               }
               sens += "]";
               Line(

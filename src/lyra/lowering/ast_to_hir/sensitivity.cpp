@@ -24,7 +24,7 @@ auto FlattenReadSet(const slang::analysis::DFAResults::ReadSet& reads)
   std::vector<SensitivityRead> out;
   for (const auto& [symbol, bitmap] : reads) {
     for (auto it = bitmap.begin(); it != bitmap.end(); ++it) {
-      out.push_back({.symbol = symbol, .bit_range = it.bounds()});
+      out.push_back({.symbol = symbol, .footprint = it.bounds()});
     }
   }
   return out;

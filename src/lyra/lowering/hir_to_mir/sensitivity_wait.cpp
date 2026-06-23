@@ -47,10 +47,20 @@ auto BuildSensitivityWaitStmt(
             },
         },
         entry.ref);
+    // Resolve the SV-level footprint into the runtime projection a backend
+    // emits directly: a bit-addressed read becomes `(lsb, hi - lsb + 1)`; a
+    // whole-signal read (no footprint) becomes width 0, the any-change form.
+    const std::uint64_t lsb_bit_offset =
+        entry.footprint.has_value() ? entry.footprint->first : 0;
+    const std::uint64_t bit_width =
+        entry.footprint.has_value()
+            ? entry.footprint->second - entry.footprint->first + 1
+            : 0;
     reads.push_back(
         mir::SensitivityRead{
             .ref = std::move(ref),
-            .bit_range = entry.bit_range,
+            .lsb_bit_offset = lsb_bit_offset,
+            .bit_width = bit_width,
             .edge_kind = LowerEventEdge(entry.edge_kind)});
   }
   return mir::Stmt{
