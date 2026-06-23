@@ -363,7 +363,6 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/file_io.hpp\"\n";
   out += "#include \"lyra/runtime/finish.hpp\"\n";
   out += "#include \"lyra/runtime/fork.hpp\"\n";
-  out += "#include \"lyra/runtime/io.hpp\"\n";
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";

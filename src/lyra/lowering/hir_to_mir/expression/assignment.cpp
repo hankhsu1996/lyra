@@ -29,7 +29,6 @@
 #include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -231,10 +230,14 @@ auto ApplyAssignEffect(
   mir::Expr closure = BuildDeferredAssignClosure(
       process.Module(), frame, target_in_outer, operands_in_outer, effect_fn);
   const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
+  const mir::ExprId services_id =
+      block.exprs.Add(BuildServicesCallExpr(process, frame));
   return mir::Expr{
       .data =
-          mir::RuntimeCallExpr{
-              .call = mir::RuntimeSubmitNbaCall{.closure = closure_id}},
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kSubmitNba},
+              .arguments = {services_id, closure_id}},
       .type = process.Module().Unit().builtins.void_type};
 }
 

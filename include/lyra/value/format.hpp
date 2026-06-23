@@ -19,13 +19,6 @@ class Queue;
 template <typename K, typename V>
 class AssociativeArray;
 
-enum class PrintKind : std::uint8_t {
-  kDisplay,
-  kWrite,
-  kFDisplay,
-  kFWrite,
-};
-
 enum class FormatKind : std::uint8_t {
   kDecimal,
   kHex,

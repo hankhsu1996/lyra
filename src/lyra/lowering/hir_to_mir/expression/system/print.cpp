@@ -12,54 +12,209 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/runtime_print.hpp"
-#include "lyra/mir/runtime_submit.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/file_descriptor.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto ToValuePrintKind(const support::PrintSystemSubroutineInfo& info)
-    -> value::PrintKind {
-  if (info.sink_kind == support::PrintSinkKind::kStdout) {
-    return info.append_newline ? value::PrintKind::kDisplay
-                               : value::PrintKind::kWrite;
+auto BuildFilesCall(
+    ProcessLowerer& process, const WalkFrame& frame, mir::Block& block)
+    -> mir::ExprId {
+  const mir::ExprId services =
+      block.exprs.Add(BuildServicesCallExpr(process, frame));
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{.id = support::BuiltinFn::kFiles},
+                  .arguments = {services}},
+          .type = process.Module().Unit().builtins.files});
+}
+
+// LRM 21.3.1 stdout pre-bound FD literal, used as the sink for $display /
+// $write / $strobe lowerings that don't carry a user-supplied descriptor.
+auto BuildStdoutFdLiteral(mir::Block& block, mir::TypeId int32_type)
+    -> mir::ExprId {
+  return block.exprs.Add(mir::MakeInt32Literal(int32_type, support::kStdoutFd));
+}
+
+auto LowerDescriptor(
+    ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call)
+    -> diag::Result<mir::Expr> {
+  if (!call.arguments[0].has_value()) {
+    throw InternalError("$f-print descriptor argument unexpectedly elided");
   }
-  return info.append_newline ? value::PrintKind::kFDisplay
-                             : value::PrintKind::kFWrite;
+  return process.LowerExpr(
+      process.HirBody().exprs.Get(*call.arguments[0]), frame);
+}
+
+auto WriteCalleeFor(bool append_newline) -> support::BuiltinFn {
+  return append_newline ? support::BuiltinFn::kWriteln
+                        : support::BuiltinFn::kWrite;
+}
+
+// Emits the two-step composition: format the items, then write to the sink.
+// Both calls land in `block`; the returned id is the void write call.
+auto EmitFormatThenWrite(
+    ProcessLowerer& process, const WalkFrame& frame, mir::Block& block,
+    mir::ExprId items_array, mir::ExprId fd, bool append_newline)
+    -> mir::ExprId {
+  auto& unit = process.Module().Unit();
+  const mir::ExprId services =
+      block.exprs.Add(BuildServicesCallExpr(process, frame));
+  const mir::ExprId text = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{.id = support::BuiltinFn::kFormat},
+                  .arguments = {services, items_array}},
+          .type = unit.builtins.string});
+  const mir::ExprId files = BuildFilesCall(process, frame, block);
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{
+                          .id = WriteCalleeFor(append_newline)},
+                  .arguments = {files, fd, text}},
+          .type = unit.builtins.void_type});
+}
+
+// LRM 21.2.2 / 21.3.1: $strobe family. The postponed-region closure formats
+// and writes at fire time; for a user-supplied descriptor, the body first
+// gates on a channel-cancellation token snapshotted at submit time so an
+// intervening $fclose silences the print.
+auto LowerStrobeCall(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
+    -> diag::Result<mir::Expr> {
+  auto& block = *frame.current_block;
+  auto& unit = process.Module().Unit();
+  const mir::TypeId void_type = unit.builtins.void_type;
+  const mir::TypeId int32_type = unit.builtins.int32;
+  const std::int64_t time_unit_power =
+      static_cast<std::int64_t>(process.Resolution().unit_power);
+  const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
+
+  std::optional<mir::ExprId> outer_user_descriptor;
+  std::optional<mir::ExprId> outer_cancellation;
+  if (is_file_sink) {
+    auto desc_or = LowerDescriptor(process, frame, call);
+    if (!desc_or) return std::unexpected(std::move(desc_or.error()));
+    outer_user_descriptor = block.exprs.Add(*std::move(desc_or));
+    const mir::ExprId outer_files = BuildFilesCall(process, frame, block);
+    outer_cancellation = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinFnCallee{
+                            .id = support::BuiltinFn::kCancellationFor},
+                    .arguments = {outer_files, *outer_user_descriptor}},
+            .type = unit.builtins.channel_cancellation});
+  }
+
+  ClosureBuilder closure(unit, frame);
+  mir::Block& body = closure.Body();
+  const WalkFrame body_frame = closure.Frame();
+
+  std::optional<mir::ExprId> body_user_descriptor;
+  if (outer_user_descriptor.has_value()) {
+    body_user_descriptor =
+        closure.CaptureByValue(*outer_user_descriptor, "descriptor");
+  }
+  if (outer_cancellation.has_value()) {
+    const mir::ExprId cancellation =
+        closure.CaptureByValue(*outer_cancellation, "cancellation");
+    const mir::ExprId is_cancelled = body.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinFnCallee{
+                            .id = support::BuiltinFn::kIsCancelled},
+                    .arguments = {cancellation}},
+            .type = unit.builtins.bit1});
+    mir::Block guard;
+    guard.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    body.AppendStmt(
+        mir::IfStmt{
+            .condition = is_cancelled,
+            .then_scope = body.child_scopes.Add(std::move(guard)),
+            .else_scope = std::nullopt});
+  }
+
+  // Items lower through the closure's frame: an enclosing procedural-local
+  // read becomes a by-value capture, while a module-signal read flows
+  // through the closure's own `self` capture and re-reads at fire time
+  // (LRM 21.2.2 sample-at-end-of-slot for signals).
+  const std::size_t arg_offset = is_file_sink ? 1 : 0;
+  auto items_or = BuildRuntimePrintItemsFromCallArgs(
+      process, body_frame, call, print.radix, arg_offset,
+      FormatStringRequirement::kOptional, span);
+  if (!items_or) return std::unexpected(std::move(items_or.error()));
+  const mir::ExprId items_array = body.exprs.Add(
+      BuildPrintItemsArray(unit, body, *items_or, time_unit_power));
+
+  const mir::ExprId body_fd = body_user_descriptor.has_value()
+                                  ? *body_user_descriptor
+                                  : BuildStdoutFdLiteral(body, int32_type);
+  const mir::ExprId write_call = EmitFormatThenWrite(
+      process, body_frame, body, items_array, body_fd, print.append_newline);
+  body.AppendStmt(mir::ExprStmt{.expr = write_call});
+
+  const mir::ExprId closure_id = block.exprs.Add(closure.BuildVoid());
+  const mir::ExprId services =
+      block.exprs.Add(BuildServicesCallExpr(process, frame));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinFnCallee{
+                      .id = support::BuiltinFn::kSubmitPostponed},
+              .arguments = {services, closure_id}},
+      .type = void_type};
 }
 
 }  // namespace
 
+// The `id` parameter is part of the system-subroutine dispatch contract;
+// this lowering reads every print-shape fact off `print` and never needs
+// the bare id.
 auto LowerPrintSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id,
+    support::SystemSubroutineId,  // NOLINT(readability-named-parameter)
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& block = *frame.current_block;
-  const mir::TypeId void_type = process.Module().Unit().builtins.void_type;
+  if (print.is_strobe) {
+    return LowerStrobeCall(process, frame, call, print, span);
+  }
 
-  std::optional<mir::ExprId> descriptor = std::nullopt;
+  auto& block = *frame.current_block;
+  auto& unit = process.Module().Unit();
+  const mir::TypeId int32_type = unit.builtins.int32;
+  const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
+
+  std::optional<mir::ExprId> user_descriptor;
   std::size_t arg_offset = 0;
-  if (print.sink_kind == support::PrintSinkKind::kFile) {
-    // LRM 21.3.2: the first argument of $fdisplay / $fwrite is an MCD/FD
-    // descriptor; remaining arguments are the print payload. The runtime
-    // decodes the bit pattern (MCD vs FD per LRM 21.3.1) at dispatch time.
-    if (!call.arguments[0].has_value()) {
-      throw InternalError("$f-print descriptor argument unexpectedly elided");
-    }
-    auto lowered_or =
-        process.LowerExpr(hir_proc.exprs.Get(*call.arguments[0]), frame);
-    if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
-    descriptor = block.exprs.Add(*std::move(lowered_or));
+  if (is_file_sink) {
+    auto desc_or = LowerDescriptor(process, frame, call);
+    if (!desc_or) return std::unexpected(std::move(desc_or.error()));
+    user_descriptor = block.exprs.Add(*std::move(desc_or));
     arg_offset = 1;
   }
 
@@ -68,41 +223,17 @@ auto LowerPrintSystemSubroutineCall(
       FormatStringRequirement::kOptional, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
-  // LRM 21.2.2: $strobe defers the same print to the postponed region. The
-  // items keep their outer-scope ExprIds; the backend wraps the rendered print
-  // in a postponed-region lambda whose init-capture list snapshots any
-  // procedural-local operands.
-  if (print.is_strobe) {
-    mir::RuntimePrintCall print_call(
-        ToValuePrintKind(print), descriptor, std::move(*items_or));
-    return mir::Expr{
-        .data =
-            mir::RuntimeCallExpr{
-                .call =
-                    mir::RuntimeSubmitPostponedCall{
-                        .print = std::move(print_call)}},
-        .type = void_type};
-  }
-
-  auto& unit = process.Module().Unit();
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
-  std::vector<mir::ExprId> args;
-  args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
-  if (descriptor.has_value()) {
-    args.push_back(*descriptor);
-  }
-  args.push_back(items_array);
-
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::SystemSubroutineCallee{.id = id},
-              .arguments = std::move(args)},
-      .type = void_type};
+  const mir::ExprId fd = user_descriptor.has_value()
+                             ? *user_descriptor
+                             : BuildStdoutFdLiteral(block, int32_type);
+  const mir::ExprId write_call = EmitFormatThenWrite(
+      process, frame, block, items_array, fd, print.append_newline);
+  return block.exprs.Get(write_call);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

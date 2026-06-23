@@ -2,10 +2,16 @@
 
 #include <cstdint>
 #include <functional>
+#include <span>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
 
@@ -21,6 +27,25 @@ void RuntimeServices::SubmitPostponed(std::function<void()> closure) {
     throw InternalError("RuntimeServices::SubmitPostponed: no Engine bound");
   }
   engine_->SubmitPostponed(std::move(closure));
+}
+
+auto RuntimeServices::Format(std::span<const value::PrintItem> items) const
+    -> value::String {
+  const value::FormatContext ctx{.time_format = &TimeFormat()};
+  std::string out;
+  for (const value::PrintItem& item : items) {
+    std::visit(
+        Overloaded{
+            [&](const value::PrintLiteralItem& lit) {
+              out.append(std::string_view{lit.data, lit.size});
+            },
+            [&](const value::PrintValueItem& v) {
+              out.append(value::Format(v.spec, v.arg, ctx));
+            },
+        },
+        item);
+  }
+  return value::String(std::move(out));
 }
 
 void RuntimeServices::TriggerValueChange(

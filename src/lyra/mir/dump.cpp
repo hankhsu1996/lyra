@@ -19,10 +19,12 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/process.hpp"
+#include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/value/format.hpp"
 
 namespace lyra::mir {
 
@@ -178,6 +180,7 @@ class MirDumper {
             },
             [](const ScopeType&) -> std::string { return "Scope"; },
             [](const ServicesType&) -> std::string { return "Services"; },
+            [](const FilesType&) -> std::string { return "Files"; },
             [](const RuntimeLibraryType& r) -> std::string {
               switch (r.kind) {
                 case RuntimeLibraryKind::kPrintItem:
@@ -188,6 +191,8 @@ class MirDumper {
                   return "RuntimeLibrary(PrintValueItem)";
                 case RuntimeLibraryKind::kFormatSpec:
                   return "RuntimeLibrary(FormatSpec)";
+                case RuntimeLibraryKind::kChannelCancellation:
+                  return "RuntimeLibrary(ChannelCancellation)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
@@ -758,28 +763,6 @@ class MirDumper {
           Indent();
           std::visit(
               Overloaded{
-                  [&](const RuntimePrintCall& pc) {
-                    DumpRuntimePrintCallItems(pc, scope);
-                  },
-                  [&](const RuntimeSubmitObservedCall& sc) {
-                    Line(
-                        std::format(
-                            "RuntimeSubmitObservedCall site={} "
-                            "closure=Expr[{}]",
-                            sc.site_id.value, sc.closure.value));
-                  },
-                  [&](const RuntimeSubmitNbaCall& nc) {
-                    Line(
-                        std::format(
-                            "RuntimeSubmitNbaCall closure=Expr[{}]",
-                            nc.closure.value));
-                  },
-                  [&](const RuntimeSubmitPostponedCall& pc) {
-                    Line("RuntimeSubmitPostponedCall");
-                    Indent();
-                    DumpRuntimePrintCallItems(pc.print, scope);
-                    Dedent();
-                  },
                   [&](const RuntimeScanCall& ss) {
                     std::string slot_list;
                     for (std::size_t k = 0; k < ss.slots.size(); ++k) {
@@ -1048,23 +1031,6 @@ class MirDumper {
     Dedent();
   }
 
-  void DumpRuntimePrintCallItems(
-      const RuntimePrintCall& call, const Block& enclosing) {
-    Line(
-        std::format(
-            "RuntimePrintCall kind={} descriptor={} items={}",
-            DumpPrintKindLabel(call.kind),
-            call.descriptor.has_value()
-                ? std::format("Expr[{}]", call.descriptor->value)
-                : std::string("stdout"),
-            call.items.size()));
-    Indent();
-    for (std::size_t i = 0; i < call.items.size(); ++i) {
-      DumpRuntimePrintItem(i, call.items[i], enclosing);
-    }
-    Dedent();
-  }
-
   void DumpRuntimePrintItem(
       std::size_t i, const RuntimePrintItem& item, const Block& enclosing) {
     std::visit(
@@ -1107,20 +1073,6 @@ class MirDumper {
         return "join_none";
     }
     throw InternalError("ForkJoinModeLabel: unknown JoinMode");
-  }
-
-  static auto DumpPrintKindLabel(value::PrintKind k) -> std::string_view {
-    switch (k) {
-      case value::PrintKind::kDisplay:
-        return "kDisplay";
-      case value::PrintKind::kWrite:
-        return "kWrite";
-      case value::PrintKind::kFDisplay:
-        return "kFDisplay";
-      case value::PrintKind::kFWrite:
-        return "kFWrite";
-    }
-    throw InternalError("DumpPrintKindLabel: unknown value::PrintKind");
   }
 
   static auto DumpFormatKindLabel(value::FormatKind k) -> std::string_view {

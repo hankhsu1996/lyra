@@ -5,9 +5,9 @@
 #include <vector>
 
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/deferred_check_site.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
@@ -27,6 +27,8 @@ struct BuiltinMirTypes {
   TypeId realtime;
   TypeId time;
   TypeId services;
+  TypeId files;
+  TypeId channel_cancellation;
   TypeId print_item;
   TypeId print_literal_item;
   TypeId print_value_item;
@@ -70,6 +72,10 @@ struct CompilationUnit {
                     .dims = {PackedRange{.left = 63, .right = 0}},
                     .form = PackedArrayForm::kTime}}),
             .services = AddType(TypeData{ServicesType{}}),
+            .files = AddType(TypeData{FilesType{}}),
+            .channel_cancellation = AddType(
+                TypeData{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kChannelCancellation}}),
             .print_item = AddType(
                 TypeData{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kPrintItem}}),
