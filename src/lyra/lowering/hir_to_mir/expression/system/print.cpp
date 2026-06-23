@@ -192,12 +192,8 @@ auto LowerStrobeCall(
 
 }  // namespace
 
-// The `id` parameter is part of the system-subroutine dispatch contract;
-// this lowering reads every print-shape fact off `print` and never needs
-// the bare id.
 auto LowerPrintSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId,  // NOLINT(readability-named-parameter)
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   if (print.is_strobe) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <memory>
@@ -78,21 +79,17 @@ class FileTable {
     std::unique_ptr<std::fstream> file;
     ErrorRecord error;
     std::stop_source cancel_source;
-    // LRM 21.3.4.1 + 21.3.5: $ungetc parks a byte here; $fgetc / $fgets /
-    // $fread / the scan-source drain it before touching the underlying
-    // stream; $fseek / $rewind clear it ("Repositioning the current file
-    // position with $fseek or $rewind shall cancel any $ungetc
-    // operations"). We do not use std::fstream's own putback area: it
-    // rejects pushback on a freshly-opened stream and its seek-cancel
-    // behaviour is implementation-defined, neither of which matches the
-    // LRM contract.
+    // LRM 21.3.4.1 + 21.3.5 single-byte putback. Held on the slot rather
+    // than in `std::fstream`'s putback area because the standard rejects
+    // pushback on a freshly-opened stream and leaves seek-cancel behaviour
+    // implementation-defined -- neither matches the LRM contract.
     std::optional<char> putback;
-    // LRM 21.3.4: "Files opened using file descriptors (fd) can be read
-    // from only if they were opened with either the r or r+ type
-    // values." Captured from the mode string at $fopen time; the read
-    // entries reject the FD with EBADF when this is false.
+    // LRM 21.3.4 read permission; false -> EBADF on every read entry.
     bool permits_read = false;
     bool permits_write = false;
+    // File bytes the last peek read, used to rewind any tail the next
+    // advance reports as unconsumed.
+    std::size_t peek_len = 0;
   };
 
   explicit FileTable(StreamDispatcher& stream) : stream_(&stream) {
@@ -136,6 +133,19 @@ class FileTable {
   // state (the putback buffer for $ungetc / $fgetc / $fseek / $rewind /
   // the scan-source).
   auto ResolveSlot(std::int32_t descriptor) -> FdSlot*;
+
+  // LRM 21.3.4.3: snapshot the bytes available at the fd's logical read
+  // position so a pure-value parser can run over them; pair with
+  // `AdvanceFd` to commit the byte count the parser actually used.
+  // Invalid / closed / non-readable descriptors return empty and stamp
+  // EBADF.
+  auto PeekBuffered(const value::PackedArray& fd) -> value::String;
+
+  // LRM 21.3.4.3 commit half of the peek/advance pair: drop `n` bytes
+  // from the head of the most recent peek (putback first, then file
+  // bytes); any unconsumed tail goes back to the stream so the next read
+  // sees it again.
+  void AdvanceFd(const value::PackedArray& fd, const value::PackedArray& n);
 
   // LRM 21.3.7 $ferror state. The runtime entry points stamp the most recent
   // error for an FD via `SetError`; `$ferror(fd, str)` returns the saved

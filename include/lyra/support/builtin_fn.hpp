@@ -134,6 +134,12 @@ enum class BuiltinFn : std::uint16_t {
   kFormat,
   kWrite,
   kWriteln,
+  // LRM 21.3.4.3 scan primitives. `Scan` is a pure value-layer parser;
+  // `PeekBuffered` / `AdvanceFd` are the file-side bytes-and-position
+  // operations a `$fscanf` lowering composes with `Scan`.
+  kScan,
+  kPeekBuffered,
+  kAdvanceFd,
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,

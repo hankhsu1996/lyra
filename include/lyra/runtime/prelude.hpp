@@ -35,10 +35,7 @@
 #include "lyra/runtime/runtime_process.hpp"    // IWYU pragma: keep
 #include "lyra/runtime/runtime_services.hpp"   // IWYU pragma: keep
 #include "lyra/runtime/runtime_traversal.hpp"  // IWYU pragma: keep
-#include "lyra/runtime/scan.hpp"               // IWYU pragma: keep
-#include "lyra/runtime/scan_source.hpp"        // IWYU pragma: keep
 #include "lyra/runtime/scope.hpp"              // IWYU pragma: keep
-#include "lyra/runtime/sformat.hpp"            // IWYU pragma: keep
 #include "lyra/runtime/sim_time.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/simulation_entry.hpp"   // IWYU pragma: keep
 #include "lyra/runtime/stream_dispatcher.hpp"  // IWYU pragma: keep
@@ -58,6 +55,7 @@
 #include "lyra/value/packed_reduction.hpp"     // IWYU pragma: keep
 #include "lyra/value/packed_type.hpp"          // IWYU pragma: keep
 #include "lyra/value/queue.hpp"                // IWYU pragma: keep
+#include "lyra/value/scan.hpp"                 // IWYU pragma: keep
 #include "lyra/value/string.hpp"               // IWYU pragma: keep
 #include "lyra/value/string_op.hpp"            // IWYU pragma: keep
 #include "lyra/value/unpacked_array.hpp"       // IWYU pragma: keep

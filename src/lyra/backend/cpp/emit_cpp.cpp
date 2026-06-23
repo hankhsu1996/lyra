@@ -367,8 +367,6 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "#include \"lyra/runtime/scope.hpp\"\n";
-  out += "#include \"lyra/runtime/scan.hpp\"\n";
-  out += "#include \"lyra/runtime/sformat.hpp\"\n";
   out += "#include \"lyra/runtime/sim_time.hpp\"\n";
   out += "#include \"lyra/runtime/timescale.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
@@ -381,6 +379,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/packed_convert.hpp\"\n";
   out += "#include \"lyra/value/packed_reduction.hpp\"\n";
   out += "#include \"lyra/value/real.hpp\"\n";
+  out += "#include \"lyra/value/scan.hpp\"\n";
   out += "#include \"lyra/value/string.hpp\"\n";
   out += "#include \"lyra/value/string_op.hpp\"\n";
   out += "#include \"lyra/value/unpacked_array.hpp\"\n";

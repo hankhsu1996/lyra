@@ -14,7 +14,6 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/method_ref.hpp"
 #include "lyra/mir/param.hpp"
-#include "lyra/mir/runtime_scan.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/mir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -102,6 +101,12 @@ struct BuiltinStaticCallee {
   TypeId type_qual;
 };
 
+// A free function (no receiver, no SV-type qualifier). Distinct from
+// `BuiltinStaticCallee` whose qualifier names an SV type.
+struct FreeFnCallee {
+  support::BuiltinFn id;
+};
+
 // Calls a closure stored as an expression in the same block.
 // The backend renders the call as `(closure_lambda)(args)` -- the standard
 // IIFE shape when invoked synchronously. Used for SV expression-position
@@ -144,17 +149,11 @@ struct ConstructorCallee {};
 
 using Callee = std::variant<
     SystemSubroutineCallee, MethodRef, BuiltinFnCallee, BuiltinStaticCallee,
-    ClosureRef, RuntimeNavCallee, ConstructorCallee>;
+    FreeFnCallee, ClosureRef, RuntimeNavCallee, ConstructorCallee>;
 
 struct CallExpr {
   Callee callee;
   std::vector<ExprId> arguments;
-};
-
-using RuntimeCall = std::variant<RuntimeScanCall>;
-
-struct RuntimeCallExpr {
-  RuntimeCall call;
 };
 
 // Dereferences a borrowed pointer to reach the cell it refers to. An
@@ -205,8 +204,8 @@ struct TupleExpr {
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, ParamRef, LocalRef,
     UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr, CallExpr,
-    RuntimeCallExpr, DerefExpr, MemberAccessExpr, ConversionExpr, ClosureExpr,
-    ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr>;
+    DerefExpr, MemberAccessExpr, ConversionExpr, ClosureExpr, ConcatExpr,
+    ReplicationExpr, ArrayLiteralExpr, TupleExpr>;
 
 struct Expr {
   ExprData data;

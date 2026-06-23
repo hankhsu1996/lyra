@@ -11,6 +11,6 @@ expect:
   stderr:
     contains:
       - "unsupported:"
-      - "output_var must be string-typed"
+      - "output_var types are not yet supported"
     not_contains:
       - "internal error"
