@@ -116,6 +116,17 @@ no special-casing.
 - An associative array method that re-implements a 7.12 scan rather than feeding its entry stream
   through the shared algorithm.
 
+## Portability floor
+
+The value layer is compiled under two toolchains -- the bazel library build (GCC) and the clang the
+emitted user program uses -- so it may rely only on the C++23 library features present in both
+standard libraries. The ranges adaptors and algorithms this decision uses (`views::enumerate` /
+`filter` / `transform` / `take` / `reverse`, `ranges::fold_left_first`, `ranges::min_element` /
+`max_element`) are available on both; `std::ranges::to` is not (it lands a standard-library version
+later than the GCC build provides), so the collect step is a small local helper rather than
+`ranges::to`. A new ranges feature is admissible here only once it compiles under both toolchains; a
+quick `g++ -std=c++23 -fsyntax-only` over the value headers reproduces the GCC side locally.
+
 ## Notes
 
 The empty-receiver reduction value (LRM 7.12.3 is silent) remains an element-shaped zero; under this

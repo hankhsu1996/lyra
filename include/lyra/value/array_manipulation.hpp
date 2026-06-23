@@ -75,6 +75,20 @@ template <typename K>
   return false;
 }
 
+// Collect a lazy view into a vector. The value layer is built under two
+// toolchains (the emit clang and the bazel GCC); `std::ranges::to` is absent on
+// the GCC libstdc++ the bazel build uses, and a 7.12 result is shaped into an
+// SV container by the caller anyway, so the projected values are gathered here.
+template <typename V>
+[[nodiscard]] auto ToVector(V view)
+    -> std::vector<std::ranges::range_value_t<V>> {
+  std::vector<std::ranges::range_value_t<V>> out;
+  for (auto&& x : view) {
+    out.push_back(static_cast<decltype(x)>(x));
+  }
+  return out;
+}
+
 // LRM 7.12.1 find core: the entries satisfying `pred`, as a lazy view. The
 // locator family composes over it -- `find` collects every match, `find_first`
 // is `take(1)`, `find_last` is `reverse | take(1)` -- so "leftmost" and
@@ -88,42 +102,42 @@ template <typename R, typename Pred>
 
 template <typename R, typename F>
 [[nodiscard]] auto ArrayFind(R entries, F pred) -> std::vector<ElementOf<R>> {
-  return std::ranges::to<std::vector>(
+  return ToVector(
       Matching(entries, pred) |
       std::views::transform([](const auto& e) { return *e.element; }));
 }
 template <typename R, typename F>
 [[nodiscard]] auto ArrayFindIndex(R entries, F pred)
     -> std::vector<IndexOf<R>> {
-  return std::ranges::to<std::vector>(
+  return ToVector(
       Matching(entries, pred) |
       std::views::transform([](const auto& e) { return e.index; }));
 }
 template <typename R, typename F>
 [[nodiscard]] auto ArrayFindFirst(R entries, F pred)
     -> std::vector<ElementOf<R>> {
-  return std::ranges::to<std::vector>(
+  return ToVector(
       Matching(entries, pred) | std::views::take(1) |
       std::views::transform([](const auto& e) { return *e.element; }));
 }
 template <typename R, typename F>
 [[nodiscard]] auto ArrayFindFirstIndex(R entries, F pred)
     -> std::vector<IndexOf<R>> {
-  return std::ranges::to<std::vector>(
+  return ToVector(
       Matching(entries, pred) | std::views::take(1) |
       std::views::transform([](const auto& e) { return e.index; }));
 }
 template <typename R, typename F>
 [[nodiscard]] auto ArrayFindLast(R entries, F pred)
     -> std::vector<ElementOf<R>> {
-  return std::ranges::to<std::vector>(
+  return ToVector(
       Matching(entries, pred) | std::views::reverse | std::views::take(1) |
       std::views::transform([](const auto& e) { return *e.element; }));
 }
 template <typename R, typename F>
 [[nodiscard]] auto ArrayFindLastIndex(R entries, F pred)
     -> std::vector<IndexOf<R>> {
-  return std::ranges::to<std::vector>(
+  return ToVector(
       Matching(entries, pred) | std::views::reverse | std::views::take(1) |
       std::views::transform([](const auto& e) { return e.index; }));
 }
@@ -176,14 +190,14 @@ template <typename R, typename F>
 }
 template <typename R, typename F>
 [[nodiscard]] auto ArrayUnique(R entries, F key) -> std::vector<ElementOf<R>> {
-  return std::ranges::to<std::vector>(
+  return ToVector(
       UniqueEntries(entries, key) |
       std::views::transform([](const auto& e) { return *e.element; }));
 }
 template <typename R, typename F>
 [[nodiscard]] auto ArrayUniqueIndex(R entries, F key)
     -> std::vector<IndexOf<R>> {
-  return std::ranges::to<std::vector>(
+  return ToVector(
       UniqueEntries(entries, key) |
       std::views::transform([](const auto& e) { return e.index; }));
 }
