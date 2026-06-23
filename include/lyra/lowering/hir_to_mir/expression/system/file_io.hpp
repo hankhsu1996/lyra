@@ -20,7 +20,8 @@ namespace lyra::lowering::hir_to_mir {
 // mir::CallExpr whose first argument is the engine handle (self.Services())
 // and whose remaining arguments are the task operands. Output-arg tasks
 // ($fgets / $fread / $ferror) reach this path only when nested inside a
-// larger expression and return diag::Unsupported -- the statement-position
+// larger expression and return an unsupported diagnostic -- the
+// statement-position
 // desugaring runs upstream via LowerFileIOSystemSubroutineCallStmt.
 auto LowerFileIOSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,

@@ -62,15 +62,14 @@ auto BuildSFormatCallExpr(
 
 auto RejectNonStringOutput(std::string_view name, diag::SourceSpan span)
     -> diag::Result<mir::Stmt> {
-  return diag::Unsupported(
+  return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
       std::format(
           "{} output_var must be string-typed; integral and "
           "unpacked-byte-array "
           "outputs (LRM 21.3.3 via the LRM 5.9 assignment rules) are not yet "
           "supported",
-          std::string{name}),
-      diag::UnsupportedCategory::kFeature);
+          std::string{name}));
 }
 
 }  // namespace

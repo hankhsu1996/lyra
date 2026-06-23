@@ -58,27 +58,27 @@ auto DelayTimeResolver::ResolveIntegerDelay(
     std::int64_t value, diag::SourceSpan span) const
     -> diag::Result<SimDuration> {
   if (value < 0) {
-    return diag::Error(
-        span, diag::DiagCode::kDelayValueOutOfRange,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorDelayValueOutOfRange,
         "delay value must be non-negative");
   }
   const int ratio_exp = resolution_.unit_power - resolution_.precision_power;
   if (ratio_exp < 0) {
-    return diag::Error(
-        span, diag::DiagCode::kDelayValueOutOfRange,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorDelayValueOutOfRange,
         "delay value cannot be represented under the active time precision");
   }
   const auto ratio_or = IntegerPow10(ratio_exp);
   if (!ratio_or) {
-    return diag::Error(
-        span, diag::DiagCode::kDelayValueOutOfRange,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorDelayValueOutOfRange,
         "delay value overflows internal tick representation");
   }
   const auto unsigned_value = static_cast<std::uint64_t>(value);
   if (*ratio_or != 0 &&
       unsigned_value > std::numeric_limits<std::uint64_t>::max() / *ratio_or) {
-    return diag::Error(
-        span, diag::DiagCode::kDelayValueOutOfRange,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorDelayValueOutOfRange,
         "delay value overflows internal tick representation");
   }
   return static_cast<SimDuration>(unsigned_value * *ratio_or);
@@ -88,13 +88,13 @@ auto DelayTimeResolver::ResolveTimeLiteral(
     double value, hir::TimeScale literal_unit, diag::SourceSpan span) const
     -> diag::Result<SimDuration> {
   if (!std::isfinite(value)) {
-    return diag::Error(
-        span, diag::DiagCode::kDelayValueOutOfRange,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorDelayValueOutOfRange,
         "delay value is not a finite real number");
   }
   if (value < 0.0) {
-    return diag::Error(
-        span, diag::DiagCode::kDelayValueOutOfRange,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorDelayValueOutOfRange,
         "delay value must be non-negative");
   }
   const int ratio_exp = static_cast<int>(HirTimeScaleToPower(literal_unit)) -
@@ -103,8 +103,8 @@ auto DelayTimeResolver::ResolveTimeLiteral(
       std::pow(10.0L, static_cast<long double>(ratio_exp));
   const long double ticks_f = static_cast<long double>(value) * ratio;
   if (!std::isfinite(ticks_f)) {
-    return diag::Error(
-        span, diag::DiagCode::kDelayValueOutOfRange,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorDelayValueOutOfRange,
         "delay value overflows internal tick representation");
   }
   // Cap at int64_t::max() because std::llroundl returns long long, not the
@@ -112,8 +112,8 @@ auto DelayTimeResolver::ResolveTimeLiteral(
   if (ticks_f < 0.0L ||
       ticks_f >
           static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
-    return diag::Error(
-        span, diag::DiagCode::kDelayValueOutOfRange,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorDelayValueOutOfRange,
         "delay value overflows internal tick representation");
   }
   const std::int64_t ticks = std::llroundl(ticks_f);

@@ -48,9 +48,9 @@ LRM 6.12: `real` is IEEE 754 double, `shortreal` is IEEE 754 single, `realtime` 
       conditional), plus `**` via LRM 11.4.3 result-typing, plus shortreal <-> real conversion.
 - [x] C3 -- Cross-family conversions: integral -> real treats `'x` / `'z` as 0 (LRM 6.12.1); real ->
       integral rounds half-away-from-zero (LRM 6.12.1).
-- [x] C4 -- LRM-illegal real forms (LRM 6.12 + 11.3.1 / Table 11-1) diagnose as `diag::Unsupported`
-      with an LRM citation. Slang's frontend filters all but case equality (`===` / `!==`); the
-      case-equality path is guarded at lowering.
+- [x] C4 -- LRM-illegal real forms (LRM 6.12 + 11.3.1 / Table 11-1) diagnose as an unsupported
+      diagnostic with an LRM citation. Slang's frontend filters all but case equality (`===` /
+      `!==`); the case-equality path is guarded at lowering.
 - [x] C5 -- Observable `real` / `shortreal` / `realtime` signals. A module-scope floating-point
       signal is an observable cell (`Var<Real>`): `wait (sig == ...)`, `always_comb` / `@*` reads,
       continuous assignment, non-blocking writes, and the explicit any-change `@(sig)` event control

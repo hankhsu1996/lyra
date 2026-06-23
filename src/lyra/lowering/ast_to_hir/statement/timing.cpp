@@ -39,10 +39,9 @@ auto LowerSignalEventTrigger(
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
     -> diag::Result<hir::EventTrigger> {
   if (sig.iffCondition != nullptr) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "`iff` qualifier on event control is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "`iff` qualifier on event control is not yet supported");
   }
 
   auto expr_or = proc.LowerExpr(sig.expr, frame);
@@ -53,17 +52,16 @@ auto LowerSignalEventTrigger(
     // The runtime classifies an edge only on a packed bit-vector cell (LRM
     // 9.4.2 Table 9-2); slang already restricts an edge to an integral operand.
     if (!expr_type.IsPackedArray()) {
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedEventTriggerForm,
-          "edge event control is only supported on a packed bit-vector operand",
-          diag::UnsupportedCategory::kFeature);
+          "edge event control is only supported on a packed bit-vector "
+          "operand");
     }
   } else if (!expr_type.IsValueChangeObservable()) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "value-change event control on a non-value operand is not yet "
-        "supported",
-        diag::UnsupportedCategory::kFeature);
+        "supported");
   }
 
   const auto edge_kind = LowerEventEdge(sig.edge);
@@ -93,16 +91,14 @@ auto LowerNamedEventControl(
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
     -> diag::Result<hir::NamedEventControl> {
   if (sig.iffCondition != nullptr) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "`iff` qualifier on event control is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "`iff` qualifier on event control is not yet supported");
   }
   if (sig.edge != slang::ast::EdgeKind::None) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "edge specifier is not valid on a named event",
-        diag::UnsupportedCategory::kFeature);
+        "edge specifier is not valid on a named event");
   }
 
   auto expr_or = proc.LowerExpr(sig.expr, frame);
@@ -111,10 +107,9 @@ auto LowerNamedEventControl(
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
   if (primary == nullptr ||
       !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "named event reference must be a plain structural variable",
-        diag::UnsupportedCategory::kFeature);
+        "named event reference must be a plain structural variable");
   }
   return hir::NamedEventControl{
       .event = frame.Exprs().Add(*std::move(expr_or)),
@@ -153,11 +148,10 @@ auto LowerTimingControl(
       triggers.reserve(list.events.size());
       for (const auto* event : list.events) {
         if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
-          return diag::Unsupported(
+          return diag::Fail(
               span, diag::DiagCode::kUnsupportedTimingControlKind,
               "event list entries must be signal events; nested timing "
-              "controls are not yet supported",
-              diag::UnsupportedCategory::kFeature);
+              "controls are not yet supported");
         }
         const auto& sig = event->as<slang::ast::SignalEventControl>();
         auto trigger_or = LowerSignalEventTrigger(proc, frame, sig, span);
@@ -170,15 +164,13 @@ auto LowerTimingControl(
     case slang::ast::TimingControlKind::ImplicitEvent:
       return hir::TimingControl{hir::ImplicitEventControl{}};
     case slang::ast::TimingControlKind::RepeatedEvent:
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "repeated event control (`repeat (N) @(...)`) is not yet supported",
-          diag::UnsupportedCategory::kFeature);
+          "repeated event control (`repeat (N) @(...)`) is not yet supported");
     default:
-      return diag::Unsupported(
+      return diag::Fail(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "this timing control kind is not yet supported",
-          diag::UnsupportedCategory::kFeature);
+          "this timing control kind is not yet supported");
   }
 }
 
@@ -215,27 +207,24 @@ auto LowerEventTriggerStmt(
     const slang::ast::EventTriggerStatement& et, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   if (et.isNonBlocking) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "non-blocking event trigger `->>` is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "non-blocking event trigger `->>` is not yet supported");
   }
   if (et.timing != nullptr) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "delayed event trigger (with intra-trigger timing control) is not yet "
-        "supported",
-        diag::UnsupportedCategory::kFeature);
+        "supported");
   }
   auto expr_or = proc.LowerExpr(et.target, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
   if (primary == nullptr ||
       !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "event trigger target must be a plain named-event reference",
-        diag::UnsupportedCategory::kFeature);
+        "event trigger target must be a plain named-event reference");
   }
   return hir::Stmt{
       .label = std::nullopt,

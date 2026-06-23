@@ -232,11 +232,10 @@ auto StructuralScopeLowerer::PopulateVariableMember(
     -> diag::Result<void> {
   const auto& mapper = module_->SourceMapper();
   if (var.lifetime != slang::ast::VariableLifetime::Static) {
-    return diag::Unsupported(
+    return diag::Fail(
         mapper.PointSpanOf(var.location),
         diag::DiagCode::kUnsupportedNonStaticVariableLifetime,
-        "only static variables are supported",
-        diag::UnsupportedCategory::kFeature);
+        "only static variables are supported");
   }
   auto type_id_or =
       module_->InternType(var.getType(), mapper.PointSpanOf(var.location));

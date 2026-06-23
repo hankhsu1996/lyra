@@ -250,10 +250,9 @@ auto LowerLoopIterNextValue(
   const auto span = mapper.SpanOf(iter.sourceRange);
 
   if (iter.kind != slang::ast::ExpressionKind::Assignment) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-        "this generate iteration form is not supported yet",
-        diag::UnsupportedCategory::kFeature);
+        "this generate iteration form is not supported yet");
   }
 
   const auto& assign = iter.as<slang::ast::AssignmentExpression>();

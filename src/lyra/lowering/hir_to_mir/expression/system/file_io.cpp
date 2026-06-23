@@ -117,14 +117,13 @@ auto LowerFileFlushCall(
 // to a statement-position call.
 auto RejectOutputArgFileCallInExprPosition(
     std::string_view name, diag::SourceSpan span) -> diag::Result<mir::Expr> {
-  return diag::Unsupported(
+  return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
       std::format(
           "{} writes through an output argument and is only supported as a "
           "bare call or as the right-hand side of a blocking assignment "
           "(LRM 13.5 copy-out semantics)",
-          std::string{name}),
-      diag::UnsupportedCategory::kFeature);
+          std::string{name}));
 }
 
 }  // namespace
@@ -223,12 +222,11 @@ auto LowerFileIOSystemSubroutineCallStmt(
         // loading an integral variable" -- reject the tolerant case so the
         // user gets a clear diagnostic instead of silent arg-dropping.
         if (call.arguments.size() != 2) {
-          return diag::Unsupported(
+          return diag::Fail(
               diag::DiagCode::kUnsupportedSubroutineArgument,
               "$fread: integral form does not accept start/count "
               "arguments (LRM 21.3.4.4 says they are ignored; we reject "
-              "to surface the mistake)",
-              diag::UnsupportedCategory::kFeature);
+              "to surface the mistake)");
         }
       } else {
         // Memory form. Only 1D unpacked of integral packed elements is in
@@ -236,11 +234,10 @@ auto LowerFileIOSystemSubroutineCallStmt(
         // are deferred.
         const auto& elem_ty = module.Hir().GetType(unpacked->element_type);
         if (!std::holds_alternative<hir::PackedArrayType>(elem_ty.data)) {
-          return diag::Unsupported(
+          return diag::Fail(
               diag::DiagCode::kUnsupportedSubroutineArgument,
               "$fread memory form: only 1D unpacked arrays of integral "
-              "packed elements are supported (LRM 21.3.4.4)",
-              diag::UnsupportedCategory::kFeature);
+              "packed elements are supported (LRM 21.3.4.4)");
         }
       }
 

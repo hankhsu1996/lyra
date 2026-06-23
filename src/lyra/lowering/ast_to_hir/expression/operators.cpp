@@ -65,8 +65,8 @@ auto CheckBinaryOperands(
       bin.op == slang::ast::BinaryOperator::CaseInequality;
   if (is_case_equality && (TypeHasRealLeaf(*bin.left().type) ||
                            TypeHasRealLeaf(*bin.right().type))) {
-    return diag::Error(
-        span, diag::DiagCode::kCaseEqualityOnRealOperand,
+    return diag::Fail(
+        span, diag::DiagCode::kErrorCaseEqualityOnRealOperand,
         "case equality (=== / !==) is not defined on real or shortreal "
         "operands (LRM Table 11-1)");
   }
@@ -146,17 +146,15 @@ auto LowerConditionalExpr(
     const slang::ast::ConditionalExpression& cond, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (cond.conditions.size() != 1) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "conditional operator with `&&&` multi-condition is not yet "
-        "supported",
-        diag::UnsupportedCategory::kOperation);
+        "supported");
   }
   if (cond.conditions[0].pattern != nullptr) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "conditional operator with `matches` pattern is not yet supported",
-        diag::UnsupportedCategory::kOperation);
+        "conditional operator with `matches` pattern is not yet supported");
   }
   auto cond_or = lowerer.LowerExpr(*cond.conditions[0].expr, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));

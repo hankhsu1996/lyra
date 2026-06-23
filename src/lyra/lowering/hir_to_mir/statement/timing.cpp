@@ -64,10 +64,10 @@ auto ResolveDelayDuration(
           time_lit->value, time_lit->scale, duration.span);
     }
   }
-  return diag::Unsupported(
+  return diag::Fail(
       duration.span, diag::DiagCode::kUnsupportedDelayExpressionForm,
-      "delay durations beyond an integer or time literal are not yet supported",
-      diag::UnsupportedCategory::kFeature);
+      "delay durations beyond an integer or time literal are not yet "
+      "supported");
 }
 
 auto ResolveDelayTicks(ProcessLowerer& process, const hir::DelayControl& d)
@@ -147,11 +147,10 @@ auto LowerEventTimedStmt(
         union_reads.reserve(ec.triggers.size());
         for (const auto& trigger : ec.triggers) {
           if (trigger.sensitivity_list.size() > 1) {
-            return diag::Unsupported(
+            return diag::Fail(
                 span, diag::DiagCode::kUnsupportedEventTriggerForm,
                 "compound event expressions (concatenation, arithmetic, "
-                "dynamic index) are not yet supported",
-                diag::UnsupportedCategory::kFeature);
+                "dynamic index) are not yet supported");
           }
           for (auto leaf : trigger.sensitivity_list) {
             // LRM 9.4.2 LSB-reduce: an edge event monitors only the LSB of

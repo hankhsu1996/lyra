@@ -40,17 +40,15 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   const auto span = mapper.PointSpanOf(sym.location);
 
   if (sym.getDelay() != nullptr) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedContinuousAssignForm,
-        "delay on continuous assignment is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "delay on continuous assignment is not yet supported");
   }
   const auto strength = sym.getDriveStrength();
   if (strength.first.has_value() || strength.second.has_value()) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedContinuousAssignForm,
-        "drive strength on continuous assignment is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "drive strength on continuous assignment is not yet supported");
   }
 
   const auto& assignment_expr = sym.getAssignment();

@@ -12,11 +12,4 @@ enum class DiagKind : std::uint8_t {
   kNote,
 };
 
-// Set iff PrimaryDiagItem::kind == kUnsupported.
-enum class UnsupportedCategory : std::uint8_t {
-  kType,
-  kOperation,
-  kFeature,
-};
-
 }  // namespace lyra::diag

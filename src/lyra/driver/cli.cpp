@@ -267,7 +267,7 @@ auto main(int argc, char** argv) -> int {
 
     if (!parsed) {
       report(
-          lyra::diag::Diagnostic::HostError(
+          lyra::diag::Make(
               lyra::diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
       return 1;
     }
@@ -307,7 +307,7 @@ auto main(int argc, char** argv) -> int {
 
     if (!args.no_project) {
       report(
-          lyra::diag::Diagnostic::HostError(
+          lyra::diag::Make(
               lyra::diag::DiagCode::kHostProjectModeUnimplemented,
               "project mode is not implemented yet; pass --no-project to "
               "run in direct file mode"));
@@ -315,7 +315,7 @@ auto main(int argc, char** argv) -> int {
     }
     if (args.input.files.empty()) {
       report(
-          lyra::diag::Diagnostic::HostError(
+          lyra::diag::Make(
               lyra::diag::DiagCode::kHostNoInputFiles, "no input files"));
       return 1;
     }
@@ -367,7 +367,7 @@ auto main(int argc, char** argv) -> int {
       auto loc_or = lyra::driver::ResolveRuntimeLocation(program_path);
       if (!loc_or) {
         report(
-            lyra::diag::Diagnostic::HostError(
+            lyra::diag::Make(
                 lyra::diag::DiagCode::kHostIoError, std::move(loc_or.error())));
         return std::nullopt;
       }
@@ -439,7 +439,7 @@ auto main(int argc, char** argv) -> int {
         auto tmp_or = lyra::support::MakeTempDir();
         if (!tmp_or) {
           report(
-              lyra::diag::Diagnostic::HostError(
+              lyra::diag::Make(
                   lyra::diag::DiagCode::kHostIoError,
                   std::move(tmp_or.error())));
           return 1;

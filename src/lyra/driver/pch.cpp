@@ -26,7 +26,7 @@ namespace lyra::driver::pch {
 namespace {
 
 auto IoError(std::string message) {
-  return diag::HostError(diag::DiagCode::kHostIoError, std::move(message));
+  return diag::Fail(diag::DiagCode::kHostIoError, std::move(message));
 }
 
 // True when the resolved compiler is clang-based. PCH file format and the
@@ -198,7 +198,7 @@ auto BuildAt(
     return IoError(std::move(result_or.error()));
   }
   if (result_or->exit_code != 0) {
-    return diag::HostError(
+    return diag::Fail(
         diag::DiagCode::kHostBuildFailed,
         std::format(
             "PCH build exited with {}:\n{}", result_or->exit_code,

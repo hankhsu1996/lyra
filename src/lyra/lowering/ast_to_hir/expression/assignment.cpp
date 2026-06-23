@@ -121,9 +121,8 @@ auto ValidateAssignableImpl(
   const auto& mapper = module.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
   auto reject = [&](std::string_view why) -> diag::Result<void> {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedAssignmentTarget, std::string{why},
-        diag::UnsupportedCategory::kFeature);
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedAssignmentTarget, std::string{why});
   };
 
   switch (expr.kind) {
@@ -179,11 +178,10 @@ auto ValidateAssignableImpl(
       for (const auto* op : cc.operands()) {
         if (op->kind == EK::Replication) {
           const auto op_span = mapper.SpanOf(op->sourceRange);
-          return diag::Unsupported(
+          return diag::Fail(
               op_span, diag::DiagCode::kUnsupportedAssignmentTarget,
               "replication is not allowed inside a destructuring "
-              "assignment target (LRM 11.4.12.1)",
-              diag::UnsupportedCategory::kFeature);
+              "assignment target (LRM 11.4.12.1)");
         }
         auto sub = ValidateAssignableImpl(module, procedural_context, *op);
         if (!sub) return sub;

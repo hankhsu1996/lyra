@@ -30,11 +30,10 @@ auto LowerConcatExpr(
   const auto kind = module.Unit().GetType(*type_id).Kind();
   if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kPackedArray &&
       kind != hir::TypeKind::kQueue) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "concatenation result type is not string, packed, or a queue (LRM "
-        "11.4.12 / 10.10)",
-        diag::UnsupportedCategory::kOperation);
+        "11.4.12 / 10.10)");
   }
   std::vector<hir::ExprId> operand_ids;
   operand_ids.reserve(cc.operands().size());
@@ -68,11 +67,10 @@ auto LowerReplicationExprProc(
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const auto kind = module.Unit().GetType(*type_id).Kind();
   if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kPackedArray) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "replication result type is neither string nor packed "
-        "(LRM 11.4.12.1)",
-        diag::UnsupportedCategory::kOperation);
+        "(LRM 11.4.12.1)");
   }
   auto count_or = proc.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));

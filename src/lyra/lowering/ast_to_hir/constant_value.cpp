@@ -38,10 +38,9 @@ auto MakeConstantValueExpr(
         .span = span,
     };
   }
-  return diag::Unsupported(
+  return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "constant of aggregate type is not yet supported",
-      diag::UnsupportedCategory::kOperation);
+      "constant of aggregate type is not yet supported");
 }
 
 }  // namespace lyra::lowering::ast_to_hir

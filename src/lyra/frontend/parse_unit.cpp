@@ -67,7 +67,7 @@ auto ExecuteParseUnit(
           auto buffer_or = source_manager.readSource(path, nullptr);
           if (!buffer_or) {
             sink.Report(
-                diag::Diagnostic::HostError(
+                diag::Make(
                     diag::DiagCode::kHostIoError,
                     fmt::format("cannot read '{}'", u.file)));
             return false;
@@ -93,7 +93,7 @@ auto ExecuteParseUnit(
             auto buffer_or = source_manager.readSource(path, nullptr);
             if (!buffer_or) {
               sink.Report(
-                  diag::Diagnostic::HostError(
+                  diag::Make(
                       diag::DiagCode::kHostIoError,
                       fmt::format("cannot read '{}'", file)));
               return false;

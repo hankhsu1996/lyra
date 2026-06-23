@@ -222,10 +222,9 @@ auto ApplyAssignEffect(
     return effect_fn(block, target_in_outer, operands_in_outer, services_id);
   }
   if (!IsExprRootedAtStructuralVar(block, target_in_outer)) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
-        "non-blocking assignment to procedural local is not supported yet",
-        diag::UnsupportedCategory::kFeature);
+        "non-blocking assignment to procedural local is not supported yet");
   }
   mir::Expr closure = BuildDeferredAssignClosure(
       process.Module(), frame, target_in_outer, operands_in_outer, effect_fn);

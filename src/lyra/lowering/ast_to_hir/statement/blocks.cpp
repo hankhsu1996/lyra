@@ -32,16 +32,14 @@ auto LowerForkStmt(
       proc.ContainingSymbol()
               .as<slang::ast::SubroutineSymbol>()
               .subroutineKind == slang::ast::SubroutineKind::Function) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedForkJoinForm,
-        "a fork-join block inside a function is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "a fork-join block inside a function is not yet supported");
   }
   if (block.blockSymbol != nullptr && !block.blockSymbol->name.empty()) {
-    return diag::Unsupported(
+    return diag::Fail(
         span, diag::DiagCode::kUnsupportedForkJoinForm,
-        "a named fork-join block is not yet supported",
-        diag::UnsupportedCategory::kFeature);
+        "a named fork-join block is not yet supported");
   }
 
   hir::JoinMode mode = hir::JoinMode::kAll;

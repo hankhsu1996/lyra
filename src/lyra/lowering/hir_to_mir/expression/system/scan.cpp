@@ -151,14 +151,13 @@ auto ComputeSlotMeta(
     meta.is_four_state = pa.IsFourState();
     return meta;
   }
-  return diag::Unsupported(
+  return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
       std::format(
           "{} output argument must be an integral or string lvalue "
           "(LRM 21.3.4.3)",
           source_kind == support::ScanSourceKind::kFile ? "$fscanf"
-                                                        : "$sscanf"),
-      diag::UnsupportedCategory::kFeature);
+                                                        : "$sscanf"));
 }
 
 }  // namespace
