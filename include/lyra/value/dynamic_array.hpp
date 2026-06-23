@@ -23,63 +23,72 @@ namespace lyra::value {
 // SystemVerilog dynamic array (LRM 7.5). Size set at run time via `new[N]` /
 // `new[N](other)` constructors; default is the empty array (LRM Table 6-7).
 //
-// `oob_slot_` is the LRM 7.4.5 invalid-index shield. Its state is restored
-// to the canonical default on every OOB access via `T::ResetToDefault`, so
-// reads after an OOB write observe the LRM Table 7-1 default rather than
-// whatever the prior write left in the slot. It is supplied at construction
-// because `T = PackedArray` requires runtime shape parameters (bit width,
-// signedness, 2/4-state) that cannot be recovered from the C++ type alone.
-// See `docs/decisions/runtime-shape-and-default-value.md`.
+// `element_default_` holds the LRM Table 7-1 default an invalid-index read
+// returns (LRM 7.4.5) and the prototype every fill / slice / locator copies.
+// It carries the element's runtime shape (bit width, signedness, 2/4-state for
+// `T = PackedArray`) that the C++ type alone cannot recover, so it is supplied
+// at construction. It is only ever read or copied, never written, so a const
+// read returns it directly with no scrub. `discard_sink_` is the throwaway an
+// invalid-index write lands on; the non-const write path scrubs it to canonical
+// via `T::ResetToDefault` before handing out the reference, so a discarded
+// write never leaks into a later access. See
+// `docs/decisions/runtime-shape-and-default-value.md`.
 template <typename T>
 class DynamicArray {
  public:
   using ElementType = T;
 
   // Sentinel "uninitialized" form -- empty container with default-constructed
-  // OOB slot. Used as the declared default state of a `Var<DynamicArray<T>>`
-  // field; the first MIR-level assignment overwrites the whole array (LRM
-  // 10.5 variable initialization).
+  // default / sink slots. Used as the declared default state of a
+  // `Var<DynamicArray<T>>` field; the first MIR-level assignment overwrites the
+  // whole array (LRM 10.5 variable initialization).
   DynamicArray() = default;
 
-  // Empty container with the shield slot seeded. Used for declarations like
-  // `int arr[];` where the array starts empty but the element shape is
+  // Empty container with the default / sink slots seeded. Used for declarations
+  // like `int arr[];` where the array starts empty but the element shape is
   // known at lowering time.
-  explicit DynamicArray(T oob_slot) : oob_slot_(std::move(oob_slot)) {
+  explicit DynamicArray(T element_default)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)) {
   }
 
-  // LRM 7.5.1 `new[N]`: build `n` elements, each a copy of the shield-slot
-  // seed (which is also the canonical default). `n` is a longint per LRM
-  // 7.5.1; the negative-N case throws at construction.
-  DynamicArray(const PackedArray& n, T oob_slot)
-      : oob_slot_(std::move(oob_slot)) {
+  // LRM 7.5.1 `new[N]`: build `n` elements, each a copy of the element default.
+  // `n` is a longint per LRM 7.5.1; the negative-N case throws at construction.
+  DynamicArray(const PackedArray& n, T element_default)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)) {
     const std::int64_t n_val = n.ToInt64();
     if (n_val < 0) {
       throw InternalError(
           "DynamicArray::new[N]: size operand is negative (LRM 7.5.1)");
     }
-    data_.assign(static_cast<std::size_t>(n_val), oob_slot_);
+    data_.assign(static_cast<std::size_t>(n_val), element_default_);
   }
 
-  // LRM 7.5.1 `new[N](other)`: copy `other` then `resize(N, oob_slot_)` --
-  // `std::vector::resize` truncates when target is smaller and pads with
-  // the fill value when target is larger, covering both halves of LRM
-  // 7.5.1 in one call.
-  DynamicArray(const PackedArray& n, T oob_slot, const DynamicArray& src)
-      : oob_slot_(std::move(oob_slot)), data_(src.data_) {
+  // LRM 7.5.1 `new[N](other)`: copy `other` then `resize(N, element_default_)`
+  // -- `std::vector::resize` truncates when target is smaller and pads with the
+  // fill value when target is larger, covering both halves of LRM 7.5.1 in one
+  // call.
+  DynamicArray(const PackedArray& n, T element_default, const DynamicArray& src)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)),
+        data_(src.data_) {
     const std::int64_t n_val = n.ToInt64();
     if (n_val < 0) {
       throw InternalError(
           "DynamicArray::new[N](src): size operand is negative (LRM 7.5.1)");
     }
-    data_.resize(static_cast<std::size_t>(n_val), oob_slot_);
+    data_.resize(static_cast<std::size_t>(n_val), element_default_);
   }
 
-  // LRM 10.9.1 assignment-pattern construction: shield slot seeded, size
-  // taken from the pattern's element list. Mirrors `UnpackedArray`'s span
+  // LRM 10.9.1 assignment-pattern construction: default / sink slots seeded,
+  // size taken from the pattern's element list. Mirrors `UnpackedArray`'s span
   // ctor so a single emit path produces `std::array<T, N>{...}` as the
   // second argument for either container.
-  DynamicArray(T oob_slot, std::span<const T> init)
-      : oob_slot_(std::move(oob_slot)), data_(init.begin(), init.end()) {
+  DynamicArray(T element_default, std::span<const T> init)
+      : element_default_(element_default),
+        discard_sink_(std::move(element_default)),
+        data_(init.begin(), init.end()) {
   }
 
   DynamicArray(const DynamicArray&) = default;
@@ -99,7 +108,8 @@ class DynamicArray {
   // NOLINTNEXTLINE(readability-identifier-naming)
   friend auto swap(DynamicArray& a, DynamicArray& b) noexcept -> void {
     using std::swap;
-    swap(a.oob_slot_, b.oob_slot_);
+    swap(a.element_default_, b.element_default_);
+    swap(a.discard_sink_, b.discard_sink_);
     swap(a.data_, b.data_);
   }
 
@@ -121,31 +131,31 @@ class DynamicArray {
   }
 
   // LRM Table 6-7: dynamic array default is the empty array. When this
-  // container is itself an OOB shield slot of an outer container, the outer
-  // calls this method to restore canonical state before handing out a
-  // reference; any subsequent inner access then re-OOBs naturally (data_ is
-  // empty), so chained access through the shield never observes a stale
+  // container is itself the discard sink of an outer container, the outer
+  // scrubs it to canonical state before handing out a reference; any subsequent
+  // inner access then re-misses naturally (data_ is empty), so chained access
+  // through the sink never observes a stale
   // write.
   auto ResetToDefault() -> void {
     data_.clear();
   }
 
-  // LRM 7.4.5: an invalid index routes through `oob_slot_`. The slot is
-  // restored to canonical state before the reference is handed out, so OOB
-  // writes that mutate it are erased on the next OOB access -- the shield
-  // never accumulates state.
+  // LRM 7.4.5: an invalid-index write lands on `discard_sink_`, scrubbed to
+  // canonical first so a compound write reads the element default before the
+  // result is thrown away.
   [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      discard_sink_.ResetToDefault();
+      return discard_sink_;
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
+  // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
+  // 7-1) directly -- `element_default_` is never written, so no scrub.
   [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
     if (IsInvalidIndex(idx)) {
-      oob_slot_.ResetToDefault();
-      return oob_slot_;
+      return element_default_;
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
@@ -158,16 +168,16 @@ class DynamicArray {
       const PackedArray& offset, const PackedArray& count_pa) const
       -> UnpackedArray<T> {
     const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
-    const T canonical = MakeCanonicalElement();
     return UnpackedArray<T>(
-        canonical, detail::ArraySliceGather(data_, canonical, offset, count));
+        element_default_,
+        detail::ArraySliceGather(data_, element_default_, offset, count));
   }
 
   [[nodiscard]] auto SliceRef(
       const PackedArray& offset, const PackedArray& count_pa)
       -> ArraySliceRef<T> {
     const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
-    return ArraySliceRef<T>{data_, MakeCanonicalElement(), offset, count};
+    return ArraySliceRef<T>{data_, element_default_, offset, count};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality. Runtime size mismatch yields
@@ -239,8 +249,8 @@ class DynamicArray {
   // LRM 7.5.3: empties the array, resulting in a zero-sized array. Body is
   // identical to ResetToDefault (LRM Table 6-7 default for dynamic array is
   // the empty array), but the two surface names track distinct contracts:
-  // Delete is the user-facing method name; ResetToDefault is the OOB-shield
-  // protocol shared with PackedArray / UnpackedArray.
+  // Delete is the user-facing method name; ResetToDefault is the
+  // canonical-reset protocol shared with PackedArray / UnpackedArray.
   auto Delete() -> void {
     data_.clear();
   }
@@ -268,49 +278,50 @@ class DynamicArray {
   [[nodiscard]] auto Sum(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc + v; });
   }
   template <typename F>
   [[nodiscard]] auto Product(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc * v; });
   }
   template <typename F>
   [[nodiscard]] auto And(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc & v; });
   }
   template <typename F>
   [[nodiscard]] auto Or(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc | v; });
   }
   template <typename F>
   [[nodiscard]] auto Xor(F&& key) const
       -> std::invoke_result_t<F&, const T&, const PackedArray&> {
     return detail::ArrayFold(
-        data_, oob_slot_, std::forward<F>(key),
+        data_, element_default_, std::forward<F>(key),
         [](auto& acc, auto& v) { acc = acc ^ v; });
   }
 
   // LRM 7.12.1 locator methods, thin wrappers over the shared `detail::Array*`
   // algorithms. The value locators (`find`, `find_first`, `find_last`, `min`,
   // `max`, `unique`) return a queue of elements carrying this array's element
-  // shape via `oob_slot_`; the index locators return a queue of `int` whose
-  // shield is a plain zero. No match or an empty receiver yields an empty
-  // queue. The `with` clause is mandatory for the find family (a Boolean
-  // predicate) and optional for `min` / `max` / `unique` (a comparison key,
-  // defaulting to the element).
+  // shape via `element_default_`; the index locators return a queue of `int`
+  // whose element default is a plain zero. No match or an empty receiver yields
+  // an empty queue. The `with` clause is mandatory for the find family (a
+  // Boolean predicate) and optional for `min` / `max` / `unique` (a comparison
+  // key, defaulting to the element).
   template <typename F>
   [[nodiscard]] auto Find(F pred) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayFind(data_, std::move(pred)));
+    return Queue<T>(
+        element_default_, detail::ArrayFind(data_, std::move(pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindIndex(F pred) const -> Queue<PackedArray> {
@@ -319,7 +330,8 @@ class DynamicArray {
   }
   template <typename F>
   [[nodiscard]] auto FindFirst(F pred) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayFindFirst(data_, std::move(pred)));
+    return Queue<T>(
+        element_default_, detail::ArrayFindFirst(data_, std::move(pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindFirstIndex(F pred) const -> Queue<PackedArray> {
@@ -329,7 +341,8 @@ class DynamicArray {
   }
   template <typename F>
   [[nodiscard]] auto FindLast(F pred) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayFindLast(data_, std::move(pred)));
+    return Queue<T>(
+        element_default_, detail::ArrayFindLast(data_, std::move(pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindLastIndex(F pred) const -> Queue<PackedArray> {
@@ -339,15 +352,18 @@ class DynamicArray {
   }
   template <typename F>
   [[nodiscard]] auto Min(F&& key) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayMin(data_, std::forward<F>(key)));
+    return Queue<T>(
+        element_default_, detail::ArrayMin(data_, std::forward<F>(key)));
   }
   template <typename F>
   [[nodiscard]] auto Max(F&& key) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayMax(data_, std::forward<F>(key)));
+    return Queue<T>(
+        element_default_, detail::ArrayMax(data_, std::forward<F>(key)));
   }
   template <typename F>
   [[nodiscard]] auto Unique(F key) const -> Queue<T> {
-    return Queue<T>(oob_slot_, detail::ArrayUnique(data_, std::move(key)));
+    return Queue<T>(
+        element_default_, detail::ArrayUnique(data_, std::move(key)));
   }
   template <typename F>
   [[nodiscard]] auto UniqueIndex(F key) const -> Queue<PackedArray> {
@@ -355,11 +371,13 @@ class DynamicArray {
         PackedArray::Int(0), detail::ArrayUniqueIndex(data_, std::move(key))};
   }
 
-  // LRM 7.12.5 projection into a same-shape dynamic array; `shield` seeds the
-  // result element type's canonical default.
+  // LRM 7.12.5 projection into a same-shape dynamic array; `element_default`
+  // seeds the result element type's canonical default.
   template <typename F, typename U>
-  [[nodiscard]] auto Map(F closure, U shield) const -> DynamicArray<U> {
-    return DynamicArray<U>(std::move(shield), detail::ArrayMap(data_, closure));
+  [[nodiscard]] auto Map(F closure, U element_default) const
+      -> DynamicArray<U> {
+    return DynamicArray<U>(
+        std::move(element_default), detail::ArrayMap(data_, closure));
   }
 
  private:
@@ -370,15 +388,8 @@ class DynamicArray {
                         static_cast<std::uint64_t>(data_.size());
   }
 
-  // Returns a fresh `T` at this container's element shape in LRM Table 7-1
-  // canonical state, disconnected from the OOB shield identity (slice fill).
-  [[nodiscard]] auto MakeCanonicalElement() const -> T {
-    T fresh = oob_slot_;
-    fresh.ResetToDefault();
-    return fresh;
-  }
-
-  mutable T oob_slot_;
+  T element_default_;
+  T discard_sink_;
   std::vector<T> data_;
 };
 

@@ -33,7 +33,7 @@ namespace lyra::lowering::hir_to_mir {
 // arguments are `[element_default, ArrayLiteralExpr{elements}]`. This is the
 // construction shape every site that produces an array-container value must
 // use: the canonical-default element required by the wrapper's runtime ctor
-// (to seed `oob_slot_`) is supplied here via `BuildDefaultValueExpr` on
+// (to seed `element_default_`) is supplied here via `BuildDefaultValueExpr` on
 // the element type, and the elements ride in an `ArrayLiteralExpr` that the
 // renderer emits as `std::array<T, N>{...}`. See
 // `docs/decisions/runtime-shape-and-default-value.md`.

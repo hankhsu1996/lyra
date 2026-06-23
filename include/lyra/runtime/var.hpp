@@ -146,8 +146,8 @@ class Var : public Observable {
   // 9.4.2 `===` semantics for @() detection -- the engine fires subscribers
   // only on a real change). The store always happens so a freshly-defaulted
   // cell adopts shape and implementation-side seeds (e.g. an
-  // `AssociativeArray`'s `oob_slot_`) from the source on the first write,
-  // even when the SV-visible content compares identical (both empty).
+  // `AssociativeArray`'s `element_default_`) from the source on the first
+  // write, even when the SV-visible content compares identical (both empty).
   auto AssignIfChanged(const T& v) -> bool {
     const bool changed = !value_.IsBitIdentical(v);
     value_ = v;

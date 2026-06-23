@@ -35,6 +35,12 @@ Each file contains:
 - Any blockers, open design questions, or cross-references to architecture contracts the work must
   satisfy.
 
+Write each item at the semantic level -- the problem and the target shape, not the field names,
+helpers, or keywords, and not the full rationale (that lives in `../decisions/`). A well-written
+item reads the same before and after the work, so completing it is flipping `[ ]` to `[x]` and
+nothing more -- never a rewrite into a past-tense account of what landed. The resulting behavior is
+recorded in the code and the decision doc; that the work happened is recorded in git.
+
 When the last item lands, the file is deleted, and any cross-reference to it from another progress
 file is updated in the same change so no dangling pointer remains. The git history is the record
 that the work happened.
