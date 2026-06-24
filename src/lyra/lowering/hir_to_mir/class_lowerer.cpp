@@ -385,6 +385,8 @@ auto BuildDownwardNavValue(
                           .id = support::BuiltinFn::kGetSignal},
                   .arguments = {cur, string_literal(hops.back().name)}},
           .type = void_ptr_type});
+  // Pointer-to-pointer reinterpret of the void* slot to the typed pointer
+  // the call site expects -- the one true MIR cast (`static_cast<T>(...)`).
   return mir::Expr{
       .data = mir::CastExpr{.operand = get_signal_id}, .type = slot_type};
 }

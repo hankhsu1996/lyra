@@ -586,14 +586,14 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       axis. The destination type is stated on the enclosing `Expr::type`; the source type is read
       off the operand; the `(source, destination)` type pair fully determines the realization
       (integral resize / sign-handling, integral-to-real, real-to-integral, packed-to-enum,
-      pointer-to-different-pointee). Backends consult the type pair to select the emit (C++
-      chooses among `static_cast` and `lyra::value` helpers; LLVM picks `zext` / `sext` / `trunc`
-      / `fptosi` / `bitcast` / `inttoptr`). The earlier `mir::ConversionExpr` (mirroring HIR's
-      LRM-defined `ConversionKind`) and `mir::PointerCastExpr` (the backend type-erasure bridge)
-      retire; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR, and the 5 HIR
-      kinds collapse to the one MIR primitive at HIR-to-MIR. The kind axis Clang's AST carries
-      exists because Clang drives LLVM codegen directly; Lyra's MIR is a higher layer and the
-      (src, dst) type pair already names the same dispatch.
+      pointer-to-different-pointee). Backends consult the type pair to select the emit (C++ chooses
+      among `static_cast` and `lyra::value` helpers; LLVM picks `zext` / `sext` / `trunc` / `fptosi`
+      / `bitcast` / `inttoptr`). The earlier `mir::ConversionExpr` (mirroring HIR's LRM-defined
+      `ConversionKind`) and `mir::PointerCastExpr` (the backend type-erasure bridge) retire; HIR's
+      `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR, and the 5 HIR kinds collapse to
+      the one MIR primitive at HIR-to-MIR. The kind axis Clang's AST carries exists because Clang
+      drives LLVM codegen directly; Lyra's MIR is a higher layer and the (src, dst) type pair
+      already names the same dispatch.
 
 - [ ] R47 -- Design the object model that SV classes need, distinct from the module / scope object.
       The MIR concept currently named a "class" is a compiled module / scope, carrying
