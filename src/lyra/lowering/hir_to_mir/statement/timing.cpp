@@ -128,9 +128,13 @@ auto LowerNamedEventTimedStmt(
             .type = process.Module().Unit().builtins.void_type};
         const mir::ExprId await_id =
             child_block.exprs.Add(std::move(await_call));
+        const mir::ExprId await_expr_id = child_block.exprs.Add(
+            mir::Expr{
+                .data = mir::AwaitExpr{.awaitable = await_id},
+                .type = process.Module().Unit().builtins.void_type});
         return mir::Stmt{
             .label = std::nullopt,
-            .data = mir::AwaitStmt{.awaitable = await_id}};
+            .data = mir::ExprStmt{.expr = await_expr_id}};
       });
 }
 
@@ -217,9 +221,13 @@ auto LowerDelayTimedStmt(
                             mir::FreeFnCallee{.id = support::BuiltinFn::kDelay},
                         .arguments = {services_id, duration_id, precision_id}},
                 .type = builtins.void_type});
+        const mir::ExprId await_expr_id = child_block.exprs.Add(
+            mir::Expr{
+                .data = mir::AwaitExpr{.awaitable = call_id},
+                .type = builtins.void_type});
         return mir::Stmt{
             .label = std::nullopt,
-            .data = mir::AwaitStmt{.awaitable = call_id}};
+            .data = mir::ExprStmt{.expr = await_expr_id}};
       });
 }
 

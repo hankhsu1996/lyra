@@ -200,12 +200,17 @@ struct RuntimeLibraryType {
   auto operator==(const RuntimeLibraryType&) const -> bool = default;
 };
 
-// The runtime coroutine handle `lyra::runtime::Coroutine`: the value a
-// suspending callable yields when invoked. A fork branch (LRM 9.3.2) is a
-// closure whose result type is this -- invoking it produces a spawned-process
-// coroutine the parent collects and joins. Opaque, like ScopeType /
-// ServicesType; it names a runtime type, never a layout.
+// The call protocol of a coroutine callable: invoking it yields a coroutine the
+// site must await or spawn, and awaiting it produces a value of `payload` --
+// the completion payload (a task's output pack, or `Void` when the completion
+// yields nothing). A fork branch (LRM 9.3.2) is a closure whose result type is
+// this. `payload` is a MIR-level type; the C++ backend realizes every coroutine
+// as one monomorphic `lyra::runtime::Coroutine` and transports the payload
+// through a caller-owned completion slot, so the scheduler holds a single
+// coroutine-handle type regardless of `payload`.
 struct CoroutineType {
+  TypeId payload;
+
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 

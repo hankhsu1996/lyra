@@ -101,18 +101,29 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       flow. It rebases callable machinery across lowering, MIR, the dumper, and the backend (where
       the per-shape `Render*` paths collapse into one generic function renderer), so it lands in
       staged cuts, each its own focused review:
-  - [ ] R8a -- The result type is the sole carrier of the call protocol. A method's coroutine-ness
+  - [x] R8a -- The result type is the sole carrier of the call protocol. A method's coroutine-ness
         is read from its result type (a coroutine result is a task, a value / void result a
         function), not a side enum; `MethodKind` is removed. Behavior-neutral; existing task /
         function tests prove no regression.
 
   - [ ] R8b -- Parameter direction normalizes to data flow. `output` / `inout` formals stop being
-        reference parameters and become components of the callable's result -- an output pack riding
-        the result type, written to the caller's actual after completion -- so copy-out timing is
-        correct under suspension; `ref` / `const ref` stay reference-typed parameters. The `kOutput`
-        / `kInOut` directions are removed (a parameter becomes a typed binding). This is what forces
-        the coroutine result type to be parameterized (`Coroutine<T>`): a task's output pack is its
-        completion payload.
+        reference parameters and become components of the callable's completion payload -- the
+        explicit return (if any) followed by each `output` / `inout` value, normalized by count
+        (zero is `Void`, one is a bare type, two or more a tuple), riding the result type and
+        written to the caller's actual after completion -- so copy-out timing is correct under
+        suspension; `ref` / `const ref` stay reference-typed parameters. The direction enum is
+        removed (a parameter becomes a typed binding). This forces the coroutine result type to be
+        parameterized (`Coroutine<T>`): a task's completion payload is its `T`. Two merge gates make
+        the realization decoupled rather than a relabeled special case: (1) await is a typed,
+        value-yielding form -- awaiting a `Coroutine<T>` yields `T`, and an output writeback is a
+        projection of that value, so a pure suspension is the `Coroutine<Void>` case of the same one
+        await, never a void-only statement with a hidden writeback convention; (2) the C++ backend
+        realizes the payload through a hidden, caller-owned completion slot that is not part of the
+        MIR signature (the monomorphic coroutine handle the scheduler relies on is untouched -- a
+        payload-templated promise is deferred as a backend-only option). The two output-pack
+        invariants from `../decisions/unified-callable-model.md` hold: an output / inout actual
+        place is bound exactly once at call entry, and the completion slot outlives any write the
+        callee can still make. Per `../decisions/unified-callable-model.md`.
 
   - [ ] R8c -- Callable code versus callable value. A closure constructs a callable value (code plus
         a bound environment); a directly-invoked named callable receives its environment from the
@@ -454,11 +465,11 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
     - [x] `$info` / `$warning` / `$error`: each decomposes to `services.Format(items)` for the
           message text, then `services.Diagnostic().Emit{Info,Warning,Error}(origin, text)` for the
           severity-tagged emit, with `origin` carrying the call's `file:line:col` so the dispatcher
-          can prefix the message and key its rate-limit counter per site (LRM 20.10). The
-          severities are distinct `BuiltinFn` methods (parallel to print's `Write` / `Writeln`
-          split), not a single `Emit(severity, text)` with a tag arg. The unique / priority
-          deferred-check cascade synthesizes its warning through the same broker. `$fatal` picks
-          up the shape when it lands.
+          can prefix the message and key its rate-limit counter per site (LRM 20.10). The severities
+          are distinct `BuiltinFn` methods (parallel to print's `Write` / `Writeln` split), not a
+          single `Emit(severity, text)` with a tag arg. The unique / priority deferred-check cascade
+          synthesizes its warning through the same broker. `$fatal` picks up the shape when it
+          lands.
   - File-IO subsystem (`services.Files()`):
     - [x] `$fopen` / `$fclose` / `$fread` / `$fseek` / `$rewind` / `$ftell` / `$feof` / `$ferror` /
           `$fflush` / `$fgetc` / `$ungetc` / `$fgets`: each lowers to a `BuiltinFnCallee` method on
