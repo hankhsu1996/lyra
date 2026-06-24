@@ -62,43 +62,13 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       empty today and exists to mark the divergence; it is populated when Stage E (ports) lands --
       ports live on `instance`, never on `gen scope`.
 
-- [ ] R4 -- Store an instance array as a fixed-size array, not a growable vector with a side dim
-      list. Today `Child c[2][3]` lowers to a nested `VectorType` (`std::vector`) and the
-      per-dimension element counts ride as a separate `dims` list on the construct statement; the
-      backend peels that list into nested container loops at render time. The extent is a
-      compile-time constant, so the storage should be a fixed-size array (`std::array`) carrying its
-      extent on each type layer -- a new array type symmetric with `VectorType`, with the count
-      living in the type (one container layer per dimension) rather than in a side list. Each
-      pre-sized slot is then assigned directly, with no grow step. This is the same
-      size-belongs-in-the-type, one-layer-per-dimension shape the unpacked-array decision fixes; the
-      flat dim list is the rejected form. **Why deferred**: the vector form is behaviorally correct
-      and the instance-array feature ships on it; the array-type refinement is contained but not
-      needed for correctness. **Trigger**: when a second fixed-extent object-collection consumer
-      appears.
-
-- [ ] R6 -- Consolidate the "synthesize an expression of canonical type X" helpers that lowerings
-      reach for whenever they need a temporary, sentinel, or computed bound. The HIR -> MIR side
-      already exposes `UnitLoweringState::MakeInt32LiteralExpr(int64)` and has ~8 consumers across
-      the `expression/`, `statement/`, and `deferred_check_cascade` files. The AST -> HIR side has
-      no equivalent public helper: `expression/lower.cpp` carries an anonymous-namespace
-      `MakeIntegerLiteralExpr` that takes a slang `IntegerLiteral&` (no raw-int64 entry point) and
-      an anonymous `MakeRefExpr` for procedural / structural / loop var refs. New consumers that
-      can't see those private helpers (most recently `statement/foreach.cpp`) reroll their own
-      copies inline -- `MakeInt32Constant` + `MakeInt32LiteralExpr` + `MakeProcVarRefExpr` are all
-      sitting in foreach's anonymous namespace today, and similar copies will accumulate at every
-      future desugar site that needs a synthetic counter, sentinel, or width-constant. Target shape:
-      a small set of public helpers on each layer's `UnitLoweringState` mirroring the MIR-side
-      `MakeInt32LiteralExpr` -- minimally a raw-int64 int32 literal expr builder, a bool literal
-      expr builder, and ref-expr builders for the three var families -- with the `IntegralConstant`
-      construction (the masked-word layout) factored into a single function rather than copy-pasted
-      at every site. **Why deferred**: foreach's local helpers are correct, scoped to one TU, and
-      shipping them inline kept the immediate PR focused. The duplication only becomes painful when
-      the next consumer arrives. **Trigger**: when a second AST -> HIR lowering needs a raw-int64
-      int32 literal expr (or a synthetic ProceduralVarRef expr), at which point the per-consumer
-      copy is the smell that forces extraction. Related to R1, which is the further move of
-      promoting the canonical `Builtins` table and these helpers from the lowering-state scope to
-      the IR (`mir::CompilationUnit` and the AST -> HIR analogue) -- R6 is the prerequisite cleanup;
-      R1 is the architectural promotion.
+- [x] R6 -- The synthetic-expression builders an AST-to-HIR lowering reaches for (a counter,
+      sentinel, or computed bound) are public, pure, and have one definition each. A raw-int64
+      `int`-typed literal builder folds the masked-word `IntegralConstant` layout into a single
+      function, and one generic reference-expression builder wraps any named-value reference primary
+      (procedural / structural / loop var) -- the three families build through the one builder
+      rather than a per-file copy. A bool-literal builder was not added: no lowering synthesizes
+      one, and surface without a consumer is not introduced.
 
 - [x] R7 -- The literal conversion keeps its faithful shape in MIR; constant folding is the
       downstream optimizer's job, not HIR-to-MIR's. A conversion of an integer literal to a
@@ -348,18 +318,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `foreach` iterates them -- `foreach` over a fixed array uses its declared range and direction,
       not a count, so that split is a real semantic difference, not the same redundancy).
 
-- [ ] R25 -- Two families still do not fit the generic `(receiver).name(args)` member-call rule and
-      need their own lowering decision: enum type-static methods (no receiver -- the qualifier is
-      part of the symbol identity, surfaced as a static-callee arm) and the value-static
-      `$isunknown` query (type-static in the all-2-state case, constant-folded). The cross-cutting
-      value-model decision is settled: an SV-facing runtime method's return and parameter types are
-      the SV value types, the representation bridge lives inside the method body (an internal detail
-      of the value layer), and the backend reads the call's stated result type and emits it
-      mechanically. The integral-query surface and integral-argument surface flow through SV value
-      types directly; the member-shaped families (string, array, queue, associative including
-      traversal, enum instance) render through one generic handler; user calls carry `self` and
-      event trigger / triggered carry the engine handle as real arguments. **Trigger**: continuation
-      of `decisions/runtime-effects-as-generic-calls.md`.
+- [x] R25 -- The two families that do not take a value receiver fit the same generic builtin-call
+      identity as every member-shaped call. An enum type-static method (`first` / `last` / `num`,
+      where the type qualifier is part of the symbol identity) lowers to the static-callee arm with
+      the qualifier on the callee and no receiver in the arguments; the value-static `$isunknown`
+      lowers to an ordinary builtin call returning the SV `bit` type, with no host-bool lift at the
+      backend. The member-shaped families (string, array, queue, associative including traversal,
+      enum instance) render through the one generic handler. Subsumed by R29
+      (`decisions/builtin-call-identity.md`). The all-2-state constant-fold of `$isunknown` is left
+      to the downstream optimizer per R7, not folded at HIR-to-MIR.
 
 - [x] R26 -- Runtime container protocols are pinned as explicit C++20 concepts in a single
       value-layer concept header; each container `static_assert`s every protocol it satisfies. Slice

@@ -23,8 +23,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
-#include "lyra/hir/primary.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
@@ -32,17 +31,6 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-// HIR primitive constructor used by every named-value reference. Local to the
-// references subsystem (no other consumer); other subsystems do not need it.
-auto MakeRefExpr(hir::Primary ref, hir::TypeId type, diag::SourceSpan span)
-    -> hir::Expr {
-  return hir::Expr{
-      .type = type,
-      .data = hir::PrimaryExpr{.data = std::move(ref)},
-      .span = span,
-  };
-}
 
 auto MakeEnumValueExpr(
     const slang::ast::EnumValueSymbol& sym, hir::TypeId type,
@@ -81,7 +69,7 @@ auto LowerNamedValueProc(
             "LowerNamedValueProc: loop-var binding home frame is not on the "
             "current scope stack");
       }
-      return MakeRefExpr(
+      return hir::MakeRefExpr(
           hir::LoopVarRef{.hops = *hops, .loop_var = loop_binding->loop_var_id},
           loop_binding->type, span);
     }
@@ -121,7 +109,8 @@ auto LowerNamedValueProc(
     }
     const hir::TypeId type_id =
         frame.current_procedural_body->procedural_vars.Get(*local).type;
-    return MakeRefExpr(hir::ProceduralVarRef{.var = *local}, type_id, span);
+    return hir::MakeRefExpr(
+        hir::ProceduralVarRef{.var = *local}, type_id, span);
   }
 
   const auto binding = module.LookupStructuralVarBinding(var);
@@ -135,7 +124,7 @@ auto LowerNamedValueProc(
         "LowerNamedValueProc: variable home frame is not on the current scope "
         "stack");
   }
-  return MakeRefExpr(
+  return hir::MakeRefExpr(
       hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
       binding->type, span);
 }
@@ -299,7 +288,7 @@ auto LowerNamedValueStructural(
             "LowerNamedValueStructural: loop-var binding home frame is not on "
             "the current scope stack");
       }
-      return MakeRefExpr(
+      return hir::MakeRefExpr(
           hir::LoopVarRef{.hops = *hops, .loop_var = loop_binding->loop_var_id},
           loop_binding->type, span);
     }
@@ -328,7 +317,7 @@ auto LowerNamedValueStructural(
         "LowerNamedValueStructural: variable home frame is not on the current "
         "scope stack");
   }
-  return MakeRefExpr(
+  return hir::MakeRefExpr(
       hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
       binding->type, span);
 }

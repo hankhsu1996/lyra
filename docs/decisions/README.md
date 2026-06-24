@@ -75,6 +75,14 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   parameter bindings), computed independently by producer and consumer and matched by name;
   injective mangling, body fingerprinting, and a design-global key map are rejected.
 
+### Compile-time model and specialization
+
+- [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) -- every
+  parameter is treated as code-shape-affecting for now (a conservative over-approximation of the
+  specialization key); parameter classification and constructor-input threading are deferred, and
+  the instance-array storage shape stays forward-compatible (vector wrapper, count as a
+  constructor-side value, never extent-in-the-type).
+
 ### Diagnostics
 
 - [diagnostic-construction](diagnostic-construction.md) -- a diagnostic's kind is a property of its
