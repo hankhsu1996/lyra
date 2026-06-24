@@ -24,7 +24,6 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
-#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -947,97 +946,6 @@ auto RenderBuiltinStaticCall(
       BuiltinFnCppName(callee.id), args);
 }
 
-// The C++ runtime entry this backend realizes a system subroutine with. Pure
-// representation -- this backend's spelling of the stated id; a LIR -> LLVM
-// backend resolves the same id to its own entry. An id whose family is not yet
-// on the generic-call shape returns a feature diagnostic.
-auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
-    -> diag::Result<std::string_view> {
-  return std::visit(
-      Overloaded{
-          [](const support::TerminationSystemSubroutineInfo&)
-              -> diag::Result<std::string_view> {
-            throw InternalError(
-                "RenderSystemSubroutineEntryName: termination id reached "
-                "system subroutine render path; finish family is "
-                "BuiltinFn-routed");
-          },
-          [](const support::PrintSystemSubroutineInfo&)
-              -> diag::Result<std::string_view> {
-            throw InternalError(
-                "RenderSystemSubroutineEntryName: print id reached system "
-                "subroutine render path; print family is BuiltinFn-routed");
-          },
-          [](const support::DiagnosticSystemSubroutineInfo&)
-              -> diag::Result<std::string_view> {
-            throw InternalError(
-                "RenderSystemSubroutineEntryName: diagnostic id reached "
-                "system subroutine render path; diagnostic family is "
-                "BuiltinFn-routed");
-          },
-          [](const support::SFormatSystemSubroutineInfo&)
-              -> diag::Result<std::string_view> {
-            throw InternalError(
-                "RenderSystemSubroutineEntryName: sformat id reached system "
-                "subroutine render path; sformat family is BuiltinFn-routed");
-          },
-          [](const support::PrintTimescaleSystemSubroutineInfo&)
-              -> diag::Result<std::string_view> {
-            throw InternalError(
-                "RenderSystemSubroutineEntryName: printtimescale id reached "
-                "system subroutine render path; printtimescale lowers to a "
-                "Files().Writeln of a compile-time message");
-          },
-          [](const support::TimeFormatSystemSubroutineInfo&)
-              -> diag::Result<std::string_view> {
-            throw InternalError(
-                "RenderSystemSubroutineEntryName: timeformat id reached "
-                "system subroutine render path; timeformat family is "
-                "BuiltinFn-routed");
-          },
-          [](const support::TimeSystemSubroutineInfo&)
-              -> diag::Result<std::string_view> {
-            throw InternalError(
-                "RenderSystemSubroutineEntryName: time id reached system "
-                "subroutine render path; time family is BuiltinFn-routed");
-          },
-          [&](const auto&) -> diag::Result<std::string_view> {
-            return diag::Fail(
-                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                std::format(
-                    "system subroutine '{}' is not yet lowered to a generic "
-                    "call",
-                    desc.name));
-          },
-      },
-      desc.semantic);
-}
-
-// A system subroutine renders as one generic call: the runtime entry name
-// followed by every argument rendered uniformly. The engine handle is not
-// injected here -- it is `arguments[0]` (a `self.Services()` expression) and
-// renders like any other argument.
-auto RenderSystemSubroutineCall(
-    const ScopeView& view, const mir::CallExpr& call,
-    const mir::SystemSubroutineCallee& callee) -> diag::Result<std::string> {
-  const support::SystemSubroutineDesc& desc =
-      support::LookupSystemSubroutine(callee.id);
-  auto name_or = RenderSystemSubroutineEntryName(desc);
-  if (!name_or) return std::unexpected(std::move(name_or.error()));
-
-  std::string out;
-  out += *name_or;
-  out += "(";
-  for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    if (i != 0) out += ", ";
-    out += *std::move(arg_or);
-  }
-  out += ")";
-  return out;
-}
-
 // Constructs a value of the call's result data type: `<TypeName>(args)`, the
 // type name from `RenderTypeAsCpp` (a constructor is a call whose callee is the
 // type's constructor), the arguments rendered like any other call's. A
@@ -1063,10 +971,6 @@ auto RenderCallExpr(
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [&](const mir::SystemSubroutineCallee& s)
-              -> diag::Result<std::string> {
-            return RenderSystemSubroutineCall(view, call, s);
-          },
           [&](const mir::MethodRef& ref) -> diag::Result<std::string> {
             if (ref.hops.value != 0) {
               return diag::Fail(
