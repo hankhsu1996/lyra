@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/cast.hpp"
 #include "lyra/mir/closure.hpp"
-#include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -152,15 +152,6 @@ struct AddressOfExpr {
   ExprId operand;
 };
 
-// Reinterprets a borrowed pointer as a pointer to a different pointee type.
-// `operand` is a pointer-typed expression; `Expr::type` is the destination
-// `PointerType`. Used when a runtime entry returns a type-erased pointer
-// (`void*`) that the call site re-types -- the lowering states the
-// destination type in MIR so the backend never picks it from context.
-struct PointerCastExpr {
-  ExprId operand;
-};
-
 // Class-member access through an explicit receiver expression. `receiver`
 // evaluates to a class-instance value (typically `LocalRef(self)`);
 // `member` names which member of the receiver's class to reach. The
@@ -223,9 +214,9 @@ struct AwaitExpr {
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     ParamRef, LocalRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
-    IncDecExpr, CallExpr, DerefExpr, AddressOfExpr, PointerCastExpr,
-    MemberAccessExpr, ConversionExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
-    ArrayLiteralExpr, TupleExpr, AwaitExpr>;
+    IncDecExpr, CallExpr, DerefExpr, AddressOfExpr, CastExpr, MemberAccessExpr,
+    ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
+    AwaitExpr>;
 
 struct Expr {
   ExprData data;

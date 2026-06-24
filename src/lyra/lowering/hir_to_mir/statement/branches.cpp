@@ -21,8 +21,8 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_hops.hpp"
+#include "lyra/mir/cast.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -89,7 +89,7 @@ auto LowerCaseStmt(
   }
   mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
 
-  // Peel an outer ConversionExpr widening the selector when state-kind is
+  // Peel an outer CastExpr widening the selector when state-kind is
   // preserved -- the cpp backend cannot init form=explicit from form=int,
   // and the cascade builds its own per-label compares. Differing state-kind
   // would make the snapshot 2-state while wildcard labels are 4-state and
@@ -104,8 +104,8 @@ auto LowerCaseStmt(
     }
     return std::nullopt;
   };
-  if (const auto* cv = std::get_if<mir::ConversionExpr>(
-          &wrapper.exprs.Get(cond_expr_id).data)) {
+  if (const auto* cv =
+          std::get_if<mir::CastExpr>(&wrapper.exprs.Get(cond_expr_id).data)) {
     const mir::TypeId dst_tid = wrapper.exprs.Get(cond_expr_id).type;
     const mir::TypeId src_tid = wrapper.exprs.Get(cv->operand).type;
     const auto dst_state = packed_state(dst_tid);
@@ -215,8 +215,8 @@ auto LowerCaseInsideStmt(
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
 
-  if (const auto* cv = std::get_if<mir::ConversionExpr>(
-          &wrapper.exprs.Get(cond_expr_id).data)) {
+  if (const auto* cv =
+          std::get_if<mir::CastExpr>(&wrapper.exprs.Get(cond_expr_id).data)) {
     cond_expr_id = cv->operand;
   }
 

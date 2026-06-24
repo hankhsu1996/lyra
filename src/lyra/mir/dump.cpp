@@ -450,22 +450,6 @@ class MirDumper {
     return out;
   }
 
-  static auto FormatConversionKind(ConversionKind k) -> std::string_view {
-    switch (k) {
-      case ConversionKind::kImplicit:
-        return "implicit";
-      case ConversionKind::kPropagated:
-        return "propagated";
-      case ConversionKind::kStreamingConcat:
-        return "streaming-concat";
-      case ConversionKind::kExplicit:
-        return "explicit";
-      case ConversionKind::kBitstreamCast:
-        return "bitstream-cast";
-    }
-    throw InternalError("MirDumper::FormatConversionKind: unknown kind");
-  }
-
   [[nodiscard]] auto FormatExpr(const Block& scope, ExprId id) const
       -> std::string {
     const auto& e = scope.exprs.Get(id);
@@ -491,9 +475,8 @@ class MirDumper {
               return std::format(
                   "AddressOfExpr operand=Expr[{}]", a.operand.value);
             },
-            [](const PointerCastExpr& c) -> std::string {
-              return std::format(
-                  "PointerCastExpr operand=Expr[{}]", c.operand.value);
+            [](const CastExpr& c) -> std::string {
+              return std::format("CastExpr operand=Expr[{}]", c.operand.value);
             },
             [this](const ParamRef& r) -> std::string {
               const auto& owner = ResolveScopeAtHops(r.hops.value);
@@ -569,11 +552,6 @@ class MirDumper {
             },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
-            },
-            [](const ConversionExpr& cv) -> std::string {
-              return std::format(
-                  "ConversionExpr kind={} operand=Expr[{}]",
-                  FormatConversionKind(cv.kind), cv.operand.value);
             },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
