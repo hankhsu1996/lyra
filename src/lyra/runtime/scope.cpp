@@ -91,14 +91,27 @@ auto Scope::Name() const -> std::string_view {
   return name_;
 }
 
-void Scope::Bind() {
-  // The whole tree is constructed before Bind runs, so every ancestor and the
-  // full parent chain exist when an ExternUp member relocates by climbing.
+void Scope::Resolve() {
+  // The whole tree is constructed before resolution runs, so every ancestor and
+  // the full parent chain exist when an ExternUp member relocates by climbing,
+  // and every child exists when this scope binds a child's `ref` port. The walk
+  // is top-down, so a parent binds a child's reference before the child (or its
+  // own children) forwards it onward.
+  ResolveState();
   for (ExternBase* member : externs_) {
     member->Relocate();
   }
+  ForEachChild([](Scope& child) { child.Resolve(); });
+}
+
+void Scope::Initialize() {
+  InitializeState();
+  ForEachChild([](Scope& child) { child.Initialize(); });
+}
+
+void Scope::Activate() {
   CreateProcesses();
-  ForEachChild([](Scope& child) { child.Bind(); });
+  ForEachChild([](Scope& child) { child.Activate(); });
 }
 
 void Scope::RegisterExtern(ExternBase* member) {

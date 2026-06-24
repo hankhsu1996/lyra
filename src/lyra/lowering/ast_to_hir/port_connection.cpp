@@ -1,4 +1,3 @@
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -12,16 +11,15 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
-#include "lyra/lowering/ast_to_hir/continuous_assign.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -36,11 +34,13 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
       span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message));
 }
 
-// Connects one instance's ports, the instance reached from its owning scope by
-// navigating `head` then `index_prefix` (empty for a scalar instance, one
-// `IndexHop` per dimension for an array element). Each port appends its own
-// member hop, so a connection is the same continuous assignment whether the
-// instance stands alone or sits at `c[i][j]` in an array.
+// Records one instance's port connections as HIR. The instance is reached from
+// its owning scope by `head` then `index_prefix` (empty for a scalar instance,
+// one `IndexHop` per dimension for an array element); each port appends its own
+// member hop, so a connection is recorded the same way whether the instance
+// stands alone or sits at `c[i][j]` in an array. The child port is held as one
+// cross-unit reference and the connection verbatim with its direction;
+// HIR-to-MIR realizes it (LRM 23.3.3).
 auto ConnectElementPorts(
     StructuralScopeLowerer& scope, ModuleLowerer& module,
     const slang::ast::InstanceSymbol& inst, hir::DownwardHead head,
@@ -55,11 +55,6 @@ auto ConnectElementPorts(
           "interface or non-variable port connection is not yet supported");
     }
     const auto& port = conn->port.as<slang::ast::PortSymbol>();
-
-    if (port.direction == slang::ast::ArgumentDirection::Ref) {
-      return PortConnectionUnsupported(
-          span, "ref port connection is not yet supported");
-    }
     if (port.direction == slang::ast::ArgumentDirection::InOut) {
       return PortConnectionUnsupported(
           span, "inout port connection is not yet supported");
@@ -77,8 +72,7 @@ auto ConnectElementPorts(
           span,
           "port not bound to a connectable variable is not yet supported");
     }
-    const auto& port_type = port.getType();
-    auto type_id = module.InternType(port_type, span);
+    auto type_id = module.InternType(port.getType(), span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     if (!module.Unit().GetType(*type_id).IsValueChangeObservable()) {
       return PortConnectionUnsupported(
@@ -87,77 +81,117 @@ auto ConnectElementPorts(
     }
     const auto* expr = conn->getExpression();
     if (expr == nullptr) {
-      // Unconnected: an explicit empty connection (`.port()`) or a port omitted
-      // with no default. The child's storage holds the data type's default
-      // initial value (LRM 23.3.3.2); no parent driver is installed.
+      // Unconnected: an explicit empty connection (`.port()`) or an omitted
+      // input port with no default. The child's storage holds the data type's
+      // default initial value (LRM 23.3.3.2); no parent driver is installed.
       continue;
+    }
+    const bool is_ref = port.direction == slang::ast::ArgumentDirection::Ref;
+    if (is_ref) {
+      // A `const ref` port shares storage but forbids the child writing through
+      // it (LRM 23.3.3.2); the child member is a read-only reference the parent
+      // still rebinds at construction, a storage shape distinct from the
+      // rebindable plain `ref`, so it waits for its own cut.
+      if (const auto* iv = internal->as_if<slang::ast::VariableSymbol>();
+          iv != nullptr && iv->flags.has(slang::ast::VariableFlags::Const)) {
+        return PortConnectionUnsupported(
+            span, "const ref port connection is not yet supported");
+      }
     }
 
     std::vector<hir::PathStep> path = index_prefix;
     path.emplace_back(hir::MemberHop{std::string{internal->name}});
-    hir::Expr child_ref = module.MakeCrossUnitMemberRef(
-        *internal, home_frame, head, std::move(path), *type_id, span);
+    // An input/output port reads the child cell during simulation, so it holds
+    // a persistent cross-unit reference; a `ref` port is bound once in the
+    // resolve phase, so it keeps only the by-name reach.
+    const auto cell_endpoint = [&]() -> hir::PortEndpoint {
+      return hir::PortCellEndpoint{
+          .cell = frame.Exprs().Add(module.MakeCrossUnitMemberRef(
+              *internal, home_frame, head, path, *type_id, span))};
+    };
 
-    if (port.direction == slang::ast::ArgumentDirection::In) {
-      // The child port is driven by the connection's value: the parent-side
-      // expression, or -- when the port was omitted -- the declared default
-      // (LRM 23.2.2.4), which slang surfaces through getExpression() as the
-      // port's own getInitializer() pointer. The default's names resolve in the
-      // child, so it cannot be lowered in the parent frame; like a C++ default
-      // argument, its already-evaluated constant is spliced in here and driven
-      // once with no sensitivity.
-      hir::Expr rhs;
-      std::vector<SensitivityRead> reads;
-      if (expr == port.getInitializer()) {
-        const auto* constant = expr->getConstant();
-        if (constant == nullptr) {
-          throw InternalError(
-              "ConnectElementPorts: port default did not fold to a "
-              "constant");
+    hir::PortDirection direction{};
+    hir::PortEndpoint endpoint;
+    hir::ExprId peer{};
+    std::vector<hir::SensitivityEntry> sensitivity;
+
+    switch (port.direction) {
+      case slang::ast::ArgumentDirection::In: {
+        direction = hir::PortDirection::kInput;
+        endpoint = cell_endpoint();
+        if (expr == port.getInitializer()) {
+          // An omitted input port takes its declared default (LRM 23.2.2.4),
+          // which slang surfaces through getExpression() as the port's own
+          // getInitializer(); the default's names resolve in the child, so its
+          // already-evaluated constant is spliced in and driven once with no
+          // sensitivity, like a defaulted argument at a call site.
+          const auto* constant = expr->getConstant();
+          if (constant == nullptr) {
+            throw InternalError(
+                "ConnectElementPorts: port default did not fold to a constant");
+          }
+          auto peer_or = MakeConstantValueExpr(*constant, *type_id, span);
+          if (!peer_or) return std::unexpected(std::move(peer_or.error()));
+          peer = frame.Exprs().Add(*std::move(peer_or));
+        } else {
+          auto peer_or = scope.LowerExpr(*expr, frame);
+          if (!peer_or) return std::unexpected(std::move(peer_or.error()));
+          peer = frame.Exprs().Add(*std::move(peer_or));
+          sensitivity = module.TranslateSensitivityReads(
+              module.Sensitivity().AnalyzeReads(*expr, inst), frame);
         }
-        auto rhs_or = MakeConstantValueExpr(*constant, *type_id, span);
-        if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-        rhs = *std::move(rhs_or);
-      } else {
-        auto rhs_or = scope.LowerExpr(*expr, frame);
-        if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-        rhs = *std::move(rhs_or);
-        reads = module.Sensitivity().AnalyzeReads(*expr, inst);
+        break;
       }
-      frame.current_structural_scope->continuous_assigns.Add(
-          BuildContinuousAssign(
-              module, frame, span, std::move(child_ref), std::move(rhs),
-              reads));
-      continue;
+      case slang::ast::ArgumentDirection::Out: {
+        direction = hir::PortDirection::kOutput;
+        endpoint = cell_endpoint();
+        // slang models an output connection as `parent_target = <port>`, the
+        // port value standing in as an EmptyArgument; the parent target is the
+        // assignment's left side. The connection observes the child's whole
+        // internal signal on any change.
+        if (expr->kind != slang::ast::ExpressionKind::Assignment) {
+          throw InternalError(
+              "ConnectElementPorts: output port connection expression is not "
+              "an "
+              "assignment");
+        }
+        auto peer_or = scope.LowerExpr(
+            expr->as<slang::ast::AssignmentExpression>().left(), frame);
+        if (!peer_or) return std::unexpected(std::move(peer_or.error()));
+        peer = frame.Exprs().Add(*std::move(peer_or));
+        sensitivity = module.TranslateSensitivityReads(
+            {SensitivityRead{.symbol = internal, .footprint = std::nullopt}},
+            frame);
+        break;
+      }
+      case slang::ast::ArgumentDirection::Ref: {
+        direction = hir::PortDirection::kRef;
+        endpoint = hir::PortAliasEndpoint{
+            .head = head, .path = std::move(path), .type = *type_id};
+        auto peer_or = scope.LowerExpr(*expr, frame);
+        if (!peer_or) return std::unexpected(std::move(peer_or.error()));
+        peer = frame.Exprs().Add(*std::move(peer_or));
+        break;
+      }
+      case slang::ast::ArgumentDirection::InOut:
+        throw InternalError(
+            "ConnectElementPorts: inout reached the connection switch");
     }
 
-    // Output: slang models the connection as `parent_target = <port>`, with
-    // the port value standing in as an EmptyArgument. The child port drives
-    // the parent target.
-    if (expr->kind != slang::ast::ExpressionKind::Assignment) {
-      throw InternalError(
-          "ConnectElementPorts: output port connection expression "
-          "is not an assignment");
-    }
-    const auto& assign = expr->as<slang::ast::AssignmentExpression>();
-    auto lhs_or = scope.LowerExpr(assign.left(), frame);
-    if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-    // The output port observes the child's whole internal signal on any change.
-    // It is not a bit-addressed read, so it carries no footprint regardless of
-    // the port's data type.
-    const std::vector<SensitivityRead> reads{
-        SensitivityRead{.symbol = internal, .footprint = std::nullopt}};
-    frame.current_structural_scope->continuous_assigns.Add(
-        BuildContinuousAssign(
-            module, frame, span, *std::move(lhs_or), std::move(child_ref),
-            reads));
+    frame.current_structural_scope->port_connections.push_back(
+        hir::PortConnection{
+            .span = span,
+            .direction = direction,
+            .endpoint = std::move(endpoint),
+            .peer = peer,
+            .sensitivity = std::move(sensitivity)});
   }
   return {};
 }
 
 // Walks an instance array's elements, extending `index_prefix` by one
-// `IndexHop` per dimension, and connects each leaf element's ports. slang
-// distributes the connection per element (LRM 23.3.3.5), so each element
+// `IndexHop` per dimension, and records each leaf element's port connections.
+// slang distributes the connection per element (LRM 23.3.3.5), so each element
 // carries its own already index-matched connection expressions; this only
 // routes each to the right cell.
 auto ConnectArrayElements(

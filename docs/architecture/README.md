@@ -16,24 +16,25 @@ Read top to bottom on first pass:
 2. `compiler_overview.md` -- pipeline, worldview, compile-time vs runtime
 3. `compilation_unit_model.md` -- what a compilation unit is and owns
 4. `runtime_model.md` -- the constructor / simulation execution-context split
-5. `specialization_model.md` -- how parameter values refine a unit into specializations
-6. `hir.md` -- source-near semantic IR
-7. `mir.md` -- object-oriented semantic IR (objects, members, callables)
-8. `callable.md` -- the one callable concept; callable code vs callable value; capture model;
+5. `elaboration_lifecycle.md` -- the build / resolve / initialize / activate phase protocol
+6. `specialization_model.md` -- how parameter values refine a unit into specializations
+7. `hir.md` -- source-near semantic IR
+8. `mir.md` -- object-oriented semantic IR (objects, members, callables)
+9. `callable.md` -- the one callable concept; callable code vs callable value; capture model;
    references as a field type
-9. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
-10. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
-11. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-12. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
+10. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
+11. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
+12. `hierarchy_and_generate.md` -- hierarchy and generate ownership
+13. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
     construction-time resolution
-13. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
+14. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
     cross-unit resolution through the SDK
-14. `identity_and_ownership.md` -- identity rules and forbidden shapes
-15. `lowering_boundaries.md` -- what each lowering may and may not do
-16. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+15. `identity_and_ownership.md` -- identity rules and forbidden shapes
+16. `lowering_boundaries.md` -- what each lowering may and may not do
+17. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-17. `incremental_build.md` -- query-based incremental compilation and caching
-18. `testing_strategy.md` -- test categories and structure
+18. `incremental_build.md` -- query-based incremental compilation and caching
+19. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -46,6 +47,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Compilation unit; class-level artifacts; instance records                 | `compilation_unit_model.md` |
 | Constructor vs simulation execution contexts; structural vs process       | `runtime_model.md`          |
 | Storage and binding vs construction; type-driven member walk              | `runtime_model.md`          |
+| Elaboration phases (build / resolve / initialize / activate); ctor scope  | `elaboration_lifecycle.md`  |
 | Generate as constructor-time logic; object graph shape                    | `hierarchy_and_generate.md` |
 | Instance array as a data type; multiplicity vs generate axes              | `hierarchy_and_generate.md` |
 | Intra-unit vs cross-unit references; compile-time vs construction resolve | `reference_resolution.md`   |
@@ -75,13 +77,13 @@ the decision's subject, top to bottom, and **check the design against every rele
 "Forbidden Shapes" before proposing it**. A design that matches a Forbidden Shape is wrong even if
 it compiles and passes tests.
 
-| Decision touches...                                          | Binding docs (read all, top-down)                                                                        |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| Cross-unit access / hierarchical refs / ports / connectivity | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`                         |
-| Backend emit / artifact structure / SDK boundary             | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `runtime_distribution` |
-| Compilation boundaries / unit dependencies / incrementality  | `north_star`, `compilation_unit_model`, `incremental_build`                                              |
-| Hierarchy / generate / object graph / construction           | `north_star`, `hierarchy_and_generate`, `runtime_model`                                                  |
-| Identity / ownership / id kinds                              | `north_star`, `identity_and_ownership`                                                                   |
+| Decision touches...                                          | Binding docs (read all, top-down)                                                                         |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Cross-unit access / hierarchical refs / ports / connectivity | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `elaboration_lifecycle` |
+| Backend emit / artifact structure / SDK boundary             | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `runtime_distribution`  |
+| Compilation boundaries / unit dependencies / incrementality  | `north_star`, `compilation_unit_model`, `incremental_build`                                               |
+| Hierarchy / generate / object graph / construction           | `north_star`, `hierarchy_and_generate`, `runtime_model`, `elaboration_lifecycle`                          |
+| Identity / ownership / id kinds                              | `north_star`, `identity_and_ownership`                                                                    |
 
 The failure mode this guards against: anchoring on current code -- which may be a transitional
 shortcut -- instead of the contract. Current code that contradicts a contract is wrong; read the

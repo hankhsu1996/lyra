@@ -58,18 +58,16 @@ C  Non-local access substrate
       scheduler on one shared time axis -- there is no single "main" block. This is end-to-end
       testable with no instantiation edge: two independent top modules each run their own processes
       under the shared schedule.
-- [ ] A2 -- A module instantiated with different parameter values yields distinct specializations
-      that each behave according to their own values. Parameters are elaborated per instance, so
-      distinct parameter bindings produce distinct compiled artifacts; the open gap is that two
-      specializations of one module are currently indistinguishable because their identity is the
-      module name alone, so emitting more than one collapses them. A specialization needs an
-      identity that separates differing parameter bindings (see
-      `docs/decisions/specialization-identity.md`). Sharing one artifact across bindings whose
-      generated code is identical is a compile-performance optimization, not a functional
-      requirement -- it lives in `performance.md`. Covers value parameters of any type, including
-      unpacked aggregate values (LRM 6.20.2), and type parameters (LRM 6.20.3); an unbounded `$`
-      value (LRM 6.20.7) is just one more distinct binding to the identity and rides on the same
-      path.
+- [x] A2 -- A module instantiated with different parameter values yields distinct specializations
+      that each behave according to their own values. Distinct parameter bindings produce distinct
+      compiled artifacts with distinct identity (see `docs/decisions/specialization-identity.md`),
+      so several specializations of one module no longer collapse onto one artifact. Covers scalar
+      value parameters (LRM 6.20.2) and type parameters (LRM 6.20.3); an aggregate value parameter
+      gets a distinct identity too, but its end-to-end emit waits on aggregate type support
+      (`datatypes.md`). Sharing one artifact across bindings whose generated code is identical --
+      classifying non-code-shape parameters as constructor inputs that flow in at construction
+      rather than baking a distinct artifact per binding -- is a compile-performance optimization,
+      not a functional requirement, and lives in `performance.md`.
 
 Unlocks the runtime side of `instantiation/param_slots`.
 
@@ -193,8 +191,14 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
 - [x] E6 -- Pass-through ports (a port forwarded into a deeper child while the module keeps its own
       local state) and sibling-to-sibling connections through a shared parent signal. Landed for
       variable-typed ports; both endpoints keep their own storage.
-- [ ] E7 -- A `ref` port aliases the connected variable as a hierarchical reference, sharing its
-      storage with no separate continuous assignment (LRM 23.3.3.2).
+- [x] E7 -- A `ref` port and the variable it connects to are one shared piece of storage (LRM
+      23.3.3.2): a read or write through the port is immediately the connected variable's value,
+      with no copy and no delay, and a write through it wakes any process sensitive to the connected
+      variable (see `docs/decisions/reference-as-data-type.md`). Covers plain `ref`, including a
+      read in the child's own variable initializer and a `ref` forwarded through intermediate
+      modules to a deeper child (every reference on the chain denotes the same variable). A
+      `const ref` port (read-only through the reference) is rejected with a clean diagnostic and
+      waits for its own cut.
 - [x] E8 -- An input port left unconnected takes its declared default value (LRM 23.2.2.4). A
       declared default is a constant expression whose names resolve in the module that declares the
       port, not the instantiating scope; like a default argument at a call site, its value is
@@ -233,6 +237,12 @@ Unlocks the `ports/*` archive group.
 - Specify parameters (`specparam`, LRM 6.20.5). They carry timing and delay values for specify
   blocks and belong to the timing domain, not the parameter-specialization path; they wait for a
   specify-block workstream rather than blocking this one.
+- Unbounded parameter values (`$`, LRM 6.20.7) and the `$isunbounded` query over them. The value `$`
+  denotes "no upper limit" and is used almost exclusively in assertion and property checkers;
+  supporting it needs an unbounded-value representation and the `$isunbounded` system function,
+  which belong to the assertion domain, not the parameter-specialization path. The specialization
+  identity already distinguishes such a binding from a numeric one; only the value's representation
+  is missing. It waits for the assertion workstream rather than blocking this one.
 - Bind directives and configuration (`config` / `bind`).
 - Net resolution and net merging: multi-driver resolved nets and net collapsing across ports. A
   single-driver net port behaves as a continuous assignment and is in scope; multi-driver net
