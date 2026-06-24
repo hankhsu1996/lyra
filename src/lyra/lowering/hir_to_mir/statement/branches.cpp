@@ -30,9 +30,9 @@ namespace lyra::lowering::hir_to_mir {
 
 auto LowerIfStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::IfStmt& i) -> diag::Result<mir::Stmt> {
+    const hir::IfStmt& i, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   if (i.check.has_value()) {
-    return LowerUniqueIfStmt(process, frame, std::move(label), i);
+    return LowerUniqueIfStmt(process, frame, std::move(label), i, span);
   }
   auto& block = *frame.current_block;
   auto cond_expr_or =
@@ -64,7 +64,7 @@ auto LowerIfStmt(
 
 auto LowerCaseStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CaseStmt& c) -> diag::Result<mir::Stmt> {
+    const hir::CaseStmt& c, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
   const mir::BinaryOp compare_op = [&] {
@@ -175,7 +175,7 @@ auto LowerCaseStmt(
     }
     return BuildDeferredCheckCascade(
         process.Module(), frame, std::move(wrapper), std::move(branches),
-        std::move(default_scope), *c.check, std::move(label));
+        std::move(default_scope), *c.check, std::move(label), span);
   }
 
   auto build_predicate = [&](WalkFrame enc_frame, std::size_t item_idx,
@@ -202,7 +202,8 @@ auto LowerCaseStmt(
 
 auto LowerCaseInsideStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CaseInsideStmt& c) -> diag::Result<mir::Stmt> {
+    const hir::CaseInsideStmt& c, diag::SourceSpan span)
+    -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
 
@@ -302,7 +303,7 @@ auto LowerCaseInsideStmt(
     }
     return BuildDeferredCheckCascade(
         process.Module(), frame, std::move(wrapper), std::move(branches),
-        std::move(default_scope), *c.check, std::move(label));
+        std::move(default_scope), *c.check, std::move(label), span);
   }
 
   return BuildCaseCascade(

@@ -83,14 +83,12 @@ struct TerminationSystemSubroutineInfo {
   int default_level;
 };
 
-enum class DiagnosticSeverityKind : std::uint8_t {
-  kInfo,
-  kWarning,
-  kError,
-};
-
+// LRM 20.10 severity-fixed diagnostic tasks. The MIR-side identity is the
+// `BuiltinFn` Emit method on the diagnostic broker; the descriptor stores it
+// directly so the lowering reads `info.builtin_fn` and routes the runtime
+// call without a parallel severity enum.
 struct DiagnosticSystemSubroutineInfo {
-  DiagnosticSeverityKind severity;
+  BuiltinFn builtin_fn;
 };
 
 // The MIR-side callee identity for the SV system task. The same closed
@@ -420,8 +418,7 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
         .semantic =
-            DiagnosticSystemSubroutineInfo{
-                .severity = DiagnosticSeverityKind::kInfo},
+            DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitInfo},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{18},
@@ -432,7 +429,7 @@ inline constexpr std::array kSystemSubroutines = {
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
         .semantic =
             DiagnosticSystemSubroutineInfo{
-                .severity = DiagnosticSeverityKind::kWarning},
+                .builtin_fn = BuiltinFn::kEmitWarning},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{19},
@@ -442,8 +439,7 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
         .semantic =
-            DiagnosticSystemSubroutineInfo{
-                .severity = DiagnosticSeverityKind::kError},
+            DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitError},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{20},

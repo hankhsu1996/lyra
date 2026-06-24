@@ -28,6 +28,7 @@ struct BuiltinMirTypes {
   TypeId time;
   TypeId services;
   TypeId files;
+  TypeId diagnostic;
   TypeId channel_cancellation;
   TypeId print_item;
   TypeId print_literal_item;
@@ -73,6 +74,7 @@ struct CompilationUnit {
                     .form = PackedArrayForm::kTime}}),
             .services = AddType(TypeData{ServicesType{}}),
             .files = AddType(TypeData{FilesType{}}),
+            .diagnostic = AddType(TypeData{DiagnosticType{}}),
             .channel_cancellation = AddType(
                 TypeData{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kChannelCancellation}}),

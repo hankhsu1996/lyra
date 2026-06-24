@@ -663,6 +663,14 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Write";
     case support::BuiltinFn::kWriteln:
       return "Writeln";
+    case support::BuiltinFn::kDiagnostic:
+      return "Diagnostic";
+    case support::BuiltinFn::kEmitInfo:
+      return "EmitInfo";
+    case support::BuiltinFn::kEmitWarning:
+      return "EmitWarning";
+    case support::BuiltinFn::kEmitError:
+      return "EmitError";
     case support::BuiltinFn::kScan:
       return "Scan";
     case support::BuiltinFn::kPeekBuffered:
@@ -951,18 +959,12 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
                 "RenderSystemSubroutineEntryName: print id reached system "
                 "subroutine render path; print family is BuiltinFn-routed");
           },
-          [](const support::DiagnosticSystemSubroutineInfo& diagnostic)
+          [](const support::DiagnosticSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
-            switch (diagnostic.severity) {
-              case support::DiagnosticSeverityKind::kInfo:
-                return std::string_view{"lyra::runtime::LyraInfo"};
-              case support::DiagnosticSeverityKind::kWarning:
-                return std::string_view{"lyra::runtime::LyraWarning"};
-              case support::DiagnosticSeverityKind::kError:
-                return std::string_view{"lyra::runtime::LyraError"};
-            }
             throw InternalError(
-                "RenderSystemSubroutineEntryName: unknown DiagnosticSeverity");
+                "RenderSystemSubroutineEntryName: diagnostic id reached "
+                "system subroutine render path; diagnostic family is "
+                "BuiltinFn-routed");
           },
           [](const support::SFormatSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
