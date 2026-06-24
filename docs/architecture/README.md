@@ -19,7 +19,8 @@ Read top to bottom on first pass:
 5. `specialization_model.md` -- how parameter values refine a unit into specializations
 6. `hir.md` -- source-near semantic IR
 7. `mir.md` -- object-oriented semantic IR (objects, members, callables)
-8. `closure.md` -- the captured callable value; capture model; references as a field type
+8. `callable.md` -- the one callable concept; callable code vs callable value; capture model;
+   references as a field type
 9. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
 10. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
 11. `hierarchy_and_generate.md` -- hierarchy and generate ownership
@@ -56,7 +57,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | HIR shape (statements, expressions, primaries)                            | `hir.md`                    |
 | MIR shape (objects, members, callables)                                   | `mir.md`                    |
 | Member and type model; object types; owning pointer; vector wrapper       | `mir.md`                    |
-| Closure model; captures; by-value vs by-reference as a field type         | `closure.md`                |
+| Callable model; code vs value; captures; references as a field type       | `callable.md`               |
 | LIR shape (CFG, basic blocks, storage)                                    | `lir.md`                    |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit  | `scheduling.md`             |
 | Incremental compilation; query-based caching                              | `incremental_build.md`      |

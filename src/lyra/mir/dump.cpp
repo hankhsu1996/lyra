@@ -702,17 +702,6 @@ class MirDumper {
     Dedent();
   }
 
-  [[nodiscard]] static auto FormatMethodKind(MethodKind kind)
-      -> std::string_view {
-    switch (kind) {
-      case MethodKind::kTask:
-        return "task";
-      case MethodKind::kFunction:
-        return "function";
-    }
-    throw InternalError("FormatMethodKind: unknown mir::MethodKind");
-  }
-
   [[nodiscard]] static auto FormatParamDirection(ParamDirection dir)
       -> std::string_view {
     switch (dir) {
@@ -729,8 +718,7 @@ class MirDumper {
   void DumpMethod(const MethodDecl& d, std::size_t index) {
     Line(
         std::format(
-            "[{}] {} \"{}\" : Type[{}]", index, FormatMethodKind(d.kind),
-            d.name, d.result_type.value));
+            "[{}] \"{}\" : Type[{}]", index, d.name, d.result_type.value));
     Indent();
     for (std::size_t i = 0; i < d.params.size(); ++i) {
       const auto& param = d.params[i];

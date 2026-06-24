@@ -62,6 +62,11 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   argument.
 - [callable-receiver](callable-receiver.md) -- every callable body's first binding is `self`; how it
   is supplied differs per callable form.
+- [unified-callable-model](unified-callable-model.md) -- one callable concept: callable code
+  (signature + internal-body | external-symbol) versus callable value (code + bound environment).
+  Result type is the call protocol (`Coroutine<T>`), parameter direction normalizes to data flow
+  (`output` / `inout` to an output pack, `ref` to `Ref<T>`), DPI is an external-callable variant,
+  process is an instance-bound value registered at constructor time. Target model; not yet built.
 - [builtin-call-identity](builtin-call-identity.md) -- built-in method calls carry a flat
   closed-namespace identifier (`support::BuiltinFn`) shared between HIR and MIR; per-family enum
   splits are out.
