@@ -105,7 +105,7 @@ class Engine {
   void ScheduleInactive(CoroutineHandle handle);
   void ScheduleAtTime(SimTime when, CoroutineHandle handle);
   void RequestFinish(int level, bool fatal = false);
-  void Spawn(Coroutine coroutine);
+  void Spawn(Coroutine<void> coroutine);
   [[nodiscard]] auto Now() const -> SimTime {
     return now_;
   }

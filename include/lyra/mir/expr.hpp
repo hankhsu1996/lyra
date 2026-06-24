@@ -211,12 +211,23 @@ struct AwaitExpr {
   ExprId awaitable;
 };
 
+// Projects one component out of a tuple value by position: `tuple.index`. The
+// inverse of `TupleExpr`, used to read a single field from a heterogeneous
+// product -- a task completion's output pack, where each `output` / `inout`
+// writeback reads its component. `Expr::type` is the component's type (the
+// `index`-th element of the operand's `TupleType`). The C++ backend realizes it
+// as `std::get<index>`.
+struct TupleGetExpr {
+  ExprId tuple;
+  std::size_t index;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     ParamRef, LocalRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
     IncDecExpr, CallExpr, DerefExpr, AddressOfExpr, CastExpr, MemberAccessExpr,
     ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
-    AwaitExpr>;
+    AwaitExpr, TupleGetExpr>;
 
 struct Expr {
   ExprData data;

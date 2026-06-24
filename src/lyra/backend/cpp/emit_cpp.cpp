@@ -78,18 +78,11 @@ auto RenderMethodParam(
     const mir::MethodParam& param) -> diag::Result<std::string> {
   auto type_or = RenderTypeAsCpp(unit, s, param.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  // An `input` formal is by value (LRM 13.5.1); a `ref` / `const ref` formal is
-  // also by value, but its `RefType` already renders as `(const) Ref<T>` so the
-  // reference value carries the aliasing (LRM 13.5.2). An `output` / `inout`
-  // formal binds the caller's writeback temp by reference (`T&`).
-  switch (param.direction) {
-    case mir::ParamDirection::kInput:
-      return *type_or + " " + param.name;
-    case mir::ParamDirection::kOutput:
-    case mir::ParamDirection::kInOut:
-      return *type_or + "& " + param.name;
-  }
-  throw InternalError("RenderMethodParam: unknown ParamDirection");
+  // Every formal is a value parameter: an `input` by value (LRM 13.5.1), a
+  // `ref` / `const ref` whose `RefType` already renders as `(const) Ref<T>` so
+  // the reference value carries the aliasing (LRM 13.5.2). `output` / `inout`
+  // are not parameters -- they ride the completion payload.
+  return *type_or + " " + param.name;
 }
 
 // The one renderer for every method. A method's declaration is rendered from

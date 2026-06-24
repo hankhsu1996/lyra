@@ -11,6 +11,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
@@ -309,22 +310,6 @@ auto LowerForeverProcess(
           .form = mir::MethodForm::kStatic}};
 }
 
-auto LowerParamDirection(hir::ParamDirection dir) -> mir::ParamDirection {
-  switch (dir) {
-    case hir::ParamDirection::kInput:
-    // A ref / const ref formal is passed by value as a `Ref<T>`; the aliasing
-    // lives in the formal's `RefType`, not in the direction (LRM 13.5.2).
-    case hir::ParamDirection::kRef:
-    case hir::ParamDirection::kConstRef:
-      return mir::ParamDirection::kInput;
-    case hir::ParamDirection::kOutput:
-      return mir::ParamDirection::kOutput;
-    case hir::ParamDirection::kInOut:
-      return mir::ParamDirection::kInOut;
-  }
-  throw InternalError("LowerParamDirection: unknown hir::ParamDirection");
-}
-
 }  // namespace
 
 auto ProcessLowerer::Run(const hir::Process& src)
@@ -358,26 +343,46 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
                                    .WithSelfBinding(self_id, parent.block_depth)
                                    .WithCoroutineBody(body_is_coroutine);
 
-  // Formals are procedural vars of the body with no VarDeclStmt: pre-register
-  // them in the body scope at depth 0 so the body's references resolve. The
-  // backend renders these as C++ parameters rather than in-body declarations.
+  // Formals normalize into the signature's data flow (LRM 13.5). An `input` and
+  // a `ref` / `const ref` are parameters (the latter carries a `Ref<T>`); an
+  // `output` is not a parameter but a default-initialized body local whose
+  // final value rides the completion payload (copy-out at completion, not a
+  // live alias); an `inout` is both an input parameter and a payload component.
+  // Every formal is a body local at depth 0 so the body's references resolve.
+  completion_decl_depth_ = body_frame.block_depth;
   std::vector<mir::MethodParam> params;
-  params.reserve(src.params.size());
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.Get(param.var);
     const mir::TypeId value_type = module_->TranslateType(hir_var.type);
-    // A `ref` / `const ref` formal's type is a `Ref<T>` over the value type
-    // (LRM 13.5.2) -- the reference is itself the data type, so the direction
-    // stays `kInput`. Every other direction keeps the value type.
-    const bool by_reference = param.direction == hir::ParamDirection::kRef ||
-                              param.direction == hir::ParamDirection::kConstRef;
+    const hir::ParamDirection dir = param.direction;
+
+    if (dir == hir::ParamDirection::kOutput) {
+      const mir::ExprId default_init = body_block.exprs.Add(
+          BuildDefaultValueExpr(*module_, body_frame, value_type));
+      const mir::LocalRef local = body_block.AppendLocal(
+          mir::LocalDecl{.name = hir_var.name, .type = value_type},
+          default_init);
+      MapProceduralVar(
+          param.var, AutomaticVarBinding{
+                         .declaration_procedural_depth = body_frame.block_depth,
+                         .var = local.var,
+                         .type = value_type});
+      output_pack_vars_.push_back(local.var);
+      output_pack_types_.push_back(value_type);
+      continue;
+    }
+
+    // A `ref` / `const ref` formal's parameter type is a `Ref<T>` over the
+    // value type (LRM 13.5.2); every other parameter carries the value type.
+    const bool by_reference = dir == hir::ParamDirection::kRef ||
+                              dir == hir::ParamDirection::kConstRef;
     const mir::TypeId type =
-        by_reference ? module_->Unit().AddType(
-                           mir::TypeData{mir::RefType{
-                               .pointee = value_type,
-                               .is_const = param.direction ==
-                                           hir::ParamDirection::kConstRef}})
-                     : value_type;
+        by_reference
+            ? module_->Unit().AddType(
+                  mir::TypeData{mir::RefType{
+                      .pointee = value_type,
+                      .is_const = dir == hir::ParamDirection::kConstRef}})
+            : value_type;
     const mir::LocalId mir_var =
         body_block.vars.Add(mir::LocalDecl{.name = hir_var.name, .type = type});
     MapProceduralVar(
@@ -385,51 +390,59 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
                        .declaration_procedural_depth = body_frame.block_depth,
                        .var = mir_var,
                        .type = type});
-    params.push_back(
-        mir::MethodParam{
-            .name = hir_var.name,
-            .type = type,
-            .direction = LowerParamDirection(param.direction)});
+    params.push_back(mir::MethodParam{.name = hir_var.name, .type = type});
+    if (dir == hir::ParamDirection::kInOut) {
+      output_pack_vars_.push_back(mir_var);
+      output_pack_types_.push_back(value_type);
+    }
   }
 
-  // LRM 13.4.1 implicit result variable desugar. A non-void function returns
-  // the current value of its implicit same-name variable on fall-through; an
-  // assignment to the function name is a write to that variable, and an
-  // explicit `return expr` overrides it because it exits before the trailing
-  // read. Materialize the variable as a default-initialized body local
-  // (named distinctly from the C++ method so a self-recursive call still
-  // resolves to the method), then close the body with `return <result>`.
-  // void functions and tasks have no result variable and no trailing return.
-  // A task's call protocol is the coroutine type (LRM 13.3); a function's is
-  // its declared value or void type (LRM 13.4). The result type is the sole
-  // carrier of that protocol.
-  const mir::TypeId result_type = body_is_coroutine
-                                      ? module_->Unit().builtins.coroutine
-                                      : module_->TranslateType(src.result_type);
-  std::optional<mir::LocalRef> result_ref;
+  // LRM 13.4.1 implicit result variable. A non-void function's same-name var is
+  // a default-initialized body local (named distinctly from the C++ method so a
+  // self-recursive call still resolves to the method): the leading
+  // completion-payload component, the value a fall-through or value-less
+  // `return` carries. void functions and tasks have none.
+  std::vector<mir::TypeId> payload_components;
   if (src.result_var.has_value()) {
+    const mir::TypeId ret_type = module_->TranslateType(src.result_type);
     const mir::ExprId default_init = body_block.exprs.Add(
-        BuildDefaultValueExpr(*module_, body_frame, result_type));
-    result_ref = body_block.AppendLocal(
-        mir::LocalDecl{.name = "_lyra_result", .type = result_type},
-        default_init);
+        BuildDefaultValueExpr(*module_, body_frame, ret_type));
+    const mir::LocalRef result_ref = body_block.AppendLocal(
+        mir::LocalDecl{.name = "_lyra_result", .type = ret_type}, default_init);
     MapProceduralVar(
         *src.result_var,
         AutomaticVarBinding{
             .declaration_procedural_depth = body_frame.block_depth,
-            .var = result_ref->var,
-            .type = result_type});
+            .var = result_ref.var,
+            .type = ret_type});
+    result_var_ = result_ref.var;
+    result_value_type_ = ret_type;
+    payload_components.push_back(ret_type);
   }
+  for (const mir::TypeId t : output_pack_types_) {
+    payload_components.push_back(t);
+  }
+
+  // The completion payload is the function return (if any) plus each output /
+  // inout value, normalized by count. A task wraps it in the coroutine call
+  // protocol (LRM 13.3); a function's result is the payload itself (LRM 13.4).
+  completion_payload_type_ =
+      NormalizeCompletionPayload(module_->Unit(), payload_components);
+  const mir::TypeId result_type =
+      body_is_coroutine ? CoroutineOf(module_->Unit(), completion_payload_type_)
+                        : completion_payload_type_;
 
   auto lowered = LowerStraightLineBodyInto(*this, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
 
-  if (result_ref.has_value()) {
-    const mir::ExprId result_read = body_block.exprs.Add(
-        mir::Expr{.data = *result_ref, .type = result_type});
+  // Close the body with a trailing return of the fall-through payload. Absent
+  // when the payload is empty (a void function or a task with no outputs); the
+  // backend then supplies the bare `co_return;` for a coroutine.
+  if (auto trailing =
+          BuildReturnPayload(body_block, body_frame, std::nullopt)) {
     body_block.AppendStmt(
         mir::ReturnStmt{
-            .value = result_read,
+            .value = trailing,
             .is_coroutine_return = body_frame.is_coroutine_body});
   } else if (body_is_coroutine) {
     // A task is a coroutine with no result value: it completes by falling off
@@ -445,6 +458,33 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
       .params = std::move(params),
       .root_block = std::move(body_block),
       .form = mir::MethodForm::kStatic};
+}
+
+auto ProcessLowerer::BuildReturnPayload(
+    mir::Block& block, const WalkFrame& frame,
+    std::optional<mir::ExprId> explicit_value) -> std::optional<mir::ExprId> {
+  std::vector<mir::ExprId> components;
+  if (result_var_.has_value()) {
+    components.push_back(
+        explicit_value.has_value()
+            ? *explicit_value
+            : block.exprs.Add(
+                  mir::MakeLocalRefExpr(
+                      frame.block_depth - completion_decl_depth_, *result_var_,
+                      result_value_type_)));
+  }
+  for (std::size_t i = 0; i < output_pack_vars_.size(); ++i) {
+    components.push_back(block.exprs.Add(
+        mir::MakeLocalRefExpr(
+            frame.block_depth - completion_decl_depth_, output_pack_vars_[i],
+            output_pack_types_[i])));
+  }
+  if (components.empty()) return std::nullopt;
+  if (components.size() == 1) return components.front();
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::TupleExpr{.components = std::move(components)},
+          .type = completion_payload_type_});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -61,7 +61,7 @@ void RuntimeServices::RequestFinish(int level, bool fatal) {
   engine_->RequestFinish(level, fatal);
 }
 
-void RuntimeServices::Spawn(Coroutine coroutine) {
+void RuntimeServices::Spawn(Coroutine<void> coroutine) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::Spawn: no Engine bound");
   }
