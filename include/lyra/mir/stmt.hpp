@@ -158,18 +158,6 @@ struct ReturnStmt {
   bool is_coroutine_return = false;
 };
 
-// `await <awaitable>;` -- a suspension point: the enclosing process yields
-// control until the awaited operand is ready, then resumes where it left off.
-// In SV the only constructs that suspend are void and statement-positioned --
-// LRM 13.4 makes a function, the sole value-yielding call form, unable to
-// suspend -- so await is a statement, the sibling of `return`, never an
-// expression. `awaitable` is the suspension-producing expression (a `$finish`,
-// task, or named-event-await call). The semantic concept is one across
-// consumers (LIR, LLVM); the C++ backend realizes it as `co_await`.
-struct AwaitStmt {
-  ExprId awaitable;
-};
-
 // One leaf entry of a wait's projection set: an expression yielding a
 // borrowed pointer to the observable cell the leaf subscribes to, plus the
 // observed bit projection of its packed encoding as a `(lsb_bit_offset,
@@ -200,8 +188,7 @@ struct SensitivityWaitStmt {
 using StmtData = std::variant<
     EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt,
     ConstructOwnedObjectStmt, ConstructExternalUnitStmt, ForStmt, WhileStmt,
-    DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt, AwaitStmt,
-    SensitivityWaitStmt>;
+    DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt, SensitivityWaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

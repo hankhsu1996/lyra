@@ -1656,6 +1656,13 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::TupleExpr& t) -> diag::Result<std::string> {
             return RenderTupleExpr(view, expr, t);
           },
+          [&](const mir::AwaitExpr& a) -> diag::Result<std::string> {
+            auto awaitable_or = RenderExpr(view, view.Expr(a.awaitable));
+            if (!awaitable_or) {
+              return std::unexpected(std::move(awaitable_or.error()));
+            }
+            return "co_await " + *awaitable_or;
+          },
       },
       expr.data);
 }

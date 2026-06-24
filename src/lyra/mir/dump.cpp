@@ -197,7 +197,10 @@ class MirDumper {
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
-            [](const CoroutineType&) -> std::string { return "Coroutine"; },
+            [](const CoroutineType& c) -> std::string {
+              return std::format(
+                  "Coroutine(payload=Type[{}])", c.payload.value);
+            },
             [](const RefType& r) -> std::string {
               return std::format(
                   "Ref({}pointee=Type[{}])", r.is_const ? "const, " : "",
@@ -615,6 +618,10 @@ class MirDumper {
               }
               return std::format("TupleExpr components=[{}]", components);
             },
+            [](const AwaitExpr& a) -> std::string {
+              return std::format(
+                  "AwaitExpr awaitable=Expr[{}]", a.awaitable.value);
+            },
         },
         e.data);
     return std::format("{} type=Type[{}]", formatted, e.type.value);
@@ -881,18 +888,6 @@ class MirDumper {
               } else {
                 Line(std::format("Stmt[{}] ReturnStmt{}", id.value, flavor));
               }
-            },
-            [&](const AwaitStmt& s) {
-              Line(
-                  std::format(
-                      "Stmt[{}] AwaitStmt awaitable=Expr[{}]", id.value,
-                      s.awaitable.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", s.awaitable.value,
-                      FormatExpr(enclosing, s.awaitable)));
-              Dedent();
             },
             [&](const SensitivityWaitStmt& s) {
               Line(std::format("Stmt[{}] SensitivityWaitStmt", id.value));

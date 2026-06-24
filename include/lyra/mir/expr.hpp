@@ -204,12 +204,33 @@ struct TupleExpr {
   std::vector<ExprId> components;
 };
 
+// The suspension protocol applied to an awaitable: entering it yields control
+// until the awaitable completes, then resumes with its completion value
+// (LRM 9.4 timing controls, 13.5 task enable). `Expr::type` is that value's
+// type -- the awaited coroutine's payload, which is a task's output pack or
+// `Void` for a pure suspension (a delay, an event control, a `$finish`, a task
+// with no outputs). Await is an expression, not a statement, because it is a
+// value-producing operation that resumes (a suspending call), not a terminator
+// like `return`: a value-yielding task completion and a void suspension are the
+// same node, distinguished only by the payload type. The C++ backend realizes
+// it as `co_await`.
+//
+// Invariant: an await appears only at statement top level -- as the expression
+// of an `ExprStmt`, or as the right-hand side of the local-decl / assignment
+// that binds its completion value -- never nested inside another expression,
+// because SV suspends only at statement position (LRM 13.4). The node is a
+// general expression for uniformity with the rest of the set; HIR-to-MIR never
+// produces a nested one.
+struct AwaitExpr {
+  ExprId awaitable;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     ParamRef, LocalRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
     IncDecExpr, CallExpr, DerefExpr, AddressOfExpr, PointerCastExpr,
     MemberAccessExpr, ConversionExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
-    ArrayLiteralExpr, TupleExpr>;
+    ArrayLiteralExpr, TupleExpr, AwaitExpr>;
 
 struct Expr {
   ExprData data;
