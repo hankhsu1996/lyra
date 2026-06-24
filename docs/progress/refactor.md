@@ -453,10 +453,12 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
           severity-tagged emit. The four severities are distinct methods (parallel to print's
           `Write` / `Writeln` split), not a single `Emit(severity, text)` with a tag arg.
   - File-IO subsystem (`services.Files()`):
-    - [ ] `$fopen` / `$fclose` / `$fread` / `$fwrite` / `$fseek` / `$fgetc` / `$fputc` / `$fgets` /
-          `$feof` / `$ferror` / `$ftell` / `$rewind` / `$fflush` / `$ungetc`: each becomes a
-          `BuiltinFnCallee` method on `files` (`files.Open`, `files.Close`, `files.Read`, ...).
-          Runtime free-function `Lyra*` entries retire; the methods are the only surface.
+    - [x] `$fopen` / `$fclose` / `$fread` / `$fseek` / `$rewind` / `$ftell` / `$feof` / `$ferror` /
+          `$fflush` / `$fgetc` / `$ungetc` / `$fgets`: each lowers to a `BuiltinFnCallee` method on
+          the `files` broker (`files.Open`, `files.Close`, `files.Read`, ...). The runtime
+          free-function `Lyra*` entries are retired; the `FileTable` methods are the only surface.
+          `$fwrite` already rides the print pipeline (`kFormat` + `kWrite`); `$fputc` is not yet
+          wired.
   - Engine forwarders on `services`:
     - [x] `$time` / `$stime` / `$realtime`: each lowers to a `FreeFnCallee` against the matching
           runtime entry with the engine handle and the calling scope's unit power as ordinary

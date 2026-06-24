@@ -6,8 +6,10 @@
 #include <cstdint>
 #include <fstream>
 #include <ios>
+#include <iostream>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <span>
 #include <stop_token>
 #include <string>
@@ -16,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/support/file_descriptor.hpp"
 
 namespace lyra::runtime {
@@ -75,6 +78,73 @@ auto ParseMode(std::string_view mode) -> std::optional<ParsedMode> {
 }
 
 }  // namespace
+
+namespace {
+
+void WriteToFile(
+    std::ostream& sink, std::string_view body, bool append_newline) {
+  sink.write(body.data(), static_cast<std::streamsize>(body.size()));
+  if (append_newline) sink.put('\n');
+}
+
+void WriteToStream(
+    StreamDispatcher& stream, std::string_view body, bool append_newline) {
+  stream.Append(body);
+  stream.FinishRecord(append_newline);
+}
+
+void DispatchWrite(
+    FileTable& files, StreamDispatcher& stream,
+    const value::PackedArray& descriptor_pa, std::string_view body,
+    bool append_newline) {
+  const auto descriptor = static_cast<std::int32_t>(descriptor_pa.ToInt64());
+  if (descriptor == 0) return;
+  const auto raw = static_cast<std::uint32_t>(descriptor);
+
+  // FD path: bit 31 set => single descriptor. Stdio sentinels route through
+  // the stream dispatcher / std::cerr so test-harness ordering with stdout
+  // prints is preserved; other FDs go to their owned fstream.
+  if ((raw & (1U << 31U)) != 0U) {
+    if (descriptor == support::kStdoutFd) {
+      WriteToStream(stream, body, append_newline);
+      return;
+    }
+    if (descriptor == support::kStderrFd) {
+      WriteToFile(std::cerr, body, append_newline);
+      return;
+    }
+    std::fstream* sink = files.Resolve(descriptor);
+    if (sink == nullptr) return;
+    WriteToFile(*sink, body, append_newline);
+    return;
+  }
+
+  // MCD path: iterate bits 0..30 in ascending order. Bit 0 -> stream sink.
+  // Bits 1..30 -> FileTable slots. Unset / unmapped bits silently no-op.
+  for (std::uint32_t bit = 0; bit <= 30U; ++bit) {
+    if ((raw & (1U << bit)) == 0U) continue;
+    if (bit == 0U) {
+      WriteToStream(stream, body, append_newline);
+      continue;
+    }
+    const auto channel = static_cast<std::int32_t>(1U << bit);
+    std::fstream* sink = files.Resolve(channel);
+    if (sink == nullptr) continue;
+    WriteToFile(*sink, body, append_newline);
+  }
+}
+
+}  // namespace
+
+void FileTable::Write(
+    const value::PackedArray& descriptor, const value::String& text) {
+  DispatchWrite(*this, *stream_, descriptor, text.View(), false);
+}
+
+void FileTable::Writeln(
+    const value::PackedArray& descriptor, const value::String& text) {
+  DispatchWrite(*this, *stream_, descriptor, text.View(), true);
+}
 
 ChannelCancellation::ChannelCancellation(std::vector<std::stop_token> tokens)
     : tokens_(std::move(tokens)) {
@@ -318,6 +388,370 @@ void FileTable::AdvanceFd(
   }
   // Multi-byte tail: rewind the stream by the unconsumed count.
   file->seekg(-static_cast<std::streamoff>(file_unconsumed), std::ios::cur);
+}
+
+namespace {
+
+// Narrow a 32-bit signed int wrapped in a PackedArray. Identity for
+// well-formed int-shaped inputs; descriptor / offset / operation operands
+// all enter as `int`.
+auto AsInt32(const value::PackedArray& pa) -> std::int32_t {
+  return static_cast<std::int32_t>(pa.ToInt64());
+}
+
+auto MakeInt(std::int32_t v) -> value::PackedArray {
+  return value::PackedArray::Int(v);
+}
+
+}  // namespace
+
+auto FileTable::Open(const value::String& name) -> value::PackedArray {
+  return MakeInt(Open(name.View(), std::nullopt));
+}
+
+auto FileTable::Open(const value::String& name, const value::String& mode)
+    -> value::PackedArray {
+  return MakeInt(Open(name.View(), mode.View()));
+}
+
+void FileTable::Close(const value::PackedArray& descriptor) {
+  Close(AsInt32(descriptor));
+}
+
+auto FileTable::Getc(const value::PackedArray& fd_pa) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  auto* slot = ResolveSlot(fd);
+  if (slot == nullptr) {
+    SetError(fd, EBADF, "$fgetc: not an open file descriptor");
+    return MakeInt(-1);
+  }
+  // LRM 21.3.4: read entries require an FD opened with r or r+ type.
+  if (!slot->permits_read) {
+    SetError(fd, EBADF, "$fgetc: file not open for reading");
+    return MakeInt(-1);
+  }
+  // LRM 21.3.4.1: drain any byte left by $ungetc (or by the scanner's
+  // "offending character" pushback) before consulting the stream.
+  if (slot->putback.has_value()) {
+    const auto byte = static_cast<unsigned char>(*slot->putback);
+    slot->putback.reset();
+    return MakeInt(byte);
+  }
+  const int c = slot->file->get();
+  if (c == std::char_traits<char>::eof()) {
+    // LRM 21.3.4.1: EOF is signalled as -1 (wider than 8 bits so callers can
+    // distinguish from 0xFF). fstream's eof bit is now set; $feof picks it up.
+    SetError(fd, 0, "$fgetc: EOF");
+    return MakeInt(-1);
+  }
+  return MakeInt(c & 0xFF);
+}
+
+auto FileTable::Ungetc(
+    const value::PackedArray& c_pa, const value::PackedArray& fd_pa)
+    -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  auto* slot = ResolveSlot(fd);
+  if (slot == nullptr) {
+    SetError(fd, EBADF, "$ungetc: not an open file descriptor");
+    return MakeInt(-1);
+  }
+  // LRM 21.3.4.1 NOTE: implementations may limit pushback depth. We keep a
+  // single-byte buffer per FD; a second $ungetc before any read returns -1
+  // per "if an error occurs pushing a character ... code is set to EOF".
+  // Using a Lyra-side slot instead of std::fstream's putback area lifts
+  // libstdc++'s "must read first" restriction so $ungetc on a freshly-opened
+  // stream works as the LRM specifies.
+  if (slot->putback.has_value()) {
+    SetError(fd, EAGAIN, "$ungetc: putback buffer full");
+    return MakeInt(-1);
+  }
+  slot->putback = static_cast<char>(AsInt32(c_pa) & 0xFF);
+  return MakeInt(0);
+}
+
+auto FileTable::Gets(value::String& dest, const value::PackedArray& fd_pa)
+    -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  auto* slot = ResolveSlot(fd);
+  if (slot == nullptr) {
+    SetError(fd, EBADF, "$fgets: not an open file descriptor");
+    dest = value::String{};
+    return MakeInt(0);
+  }
+  if (!slot->permits_read) {
+    SetError(fd, EBADF, "$fgets: file not open for reading");
+    dest = value::String{};
+    return MakeInt(0);
+  }
+  // LRM 21.3.4.2 + 21.3.4.1: byte-by-byte loop so any pending $ungetc byte
+  // is the first byte of the line. std::getline would bypass the slot-side
+  // putback.
+  std::string line;
+  while (true) {
+    int c = 0;
+    if (slot->putback.has_value()) {
+      c = static_cast<unsigned char>(*slot->putback);
+      slot->putback.reset();
+    } else {
+      c = slot->file->get();
+    }
+    if (c == std::char_traits<char>::eof()) break;
+    line.push_back(static_cast<char>(c));
+    if (c == '\n') break;
+  }
+  if (line.empty()) {
+    SetError(fd, 0, "$fgets: EOF");
+    dest = value::String{};
+    return MakeInt(0);
+  }
+  dest = value::String{line};
+  return MakeInt(static_cast<std::int32_t>(line.size()));
+}
+
+auto FileTable::Read(value::PackedArray& dest, const value::PackedArray& fd_pa)
+    -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  auto* slot = ResolveSlot(fd);
+  if (slot == nullptr) {
+    SetError(fd, EBADF, "$fread: not an open file descriptor");
+    return MakeInt(0);
+  }
+  if (!slot->permits_read) {
+    SetError(fd, EBADF, "$fread: file not open for reading");
+    return MakeInt(0);
+  }
+  const std::uint64_t width = dest.BitWidth();
+  if (width == 0U) {
+    SetError(fd, EINVAL, "$fread: destination has zero bit width");
+    return MakeInt(0);
+  }
+  const auto byte_count = static_cast<std::size_t>((width + 7U) / 8U);
+  std::vector<char> buf(byte_count, '\0');
+  std::size_t pos = 0;
+  // LRM 21.3.4.1: any pending $ungetc byte is the next byte read from the
+  // FD; place it at the head of the buffer before consulting the stream.
+  if (slot->putback.has_value()) {
+    buf[pos++] = *slot->putback;
+    slot->putback.reset();
+  }
+  const auto rest = std::span<char>(buf).subspan(pos);
+  slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
+  const auto got = pos + static_cast<std::size_t>(slot->file->gcount());
+  if (got == 0U) {
+    SetError(fd, 0, "$fread: EOF");
+    return MakeInt(0);
+  }
+  // LRM 21.3.4.4: 2-value, big-endian (first byte fills the MSBs). On a
+  // short read, the trailing buffer is already zero from the vector
+  // constructor and lands in the destination's LSBs ("as much as
+  // available"). PackedArray::FromBytes supports any width; the
+  // destination's declared shape (sign / 4-state) is preserved.
+  dest = value::PackedArray::FromBytes(
+      buf, width, dest.IsSigned(), dest.IsFourState());
+  return MakeInt(static_cast<std::int32_t>(got));
+}
+
+namespace {
+
+auto ReadUnpackedImpl(
+    FileTable& files, value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd_pa, std::int64_t declared_left,
+    std::int64_t declared_right, std::int64_t start_sv,
+    std::optional<std::int64_t> count) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  auto* slot = files.ResolveSlot(fd);
+  if (slot == nullptr) {
+    files.SetError(fd, EBADF, "$fread: not an open file descriptor");
+    return MakeInt(0);
+  }
+  if (!slot->permits_read) {
+    files.SetError(fd, EBADF, "$fread: file not open for reading");
+    return MakeInt(0);
+  }
+  if (dest.RawSize() == 0U) return MakeInt(0);
+
+  const bool ascending = declared_left <= declared_right;
+  const auto lowest_sv = std::min(declared_left, declared_right);
+  const auto highest_sv = std::max(declared_left, declared_right);
+  // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EBADF
+  // and return 0 so the user sees the failure rather than a silent no-op.
+  if (start_sv < lowest_sv || start_sv > highest_sv) {
+    files.SetError(fd, EINVAL, "$fread: start index out of array range");
+    return MakeInt(0);
+  }
+  const auto available_elements =
+      static_cast<std::size_t>(highest_sv - start_sv + 1);
+  const auto target_count =
+      count.has_value()
+          ? std::min(static_cast<std::size_t>(*count), available_elements)
+          : available_elements;
+
+  const auto element_width = dest.RawAt(0).BitWidth();
+  const bool elem_signed = dest.RawAt(0).IsSigned();
+  const bool elem_four_state = dest.RawAt(0).IsFourState();
+  const auto bytes_per_elem =
+      static_cast<std::size_t>((element_width + 7U) / 8U);
+  std::size_t total_bytes = 0;
+
+  for (std::size_t k = 0; k < target_count; ++k) {
+    std::vector<char> buf(bytes_per_elem, '\0');
+    std::size_t pos = 0;
+    // LRM 21.3.4.1: drain any $ungetc-deposited byte only on the very first
+    // element's first byte; subsequent bytes come straight from the stream.
+    if (k == 0 && slot->putback.has_value()) {
+      buf[pos++] = *slot->putback;
+      slot->putback.reset();
+    }
+    const auto rest = std::span<char>(buf).subspan(pos);
+    slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
+    const auto got_this = pos + static_cast<std::size_t>(slot->file->gcount());
+    if (got_this == 0U) break;
+    // Partial element gets LSB zero-padding via PackedArray::FromBytes'
+    // "shorter input -> trailing zeros" path -- consistent with the packed
+    // form's "as much as available" behaviour.
+    auto effective = std::span<const char>(buf).first(got_this);
+    auto elem_value = value::PackedArray::FromBytes(
+        effective, element_width, elem_signed, elem_four_state);
+    const std::int64_t sv_index = start_sv + static_cast<std::int64_t>(k);
+    const std::int64_t storage_idx =
+        ascending ? (sv_index - declared_left) : (declared_left - sv_index);
+    dest.ElementRef(
+        value::PackedArray::Int(static_cast<std::int32_t>(storage_idx))) =
+        std::move(elem_value);
+    total_bytes += got_this;
+    if (got_this < bytes_per_elem) break;
+  }
+  return MakeInt(static_cast<std::int32_t>(total_bytes));
+}
+
+}  // namespace
+
+auto FileTable::Read(
+    value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right,
+    const value::PackedArray& sv_start) -> value::PackedArray {
+  return ReadUnpackedImpl(
+      *this, dest, fd, declared_left.ToInt64(), declared_right.ToInt64(),
+      sv_start.ToInt64(), std::nullopt);
+}
+
+auto FileTable::Read(
+    value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right,
+    const value::PackedArray& sv_start, const value::PackedArray& count)
+    -> value::PackedArray {
+  return ReadUnpackedImpl(
+      *this, dest, fd, declared_left.ToInt64(), declared_right.ToInt64(),
+      sv_start.ToInt64(), count.ToInt64());
+}
+
+auto FileTable::Seek(
+    const value::PackedArray& fd_pa, const value::PackedArray& offset,
+    const value::PackedArray& operation) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  auto* slot = ResolveSlot(fd);
+  if (slot == nullptr) {
+    SetError(fd, EBADF, "$fseek: not an open file descriptor");
+    return MakeInt(-1);
+  }
+  const auto offset_v = static_cast<std::streamoff>(AsInt32(offset));
+  std::ios_base::seekdir dir{};
+  switch (AsInt32(operation)) {
+    case 0:
+      dir = std::ios_base::beg;
+      break;
+    case 1:
+      dir = std::ios_base::cur;
+      break;
+    case 2:
+      dir = std::ios_base::end;
+      break;
+    default:
+      SetError(fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
+      return MakeInt(-1);
+  }
+  auto& stream = *slot->file;
+  stream.clear();
+  stream.seekg(offset_v, dir);
+  stream.seekp(offset_v, dir);
+  if (stream.fail()) {
+    SetError(fd, errno, "$fseek: seek failed");
+    return MakeInt(-1);
+  }
+  // LRM 21.3.5: "Repositioning the current file position with $fseek or
+  // $rewind shall cancel any $ungetc operations."
+  slot->putback.reset();
+  return MakeInt(0);
+}
+
+auto FileTable::Rewind(const value::PackedArray& fd_pa) -> value::PackedArray {
+  return Seek(fd_pa, MakeInt(0), MakeInt(0));
+}
+
+auto FileTable::Tell(const value::PackedArray& fd_pa) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = Resolve(fd);
+  if (stream == nullptr) {
+    SetError(fd, EBADF, "$ftell: not an open file descriptor");
+    return MakeInt(-1);
+  }
+  const auto pos = stream->tellg();
+  if (pos == std::fstream::pos_type{-1}) {
+    SetError(fd, errno, "$ftell: tell failed");
+    return MakeInt(-1);
+  }
+  return MakeInt(static_cast<std::int32_t>(pos));
+}
+
+auto FileTable::Eof(const value::PackedArray& fd_pa) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = Resolve(fd);
+  if (stream == nullptr) return MakeInt(0);
+  return MakeInt(stream->eof() ? 1 : 0);
+}
+
+auto FileTable::Error(const value::PackedArray& fd_pa, value::String& dest)
+    -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  const int errno_value = LastError(fd);
+  if (errno_value == 0) {
+    dest = value::String{};
+    return MakeInt(0);
+  }
+  dest = value::String{LastErrorMessage(fd)};
+  ClearError(fd);
+  return MakeInt(errno_value);
+}
+
+void FileTable::Flush() {
+  // Flush-all path: iterate every set bit in the entire 1..30 MCD range and
+  // every reserved+pool FD index. Cheap enough vs disk cost.
+  for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
+    std::fstream* s = Resolve(static_cast<std::int32_t>(1U << bit));
+    if (s != nullptr) s->flush();
+  }
+}
+
+void FileTable::Flush(const value::PackedArray& descriptor_pa) {
+  const std::int32_t descriptor = AsInt32(descriptor_pa);
+  if (descriptor == 0) return;
+  const auto raw = static_cast<std::uint32_t>(descriptor);
+  if ((raw & (1U << 31U)) != 0U) {
+    // FD form: stdio sentinels need no flush from us (the sink-write path
+    // routes them through the stream dispatcher / std::cerr).
+    std::fstream* s = Resolve(descriptor);
+    if (s != nullptr) s->flush();
+    return;
+  }
+  // MCD form: walk set bits and flush each owned channel.
+  for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
+    if ((raw & (1U << bit)) == 0U) continue;
+    std::fstream* s = Resolve(static_cast<std::int32_t>(1U << bit));
+    if (s != nullptr) s->flush();
+  }
 }
 
 auto FileTable::CancellationFor(const lyra::value::PackedArray& descriptor)

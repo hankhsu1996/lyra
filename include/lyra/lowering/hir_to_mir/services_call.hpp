@@ -16,4 +16,13 @@ namespace lyra::lowering::hir_to_mir {
 auto BuildServicesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
     -> mir::Expr;
 
+// Builds the file-IO broker expression `services.Files()`: a `Files` method
+// call on the engine handle, typed as the unit's `files` builtin. Returns the
+// outer call detached; the caller interns it. The inner services call is
+// interned into `frame.current_block` as a child. LRM 21.3 file-IO ops and
+// LRM 21.2.1 / 21.3.1 sink writes thread the resulting handle as the receiver
+// of their FileTable methods.
+auto BuildFilesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
+    -> mir::Expr;
+
 }  // namespace lyra::lowering::hir_to_mir

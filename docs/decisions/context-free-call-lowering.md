@@ -101,8 +101,7 @@ positions.
   shape (a value reference versus a call) and a different resolution path for the two. The modern
   iteration model is unanimous that the index and element are co-equal yielded values; the asymmetry
   is a syntactic artifact, and encoding it splits one concept ("the current iteration's value")
-  across two node kinds. One `IterationBindingRef` for both, selected by role, keeps them
-  symmetric.
+  across two node kinds. One `IterationBindingRef` for both, selected by role, keeps them symmetric.
 
 ## Cross-references
 
