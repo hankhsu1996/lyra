@@ -1,0 +1,15 @@
+id: cpp.assoc_packed_struct_key
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    va: 42
+    vb: 43
+    n: 2
+    ex_present: 1
+    ex_absent: 0

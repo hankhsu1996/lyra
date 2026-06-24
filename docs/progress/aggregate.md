@@ -42,7 +42,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | A3   | Done: `foreach` over an associative array (any dimensionality).         |
 | A4   | Done: literals with optional default, whole-array assignment.           |
 | A5   | Done: locator / reduction / map manipulation methods (key-indexed).     |
-| A6   | Open: wildcard `[*]` index; struct / class index families.              |
+| A6   | Done: wildcard `[*]` and packed-struct index; class index deferred.     |
 
 ## Dynamic Array
 
@@ -235,12 +235,14 @@ the lookup key and imposes an ordering.
       `shuffle`) is excluded for associative arrays (LRM 7.12.2) and is not part of this step;
       reduction is included because LRM 7.12.3 permits it on any integral-valued unpacked array.
 
-- [ ] A6 -- The remaining associative index families. The wildcard `[*]` index admits any integral
-      expression, normalizing each index to its minimal-width canonical form (LRM 7.8.1); a
-      wildcard-indexed array is barred from `foreach` and from any manipulation method that returns
-      an index (LRM 7.8.1 / 7.12.1). The other user-defined index types (a packed struct key, LRM
-      7.8.5) require the index type's equality and ordering. The class index (LRM 7.8.3) is blocked
-      on class support and deferred to that workstream.
+- [x] A6 -- The remaining associative index families. A wildcard `[*]` index admits any integral
+      expression and identifies an entry by its unsigned numerical value, so two indices of the same
+      value but different widths name one entry and ordering is by magnitude (LRM 7.8.1). The
+      frontend rejects a wildcard-indexed array used in `foreach` or with a manipulation method that
+      returns an index (LRM 7.8.1 / 7.12.1), so those illegal forms never reach lowering. A
+      packed-struct key (LRM 7.8.5) is an integral index, keyed and ordered by its bit-pattern
+      value. The class index (LRM 7.8.3) stays blocked on class support and is deferred to that
+      workstream.
 
 ## Cross-references
 

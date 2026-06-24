@@ -63,6 +63,7 @@ auto Type::Kind() const -> TypeKind {
           [](const AssociativeArrayType&) {
             return TypeKind::kAssociativeArray;
           },
+          [](const WildcardIndexType&) { return TypeKind::kWildcardIndex; },
           [](const StringType&) { return TypeKind::kString; },
           [](const EventType&) { return TypeKind::kEvent; },
           [](const RealType&) { return TypeKind::kReal; },

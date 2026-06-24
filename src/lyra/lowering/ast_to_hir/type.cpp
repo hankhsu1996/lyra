@@ -337,20 +337,27 @@ auto TranslateTypeData(
     }
     case slang::ast::SymbolKind::AssociativeArrayType: {
       const auto& aa = canonical.as<slang::ast::AssociativeArrayType>();
-      // LRM 7.8.1 wildcard index (`[*]`) carries no index type and has its own
-      // minimal-length normalization rules; LRM 7.8.3 / 7.8.5 class and other
-      // user-defined indices have their own ordering contracts. Only the string
-      // (LRM 7.8.2) and integral (LRM 7.8.4) index families are in scope.
-      if (aa.indexType == nullptr ||
-          !(aa.indexType->isIntegral() || aa.indexType->isString())) {
-        return diag::Fail(
-            decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
-            "associative arrays are only supported with a string or integral "
-            "index type");
-      }
       auto elem_id_or = module.InternType(aa.elementType, decl_span);
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
+      }
+      // LRM 7.8.1 wildcard index (`[*]`) declares no index type: the key is any
+      // integral value identified by its magnitude, carried by the dedicated
+      // wildcard-index key type.
+      if (aa.indexType == nullptr) {
+        return hir::TypeData{hir::AssociativeArrayType{
+            .element_type = *elem_id_or,
+            .key_type = module.Unit().builtins.wildcard_index,
+        }};
+      }
+      // A declared index covers string (LRM 7.8.2) and integral, which includes
+      // a packed struct / enum (LRM 7.8.4 / 7.8.5). A class index (LRM 7.8.3)
+      // and a real index are rejected.
+      if (!(aa.indexType->isIntegral() || aa.indexType->isString())) {
+        return diag::Fail(
+            decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
+            "associative arrays are only supported with a string, integral, or "
+            "wildcard index type");
       }
       auto key_id_or = module.InternType(*aa.indexType, decl_span);
       if (!key_id_or) {

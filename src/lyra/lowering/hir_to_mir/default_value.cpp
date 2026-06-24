@@ -251,12 +251,7 @@ auto BuildAssociativeConstructionCall(
         "BuildAssociativeConstructionCall: result type is not "
         "AssociativeArrayType");
   }
-  if (!assoc->key_type.has_value()) {
-    throw InternalError(
-        "BuildAssociativeConstructionCall: associative array has no key type "
-        "(wildcard index); AST -> HIR rejects it");
-  }
-  const mir::TypeId key_type = *assoc->key_type;
+  const mir::TypeId key_type = assoc->key_type;
   const mir::TypeId element_type = assoc->element_type;
 
   const mir::TypeId tuple_type = module.Unit().AddType(

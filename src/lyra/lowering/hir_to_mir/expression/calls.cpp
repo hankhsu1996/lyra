@@ -211,8 +211,8 @@ auto BuildArrayMethodClosure(
   mir::TypeId index_type = module.Unit().builtins.int32;
   if (const auto* assoc =
           std::get_if<hir::AssociativeArrayType>(&hir_recv_ty.data);
-      assoc != nullptr && assoc->key_type.has_value()) {
-    index_type = module.TranslateType(*assoc->key_type);
+      assoc != nullptr) {
+    index_type = module.TranslateType(assoc->key_type);
   }
   const std::string iterator_name =
       with_clause != nullptr ? with_clause->element_name : std::string{"item"};
