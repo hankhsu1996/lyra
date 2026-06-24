@@ -86,7 +86,7 @@ auto Engine::Run() -> int {
 
   phase_ = SchedulerPhase::kIdle;
   stream_.Drain();
-  return 0;
+  return fatal_finish_ ? 1 : 0;
 }
 
 void Engine::EnsureReadyToRun() {
@@ -326,11 +326,15 @@ void Engine::RunProcess(CoroutineHandle handle) {
   }
 }
 
-void Engine::RequestFinish(int) {  // NOLINT(readability-named-parameter)
+void Engine::RequestFinish(
+    int,  // NOLINT(readability-named-parameter)
+    bool fatal) {
   // The LRM 20.2 `$finish` verbosity argument is validated at lowering and
   // threaded here for interface completeness, but the engine terminates
-  // regardless of its value; acting on it is a known gap.
+  // regardless of its value; acting on it is a known gap. The `fatal` flag
+  // (LRM 20.10) bumps the eventual Run() return to a non-zero exit code.
   finished_ = true;
+  if (fatal) fatal_finish_ = true;
 }
 
 void Engine::TriggerValueChange(

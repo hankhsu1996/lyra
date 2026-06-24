@@ -284,6 +284,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "realtime";
     case BuiltinFn::kFinish:
       return "finish";
+    case BuiltinFn::kFatalFinish:
+      return "fatal_finish";
     case BuiltinFn::kAsObservable:
       return "as_observable";
     case BuiltinFn::kRegisterSignal:
@@ -324,6 +326,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "emit_warning";
     case BuiltinFn::kEmitError:
       return "emit_error";
+    case BuiltinFn::kEmitFatal:
+      return "emit_fatal";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

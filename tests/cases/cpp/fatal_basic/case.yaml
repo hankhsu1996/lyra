@@ -1,0 +1,13 @@
+id: cpp.fatal_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 1
+  stdout:
+    exact: "before fatal\n"
+  stderr:
+    exact: "main.sv:4:5: fatal: \n"

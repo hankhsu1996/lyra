@@ -817,6 +817,17 @@ inline constexpr std::array kSystemSubroutines = {
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
         .semantic = PrintTimescaleSystemSubroutineInfo{},
     },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{53},
+        .name = "$fatal",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitFatal},
+        .suspends = true,
+    },
 };
 
 }  // namespace detail

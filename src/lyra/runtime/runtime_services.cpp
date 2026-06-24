@@ -77,11 +77,11 @@ void RuntimeServices::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
   engine_->ScheduleAtTime(when, handle);
 }
 
-void RuntimeServices::RequestFinish(int level) {
+void RuntimeServices::RequestFinish(int level, bool fatal) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::RequestFinish: no Engine bound");
   }
-  engine_->RequestFinish(level);
+  engine_->RequestFinish(level, fatal);
 }
 
 void RuntimeServices::Spawn(Coroutine coroutine) {
