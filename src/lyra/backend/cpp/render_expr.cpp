@@ -815,6 +815,30 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "GetSignal";
     case support::BuiltinFn::kGetChild:
       return "GetChild";
+    case support::BuiltinFn::kFileOpen:
+      return "Open";
+    case support::BuiltinFn::kFileClose:
+      return "Close";
+    case support::BuiltinFn::kFileGetc:
+      return "Getc";
+    case support::BuiltinFn::kFileUngetc:
+      return "Ungetc";
+    case support::BuiltinFn::kFileGets:
+      return "Gets";
+    case support::BuiltinFn::kFileRead:
+      return "Read";
+    case support::BuiltinFn::kFileSeek:
+      return "Seek";
+    case support::BuiltinFn::kFileRewind:
+      return "Rewind";
+    case support::BuiltinFn::kFileTell:
+      return "Tell";
+    case support::BuiltinFn::kFileEof:
+      return "Eof";
+    case support::BuiltinFn::kFileError:
+      return "Error";
+    case support::BuiltinFn::kFileFlush:
+      return "Flush";
   }
   throw InternalError("BuiltinFnCppName: unknown BuiltinFn");
 }
@@ -962,37 +986,6 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
             throw InternalError(
                 "RenderSystemSubroutineEntryName: time id reached system "
                 "subroutine render path; time family is BuiltinFn-routed");
-          },
-          [](const support::FileIOSystemSubroutineInfo& file_io)
-              -> diag::Result<std::string_view> {
-            switch (file_io.kind) {
-              case support::FileIOKind::kOpen:
-                return std::string_view{"lyra::runtime::LyraFOpen"};
-              case support::FileIOKind::kClose:
-                return std::string_view{"lyra::runtime::LyraFClose"};
-              case support::FileIOKind::kGetc:
-                return std::string_view{"lyra::runtime::LyraFGetc"};
-              case support::FileIOKind::kUngetc:
-                return std::string_view{"lyra::runtime::LyraFUngetc"};
-              case support::FileIOKind::kGets:
-                return std::string_view{"lyra::runtime::LyraFGets"};
-              case support::FileIOKind::kSeek:
-                return std::string_view{"lyra::runtime::LyraFSeek"};
-              case support::FileIOKind::kRewind:
-                return std::string_view{"lyra::runtime::LyraFRewind"};
-              case support::FileIOKind::kTell:
-                return std::string_view{"lyra::runtime::LyraFTell"};
-              case support::FileIOKind::kEof:
-                return std::string_view{"lyra::runtime::LyraFEof"};
-              case support::FileIOKind::kError:
-                return std::string_view{"lyra::runtime::LyraFError"};
-              case support::FileIOKind::kFlush:
-                return std::string_view{"lyra::runtime::LyraFFlush"};
-              case support::FileIOKind::kRead:
-                return std::string_view{"lyra::runtime::LyraFRead"};
-            }
-            throw InternalError(
-                "RenderSystemSubroutineEntryName: unknown FileIOKind");
           },
           [&](const auto&) -> diag::Result<std::string_view> {
             return diag::Fail(

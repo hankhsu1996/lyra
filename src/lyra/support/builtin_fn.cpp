@@ -101,6 +101,17 @@ auto IsAssociativeTraversalFn(BuiltinFn id) -> bool {
   }
 }
 
+auto IsFileOutputArgBuiltinFn(BuiltinFn id) -> bool {
+  switch (id) {
+    case BuiltinFn::kFileGets:
+    case BuiltinFn::kFileRead:
+    case BuiltinFn::kFileError:
+      return true;
+    default:
+      return false;
+  }
+}
+
 auto BuiltinFnName(BuiltinFn id) -> std::string_view {
   switch (id) {
     case BuiltinFn::kElement:
@@ -281,6 +292,30 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "get_signal";
     case BuiltinFn::kGetChild:
       return "get_child";
+    case BuiltinFn::kFileOpen:
+      return "file_open";
+    case BuiltinFn::kFileClose:
+      return "file_close";
+    case BuiltinFn::kFileGetc:
+      return "file_getc";
+    case BuiltinFn::kFileUngetc:
+      return "file_ungetc";
+    case BuiltinFn::kFileGets:
+      return "file_gets";
+    case BuiltinFn::kFileRead:
+      return "file_read";
+    case BuiltinFn::kFileSeek:
+      return "file_seek";
+    case BuiltinFn::kFileRewind:
+      return "file_rewind";
+    case BuiltinFn::kFileTell:
+      return "file_tell";
+    case BuiltinFn::kFileEof:
+      return "file_eof";
+    case BuiltinFn::kFileError:
+      return "file_error";
+    case BuiltinFn::kFileFlush:
+      return "file_flush";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

@@ -28,21 +28,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto BuildFilesCall(
-    ProcessLowerer& process, const WalkFrame& frame, mir::Block& block)
-    -> mir::ExprId {
-  const mir::ExprId services =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::BuiltinFnCallee{.id = support::BuiltinFn::kFiles},
-                  .arguments = {services}},
-          .type = process.Module().Unit().builtins.files});
-}
-
 // LRM 21.3.1 stdout pre-bound FD literal, used as the sink for $display /
 // $write / $strobe lowerings that don't carry a user-supplied descriptor.
 auto BuildStdoutFdLiteral(mir::Block& block, mir::TypeId int32_type)
@@ -82,7 +67,8 @@ auto EmitFormatThenWrite(
                       mir::BuiltinFnCallee{.id = support::BuiltinFn::kFormat},
                   .arguments = {services, items_array}},
           .type = unit.builtins.string});
-  const mir::ExprId files = BuildFilesCall(process, frame, block);
+  const mir::ExprId files =
+      block.exprs.Add(BuildFilesCallExpr(process.Module(), frame));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -116,7 +102,8 @@ auto LowerStrobeCall(
     auto desc_or = LowerDescriptor(process, frame, call);
     if (!desc_or) return std::unexpected(std::move(desc_or.error()));
     outer_user_descriptor = block.exprs.Add(*std::move(desc_or));
-    const mir::ExprId outer_files = BuildFilesCall(process, frame, block);
+    const mir::ExprId outer_files =
+        block.exprs.Add(BuildFilesCallExpr(process.Module(), frame));
     outer_cancellation = block.exprs.Add(
         mir::Expr{
             .data =

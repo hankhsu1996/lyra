@@ -13,6 +13,7 @@
 
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::runtime {
 
@@ -179,6 +180,95 @@ class FileTable {
   void Writeln(
       const lyra::value::PackedArray& descriptor,
       const lyra::value::String& text);
+
+  // LRM 21.3.1 $fopen. The no-mode overload returns a multichannel
+  // descriptor (MCD form); the mode overload returns a single file
+  // descriptor (FD form). On failure both return 0 (file cannot be
+  // opened, all MCD slots in use, or unknown mode string).
+  auto Open(const lyra::value::String& name) -> lyra::value::PackedArray;
+  auto Open(const lyra::value::String& name, const lyra::value::String& mode)
+      -> lyra::value::PackedArray;
+
+  // LRM 21.3.1 $fclose. No-op for 0 / pre-bound stdio FDs; for an MCD
+  // closes every set-bit channel and fires the per-channel cancel signal.
+  void Close(const lyra::value::PackedArray& descriptor);
+
+  // LRM 21.3.4.1 $fgetc. Returns the next byte as an int32 PackedArray,
+  // or -1 on EOF / error. A pending $ungetc putback (if any) is the
+  // first byte returned.
+  auto Getc(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
+
+  // LRM 21.3.4.1 $ungetc. Pushes the low byte of `c` back onto the FD's
+  // input buffer (single-byte slot-side putback; a second $ungetc before
+  // any read returns -1). Returns 0 on success or -1 on error.
+  auto Ungetc(
+      const lyra::value::PackedArray& c, const lyra::value::PackedArray& fd)
+      -> lyra::value::PackedArray;
+
+  // LRM 21.3.4.2 $fgets. Reads bytes into `dest` up to and including the
+  // next newline, or until EOF. Returns the number of bytes written, or 0
+  // on error.
+  auto Gets(lyra::value::String& dest, const lyra::value::PackedArray& fd)
+      -> lyra::value::PackedArray;
+
+  // LRM 21.3.4.4 $fread into a packed destination. Reads (BitWidth+7)/8
+  // bytes big-endian (first byte fills MSBs); the destination's existing
+  // shape drives the result's width / sign / 4-state. Returns byte count,
+  // 0 on error.
+  auto Read(lyra::value::PackedArray& dest, const lyra::value::PackedArray& fd)
+      -> lyra::value::PackedArray;
+
+  // LRM 21.3.4.4 $fread into an unpacked destination. Iterates `dest`
+  // elements from SV index `sv_start` toward the highest declared SV
+  // index, reading until EOF or the highest declared index.
+  // `declared_left` / `declared_right` are the destination's declared
+  // bounds; the caller always supplies `sv_start` (the lowest declared
+  // index when the SV call omits it).
+  auto Read(
+      lyra::value::UnpackedArray<lyra::value::PackedArray>& dest,
+      const lyra::value::PackedArray& fd,
+      const lyra::value::PackedArray& declared_left,
+      const lyra::value::PackedArray& declared_right,
+      const lyra::value::PackedArray& sv_start) -> lyra::value::PackedArray;
+
+  // As above, loading at most `count` elements (LRM 21.3.4.4 explicit
+  // count).
+  auto Read(
+      lyra::value::UnpackedArray<lyra::value::PackedArray>& dest,
+      const lyra::value::PackedArray& fd,
+      const lyra::value::PackedArray& declared_left,
+      const lyra::value::PackedArray& declared_right,
+      const lyra::value::PackedArray& sv_start,
+      const lyra::value::PackedArray& count) -> lyra::value::PackedArray;
+
+  // LRM 21.3.5 $fseek. `operation` is 0/1/2 for SEEK_SET / SEEK_CUR /
+  // SEEK_END. Returns 0 on success or -1 on error. Per LRM, any pending
+  // $ungetc operation is cancelled.
+  auto Seek(
+      const lyra::value::PackedArray& fd,
+      const lyra::value::PackedArray& offset,
+      const lyra::value::PackedArray& operation) -> lyra::value::PackedArray;
+
+  // LRM 21.3.5 $rewind. Equivalent to $fseek(fd, 0, 0).
+  auto Rewind(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
+
+  // LRM 21.3.5 $ftell. Returns the current position or -1 on error.
+  auto Tell(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
+
+  // LRM 21.3.8 $feof. Returns a nonzero value once an EOF has been
+  // observed on `fd`, zero otherwise.
+  auto Eof(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
+
+  // LRM 21.3.7 $ferror. Returns the most recent errno stamped on `fd`
+  // and writes the textual message into `dest`. The slot's error state is
+  // cleared after the read.
+  auto Error(const lyra::value::PackedArray& fd, lyra::value::String& dest)
+      -> lyra::value::PackedArray;
+
+  // LRM 21.3.6 $fflush. No-arg form flushes every open file; the
+  // addressed form flushes a single FD or every set-bit MCD channel.
+  void Flush();
+  void Flush(const lyra::value::PackedArray& descriptor);
 
  private:
   // LRM 21.3.1: at most 31 MCD slots (bits 1..30); bit 0 is stdout-sentinel.

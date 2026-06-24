@@ -392,14 +392,11 @@ auto LowerExprStmt(
     if (const auto* sys_ref =
             std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
       const auto& desc = support::LookupSystemSubroutine(sys_ref->id);
-      // System-subroutine tasks with an output arg ($fgets / $fread / $ferror)
-      // ride the copy-out shape but build a RuntimeFileXxxCall MIR node instead
-      // of a user-function CallExpr.
       if (const auto* file_info = support::GetFileIOInfo(desc)) {
-        if (support::FileIOHasOutputArg(file_info->kind)) {
+        if (support::IsFileOutputArgBuiltinFn(file_info->builtin_fn)) {
           return LowerFileIOSystemSubroutineCallStmt(
-              process, frame, std::move(label), *call, desc.id, *file_info,
-              std::nullopt, process.Module().TranslateType(inner.type));
+              process, frame, std::move(label), *call, *file_info, std::nullopt,
+              process.Module().TranslateType(inner.type));
         }
       }
       if (const auto* sformat_info = support::GetSFormatInfo(desc)) {
@@ -459,9 +456,9 @@ auto LowerExprStmt(
               conv_target_type.has_value() ? *conv_target_type
                                            : call_carrier->type);
           if (const auto* file_info = support::GetFileIOInfo(desc)) {
-            if (support::FileIOHasOutputArg(file_info->kind)) {
+            if (support::IsFileOutputArgBuiltinFn(file_info->builtin_fn)) {
               return LowerFileIOSystemSubroutineCallStmt(
-                  process, frame, std::move(label), *call, desc.id, *file_info,
+                  process, frame, std::move(label), *call, *file_info,
                   assign->lhs, result_type);
             }
           }

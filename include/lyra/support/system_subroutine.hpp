@@ -9,6 +9,7 @@
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::support {
 
@@ -92,33 +93,13 @@ struct DiagnosticSystemSubroutineInfo {
   DiagnosticSeverityKind severity;
 };
 
-enum class FileIOKind : std::uint8_t {
-  kOpen,
-  kClose,
-  kGetc,
-  kUngetc,
-  kGets,
-  kRead,
-  kSeek,
-  kRewind,
-  kTell,
-  kEof,
-  kError,
-  kFlush,
-};
-
+// The MIR-side callee identity for the SV system task. The same closed
+// namespace `BuiltinFn` carries every recognized runtime entry; descriptors
+// store it directly so lowering reads `info.builtin_fn` and renders without
+// a parallel SV-kind axis.
 struct FileIOSystemSubroutineInfo {
-  FileIOKind kind;
+  BuiltinFn builtin_fn;
 };
-
-// LRM 21.3.4: $fgets writes its first arg, $fread writes its first arg, and
-// $ferror writes its second arg. The kind alone implies which slot is the
-// output destination; consumers branch on `kind` rather than carry a
-// per-position direction array.
-[[nodiscard]] constexpr auto FileIOHasOutputArg(FileIOKind kind) -> bool {
-  return kind == FileIOKind::kGets || kind == FileIOKind::kRead ||
-         kind == FileIOKind::kError;
-}
 
 // LRM 21.3.4.3 scan family ($sscanf / $fscanf). The kind axis tracks where
 // the scanned characters come from; the scanner core is shared and only
@@ -471,7 +452,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kOpen},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileOpen},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{21},
@@ -480,7 +462,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kClose},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileClose},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{22},
@@ -489,7 +472,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kGetc},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileGetc},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{23},
@@ -498,7 +482,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kUngetc},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileUngetc},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{24},
@@ -507,7 +492,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kGets},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileGets},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{25},
@@ -519,7 +505,8 @@ inline constexpr std::array kSystemSubroutines = {
         // (mem, fd), (mem, fd, start), (mem, fd, start, count), and the
         // (mem, fd, , count) comma-elision shape -- all 2..4 positional.
         .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 4},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kRead},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileRead},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{26},
@@ -528,7 +515,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 3},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kSeek},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileSeek},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{27},
@@ -537,7 +525,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kRewind},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileRewind},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{28},
@@ -546,7 +535,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kTell},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileTell},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{29},
@@ -555,7 +545,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kEof},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileEof},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{30},
@@ -564,7 +555,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kError},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileError},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{31},
@@ -573,7 +565,8 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
-        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kFlush},
+        .semantic =
+            FileIOSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFileFlush},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{32},

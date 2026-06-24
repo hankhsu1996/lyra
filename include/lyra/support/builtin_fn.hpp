@@ -139,6 +139,25 @@ enum class BuiltinFn : std::uint16_t {
   kScan,
   kPeekBuffered,
   kAdvanceFd,
+  // LRM 21.3 file-IO subsystem methods on the `files` broker. Each is a
+  // FileTable instance method whose receiver is `services.Files()`; the
+  // descriptor / FD operands are SV-typed packed values, so the lowered
+  // call carries the same shapes the user wrote. `Open` returns the
+  // descriptor value (LRM 21.3.1); the read family yields byte counts;
+  // `Close` / `Flush` are void. The `kFile` prefix disambiguates from
+  // string's `kGetc` (LRM 6.16) which targets a different receiver.
+  kFileOpen,
+  kFileClose,
+  kFileGetc,
+  kFileUngetc,
+  kFileGets,
+  kFileRead,
+  kFileSeek,
+  kFileRewind,
+  kFileTell,
+  kFileEof,
+  kFileError,
+  kFileFlush,
   // LRM 9.4.1 `#N`. The runtime free function the scheduler suspends on.
   // The call takes the engine handle, the duration in the calling scope's
   // precision steps, and the calling scope's precision power; the runtime
@@ -204,6 +223,12 @@ enum class BuiltinFn : std::uint16_t {
 // The traversal family lowers to an immediately-invoked closure (mutates the
 // index argument and runs the write-back inline).
 [[nodiscard]] auto IsAssociativeTraversalFn(BuiltinFn id) -> bool;
+
+// True iff the file-IO entry writes through one of its argument slots
+// (LRM 21.3.4: `$fgets` writes its first arg, `$fread` writes its first
+// arg, `$ferror` writes its second arg). The lowering routes such calls
+// through a copy-out wrapper at statement position.
+[[nodiscard]] auto IsFileOutputArgBuiltinFn(BuiltinFn id) -> bool;
 
 // Short snake-case name for the id. Used for HIR / MIR dumps and any
 // diagnostic that names the runtime entry; aligns with the SV method
