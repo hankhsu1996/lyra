@@ -673,6 +673,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "EmitError";
     case support::BuiltinFn::kEmitFatal:
       return "EmitFatal";
+    case support::BuiltinFn::kSetTimeFormat:
+      return "SetTimeFormat";
+    case support::BuiltinFn::kResetTimeFormat:
+      return "ResetTimeFormat";
     case support::BuiltinFn::kScan:
       return "Scan";
     case support::BuiltinFn::kPeekBuffered:
@@ -979,14 +983,17 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
           },
           [](const support::PrintTimescaleSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
-            return std::string_view{"lyra::runtime::LyraPrintTimescale"};
+            throw InternalError(
+                "RenderSystemSubroutineEntryName: printtimescale id reached "
+                "system subroutine render path; printtimescale lowers to a "
+                "Files().Writeln of a compile-time message");
           },
           [](const support::TimeFormatSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
-            // LRM 20.4.3: one entry; the set (four-argument) and reset
-            // (no-argument) forms are arity overloads the emitted call
-            // resolves.
-            return std::string_view{"lyra::runtime::LyraTimeFormat"};
+            throw InternalError(
+                "RenderSystemSubroutineEntryName: timeformat id reached "
+                "system subroutine render path; timeformat family is "
+                "BuiltinFn-routed");
           },
           [](const support::TimeSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {

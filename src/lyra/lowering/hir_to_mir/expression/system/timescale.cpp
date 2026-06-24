@@ -2,26 +2,29 @@
 
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/file_descriptor.hpp"
+#include "lyra/value/format.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerTimeFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id, diag::SourceSpan span)
-    -> diag::Result<mir::Expr> {
+    diag::SourceSpan span) -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
   auto& body = *frame.current_block;
   const auto& args = call.arguments;
@@ -44,50 +47,53 @@ auto LowerTimeFormatSystemSubroutineCall(
     call_args.push_back(body.exprs.Add(*std::move(lowered)));
   }
 
+  const support::BuiltinFn builtin = args.empty()
+                                         ? support::BuiltinFn::kResetTimeFormat
+                                         : support::BuiltinFn::kSetTimeFormat;
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::SystemSubroutineCallee{.id = id},
+              .callee = mir::BuiltinFnCallee{.id = builtin},
               .arguments = std::move(call_args)},
       .type = process.Module().Unit().builtins.void_type};
 }
 
 auto LowerPrintTimescaleSystemSubroutineCall(
-    const ProcessLowerer& process, const WalkFrame& frame,
-    support::SystemSubroutineId id) -> diag::Result<mir::Expr> {
+    const ProcessLowerer& process, const WalkFrame& frame)
+    -> diag::Result<mir::Expr> {
   const auto& builtins = process.Module().Unit().builtins;
   auto& body = *frame.current_block;
   const auto resolution = process.Resolution();
 
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
-  const mir::ExprId scope_name_lit = body.exprs.Add(
+  // LRM 20.4.2 fixed format -- the scope name and the two powers are all
+  // compile-time facts of the enclosing scope, so the message string is
+  // assembled here once and the runtime only sees the same sink write that
+  // $display lands on.
+  const std::string message = std::format(
+      "Time scale of ({}) is {} / {}", process.Owner().Name(),
+      value::TimeUnitText(resolution.unit_power),
+      value::TimeUnitText(resolution.precision_power));
+  const mir::ExprId text_lit = body.exprs.Add(
       mir::Expr{
-          .data =
-              mir::StringLiteral{.value = std::string(process.Owner().Name())},
+          .data = mir::StringLiteral{.value = message},
           .type = builtins.string});
-  const mir::ExprId scope_name_id = body.exprs.Add(
+  const mir::ExprId text_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::ConstructorCallee{},
-                  .arguments = {scope_name_lit}},
+                  .callee = mir::ConstructorCallee{}, .arguments = {text_lit}},
           .type = builtins.string});
-  const mir::ExprId unit_power_id = body.exprs.Add(
-      mir::MakeInt32Literal(
-          builtins.int32, static_cast<std::int64_t>(resolution.unit_power)));
-  const mir::ExprId precision_power_id = body.exprs.Add(
-      mir::MakeInt32Literal(
-          builtins.int32,
-          static_cast<std::int64_t>(resolution.precision_power)));
 
+  const mir::ExprId fd_id =
+      body.exprs.Add(mir::MakeInt32Literal(builtins.int32, support::kStdoutFd));
+  const mir::ExprId files_id =
+      body.exprs.Add(BuildFilesCallExpr(process.Module(), frame));
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::SystemSubroutineCallee{.id = id},
-              .arguments =
-                  {services_id, scope_name_id, unit_power_id,
-                   precision_power_id}},
+              .callee =
+                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kWriteln},
+              .arguments = {files_id, fd_id, text_id}},
       .type = builtins.void_type};
 }
 

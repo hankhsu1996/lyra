@@ -113,11 +113,27 @@ auto RuntimeServices::TimeFormat() const -> const value::TimeFormat& {
   return engine_->TimeFormat();
 }
 
-void RuntimeServices::SetTimeFormat(const value::TimeFormat& time_format) {
+void RuntimeServices::SetTimeFormat(
+    const value::PackedArray& units_power, const value::PackedArray& precision,
+    const value::String& suffix, const value::PackedArray& min_width) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::SetTimeFormat: no Engine bound");
   }
-  engine_->SetTimeFormat(time_format);
+  engine_->SetTimeFormat(
+      value::TimeFormat{
+          .units_power = static_cast<std::int8_t>(units_power.ToInt64()),
+          .precision = static_cast<std::int32_t>(precision.ToInt64()),
+          .suffix = std::string(suffix.View()),
+          .min_width = static_cast<std::int32_t>(min_width.ToInt64())});
+}
+
+void RuntimeServices::ResetTimeFormat() {
+  if (engine_ == nullptr) {
+    throw InternalError("RuntimeServices::ResetTimeFormat: no Engine bound");
+  }
+  value::TimeFormat defaults;
+  defaults.units_power = engine_->GlobalPrecisionPower();
+  engine_->SetTimeFormat(defaults);
 }
 
 }  // namespace lyra::runtime
