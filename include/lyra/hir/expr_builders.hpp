@@ -1,14 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
-#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/type_id.hpp"
-#include "lyra/hir/value_ref.hpp"
 
 // Pure builders for the synthetic HIR expressions a lowering reaches for
 // whenever it needs a counter, bound, or sentinel -- stateless, unlike the
@@ -39,13 +38,13 @@ namespace lyra::hir {
       .span = span};
 }
 
-// A reference to a procedural variable.
-[[nodiscard]] inline auto MakeProcVarRefExpr(
-    ProceduralVarId var, TypeId type, diag::SourceSpan span) -> Expr {
+// Wraps a named-value reference primary (a procedural, structural, or loop-var
+// reference) as an Expr. The caller builds the specific primary; one builder
+// serves every reference family.
+[[nodiscard]] inline auto MakeRefExpr(
+    Primary ref, TypeId type, diag::SourceSpan span) -> Expr {
   return Expr{
-      .type = type,
-      .data = PrimaryExpr{.data = ProceduralVarRef{.var = var}},
-      .span = span};
+      .type = type, .data = PrimaryExpr{.data = std::move(ref)}, .span = span};
 }
 
 }  // namespace lyra::hir
