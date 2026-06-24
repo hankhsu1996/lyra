@@ -56,6 +56,10 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   constructor-scope statement.
 - [variable-lifetime-storage](variable-lifetime-storage.md) -- storage of static-lifetime body
   locals.
+- [lifetime-extended-automatic-scope](lifetime-extended-automatic-scope.md) -- an automatic scope
+  borrowed by a process that may outlive it is realized as a shared-owned activation object
+  (`PointerType{kShared}`'s first producer); a borrowed capture carries place identity (`Ref<T>`)
+  and lifetime authority (`Shared<activation>`) separately.
 - [read-set-inference](read-set-inference.md) -- read-set inference via slang flow analysis.
 - [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) -- runtime effects
   (`$display`, `$finish`, file IO) lower to ordinary `CallExpr` with the engine handle as one

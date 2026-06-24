@@ -47,10 +47,14 @@ long, follows from where the storage lives and how long the enclosing activation
 - Referring to a subroutine's by-reference formal argument from a `join_any` / `join_none` branch is
   illegal unless the formal is declared `ref static` (LRM 9.3.2); the frontend rejects it, so it
   never reaches lowering.
-- A branch inside a task that references the task's own procedural variable is rejected at the
-  frontend, not lowered: a task's automatic locals do not outlive the call, so a detached branch
-  could read them after the call returns. The enclosing-process case above does not have this
-  limitation because process variables are static.
+- An automatic variable owned by an enclosing activation that a branch can outlive -- a `task` /
+  method local, or an outer fork branch's block-item local reached from a nested branch -- is legal
+  (LRM 6.21 requires the lifetime of a scope enclosing a fork-join to encompass every spawned
+  branch), but Lyra does not yet extend a non-persistent activation frame to cover a detached
+  branch. A branch that by-reference aliases such a variable is therefore rejected with an
+  `unsupported` diagnostic rather than left to read freed storage. slang accepts these references;
+  the restriction is Lyra's, pending the LRM 6.21 lifetime extension. The enclosing-process and
+  module-signal cases above do not have this limitation: their storage is persistent.
 
 ## Sub-Steps
 
@@ -90,9 +94,11 @@ long, follows from where the storage lives and how long the enclosing activation
       module-scope signals (LRM 6.21); because a process variable has static lifetime, a detached
       `join_none` / `join_any` branch reaches it correctly even after the process body has
       completed. A reference to a subroutine's by-reference formal from a `join_any` / `join_none`
-      branch stays rejected unless declared `ref static`, and a branch inside a task that references
-      the task's procedural variable stays rejected at the frontend (a task's automatic locals do
-      not outlive the call).
+      branch stays rejected at the frontend unless declared `ref static`. A branch that by-reference
+      aliases an automatic variable of a non-persistent enclosing activation -- a task / method
+      local, or an outer fork branch's local from a nested branch -- is rejected with an
+      `unsupported` diagnostic, pending the LRM 6.21 lifetime extension that would keep that frame
+      alive for the branch.
 
 ### Naming
 
