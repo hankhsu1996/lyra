@@ -18,6 +18,7 @@
 #include "lyra/hir/inc_dec_op.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
@@ -105,16 +106,18 @@ auto BuildIntegerLevel(
             .data = hir::VarDeclStmt{.var = last_var, .init = last_value_id},
             .span = span}));
     first_id = frame.Exprs().Add(hir::MakeInt32Literal(0, int32_type, span));
-    last_id =
-        frame.Exprs().Add(hir::MakeProcVarRefExpr(last_var, int32_type, span));
+    last_id = frame.Exprs().Add(
+        hir::MakeRefExpr(
+            hir::ProceduralVarRef{.var = last_var}, int32_type, span));
   }
 
   const hir::ProceduralVarId loop_var =
       proc.AddProceduralVar(body, *dim.loopVar, int32_type);
   std::vector<hir::ForInit> init;
   init.emplace_back(hir::ForInitDecl{.var = loop_var, .init = first_id});
-  const hir::ExprId cond_ref =
-      frame.Exprs().Add(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+  const hir::ExprId cond_ref = frame.Exprs().Add(
+      hir::MakeRefExpr(
+          hir::ProceduralVarRef{.var = loop_var}, int32_type, span));
   const hir::ExprId cond_id = frame.Exprs().Add(
       hir::Expr{
           .type = int32_type,
@@ -125,8 +128,9 @@ auto BuildIntegerLevel(
                   .lhs = cond_ref,
                   .rhs = last_id},
           .span = span});
-  const hir::ExprId step_ref =
-      frame.Exprs().Add(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+  const hir::ExprId step_ref = frame.Exprs().Add(
+      hir::MakeRefExpr(
+          hir::ProceduralVarRef{.var = loop_var}, int32_type, span));
   const hir::ExprId step_id = frame.Exprs().Add(
       hir::Expr{
           .type = int32_type,
@@ -175,8 +179,9 @@ auto BuildAssociativeLevel(
           .lifetime = hir::VariableLifetime::kAutomatic});
 
   auto walk_call = [&](support::BuiltinFn method) -> hir::ExprId {
-    const hir::ExprId key_ref =
-        frame.Exprs().Add(hir::MakeProcVarRefExpr(key_var, key_type, span));
+    const hir::ExprId key_ref = frame.Exprs().Add(
+        hir::MakeRefExpr(
+            hir::ProceduralVarRef{.var = key_var}, key_type, span));
     return frame.Exprs().Add(
         hir::Expr{
             .type = int32_type,
@@ -192,10 +197,12 @@ auto BuildAssociativeLevel(
   init.emplace_back(
       hir::ForInitDecl{
           .var = more_var, .init = walk_call(support::BuiltinFn::kAssocFirst)});
-  const hir::ExprId cond_id =
-      frame.Exprs().Add(hir::MakeProcVarRefExpr(more_var, int32_type, span));
-  const hir::ExprId more_lhs =
-      frame.Exprs().Add(hir::MakeProcVarRefExpr(more_var, int32_type, span));
+  const hir::ExprId cond_id = frame.Exprs().Add(
+      hir::MakeRefExpr(
+          hir::ProceduralVarRef{.var = more_var}, int32_type, span));
+  const hir::ExprId more_lhs = frame.Exprs().Add(
+      hir::MakeRefExpr(
+          hir::ProceduralVarRef{.var = more_var}, int32_type, span));
   const hir::ExprId step_id = frame.Exprs().Add(
       hir::Expr{
           .type = int32_type,
@@ -286,7 +293,9 @@ auto BuildForeachNest(
       return std::unexpected(std::move(inner_hir_type.error()));
     }
     const hir::ExprId index_id = frame.Exprs().Add(
-        hir::MakeProcVarRefExpr(loop.loop_var, loop.loop_var_type, span));
+        hir::MakeRefExpr(
+            hir::ProceduralVarRef{.var = loop.loop_var}, loop.loop_var_type,
+            span));
     inner_array = frame.Exprs().Add(
         hir::Expr{
             .type = *inner_hir_type,
