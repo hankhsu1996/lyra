@@ -22,6 +22,28 @@ namespace lyra::lowering::hir_to_mir {
 // is a legitimate target).
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 
+// HIR-to-MIR binary-operator realization. Takes the lowered operand ids
+// (already in `block`) and dispatches on `(op, lhs_type, rhs_type)`:
+// method-style operators (LRM 11.4 shifts / power / xnor / wildcard / case /
+// implication / equivalence) lift to a `CallExpr` against the matching
+// `BuiltinFn` realization on the receiver value type; real / string
+// comparison and logical operators wrap in `kFromBool` (with `BoolCastExpr`
+// around the operands for the logical family); the rest produce a native
+// `BinaryExpr` for the backend to render mechanically. Shared between
+// `LowerHirBinaryExpr` and the case-cascade builder so every site that
+// produces a binary operator goes through one lift.
+auto BuildMirBinaryExpr(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
+    -> mir::Expr;
+
+// Symmetric helper for unary operators: reduction ops lift to a `CallExpr`
+// against `BuiltinFn`, a real `kLogicalNot` wraps in `kFromBool`, every
+// other op produces a native `UnaryExpr`.
+auto BuildMirUnaryExpr(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::UnaryOp op,
+    mir::ExprId operand_id, mir::TypeId result_type) -> mir::Expr;
+
 // An operator's meaning is independent of the enclosing scope, so one template
 // over the pass class serves both the procedural and structural contexts. The
 // pass class is reached through a uniform `HirExprs` / `LowerExpr` surface, so

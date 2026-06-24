@@ -85,6 +85,13 @@ class PackedArray {
   // such as `IsUnknown()`. Sibling of `Int(int32_t)` / `Byte`.
   [[nodiscard]] static auto Bit(bool value) -> PackedArray;
 
+  // Same shape as `Bit`, but named after the call-site role: shapes the
+  // host-bool result of a real / string comparison or logical operator into
+  // the LRM 11.3 / 11.4 1-bit integral result. HIR-to-MIR emits this via
+  // `BuiltinFn::kFromBool`; renamed at the call site so reading the emitted
+  // C++ keeps the SV-level reason visible.
+  [[nodiscard]] static auto FromBool(bool value) -> PackedArray;
+
   // Construct a narrow PackedArray (bit_width <= 64) from an integer value.
   // The `std::int64_t` parameter is the carrier type wide enough to cover
   // every narrow width; the resulting shape is set by `bit_width`, with bits
@@ -452,7 +459,7 @@ class PackedArray {
   [[nodiscard]] auto ArithmeticShiftRight(const PackedArray& amount) const
       -> PackedArray;
 
-  [[nodiscard]] auto Power(const PackedArray& exponent) const -> PackedArray;
+  [[nodiscard]] auto Pow(const PackedArray& exponent) const -> PackedArray;
 
   [[nodiscard]] auto ReductionAnd() const -> PackedArray;
   [[nodiscard]] auto ReductionOr() const -> PackedArray;

@@ -2,10 +2,8 @@
 
 #include <span>
 #include <string>
-#include <vector>
 
 #include "lyra/backend/cpp/artifact.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::backend::cpp {
@@ -17,13 +15,12 @@ struct TopInstance {
   const mir::CompilationUnit* unit;
 };
 
-auto EmitCppDeclarations(const mir::CompilationUnit& unit)
-    -> diag::Result<std::vector<CppArtifact>>;
+auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact;
 
 auto EmitCppHostMain(std::span<const TopInstance> tops) -> CppArtifact;
 
 auto EmitCpp(
     std::span<const mir::CompilationUnit> units,
-    std::span<const TopInstance> tops) -> diag::Result<CppArtifactSet>;
+    std::span<const TopInstance> tops) -> CppArtifactSet;
 
 }  // namespace lyra::backend::cpp

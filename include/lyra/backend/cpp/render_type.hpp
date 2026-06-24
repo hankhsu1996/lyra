@@ -2,7 +2,6 @@
 
 #include <string>
 
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
@@ -14,7 +13,7 @@ namespace lyra::backend::cpp {
 // `ObjectType::target` ids are resolved against its nested classes.
 [[nodiscard]] auto RenderTypeAsCpp(
     const mir::CompilationUnit& unit, const mir::Class& owner_class,
-    mir::TypeId type_id) -> diag::Result<std::string>;
+    mir::TypeId type_id) -> std::string;
 
 // Renders the constructor argument list for a `lyra::value::PackedArray`
 // variable declared from a kExplicit packed array type, in the form

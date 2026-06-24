@@ -157,17 +157,14 @@ auto EmitAndWriteSources(
     std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
     const std::filesystem::path& dir, bool format) -> diag::Result<void> {
-  auto set_or = backend::cpp::EmitCpp(units, tops);
-  if (!set_or) {
-    return std::unexpected(std::move(set_or.error()));
-  }
-  for (const auto& file : set_or->files) {
+  auto set = backend::cpp::EmitCpp(units, tops);
+  for (const auto& file : set.files) {
     if (auto r = WriteFile(dir / file.relpath, file.content); !r) {
       return r;
     }
   }
   if (format) {
-    FormatSources(set_or->files, dir);
+    FormatSources(set.files, dir);
   }
   return {};
 }

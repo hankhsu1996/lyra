@@ -21,22 +21,23 @@ auto IsRealFamilyKind(mir::TypeKind k) -> bool {
 }
 
 // Three trailing operands `PackedArray::FromInt` / `ConvertFrom` consume after
-// the value: `(bit_width, is_signed, is_four_state)`. All three are
-// compile-time facts of the destination packed shape, so the lowering
-// synthesizes int literals here -- the runtime call's signature surfaces them
-// uniformly as plain integer arguments.
+// the value: `(bit_width, is_signed, is_four_state)`. The runtime entry's
+// signature takes host scalars (`uint64_t`, `bool`, `bool`), not SV-typed
+// `PackedArray` values, so the lowering synthesizes `HostIntLiteral` for
+// each -- they render as bare C++ integer literals that C++ implicitly
+// narrows / converts to the parameter types.
 void AppendPackedShapeArgs(
     const mir::CompilationUnit& unit, mir::Block& block,
     const mir::PackedArrayType& dst_pa, std::vector<mir::ExprId>& args) {
   const mir::TypeId int32_type = unit.builtins.int32;
-  args.push_back(block.exprs.Add(
-      mir::MakeInt32Literal(
-          int32_type, static_cast<std::int64_t>(dst_pa.BitWidth()))));
-  args.push_back(block.exprs.Add(
-      mir::MakeInt32Literal(
-          int32_type, dst_pa.signedness == mir::Signedness::kSigned ? 1 : 0)));
-  args.push_back(block.exprs.Add(
-      mir::MakeInt32Literal(int32_type, dst_pa.IsFourState() ? 1 : 0)));
+  const auto host_lit = [&](std::int64_t v) {
+    return block.exprs.Add(
+        mir::Expr{.data = mir::HostIntLiteral{.value = v}, .type = int32_type});
+  };
+  args.push_back(host_lit(static_cast<std::int64_t>(dst_pa.BitWidth())));
+  args.push_back(
+      host_lit(dst_pa.signedness == mir::Signedness::kSigned ? 1 : 0));
+  args.push_back(host_lit(dst_pa.IsFourState() ? 1 : 0));
 }
 
 // `Real(operand)` / `ShortReal(operand)` invokes the explicit `RealValue`

@@ -693,7 +693,8 @@ auto LowerCaseGenerate(
             return std::unexpected(std::move(lab_or.error()));
           }
           return label_frame.current_block->exprs.Add(*std::move(lab_or));
-        });
+        },
+        lowerer.Module().Unit());
   };
 
   return BuildCaseCascade(

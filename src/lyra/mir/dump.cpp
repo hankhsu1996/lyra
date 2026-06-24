@@ -473,6 +473,9 @@ class MirDumper {
               return std::format("RealLiteral({})", lit.value);
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
+            [](const HostIntLiteral& lit) -> std::string {
+              return std::format("HostIntLiteral({})", lit.value);
+            },
             [](const AddressOfExpr& a) -> std::string {
               return std::format(
                   "AddressOfExpr operand=Expr[{}]", a.operand.value);
@@ -503,6 +506,10 @@ class MirDumper {
               return std::format(
                   "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}]",
                   FormatBinaryOp(b.op), b.lhs.value, b.rhs.value);
+            },
+            [](const BoolCastExpr& b) -> std::string {
+              return std::format(
+                  "BoolCastExpr operand=Expr[{}]", b.operand.value);
             },
             [](const ConditionalExpr& c) -> std::string {
               return std::format(
