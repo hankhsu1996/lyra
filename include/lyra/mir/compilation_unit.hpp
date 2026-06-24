@@ -36,6 +36,7 @@ struct BuiltinMirTypes {
   TypeId format_spec;
   TypeId time_format;
   TypeId coroutine;
+  TypeId wildcard_index;
 };
 
 struct CompilationUnit {
@@ -95,6 +96,7 @@ struct CompilationUnit {
                 TypeData{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kTimeFormat}}),
             .coroutine = TypeId{},
+            .wildcard_index = AddType(TypeData{WildcardIndexType{}}),
         } {
     // A bare coroutine yields nothing, so its completion payload is `Void`. It
     // is interned in the body rather than the member list because it reads back

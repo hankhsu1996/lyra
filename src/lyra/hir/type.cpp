@@ -92,6 +92,7 @@ auto Type::Kind() const -> TypeKind {
           [](const AssociativeArrayType&) {
             return TypeKind::kAssociativeArray;
           },
+          [](const WildcardIndexType&) { return TypeKind::kWildcardIndex; },
           [](const StringType&) { return TypeKind::kString; },
           [](const EventType&) { return TypeKind::kEvent; },
           [](const RealType&) { return TypeKind::kReal; },
@@ -151,6 +152,7 @@ auto Type::IsValueChangeObservable() const -> bool {
     case TypeKind::kShortReal:
     case TypeKind::kRealTime:
       return true;
+    case TypeKind::kWildcardIndex:
     case TypeKind::kEvent:
     case TypeKind::kChandle:
     case TypeKind::kVoid:

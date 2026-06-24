@@ -21,6 +21,7 @@ struct BuiltinHirTypes {
   TypeId string;
   TypeId time;
   TypeId realtime;
+  TypeId wildcard_index;
 };
 
 struct ModuleUnit {
@@ -53,6 +54,7 @@ struct ModuleUnit {
                     .dims = {PackedRange{.left = 63, .right = 0}},
                     .form = PackedArrayForm::kTime}}),
             .realtime = AddType(TypeData{RealTimeType{}}),
+            .wildcard_index = AddType(TypeData{WildcardIndexType{}}),
         } {
   }
 

@@ -1,0 +1,18 @@
+id: cpp.assoc_wildcard
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    v5: 200
+    n_after_collapse: 1
+    v300: 7
+    n_two: 2
+    ex5: 1
+    ex7: 0
+    v_unsigned: 42
+    n_after_delete: 2

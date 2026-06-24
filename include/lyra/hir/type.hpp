@@ -20,6 +20,7 @@ enum class TypeKind {
   kDynamicArray,
   kQueue,
   kAssociativeArray,
+  kWildcardIndex,
   kString,
   kEvent,
   kReal,
@@ -130,8 +131,15 @@ struct QueueType {
 
 struct AssociativeArrayType {
   TypeId element_type;
-  std::optional<TypeId> key_type;
+  TypeId key_type;
 };
+
+// LRM 7.8.1 wildcard index type (`[*]`): the key type of an associative array
+// indexed by any integral value, identified by magnitude regardless of the
+// index expression's width. It declares no member structure of its own; it is
+// the type that distinguishes a wildcard-keyed array from a string- or
+// integral-keyed one.
+struct WildcardIndexType {};
 
 struct StringType {};
 struct EventType {};
@@ -144,8 +152,8 @@ struct VoidType {};
 using TypeData = std::variant<
     PackedArrayType, PackedStructType, PackedUnionType, EnumType,
     UnpackedArrayType, DynamicArrayType, QueueType, AssociativeArrayType,
-    StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
-    VoidType>;
+    WildcardIndexType, StringType, EventType, RealType, ShortRealType,
+    RealTimeType, ChandleType, VoidType>;
 
 struct Type {
   TypeData data;
