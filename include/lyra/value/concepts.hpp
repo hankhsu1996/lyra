@@ -38,8 +38,8 @@ class PackedArray;
 // This is a C++-mechanics contract, NOT a statement about assignment
 // meaning. For shape-bearing types like `PackedArray`, assignment preserves
 // the destination's declared shape and copies the source's bits in (it is
-// not a pure value adopt); see docs/decisions/integral-representation.md.
-// The concept only guarantees the operations exist and relocation is safe.
+// not a pure value adopt). The concept only guarantees the operations exist
+// and relocation is safe.
 template <typename T>
 concept Storable = std::copyable<T>;
 
@@ -47,8 +47,7 @@ concept Storable = std::copyable<T>;
 // row). A type that satisfies this concept provides the universal equality
 // operators plus the engine's bit-pattern change-detection predicate. This
 // is the concept `lyra::runtime::Var<T>` requires, so wrapping a
-// structural-var in observable storage gates on it. See
-// `docs/decisions/value-type-concepts.md`.
+// structural-var in observable storage gates on it.
 template <typename T>
 concept LyraValue = Storable<T> && requires(const T& a, const T& b) {
   // LRM 11.4.5 `==` / `!=` (Any data type). Uniform return type: every

@@ -252,13 +252,13 @@ auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
       .root_block = std::move(process_block)};
 }
 
-// Wraps the body in a `forever` loop. `tail_stmt`, if present, is appended
-// after the lowered body inside the loop -- carries the materialised
-// SensitivityWaitStmt for always_comb / always_latch (LRM 9.2.2.2.1),
-// nullopt for `always` / `always_ff` where the body itself carries any
-// timing.
+// Wraps the body in a `forever` loop. `implicit_sensitivity`, if present,
+// is materialised into a `SensitivityWaitStmt` appended after the lowered
+// body -- the always_comb / always_latch (LRM 9.2.2.2.1) tail. `always` /
+// `always_ff` pass nullptr because the body itself carries any timing.
 auto LowerForeverProcess(
-    ProcessLowerer& process, std::optional<mir::Stmt> tail_stmt)
+    ProcessLowerer& process,
+    const std::vector<hir::SensitivityEntry>* implicit_sensitivity)
     -> diag::Result<mir::Process> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::Block process_block;
@@ -274,8 +274,9 @@ auto LowerForeverProcess(
             .Deeper();
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    if (tail_stmt.has_value()) {
-      body_block.AppendStmt(*std::move(tail_stmt));
+    if (implicit_sensitivity != nullptr) {
+      body_block.AppendStmt(MakeSensitivityWaitStmt(
+          body_block, body_frame, process.Owner(), *implicit_sensitivity));
     }
   }
 
@@ -332,12 +333,10 @@ auto ProcessLowerer::Run(const hir::Process& src)
       return LowerStraightLineProcess(*this, mir::ProcessKind::kFinal);
     case hir::ProcessKind::kAlways:
     case hir::ProcessKind::kAlwaysFf:
-      return LowerForeverProcess(*this, std::nullopt);
+      return LowerForeverProcess(*this, nullptr);
     case hir::ProcessKind::kAlwaysComb:
     case hir::ProcessKind::kAlwaysLatch:
-      return LowerForeverProcess(
-          *this,
-          MakeSensitivityWaitStmt(*owner_, src.implicit_sensitivity_list));
+      return LowerForeverProcess(*this, &src.implicit_sensitivity_list);
   }
   throw InternalError("ProcessLowerer::Run: unknown HIR ProcessKind");
 }

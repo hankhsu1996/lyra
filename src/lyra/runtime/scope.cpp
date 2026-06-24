@@ -1,6 +1,5 @@
 #include "lyra/runtime/scope.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -29,9 +28,8 @@ Scope::Scope(Scope* parent, std::string name, RuntimeServices& services)
 void Scope::AddChild(Scope& child) {
   // Linking establishes the full bidirectional edge. A child built under a
   // parent already set `parent_` in its constructor; a top-level block is
-  // constructed parentless and adopts `$root` as its parent here, so an upward
-  // climb from inside a top reaches the root (LRM 23.6, hierarchy_and_generate
-  // invariant 8).
+  // constructed parentless and adopts `$root` as its parent here, so an
+  // upward climb from inside a top reaches the root (LRM 23.6).
   child.parent_ = this;
   children_.push_back(&child);
 }
@@ -65,9 +63,20 @@ auto Scope::GetSignal(std::string_view name) -> void* {
 }
 
 auto Scope::GetChild(
-    std::string_view name, std::span<const std::size_t> indices) -> Scope* {
+    std::string_view name, std::span<const lyra::value::PackedArray> indices)
+    -> Scope* {
   for (const ChildEntry& child : child_entries_) {
-    if (child.name == name && std::ranges::equal(child.indices, indices)) {
+    if (child.name != name || child.indices.size() != indices.size()) {
+      continue;
+    }
+    bool matched = true;
+    for (std::size_t i = 0; i < indices.size(); ++i) {
+      if (child.indices[i] != static_cast<std::size_t>(indices[i].ToInt64())) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) {
       return child.scope;
     }
   }

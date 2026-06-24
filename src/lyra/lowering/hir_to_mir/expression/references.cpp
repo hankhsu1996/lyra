@@ -108,7 +108,7 @@ auto StringBytesToConstant(
 // An SV string literal is a packed bit-vector constant (LRM 5.9), so MIR
 // carries it as the integer constant of its bytes. A string-typed literal (a
 // string parameter's value) instead builds a `value::String` via the
-// constructor. See decisions/string-packed-conversion.md.
+// constructor.
 auto LowerHirStringLiteral(
     const ModuleLowerer& module, const WalkFrame& frame,
     const hir::StringLiteral& s, mir::TypeId type) -> mir::Expr {

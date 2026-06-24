@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -40,9 +41,9 @@ auto TryExtractLiteralInt(const hir::Expr& expr)
 
 auto LowerFinishSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame,
-    const hir::CallExpr& call, support::SystemSubroutineId id,
-    std::string_view name, const support::TerminationSystemSubroutineInfo& info,
-    diag::SourceSpan span) -> diag::Result<mir::Expr> {
+    const hir::CallExpr& call, std::string_view name,
+    const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
+    -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
   int level = info.default_level;
   if (!call.arguments.empty()) {
@@ -73,7 +74,7 @@ auto LowerFinishSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::SystemSubroutineCallee{.id = id},
+              .callee = mir::FreeFnCallee{.id = support::BuiltinFn::kFinish},
               .arguments = {services_id, level_id}},
       .type = builtins.void_type};
 }

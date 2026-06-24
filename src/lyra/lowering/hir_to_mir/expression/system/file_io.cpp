@@ -29,10 +29,9 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Assembles the generic file-IO call: the engine handle (self.Services()) as
-// argument 0, then the task operands in runtime-signature order. Every file-IO
-// runtime entry takes RuntimeServices& first, so the handle is a leading
-// argument, not a backend-injected fact
-// (docs/decisions/runtime-effects-as-generic-calls.md).
+// argument 0, then the task operands in runtime-signature order. Every
+// file-IO runtime entry takes RuntimeServices& first, so the handle is a
+// leading argument, not a backend-injected fact.
 auto BuildFileIoCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     support::SystemSubroutineId id, std::vector<mir::ExprId> operands,

@@ -147,9 +147,8 @@ class RealValue {
     return PackedArray::Bit(false);
   }
 
-  // LRM Table 6-7: the real default is 0.0. This is the container OOB-shield
-  // contract (docs/decisions/runtime-shape-and-default-value.md), so a real can
-  // be an unpacked-array element.
+  // LRM Table 6-7: the real default is 0.0. Satisfies the container
+  // OOB-shield contract so a real can be an unpacked-array element.
   auto ResetToDefault() -> void {
     v_ = Host{0};
   }

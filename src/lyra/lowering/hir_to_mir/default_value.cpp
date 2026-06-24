@@ -107,9 +107,8 @@ auto BuildDefaultValueExpr(
           },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
-          // construction so OOB reads and resize-fills have a shape source --
-          // see `docs/decisions/runtime-shape-and-default-value.md`. Emit
-          // chain: a construction call on `element_default` -> the
+          // construction so OOB reads and resize-fills have a shape source.
+          // Emit chain: a construction call on `element_default` -> the
           // `DynamicArray<T>(...)` ctor that stores the value and leaves
           // `data_` empty.
           [&](const mir::DynamicArrayType& da) -> mir::Expr {
@@ -178,11 +177,7 @@ auto BuildDefaultValueExpr(
                 .type = type};
           },
           [&](const mir::PointerType&) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = mir::ConstructorCallee{}, .arguments = {}},
-                .type = type};
+            return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
           [&](const mir::VectorType&) -> mir::Expr {
             return mir::Expr{

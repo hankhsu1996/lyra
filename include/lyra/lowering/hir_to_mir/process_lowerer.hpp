@@ -36,10 +36,9 @@ struct StaticVarBinding {
   mir::MemberId var;
 };
 
-// LRM 13.3.1: a static-lifetime body local is realized as a member on
-// the callable's owner class, so a HIR procedural-var-ref dispatches to a
-// MemberAccess instead of a LocalRef
-// (`docs/decisions/variable-lifetime-storage.md`).
+// LRM 13.3.1: a static-lifetime body local is realized as a member on the
+// callable's owner class, so a HIR procedural-var-ref dispatches to a
+// MemberAccess instead of a LocalRef.
 using ProceduralVarBinding =
     std::variant<AutomaticVarBinding, StaticVarBinding>;
 

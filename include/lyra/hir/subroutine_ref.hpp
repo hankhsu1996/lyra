@@ -24,8 +24,8 @@ struct SystemSubroutineRef {
 
 // Calls a built-in runtime method (LRM 6.16 string, 6.19.5 enum, 7.9
 // associative, 7.10 queue, 7.12 unpacked-array shared family, 15.5 named
-// event). The id is the flat closed namespace `support::BuiltinFn`,
-// shared with MIR (see `docs/decisions/builtin-call-identity.md`).
+// event). The id is the flat closed namespace `support::BuiltinFn`, shared
+// with MIR.
 struct BuiltinMethodRef {
   support::BuiltinFn method;
 };

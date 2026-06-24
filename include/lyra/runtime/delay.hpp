@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstdint>
+
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/runtime_services.hpp"
+#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -60,9 +63,11 @@ class DelayAwaitable {
 };
 
 inline auto Delay(
-    RuntimeServices& services, SimDuration duration,
-    std::int8_t precision_power) -> DelayAwaitable {
-  return DelayAwaitable{services, duration, precision_power};
+    RuntimeServices& services, const value::PackedArray& duration,
+    const value::PackedArray& precision_power) -> DelayAwaitable {
+  return DelayAwaitable{
+      services, static_cast<SimDuration>(duration.ToInt64()),
+      static_cast<std::int8_t>(precision_power.ToInt64())};
 }
 
 }  // namespace lyra::runtime

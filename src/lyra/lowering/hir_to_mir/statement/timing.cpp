@@ -24,6 +24,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -142,7 +143,8 @@ auto LowerEventTimedStmt(
     -> diag::Result<mir::Stmt> {
   return LowerTimedWaitWrapper(
       process, frame, std::move(label), t.stmt,
-      [&](mir::Block&, WalkFrame) -> diag::Result<mir::Stmt> {
+      [&](mir::Block& child_block,
+          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
         std::vector<hir::SensitivityEntry> union_reads;
         union_reads.reserve(ec.triggers.size());
         for (const auto& trigger : ec.triggers) {
@@ -164,7 +166,8 @@ auto LowerEventTimedStmt(
             union_reads.push_back(leaf);
           }
         }
-        return MakeSensitivityWaitStmt(process.Owner(), union_reads);
+        return MakeSensitivityWaitStmt(
+            child_block, child_frame, process.Owner(), union_reads);
       });
 }
 
@@ -175,24 +178,48 @@ auto LowerImplicitEventTimedStmt(
     -> diag::Result<mir::Stmt> {
   return LowerTimedWaitWrapper(
       process, frame, std::move(label), t.stmt,
-      [&](mir::Block&, WalkFrame) -> diag::Result<mir::Stmt> {
-        return MakeSensitivityWaitStmt(process.Owner(), ie.sensitivity_list);
+      [&](mir::Block& child_block,
+          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
+        return MakeSensitivityWaitStmt(
+            child_block, child_frame, process.Owner(), ie.sensitivity_list);
       });
 }
 
-// LRM 9.4.1 `#N body`.
+// LRM 9.4.1 `#N body`. The wait lowers to a coroutine-suspending free-function
+// call whose argument vector states services, the literal tick count in the
+// enclosing scope's precision, and that scope's precision power (LRM 3.14.2);
+// the runtime scales from precision to the design-global tick (LRM 3.14.3).
 auto LowerDelayTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t, const hir::DelayControl& d)
     -> diag::Result<mir::Stmt> {
   return LowerTimedWaitWrapper(
       process, frame, std::move(label), t.stmt,
-      [&](mir::Block&, WalkFrame) -> diag::Result<mir::Stmt> {
+      [&](mir::Block& child_block,
+          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
         auto ticks_or = ResolveDelayTicks(process, d);
         if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
+        const auto& builtins = process.Module().Unit().builtins;
+        const mir::ExprId services_id =
+            child_block.exprs.Add(BuildServicesCallExpr(process, child_frame));
+        const mir::ExprId duration_id = child_block.exprs.Add(
+            mir::MakeInt32Literal(
+                builtins.int32, static_cast<std::int64_t>(*ticks_or)));
+        const mir::ExprId precision_id = child_block.exprs.Add(
+            mir::MakeInt32Literal(
+                builtins.int32, static_cast<std::int64_t>(
+                                    process.Resolution().precision_power)));
+        const mir::ExprId call_id = child_block.exprs.Add(
+            mir::Expr{
+                .data =
+                    mir::CallExpr{
+                        .callee =
+                            mir::FreeFnCallee{.id = support::BuiltinFn::kDelay},
+                        .arguments = {services_id, duration_id, precision_id}},
+                .type = builtins.void_type});
         return mir::Stmt{
             .label = std::nullopt,
-            .data = mir::DelayStmt{.duration = *ticks_or}};
+            .data = mir::AwaitStmt{.awaitable = call_id}};
       });
 }
 
@@ -229,8 +256,7 @@ auto LowerEventTriggerStmt(
   const mir::ExprId receiver_id = block.exprs.Add(*std::move(receiver_or));
   // LRM 15.5.1: triggering reaches RuntimeServices to wake subscribers. The
   // engine handle is a real trailing argument, threaded the same way every
-  // runtime effect threads it
-  // (docs/decisions/runtime-effects-as-generic-calls.md).
+  // runtime effect threads it.
   const mir::ExprId services_id =
       block.exprs.Add(BuildServicesCallExpr(process, frame));
   mir::Expr call{
@@ -272,7 +298,9 @@ auto LowerWaitStmt(
   const auto& reads = w.sensitivity_list;
 
   mir::Block inner_block;
-  inner_block.AppendStmt(MakeSensitivityWaitStmt(process.Owner(), reads));
+  const WalkFrame inner_frame = wrapper_frame.WithBlock(&inner_block).Deeper();
+  inner_block.AppendStmt(MakeSensitivityWaitStmt(
+      inner_block, inner_frame, process.Owner(), reads));
 
   const mir::BlockId inner_scope_id =
       wrapper.child_scopes.Add(std::move(inner_block));

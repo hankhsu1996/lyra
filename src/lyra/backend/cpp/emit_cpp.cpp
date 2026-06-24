@@ -235,24 +235,12 @@ auto RenderScopeAsClass(
   out += Indent(indent) + " public:\n";
 
   // The scope's own time precision (LRM 3.14.2). The engine takes the minimum
-  // across the tree as the design-global tick (LRM 3.14.3); a delay in this
-  // scope scales from this precision to that tick.
+  // across the tree as the design-global tick (LRM 3.14.3); the runtime scales
+  // a local-precision delay from this value to that tick.
   out += Indent(indent + 1) +
-         "static constexpr std::int8_t kTimePrecisionPower = " +
+         "auto TimePrecisionPower() const -> std::int8_t override { return " +
          std::to_string(static_cast<int>(s.time_resolution.precision_power)) +
-         ";\n";
-  out += Indent(indent + 1) +
-         "auto TimePrecisionPower() const -> std::int8_t override {\n";
-  out += Indent(indent + 2) + "return kTimePrecisionPower;\n";
-  out += Indent(indent + 1) + "}\n\n";
-
-  // The scope's own time unit (LRM 3.14.2). $time / $realtime read here to
-  // scale the design-global tick back to this design element's unit (LRM
-  // 20.3); an unqualified reference in a process or method body resolves
-  // to the lexically enclosing scope's value.
-  out += Indent(indent + 1) + "static constexpr std::int8_t kTimeUnitPower = " +
-         std::to_string(static_cast<int>(s.time_resolution.unit_power)) +
-         ";\n\n";
+         "; }\n\n";
 
   for (const auto& child : s.nested_classes) {
     auto child_or =
@@ -283,7 +271,7 @@ auto RenderScopeAsClass(
   }
 
   // Members follow the constructor and methods. They are public so cross-unit
-  // references can reach them directly (see reference_resolution.md).
+  // references can reach them directly.
   if (!s.params.empty() || !s.members.empty()) {
     out += "\n";
   }

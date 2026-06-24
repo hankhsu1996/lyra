@@ -44,8 +44,7 @@ namespace {
 // Wrap a value type in `ObservableType` iff it is a SystemVerilog value-storage
 // data type (LRM 6.5 / 7.x). Handle / wrapper types (pointer / vector / object
 // / external ref / external unit object) and named events (LRM 15 -- carry
-// their own subscribe mechanism) pass through unwrapped. See
-// `docs/decisions/value-type-concepts.md`.
+// their own subscribe mechanism) pass through unwrapped.
 auto MaybeWrapObservable(ModuleLowerer& module, mir::TypeId t) -> mir::TypeId {
   const auto& data = module.Unit().GetType(t).data;
   const bool wrap = std::holds_alternative<mir::PackedArrayType>(data) ||
@@ -242,13 +241,13 @@ auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
 // An upward cross-unit reference materializes as an ExternalRef member: the
 // symbol -- ancestor name, by-name tail through its owned children, and leaf
 // signal -- lives on its type, and the runtime ExternUp member self-relocates
-// at Bind by climbing the parent chain then walking the tail
-// (docs/architecture/emission_model.md). A downward reference gets a borrowed-
-// pointer slot member, null until the constructor resolves it. Both
-// run before processes so reads resolve to the slot; both record their MIR read
-// target as a StructuralVarRef to that member, in HIR slot order. The returned
-// vector carries the downward slot var per ref (nullopt for upward), consumed
-// by InstallCrossUnitRefs once the children exist.
+// at Bind by climbing the parent chain then walking the tail. A downward
+// reference gets a borrowed-pointer slot member, null until the constructor
+// resolves it. Both run before processes so reads resolve to the slot; both
+// record their MIR read target as a StructuralVarRef to that member, in HIR
+// slot order. The returned vector carries the downward slot var per ref
+// (nullopt for upward), consumed by InstallCrossUnitRefs once the children
+// exist.
 auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
     -> std::vector<std::optional<mir::MemberId>> {
   ModuleLowerer& module = lowerer.Module();
@@ -317,7 +316,7 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
 // so render casts the untyped storage pointer mechanically. Per-dimension array
 // indices are ordinary integer-literal arguments, never bundled with the name.
 auto BuildDownwardNavValue(
-    const ModuleLowerer& module, WalkFrame frame, const std::string& head_name,
+    ModuleLowerer& module, WalkFrame frame, const std::string& head_name,
     const std::vector<hir::PathStep>& path, mir::TypeId slot_type,
     mir::TypeId scope_ptr_type) -> mir::Expr {
   mir::Block& ctor_block = *frame.current_block;
@@ -344,39 +343,55 @@ auto BuildDownwardNavValue(
         "owned child");
   }
 
+  const auto& builtins = module.Unit().builtins;
+  const auto string_literal = [&](const std::string& s) -> mir::ExprId {
+    return ctor_block.exprs.Add(
+        mir::Expr{
+            .data = mir::StringLiteral{.value = s}, .type = builtins.string});
+  };
+
   mir::ExprId cur = ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
   for (std::size_t i = 0; i + 1 < hops.size(); ++i) {
-    std::vector<mir::ExprId> args;
-    args.push_back(cur);
-    for (const mir::ExprId idx : hops[i].indices) {
-      args.push_back(idx);
-    }
+    const mir::TypeId indices_type = module.Unit().AddType(
+        mir::UnpackedArrayType{
+            .element_type = builtins.int32, .size = hops[i].indices.size()});
+    const mir::ExprId indices_id = ctor_block.exprs.Add(
+        mir::Expr{
+            .data = mir::ArrayLiteralExpr{.elements = hops[i].indices},
+            .type = indices_type});
     cur = ctor_block.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::RuntimeNavCallee{
-                            .fn = mir::RuntimeFn::kGetChild,
-                            .name = hops[i].name},
-                    .arguments = std::move(args)},
+                        mir::BuiltinFnCallee{
+                            .id = support::BuiltinFn::kGetChild},
+                    .arguments =
+                        {cur, string_literal(hops[i].name), indices_id}},
             .type = scope_ptr_type});
   }
+  const mir::TypeId void_ptr_type = module.Unit().AddType(
+      mir::PointerType{
+          .pointee = builtins.void_type,
+          .ownership = mir::PointerOwnership::kBorrowed});
+  const mir::ExprId get_signal_id = ctor_block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{
+                          .id = support::BuiltinFn::kGetSignal},
+                  .arguments = {cur, string_literal(hops.back().name)}},
+          .type = void_ptr_type});
   return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::RuntimeNavCallee{
-                      .fn = mir::RuntimeFn::kGetSignal,
-                      .name = hops.back().name},
-              .arguments = {cur}},
+      .data = mir::PointerCastExpr{.operand = get_signal_id},
       .type = slot_type};
 }
 
 // A downward slot resolves in the constructor by navigating from the enclosing
-// scope after the children are built (reference_resolution.md): an ordinary
-// assignment of the navigation value into the borrowed-pointer slot. Upward
-// slots are materialized as ExternalRef members upstream and skipped here.
+// scope after the children are built: an ordinary assignment of the navigation
+// value into the borrowed-pointer slot. Upward slots are materialized as
+// ExternalRef members upstream and skipped here.
 void InstallCrossUnitRefs(
     ClassLowerer& lowerer, WalkFrame frame,
     const std::vector<mir::MemberId>& instance_member_vars,
@@ -813,9 +828,8 @@ auto ClassLowerer::Run(
               self_read(), mir::MemberRef{.hops = {.value = 0}, .var = mir_id},
               mir_field_type));
       // An observable cell init routes through `Var<T>::Set` so the field's
-      // engine-side change-tracking sees the initial value
-      // (`docs/decisions/value-type-concepts.md`). Plain fields use a regular
-      // `AssignExpr`.
+      // engine-side change-tracking sees the initial value. Plain fields use
+      // a regular `AssignExpr`.
       const mir::ExprId services_id = ctor_block.exprs.Add(
           mir::MakeServicesCallExpr(
               self_read(), module.Unit().builtins.services));
@@ -843,15 +857,24 @@ auto ClassLowerer::Run(
           mir::MakeMemberAccessExpr(
               self_read(), mir::MemberRef{.hops = {.value = 0}, .var = mir_id},
               mir_field_type));
+      const mir::TypeId var_ptr_type = module.Unit().AddType(
+          mir::PointerType{
+              .pointee = mir_field_type,
+              .ownership = mir::PointerOwnership::kBorrowed});
+      const mir::ExprId addr_id =
+          ctor_block.exprs.Add(mir::MakeAddressOfExpr(var_ref, var_ptr_type));
+      const mir::ExprId name_id = ctor_block.exprs.Add(
+          mir::Expr{
+              .data = mir::StringLiteral{.value = d.name},
+              .type = module.Unit().builtins.string});
       const mir::ExprId call = ctor_block.exprs.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
                       .callee =
-                          mir::RuntimeNavCallee{
-                              .fn = mir::RuntimeFn::kRegisterSignal,
-                              .name = d.name},
-                      .arguments = {self_read(), var_ref}},
+                          mir::BuiltinFnCallee{
+                              .id = support::BuiltinFn::kRegisterSignal},
+                      .arguments = {self_read(), name_id, addr_id}},
               .type = void_type});
       ctor_block.AppendStmt(
           mir::Stmt{

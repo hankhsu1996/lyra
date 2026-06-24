@@ -63,15 +63,15 @@ struct AssocKeyTraits<PackedArray> {
 // is an ordered `std::map` so iteration and `%p` formatting follow the LRM 7.8
 // key ordering and stay deterministic.
 //
-// `element_default_` holds the element-type default -- the LRM Table 7-1 value
-// read from a nonexistent array entry. It carries the element's runtime shape
-// (supplied at construction because `V = PackedArray` carries shape the C++
-// type cannot recover; see `docs/decisions/runtime-shape-and-default-value.md`)
-// and is only ever read or copied, never written, so a read returns it
-// directly. A read of a nonexistent or invalid key (LRM 7.8.6) returns it
-// unless `user_default_` overrides it (LRM 7.9.11). `discard_sink_` is the
-// throwaway an invalid-key write lands on, scrubbed to canonical by the
-// non-const write path. There is no out-of-bounds concept here: an associative
+// `element_default_` holds the element-type default -- the LRM Table 7-1
+// value read from a nonexistent array entry. It carries the element's
+// runtime shape (supplied at construction because `V = PackedArray` carries
+// shape the C++ type cannot recover) and is only ever read or copied, never
+// written, so a read returns it directly. A read of a nonexistent or invalid
+// key (LRM 7.8.6) returns it unless `user_default_` overrides it (LRM
+// 7.9.11). `discard_sink_` is the throwaway an invalid-key write lands on,
+// scrubbed to canonical by the non-const write path. There is no
+// out-of-bounds concept here: an associative
 // array has no index bounds, so the trigger is a missing or invalid key, never
 // a boundary.
 template <typename K, typename V>

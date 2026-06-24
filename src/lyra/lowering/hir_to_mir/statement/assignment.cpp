@@ -254,8 +254,8 @@ auto LowerSubroutineCallWithWritebacks(
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
 
-  // The callee body takes its instance handle as `arguments[0]` (mir.md
-  // invariant 11); the SV actuals (with output / inout temps) follow.
+  // The callee body takes its instance handle as `arguments[0]`; the SV
+  // actuals (with output / inout temps) follow.
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size() + 1);
   call_args.push_back(wrapper.exprs.Add(MakeSelfRefExpr(
