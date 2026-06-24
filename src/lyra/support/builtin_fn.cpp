@@ -334,6 +334,18 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "set_time_format";
     case BuiltinFn::kResetTimeFormat:
       return "reset_time_format";
+    case BuiltinFn::kToInt64:
+      return "to_int64";
+    case BuiltinFn::kRound:
+      return "round";
+    case BuiltinFn::kFromInt:
+      return "from_int";
+    case BuiltinFn::kConvertFrom:
+      return "convert_from";
+    case BuiltinFn::kFromPackedArray:
+      return "from_packed_array";
+    case BuiltinFn::kFromByteArray:
+      return "from_byte_array";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

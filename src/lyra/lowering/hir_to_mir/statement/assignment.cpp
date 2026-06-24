@@ -15,6 +15,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -26,7 +27,6 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/cast.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -95,8 +95,8 @@ auto LowerDestructuringAssign(
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   mir::ExprId rhs_id = wrapper.exprs.Add(*std::move(rhs_or));
   if (wrapper.exprs.Get(rhs_id).type != temp_type) {
-    rhs_id = wrapper.exprs.Add(
-        mir::Expr{.data = mir::CastExpr{.operand = rhs_id}, .type = temp_type});
+    rhs_id = wrapper.exprs.Add(BuildValueConversion(
+        process.Module().Unit(), wrapper, rhs_id, temp_type));
   }
 
   const mir::ExprId temp_assign_target =
@@ -160,10 +160,8 @@ auto LowerDestructuringAssign(
             .type = slice_type});
     mir::ExprId rhs_for_part = slice_id;
     if (part_mir_type != slice_type) {
-      rhs_for_part = wrapper.exprs.Add(
-          mir::Expr{
-              .data = mir::CastExpr{.operand = slice_id},
-              .type = part_mir_type});
+      rhs_for_part = wrapper.exprs.Add(BuildValueConversion(
+          process.Module().Unit(), wrapper, slice_id, part_mir_type));
     }
 
     mir::ExprId per_part_expr_id{};
