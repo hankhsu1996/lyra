@@ -4,7 +4,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -16,7 +15,6 @@
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member.hpp"
@@ -30,10 +28,9 @@ namespace {
 
 auto RenderField(
     const ScopeView& ctor_view, const mir::MemberDecl& var, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& unit = ctor_view.Unit();
-  auto type_or = RenderTypeAsCpp(unit, ctor_view.Class(), var.type);
-  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  std::string type = RenderTypeAsCpp(unit, ctor_view.Class(), var.type);
   // An upward reference is an ExternUp member: its constructor takes the
   // symbol payload (ancestor, by-name tail, leaf signal) rather than a value
   // initializer; it registers itself and relocates in the resolve phase.
@@ -42,7 +39,7 @@ auto RenderField(
     std::string tail = "{";
     for (std::size_t i = 0; i < er->tail.size(); ++i) {
       if (i != 0) tail += ", ";
-      tail += "{\"" + er->tail[i].name + "\", {";
+      tail += std::format("{{\"{}\", {{", er->tail[i].name);
       for (std::size_t j = 0; j < er->tail[i].indices.size(); ++j) {
         if (j != 0) tail += ", ";
         tail += std::to_string(er->tail[i].indices[j]);
@@ -53,36 +50,33 @@ auto RenderField(
     const std::string match = er->match == mir::ExternalRefMatch::kDefName
                                   ? "lyra::runtime::UpwardMatch::kDefName"
                                   : "lyra::runtime::UpwardMatch::kScopeName";
-    return Indent(indent) + *type_or + " " + var.name + "{this, \"" +
-           er->ancestor + "\", " + match + ", " + tail + ", \"" + er->signal +
-           "\"};\n";
+    return std::format(
+        "{}{} {}{{this, \"{}\", {}, {}, \"{}\"}};\n", Indent(indent), type,
+        var.name, er->ancestor, match, tail, er->signal);
   }
-  return Indent(indent) + *type_or + " " + var.name + "{};\n";
+  return std::format("{}{} {}{{}};\n", Indent(indent), type, var.name);
 }
 
 auto RenderParamField(
     const mir::CompilationUnit& unit, const mir::Class& owner_class,
-    const mir::ParamDecl& param, std::size_t indent)
-    -> diag::Result<std::string> {
-  auto type_or = RenderTypeAsCpp(unit, owner_class, param.type);
-  if (!type_or) return std::unexpected(std::move(type_or.error()));
-  return Indent(indent) + "const " + *type_or + " " + param.name + ";\n";
+    const mir::ParamDecl& param, std::size_t indent) -> std::string {
+  return std::format(
+      "{}const {} {};\n", Indent(indent),
+      RenderTypeAsCpp(unit, owner_class, param.type), param.name);
 }
 
 auto CtorParamName(std::size_t index) -> std::string {
-  return "param" + std::to_string(index);
+  return std::format("param{}", index);
 }
 
 auto RenderMethodParam(
     const mir::CompilationUnit& unit, const mir::Class& s,
-    const mir::MethodParam& param) -> diag::Result<std::string> {
-  auto type_or = RenderTypeAsCpp(unit, s, param.type);
-  if (!type_or) return std::unexpected(std::move(type_or.error()));
+    const mir::MethodParam& param) -> std::string {
   // Every formal is a value parameter: an `input` by value (LRM 13.5.1), a
   // `ref` / `const ref` whose `RefType` already renders as `(const) Ref<T>` so
   // the reference value carries the aliasing (LRM 13.5.2). `output` / `inout`
   // are not parameters -- they ride the completion payload.
-  return *type_or + " " + param.name;
+  return std::format("{} {}", RenderTypeAsCpp(unit, s, param.type), param.name);
 }
 
 // The one renderer for every method. A method's declaration is rendered from
@@ -96,7 +90,7 @@ auto RenderMethodParam(
 auto RenderMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::MethodDecl& m, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const bool is_static = m.form == mir::MethodForm::kStatic;
   const ScopeView base_view =
       (parent_struct_view == nullptr)
@@ -105,54 +99,49 @@ auto RenderMethod(
   const ScopeView body_view =
       base_view.WithSelfSpelling(is_static ? "self" : "this");
 
-  auto ret_or = RenderTypeAsCpp(unit, s, m.result_type);
-  if (!ret_or) return std::unexpected(std::move(ret_or.error()));
+  std::string ret = RenderTypeAsCpp(unit, s, m.result_type);
 
   std::string sig =
-      std::string(is_static ? "static auto " : "auto ") + m.name + "(";
+      std::format("{}{}(", is_static ? "static auto " : "auto ", m.name);
   bool first = true;
   if (is_static) {
-    sig += s.name + "* self";
+    sig += std::format("{}* self", s.name);
     first = false;
   }
   for (const auto& param : m.params) {
-    auto param_or = RenderMethodParam(unit, s, param);
-    if (!param_or) return std::unexpected(std::move(param_or.error()));
     if (!first) sig += ", ";
-    sig += *param_or;
+    sig += RenderMethodParam(unit, s, param);
     first = false;
   }
-  sig += ") -> " + *ret_or;
+  sig += std::format(") -> {}", ret);
   if (!is_static) {
     sig += " override";
   }
 
   std::string out;
-  out += Indent(indent) + sig + " {\n";
-  auto body_or = RenderBlockStatements(body_view, indent + 1);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  out += *body_or;
-  out += Indent(indent) + "}\n";
+  out += std::format("{}{} {{\n", Indent(indent), sig);
+  out += RenderBlockStatements(body_view, indent + 1);
+  out += std::format("{}}}\n", Indent(indent));
   return out;
 }
 
 auto RenderConstructor(
     const ScopeView& scope_view, const mir::Class& s,
-    const std::string& base_class, std::size_t indent)
-    -> diag::Result<std::string> {
-  std::string sig = s.name +
-                    "(lyra::runtime::Scope* parent, std::string name, "
-                    "lyra::runtime::RuntimeServices& services";
-  std::string init_list = base_class + "(parent, std::move(name), services)";
+    const std::string& base_class, std::size_t indent) -> std::string {
+  std::string sig = std::format(
+      "{}(lyra::runtime::Scope* parent, std::string name, "
+      "lyra::runtime::RuntimeServices& services",
+      s.name);
+  std::string init_list =
+      std::format("{}(parent, std::move(name), services)", base_class);
   for (std::size_t i = 0; i < s.params.size(); ++i) {
     const auto& p = s.params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
     const auto param_name = CtorParamName(i);
-    auto type_or = RenderTypeAsCpp(scope_view.Unit(), s, p.type);
-    if (!type_or) return std::unexpected(std::move(type_or.error()));
-    sig += ", " + *type_or + " " + param_name;
-    init_list += ", " + p.name + "(" + param_name + ")";
+    sig += std::format(
+        ", {} {}", RenderTypeAsCpp(scope_view.Unit(), s, p.type), param_name);
+    init_list += std::format(", {}({})", p.name, param_name);
   }
-  sig += ") : " + init_list;
+  sig += std::format(") : {}", init_list);
 
   // The C++ constructor is the one shape that is not an ordinary method: it has
   // no result type and runs a member-init list before its body, so it cannot
@@ -161,15 +150,14 @@ auto RenderConstructor(
   // body -- a static worker over `self`, the same body shape every method uses.
   // An empty body needs no kickoff.
   if (s.constructor_block.root_stmts.empty()) {
-    return Indent(indent) + sig + " {}\n";
+    return std::format("{}{} {{}}\n", Indent(indent), sig);
   }
   std::string out;
-  out += Indent(indent) + sig + " { init(this); }\n";
-  out += Indent(indent) + "static auto init(" + s.name + "* self) -> void {\n";
-  auto body_or = RenderBlockStatements(scope_view, indent + 1);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  out += *body_or;
-  out += Indent(indent) + "}\n";
+  out += std::format("{}{} {{ init(this); }}\n", Indent(indent), sig);
+  out += std::format(
+      "{}static auto init({}* self) -> void {{\n", Indent(indent), s.name);
+  out += RenderBlockStatements(scope_view, indent + 1);
+  out += std::format("{}}}\n", Indent(indent));
   return out;
 }
 
@@ -189,19 +177,19 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
 auto RenderCreateProcesses(const mir::Class& s, std::size_t indent)
     -> std::string {
   std::string out;
-  out += Indent(indent) + "void CreateProcesses() override {\n";
+  out += std::format("{}void CreateProcesses() override {{\n", Indent(indent));
   for (const auto& p : s.processes) {
-    out += Indent(indent + 1) + "AddProcess(" +
-           RenderProcessKindLiteral(p.kind) + ", " + p.code.name + "(this));\n";
+    out += std::format(
+        "{}AddProcess({}, {}(this));\n", Indent(indent + 1),
+        RenderProcessKindLiteral(p.kind), p.code.name);
   }
-  out += Indent(indent) + "}\n";
+  out += std::format("{}}}\n", Indent(indent));
   return out;
 }
 
 auto RenderScopeAsClass(
     const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
-    bool is_top_level, const ScopeView* parent_struct_view)
-    -> diag::Result<std::string> {
+    bool is_top_level, const ScopeView* parent_struct_view) -> std::string {
   // `this_anchor` is bound to `s.constructor_block` so it doubles as the
   // view for rendering the constructor body. Children's bodies use it as
   // their enclosing class (one hop above the child).
@@ -216,48 +204,37 @@ auto RenderScopeAsClass(
       is_top_level ? "lyra::runtime::Instance" : "lyra::runtime::GenScope";
 
   std::string out;
-  out += Indent(indent) + "class " + s.name + " final : public " + base_class +
-         " {\n";
-  out += Indent(indent) + " public:\n";
+  out += std::format(
+      "{}class {} final : public {} {{\n", Indent(indent), s.name, base_class);
+  out += std::format("{} public:\n", Indent(indent));
 
   // The scope's own time precision (LRM 3.14.2). The engine takes the minimum
   // across the tree as the design-global tick (LRM 3.14.3); the runtime scales
   // a local-precision delay from this value to that tick.
-  out += Indent(indent + 1) +
-         "auto TimePrecisionPower() const -> std::int8_t override { return " +
-         std::to_string(static_cast<int>(s.time_resolution.precision_power)) +
-         "; }\n\n";
+  out += std::format(
+      "{}auto TimePrecisionPower() const -> std::int8_t override {{ return "
+      "{}; }}\n\n",
+      Indent(indent + 1), static_cast<int>(s.time_resolution.precision_power));
 
   for (const auto& child : s.nested_classes) {
-    auto child_or =
-        RenderScopeAsClass(unit, child, indent + 1, false, &this_anchor);
-    if (!child_or) return std::unexpected(std::move(child_or.error()));
-    out += *child_or;
+    out += RenderScopeAsClass(unit, child, indent + 1, false, &this_anchor);
   }
   if (!s.nested_classes.empty()) {
     out += "\n";
   }
 
-  auto ctor_or = RenderConstructor(this_anchor, s, base_class, indent + 1);
-  if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
-  out += *ctor_or;
+  out += RenderConstructor(this_anchor, s, base_class, indent + 1);
 
   // The resolve and initialize phases run after construction; each is a
   // virtual override the engine dispatches, present only when the scope has
   // work for that phase. They render through the one method renderer.
   if (s.resolve.has_value()) {
     out += "\n";
-    auto body_or =
-        RenderMethod(parent_struct_view, unit, s, *s.resolve, indent + 1);
-    if (!body_or) return std::unexpected(std::move(body_or.error()));
-    out += *body_or;
+    out += RenderMethod(parent_struct_view, unit, s, *s.resolve, indent + 1);
   }
   if (s.initialize.has_value()) {
     out += "\n";
-    auto body_or =
-        RenderMethod(parent_struct_view, unit, s, *s.initialize, indent + 1);
-    if (!body_or) return std::unexpected(std::move(body_or.error()));
-    out += *body_or;
+    out += RenderMethod(parent_struct_view, unit, s, *s.initialize, indent + 1);
   }
 
   // Child links are registered automatically at construction and walked by the
@@ -270,9 +247,10 @@ auto RenderScopeAsClass(
   // A unit-root scope is a module; its name is the def-name an upward reference
   // matches when climbing the parent chain (LRM 23.8).
   if (is_top_level) {
-    out += Indent(indent + 1) +
-           "auto DefName() const -> std::string_view override { return \"" +
-           s.name + "\"; }\n";
+    out += std::format(
+        "{}auto DefName() const -> std::string_view override {{ return "
+        "\"{}\"; }}\n",
+        Indent(indent + 1), s.name);
   }
 
   // Members follow the constructor and methods. They are public so cross-unit
@@ -281,43 +259,34 @@ auto RenderScopeAsClass(
     out += "\n";
   }
   for (const auto& p : s.params) {
-    auto field_or = RenderParamField(unit, s, p, indent + 1);
-    if (!field_or) return std::unexpected(std::move(field_or.error()));
-    out += *field_or;
+    out += RenderParamField(unit, s, p, indent + 1);
   }
   if (!s.params.empty() && !s.members.empty()) {
     out += "\n";
   }
   for (const auto& v : s.members) {
-    auto field_or = RenderField(this_anchor, v, indent + 1);
-    if (!field_or) return std::unexpected(std::move(field_or.error()));
-    out += *field_or;
+    out += RenderField(this_anchor, v, indent + 1);
   }
 
   if (s.processes.empty() && s.methods.empty()) {
-    out += Indent(indent) + "};\n";
+    out += std::format("{}}};\n", Indent(indent));
     return out;
   }
 
   out += "\n";
-  out += Indent(indent) + " private:\n";
+  out += std::format("{} private:\n", Indent(indent));
 
   for (const auto& p : s.processes) {
     out += "\n";
-    auto body_or =
-        RenderMethod(parent_struct_view, unit, s, p.code, indent + 1);
-    if (!body_or) return std::unexpected(std::move(body_or.error()));
-    out += *body_or;
+    out += RenderMethod(parent_struct_view, unit, s, p.code, indent + 1);
   }
 
   for (const auto& sub : s.methods) {
     out += "\n";
-    auto body_or = RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
-    if (!body_or) return std::unexpected(std::move(body_or.error()));
-    out += *body_or;
+    out += RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
   }
 
-  out += Indent(indent) + "};\n";
+  out += std::format("{}}};\n", Indent(indent));
   return out;
 }
 
@@ -337,8 +306,7 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
 }
 
 auto RenderScopeHeaderFile(
-    const mir::CompilationUnit& unit, const mir::Class& s)
-    -> diag::Result<std::string> {
+    const mir::CompilationUnit& unit, const mir::Class& s) -> std::string {
   std::string out;
   out += "#pragma once\n";
   out += "#include <array>\n";
@@ -377,7 +345,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/unpacked_array.hpp\"\n";
   out += "#include \"lyra/value/dynamic_array.hpp\"\n";
   for (const auto& name : CollectExternalUnitNames(unit)) {
-    out += "#include \"" + name + ".hpp\"\n";
+    out += std::format("#include \"{}.hpp\"\n", name);
   }
   out += "\n";
   bool any_enum = false;
@@ -418,18 +386,15 @@ auto RenderScopeHeaderFile(
   // for a given target supplies the class name itself).
   bool any_alias = false;
   for (const auto& alias : s.type_aliases) {
-    auto target_or = RenderTypeAsCpp(unit, s, alias.target);
-    if (!target_or) return std::unexpected(std::move(target_or.error()));
-    if (alias.name == *target_or) continue;
-    out += std::format("using {} = {};\n", alias.name, *target_or);
+    std::string target = RenderTypeAsCpp(unit, s, alias.target);
+    if (alias.name == target) continue;
+    out += std::format("using {} = {};\n", alias.name, target);
     any_alias = true;
   }
   if (any_alias) {
     out += "\n";
   }
-  auto class_or = RenderScopeAsClass(unit, s, 0, true, nullptr);
-  if (!class_or) return std::unexpected(std::move(class_or.error()));
-  out += *class_or;
+  out += RenderScopeAsClass(unit, s, 0, true, nullptr);
   return out;
 }
 
@@ -440,18 +405,19 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
   for (const auto& top : tops) {
-    out += "#include \"" + top.unit->top_class.name + ".hpp\"\n";
+    out += std::format("#include \"{}.hpp\"\n", top.unit->top_class.name);
   }
   out += "\n";
   out += "auto main() -> int {\n";
   out += "  lyra::runtime::Engine engine;\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
-    out += "  " + tops[i].unit->top_class.name + " top" + std::to_string(i) +
-           "{nullptr, \"" + tops[i].name + "\", engine.Services()};\n";
+    out += std::format(
+        "  {} top{}{{nullptr, \"{}\", engine.Services()}};\n",
+        tops[i].unit->top_class.name, i, tops[i].name);
   }
   out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
-    out += "      {&top" + std::to_string(i) + "},\n";
+    out += std::format("      {{&top{}}},\n", i);
   }
   out += "  };\n";
   out += "  engine.BindDesign(tops);\n";
@@ -462,15 +428,11 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
 
 }  // namespace
 
-auto EmitCppDeclarations(const mir::CompilationUnit& unit)
-    -> diag::Result<std::vector<CppArtifact>> {
-  std::vector<CppArtifact> headers;
+auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact {
   const auto& root = unit.top_class;
-  auto content_or = RenderScopeHeaderFile(unit, root);
-  if (!content_or) return std::unexpected(std::move(content_or.error()));
-  headers.push_back(
-      {.relpath = root.name + ".hpp", .content = *std::move(content_or)});
-  return headers;
+  return {
+      .relpath = std::format("{}.hpp", root.name),
+      .content = RenderScopeHeaderFile(unit, root)};
 }
 
 auto EmitCppHostMain(std::span<const TopInstance> tops) -> CppArtifact {
@@ -479,14 +441,10 @@ auto EmitCppHostMain(std::span<const TopInstance> tops) -> CppArtifact {
 
 auto EmitCpp(
     std::span<const mir::CompilationUnit> units,
-    std::span<const TopInstance> tops) -> diag::Result<CppArtifactSet> {
+    std::span<const TopInstance> tops) -> CppArtifactSet {
   CppArtifactSet set;
   for (const auto& unit : units) {
-    auto headers_or = EmitCppDeclarations(unit);
-    if (!headers_or) return std::unexpected(std::move(headers_or.error()));
-    for (auto& h : *headers_or) {
-      set.files.push_back(std::move(h));
-    }
+    set.files.push_back(EmitCppDeclarations(unit));
   }
   set.files.push_back(EmitCppHostMain(tops));
   return set;

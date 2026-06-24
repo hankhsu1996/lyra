@@ -1,9 +1,9 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 
 #include <cstddef>
+#include <format>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -13,7 +13,6 @@
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -23,10 +22,10 @@ namespace lyra::backend::cpp {
 namespace {
 
 auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
-    -> diag::Result<std::string> {
+    -> std::string {
   return std::visit(
       Overloaded{
-          [&](const mir::ForInitDecl& d) -> diag::Result<std::string> {
+          [&](const mir::ForInitDecl& d) -> std::string {
             // The induction variable's C++ type is whatever the initializer
             // yields (every integral value is a PackedArray), so `auto` is the
             // exact same type as spelling it out -- and reads as the idiomatic
@@ -34,13 +33,10 @@ auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
             const auto& lv = view.BlockAtHops(d.induction_var.hops)
                                  .vars.Get(d.induction_var.var);
             const auto& init_expr = view.Block().exprs.Get(d.init);
-            auto rendered_or = RenderExpr(view, init_expr);
-            if (!rendered_or) {
-              return std::unexpected(std::move(rendered_or.error()));
-            }
-            return "auto " + lv.name + " = " + *rendered_or;
+            return std::format(
+                "auto {} = {}", lv.name, RenderExpr(view, init_expr));
           },
-          [&](const mir::ForInitExpr& e) -> diag::Result<std::string> {
+          [&](const mir::ForInitExpr& e) -> std::string {
             const auto& expr = view.Block().exprs.Get(e.expr);
             return RenderExpr(view, expr);
           },
@@ -64,34 +60,29 @@ auto RenderEventEdgeAsRuntime(mir::EventEdge edge) -> std::string_view {
 
 auto RenderLocalDeclStmt(
     const ScopeView& view, const mir::LocalDeclStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& lv = view.BlockAtHops(s.target.hops).vars.Get(s.target.var);
-  auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), lv.type);
-  if (!type_or) return std::unexpected(std::move(type_or.error()));
   const auto& init_expr = view.Block().exprs.Get(s.init);
-  auto init_or = RenderExpr(view, init_expr);
-  if (!init_or) return std::unexpected(std::move(init_or.error()));
-  return Indent(indent) + *type_or + " " + lv.name + " = " + *init_or + ";\n";
+  return std::format(
+      "{}{} {} = {};\n", Indent(indent),
+      RenderTypeAsCpp(view.Unit(), view.Class(), lv.type), lv.name,
+      RenderExpr(view, init_expr));
 }
 
 auto RenderExprStmt(
     const ScopeView& view, const mir::ExprStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& expr = view.Block().exprs.Get(s.expr);
-  auto rendered_or = RenderExpr(view, expr);
-  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-  return Indent(indent) + *rendered_or + ";\n";
+  return std::format("{}{};\n", Indent(indent), RenderExpr(view, expr));
 }
 
-auto RenderBlockStmtNode(
+auto RenderBlockStmt(
     const ScopeView& view, const mir::BlockStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& child = view.Block().child_scopes.Get(s.scope);
-  std::string result = Indent(indent) + "{\n";
-  auto child_or = RenderNestedBlock(view, child, indent + 1);
-  if (!child_or) return std::unexpected(std::move(child_or.error()));
-  result += *child_or;
-  result += Indent(indent) + "}\n";
+  std::string result = std::format("{}{{\n", Indent(indent));
+  result += RenderNestedBlock(view, child, indent + 1);
+  result += std::format("{}}}\n", Indent(indent));
   return result;
 }
 
@@ -104,7 +95,7 @@ auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
     case mir::JoinMode::kNone:
       return "lyra::runtime::JoinMode::kNone";
   }
-  return "lyra::runtime::JoinMode::kAll";
+  throw InternalError("RenderForkJoinModeLiteral: unknown JoinMode value");
 }
 
 // LRM 9.3.2: a fork is a block, rendered as a C++ block at the fork
@@ -114,9 +105,9 @@ auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
 // renderer emits it as a stateless coroutine lambda invoked on its captures,
 // yielding a `lyra::runtime::Coroutine` collected into `fork_branches`. The
 // fork then waits per the join mode.
-auto RenderForkStmtNode(
+auto RenderForkStmt(
     const ScopeView& view, const mir::ForkStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   // The fork-branches vector lives in this fork's own `{...}` block scope
   // (opened just below), so a fixed name suffices -- a sibling fork in the
   // surrounding scope, or a nested fork in a branch lambda body, each has
@@ -124,44 +115,38 @@ auto RenderForkStmtNode(
   const std::string vec = "fork_branches";
   const ScopeView fork_view =
       view.WithBlock(view.Block().child_scopes.Get(s.scope));
-  std::string out = Indent(indent) + "{\n";
-  auto locals_or = RenderBlockStatements(fork_view, indent + 1);
-  if (!locals_or) return std::unexpected(std::move(locals_or.error()));
-  out += *locals_or;
-  out += Indent(indent + 1) + "std::vector<lyra::runtime::Coroutine<void>> " +
-         vec + ";\n";
+  std::string out = std::format("{}{{\n", Indent(indent));
+  out += RenderBlockStatements(fork_view, indent + 1);
+  out += std::format(
+      "{}std::vector<lyra::runtime::Coroutine<void>> {};\n", Indent(indent + 1),
+      vec);
   for (const auto branch : s.branches) {
-    auto closure_or = RenderExpr(fork_view, fork_view.Expr(branch));
-    if (!closure_or) return std::unexpected(std::move(closure_or.error()));
-    out += Indent(indent + 1) + vec + ".push_back(" + *closure_or + ");\n";
+    out += std::format(
+        "{}{}.push_back({});\n", Indent(indent + 1), vec,
+        RenderExpr(fork_view, fork_view.Expr(branch)));
   }
-  out += Indent(indent + 1) + "co_await lyra::runtime::Fork(" +
-         "self->Services()" + ", std::move(" + vec + "), " +
-         std::string(RenderForkJoinModeLiteral(s.mode)) + ");\n";
-  out += Indent(indent) + "}\n";
+  out += std::format(
+      "{}co_await lyra::runtime::Fork(self->Services(), std::move({}), {});\n",
+      Indent(indent + 1), vec, RenderForkJoinModeLiteral(s.mode));
+  out += std::format("{}}}\n", Indent(indent));
   return out;
 }
 
-auto RenderIfStmtNode(
+auto RenderIfStmt(
     const ScopeView& view, const mir::IfStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& cond_expr = view.Block().exprs.Get(s.condition);
   const auto& then_scope = view.Block().child_scopes.Get(s.then_scope);
-  auto cond_or = RenderConditionAsBool(view, cond_expr);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  auto then_or = RenderNestedBlock(view, then_scope, indent + 1);
-  if (!then_or) return std::unexpected(std::move(then_or.error()));
   std::string result;
-  result += Indent(indent) + "if (" + *cond_or + ") {\n";
-  result += *then_or;
-  result += Indent(indent) + "}";
+  result += std::format(
+      "{}if ({}) {{\n", Indent(indent), RenderConditionAsBool(view, cond_expr));
+  result += RenderNestedBlock(view, then_scope, indent + 1);
+  result += std::format("{}}}", Indent(indent));
   if (s.else_scope.has_value()) {
     const auto& else_scope = view.Block().child_scopes.Get(*s.else_scope);
-    auto else_or = RenderNestedBlock(view, else_scope, indent + 1);
-    if (!else_or) return std::unexpected(std::move(else_or.error()));
     result += " else {\n";
-    result += *else_or;
-    result += Indent(indent) + "}";
+    result += RenderNestedBlock(view, else_scope, indent + 1);
+    result += std::format("{}}}", Indent(indent));
   }
   result += "\n";
   return result;
@@ -169,14 +154,12 @@ auto RenderIfStmtNode(
 
 auto RenderConstructOwnedObjectStmt(
     const ScopeView& view, const mir::ConstructOwnedObjectStmt& s,
-    std::size_t indent) -> diag::Result<std::string> {
+    std::size_t indent) -> std::string {
   const auto& var = view.Class().members.Get(s.target);
   const auto& target_scope = view.Class().nested_classes.Get(s.scope_id);
   std::string trailing_args;
   for (const auto arg_id : s.args) {
-    auto arg_or = RenderExpr(view, view.Expr(arg_id));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    trailing_args += ", " + *arg_or;
+    trailing_args += std::format(", {}", RenderExpr(view, view.Expr(arg_id)));
   }
   const auto child = mir::GetChildScope(view.Unit(), var.type);
   if (!child.has_value() ||
@@ -184,23 +167,25 @@ auto RenderConstructOwnedObjectStmt(
     throw InternalError(
         "ConstructOwnedObjectStmt target is not an owned object var");
   }
-  const std::string lhs = "self->" + var.name;
+  const std::string lhs = std::format("self->{}", var.name);
   // The runtime scope name is the source-level label (LRM 27.6) -- the name an
   // upward climb and a by-name child lookup match against -- not the emitted
   // class name.
   const std::string reg_name =
       var.source_name.empty() ? var.name : var.source_name;
-  const std::string make = "std::make_unique<" + target_scope.name +
-                           ">(self, \"" + reg_name + "\", self->Services()" +
-                           trailing_args + ")";
+  const std::string make = std::format(
+      "std::make_unique<{}>(self, \"{}\", self->Services(){})",
+      target_scope.name, reg_name, trailing_args);
   if (std::holds_alternative<mir::VectorType>(
           view.Unit().GetType(var.type).data)) {
-    return Indent(indent) + lhs + ".push_back(" + make + ");\n" +
-           Indent(indent) + "self->RegisterChild(\"" + reg_name +
-           "\", std::array{" + lhs + ".size() - 1}, *" + lhs + ".back());\n";
+    return std::format(
+        "{}{}.push_back({});\n{}self->RegisterChild(\"{}\", "
+        "std::array{{{}.size() - 1}}, *{}.back());\n",
+        Indent(indent), lhs, make, Indent(indent), reg_name, lhs, lhs);
   }
-  return Indent(indent) + lhs + " = " + make + ";\n" + Indent(indent) +
-         "self->RegisterChild(\"" + reg_name + "\", {}, *" + lhs + ");\n";
+  return std::format(
+      "{}{} = {};\n{}self->RegisterChild(\"{}\", {{}}, *{});\n", Indent(indent),
+      lhs, make, Indent(indent), reg_name, lhs);
 }
 
 // Materializes an external-unit member by recursing on its type, mirroring the
@@ -216,132 +201,122 @@ auto RenderExternalUnitFill(
     std::size_t indent) -> std::string {
   if (const auto* vec =
           std::get_if<mir::VectorType>(&view.Unit().GetType(type).data)) {
-    const std::string idx = "i" + std::to_string(depth);
+    const std::string idx = std::format("i{}", depth);
     std::string out;
-    out += Indent(indent) + "for (std::size_t " + idx + " = 0; " + idx + " < " +
-           std::to_string(dims.at(depth)) + "; ++" + idx + ") {\n";
-    out += Indent(indent + 1) + lvalue + ".emplace_back();\n";
+    out += std::format(
+        "{}for (std::size_t {} = 0; {} < {}; ++{}) {{\n", Indent(indent), idx,
+        idx, dims.at(depth), idx);
+    out += std::format("{}{}.emplace_back();\n", Indent(indent + 1), lvalue);
     out += RenderExternalUnitFill(
-        view, lvalue + "[" + idx + "]", vec->element, unit_name, label, dims,
-        depth + 1, indent + 1);
-    out += Indent(indent) + "}\n";
+        view, std::format("{}[{}]", lvalue, idx), vec->element, unit_name,
+        label, dims, depth + 1, indent + 1);
+    out += std::format("{}}}\n", Indent(indent));
     return out;
   }
-  std::string out = Indent(indent) + lvalue + " = std::make_unique<" +
-                    unit_name + ">(self, \"" + label +
-                    "\", self->Services());\n";
+  std::string out = std::format(
+      "{}{} = std::make_unique<{}>(self, \"{}\", self->Services());\n",
+      Indent(indent), lvalue, unit_name, label);
   std::string idx = "{}";
   if (depth > 0) {
     idx = "std::array{";
     for (std::size_t d = 0; d < depth; ++d) {
       if (d != 0) idx += ", ";
-      idx += "i" + std::to_string(d);
+      idx += std::format("i{}", d);
     }
     idx += "}";
   }
-  out += Indent(indent) + "self->RegisterChild(\"" + label + "\", " + idx +
-         ", *" + lvalue + ");\n";
+  out += std::format(
+      "{}self->RegisterChild(\"{}\", {}, *{});\n", Indent(indent), label, idx,
+      lvalue);
   return out;
 }
 
 auto RenderConstructExternalUnitStmt(
     const ScopeView& view, const mir::ConstructExternalUnitStmt& s,
-    std::size_t indent) -> diag::Result<std::string> {
+    std::size_t indent) -> std::string {
   const auto& var = view.Class().members.Get(s.target);
   return RenderExternalUnitFill(
-      view, "self->" + var.name, var.type, s.unit_name, var.name, s.dims, 0,
-      indent);
+      view, std::format("self->{}", var.name), var.type, s.unit_name, var.name,
+      s.dims, 0, indent);
 }
 
 // C++ has no labeled break, so a `foreach` break that must leave every nested
 // dimension lowers to a `goto` aimed at a label after the outermost loop. Both
 // the landing label and the jump derive their name from the loop's LoopLabelId.
 auto BreakLandingLabel(mir::LoopLabelId label) -> std::string {
-  return "__lyra_break_" + std::to_string(label.value);
+  return std::format("__lyra_break_{}", label.value);
 }
 
-auto RenderForStmtNode(
+auto RenderForStmt(
     const ScopeView& view, const mir::ForStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   std::string init;
   for (std::size_t i = 0; i < s.init.size(); ++i) {
     if (i != 0) init += ", ";
-    auto init_or = RenderForInit(view, s.init[i]);
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init += *init_or;
+    init += RenderForInit(view, s.init[i]);
   }
   std::string cond;
   if (s.condition.has_value()) {
     const auto& cond_expr = view.Block().exprs.Get(*s.condition);
-    auto cond_or = RenderConditionAsBool(view, cond_expr);
-    if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    cond = *std::move(cond_or);
+    cond = RenderConditionAsBool(view, cond_expr);
   }
   std::string step;
   for (std::size_t i = 0; i < s.step.size(); ++i) {
     if (i != 0) step += ", ";
     const auto& step_expr = view.Block().exprs.Get(s.step[i]);
-    auto step_or = RenderExpr(view, step_expr);
-    if (!step_or) return std::unexpected(std::move(step_or.error()));
-    step += *step_or;
+    step += RenderExpr(view, step_expr);
   }
   const auto& block = view.Block().child_scopes.Get(s.scope);
-  auto body_or = RenderNestedBlock(view, block, indent + 1);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
   std::string result =
-      Indent(indent) + "for (" + init + "; " + cond + "; " + step + ") {\n";
-  result += *body_or;
-  result += Indent(indent) + "}\n";
+      std::format("{}for ({}; {}; {}) {{\n", Indent(indent), init, cond, step);
+  result += RenderNestedBlock(view, block, indent + 1);
+  result += std::format("{}}}\n", Indent(indent));
   if (s.break_label.has_value()) {
-    result += Indent(indent) + BreakLandingLabel(*s.break_label) + ":;\n";
+    result += std::format(
+        "{}{}:;\n", Indent(indent), BreakLandingLabel(*s.break_label));
   }
   return result;
 }
 
-auto RenderWhileStmtNode(
+auto RenderWhileStmt(
     const ScopeView& view, const mir::WhileStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& cond_expr = view.Block().exprs.Get(s.condition);
-  auto cond_or = RenderConditionAsBool(view, cond_expr);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const auto& block = view.Block().child_scopes.Get(s.scope);
-  auto body_or = RenderNestedBlock(view, block, indent + 1);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  std::string result =
-      Indent(indent) + "while (" + *std::move(cond_or) + ") {\n";
-  result += *body_or;
-  result += Indent(indent) + "}\n";
+  std::string result = std::format(
+      "{}while ({}) {{\n", Indent(indent),
+      RenderConditionAsBool(view, cond_expr));
+  result += RenderNestedBlock(view, block, indent + 1);
+  result += std::format("{}}}\n", Indent(indent));
   return result;
 }
 
-auto RenderDoWhileStmtNode(
+auto RenderDoWhileStmt(
     const ScopeView& view, const mir::DoWhileStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& cond_expr = view.Block().exprs.Get(s.condition);
-  auto cond_or = RenderConditionAsBool(view, cond_expr);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const auto& block = view.Block().child_scopes.Get(s.scope);
-  auto body_or = RenderNestedBlock(view, block, indent + 1);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  std::string result = Indent(indent) + "do {\n";
-  result += *body_or;
-  result += Indent(indent) + "} while (" + *std::move(cond_or) + ");\n";
+  std::string result = std::format("{}do {{\n", Indent(indent));
+  result += RenderNestedBlock(view, block, indent + 1);
+  result += std::format(
+      "{}}} while ({});\n", Indent(indent),
+      RenderConditionAsBool(view, cond_expr));
   return result;
 }
 
 auto RenderSensitivityWaitStmt(
     const ScopeView& view, const mir::SensitivityWaitStmt& s,
-    std::size_t indent) -> diag::Result<std::string> {
-  std::string result = Indent(indent) + "co_await lyra::runtime::WaitAny({";
+    std::size_t indent) -> std::string {
+  std::string result =
+      std::format("{}co_await lyra::runtime::WaitAny({{", Indent(indent));
   for (std::size_t i = 0; i < s.reads.size(); ++i) {
     const auto& read = s.reads[i];
-    auto ptr_or = RenderExpr(view, view.Expr(read.observable_ptr));
-    if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
     if (i != 0) result += ", ";
-    result += "{" + *ptr_or + ", " +
-              std::string{RenderEventEdgeAsRuntime(read.edge_kind)} + ", " +
-              std::to_string(read.lsb_bit_offset) + "ULL, " +
-              std::to_string(read.bit_width) + "ULL}";
+    result += std::format(
+        "{{{}, {}, {}ULL, {}ULL}}",
+        RenderExpr(view, view.Expr(read.observable_ptr)),
+        RenderEventEdgeAsRuntime(read.edge_kind), read.lsb_bit_offset,
+        read.bit_width);
   }
   result += "});\n";
   return result;
@@ -351,59 +326,57 @@ auto RenderSensitivityWaitStmt(
 
 auto RenderStmt(
     const ScopeView& view, const mir::Stmt& stmt, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   std::string out;
   if (stmt.label.has_value()) {
-    out += Indent(indent) + *stmt.label + ":\n";
+    out += std::format("{}{}:\n", Indent(indent), *stmt.label);
   }
-  auto rendered_or = std::visit(
+  out += std::visit(
       Overloaded{
-          [&](const mir::EmptyStmt&) -> diag::Result<std::string> {
-            return Indent(indent) + ";\n";
+          [&](const mir::EmptyStmt&) -> std::string {
+            return std::format("{};\n", Indent(indent));
           },
-          [&](const mir::LocalDeclStmt& s) -> diag::Result<std::string> {
+          [&](const mir::LocalDeclStmt& s) -> std::string {
             return RenderLocalDeclStmt(view, s, indent);
           },
-          [&](const mir::ExprStmt& s) -> diag::Result<std::string> {
+          [&](const mir::ExprStmt& s) -> std::string {
             return RenderExprStmt(view, s, indent);
           },
-          [&](const mir::BlockStmt& s) -> diag::Result<std::string> {
-            return RenderBlockStmtNode(view, s, indent);
+          [&](const mir::BlockStmt& s) -> std::string {
+            return RenderBlockStmt(view, s, indent);
           },
-          [&](const mir::ForkStmt& s) -> diag::Result<std::string> {
-            return RenderForkStmtNode(view, s, indent);
+          [&](const mir::ForkStmt& s) -> std::string {
+            return RenderForkStmt(view, s, indent);
           },
-          [&](const mir::IfStmt& s) -> diag::Result<std::string> {
-            return RenderIfStmtNode(view, s, indent);
+          [&](const mir::IfStmt& s) -> std::string {
+            return RenderIfStmt(view, s, indent);
           },
-          [&](const mir::ConstructOwnedObjectStmt& s)
-              -> diag::Result<std::string> {
+          [&](const mir::ConstructOwnedObjectStmt& s) -> std::string {
             return RenderConstructOwnedObjectStmt(view, s, indent);
           },
-          [&](const mir::ConstructExternalUnitStmt& s)
-              -> diag::Result<std::string> {
+          [&](const mir::ConstructExternalUnitStmt& s) -> std::string {
             return RenderConstructExternalUnitStmt(view, s, indent);
           },
-          [&](const mir::ForStmt& s) -> diag::Result<std::string> {
-            return RenderForStmtNode(view, s, indent);
+          [&](const mir::ForStmt& s) -> std::string {
+            return RenderForStmt(view, s, indent);
           },
-          [&](const mir::WhileStmt& s) -> diag::Result<std::string> {
-            return RenderWhileStmtNode(view, s, indent);
+          [&](const mir::WhileStmt& s) -> std::string {
+            return RenderWhileStmt(view, s, indent);
           },
-          [&](const mir::DoWhileStmt& s) -> diag::Result<std::string> {
-            return RenderDoWhileStmtNode(view, s, indent);
+          [&](const mir::DoWhileStmt& s) -> std::string {
+            return RenderDoWhileStmt(view, s, indent);
           },
-          [&](const mir::BreakStmt& s) -> diag::Result<std::string> {
+          [&](const mir::BreakStmt& s) -> std::string {
             if (s.target.has_value()) {
-              return Indent(indent) + "goto " + BreakLandingLabel(*s.target) +
-                     ";\n";
+              return std::format(
+                  "{}goto {};\n", Indent(indent), BreakLandingLabel(*s.target));
             }
-            return Indent(indent) + "break;\n";
+            return std::format("{}break;\n", Indent(indent));
           },
-          [&](const mir::ContinueStmt&) -> diag::Result<std::string> {
-            return Indent(indent) + "continue;\n";
+          [&](const mir::ContinueStmt&) -> std::string {
+            return std::format("{}continue;\n", Indent(indent));
           },
-          [&](const mir::ReturnStmt& s) -> diag::Result<std::string> {
+          [&](const mir::ReturnStmt& s) -> std::string {
             // `is_coroutine_return` (set at HIR-to-MIR from the enclosing
             // callable's coroutine-ness, mir/stmt.hpp) is a C++ render hint --
             // LIR / LLVM ignore it -- choosing `co_return` over `return`. A
@@ -411,24 +384,22 @@ auto RenderStmt(
             const std::string keyword =
                 s.is_coroutine_return ? "co_return" : "return";
             if (!s.value.has_value()) {
-              return Indent(indent) + keyword + ";\n";
+              return std::format("{}{};\n", Indent(indent), keyword);
             }
-            auto value_or = RenderExpr(view, view.Expr(*s.value));
-            if (!value_or) return std::unexpected(std::move(value_or.error()));
-            return Indent(indent) + keyword + " " + *value_or + ";\n";
+            return std::format(
+                "{}{} {};\n", Indent(indent), keyword,
+                RenderExpr(view, view.Expr(*s.value)));
           },
-          [&](const mir::SensitivityWaitStmt& s) -> diag::Result<std::string> {
+          [&](const mir::SensitivityWaitStmt& s) -> std::string {
             return RenderSensitivityWaitStmt(view, s, indent);
           },
       },
       stmt.data);
-  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-  out += *rendered_or;
   return out;
 }
 
 auto RenderBlockStatements(const ScopeView& view, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& block = view.Block();
   // When a scope's whole content is a single begin/end block, the enclosing
   // braces (a function body, a loop or branch body, an outer block) already
@@ -443,16 +414,14 @@ auto RenderBlockStatements(const ScopeView& view, std::size_t indent)
   }
   std::string out;
   for (const auto& sid : block.root_stmts) {
-    auto rendered_or = RenderStmt(view, block.stmts.Get(sid), indent);
-    if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-    out += *rendered_or;
+    out += RenderStmt(view, block.stmts.Get(sid), indent);
   }
   return out;
 }
 
 auto RenderNestedBlock(
     const ScopeView& parent, const mir::Block& block, std::size_t indent)
-    -> diag::Result<std::string> {
+    -> std::string {
   const ScopeView child = parent.WithBlock(block);
   return RenderBlockStatements(child, indent);
 }

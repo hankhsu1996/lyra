@@ -117,6 +117,10 @@ auto PackedArray::Bit(bool value) -> PackedArray {
   return FromInt(value ? 1 : 0, 1U, false, false);
 }
 
+auto PackedArray::FromBool(bool value) -> PackedArray {
+  return Bit(value);
+}
+
 auto PackedArray::MakeFromWordPlanes(
     std::uint64_t bit_width, bool is_signed, bool is_four_state,
     std::span<const std::uint64_t> value_words,
@@ -1729,7 +1733,7 @@ auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
       std::span<const std::uint64_t>{unk_buf.data(), unk_buf.size()});
 }
 
-auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
+auto PackedArray::Pow(const PackedArray& exponent) const -> PackedArray {
   // The exponent is checked before the base so that `X ** 0 = 1` wins
   // over X-propagation from the base (LRM 11.4.10).
   if (exponent.HasUnknown()) {
@@ -1739,7 +1743,7 @@ auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
   for (std::size_t i = 1; i < exp_words.size(); ++i) {
     if (exp_words[i] != 0U && exp_words[i] != ~std::uint64_t{0}) {
       throw InternalError(
-          "PackedArray::Power: exponent magnitude exceeds 64 bits");
+          "PackedArray::Pow: exponent magnitude exceeds 64 bits");
     }
   }
   const std::uint64_t exp_low = exp_words.empty() ? 0U : exp_words[0];

@@ -45,8 +45,30 @@ struct RealLiteral {
 // produce for a default-init pointer.
 struct NullLiteral {};
 
+// A host-language integer literal: renders as a bare C++ integer (e.g.
+// `42LL`), not as a `PackedArray::Int(42)` runtime value. Used at the
+// boundary between MIR and the runtime when a runtime entry's signature
+// takes a host scalar (`uint64_t` bit-width, `bool` flag) rather than a
+// SV-typed value. `Expr::type` is conventionally `builtins.int32` so
+// downstream type accounting stays uniform; the host-int-ness is implicit
+// from the node kind.
+struct HostIntLiteral {
+  std::int64_t value;
+};
+
 struct UnaryExpr {
   UnaryOp op;
+  ExprId operand;
+};
+
+// Reduces an operand to a host `bool`. Used to bring real / string operands
+// onto the host-bool plane before a C++ native logical operator (`&&`, `||`,
+// `!`), and as the inner argument of `BuiltinFn::kFromBool` when the result
+// must re-shape to a 1-bit packed value. `Expr::type` is conventionally
+// `builtins.bit1` (the result is observable only after `FromBool` re-shapes
+// it; the operand of a `BoolCastExpr` is whatever the host's `bool(...)`
+// conversion accepts).
+struct BoolCastExpr {
   ExprId operand;
 };
 
@@ -224,10 +246,10 @@ struct TupleGetExpr {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
-    ParamRef, LocalRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
-    IncDecExpr, CallExpr, DerefExpr, AddressOfExpr, CastExpr, MemberAccessExpr,
-    ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
-    AwaitExpr, TupleGetExpr>;
+    HostIntLiteral, ParamRef, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
+    ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
+    CastExpr, MemberAccessExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
+    ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr>;
 
 struct Expr {
   ExprData data;

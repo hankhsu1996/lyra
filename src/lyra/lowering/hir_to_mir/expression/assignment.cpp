@@ -307,14 +307,9 @@ auto LowerStringElementAssign(
     const mir::ExprId base_read_id = block.exprs.Add(*std::move(base_read_or));
     const mir::ExprId cur_id = block.exprs.Add(MakeStringMethodCallExpr(
         support::BuiltinFn::kGetc, {base_read_id, idx_id}, result_type));
-    value_id = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = LowerBinaryOp(*a.compound_op),
-                    .lhs = cur_id,
-                    .rhs = value_id},
-            .type = result_type});
+    value_id = block.exprs.Add(BuildMirBinaryExpr(
+        unit, block, LowerBinaryOp(*a.compound_op), cur_id, value_id,
+        result_type));
   }
 
   const std::array<mir::ExprId, 2> operands{idx_id, value_id};

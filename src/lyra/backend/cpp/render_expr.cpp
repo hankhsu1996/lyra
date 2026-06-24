@@ -7,7 +7,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <variant>
 
 #include "lyra/backend/cpp/render_stmt.hpp"
@@ -16,8 +15,6 @@
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/cast.hpp"
 #include "lyra/mir/expr.hpp"
@@ -28,17 +25,6 @@
 namespace lyra::backend::cpp {
 
 namespace {
-
-// Type-kind predicate. `real`, `shortreal`, and `realtime` (LRM 6.12)
-// collectively form the "real family"; arithmetic / relational / logical
-// operator dispatch all branch on this. Taking the full `mir::Type` instead
-// of `TypeKind` keeps the call-site spelling consistent with `IsIntegralPacked`
-// / `IsEnum` on `mir::Type` itself.
-auto IsRealFamilyType(const mir::Type& ty) -> bool {
-  return ty.Kind() == mir::TypeKind::kReal ||
-         ty.Kind() == mir::TypeKind::kShortReal ||
-         ty.Kind() == mir::TypeKind::kRealTime;
-}
 
 auto IntegralConstantToInt64(const mir::IntegralConstant& c) -> std::int64_t {
   if (c.width == 0U) {
@@ -131,7 +117,7 @@ auto RenderPackedArrayIntegerLiteral(
 
 auto RenderIntegerLiteralExpr(
     const ScopeView& view, const mir::Expr& expr,
-    const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
+    const mir::IntegerLiteral& lit) -> std::string {
   const auto& ty = view.Unit().GetType(expr.type);
   if (!ty.IsIntegralPacked()) {
     throw InternalError(
@@ -175,15 +161,14 @@ auto RenderRealLiteralExpr(
 }
 
 auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
-    -> diag::Result<std::string> {
+    -> std::string {
   if (r.hops.value != 0) {
-    return diag::Fail(
-        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+    throw InternalError(
         "cross-scope param access is not yet implemented in "
         "cpp emit");
   }
   const std::string& name = view.Class().params.Get(r.param).name;
-  return std::string(view.SelfSpelling()) + "->" + name;
+  return std::format("{}->{}", view.SelfSpelling(), name);
 }
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
@@ -203,309 +188,123 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
 
 namespace {
 
-// Builds the C++ literal that materializes a 1-bit PackedArray of the SV-typed
-// shape carried by `result_ty`. Used to wrap the C++ `bool` result of a
-// real-operand relational / equality / logical operator into the 1-bit
-// integral PackedArray result type LRM 11.3.1 prescribes.
-auto WrapBoolAsResultShape(
-    const mir::Type& result_ty, std::string_view bool_expr) -> std::string {
-  if (!result_ty.IsIntegralPacked()) {
-    throw InternalError(
-        "WrapBoolAsResultShape: real comparison / logical result type is "
-        "not an integral PackedArray; MIR invariant violated");
-  }
-  return std::format(
-      "lyra::value::PackedArray::FromInt(({}) ? 1LL : 0LL, {})", bool_expr,
-      RenderPackedArrayCtorArgs(result_ty.AsIntegralPacked()));
-}
-
-auto RenderBinaryOpString(
-    mir::BinaryOp op, const std::string& lhs, const std::string& rhs,
-    const mir::Type& result_ty) -> diag::Result<std::string> {
-  // LRM 6.16 Table 6-9: equality compares contents; relational ops use
-  // lexicographic ordering (str.compare semantics). std::string's operator==
-  // and operator< match these directly.
-  switch (op) {
-    case mir::BinaryOp::kEquality:
-      return WrapBoolAsResultShape(result_ty, lhs + " == " + rhs);
-    case mir::BinaryOp::kInequality:
-      return WrapBoolAsResultShape(result_ty, lhs + " != " + rhs);
-    case mir::BinaryOp::kLessThan:
-      return WrapBoolAsResultShape(result_ty, lhs + " < " + rhs);
-    case mir::BinaryOp::kLessEqual:
-      return WrapBoolAsResultShape(result_ty, lhs + " <= " + rhs);
-    case mir::BinaryOp::kGreaterThan:
-      return WrapBoolAsResultShape(result_ty, lhs + " > " + rhs);
-    case mir::BinaryOp::kGreaterEqual:
-      return WrapBoolAsResultShape(result_ty, lhs + " >= " + rhs);
-    default:
-      break;
-  }
-  return diag::Fail(
-      diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-      "binary operator is not legal on string operands per LRM 6.16");
-}
-
-auto RenderBinaryOpReal(
-    mir::BinaryOp op, const std::string& lhs, const std::string& rhs,
-    const mir::Type& result_ty) -> diag::Result<std::string> {
-  // LRM 11.3.1 + Table 11-1: arithmetic on real produces real; relational and
-  // equality return a 1-bit `PackedArray` directly from the `RealValue`
-  // operator. Logical operators reduce each operand to a host bool first, then
-  // re-shape into the result's integral type.
+// The C++ operator token for the SV binary ops that render natively. The
+// method-style ops (shifts, power, xnor, wildcard / case / implication /
+// equivalence) are lifted to `CallExpr` at HIR-to-MIR and never reach this
+// dispatch; reaching one is an MIR-invariant violation.
+auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
   switch (op) {
     case mir::BinaryOp::kAdd:
-      return "(" + lhs + " + " + rhs + ")";
+      return "+";
     case mir::BinaryOp::kSub:
-      return "(" + lhs + " - " + rhs + ")";
+      return "-";
     case mir::BinaryOp::kMul:
-      return "(" + lhs + " * " + rhs + ")";
+      return "*";
     case mir::BinaryOp::kDiv:
-      return "(" + lhs + " / " + rhs + ")";
-    case mir::BinaryOp::kPower:
-      return "(" + lhs + ").Pow(" + rhs + ")";
-    case mir::BinaryOp::kLessThan:
-      return "(" + lhs + " < " + rhs + ")";
-    case mir::BinaryOp::kLessEqual:
-      return "(" + lhs + " <= " + rhs + ")";
-    case mir::BinaryOp::kGreaterThan:
-      return "(" + lhs + " > " + rhs + ")";
-    case mir::BinaryOp::kGreaterEqual:
-      return "(" + lhs + " >= " + rhs + ")";
-    case mir::BinaryOp::kEquality:
-      return "(" + lhs + " == " + rhs + ")";
-    case mir::BinaryOp::kInequality:
-      return "(" + lhs + " != " + rhs + ")";
-    case mir::BinaryOp::kLogicalAnd:
-      return WrapBoolAsResultShape(
-          result_ty, "bool(" + lhs + ") && bool(" + rhs + ")");
-    case mir::BinaryOp::kLogicalOr:
-      return WrapBoolAsResultShape(
-          result_ty, "bool(" + lhs + ") || bool(" + rhs + ")");
-    case mir::BinaryOp::kLogicalImplication:
-      return WrapBoolAsResultShape(
-          result_ty, "!bool(" + lhs + ") || bool(" + rhs + ")");
-    case mir::BinaryOp::kLogicalEquivalence:
-      return WrapBoolAsResultShape(
-          result_ty, "bool(" + lhs + ") == bool(" + rhs + ")");
-    default:
-      break;
-  }
-  return diag::Fail(
-      diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-      "binary operator is not legal on real operands per LRM 11.3.1");
-}
-
-// LRM 11.2.2 + 11.4.5: aggregate equality / inequality / case-equality /
-// case-inequality. Both `UnpackedArray` and `DynamicArray` overload `==` /
-// `!=` to return a 1-bit `PackedArray` (X / Z propagating) and expose
-// `CaseEqual` as a method returning a 1-bit `PackedArray` (0 / 1 only). The
-// dynamic-array overloads additionally short-circuit on runtime size
-// mismatch -> 0 (industry convention, LRM 11.2.2 is silent). Relational
-// operators are not defined on aggregate operands.
-auto RenderBinaryOpArray(
-    mir::BinaryOp op, const std::string& lhs, const std::string& rhs)
-    -> diag::Result<std::string> {
-  switch (op) {
-    case mir::BinaryOp::kEquality:
-      return "(" + lhs + " == " + rhs + ")";
-    case mir::BinaryOp::kInequality:
-      return "(" + lhs + " != " + rhs + ")";
-    case mir::BinaryOp::kCaseEquality:
-      return "(" + lhs + ").CaseEqual(" + rhs + ")";
-    case mir::BinaryOp::kCaseInequality:
-      return "!(" + lhs + ").CaseEqual(" + rhs + ")";
-    default:
-      break;
-  }
-  return diag::Fail(
-      diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-      "binary operator is not legal on aggregate operands per LRM 11.2.2");
-}
-
-auto RenderBinaryOpIntegral(
-    mir::BinaryOp op, const std::string& lhs, const std::string& rhs)
-    -> diag::Result<std::string> {
-  std::string_view tok;
-  switch (op) {
-    case mir::BinaryOp::kAdd:
-      tok = " + ";
-      break;
-    case mir::BinaryOp::kSub:
-      tok = " - ";
-      break;
-    case mir::BinaryOp::kMul:
-      tok = " * ";
-      break;
-    case mir::BinaryOp::kDiv:
-      tok = " / ";
-      break;
+      return "/";
     case mir::BinaryOp::kMod:
-      tok = " % ";
-      break;
+      return "%";
     case mir::BinaryOp::kBitwiseAnd:
-      tok = " & ";
-      break;
+      return "&";
     case mir::BinaryOp::kBitwiseOr:
-      tok = " | ";
-      break;
+      return "|";
     case mir::BinaryOp::kBitwiseXor:
-      tok = " ^ ";
-      break;
+      return "^";
     case mir::BinaryOp::kEquality:
-      tok = " == ";
-      break;
+      return "==";
     case mir::BinaryOp::kInequality:
-      tok = " != ";
-      break;
+      return "!=";
     case mir::BinaryOp::kLessThan:
-      tok = " < ";
-      break;
+      return "<";
     case mir::BinaryOp::kLessEqual:
-      tok = " <= ";
-      break;
+      return "<=";
     case mir::BinaryOp::kGreaterThan:
-      tok = " > ";
-      break;
+      return ">";
     case mir::BinaryOp::kGreaterEqual:
-      tok = " >= ";
-      break;
+      return ">=";
     case mir::BinaryOp::kLogicalAnd:
-      return "(" + lhs + " && " + rhs + ")";
+      return "&&";
     case mir::BinaryOp::kLogicalOr:
-      return "(" + lhs + " || " + rhs + ")";
-    case mir::BinaryOp::kBitwiseXnor:
-      return "(" + lhs + ").BitwiseXnor(" + rhs + ")";
+      return "||";
     case mir::BinaryOp::kPower:
-      return "(" + lhs + ").Power(" + rhs + ")";
+    case mir::BinaryOp::kBitwiseXnor:
     case mir::BinaryOp::kShiftLeft:
-      return "(" + lhs + ").ShiftLeft(" + rhs + ")";
     case mir::BinaryOp::kLogicalShiftRight:
-      return "(" + lhs + ").LogicalShiftRight(" + rhs + ")";
     case mir::BinaryOp::kArithmeticShiftRight:
-      return "(" + lhs + ").ArithmeticShiftRight(" + rhs + ")";
     case mir::BinaryOp::kLogicalImplication:
-      return "(" + lhs + ").LogicalImplication(" + rhs + ")";
     case mir::BinaryOp::kLogicalEquivalence:
-      return "(" + lhs + ").LogicalEquivalence(" + rhs + ")";
     case mir::BinaryOp::kWildcardEquality:
-      return "(" + lhs + ").WildcardEquals(" + rhs + ")";
     case mir::BinaryOp::kWildcardInequality:
-      return "(!(" + lhs + ").WildcardEquals(" + rhs + "))";
     case mir::BinaryOp::kCaseEquality:
-      return "(" + lhs + ").CaseEqual(" + rhs + ")";
     case mir::BinaryOp::kCaseInequality:
-      return "(!(" + lhs + ").CaseEqual(" + rhs + "))";
     case mir::BinaryOp::kCasezEquality:
-      return "(" + lhs + ").CasezEquals(" + rhs + ")";
     case mir::BinaryOp::kCasexEquality:
-      return "(" + lhs + ").CasexEquals(" + rhs + ")";
+      throw InternalError(
+          "BinaryOpToken: method-style operator reached backend render; "
+          "HIR-to-MIR should have lifted it to a CallExpr");
   }
-  return "(" + lhs + std::string{tok} + rhs + ")";
+  throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
 
-auto RenderUnaryOpReal(
-    mir::UnaryOp op, const std::string& operand, const mir::Type& result_ty)
-    -> diag::Result<std::string> {
+auto UnaryOpToken(mir::UnaryOp op) -> std::string_view {
   switch (op) {
-    case mir::UnaryOp::kPlus:
-      return "(" + operand + ")";
     case mir::UnaryOp::kMinus:
-      return "(-(" + operand + "))";
-    case mir::UnaryOp::kLogicalNot:
-      return WrapBoolAsResultShape(result_ty, "!bool(" + operand + ")");
-    default:
-      break;
-  }
-  return diag::Fail(
-      diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-      "unary operator is not legal on real operands per LRM 11.3.1");
-}
-
-auto RenderUnaryOpIntegral(mir::UnaryOp op, const std::string& operand)
-    -> diag::Result<std::string> {
-  switch (op) {
-    case mir::UnaryOp::kPlus:
-      return "(" + operand + ")";
-    case mir::UnaryOp::kMinus:
-      return "(-" + operand + ")";
+      return "-";
     case mir::UnaryOp::kBitwiseNot:
-      return "(~" + operand + ")";
+      return "~";
     case mir::UnaryOp::kLogicalNot:
-      return "(!(" + operand + "))";
+      return "!";
+    case mir::UnaryOp::kPlus:
+      // kPlus has no C++ token: PackedArray / String have no `operator+()`
+      // (LRM 11.4.3 unary plus is a no-op), so render emits the bare
+      // operand instead -- handled separately in `RenderUnaryExpr`.
     case mir::UnaryOp::kReductionAnd:
-      return "(" + operand + ").ReductionAnd()";
     case mir::UnaryOp::kReductionOr:
-      return "(" + operand + ").ReductionOr()";
     case mir::UnaryOp::kReductionXor:
-      return "(" + operand + ").ReductionXor()";
     case mir::UnaryOp::kReductionNand:
-      return "(" + operand + ").ReductionNand()";
     case mir::UnaryOp::kReductionNor:
-      return "(" + operand + ").ReductionNor()";
     case mir::UnaryOp::kReductionXnor:
-      return "(" + operand + ").ReductionXnor()";
+      throw InternalError(
+          "UnaryOpToken: operator has no native C++ token; "
+          "kPlus is identity (handled by RenderUnaryExpr) and reductions "
+          "lift to CallExpr at HIR-to-MIR");
   }
-  throw InternalError("RenderUnaryOpIntegral: unknown MIR UnaryOp");
+  throw InternalError("UnaryOpToken: unknown MIR UnaryOp");
 }
 
-auto RenderUnaryExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::UnaryExpr& u)
-    -> diag::Result<std::string> {
-  const auto& operand_expr = view.Expr(u.operand);
-  auto operand_or = RenderExpr(view, operand_expr);
-  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-  if (IsRealFamilyType(view.Unit().GetType(operand_expr.type))) {
-    return RenderUnaryOpReal(u.op, *operand_or, view.Unit().GetType(expr.type));
+auto RenderUnaryExpr(const ScopeView& view, const mir::UnaryExpr& u)
+    -> std::string {
+  std::string operand = RenderExpr(view, view.Expr(u.operand));
+  // LRM 11.4.3: unary plus is an identity; no C++ `operator+()` exists on
+  // PackedArray / String / RealValue, so render the operand directly.
+  if (u.op == mir::UnaryOp::kPlus) {
+    return std::format("({})", operand);
   }
-  return RenderUnaryOpIntegral(u.op, *operand_or);
+  return std::format("({}{})", UnaryOpToken(u.op), operand);
 }
 
-auto RenderBinaryExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::BinaryExpr& b)
-    -> diag::Result<std::string> {
-  const auto& lhs_expr = view.Expr(b.lhs);
-  const auto& rhs_expr = view.Expr(b.rhs);
-  auto lhs_or = RenderExpr(view, lhs_expr);
-  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  auto rhs_or = RenderExpr(view, rhs_expr);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  // Slang inserts a propagated `ConversionExpr` on the narrower operand so by
-  // the time we reach a binary op both sides share a precision class. Dispatch
-  // by operand kind: real-family (LRM 11.3.1), string (LRM 6.16 Table 6-9),
-  // else integral PackedArray ops.
-  const auto& lhs_ty = view.Unit().GetType(lhs_expr.type);
-  const auto& rhs_ty = view.Unit().GetType(rhs_expr.type);
-  if (IsRealFamilyType(lhs_ty) || IsRealFamilyType(rhs_ty)) {
-    return RenderBinaryOpReal(
-        b.op, *lhs_or, *rhs_or, view.Unit().GetType(expr.type));
-  }
-  if (lhs_ty.Kind() == mir::TypeKind::kString &&
-      rhs_ty.Kind() == mir::TypeKind::kString) {
-    return RenderBinaryOpString(
-        b.op, *lhs_or, *rhs_or, view.Unit().GetType(expr.type));
-  }
-  const bool lhs_is_array =
-      std::holds_alternative<mir::UnpackedArrayType>(lhs_ty.data) ||
-      std::holds_alternative<mir::DynamicArrayType>(lhs_ty.data);
-  const bool rhs_is_array =
-      std::holds_alternative<mir::UnpackedArrayType>(rhs_ty.data) ||
-      std::holds_alternative<mir::DynamicArrayType>(rhs_ty.data);
-  if (lhs_is_array && rhs_is_array) {
-    return RenderBinaryOpArray(b.op, *lhs_or, *rhs_or);
-  }
-  return RenderBinaryOpIntegral(b.op, *lhs_or, *rhs_or);
+auto RenderBinaryExpr(const ScopeView& view, const mir::BinaryExpr& b)
+    -> std::string {
+  return std::format(
+      "({} {} {})", RenderExpr(view, view.Expr(b.lhs)), BinaryOpToken(b.op),
+      RenderExpr(view, view.Expr(b.rhs)));
+}
+
+// Brings an operand onto the host-bool plane so a native C++ logical
+// operator (`&&` / `||` / `!`) can take it. The wrap is observable only as
+// the operand of `kFromBool` -- the value-shape re-projection back to the
+// SV 1-bit integral lives there.
+auto RenderBoolCastExpr(const ScopeView& view, const mir::BoolCastExpr& b)
+    -> std::string {
+  return std::format("bool({})", RenderExpr(view, view.Expr(b.operand)));
 }
 
 auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
-    -> diag::Result<std::string> {
-  auto cond_or = RenderConditionAsBool(view, view.Expr(c.condition));
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  auto then_or = RenderExpr(view, view.Expr(c.then_value));
-  if (!then_or) return std::unexpected(std::move(then_or.error()));
-  auto else_or = RenderExpr(view, view.Expr(c.else_value));
-  if (!else_or) return std::unexpected(std::move(else_or.error()));
-  return "(" + *cond_or + " ? " + *then_or + " : " + *else_or + ")";
+    -> std::string {
+  return std::format(
+      "({} ? {} : {})", RenderConditionAsBool(view, view.Expr(c.condition)),
+      RenderExpr(view, view.Expr(c.then_value)),
+      RenderExpr(view, view.Expr(c.else_value)));
 }
 
 // `mir::CastExpr` is a type-level view change with no runtime semantic
@@ -518,12 +317,11 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
 // path.
 auto RenderCastExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast)
-    -> diag::Result<std::string> {
-  auto operand_or = RenderExpr(view, view.Expr(cast.operand));
-  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-  auto dest_or = RenderTypeAsCpp(view.Unit(), view.Class(), expr.type);
-  if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-  return "static_cast<" + *dest_or + ">(" + *std::move(operand_or) + ")";
+    -> std::string {
+  return std::format(
+      "static_cast<{}>({})",
+      RenderTypeAsCpp(view.Unit(), view.Class(), expr.type),
+      RenderExpr(view, view.Expr(cast.operand)));
 }
 
 // The bare C++ identifier this backend declares the builtin fn as. One
@@ -740,6 +538,42 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "FromPackedArray";
     case support::BuiltinFn::kFromByteArray:
       return "FromByteArray";
+    case support::BuiltinFn::kPow:
+      return "Pow";
+    case support::BuiltinFn::kShiftLeft:
+      return "ShiftLeft";
+    case support::BuiltinFn::kLogicalShiftRight:
+      return "LogicalShiftRight";
+    case support::BuiltinFn::kArithmeticShiftRight:
+      return "ArithmeticShiftRight";
+    case support::BuiltinFn::kBitwiseXnor:
+      return "BitwiseXnor";
+    case support::BuiltinFn::kLogicalImplication:
+      return "LogicalImplication";
+    case support::BuiltinFn::kLogicalEquivalence:
+      return "LogicalEquivalence";
+    case support::BuiltinFn::kWildcardEquals:
+      return "WildcardEquals";
+    case support::BuiltinFn::kCaseEqual:
+      return "CaseEqual";
+    case support::BuiltinFn::kCasezEquals:
+      return "CasezEquals";
+    case support::BuiltinFn::kCasexEquals:
+      return "CasexEquals";
+    case support::BuiltinFn::kReductionAnd:
+      return "ReductionAnd";
+    case support::BuiltinFn::kReductionOr:
+      return "ReductionOr";
+    case support::BuiltinFn::kReductionXor:
+      return "ReductionXor";
+    case support::BuiltinFn::kReductionNand:
+      return "ReductionNand";
+    case support::BuiltinFn::kReductionNor:
+      return "ReductionNor";
+    case support::BuiltinFn::kReductionXnor:
+      return "ReductionXnor";
+    case support::BuiltinFn::kFromBool:
+      return "FromBool";
     case support::BuiltinFn::kFileOpen:
       return "Open";
     case support::BuiltinFn::kFileClose:
@@ -802,31 +636,28 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
 // the separator mechanically.
 auto RenderBuiltinFnCall(
     const ScopeView& view, const mir::CallExpr& call, support::BuiltinFn id)
-    -> diag::Result<std::string> {
+    -> std::string {
   if (call.arguments.empty()) {
     throw InternalError(
         "RenderBuiltinFnCall: instance call expects a receiver argument");
   }
   const mir::Expr& receiver = view.Expr(call.arguments[0]);
-  auto recv_or = RenderExpr(view, receiver);
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
+  auto recv = RenderExpr(view, receiver);
   const std::string_view sep =
       view.Unit().GetType(receiver.type).Kind() == mir::TypeKind::kPointer
           ? "->"
           : ".";
   std::string args;
   for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i != 1) args += ", ";
-    args += *std::move(arg_or);
+    args += RenderExpr(view, view.Expr(call.arguments[i]));
   }
-  return std::format("({}){}{}({})", *recv_or, sep, BuiltinFnCppName(id), args);
+  return std::format("({}){}{}({})", recv, sep, BuiltinFnCppName(id), args);
 }
 
 auto RenderFreeFnCall(
     const ScopeView& view, const mir::CallExpr& call, support::BuiltinFn id)
-    -> diag::Result<std::string> {
+    -> std::string {
   const std::string_view ns = BuiltinFnCppNamespace(id);
   if (ns.empty()) {
     throw InternalError(
@@ -834,27 +665,33 @@ auto RenderFreeFnCall(
   }
   std::string args;
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i != 0) args += ", ";
-    args += *std::move(arg_or);
+    args += RenderExpr(view, view.Expr(call.arguments[i]));
   }
   return std::format("{}::{}({})", ns, BuiltinFnCppName(id), args);
 }
 
 auto RenderBuiltinStaticCall(
     const ScopeView& view, const mir::CallExpr& call,
-    const mir::BuiltinStaticCallee& callee) -> diag::Result<std::string> {
+    const mir::BuiltinStaticCallee& callee) -> std::string {
   std::string args;
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i != 0) args += ", ";
-    args += *std::move(arg_or);
+    args += RenderExpr(view, view.Expr(call.arguments[i]));
   }
+  // The qualifier names the SV type whose static method is being invoked.
+  // Enum-typed qualifiers go through the alias-aware `RenderEnumClassName`
+  // (the alias spelling matches the user's `typedef enum {...}` name); every
+  // other SV type maps to its canonical `lyra::value::...` C++ name via
+  // `RenderTypeAsCpp`. Splitting the two keeps the call-site choice
+  // ("qualified by enum alias vs by runtime library type") visible.
+  const auto& qual_ty = view.Unit().GetType(callee.type_qual);
+  const std::string qualifier =
+      qual_ty.IsEnum()
+          ? RenderEnumClassName(view.Class(), callee.type_qual)
+          : RenderTypeAsCpp(view.Unit(), view.Class(), callee.type_qual);
   return std::format(
-      "{}::{}({})", RenderEnumClassName(view.Class(), callee.type_qual),
-      BuiltinFnCppName(callee.id), args);
+      "{}::{}({})", qualifier, BuiltinFnCppName(callee.id), args);
 }
 
 // Constructs a value of the call's result data type: `<TypeName>(args)`, the
@@ -864,28 +701,24 @@ auto RenderBuiltinStaticCall(
 // itself -- the `Ref<T>` constructor binds it.
 auto RenderConstructorCall(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
-    -> diag::Result<std::string> {
-  auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), result_type);
-  if (!type_or) return std::unexpected(std::move(type_or.error()));
+    -> std::string {
+  std::string type = RenderTypeAsCpp(view.Unit(), view.Class(), result_type);
   std::string args;
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i != 0) args += ", ";
-    args += *std::move(arg_or);
+    args += RenderExpr(view, view.Expr(call.arguments[i]));
   }
-  return *type_or + "(" + args + ")";
+  return std::format("{}({})", type, args);
 }
 
 auto RenderCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
-    -> diag::Result<std::string> {
+    -> std::string {
   return std::visit(
       Overloaded{
-          [&](const mir::MethodRef& ref) -> diag::Result<std::string> {
+          [&](const mir::MethodRef& ref) -> std::string {
             if (ref.hops.value != 0) {
-              return diag::Fail(
-                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+              throw InternalError(
                   "method call across classes is not yet "
                   "implemented in cpp emit");
             }
@@ -897,37 +730,30 @@ auto RenderCallExpr(
             // so every argument renders uniformly.
             std::string args;
             for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-              auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
-              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
               if (i != 0) args += ", ";
-              args += *std::move(arg_or);
+              args += RenderExpr(view, view.Expr(call.arguments[i]));
             }
             return std::format("{}({})", decl.name, args);
           },
-          [&](const mir::BuiltinFnCallee& b) -> diag::Result<std::string> {
+          [&](const mir::BuiltinFnCallee& b) -> std::string {
             return RenderBuiltinFnCall(view, call, b.id);
           },
-          [&](const mir::BuiltinStaticCallee& b) -> diag::Result<std::string> {
+          [&](const mir::BuiltinStaticCallee& b) -> std::string {
             return RenderBuiltinStaticCall(view, call, b);
           },
-          [&](const mir::FreeFnCallee& f) -> diag::Result<std::string> {
+          [&](const mir::FreeFnCallee& f) -> std::string {
             return RenderFreeFnCall(view, call, f.id);
           },
-          [&](const mir::ClosureRef& cr) -> diag::Result<std::string> {
-            auto closure_or = RenderExpr(view, view.Expr(cr.closure));
-            if (!closure_or) {
-              return std::unexpected(std::move(closure_or.error()));
-            }
+          [&](const mir::ClosureRef& cr) -> std::string {
+            std::string closure = RenderExpr(view, view.Expr(cr.closure));
             std::string args;
             for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-              auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
-              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
               if (i != 0) args += ", ";
-              args += *std::move(arg_or);
+              args += RenderExpr(view, view.Expr(call.arguments[i]));
             }
-            return "(" + *closure_or + ")(" + args + ")";
+            return std::format("({})({})", closure, args);
           },
-          [&](const mir::ConstructorCallee&) -> diag::Result<std::string> {
+          [&](const mir::ConstructorCallee&) -> std::string {
             return RenderConstructorCall(view, call, result_type);
           },
       },
@@ -943,19 +769,16 @@ auto RenderCallExpr(
 // `ObservableMethod{kMutate}` call -- this render emits nothing implicit
 // on top of the explicit MIR shape.
 auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
-    -> diag::Result<std::string> {
+    -> std::string {
   return std::visit(
       Overloaded{
-          [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
-            auto receiver_or = RenderExpr(view, view.Expr(m.receiver));
-            if (!receiver_or) {
-              return std::unexpected(std::move(receiver_or.error()));
-            }
+          [&](const mir::MemberAccessExpr& m) -> std::string {
             const auto& cls = view.EnclosingClassAtHops(m.member.hops);
             const auto& var = cls.members.Get(m.member.var);
-            return *receiver_or + "->" + var.name;
+            return std::format(
+                "{}->{}", RenderExpr(view, view.Expr(m.receiver)), var.name);
           },
-          [&](const mir::LocalRef& l) -> diag::Result<std::string> {
+          [&](const mir::LocalRef& l) -> std::string {
             return LookupLocalName(view, l);
           },
           // HIR-to-MIR lowers an LHS selector chain to a container-access
@@ -963,15 +786,13 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           // returns a write-through reference, so the natural value-side
           // rendering is itself the assignment
           // target; LHS context needs no extra fix-up.
-          [&](const mir::CallExpr&) -> diag::Result<std::string> {
+          [&](const mir::CallExpr&) -> std::string {
             return RenderExpr(view, expr);
           },
-          [&](const mir::DerefExpr& d) -> diag::Result<std::string> {
-            auto ptr = RenderExpr(view, view.Expr(d.pointer));
-            if (!ptr) return std::unexpected(std::move(ptr.error()));
-            return "(*" + *ptr + ")";
+          [&](const mir::DerefExpr& d) -> std::string {
+            return std::format("(*{})", RenderExpr(view, view.Expr(d.pointer)));
           },
-          [&](const auto&) -> diag::Result<std::string> {
+          [&](const auto&) -> std::string {
             throw InternalError(
                 "RenderLhsExpr: expression form is not addressable; the "
                 "assignment target lowering should have produced an "
@@ -1002,27 +823,27 @@ auto RenderCompoundAssign(
     -> std::string {
   switch (op) {
     case mir::BinaryOp::kAdd:
-      return chain + " += " + rhs;
+      return std::format("{} += {}", chain, rhs);
     case mir::BinaryOp::kSub:
-      return chain + " -= " + rhs;
+      return std::format("{} -= {}", chain, rhs);
     case mir::BinaryOp::kMul:
-      return chain + " *= " + rhs;
+      return std::format("{} *= {}", chain, rhs);
     case mir::BinaryOp::kDiv:
-      return chain + " /= " + rhs;
+      return std::format("{} /= {}", chain, rhs);
     case mir::BinaryOp::kMod:
-      return chain + " %= " + rhs;
+      return std::format("{} %= {}", chain, rhs);
     case mir::BinaryOp::kBitwiseAnd:
-      return chain + " &= " + rhs;
+      return std::format("{} &= {}", chain, rhs);
     case mir::BinaryOp::kBitwiseOr:
-      return chain + " |= " + rhs;
+      return std::format("{} |= {}", chain, rhs);
     case mir::BinaryOp::kBitwiseXor:
-      return chain + " ^= " + rhs;
+      return std::format("{} ^= {}", chain, rhs);
     case mir::BinaryOp::kShiftLeft:
-      return chain + ".ShiftLeftAssign(" + rhs + ")";
+      return std::format("{}.ShiftLeftAssign({})", chain, rhs);
     case mir::BinaryOp::kLogicalShiftRight:
-      return chain + ".LogicalShiftRightAssign(" + rhs + ")";
+      return std::format("{}.LogicalShiftRightAssign({})", chain, rhs);
     case mir::BinaryOp::kArithmeticShiftRight:
-      return chain + ".ArithmeticShiftRightAssign(" + rhs + ")";
+      return std::format("{}.ArithmeticShiftRightAssign({})", chain, rhs);
     default:
       throw InternalError(
           "RenderCompoundAssign: BinaryOp is not a legal SV compound "
@@ -1032,9 +853,8 @@ auto RenderCompoundAssign(
 }
 
 auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
-    -> diag::Result<std::string> {
-  auto value_or = RenderExpr(view, view.Expr(a.value));
-  if (!value_or) return std::unexpected(std::move(value_or.error()));
+    -> std::string {
+  std::string value = RenderExpr(view, view.Expr(a.value));
 
   const mir::Expr& lhs_expr = view.Expr(a.target);
 
@@ -1044,39 +864,35 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
   // Both shapes arrive from HIR-to-MIR already lowered, so this path emits a
   // plain C++ assignment over whatever the LHS render produces.
   if (IsLhsBarePrimary(lhs_expr)) {
-    auto root_or = RenderLhsExpr(view, lhs_expr);
-    if (!root_or) return std::unexpected(std::move(root_or.error()));
+    std::string root = RenderLhsExpr(view, lhs_expr);
     if (a.compound_op.has_value()) {
-      return "(" + RenderCompoundAssign(*a.compound_op, *root_or, *value_or) +
-             ")";
+      return std::format(
+          "({})", RenderCompoundAssign(*a.compound_op, root, value));
     }
-    return "(" + *root_or + " = " + *value_or + ")";
+    return std::format("({} = {})", root, value);
   }
-  auto chain_or = RenderLhsExpr(view, lhs_expr);
-  if (!chain_or) return std::unexpected(std::move(chain_or.error()));
+  std::string chain = RenderLhsExpr(view, lhs_expr);
   if (a.compound_op.has_value()) {
-    return "(" + RenderCompoundAssign(*a.compound_op, *chain_or, *value_or) +
-           ")";
+    return std::format(
+        "({})", RenderCompoundAssign(*a.compound_op, chain, value));
   }
-  return *chain_or + " = " + *value_or;
+  return std::format("{} = {}", chain, value);
 }
 
 auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
-    -> diag::Result<std::string> {
+    -> std::string {
   const mir::Expr& target_expr = view.Expr(inc.target);
-  auto lhs_or = RenderLhsExpr(view, target_expr);
-  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  std::string lhs = *std::move(lhs_or);
+  std::string lhs = RenderLhsExpr(view, target_expr);
 
   switch (inc.op) {
     case mir::IncDecOp::kPreInc:
-      return "(++" + lhs + ")";
+      return std::format("(++{})", lhs);
     case mir::IncDecOp::kPostInc:
-      return "(" + lhs + "++)";
+      return std::format("({}++)", lhs);
     case mir::IncDecOp::kPreDec:
-      return "(--" + lhs + ")";
+      return std::format("(--{})", lhs);
     case mir::IncDecOp::kPostDec:
-      return "(" + lhs + "--)";
+      return std::format("({}--)", lhs);
   }
   throw InternalError("RenderIncDecExpr: unknown IncDecOp");
 }
@@ -1085,10 +901,10 @@ auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
 // `RefType` binding renders as `Ref<T> name`, a value binding as `T name`;
 // the wrapper comes from the type alone (RenderTypeAsCpp), never hand-written.
 auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
-    -> diag::Result<std::string> {
-  auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), bind.type);
-  if (!type_or) return std::unexpected(std::move(type_or.error()));
-  return *type_or + " " + bind.name;
+    -> std::string {
+  return std::format(
+      "{} {}", RenderTypeAsCpp(view.Unit(), view.Class(), bind.type),
+      bind.name);
 }
 
 // A closure renders from its captures, parameters, result type, and body alone.
@@ -1098,20 +914,18 @@ auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
 // lambda would dangle once the spawned branch outlives the referencing site.
 auto RenderClosureExpr(
     const ScopeView& view, const mir::ClosureExpr& closure,
-    mir::TypeId result_type) -> diag::Result<std::string> {
+    mir::TypeId result_type) -> std::string {
   if (closure.body == nullptr) {
     throw InternalError("RenderClosureExpr: closure has no body");
   }
 
-  auto result_ty_or = RenderTypeAsCpp(view.Unit(), view.Class(), result_type);
-  if (!result_ty_or) return std::unexpected(std::move(result_ty_or.error()));
-  const std::string return_clause = " -> " + *result_ty_or;
+  const std::string return_clause = std::format(
+      " -> {}", RenderTypeAsCpp(view.Unit(), view.Class(), result_type));
 
   const ScopeView body_view =
       ScopeView::ForRoot(view.Unit(), view.Class(), *closure.body);
-  auto body_or = RenderBlockStatements(body_view, 1);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  const std::string body = " {\n" + *body_or + "}";
+  const std::string body =
+      std::format(" {{\n{}}}", RenderBlockStatements(body_view, 1));
 
   if (std::holds_alternative<mir::CoroutineType>(
           view.Unit().GetType(result_type).data)) {
@@ -1123,18 +937,14 @@ auto RenderClosureExpr(
     std::string args;
     for (std::size_t i = 0; i < closure.captures.size(); ++i) {
       const auto& bind = closure.body->vars.Get(closure.captures[i].binding);
-      auto decl_or = RenderBindingParamDecl(view, bind);
-      if (!decl_or) return std::unexpected(std::move(decl_or.error()));
-      auto arg_or = RenderExpr(view, view.Expr(closure.captures[i].value));
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       if (i != 0) {
         params += ", ";
         args += ", ";
       }
-      params += *decl_or;
-      args += *arg_or;
+      params += RenderBindingParamDecl(view, bind);
+      args += RenderExpr(view, view.Expr(closure.captures[i].value));
     }
-    return "[](" + params + ")" + return_clause + body + "(" + args + ")";
+    return std::format("[]({}){}{}({})", params, return_clause, body, args);
   }
 
   // The capture clause never contains `[this]`, `[=]`, or `[&]` -- every entry
@@ -1144,22 +954,21 @@ auto RenderClosureExpr(
   for (std::size_t i = 0; i < closure.captures.size(); ++i) {
     const std::string& bind_name =
         closure.body->vars.Get(closure.captures[i].binding).name;
-    auto source_or = RenderExpr(view, view.Expr(closure.captures[i].value));
-    if (!source_or) return std::unexpected(std::move(source_or.error()));
     if (i != 0) captures_text += ", ";
-    captures_text += bind_name + " = " + *source_or;
+    captures_text += std::format(
+        "{} = {}", bind_name,
+        RenderExpr(view, view.Expr(closure.captures[i].value)));
   }
 
   std::string params_text;
   for (std::size_t i = 0; i < closure.params.size(); ++i) {
     const auto& bind = closure.body->vars.Get(closure.params[i].binding);
-    auto decl_or = RenderBindingParamDecl(view, bind);
-    if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     if (i != 0) params_text += ", ";
-    params_text += *decl_or;
+    params_text += RenderBindingParamDecl(view, bind);
   }
 
-  return "[" + captures_text + "](" + params_text + ")" + return_clause + body;
+  return std::format(
+      "[{}]({}){}{}", captures_text, params_text, return_clause, body);
 }
 
 // LRM 10.10 unpacked array concatenation into a queue. Each operand is spliced
@@ -1169,12 +978,12 @@ auto RenderClosureExpr(
 // element default is threaded.
 auto RenderQueueConcat(
     const ScopeView& view, const mir::Type& result_ty, const mir::ConcatExpr& c)
-    -> diag::Result<std::string> {
+    -> std::string {
   const mir::TypeId elem_type_id =
       std::get<mir::QueueType>(result_ty.data).element_type;
-  auto elem_cpp = RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id);
-  if (!elem_cpp) return std::unexpected(std::move(elem_cpp.error()));
-  std::string out = "lyra::value::MakeQueueConcat<" + *elem_cpp + ">(";
+  std::string out = std::format(
+      "lyra::value::MakeQueueConcat<{}>(",
+      RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id));
   for (std::size_t i = 0; i < c.operands.size(); ++i) {
     const auto& op_expr = view.Expr(c.operands[i]);
     const auto& op_ty = view.Unit().GetType(op_expr.type);
@@ -1182,11 +991,10 @@ auto RenderQueueConcat(
         std::holds_alternative<mir::QueueType>(op_ty.data) ||
         std::holds_alternative<mir::DynamicArrayType>(op_ty.data) ||
         std::holds_alternative<mir::UnpackedArrayType>(op_ty.data);
-    auto rendered = RenderExpr(view, op_expr);
-    if (!rendered) return std::unexpected(std::move(rendered.error()));
+    std::string rendered = RenderExpr(view, op_expr);
     if (i != 0) out += ", ";
-    out += spread ? "lyra::value::QSpread(" + *rendered + ")"
-                  : "lyra::value::QElem(" + *rendered + ")";
+    out += spread ? std::format("lyra::value::QSpread({})", rendered)
+                  : std::format("lyra::value::QElem({})", rendered);
   }
   out += ")";
   return out;
@@ -1194,7 +1002,7 @@ auto RenderQueueConcat(
 
 auto RenderConcatExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
-    -> diag::Result<std::string> {
+    -> std::string {
   const auto& result_ty = view.Unit().GetType(expr.type);
   if (std::holds_alternative<mir::QueueType>(result_ty.data)) {
     return RenderQueueConcat(view, result_ty, c);
@@ -1203,13 +1011,11 @@ auto RenderConcatExpr(
     throw InternalError("RenderConcatExpr: hir lowering produced empty concat");
   }
   const auto join = [&](std::string_view open, std::string_view sep,
-                        std::string_view close) -> diag::Result<std::string> {
+                        std::string_view close) -> std::string {
     std::string out{open};
     for (std::size_t i = 0; i < c.operands.size(); ++i) {
-      auto rendered = RenderExpr(view, view.Expr(c.operands[i]));
-      if (!rendered) return std::unexpected(std::move(rendered.error()));
       if (i != 0) out += sep;
-      out += *rendered;
+      out += RenderExpr(view, view.Expr(c.operands[i]));
     }
     out += close;
     return out;
@@ -1235,7 +1041,7 @@ auto RenderConcatExpr(
 // and as a construction-call argument.
 auto RenderArrayLiteralExpr(
     const ScopeView& view, const mir::Expr& expr,
-    const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
+    const mir::ArrayLiteralExpr& a) -> std::string {
   const auto& container_ty = view.Unit().GetType(expr.type);
   const mir::TypeId elem_type_id = std::visit(
       [](const auto& ty) -> mir::TypeId {
@@ -1252,15 +1058,13 @@ auto RenderArrayLiteralExpr(
         }
       },
       container_ty.data);
-  auto elem_type_or = RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id);
-  if (!elem_type_or) return std::unexpected(std::move(elem_type_or.error()));
-  std::string out =
-      std::format("std::array<{}, {}>{{", *elem_type_or, a.elements.size());
+  std::string out = std::format(
+      "std::array<{}, {}>{{",
+      RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id),
+      a.elements.size());
   for (std::size_t i = 0; i < a.elements.size(); ++i) {
-    auto rendered = RenderExpr(view, view.Expr(a.elements[i]));
-    if (!rendered) return std::unexpected(std::move(rendered.error()));
     if (i != 0) out += ", ";
-    out += *rendered;
+    out += RenderExpr(view, view.Expr(a.elements[i]));
   }
   out += "}";
   return out;
@@ -1271,15 +1075,12 @@ auto RenderArrayLiteralExpr(
 // including when the tuple is an element of an outer array literal.
 auto RenderTupleExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::TupleExpr& t)
-    -> diag::Result<std::string> {
-  auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), expr.type);
-  if (!type_or) return std::unexpected(std::move(type_or.error()));
-  std::string out = *type_or + "{";
+    -> std::string {
+  std::string out = std::format(
+      "{}{{", RenderTypeAsCpp(view.Unit(), view.Class(), expr.type));
   for (std::size_t i = 0; i < t.components.size(); ++i) {
-    auto rendered = RenderExpr(view, view.Expr(t.components[i]));
-    if (!rendered) return std::unexpected(std::move(rendered.error()));
     if (i != 0) out += ", ";
-    out += *rendered;
+    out += RenderExpr(view, view.Expr(t.components[i]));
   }
   out += "}";
   return out;
@@ -1287,25 +1088,23 @@ auto RenderTupleExpr(
 
 auto RenderReplicationExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ReplicationExpr& r)
-    -> diag::Result<std::string> {
-  auto count = RenderExpr(view, view.Expr(r.count));
-  if (!count) return std::unexpected(std::move(count.error()));
-  auto concat = RenderExpr(view, view.Expr(r.concat));
-  if (!concat) return std::unexpected(std::move(concat.error()));
+    -> std::string {
+  std::string count = RenderExpr(view, view.Expr(r.count));
+  std::string concat = RenderExpr(view, view.Expr(r.concat));
   const auto& count_ty = view.Unit().GetType(view.Expr(r.count).type);
   std::string count_text = count_ty.IsIntegralPacked()
-                               ? std::format("({}).ToInt64()", *count)
-                               : *count;
+                               ? std::format("({}).ToInt64()", count)
+                               : count;
   const auto& result_ty = view.Unit().GetType(expr.type);
   if (result_ty.IsIntegralPacked()) {
     return std::format(
         "lyra::value::PackedArray::Replicate({}, "
         "static_cast<std::uint64_t>({}))",
-        *concat, count_text);
+        concat, count_text);
   }
   if (result_ty.Kind() == mir::TypeKind::kString) {
     return std::format(
-        "lyra::value::ReplicateString({}, {})", *concat, count_text);
+        "lyra::value::ReplicateString({}, {})", concat, count_text);
   }
   throw InternalError(
       "RenderReplicationExpr: result type must be PackedArrayType or string");
@@ -1316,131 +1115,121 @@ auto RenderReplicationExpr(
 // explicit `ObservableMethod{kGet}` call that HIR-to-MIR wraps around an
 // observable read.
 auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
-    -> diag::Result<std::string> {
-  const mir::Expr& ptr_expr = view.Expr(d.pointer);
-  auto ptr_or = RenderExpr(view, ptr_expr);
-  if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
-  return "(*" + *ptr_or + ")";
+    -> std::string {
+  return std::format("(*{})", RenderExpr(view, view.Expr(d.pointer)));
 }
 
 // `&place` emitted as the C++ address-of operator. Backend-side
 // canonicalization: `&(*p)` collapses to `p` directly, avoiding a no-op
 // round-trip through the address-of/dereference pair.
 auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
-    -> diag::Result<std::string> {
+    -> std::string {
   const mir::Expr& operand_expr = view.Expr(a.operand);
   if (const auto* deref = std::get_if<mir::DerefExpr>(&operand_expr.data)) {
     return RenderExpr(view, view.Expr(deref->pointer));
   }
-  auto operand_or = RenderLhsExpr(view, operand_expr);
-  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-  return "&" + *operand_or;
+  return std::format("&{}", RenderLhsExpr(view, operand_expr));
 }
 
 }  // namespace
 
-auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
-    -> diag::Result<std::string> {
+auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
   return std::visit(
       Overloaded{
-          [&](const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
+          [&](const mir::IntegerLiteral& lit) -> std::string {
             return RenderIntegerLiteralExpr(view, expr, lit);
           },
-          [&](const mir::StringLiteral& s) -> diag::Result<std::string> {
+          [&](const mir::StringLiteral& s) -> std::string {
             return RenderCStringLiteral(s.value);
           },
-          [](const mir::TimeLiteral&) -> diag::Result<std::string> {
-            return diag::Fail(
-                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+          [](const mir::TimeLiteral&) -> std::string {
+            throw InternalError(
                 "TimeLiteral is not yet implemented in cpp emit");
           },
-          [&](const mir::RealLiteral& r) -> diag::Result<std::string> {
+          [&](const mir::RealLiteral& r) -> std::string {
             return RenderRealLiteralExpr(view, expr, r);
           },
-          [](const mir::NullLiteral&) -> diag::Result<std::string> {
+          [](const mir::NullLiteral&) -> std::string {
             return std::string{"nullptr"};
           },
-          [&](const mir::ParamRef& r) -> diag::Result<std::string> {
+          [](const mir::HostIntLiteral& h) -> std::string {
+            return std::format("{}LL", h.value);
+          },
+          [&](const mir::ParamRef& r) -> std::string {
             return RenderParamExpr(view, r);
           },
-          [&](const mir::LocalRef& l) -> diag::Result<std::string> {
+          [&](const mir::LocalRef& l) -> std::string {
             return LookupLocalName(view, l);
           },
-          [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
-            return RenderUnaryExpr(view, expr, u);
+          [&](const mir::UnaryExpr& u) -> std::string {
+            return RenderUnaryExpr(view, u);
           },
-          [&](const mir::BinaryExpr& b) -> diag::Result<std::string> {
-            return RenderBinaryExpr(view, expr, b);
+          [&](const mir::BinaryExpr& b) -> std::string {
+            return RenderBinaryExpr(view, b);
           },
-          [&](const mir::ConditionalExpr& c) -> diag::Result<std::string> {
+          [&](const mir::BoolCastExpr& b) -> std::string {
+            return RenderBoolCastExpr(view, b);
+          },
+          [&](const mir::ConditionalExpr& c) -> std::string {
             return RenderConditionalExpr(view, c);
           },
-          [&](const mir::AssignExpr& a) -> diag::Result<std::string> {
+          [&](const mir::AssignExpr& a) -> std::string {
             return RenderAssignExpr(view, a);
           },
-          [&](const mir::IncDecExpr& inc) -> diag::Result<std::string> {
+          [&](const mir::IncDecExpr& inc) -> std::string {
             return RenderIncDecExpr(view, inc);
           },
-          [&](const mir::CastExpr& cast) -> diag::Result<std::string> {
+          [&](const mir::CastExpr& cast) -> std::string {
             return RenderCastExpr(view, expr, cast);
           },
-          [&](const mir::CallExpr& call) -> diag::Result<std::string> {
+          [&](const mir::CallExpr& call) -> std::string {
             return RenderCallExpr(view, call, expr.type);
           },
-          [&](const mir::DerefExpr& d) -> diag::Result<std::string> {
+          [&](const mir::DerefExpr& d) -> std::string {
             return RenderDerefExpr(view, d);
           },
-          [&](const mir::AddressOfExpr& a) -> diag::Result<std::string> {
+          [&](const mir::AddressOfExpr& a) -> std::string {
             return RenderAddressOfExpr(view, a);
           },
-          [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
+          [&](const mir::MemberAccessExpr& m) -> std::string {
             const auto& cls = view.EnclosingClassAtHops(m.member.hops);
             const auto& var = cls.members.Get(m.member.var);
-            auto receiver_or = RenderExpr(view, view.Expr(m.receiver));
-            if (!receiver_or) {
-              return std::unexpected(std::move(receiver_or.error()));
-            }
-            return *receiver_or + "->" + var.name;
+            return std::format(
+                "{}->{}", RenderExpr(view, view.Expr(m.receiver)), var.name);
           },
-          [&](const mir::ClosureExpr& cl) -> diag::Result<std::string> {
+          [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl, expr.type);
           },
-          [&](const mir::ConcatExpr& c) -> diag::Result<std::string> {
+          [&](const mir::ConcatExpr& c) -> std::string {
             return RenderConcatExpr(view, expr, c);
           },
-          [&](const mir::ReplicationExpr& r) -> diag::Result<std::string> {
+          [&](const mir::ReplicationExpr& r) -> std::string {
             return RenderReplicationExpr(view, expr, r);
           },
-          [&](const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
+          [&](const mir::ArrayLiteralExpr& a) -> std::string {
             return RenderArrayLiteralExpr(view, expr, a);
           },
-          [&](const mir::TupleExpr& t) -> diag::Result<std::string> {
+          [&](const mir::TupleExpr& t) -> std::string {
             return RenderTupleExpr(view, expr, t);
           },
-          [&](const mir::AwaitExpr& a) -> diag::Result<std::string> {
-            auto awaitable_or = RenderExpr(view, view.Expr(a.awaitable));
-            if (!awaitable_or) {
-              return std::unexpected(std::move(awaitable_or.error()));
-            }
-            return "co_await " + *awaitable_or;
+          [&](const mir::AwaitExpr& a) -> std::string {
+            return std::format(
+                "co_await {}", RenderExpr(view, view.Expr(a.awaitable)));
           },
-          [&](const mir::TupleGetExpr& g) -> diag::Result<std::string> {
-            auto tuple_or = RenderExpr(view, view.Expr(g.tuple));
-            if (!tuple_or) return std::unexpected(std::move(tuple_or.error()));
-            return "std::get<" + std::to_string(g.index) + ">(" + *tuple_or +
-                   ")";
+          [&](const mir::TupleGetExpr& g) -> std::string {
+            return std::format(
+                "std::get<{}>({})", g.index,
+                RenderExpr(view, view.Expr(g.tuple)));
           },
       },
       expr.data);
 }
 
 auto RenderConditionAsBool(const ScopeView& view, const mir::Expr& expr)
-    -> diag::Result<std::string> {
-  auto text_or = RenderExpr(view, expr);
-  if (!text_or) return std::unexpected(std::move(text_or.error()));
+    -> std::string {
   // PackedArray's `explicit operator bool` fires in any boolean context (if /
   // while / for / ternary cond / `&&` / `||` / `!`), so no wrapping needed.
-  return *text_or;
+  return RenderExpr(view, expr);
 }
 
 }  // namespace lyra::backend::cpp

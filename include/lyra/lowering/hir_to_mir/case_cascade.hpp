@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -48,7 +49,8 @@ template <typename LabelLowerer>
 auto BuildEqualityChain(
     WalkFrame frame, CaseSnapshotRefs snapshot, mir::TypeId bit_type,
     mir::BinaryOp compare_op, std::uint32_t sel_hops, std::size_t label_count,
-    LabelLowerer&& lower_label) -> diag::Result<mir::ExprId> {
+    LabelLowerer&& lower_label, const mir::CompilationUnit& unit)
+    -> diag::Result<mir::ExprId> {
   auto& enc_scope = *frame.current_block;
   std::optional<mir::ExprId> acc;
   for (std::size_t i = 0; i < label_count; ++i) {
@@ -64,19 +66,11 @@ auto BuildEqualityChain(
                     .hops = mir::BlockHops{.value = sel_hops},
                     .var = snapshot.sel_var},
             .type = snapshot.sel_type});
-    const mir::ExprId cmp = enc_scope.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = compare_op, .lhs = sel_ref, .rhs = label_id},
-            .type = bit_type});
+    const mir::ExprId cmp = enc_scope.exprs.Add(BuildMirBinaryExpr(
+        unit, enc_scope, compare_op, sel_ref, label_id, bit_type));
     if (acc.has_value()) {
-      acc = enc_scope.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kLogicalOr, .lhs = *acc, .rhs = cmp},
-              .type = bit_type});
+      acc = enc_scope.exprs.Add(BuildMirBinaryExpr(
+          unit, enc_scope, mir::BinaryOp::kLogicalOr, *acc, cmp, bit_type));
     } else {
       acc = cmp;
     }

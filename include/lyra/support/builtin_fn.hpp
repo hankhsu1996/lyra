@@ -232,6 +232,35 @@ enum class BuiltinFn : std::uint16_t {
   kConvertFrom,
   kFromPackedArray,
   kFromByteArray,
+  // Operator realizations on `PackedArray`. HIR-to-MIR lifts the
+  // method-style SV operators (LRM 11.4) into `CallExpr` against these
+  // entries, so the backend renders every operator mechanically: native
+  // forms (`+`, `==`, ...) collapse to a single formatter, method forms
+  // route through the call path. The shift / power / xnor / wildcard /
+  // case / implication / equivalence ids are instance methods on the
+  // receiver (`args[0]`); the reduction ids likewise take the operand as
+  // `args[0]`. `kFromBool` is a static factory that wraps a host bool
+  // into a 1-bit `PackedArray` (used to shape the result of a real /
+  // string comparison or logical operator into the LRM 11.3 / 11.4 1-bit
+  // integral result type).
+  kPow,
+  kShiftLeft,
+  kLogicalShiftRight,
+  kArithmeticShiftRight,
+  kBitwiseXnor,
+  kLogicalImplication,
+  kLogicalEquivalence,
+  kWildcardEquals,
+  kCaseEqual,
+  kCasezEquals,
+  kCasexEquals,
+  kReductionAnd,
+  kReductionOr,
+  kReductionXor,
+  kReductionNand,
+  kReductionNor,
+  kReductionXnor,
+  kFromBool,
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,
@@ -242,7 +271,7 @@ enum class BuiltinFn : std::uint16_t {
   return id == BuiltinFn::kEnumFirst || id == BuiltinFn::kEnumLast ||
          id == BuiltinFn::kEnumNum || id == BuiltinFn::kFromInt ||
          id == BuiltinFn::kConvertFrom || id == BuiltinFn::kFromPackedArray ||
-         id == BuiltinFn::kFromByteArray;
+         id == BuiltinFn::kFromByteArray || id == BuiltinFn::kFromBool;
 }
 
 // True iff the function modifies its receiver argument's storage in place.
