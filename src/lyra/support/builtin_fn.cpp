@@ -328,6 +328,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "emit_error";
     case BuiltinFn::kEmitFatal:
       return "emit_fatal";
+    case BuiltinFn::kSetTimeFormat:
+      return "set_time_format";
+    case BuiltinFn::kResetTimeFormat:
+      return "reset_time_format";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

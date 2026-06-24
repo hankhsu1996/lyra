@@ -71,6 +71,13 @@ struct TimeFormat {
   std::int32_t min_width = 20;
 };
 
+// LRM Table 20-2: a power value maps to one of {1, 10, 100} times a unit
+// that cycles s / ms / us / ns / ps / fs every three decades below 1 s.
+// Used by the `$printtimescale` lowering to compile-time format the
+// "Time scale of ..." message and by any future caller that needs the same
+// power-to-text projection.
+[[nodiscard]] auto TimeUnitText(std::int8_t power) -> std::string;
+
 // Per-call context routed alongside the spec into every Formatter::Format.
 // Holds the design-wide bits that a formatter sometimes needs but the spec
 // itself cannot carry (the spec is closed and shared across call sites). At

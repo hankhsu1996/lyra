@@ -145,6 +145,14 @@ enum class BuiltinFn : std::uint16_t {
   kEmitWarning,
   kEmitError,
   kEmitFatal,
+  // LRM 20.4.3 `$timeformat` state setter / reset on `RuntimeServices`. The
+  // setter takes the four `%t` display arguments (units power, precision,
+  // suffix, minimum field width) as SV values; the reset form takes none and
+  // restores the LRM Table 20-3 defaults. Two distinct methods rather than
+  // one with arity-driven branching, mirroring the print `Write` / `Writeln`
+  // and diagnostic `EmitX` splits.
+  kSetTimeFormat,
+  kResetTimeFormat,
   // LRM 21.3.4.3 scan primitives. `Scan` is a pure value-layer parser;
   // `PeekBuffered` / `AdvanceFd` are the file-side bytes-and-position
   // operations a `$fscanf` lowering composes with `Scan`.

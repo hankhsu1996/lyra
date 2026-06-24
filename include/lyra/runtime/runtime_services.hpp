@@ -9,6 +9,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -93,11 +94,18 @@ class RuntimeServices {
   // scope-precision delay against to reach the engine's tick.
   [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t;
 
-  // The design-wide `$timeformat` state (LRM 20.4.3) read by `%t`. The store is
-  // value-level; the `$timeformat` set / reset semantics live in the runtime
-  // entries that resolve the value before calling here.
+  // The design-wide `$timeformat` state (LRM 20.4.3) read by `%t`. The reader
+  // is the value-format machinery; the two setter methods are the
+  // `$timeformat` SV surface -- the four-argument set form takes the LRM
+  // 20.4.3 display arguments as SV values, and the no-argument reset form
+  // restores the LRM Table 20-3 defaults (display unit is the design-global
+  // precision, which only the runtime resolves).
   [[nodiscard]] auto TimeFormat() const -> const value::TimeFormat&;
-  void SetTimeFormat(const value::TimeFormat& time_format);
+  void SetTimeFormat(
+      const value::PackedArray& units_power,
+      const value::PackedArray& precision, const value::String& suffix,
+      const value::PackedArray& min_width);
+  void ResetTimeFormat();
 
  private:
   StreamDispatcher* stream_ = nullptr;

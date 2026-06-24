@@ -1,8 +1,11 @@
 #include "lyra/value/format.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -11,6 +14,23 @@
 #include "lyra/value/string.hpp"
 
 namespace lyra::value {
+
+auto TimeUnitText(std::int8_t power) -> std::string {
+  constexpr std::array<std::string_view, 6> kUnits = {"s",  "ms", "us",
+                                                      "ns", "ps", "fs"};
+  constexpr std::array<std::string_view, 3> kMantissa = {"1", "10", "100"};
+  const int p = static_cast<int>(power);
+  const int index = (-p + 2) / 3;
+  const int mantissa_exp = p + (3 * index);
+  const std::string_view unit = (index >= 0 && index < 6)
+                                    ? kUnits.at(static_cast<std::size_t>(index))
+                                    : "?";
+  const std::string_view mantissa =
+      (mantissa_exp >= 0 && mantissa_exp < 3)
+          ? kMantissa.at(static_cast<std::size_t>(mantissa_exp))
+          : "?";
+  return std::string(mantissa) + std::string(unit);
+}
 
 namespace {
 
