@@ -93,7 +93,10 @@ class Engine {
   // ScheduleInactive    -- enqueue on the inactive region of the current
   //                        slot (used by `#0` delays).
   // ScheduleAtTime      -- enqueue at a future SimTime (used by `#N`).
-  // RequestFinish       -- tear down the simulation (used by `$finish`).
+  // RequestFinish       -- tear down the simulation (used by `$finish` and
+  //                        the implicit shutdown that `$fatal` chains;
+  //                        `fatal` true makes Run() return a non-zero exit
+  //                        code per LRM 20.10).
   // Now                 -- query current simulation time.
   // Spawn               -- adopt a coroutine created mid-simulation as a
   //                        runnable process and schedule it (used by fork-join
@@ -101,7 +104,7 @@ class Engine {
   void ScheduleNextDelta(CoroutineHandle handle);
   void ScheduleInactive(CoroutineHandle handle);
   void ScheduleAtTime(SimTime when, CoroutineHandle handle);
-  void RequestFinish(int level);
+  void RequestFinish(int level, bool fatal = false);
   void Spawn(Coroutine coroutine);
   [[nodiscard]] auto Now() const -> SimTime {
     return now_;
@@ -184,6 +187,7 @@ class Engine {
   bool bound_ = false;
   bool ran_ = false;
   bool finished_ = false;
+  bool fatal_finish_ = false;
 };
 
 }  // namespace lyra::runtime

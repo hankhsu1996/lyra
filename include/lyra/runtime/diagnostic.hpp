@@ -14,6 +14,7 @@ enum class Severity : std::uint8_t {
   kInfo,
   kWarning,
   kError,
+  kFatal,
 };
 
 struct DiagnosticRecord {
@@ -45,6 +46,8 @@ class DiagnosticDispatcher {
   void EmitWarning(
       const lyra::value::String& origin, const lyra::value::String& text);
   void EmitError(
+      const lyra::value::String& origin, const lyra::value::String& text);
+  void EmitFatal(
       const lyra::value::String& origin, const lyra::value::String& text);
 
  private:
