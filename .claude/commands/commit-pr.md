@@ -86,7 +86,10 @@ Each tool runs **once**. Formatters run in write mode; rerunning them in check m
 
 ### Phase 2: PR
 
-9. **Rebase if behind main:** If commits behind > 0, run `git rebase origin/main`
+9. **Rebase if behind main:** If commits behind > 0:
+   - `git rebase origin/main`
+   - Re-run clang-format (a rebase can drift C++ formatting against upstream):
+     - `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
 10. **Push:** `git push -u origin <branch>`
 11. **Create PR:** `gh pr create --title "..." --body "..."`
 12. **Enable auto-merge:** `gh pr merge --auto --squash`
