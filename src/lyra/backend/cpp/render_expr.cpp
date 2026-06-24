@@ -19,7 +19,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/conversion.hpp"
+#include "lyra/mir/cast.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
@@ -591,17 +591,27 @@ auto RenderRealToIntegralConversion(
       RenderPackedArrayCtorArgs(dst_pa));
 }
 
-auto RenderConversionExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::ConversionExpr& cv)
+auto RenderCastExpr(
+    const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast)
     -> diag::Result<std::string> {
-  const auto& src_expr = view.Expr(cv.operand);
+  const auto& src_expr = view.Expr(cast.operand);
   const auto& src_ty = view.Unit().GetType(src_expr.type);
   const auto& dst_ty = view.Unit().GetType(expr.type);
   auto operand_or = RenderExpr(view, src_expr);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
 
-  // Dispatch by (source category, destination category). Each branch is
-  // one (src, dst) emit form.
+  // Dispatch by (source category, destination category). Each branch is one
+  // (src, dst) emit form.
+  // Pointer-to-pointer reinterpret: the runtime returns a type-erased pointer
+  // (e.g. `void*` from a by-name navigation) and the MIR re-types it at the
+  // call site. The C++ realization is a `static_cast` to the destination
+  // pointer spelling.
+  if (src_ty.Kind() == mir::TypeKind::kPointer &&
+      dst_ty.Kind() == mir::TypeKind::kPointer) {
+    auto dest_or = RenderTypeAsCpp(view.Unit(), view.Class(), expr.type);
+    if (!dest_or) return std::unexpected(std::move(dest_or.error()));
+    return "static_cast<" + *dest_or + ">(" + *std::move(operand_or) + ")";
+  }
   if (IsRealFamilyType(src_ty) && IsRealFamilyType(dst_ty)) {
     return RenderRealConversion(*std::move(operand_or), src_ty, dst_ty);
   }
@@ -618,8 +628,8 @@ auto RenderConversionExpr(
         *std::move(operand_or), dst_ty.AsIntegralPacked());
   }
   // LRM 21.3.4.3: $sscanf unpacked-array-of-byte source lifts to string.
-  // The lowering layer inserts the ConversionExpr at the call boundary,
-  // leaving this site as the single emit point.
+  // The lowering layer inserts the cast at the call boundary, leaving this
+  // site as the single emit point.
   if (src_ty.Kind() == mir::TypeKind::kUnpackedArray &&
       dst_ty.Kind() == mir::TypeKind::kString) {
     return std::format(
@@ -632,9 +642,9 @@ auto RenderConversionExpr(
     return std::format(
         "lyra::value::String::FromPackedArray({})", *std::move(operand_or));
   }
-  // Identity / no-op rendering: the conversion exists in MIR but the
-  // operand's already-rendered C++ matches the destination shape (e.g. a
-  // string -> string lift).
+  // Identity / no-op rendering: the cast exists in MIR but the operand's
+  // already-rendered C++ matches the destination shape (e.g. a string -> string
+  // lift).
   return *std::move(operand_or);
 }
 
@@ -1482,20 +1492,6 @@ auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
   return "&" + *operand_or;
 }
 
-// Reinterprets a borrowed pointer as a different pointer type stated by the
-// expression's `type`. Renders as `static_cast<DestType>(operand)`; the
-// destination spelling comes from the type table, not from any local
-// inference.
-auto RenderPointerCastExpr(
-    const ScopeView& view, const mir::PointerCastExpr& cast, mir::TypeId dest)
-    -> diag::Result<std::string> {
-  auto operand_or = RenderExpr(view, view.Expr(cast.operand));
-  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-  auto dest_or = RenderTypeAsCpp(view.Unit(), view.Class(), dest);
-  if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-  return "static_cast<" + *dest_or + ">(" + *operand_or + ")";
-}
-
 }  // namespace
 
 auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
@@ -1541,8 +1537,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::IncDecExpr& inc) -> diag::Result<std::string> {
             return RenderIncDecExpr(view, inc);
           },
-          [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
-            return RenderConversionExpr(view, expr, cv);
+          [&](const mir::CastExpr& cast) -> diag::Result<std::string> {
+            return RenderCastExpr(view, expr, cast);
           },
           [&](const mir::CallExpr& call) -> diag::Result<std::string> {
             return RenderCallExpr(view, call, expr.type);
@@ -1552,9 +1548,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           },
           [&](const mir::AddressOfExpr& a) -> diag::Result<std::string> {
             return RenderAddressOfExpr(view, a);
-          },
-          [&](const mir::PointerCastExpr& c) -> diag::Result<std::string> {
-            return RenderPointerCastExpr(view, c, expr.type);
           },
           [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
             const auto& cls = view.EnclosingClassAtHops(m.member.hops);

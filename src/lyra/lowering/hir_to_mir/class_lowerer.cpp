@@ -386,8 +386,7 @@ auto BuildDownwardNavValue(
                   .arguments = {cur, string_literal(hops.back().name)}},
           .type = void_ptr_type});
   return mir::Expr{
-      .data = mir::PointerCastExpr{.operand = get_signal_id},
-      .type = slot_type};
+      .data = mir::CastExpr{.operand = get_signal_id}, .type = slot_type};
 }
 
 // A downward slot resolves in the constructor by navigating from the enclosing

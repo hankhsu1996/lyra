@@ -11,8 +11,8 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/mir/cast.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -57,11 +57,7 @@ auto BuildCopyOutBlock(
     if (call_type != result_type) {
       value_id = wrapper.exprs.Add(
           mir::Expr{
-              .data =
-                  mir::ConversionExpr{
-                      .operand = call_id,
-                      .kind = mir::ConversionKind::kImplicit},
-              .type = result_type});
+              .data = mir::CastExpr{.operand = call_id}, .type = result_type});
     }
     const mir::Expr assign_expr = BuildObservableAssignExpr(
         unit, wrapper, services_id, *assign_target_id, value_id, std::nullopt,

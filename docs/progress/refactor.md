@@ -456,7 +456,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       returning -- a const method that mutates. Split the read role from the write role so the read
       path is pure. See `../decisions/runtime-shape-and-default-value.md`.
 
-- [ ] R37 -- Retire `SystemSubroutineCallee` from MIR's Callee variant set. R20 declared every
+- [x] R37 -- Retire `SystemSubroutineCallee` from MIR's Callee variant set. R20 declared every
       runtime effect "generic" because each was an ordinary `CallExpr`; in practice the closure-free
       families still route through `SystemSubroutineCallee`, whose identity is an SV system task id
       -- an HIR / source-language concept that `mir.md` invariant 10 forbids carrying into MIR. Each
@@ -582,21 +582,18 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       **Blocker**: R37 still in flight retiring `SystemSubroutineCallee`; do that first so the
       call-shape unification sees the final set of named-symbol callees.
 
-- [ ] R46 -- Unify `ConversionExpr` and `PointerCastExpr` into one `CastExpr { operand, kind }`.
-      Both primitives produce a value of a different type from their operand; both render as
-      `static_cast<DestType>(operand)` in the C++ backend; both lower to a cast-family instruction
-      in LLVM (`zext` / `sext` / `bitcast` / ...). The split is conceptual ("ConversionExpr is
-      LRM-defined value conversion, PointerCastExpr is backend type-erasure bridge") but the
-      emission shape is identical -- Clang AST and Rust MIR both consolidate this into one cast
-      primitive with a kind axis. Today's `ConversionKind` has 5 LRM-specific kinds (`kImplicit` /
-      `kPropagated` / `kStreamingConcat` / `kExplicit` / `kBitstreamCast`); the unified kind axis
-      would add `kPointerReinterpret` (and likely future `kIntToInt`, `kFloatToInt` etc. as the LIR
-      / LLVM backend appears and needs explicit kinds for the cast-family instruction selection).
-      **Not blocked**: nothing prevents merging the two primitives -- they already render
-      identically. The unified kind axis gains `kPointerReinterpret` now and further cast kinds
-      (`kIntToInt`, `kFloatToInt`, ...) as the LIR / LLVM backend needs explicit
-      instruction-selection kinds. Land it when this cast machinery is next touched, or when a third
-      cast-like primitive would otherwise be added.
+- [x] R46 -- MIR's value-reinterpretation primitive is one `CastExpr{operand}` carrying no kind
+      axis. The destination type is stated on the enclosing `Expr::type`; the source type is read
+      off the operand; the `(source, destination)` type pair fully determines the realization
+      (integral resize / sign-handling, integral-to-real, real-to-integral, packed-to-enum,
+      pointer-to-different-pointee). Backends consult the type pair to select the emit (C++
+      chooses among `static_cast` and `lyra::value` helpers; LLVM picks `zext` / `sext` / `trunc`
+      / `fptosi` / `bitcast` / `inttoptr`). The earlier `mir::ConversionExpr` (mirroring HIR's
+      LRM-defined `ConversionKind`) and `mir::PointerCastExpr` (the backend type-erasure bridge)
+      retire; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR, and the 5 HIR
+      kinds collapse to the one MIR primitive at HIR-to-MIR. The kind axis Clang's AST carries
+      exists because Clang drives LLVM codegen directly; Lyra's MIR is a higher layer and the
+      (src, dst) type pair already names the same dispatch.
 
 - [ ] R47 -- Design the object model that SV classes need, distinct from the module / scope object.
       The MIR concept currently named a "class" is a compiled module / scope, carrying

@@ -56,9 +56,7 @@ auto LiftStringSource(
 
   return frame.current_block->exprs.Add(
       mir::Expr{
-          .data =
-              mir::ConversionExpr{
-                  .operand = source_id, .kind = mir::ConversionKind::kImplicit},
+          .data = mir::CastExpr{.operand = source_id},
           .type = module.Unit().builtins.string});
 }
 
@@ -76,9 +74,7 @@ auto LiftStringFormat(
   }
   return frame.current_block->exprs.Add(
       mir::Expr{
-          .data =
-              mir::ConversionExpr{
-                  .operand = format_id, .kind = mir::ConversionKind::kImplicit},
+          .data = mir::CastExpr{.operand = format_id},
           .type = module.Unit().builtins.string});
 }
 

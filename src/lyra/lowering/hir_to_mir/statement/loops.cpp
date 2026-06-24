@@ -16,8 +16,8 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_hops.hpp"
+#include "lyra/mir/cast.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -184,11 +184,7 @@ auto LowerRepeatStmt(
   if (wrapper.exprs.Get(count_expr_id).type != int_type) {
     count_expr_id = wrapper.exprs.Add(
         mir::Expr{
-            .data =
-                mir::ConversionExpr{
-                    .operand = count_expr_id,
-                    .kind = mir::ConversionKind::kImplicit},
-            .type = int_type});
+            .data = mir::CastExpr{.operand = count_expr_id}, .type = int_type});
   }
 
   const mir::LocalId count_var = wrapper.vars.Add(
