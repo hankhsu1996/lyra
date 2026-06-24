@@ -234,7 +234,7 @@ void Engine::ExecutePostponedRegion() {
 void Engine::ExecuteFinalProcesses() {
   phase_ = SchedulerPhase::kPostponed;
   for (CoroutineHandle handle : queues_.finals) {
-    const bool completed = handle.promise().Process().ResumeWith(handle);
+    const bool completed = handle->Process().ResumeWith(handle);
     if (completed) {
       continue;
     }
@@ -313,7 +313,7 @@ void Engine::RunProcess(CoroutineHandle handle) {
   // during await_suspend. Capture the owning process before resuming, since
   // `handle` may be an enabled task's frame that is destroyed as control
   // returns up the enable chain.
-  RuntimeProcess& process = handle.promise().Process();
+  RuntimeProcess& process = handle->Process();
   const bool completed = process.ResumeWith(handle);
   // A spawned process (a fork-join branch) is owned by the engine for its
   // dynamic lifetime; drop it the moment it finishes -- executor-standard
@@ -342,8 +342,8 @@ void Engine::TriggerValueChange(
   for (CoroutineHandle handle : observable.TakeMatchingWaiters(classify)) {
     // Clean up sibling subscriptions so they don't leak across waits when this
     // frame re-enters the runnable queue.
-    for (Observable* other : std::exchange(
-             handle.promise().pending_value_change_subscriptions, {})) {
+    for (Observable* other :
+         std::exchange(handle->pending_value_change_subscriptions, {})) {
       if (other != &observable) {
         other->Unsubscribe(handle);
       }
@@ -368,7 +368,7 @@ void Engine::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
   queues_.delayed[when].push_back(handle);
 }
 
-void Engine::Spawn(Coroutine coroutine) {
+void Engine::Spawn(Coroutine<void> coroutine) {
   auto process = std::make_unique<RuntimeProcess>(
       ProcessKind::kSpawned, std::move(coroutine));
   const CoroutineHandle handle = process->TopHandle();

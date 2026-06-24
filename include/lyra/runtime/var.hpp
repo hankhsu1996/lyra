@@ -249,7 +249,9 @@ class EventControlAwaitable {
     return false;
   }
 
-  void await_suspend(CoroutineHandle handle) {
+  template <class P>
+  void await_suspend(std::coroutine_handle<P> handle) {
+    CoroutineHandle token = &handle.promise();
     std::vector<Observable*> subs;
     subs.reserve(triggers_.size());
     for (const auto& trigger : triggers_) {
@@ -259,10 +261,10 @@ class EventControlAwaitable {
             "null");
       }
       trigger.observable->Subscribe(
-          handle, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
+          token, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
       subs.push_back(trigger.observable);
     }
-    handle.promise().pending_value_change_subscriptions = std::move(subs);
+    token->pending_value_change_subscriptions = std::move(subs);
   }
 
   static void await_resume() noexcept {

@@ -30,7 +30,7 @@ class FinishAwaitable {
   // The coroutine protocol passes the awaiting handle, but the finish-family
   // suspends forever (the engine drops the frame), so the handle is unused.
   // NOLINTNEXTLINE(readability-named-parameter)
-  void await_suspend(CoroutineHandle) noexcept {
+  void await_suspend(std::coroutine_handle<>) noexcept {
     services_->RequestFinish(level_, fatal_);
   }
 

@@ -23,18 +23,20 @@ Read top to bottom on first pass:
 9. `callable.md` -- the one callable concept; callable code vs callable value; capture model;
    references as a field type
 10. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
-11. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
-12. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-13. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
+11. `activation.md` -- the runtime execution instance; completion slot; ownership / continuation /
+    cancellation relations
+12. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
+13. `hierarchy_and_generate.md` -- hierarchy and generate ownership
+14. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
     construction-time resolution
-14. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
+15. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
     cross-unit resolution through the SDK
-15. `identity_and_ownership.md` -- identity rules and forbidden shapes
-16. `lowering_boundaries.md` -- what each lowering may and may not do
-17. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+16. `identity_and_ownership.md` -- identity rules and forbidden shapes
+17. `lowering_boundaries.md` -- what each lowering may and may not do
+18. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-18. `incremental_build.md` -- query-based incremental compilation and caching
-19. `testing_strategy.md` -- test categories and structure
+19. `incremental_build.md` -- query-based incremental compilation and caching
+20. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -61,6 +63,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Member and type model; object types; owning pointer; vector wrapper       | `mir.md`                    |
 | Callable model; code vs value; captures; references as a field type       | `callable.md`               |
 | LIR shape (CFG, basic blocks, storage)                                    | `lir.md`                    |
+| Activation; execution instance; completion slot; cancellation domain      | `activation.md`             |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit  | `scheduling.md`             |
 | Incremental compilation; query-based caching                              | `incremental_build.md`      |
 | Locating/bundling the C++ runtime; run output contract                    | `runtime_distribution.md`   |

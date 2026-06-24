@@ -8,7 +8,7 @@
 
 namespace lyra::runtime {
 
-RuntimeProcess::RuntimeProcess(ProcessKind kind, Coroutine coroutine)
+RuntimeProcess::RuntimeProcess(ProcessKind kind, Coroutine<void> coroutine)
     : kind_(kind), coroutine_(std::move(coroutine)) {
   // Wire the promise's back-pointer so coroutine-side code (awaitables)
   // can recover the RuntimeProcess identity from within await_suspend.
@@ -28,7 +28,7 @@ auto RuntimeProcess::ResumeWith(CoroutineHandle handle) -> bool {
     throw InternalError("RuntimeProcess::ResumeWith: reentrant resume");
   }
   state_ = ProcessState::kRunning;
-  handle.resume();
+  handle->self.resume();
   // A task's exception propagates up the enable chain to the top-level promise,
   // so it is read there regardless of which frame threw.
   if (auto exc = std::exchange(

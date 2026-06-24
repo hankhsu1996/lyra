@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -188,6 +189,19 @@ class ProcessLowerer {
     return owner_ctor_frame_;
   }
 
+  // Assembles the completion-payload value a `return` should carry in the
+  // subroutine being lowered: the function's explicit return value (or its
+  // implicit result variable when a `return` supplies none) followed by each
+  // `output` / `inout` local, normalized to a bare value (one component) or a
+  // `TupleExpr` (two or more). Returns nullopt when the payload is empty -- a
+  // void function or a task with no outputs -- so the caller emits a plain
+  // `return;`. `explicit_value` is the lowered `return expr` operand, absent
+  // for a bare `return;`. Reads the pack locals at `frame`'s depth, so a return
+  // nested in an inner block resolves the correct hops.
+  [[nodiscard]] auto BuildReturnPayload(
+      mir::Block& block, const WalkFrame& frame,
+      std::optional<mir::ExprId> explicit_value) -> std::optional<mir::ExprId>;
+
  private:
   ModuleLowerer* module_;
   const ClassLowerer* owner_;
@@ -196,6 +210,17 @@ class ProcessLowerer {
   std::string callable_name_;
   WalkFrame owner_ctor_frame_;
   std::vector<ProceduralVarBinding> bindings_;
+
+  // Completion-payload shape of the subroutine being lowered, set by
+  // Run(subroutine) before its body walks and read by every return site. All
+  // default for a process or an empty-payload callable: no result var, no pack
+  // locals, so BuildReturnPayload yields a plain `return;`.
+  BlockDepth completion_decl_depth_{};
+  std::optional<mir::LocalId> result_var_;
+  mir::TypeId result_value_type_{};
+  std::vector<mir::LocalId> output_pack_vars_;
+  std::vector<mir::TypeId> output_pack_types_;
+  mir::TypeId completion_payload_type_{};
 };
 
 }  // namespace lyra::lowering::hir_to_mir

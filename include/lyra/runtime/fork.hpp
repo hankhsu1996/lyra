@@ -86,8 +86,9 @@ class JoinAwaitable {
     return !group_->NeedsPark();
   }
 
-  void await_suspend(CoroutineHandle parent) noexcept {
-    group_->ParkParent(parent);
+  template <class P>
+  void await_suspend(std::coroutine_handle<P> parent) noexcept {
+    group_->ParkParent(&parent.promise());
   }
 
   void await_resume() const noexcept {
@@ -103,12 +104,11 @@ class JoinAwaitable {
 // snapshot-drain, since a branch enqueued while the parent runs is reached only
 // on the next drain pass, after the parent has parked or moved on.
 inline auto Fork(
-    RuntimeServices& services, std::vector<Coroutine> branches, JoinMode mode)
-    -> JoinAwaitable {
+    RuntimeServices& services, std::vector<Coroutine<void>> branches,
+    JoinMode mode) -> JoinAwaitable {
   auto group = std::make_shared<ForkGroup>(services, branches.size(), mode);
   for (auto& branch : branches) {
-    CoroutineHandle handle = branch.Handle();
-    handle.promise().on_complete = [group] { group->OnBranchDone(); };
+    branch.Handle().promise().on_complete = [group] { group->OnBranchDone(); };
     services.Spawn(std::move(branch));
   }
   return JoinAwaitable{group};

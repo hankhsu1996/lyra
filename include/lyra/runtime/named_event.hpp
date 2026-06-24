@@ -24,8 +24,9 @@ class EventAwaitable {
     return false;
   }
 
-  void await_suspend(CoroutineHandle handle) noexcept {
-    event_->AddWaiter(handle);
+  template <class P>
+  void await_suspend(std::coroutine_handle<P> handle) noexcept {
+    event_->AddWaiter(&handle.promise());
   }
 
   static void await_resume() noexcept {

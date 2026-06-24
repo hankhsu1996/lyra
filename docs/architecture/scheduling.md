@@ -13,10 +13,15 @@ detection, and edge detection are separate runtime subsystems.
 
 ## Processes and tasks are coroutines
 
+The execution instance a process or task runs as -- its identity, completion outcome, ownership, and
+cancellation -- is the activation, defined in `activation.md`. This doc owns the engine that parks
+and resumes activations; `activation.md` owns what an activation is. The scheduler holds an
+activation token (a payload-neutral handle) and never sees an activation's completion type.
+
 A process body -- and a task body, which may consume time -- compiles into a `Coroutine`. The
-scheduler holds a `std::coroutine_handle` and calls `.resume()` to continue the body; a `co_await`
-in the body suspends it again. Process state -- procedural locals, the implicit program counter --
-lives in the coroutine frame, which the engine does not introspect.
+scheduler holds the activation token and resumes the body; a `co_await` in the body suspends it
+again. Process state -- procedural locals, the implicit program counter -- lives in the coroutine
+frame, which the engine does not introspect.
 
 A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
 until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each

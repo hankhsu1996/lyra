@@ -16,7 +16,7 @@ enum class ProcessState : std::uint8_t {
 
 class RuntimeProcess {
  public:
-  RuntimeProcess(ProcessKind kind, Coroutine coroutine);
+  RuntimeProcess(ProcessKind kind, Coroutine<void> coroutine);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -41,12 +41,12 @@ class RuntimeProcess {
   // wakeup; this is what the engine schedules to start the process and what
   // completion is judged against.
   [[nodiscard]] auto TopHandle() const -> CoroutineHandle {
-    return coroutine_.Handle();
+    return coroutine_.Token();
   }
 
  private:
   ProcessKind kind_;
-  Coroutine coroutine_;
+  Coroutine<void> coroutine_;
   ProcessState state_ = ProcessState::kCreated;
 };
 

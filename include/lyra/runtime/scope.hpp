@@ -140,7 +140,8 @@ class Scope {
   }
 
  protected:
-  auto AddProcess(ProcessKind kind, Coroutine coroutine) -> RuntimeProcess&;
+  auto AddProcess(ProcessKind kind, Coroutine<void> coroutine)
+      -> RuntimeProcess&;
 
   // Reached by emitted process and subroutine bodies for every runtime
   // service call (print, delay, NBA submit, file I/O, the deferred-check
