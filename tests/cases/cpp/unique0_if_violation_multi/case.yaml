@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stderr:
-    exact: "warning: unique0 check failed: matched 2 of 2 conditions\n"
+    exact: "main.sv:5:5: warning: unique0 check failed: matched 2 of 2 conditions\n"

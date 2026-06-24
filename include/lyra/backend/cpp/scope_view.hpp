@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/class.hpp"
@@ -29,13 +31,30 @@ class ScopeView {
   }
 
   [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
-    return ScopeView{*unit_, *class_, child, this, class_parent_};
+    return ScopeView{*unit_, *class_,       child,
+                     this,   class_parent_, self_spelling_};
   }
 
   [[nodiscard]] auto WithClass(
       const mir::Class& child_class, const mir::Block& root_block) const
       -> ScopeView {
-    return ScopeView{*unit_, child_class, root_block, nullptr, this};
+    return ScopeView{*unit_,  child_class, root_block,
+                     nullptr, this,        self_spelling_};
+  }
+
+  // How the receiver `self` (the body's `vars[0]`, MIR invariant 11) is spelled
+  // in C++. A static method receives `self` as its first parameter, so it is
+  // spelled `self`; a virtual instance method takes the receiver implicitly, so
+  // it is spelled `this`. A nested block inherits the enclosing method's
+  // spelling.
+  [[nodiscard]] auto WithSelfSpelling(std::string_view spelling) const
+      -> ScopeView {
+    return ScopeView{*unit_,        *class_,       *block_,
+                     block_parent_, class_parent_, spelling};
+  }
+
+  [[nodiscard]] auto SelfSpelling() const -> std::string_view {
+    return self_spelling_;
   }
 
   ScopeView(const ScopeView&) = delete;
@@ -97,12 +116,13 @@ class ScopeView {
   ScopeView(
       const mir::CompilationUnit& unit, const mir::Class& cls,
       const mir::Block& block, const ScopeView* block_parent,
-      const ScopeView* class_parent)
+      const ScopeView* class_parent, std::string_view self_spelling)
       : unit_(&unit),
         class_(&cls),
         block_(&block),
         block_parent_(block_parent),
-        class_parent_(class_parent) {
+        class_parent_(class_parent),
+        self_spelling_(self_spelling) {
   }
 
   const mir::CompilationUnit* unit_;
@@ -110,6 +130,7 @@ class ScopeView {
   const mir::Block* block_;
   const ScopeView* block_parent_;
   const ScopeView* class_parent_;
+  std::string_view self_spelling_ = "self";
 };
 
 }  // namespace lyra::backend::cpp
