@@ -395,8 +395,8 @@ auto LowerExprStmt(
       if (const auto* file_info = support::GetFileIOInfo(desc)) {
         if (support::IsFileOutputArgBuiltinFn(file_info->builtin_fn)) {
           return LowerFileIOSystemSubroutineCallStmt(
-              process, frame, std::move(label), *call, *file_info,
-              std::nullopt, process.Module().TranslateType(inner.type));
+              process, frame, std::move(label), *call, *file_info, std::nullopt,
+              process.Module().TranslateType(inner.type));
         }
       }
       if (const auto* sformat_info = support::GetSFormatInfo(desc)) {
