@@ -39,7 +39,8 @@ auto BuildFileIoCall(
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> args;
   args.reserve(operands.size() + 1);
-  args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
+  args.push_back(
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame)));
   for (const mir::ExprId operand : operands) {
     args.push_back(operand);
   }
@@ -314,7 +315,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
   }
 
   const mir::ExprId services_id =
-      wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
+      wrapper.exprs.Add(BuildServicesCallExpr(process.Module(), wrapper_frame));
   return BuildCopyOutBlock(
       process.Module().Unit(), services_id, frame, std::move(wrapper),
       std::move(label), result_type, std::move(call_expr), false,

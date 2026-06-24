@@ -318,15 +318,17 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `foreach` iterates them -- `foreach` over a fixed array uses its declared range and direction,
       not a count, so that split is a real semantic difference, not the same redundancy).
 
-- [x] R25 -- The two families that do not take a value receiver fit the same generic builtin-call
-      identity as every member-shaped call. An enum type-static method (`first` / `last` / `num`,
-      where the type qualifier is part of the symbol identity) lowers to the static-callee arm with
-      the qualifier on the callee and no receiver in the arguments; the value-static `$isunknown`
-      lowers to an ordinary builtin call returning the SV `bit` type, with no host-bool lift at the
-      backend. The member-shaped families (string, array, queue, associative including traversal,
-      enum instance) render through the one generic handler. Subsumed by R29
-      (`decisions/builtin-call-identity.md`). The all-2-state constant-fold of `$isunknown` is left
-      to the downstream optimizer per R7, not folded at HIR-to-MIR.
+- [x] R25 -- **Closed: both carve-outs resolved.** The two value-query families this entry set aside
+      as not fitting the generic `(receiver).name(args)` member-call rule are both settled. Enum
+      type-static methods (`first` / `last` / `num`, no receiver -- the type qualifier is part of
+      the symbol identity) lower to the `BuiltinStaticCallee` arm R29 introduced and render as
+      `Enum::method(args)`. `$isunknown` needs no special type-static / constant-fold path: it is
+      the generic instance built-in call `(x).IsUnknown()` returning the SV `bit` type (1-bit
+      `PackedArray`, LRM 20.9), now wired end to end -- recognized at AST-to-HIR by
+      `KnownSystemName::IsUnknown`, lowered through the context-free call family in both procedural
+      and continuous-assign positions (`../decisions/context-free-call-lowering.md`). The
+      cross-cutting value-model (SV-typed runtime signatures, the representation bridge inside the
+      method body, the backend reading the stated result type) is settled.
 
 - [x] R26 -- Runtime container protocols are pinned as explicit C++20 concepts in a single
       value-layer concept header; each container `static_assert`s every protocol it satisfies. Slice

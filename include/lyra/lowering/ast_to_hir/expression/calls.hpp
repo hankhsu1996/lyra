@@ -7,7 +7,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
@@ -16,9 +16,14 @@ class CallExpression;
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerCallExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::CallExpression& call, diag::SourceSpan span)
-    -> diag::Result<hir::Expr>;
+// A call's meaning is independent of the enclosing scope, so one template over
+// the pass class serves both the procedural and structural contexts; explicit
+// instantiations live in the implementation file. The LRM 7.12 `with`-clause
+// iteration element is the clause's own binding, reached without the enclosing
+// scope's variable storage, so nothing here is procedural-only.
+template <ExprLowerer Lowerer>
+auto LowerCallExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

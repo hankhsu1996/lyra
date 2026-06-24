@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/block_depth.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/iteration_binding_registry.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -221,6 +222,34 @@ auto LowerLoopVarRefExprAsStructuralParam(
       .type = type};
 }
 
+// LRM 7.12.4: a with-clause iteration reference reads the named clause's
+// element or index closure parameter. The parameter is found by clause
+// identity, then resolved by the same rule as any body-local: read directly
+// when the reference is in the clause's own closure, captured when it is inside
+// a deeper clause's closure (the parameter's declaration sits above that
+// closure's boundary).
+auto LowerIterationBindingRefExpr(
+    const hir::IterationBindingRef& ref, WalkFrame frame, mir::TypeId type)
+    -> mir::Expr {
+  if (frame.iteration_bindings == nullptr) {
+    throw InternalError(
+        "LowerIterationBindingRefExpr: with-clause iteration reference outside "
+        "an array-method `with` body (LRM 7.12.4)");
+  }
+  const IterationBinding binding =
+      frame.iteration_bindings->Lookup(ref.clause, ref.role);
+  if (auto* sink = frame.capture_sink) {
+    if (binding.decl_depth < sink->BoundaryDepth()) {
+      return mir::Expr{
+          .data = sink->Capture(
+              binding.var, binding.decl_depth, type, frame.block_depth),
+          .type = type};
+    }
+  }
+  return mir::MakeLocalRefExpr(
+      frame.block_depth - binding.decl_depth, binding.var, type);
+}
+
 }  // namespace
 
 auto LowerHirPrimaryExprProc(
@@ -254,6 +283,9 @@ auto LowerHirPrimaryExprProc(
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
             return LowerCrossUnitVarRefExpr(lowerer, frame, c);
+          },
+          [&](const hir::IterationBindingRef& r) -> mir::Expr {
+            return LowerIterationBindingRefExpr(r, frame, result_type);
           },
       },
       p);
@@ -295,6 +327,9 @@ auto LowerHirPrimaryExprStructural(
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
             return LowerCrossUnitVarRefExpr(lowerer, frame, c);
+          },
+          [&](const hir::IterationBindingRef& r) -> mir::Expr {
+            return LowerIterationBindingRefExpr(r, frame, result_type);
           },
       },
       p);

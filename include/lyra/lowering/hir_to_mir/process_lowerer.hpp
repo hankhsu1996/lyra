@@ -124,6 +124,20 @@ class ProcessLowerer {
     return *owner_;
   }
 
+  // The structural-subroutine tables live on the owning `ClassLowerer`; expose
+  // them here too so a templated call handler reaches a user subroutine through
+  // the same surface on either pass class (`ClassLowerer` has them directly).
+  [[nodiscard]] auto LookupHirSubroutine(
+      hir::StructuralHops hops, hir::StructuralSubroutineId id) const
+      -> const hir::StructuralSubroutineDecl& {
+    return owner_->LookupHirSubroutine(hops, id);
+  }
+  [[nodiscard]] auto TranslateStructuralSubroutine(
+      hir::StructuralHops hops, hir::StructuralSubroutineId id) const
+      -> mir::MethodRef {
+    return owner_->TranslateStructuralSubroutine(hops, id);
+  }
+
   [[nodiscard]] auto Resolution() const -> TimeResolution {
     return time_resolution_;
   }

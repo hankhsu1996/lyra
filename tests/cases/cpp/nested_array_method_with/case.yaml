@@ -1,0 +1,13 @@
+id: cpp.nested_array_method_with
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    inner_uses_outer_element: 69
+    inner_uses_outer_index: 62
+    shadow_default: 63

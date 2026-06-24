@@ -30,17 +30,7 @@ struct BuiltinMethodRef {
   support::BuiltinFn method;
 };
 
-// LRM 7.12.4 `item.index` (also written `item.<user-named-index>`). SV
-// dresses it as a method on the iterator binding, but no runtime function
-// exists -- the receiver value is discarded and the call resolves to the
-// closure's index parameter. HIR-to-MIR rewrites it to a `LocalRef`; no
-// MIR `CallExpr` survives. Kept as its own callee arm so the translation
-// behaviour ("rewrites away") is visible in the type rather than hidden
-// inside `BuiltinMethodRef`.
-struct IteratorIndexRef {};
-
 using SubroutineRef = std::variant<
-    StructuralSubroutineRef, SystemSubroutineRef, BuiltinMethodRef,
-    IteratorIndexRef>;
+    StructuralSubroutineRef, SystemSubroutineRef, BuiltinMethodRef>;
 
 }  // namespace lyra::hir

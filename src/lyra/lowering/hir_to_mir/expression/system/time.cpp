@@ -41,7 +41,7 @@ auto LowerTimeSystemSubroutineCall(
   const TimeFnInfo fn = SelectTimeFn(builtins, info.kind);
   auto& body = *frame.current_block;
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(process, frame));
+      body.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   const mir::ExprId unit_power_id = body.exprs.Add(
       mir::MakeInt32Literal(
           builtins.int32,

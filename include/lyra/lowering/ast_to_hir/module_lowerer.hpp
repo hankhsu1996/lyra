@@ -188,6 +188,11 @@ class ModuleLowerer {
   // Frame minting for scope entry.
   [[nodiscard]] auto NextScopeFrameId() -> ScopeFrameId;
 
+  // Identity minting for an array-method `with` clause (LRM 7.12). Unique
+  // within the unit, so HIR-to-MIR can key its iteration-binding registry on
+  // it.
+  [[nodiscard]] auto NextWithClauseId() -> hir::WithClauseId;
+
   // Builds a HIR Expr referring to a leaf reached by navigating `path` down
   // from `head`. `target` is the leaf value symbol (cross-unit dedup key);
   // `home_frame` is the owning structural scope's frame.
@@ -232,6 +237,7 @@ class ModuleLowerer {
   std::map<ScopeFrameId, std::vector<hir::CrossUnitRefDecl>>
       cross_unit_refs_by_frame_;
   std::uint32_t next_scope_frame_ = 0;
+  std::uint32_t next_with_clause_ = 0;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

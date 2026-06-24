@@ -8,29 +8,29 @@
 #include <slang/ast/expressions/OperatorExpressions.h>
 
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerInsideExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::InsideExpression& in, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  auto lhs_or = proc.LowerExpr(in.left(), frame);
+template <ExprLowerer Lowerer>
+auto LowerInsideExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::InsideExpression& in,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto lhs_or = lowerer.LowerExpr(in.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(lhs_or));
 
   std::vector<hir::InsideItem> items;
   items.reserve(in.rangeList().size());
   for (const auto* item : in.rangeList()) {
-    auto item_or = LowerInsideItemImpl(proc, frame, *item);
+    auto item_or = LowerInsideItemImpl(lowerer, frame, *item);
     if (!item_or) return std::unexpected(std::move(item_or.error()));
     items.push_back(*std::move(item_or));
   }
 
-  auto type_id = proc.Module().InternType(*in.type, span);
+  auto type_id = lowerer.Module().InternType(*in.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -39,10 +39,11 @@ auto LowerInsideExprProc(
   };
 }
 
+template <ExprLowerer Lowerer>
 auto LowerInsideItemImpl(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::Expression& item_expr) -> diag::Result<hir::InsideItem> {
-  auto& module = proc.Module();
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& item_expr)
+    -> diag::Result<hir::InsideItem> {
+  auto& module = lowerer.Module();
   if (item_expr.kind == slang::ast::ExpressionKind::ValueRange) {
     const auto& vr = item_expr.as<slang::ast::ValueRangeExpression>();
     if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
@@ -51,17 +52,32 @@ auto LowerInsideItemImpl(
           diag::DiagCode::kUnsupportedExpressionForm,
           "tolerance-range form in inside operator is not yet supported");
     }
-    auto lo_or = proc.LowerExpr(vr.left(), frame);
+    auto lo_or = lowerer.LowerExpr(vr.left(), frame);
     if (!lo_or) return std::unexpected(std::move(lo_or.error()));
     const hir::ExprId lo_id = frame.Exprs().Add(*std::move(lo_or));
-    auto hi_or = proc.LowerExpr(vr.right(), frame);
+    auto hi_or = lowerer.LowerExpr(vr.right(), frame);
     if (!hi_or) return std::unexpected(std::move(hi_or.error()));
     const hir::ExprId hi_id = frame.Exprs().Add(*std::move(hi_or));
     return hir::InsideRangePair{.lo = lo_id, .hi = hi_id};
   }
-  auto val_or = proc.LowerExpr(item_expr, frame);
+  auto val_or = lowerer.LowerExpr(item_expr, frame);
   if (!val_or) return std::unexpected(std::move(val_or.error()));
   return frame.Exprs().Add(*std::move(val_or));
 }
+
+template auto LowerInsideExpr(
+    ProcessLowerer& lowerer, WalkFrame frame,
+    const slang::ast::InsideExpression& in, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+template auto LowerInsideExpr(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const slang::ast::InsideExpression& in, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+template auto LowerInsideItemImpl(
+    ProcessLowerer& lowerer, WalkFrame frame,
+    const slang::ast::Expression& item_expr) -> diag::Result<hir::InsideItem>;
+template auto LowerInsideItemImpl(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const slang::ast::Expression& item_expr) -> diag::Result<hir::InsideItem>;
 
 }  // namespace lyra::lowering::ast_to_hir

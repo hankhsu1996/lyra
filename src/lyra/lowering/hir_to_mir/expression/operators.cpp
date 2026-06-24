@@ -218,7 +218,7 @@ auto LowerHirIncDecExprProc(
   if (mir::IsObservableCellType(
           process.Module().Unit().GetType(block.exprs.Get(root_id).type))) {
     const mir::ExprId services_id =
-        block.exprs.Add(BuildServicesCallExpr(process, frame));
+        block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
     target_id = RewriteLhsRootWithMutate(
         process.Module().Unit(), block, target_id, services_id);
   }

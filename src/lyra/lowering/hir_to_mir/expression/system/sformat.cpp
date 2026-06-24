@@ -48,7 +48,7 @@ auto BuildSFormatCallExpr(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
 
   return mir::Expr{
       .data =
@@ -128,7 +128,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
   const mir::ExprId call_id = block.exprs.Add(*std::move(call_expr_or));
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
       process.Module().Unit(), block, services_id, out_id, call_id,
       std::nullopt, out_type, process.Module().Unit().builtins.void_type);
