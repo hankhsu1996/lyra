@@ -114,13 +114,7 @@ auto LowerDiagnosticSystemSubroutineCall(
   const mir::ExprId services_id =
       block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   const mir::ExprId text_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::BuiltinFnCallee{.id = support::BuiltinFn::kFormat},
-                  .arguments = {services_id, items_array}},
-          .type = unit.builtins.string});
+      BuildFormatCallExpr(unit, block, services_id, items_array));
   const mir::ExprId diagnostic_id =
       block.exprs.Add(BuildDiagnosticCallExpr(process.Module(), frame));
   const mir::ExprId origin_id = BuildOriginStringExpr(

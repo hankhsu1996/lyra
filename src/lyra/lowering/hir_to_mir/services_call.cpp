@@ -63,4 +63,25 @@ auto BuildDiagnosticCallExpr(
       .type = builtins.diagnostic};
 }
 
+auto BuildFormatCallExpr(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::ExprId services_id, mir::ExprId items_array) -> mir::Expr {
+  const auto& builtins = unit.builtins;
+  const mir::ExprId time_format_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{
+                          .id = support::BuiltinFn::kTimeFormat},
+                  .arguments = {services_id}},
+          .type = builtins.time_format});
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::FreeFnCallee{.id = support::BuiltinFn::kFormat},
+              .arguments = {items_array, time_format_id}},
+      .type = builtins.string};
+}
+
 }  // namespace lyra::lowering::hir_to_mir

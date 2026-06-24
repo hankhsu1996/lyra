@@ -41,9 +41,10 @@ struct FormatArg {
 };
 ```
 
-The runtime loop calls `Format(spec, arg, ctx)` once per `PrintValueItem`; the call resolves through
-`arg.format_fn` into the right `Formatter<T>::Format` specialization. The dispatch table is the
-function pointer; there is no central catalog of formattable types.
+The value-layer format walk (`value::Format(items, time_format)`) calls `Format(spec, arg, ctx)`
+once per `PrintValueItem`; the call resolves through `arg.format_fn` into the right
+`Formatter<T>::Format` specialization. The dispatch table is the function pointer; there is no
+central catalog of formattable types.
 
 Each `Formatter<T>` declares the signature it actually needs. Formatters that consult design-wide
 context (`%t` needs `TimeFormat`, future `%m` would need the scope) take `FormatContext`; those that
@@ -93,9 +94,13 @@ struct FormatContext {
 };
 ```
 
-Runtime callers pass `&services.TimeFormat()` once per `PrintItem`-walk. Formatters that consult
-context for the requested spec kind check the relevant pointer and throw on `nullptr`; the test
-framework passes the default `{}` because its specs never reach those paths.
+The value-layer items-walk takes the `TimeFormat` by reference and builds one
+`FormatContext{&time_format}` for the whole walk. The `time_format` is reached from the Engine-owned
+record through a `TimeFormat` accessor on `services` and threaded into the walk as an explicit
+operand at lowering, rather than pulled from inside the walk -- so the format step itself holds no
+engine state. Formatters that consult context for the requested spec kind check the relevant pointer
+and throw on `nullptr`; the test framework passes the default `{}` because its specs never reach
+those paths.
 
 ### Test framework integration
 

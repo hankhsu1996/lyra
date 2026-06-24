@@ -194,6 +194,8 @@ class MirDumper {
                   return "RuntimeLibrary(FormatSpec)";
                 case RuntimeLibraryKind::kChannelCancellation:
                   return "RuntimeLibrary(ChannelCancellation)";
+                case RuntimeLibraryKind::kTimeFormat:
+                  return "RuntimeLibrary(TimeFormat)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },

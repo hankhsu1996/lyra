@@ -150,14 +150,8 @@ auto BuildDiagnosticThenScope(
   // EmitWarning method (LRM 20.10): unique / priority deferred-check failures
   // are warning-severity by spec. The origin tag is the qualified statement's
   // source location, threaded in from the cascade entry.
-  const mir::ExprId text_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::BuiltinFnCallee{.id = support::BuiltinFn::kFormat},
-                  .arguments = {services, items_array}},
-          .type = unit.builtins.string});
+  const mir::ExprId text_id =
+      block.exprs.Add(BuildFormatCallExpr(unit, block, services, items_array));
   const mir::ExprId diagnostic_id = block.exprs.Add(
       mir::Expr{
           .data =

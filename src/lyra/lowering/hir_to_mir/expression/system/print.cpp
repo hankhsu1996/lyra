@@ -59,14 +59,8 @@ auto EmitFormatThenWrite(
   auto& unit = process.Module().Unit();
   const mir::ExprId services =
       block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
-  const mir::ExprId text = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::BuiltinFnCallee{.id = support::BuiltinFn::kFormat},
-                  .arguments = {services, items_array}},
-          .type = unit.builtins.string});
+  const mir::ExprId text =
+      block.exprs.Add(BuildFormatCallExpr(unit, block, services, items_array));
   const mir::ExprId files =
       block.exprs.Add(BuildFilesCallExpr(process.Module(), frame));
   return block.exprs.Add(
