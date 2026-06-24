@@ -22,32 +22,31 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Assembles the generic file-IO call: the engine handle (self.Services()) as
-// argument 0, then the task operands in runtime-signature order. Every
-// file-IO runtime entry takes RuntimeServices& first, so the handle is a
-// leading argument, not a backend-injected fact.
+// Assembles the file-IO call as an instance method on the `files` broker.
+// `files = services.Files()` is interned first; subsequent operands flow
+// after it in their runtime-signature order.
 auto BuildFileIoCall(
     const ProcessLowerer& process, const WalkFrame& frame,
-    support::SystemSubroutineId id, std::vector<mir::ExprId> operands,
+    support::BuiltinFn builtin_fn, std::vector<mir::ExprId> operands,
     mir::TypeId result_type) -> mir::Expr {
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> args;
   args.reserve(operands.size() + 1);
-  args.push_back(
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame)));
+  args.push_back(block.exprs.Add(BuildFilesCallExpr(process.Module(), frame)));
   for (const mir::ExprId operand : operands) {
     args.push_back(operand);
   }
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::SystemSubroutineCallee{.id = id},
+              .callee = mir::BuiltinFnCallee{.id = builtin_fn},
               .arguments = std::move(args)},
       .type = result_type};
 }
@@ -61,7 +60,7 @@ auto LowerOperand(
 
 auto LowerFixedOperandCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id, std::size_t operand_count,
+    support::BuiltinFn builtin_fn, std::size_t operand_count,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> operands;
@@ -71,14 +70,15 @@ auto LowerFixedOperandCall(
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     operands.push_back(block.exprs.Add(*std::move(operand_or)));
   }
-  return BuildFileIoCall(process, frame, id, std::move(operands), result_type);
+  return BuildFileIoCall(
+      process, frame, builtin_fn, std::move(operands), result_type);
 }
 
-// LRM 21.3.1: the one-argument MCD form and the two-argument FD form select the
-// runtime overload by argument count alone.
+// LRM 21.3.1: the one-argument MCD form and the two-argument FD form select
+// the runtime overload by argument count alone.
 auto LowerFileOpenCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id) -> diag::Result<mir::Expr> {
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
+    -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   auto name_or = LowerOperand(process, frame, call, 0);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
@@ -89,15 +89,15 @@ auto LowerFileOpenCall(
     operands.push_back(block.exprs.Add(*std::move(mode_or)));
   }
   return BuildFileIoCall(
-      process, frame, id, std::move(operands),
+      process, frame, support::BuiltinFn::kFileOpen, std::move(operands),
       process.Module().Unit().builtins.int32);
 }
 
-// LRM 21.3.6: the no-argument flush-all form and the addressed form select the
-// runtime overload by argument count alone.
+// LRM 21.3.6: the no-argument flush-all form and the addressed form select
+// the runtime overload by argument count alone.
 auto LowerFileFlushCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id) -> diag::Result<mir::Expr> {
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
+    -> diag::Result<mir::Expr> {
   std::vector<mir::ExprId> operands;
   if (!call.arguments.empty()) {
     auto fd_or = LowerOperand(process, frame, call, 0);
@@ -105,16 +105,15 @@ auto LowerFileFlushCall(
     operands.push_back(frame.current_block->exprs.Add(*std::move(fd_or)));
   }
   return BuildFileIoCall(
-      process, frame, id, std::move(operands),
+      process, frame, support::BuiltinFn::kFileFlush, std::move(operands),
       process.Module().Unit().builtins.void_type);
 }
 
 // LRM 13.5: $fgets / $fread / $ferror write into an actual lvalue argument
 // and must desugar to copy-out semantics at the statement boundary, exactly
-// like user-defined functions with `output` args (see
-// `LowerSubroutineCallWithWritebacks`). At expression position we cannot
-// safely synthesize the temp+writeback block, so reject and direct the user
-// to a statement-position call.
+// like user-defined functions with `output` args. At expression position we
+// cannot safely synthesize the temp+writeback block, so reject and direct
+// the user to a statement-position call.
 auto RejectOutputArgFileCallInExprPosition(
     std::string_view name, diag::SourceSpan span) -> diag::Result<mir::Expr> {
   return diag::Fail(
@@ -130,52 +129,57 @@ auto RejectOutputArgFileCallInExprPosition(
 
 auto LowerFileIOSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id, std::string_view name,
-    const support::FileIOSystemSubroutineInfo& info, diag::SourceSpan span)
-    -> diag::Result<mir::Expr> {
+    std::string_view name, const support::FileIOSystemSubroutineInfo& info,
+    diag::SourceSpan span) -> diag::Result<mir::Expr> {
   const auto& builtins = process.Module().Unit().builtins;
-  switch (info.kind) {
-    case support::FileIOKind::kOpen:
-      return LowerFileOpenCall(process, frame, call, id);
-    case support::FileIOKind::kClose:
+  switch (info.builtin_fn) {
+    case support::BuiltinFn::kFileOpen:
+      return LowerFileOpenCall(process, frame, call);
+    case support::BuiltinFn::kFileClose:
       return LowerFixedOperandCall(
-          process, frame, call, id, 1, builtins.void_type);
-    case support::FileIOKind::kGetc:
-      return LowerFixedOperandCall(process, frame, call, id, 1, builtins.int32);
-    case support::FileIOKind::kUngetc:
-      return LowerFixedOperandCall(process, frame, call, id, 2, builtins.int32);
-    case support::FileIOKind::kSeek:
-      return LowerFixedOperandCall(process, frame, call, id, 3, builtins.int32);
-    case support::FileIOKind::kRewind:
-      return LowerFixedOperandCall(process, frame, call, id, 1, builtins.int32);
-    case support::FileIOKind::kTell:
-      return LowerFixedOperandCall(process, frame, call, id, 1, builtins.int32);
-    case support::FileIOKind::kEof:
-      return LowerFixedOperandCall(process, frame, call, id, 1, builtins.int32);
-    case support::FileIOKind::kFlush:
-      return LowerFileFlushCall(process, frame, call, id);
-    case support::FileIOKind::kGets:
-    case support::FileIOKind::kRead:
-    case support::FileIOKind::kError:
+          process, frame, call, info.builtin_fn, 1, builtins.void_type);
+    case support::BuiltinFn::kFileGetc:
+      return LowerFixedOperandCall(
+          process, frame, call, info.builtin_fn, 1, builtins.int32);
+    case support::BuiltinFn::kFileUngetc:
+      return LowerFixedOperandCall(
+          process, frame, call, info.builtin_fn, 2, builtins.int32);
+    case support::BuiltinFn::kFileSeek:
+      return LowerFixedOperandCall(
+          process, frame, call, info.builtin_fn, 3, builtins.int32);
+    case support::BuiltinFn::kFileRewind:
+      return LowerFixedOperandCall(
+          process, frame, call, info.builtin_fn, 1, builtins.int32);
+    case support::BuiltinFn::kFileTell:
+      return LowerFixedOperandCall(
+          process, frame, call, info.builtin_fn, 1, builtins.int32);
+    case support::BuiltinFn::kFileEof:
+      return LowerFixedOperandCall(
+          process, frame, call, info.builtin_fn, 1, builtins.int32);
+    case support::BuiltinFn::kFileFlush:
+      return LowerFileFlushCall(process, frame, call);
+    case support::BuiltinFn::kFileGets:
+    case support::BuiltinFn::kFileRead:
+    case support::BuiltinFn::kFileError:
       // Output-arg tasks land here only when invoked in a nested expression
       // context (e.g., `if ($fgets(s, fd)) ...`). Statement-position calls
       // (`code = $fgets(s, fd);` / `$fgets(s, fd);`) get desugared upstream
-      // in `statement/assignment.cpp` (ExprStmt path) before reaching this
-      // dispatch.
+      // in the assignment-statement path before reaching this dispatch.
       return RejectOutputArgFileCallInExprPosition(name, span);
+    default:
+      throw InternalError(
+          "LowerFileIOSystemSubroutineCall: unexpected file-IO BuiltinFn");
   }
-  throw InternalError("LowerFileIOSystemSubroutineCall: unknown FileIOKind");
 }
 
 auto LowerFileIOSystemSubroutineCallStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CallExpr& call, support::SystemSubroutineId id,
-    const support::FileIOSystemSubroutineInfo& info,
+    const hir::CallExpr& call, const support::FileIOSystemSubroutineInfo& info,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> diag::Result<mir::Stmt> {
-  if (!support::FileIOHasOutputArg(info.kind)) {
+  if (!support::IsFileOutputArgBuiltinFn(info.builtin_fn)) {
     throw InternalError(
-        "LowerFileIOSystemSubroutineCallStmt: kind has no output arg");
+        "LowerFileIOSystemSubroutineCallStmt: BuiltinFn has no output arg");
   }
 
   const auto& module = process.Module();
@@ -187,8 +191,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
   std::vector<OutputArgSlot> slots;
   mir::Expr call_expr{};
 
-  switch (info.kind) {
-    case support::FileIOKind::kGets: {
+  switch (info.builtin_fn) {
+    case support::BuiltinFn::kFileGets: {
       // $fgets(str_lvalue, fd) -- arg[0] is the output string lvalue.
       auto slot_or = BuildOutputArgSlot(
           process, wrapper_frame, *call.arguments[0], "_lyra_fgets_dest");
@@ -201,11 +205,11 @@ auto LowerFileIOSystemSubroutineCallStmt(
       const mir::ExprId temp_ref = wrapper.exprs.Add(
           mir::Expr{.data = slots[0].temp, .type = slots[0].type});
       call_expr = BuildFileIoCall(
-          process, wrapper_frame, id, {temp_ref, fd_id},
+          process, wrapper_frame, info.builtin_fn, {temp_ref, fd_id},
           process.Module().Unit().builtins.int32);
       break;
     }
-    case support::FileIOKind::kRead: {
+    case support::BuiltinFn::kFileRead: {
       // LRM 21.3.4.4: arg[0] is either a packed integral lvalue (integral
       // form) or an unpacked array (memory form). Both write the destination,
       // so both round-trip through a copy-out temp; the runtime call is a
@@ -281,10 +285,11 @@ auto LowerFileIOSystemSubroutineCallStmt(
         }
       }
       call_expr = BuildFileIoCall(
-          process, wrapper_frame, id, std::move(operands), builtins.int32);
+          process, wrapper_frame, info.builtin_fn, std::move(operands),
+          builtins.int32);
       break;
     }
-    case support::FileIOKind::kError: {
+    case support::BuiltinFn::kFileError: {
       // $ferror(fd, str_lvalue) -- arg[1] is the output string lvalue.
       auto fd_or = process.LowerExpr(
           hir_proc.exprs.Get(*call.arguments[0]), wrapper_frame);
@@ -297,13 +302,13 @@ auto LowerFileIOSystemSubroutineCallStmt(
       const mir::ExprId temp_ref = wrapper.exprs.Add(
           mir::Expr{.data = slots[0].temp, .type = slots[0].type});
       call_expr = BuildFileIoCall(
-          process, wrapper_frame, id, {fd_id, temp_ref},
+          process, wrapper_frame, info.builtin_fn, {fd_id, temp_ref},
           process.Module().Unit().builtins.int32);
       break;
     }
     default:
       throw InternalError(
-          "LowerFileIOSystemSubroutineCallStmt: unexpected FileIOKind");
+          "LowerFileIOSystemSubroutineCallStmt: unexpected file-IO BuiltinFn");
   }
 
   std::optional<mir::ExprId> assign_target_id = std::nullopt;
