@@ -13,15 +13,18 @@
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -52,11 +55,11 @@ auto MakeReturnConventionType(
 
 }  // namespace
 
-auto LowerCallExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::CallExpression& call, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  auto& module = proc.Module();
+template <ExprLowerer Lowerer>
+auto LowerCallExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto& module = lowerer.Module();
   std::vector<std::optional<hir::ExprId>> arg_ids;
   arg_ids.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;
@@ -81,7 +84,7 @@ auto LowerCallExprProc(
       arg_ids.emplace_back(std::nullopt);
       continue;
     }
-    auto arg_or = proc.LowerExpr(*arg, frame);
+    auto arg_or = lowerer.LowerExpr(*arg, frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i == 0) {
       receiver_type = arg_or->type;
@@ -216,17 +219,21 @@ auto LowerCallExprProc(
                   info.extraInfo);
           const auto& iter_var =
               iter_info.iterVar->as<slang::ast::VariableSymbol>();
-          auto iter_type = module.InternType(iter_var.getType(), span);
-          if (!iter_type) {
-            return std::unexpected(std::move(iter_type.error()));
-          }
-          const hir::ProceduralVarId iterator_id = proc.AddProceduralVar(
-              *frame.current_procedural_body, iter_var, *iter_type);
-          auto body_or = proc.LowerExpr(*iter_info.iterExpr, frame);
+          // The clause's element and index references resolve to this id while
+          // the body is lowered; marking the iterator by identity on the frame
+          // distinguishes it from a foreach loop variable (also a slang
+          // Iterator symbol) and lets a clause nested in the body name this
+          // outer one.
+          const hir::WithClauseId clause_id = module.NextWithClauseId();
+          auto body_or = lowerer.LowerExpr(
+              *iter_info.iterExpr,
+              frame.WithIterationClause(iter_var, clause_id));
           if (!body_or) return std::unexpected(std::move(body_or.error()));
           const auto body_expr_id = frame.Exprs().Add(*std::move(body_or));
-          with_clause =
-              hir::WithClause{.iterator = iterator_id, .expr = body_expr_id};
+          with_clause = hir::WithClause{
+              .id = clause_id,
+              .element_name = std::string{iter_var.name},
+              .expr = body_expr_id};
         }
         return hir::Expr{
             .type = *type_id,
@@ -262,28 +269,58 @@ auto LowerCallExprProc(
       }
     }
 
-    // LRM 7.12.4 `item.index`: SV dresses the iteration-index access as a
-    // method on the iterator binding (slang parses it as a SystemSubroutine
-    // with `KnownSystemName::Index`), but no runtime function exists -- the
-    // receiver value is discarded and the call resolves to the enclosing
-    // closure's index parameter. HIR keeps the method-call shape (LRM 7.12
-    // grammar level) with a dedicated `IteratorIndexRef` callee; HIR-to-MIR
-    // rewrites it to a `LocalRef` on that parameter binding. The dedicated
-    // callee arm encodes the "rewrites away" translation behaviour in the
-    // type, so it is structurally distinct from runtime-backed builtin
-    // methods.
+    // LRM 20.9 `$isunknown`: 1 if any bit of the operand is X or Z. A
+    // type-agnostic value query -- every value type exposes the query -- so it
+    // lowers to the generic instance builtin call on its operand, not through a
+    // receiver-type-keyed method table.
     if (info.subroutine != nullptr &&
         info.subroutine->knownNameId ==
-            slang::parsing::KnownSystemName::Index) {
+            slang::parsing::KnownSystemName::IsUnknown) {
       auto type_id = module.InternType(*call.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
           .data =
               hir::CallExpr{
-                  .callee = hir::IteratorIndexRef{},
-                  .arguments = {},
+                  .callee =
+                      hir::BuiltinMethodRef{
+                          .method = support::BuiltinFn::kIsUnknown},
+                  .arguments = std::move(arg_ids),
               },
+          .span = span,
+      };
+    }
+
+    // LRM 7.12.4 `item.index`: slang dresses the iteration index as a method on
+    // the iterator (a SystemSubroutine with `KnownSystemName::Index`) whose
+    // receiver value is discarded. It is the index iteration parameter -- a
+    // value co-equal with the element -- so it lowers to an
+    // `IterationBindingRef` value reference, not a call. Its clause is the one
+    // whose iterator is the receiver, so a nested clause's `item.index` still
+    // names the right clause.
+    if (info.subroutine != nullptr &&
+        info.subroutine->knownNameId ==
+            slang::parsing::KnownSystemName::Index) {
+      const auto& receiver = *call.arguments()[0];
+      if (receiver.kind != slang::ast::ExpressionKind::NamedValue) {
+        throw InternalError("item.index receiver is not a named iterator");
+      }
+      const auto clause = frame.FindIterationClause(
+          receiver.as<slang::ast::NamedValueExpression>().symbol);
+      if (!clause) {
+        throw InternalError(
+            "item.index receiver is not an active with-clause iterator");
+      }
+      auto type_id = module.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::PrimaryExpr{
+                  .data =
+                      hir::IterationBindingRef{
+                          .clause = *clause,
+                          .role = hir::IterationBindingRole::kIndex}},
           .span = span,
       };
     }
@@ -352,5 +389,14 @@ auto LowerCallExprProc(
       .span = span,
   };
 }
+
+template auto LowerCallExpr(
+    ProcessLowerer& lowerer, WalkFrame frame,
+    const slang::ast::CallExpression& call, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+template auto LowerCallExpr(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const slang::ast::CallExpression& call, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

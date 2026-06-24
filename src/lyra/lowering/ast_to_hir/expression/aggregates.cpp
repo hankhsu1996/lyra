@@ -11,7 +11,6 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -58,11 +57,12 @@ auto LowerConcatExpr(
   };
 }
 
-auto LowerReplicationExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+template <ExprLowerer Lowerer>
+auto LowerReplicationExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ReplicationExpression& rp, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto& module = proc.Module();
+  auto& module = lowerer.Module();
   auto type_id = module.InternType(*rp.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const auto kind = module.Unit().GetType(*type_id).Kind();
@@ -72,10 +72,10 @@ auto LowerReplicationExprProc(
         "replication result type is neither string nor packed "
         "(LRM 11.4.12.1)");
   }
-  auto count_or = proc.LowerExpr(rp.count(), frame);
+  auto count_or = lowerer.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const hir::ExprId count_id = frame.Exprs().Add(*std::move(count_or));
-  auto concat_or = proc.LowerExpr(rp.concat(), frame);
+  auto concat_or = lowerer.LowerExpr(rp.concat(), frame);
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const hir::ExprId concat_id = frame.Exprs().Add(*std::move(concat_or));
   return hir::Expr{
@@ -231,6 +231,13 @@ template auto LowerAssociativeAssignmentPattern(
 template auto LowerAssociativeAssignmentPattern(
     StructuralScopeLowerer&, WalkFrame,
     const slang::ast::StructuredAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerReplicationExpr(
+    ProcessLowerer&, WalkFrame, const slang::ast::ReplicationExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerReplicationExpr(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::ReplicationExpression&, diag::SourceSpan)
     -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

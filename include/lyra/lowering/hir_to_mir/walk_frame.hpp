@@ -16,6 +16,7 @@ struct Block;
 namespace lyra::lowering::hir_to_mir {
 
 class CaptureSink;
+class IterationBindingRegistry;
 
 // Singly-linked node carrying a class's parent chain so a leaf reference
 // can read the declared type of a member at `hops > 0`. Each node lives on
@@ -80,10 +81,12 @@ struct WalkFrame {
   // closure body.
   CaptureSink* capture_sink = nullptr;
 
-  // The iterator-index binding active while lowering an array-method
-  // with-clause body (LRM 7.12.4). Read by the `item.index` reference
-  // lowering. Empty outside a with-clause body.
-  std::optional<mir::LocalId> active_index_binding;
+  // The array-method `with`-clause iteration parameters reachable while
+  // lowering a clause body (LRM 7.12.4), keyed by clause identity. An `item` /
+  // `item.index` reference resolves through it by identity, so a clause nested
+  // in the body can still reach an outer clause's parameter. Null outside a
+  // with-clause body.
+  IterationBindingRegistry* iteration_bindings = nullptr;
 
   // The `self` binding at the root of the current body. Set at body entry
   // (process / method / constructor / closure) and unchanged through the
@@ -180,9 +183,12 @@ struct WalkFrame {
     return next;
   }
 
-  [[nodiscard]] auto WithIndexBinding(mir::LocalId id) const -> WalkFrame {
+  // Threads the registry of active `with`-clause iteration parameters into the
+  // body subtree being lowered (LRM 7.12.4).
+  [[nodiscard]] auto WithIterationBindings(
+      IterationBindingRegistry* registry) const -> WalkFrame {
     WalkFrame next = *this;
-    next.active_index_binding = id;
+    next.iteration_bindings = registry;
     return next;
   }
 

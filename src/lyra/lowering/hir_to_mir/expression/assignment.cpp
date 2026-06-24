@@ -218,7 +218,7 @@ auto ApplyAssignEffect(
   auto& block = *frame.current_block;
   if (kind == hir::AssignKind::kBlocking) {
     const mir::ExprId services_id =
-        block.exprs.Add(BuildServicesCallExpr(process, frame));
+        block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
     return effect_fn(block, target_in_outer, operands_in_outer, services_id);
   }
   if (!IsExprRootedAtStructuralVar(block, target_in_outer)) {
@@ -230,7 +230,7 @@ auto ApplyAssignEffect(
       process.Module(), frame, target_in_outer, operands_in_outer, effect_fn);
   const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   return mir::Expr{
       .data =
           mir::CallExpr{

@@ -21,6 +21,8 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
+#include "lyra/lowering/hir_to_mir/expression/inside.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
@@ -988,15 +990,11 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             return LowerHirConversionExpr(*this, frame, cv, result_type);
           },
-          [](const hir::CallExpr&) -> diag::Result<mir::Expr> {
-            return diag::Fail(
-                diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                "calls are not allowed in constructor expressions");
+          [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirCallExpr(*this, frame, c, expr.span, result_type);
           },
-          [](const hir::InsideExpr&) -> diag::Result<mir::Expr> {
-            return diag::Fail(
-                diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                "inside operator is not allowed in constructor expressions");
+          [&](const hir::InsideExpr& in) -> diag::Result<mir::Expr> {
+            return LowerHirInsideExpr(*this, frame, in, result_type);
           },
           [&](const hir::ElementSelectExpr& s) -> diag::Result<mir::Expr> {
             return LowerHirElementSelectExpr(*this, frame, s, result_type);
@@ -1010,10 +1008,8 @@ auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirConcatExpr(*this, frame, c, result_type);
           },
-          [](const hir::ReplicationExpr&) -> diag::Result<mir::Expr> {
-            return diag::Fail(
-                diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                "replication in constructor expressions is not yet supported");
+          [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
+            return LowerHirReplicationExpr(*this, frame, r, result_type);
           },
           [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
             return LowerHirAssignmentPatternExpr(*this, frame, a, result_type);

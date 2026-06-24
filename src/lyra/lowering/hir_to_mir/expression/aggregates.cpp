@@ -80,14 +80,15 @@ auto LowerHirConcatExpr(
       .type = result_type};
 }
 
-auto LowerHirReplicationExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::ReplicationExpr& r,
+template <ExprLowerer Lowerer>
+auto LowerHirReplicationExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ReplicationExpr& r,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  auto count_or = process.LowerExpr(process.HirExprs().Get(r.count), frame);
+  auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
-  auto concat_or = process.LowerExpr(process.HirExprs().Get(r.concat), frame);
+  auto concat_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.concat), frame);
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const mir::ExprId concat_id = block.exprs.Add(*std::move(concat_or));
   return mir::Expr{
@@ -258,6 +259,12 @@ template auto LowerHirAssociativeAssignmentPatternExpr(
 template auto LowerHirAssociativeAssignmentPatternExpr(
     const ClassLowerer&, WalkFrame,
     const hir::AssociativeAssignmentPatternExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirReplicationExpr(
+    ProcessLowerer&, WalkFrame, const hir::ReplicationExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirReplicationExpr(
+    const ClassLowerer&, WalkFrame, const hir::ReplicationExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

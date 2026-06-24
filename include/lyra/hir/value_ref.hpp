@@ -8,6 +8,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_var.hpp"
+#include "lyra/hir/with_clause_id.hpp"
 
 namespace lyra::hir {
 
@@ -46,6 +47,17 @@ struct LoopVarRef {
   LoopVarDeclId loop_var;
 
   auto operator==(const LoopVarRef&) const -> bool = default;
+};
+
+// A reference to a `with`-clause iteration value (LRM 7.12.4), named by the
+// owning clause's identity and the role. Both element and index are closure
+// parameters; HIR-to-MIR resolves this to that clause's parameter, capturing it
+// when the reference sits inside a deeper clause's closure body.
+struct IterationBindingRef {
+  WithClauseId clause;
+  IterationBindingRole role;
+
+  auto operator==(const IterationBindingRef&) const -> bool = default;
 };
 
 // A sensitivity leaf observes either a this-unit structural var or a cross-unit
