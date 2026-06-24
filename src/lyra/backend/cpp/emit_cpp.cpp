@@ -35,7 +35,7 @@ auto RenderField(
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   // An upward reference is an ExternUp member: its constructor takes the
   // symbol payload (ancestor, by-name tail, leaf signal) rather than a value
-  // initializer; it registers itself and relocates at Bind.
+  // initializer; it registers itself and relocates in the resolve phase.
   if (const auto* er =
           std::get_if<mir::ExternalRefType>(&unit.GetType(var.type).data)) {
     std::string tail = "{";
@@ -97,6 +97,39 @@ auto RenderConstructor(
   out += Indent(indent) + sig + " { init(this); }\n";
   out += Indent(indent) + "static void init(" + s.name + "* self) {\n";
   auto rendered_or = RenderBlockStatements(scope_view, indent + 1);
+  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+  out += *rendered_or;
+  out += Indent(indent) + "}\n";
+  return out;
+}
+
+auto RenderResolveState(
+    const ScopeView& resolve_view, const mir::Class& s, std::size_t indent)
+    -> diag::Result<std::string> {
+  if (s.resolve_block.root_stmts.empty()) {
+    return std::string{};
+  }
+  std::string out;
+  out += Indent(indent) + "void ResolveState() override { resolve(this); }\n";
+  out += Indent(indent) + "static void resolve(" + s.name + "* self) {\n";
+  auto rendered_or = RenderBlockStatements(resolve_view, indent + 1);
+  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+  out += *rendered_or;
+  out += Indent(indent) + "}\n";
+  return out;
+}
+
+auto RenderInitializeState(
+    const ScopeView& init_view, const mir::Class& s, std::size_t indent)
+    -> diag::Result<std::string> {
+  if (s.initialize_block.root_stmts.empty()) {
+    return std::string{};
+  }
+  std::string out;
+  out += Indent(indent) +
+         "void InitializeState() override { init_state(this); }\n";
+  out += Indent(indent) + "static void init_state(" + s.name + "* self) {\n";
+  auto rendered_or = RenderBlockStatements(init_view, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
   out += Indent(indent) + "}\n";
@@ -251,6 +284,33 @@ auto RenderScopeAsClass(
   auto ctor_or = RenderConstructor(this_anchor, s, base_class, indent + 1);
   if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
   out += *ctor_or;
+
+  // Cross-instance binding (ref ports) is a separate method the engine runs
+  // after the whole tree is constructed; the constructor only allocates.
+  const ScopeView resolve_anchor =
+      (parent_struct_view == nullptr)
+          ? ScopeView::ForRoot(unit, s, s.resolve_block)
+          : parent_struct_view->WithClass(s, s.resolve_block);
+  auto resolve_or = RenderResolveState(resolve_anchor, s, indent + 1);
+  if (!resolve_or) return std::unexpected(std::move(resolve_or.error()));
+  if (!resolve_or->empty()) {
+    out += "\n";
+    out += *resolve_or;
+  }
+
+  // Variable initialization is a separate method the engine runs after the
+  // resolve phase; the constructor only allocates and registers.
+  const ScopeView init_anchor =
+      (parent_struct_view == nullptr)
+          ? ScopeView::ForRoot(unit, s, s.initialize_block)
+          : parent_struct_view->WithClass(s, s.initialize_block);
+  auto init_or = RenderInitializeState(init_anchor, s, indent + 1);
+  if (!init_or) return std::unexpected(std::move(init_or.error()));
+  if (!init_or->empty()) {
+    out += "\n";
+    out += *init_or;
+  }
+
   // Child links are registered automatically at construction and walked by the
   // base; only a scope's own processes need a per-class override.
   if (!s.processes.empty()) {

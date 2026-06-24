@@ -73,6 +73,11 @@ The same resolution serves both accessing the target's value and observing its c
 - `runtime_model.md` places resolution of cross-unit references in the constructor context and the
   access in the simulation context. A cross-unit reference resolves at t = 0 and is read or written
   at t >= 0.
+- `elaboration_lifecycle.md` owns _when_ within t = 0 a reference resolves: a single resolve phase
+  after the whole shell graph is built, for all directions. It supersedes any "downward resolved
+  inside the constructor, upward at bind" reading -- both resolve in that one phase -- and requires
+  every reference to seal to a direct final cell (no reference-to-a-reference) before initializers
+  run.
 - `identity_and_ownership.md` requires a cross-unit reference to be a distinct id kind from an
   intra-unit id.
 - `scheduling.md` owns the wakeup that fires when a resolved cross-unit member changes.

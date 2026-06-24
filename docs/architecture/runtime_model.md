@@ -61,9 +61,14 @@ Between construction and simulation -- still at t = 0, before any process runs -
 the constructed objects into the one `$root`-rooted tree and binds it. Binding resolves the
 cross-tree references a per-object constructor could not, because they need the whole tree to exist:
 an upward reference to an ancestor, a `$root`-anchored path (see `reference_resolution.md`,
-`emission_model.md`). A reference a constructor can reach from its own subtree (an owned child) is
-resolved in that constructor; one that needs the whole tree is resolved at bind. A constructor
-returning leaves its own subtree fixed, but the whole-design tree is fixed only after bind.
+`emission_model.md`).
+
+`elaboration_lifecycle.md` refines this construction-vs-simulation boundary into ordered phases
+(build / resolve / initialize / activate) and is the authority on _when_ each piece runs. It
+supersedes the "downward resolved in the constructor, upward at bind" split described historically
+here: all cross-instance references resolve in one resolve phase after the shell graph is built, and
+variable initializers run in the initialize phase after resolution, not inside the constructor. The
+constructor allocates the shell; it is not the executor of elaboration semantics.
 
 ## Generate is not compile-time expansion
 

@@ -143,7 +143,8 @@ auto AsUniquePointee(const CompilationUnit& unit, TypeId type)
 
 auto IsObservableCellType(const Type& ty) -> bool {
   return std::holds_alternative<ObservableType>(ty.data) ||
-         std::holds_alternative<ExternalRefType>(ty.data);
+         std::holds_alternative<ExternalRefType>(ty.data) ||
+         std::holds_alternative<RefType>(ty.data);
 }
 
 auto ObservableInnerValueType(const Type& ty) -> TypeId {
@@ -152,6 +153,9 @@ auto ObservableInnerValueType(const Type& ty) -> TypeId {
   }
   if (const auto* er = std::get_if<ExternalRefType>(&ty.data)) {
     return er->element;
+  }
+  if (const auto* rf = std::get_if<RefType>(&ty.data)) {
+    return rf->pointee;
   }
   throw InternalError(
       "ObservableInnerValueType: type is not an observable cell wrapper");

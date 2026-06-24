@@ -59,12 +59,12 @@ class Scope {
     return {};
   }
 
-  // Records, during construction, the address of a signal this scope owns
-  // under its source name, and the owned child reachable at `name` plus one
-  // index per array dimension (empty for a scalar). A unit answers by-name
-  // queries about its own interface from these registrations; it never
-  // inspects who asks. `name` points at an emitted string literal; the
-  // indices are copied so the entry outlives the constructor's arguments.
+  // Records, during construction, the address of a signal this scope owns under
+  // its source name, and the owned child reachable at `name` plus one index per
+  // array dimension (empty for a scalar). A unit answers by-name queries about
+  // its own interface from these registrations; it never inspects who asks.
+  // `name` points at an emitted string literal; the indices are copied so the
+  // entry outlives the constructor's arguments.
   void RegisterSignal(std::string_view name, void* address);
   void RegisterChild(
       std::string_view name, std::span<const std::size_t> indices,
@@ -88,12 +88,12 @@ class Scope {
   // `kScopeName` matches the scope's own name (`Name()`, a named generate block
   // or `$root`), whose name is itself the lookup key. The shared start of an
   // upward reference's runtime navigation; from there an `ExternUp` member
-  // walks any by-name tail and fetches the leaf, once at Bind.
+  // walks any by-name tail and fetches the leaf, once in the resolve phase.
   [[nodiscard]] auto ResolveUpwardScope(std::string_view key, UpwardMatch match)
       -> Scope*;
 
-  // An `ExternUp` member registers itself here from its constructor; Bind
-  // relocates all registered members once the whole tree exists.
+  // An `ExternUp` member registers itself here from its constructor; the
+  // resolve phase relocates all registered members once the whole tree exists.
   void RegisterExtern(ExternBase* member);
 
   // The scope's declared time precision as a power of ten (LRM Table 20-2).
@@ -104,16 +104,24 @@ class Scope {
     return kUnspecifiedTimePrecisionPower;
   }
 
-  // Relocates any registered `ExternUp` members, creates this scope's
-  // processes, then recurses into the children. Services are already wired in
-  // the constructor; Bind only installs runtime behavior that requires the
-  // whole tree to exist.
-  void Bind();
+  // The post-construction elaboration phases, each a top-down walk over the
+  // whole subtree. Services and structure are already wired in the constructor;
+  // these install behavior that needs the whole tree to exist. They run in
+  // order across the design: every scope resolves, then every scope
+  // initializes, then every scope activates.
+  //
+  // Resolve relocates registered `ExternUp` members (cross-tree references).
+  // Initialize runs variable initializers, after resolution, so an initializer
+  // observes connected and bound values. Activate creates this scope's
+  // processes, after initialization.
+  void Resolve();
+  void Initialize();
+  void Activate();
 
   // Last-write-wins per site within a time slot: re-submit at the same site
   // overwrites the prior closure, which suppresses settle-time glitches. The
-  // site id is the compile-time-fixed slot index passed as an SV integer;
-  // the runtime projects to `std::size_t` internally at the API boundary.
+  // site id is the compile-time-fixed slot index passed as an SV integer; the
+  // runtime projects to `std::size_t` internally at the API boundary.
   void SubmitObserved(
       const lyra::value::PackedArray& site_id, std::function<void()> fn);
   void DrainObserved();
@@ -140,6 +148,18 @@ class Scope {
   [[nodiscard]] auto Services() -> RuntimeServices&;
 
  private:
+  // A scope with no cross-instance bindings does none; only scopes that bind a
+  // child's reference (a `ref` port) override this. Called in the resolve
+  // phase, once the whole tree is constructed.
+  virtual void ResolveState() {
+  }
+
+  // A scope with no variable initializers runs none; only scopes with
+  // initializers override this. Called in the initialize phase, after the whole
+  // tree has resolved its references.
+  virtual void InitializeState() {
+  }
+
   // A scope with no processes creates none; only scopes with processes
   // override this.
   virtual void CreateProcesses() {
@@ -170,13 +190,14 @@ class Scope {
   std::vector<std::unique_ptr<RuntimeProcess>> processes_;
   // Empty std::function == clean slot; no parallel dirty bitmap needed.
   std::vector<std::function<void()>> observed_pending_;
-  // Non-owning links to this scope's ExternUp members; relocated at Bind once
-  // the whole tree exists. The members are owned by the derived class.
+  // Non-owning links to this scope's ExternUp members; relocated in the resolve
+  // phase once the whole tree exists. The members are owned by the derived
+  // class.
   std::vector<ExternBase*> externs_;
 };
 
-// A module / interface / program instance: an owned child built from
-// another compilation unit, reached across the unit boundary.
+// A module / interface / program instance: an owned child built from another
+// compilation unit, reached across the unit boundary.
 class Instance : public Scope {
  public:
   using Scope::Scope;

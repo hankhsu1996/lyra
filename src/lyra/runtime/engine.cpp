@@ -49,10 +49,20 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
     // root answers GetChild for each top under its name (LRM 23.6).
     root_->RegisterChild(top.scope->Name(), {}, *top.scope);
   }
-  // Link every top before binding any, so an upward climb at Bind sees the
-  // whole tree (the root and all sibling tops already exist).
+  // Link every top before any phase runs, so an upward climb during resolution
+  // sees the whole tree (the root and all sibling tops already exist). The
+  // phases run design-wide in order: resolve every reference, then initialize
+  // every scope's variables, then activate every scope's processes -- so an
+  // initializer observes resolved references, and processes start only after
+  // all initialization.
   for (const auto& top : tops) {
-    top.scope->Bind();
+    top.scope->Resolve();
+  }
+  for (const auto& top : tops) {
+    top.scope->Initialize();
+  }
+  for (const auto& top : tops) {
+    top.scope->Activate();
   }
 }
 

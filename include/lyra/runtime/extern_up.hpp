@@ -35,11 +35,11 @@ struct ChildStep {
 // An upward hierarchical reference modeled as an extern member: it holds the
 // symbol -- the ancestor name, how that name is matched on the parent chain,
 // the by-name tail down through the ancestor's owned children, and the leaf
-// signal name -- and at Bind climbs to the ancestor, walks the tail, and
-// binds a direct pointer to the leaf. Reads, writes, and sensitivity forward
-// to that resolved cell, so the member behaves like the referenced `Var<T>`
-// while naming no ancestor type. Non-movable: it registers `this`, and is
-// owned by the stable scope node that declares it.
+// signal name -- and in the resolve phase climbs to the ancestor, walks the
+// tail, and binds a direct pointer to the leaf. Reads, writes, and sensitivity
+// forward to that resolved cell, so the member behaves like the referenced
+// `Var<T>` while naming no ancestor type. Non-movable: it registers `this`, and
+// is owned by the stable scope node that declares it.
 template <value::LyraValue T>
 class ExternUp : public ExternBase {
  public:
