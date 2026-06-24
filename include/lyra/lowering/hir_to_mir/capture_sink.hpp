@@ -61,14 +61,20 @@ class CaptureSink {
     return boundary_depth_;
   }
 
-  // Capture `var` (declared at `decl_depth`) and return the body-side reference
-  // -- a binding local to the body, read at `current_depth`.
+  // Capture `var` (declared at `decl_depth`) and return the body-side
+  // reference -- a binding local to the body, read at `current_depth`. The
+  // expr carries the binding slot's declared type: a `RefType` for a
+  // by-reference alias, the value type for a by-value snapshot, so the read
+  // lifts to the cell protocol exactly when the binding aliases live storage.
   auto Capture(
       mir::LocalId var, BlockDepth decl_depth, mir::TypeId type,
-      BlockDepth current_depth) -> mir::LocalRef {
+      BlockDepth current_depth) -> mir::Expr {
     mir::LocalId binding = FindOrCreate(var, decl_depth, type);
-    return mir::LocalRef{
-        .hops = current_depth - boundary_depth_, .var = binding};
+    return mir::Expr{
+        .data =
+            mir::LocalRef{
+                .hops = current_depth - boundary_depth_, .var = binding},
+        .type = body_->vars.Get(binding).type};
   }
 
   auto TakeRequests() -> std::vector<CaptureRequest> {

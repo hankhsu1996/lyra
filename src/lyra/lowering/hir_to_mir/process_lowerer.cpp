@@ -383,7 +383,8 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
     MapProceduralVar(
         param.var, AutomaticVarBinding{
                        .declaration_procedural_depth = body_frame.block_depth,
-                       .var = mir_var});
+                       .var = mir_var,
+                       .type = type});
     params.push_back(
         mir::MethodParam{
             .name = hir_var.name,
@@ -416,7 +417,8 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
         *src.result_var,
         AutomaticVarBinding{
             .declaration_procedural_depth = body_frame.block_depth,
-            .var = result_ref->var});
+            .var = result_ref->var,
+            .type = result_type});
   }
 
   auto lowered = LowerStraightLineBodyInto(*this, body_frame);
