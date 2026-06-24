@@ -148,11 +148,11 @@ auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
           [&](const hir::AssociativeArrayType& src) -> mir::TypeData {
             return mir::AssociativeArrayType{
                 .element_type = TranslateType(src.element_type),
-                .key_type = src.key_type.has_value()
-                                ? std::optional<mir::TypeId>{TranslateType(
-                                      *src.key_type)}
-                                : std::nullopt,
+                .key_type = TranslateType(src.key_type),
             };
+          },
+          [](const hir::WildcardIndexType&) -> mir::TypeData {
+            return mir::WildcardIndexType{};
           },
           [](const hir::StringType&) -> mir::TypeData {
             return mir::StringType{};

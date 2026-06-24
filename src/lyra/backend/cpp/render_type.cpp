@@ -92,15 +92,13 @@ auto RenderTypeAsCpp(
                 RenderTypeAsCpp(unit, owner_class, q.element_type));
           },
           [&](const mir::AssociativeArrayType& a) -> std::string {
-            if (!a.key_type.has_value()) {
-              throw InternalError(
-                  "RenderTypeAsCpp: associative array with a wildcard index "
-                  "type reached the backend; AST -> HIR rejects it");
-            }
             return std::format(
                 "lyra::value::AssociativeArray<{}, {}>",
-                RenderTypeAsCpp(unit, owner_class, *a.key_type),
+                RenderTypeAsCpp(unit, owner_class, a.key_type),
                 RenderTypeAsCpp(unit, owner_class, a.element_type));
+          },
+          [](const mir::WildcardIndexType&) -> std::string {
+            return "lyra::value::WildcardKey";
           },
           [](const mir::ObjectType& o) -> std::string { return o.name; },
           [](const mir::ExternalUnitObjectType& e) -> std::string {

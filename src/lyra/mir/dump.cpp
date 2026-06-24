@@ -155,14 +155,12 @@ class MirDumper {
               return std::format("Queue(elem=Type[{}])", q.element_type.value);
             },
             [](const AssociativeArrayType& a) -> std::string {
-              if (a.key_type.has_value()) {
-                return std::format(
-                    "AssociativeArray(elem=Type[{}], key=Type[{}])",
-                    a.element_type.value, a.key_type->value);
-              }
               return std::format(
-                  "AssociativeArray(elem=Type[{}], key=wildcard)",
-                  a.element_type.value);
+                  "AssociativeArray(elem=Type[{}], key=Type[{}])",
+                  a.element_type.value, a.key_type.value);
+            },
+            [](const WildcardIndexType&) -> std::string {
+              return "WildcardIndexType";
             },
             [](const StringType&) -> std::string { return "StringType"; },
             [](const EventType&) -> std::string { return "EventType"; },
