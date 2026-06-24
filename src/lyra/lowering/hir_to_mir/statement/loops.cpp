@@ -10,13 +10,13 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_hops.hpp"
-#include "lyra/mir/cast.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -182,9 +182,8 @@ auto LowerRepeatStmt(
   }
   mir::ExprId count_expr_id = wrapper.exprs.Add(*std::move(count_or));
   if (wrapper.exprs.Get(count_expr_id).type != int_type) {
-    count_expr_id = wrapper.exprs.Add(
-        mir::Expr{
-            .data = mir::CastExpr{.operand = count_expr_id}, .type = int_type});
+    count_expr_id = wrapper.exprs.Add(BuildValueConversion(
+        process.Module().Unit(), wrapper, count_expr_id, int_type));
   }
 
   const mir::LocalId count_var = wrapper.vars.Add(

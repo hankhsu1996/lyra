@@ -17,8 +17,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/mir/cast.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
@@ -86,9 +86,9 @@ auto BuildPrintValueItem(
       value_type.Kind() != mir::TypeKind::kString &&
       !value_type.IsIntegralPacked()) {
     const mir::ExprId inner = block.exprs.Add(std::move(lowered));
-    lowered = mir::Expr{
-        .data = mir::CastExpr{.operand = inner},
-        .type = process.Module().Unit().builtins.string};
+    lowered = BuildValueConversion(
+        process.Module().Unit(), block, inner,
+        process.Module().Unit().builtins.string);
   }
 
   const mir::TypeId type = lowered.type;

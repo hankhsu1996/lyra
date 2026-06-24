@@ -9,13 +9,13 @@
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/cast.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -223,8 +223,8 @@ auto LowerHirConversionExpr(
   }
   const mir::ExprId operand_id =
       frame.current_block->exprs.Add(*std::move(operand_or));
-  return mir::Expr{
-      .data = mir::CastExpr{.operand = operand_id}, .type = result_type};
+  return BuildValueConversion(
+      lowerer.Module().Unit(), *frame.current_block, operand_id, result_type);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

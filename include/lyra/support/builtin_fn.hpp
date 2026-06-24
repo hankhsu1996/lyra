@@ -214,6 +214,24 @@ enum class BuiltinFn : std::uint16_t {
   kRegisterSignal,
   kGetSignal,
   kGetChild,
+  // Value-layer conversion factories. HIR-to-MIR dispatches on the (src, dst)
+  // type pair and emits a `CallExpr` to the matching factory; the C++ backend
+  // renders each as the corresponding `lyra::value::T::Method(...)` static call
+  // or instance method, with no type-driven branching. `kToInt64` is the
+  // `PackedArray` accessor that yields a host int64 (used as an inner step of
+  // the integral-to-real path); `kRound` is the `Real` / `ShortReal` accessor
+  // that rounds to int64 per LRM 6.12.1 (used as an inner step of the
+  // real-to-integral path). `kFromInt` / `kConvertFrom` are the static
+  // `PackedArray` factories that build a target-shape vector from an integer
+  // (rounded real value) or reshape another packed vector. `kFromPackedArray`
+  // / `kFromByteArray` are the static `String` factories that build a string
+  // from packed bits (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
+  kToInt64,
+  kRound,
+  kFromInt,
+  kConvertFrom,
+  kFromPackedArray,
+  kFromByteArray,
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,
@@ -222,7 +240,9 @@ enum class BuiltinFn : std::uint16_t {
 // without re-deriving the family axis.
 [[nodiscard]] constexpr auto IsStaticBuiltinFn(BuiltinFn id) -> bool {
   return id == BuiltinFn::kEnumFirst || id == BuiltinFn::kEnumLast ||
-         id == BuiltinFn::kEnumNum;
+         id == BuiltinFn::kEnumNum || id == BuiltinFn::kFromInt ||
+         id == BuiltinFn::kConvertFrom || id == BuiltinFn::kFromPackedArray ||
+         id == BuiltinFn::kFromByteArray;
 }
 
 // True iff the function modifies its receiver argument's storage in place.

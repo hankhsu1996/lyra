@@ -13,6 +13,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
@@ -54,10 +55,9 @@ auto LiftStringSource(
         "unpacked array of byte (LRM 21.3.4.3)");
   }
 
-  return frame.current_block->exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = source_id},
-          .type = module.Unit().builtins.string});
+  return frame.current_block->exprs.Add(BuildValueConversion(
+      module.Unit(), *frame.current_block, source_id,
+      module.Unit().builtins.string));
 }
 
 // LRM 21.3.4.3 permits string or integral as the format argument; the
@@ -72,10 +72,9 @@ auto LiftStringFormat(
         "LiftStringFormat: scan format is not string or integral (LRM "
         "21.3.4.3)");
   }
-  return frame.current_block->exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = format_id},
-          .type = module.Unit().builtins.string});
+  return frame.current_block->exprs.Add(BuildValueConversion(
+      module.Unit(), *frame.current_block, format_id,
+      module.Unit().builtins.string));
 }
 
 // LRM 21.3.4.3: a source or format string that contains x or z makes

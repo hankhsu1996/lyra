@@ -518,134 +518,22 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
   return "(" + *cond_or + " ? " + *then_or + " : " + *else_or + ")";
 }
 
-// SV LRM 6.12.1 + 6.22: real-family conversions are a pure float-precision
-// reshape. `realtime` is a synonym for `real`, so both are `lyra::value::Real`
-// and need no conversion; only a `shortreal` <-> `real` change crosses the two
-// `RealValue` instantiations, expressed through the cross-precision ctor.
-auto RenderRealConversion(
-    std::string operand, const mir::Type& src_ty, const mir::Type& dst_ty)
-    -> std::string {
-  const bool src_is_short = src_ty.Kind() == mir::TypeKind::kShortReal;
-  const bool dst_is_short = dst_ty.Kind() == mir::TypeKind::kShortReal;
-  if (src_is_short == dst_is_short) {
-    return operand;
-  }
-  return std::format(
-      "lyra::value::{}{{{}}}", dst_is_short ? "ShortReal" : "Real", operand);
-}
-
-// Integral-to-integral conversions reshape a PackedArray to a possibly-
-// different width / signedness / state. Same-shape is pass-through (slang
-// emits spurious self-conversions). Enum endpoints layer two extra wraps on
-// top of the integral body so the C++ static type matches LRM 6.19.3's
-// explicit-cast requirement: integral -> enum wraps with the enum class's
-// converting ctor; enum -> integral slices the enum subobject into a plain
-// PackedArray for downstream template deduction.
-auto RenderIntegralConversion(
-    const ScopeView& view, mir::TypeId dst_type_id, std::string operand,
-    const mir::PackedArrayType& src_pa, const mir::PackedArrayType& dst_pa,
-    bool src_is_enum, bool dst_is_enum) -> std::string {
-  std::string body;
-  if (src_pa.BitWidth() == dst_pa.BitWidth() &&
-      src_pa.signedness == dst_pa.signedness && src_pa.atom == dst_pa.atom) {
-    body = std::move(operand);
-  } else {
-    body = std::format(
-        "lyra::value::PackedArray::ConvertFrom({}, {})", operand,
-        RenderPackedArrayCtorArgs(dst_pa));
-  }
-  if (dst_is_enum) {
-    return std::format(
-        "{}{{{}}}", RenderEnumClassName(view.Class(), dst_type_id), body);
-  }
-  if (src_is_enum) {
-    return std::format("lyra::value::PackedArray{{{}}}", body);
-  }
-  return body;
-}
-
-// LRM 6.12.1: integer-to-real implicit conversion treats X/Z bits as 0.
-// `PackedArray::ToInt64` already collapses X/Z bits to 0 (packed_array.hpp
-// docstring), so the integer value feeds `RealValue::FromInt64`. `shortreal`
-// builds a `ShortReal`; `real` and `realtime` (LRM 6.12 synonyms) build a
-// `Real`.
-auto RenderIntegralToRealConversion(
-    std::string operand, const mir::Type& dst_ty) -> std::string {
-  const auto* real_ty =
-      dst_ty.Kind() == mir::TypeKind::kShortReal ? "ShortReal" : "Real";
-  return std::format(
-      "lyra::value::{}::FromInt64(({}).ToInt64())", real_ty, operand);
-}
-
-// LRM 6.12.1: real-to-integer implicit conversion rounds the real to the
-// nearest integer with ties rounded away from zero (35.5 -> 36, -1.5 -> -2).
-// `RealValue::Round` applies that rule (via `std::llround`) and returns a
-// `long long` (>= 64 bits), which feeds `PackedArray::FromInt` to land the
-// rounded value into the destination shape. Destination widths > 64 bits would
-// need a wide-int conversion path; that is currently caught by `FromInt`'s own
-// width invariant.
-auto RenderRealToIntegralConversion(
-    std::string operand, const mir::PackedArrayType& dst_pa) -> std::string {
-  return std::format(
-      "lyra::value::PackedArray::FromInt(({}).Round(), {})", operand,
-      RenderPackedArrayCtorArgs(dst_pa));
-}
-
+// `mir::CastExpr` is a type-level view change with no runtime semantic
+// transform -- the C++ peer of `static_cast<T>(x)` and the LLVM peer of
+// `bitcast`. The destination type comes from the enclosing `Expr::type`;
+// render is a fixed function of the node kind, with no type-driven branching.
+// Every other value-shape conversion (integral resize, real <-> integral,
+// packed <-> string, real <-> real precision) is expressed upstream as a
+// `CallExpr` against a `lyra::value` factory and renders through the call
+// path.
 auto RenderCastExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast)
     -> diag::Result<std::string> {
-  const auto& src_expr = view.Expr(cast.operand);
-  const auto& src_ty = view.Unit().GetType(src_expr.type);
-  const auto& dst_ty = view.Unit().GetType(expr.type);
-  auto operand_or = RenderExpr(view, src_expr);
+  auto operand_or = RenderExpr(view, view.Expr(cast.operand));
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-
-  // Dispatch by (source category, destination category). Each branch is one
-  // (src, dst) emit form.
-  // Pointer-to-pointer reinterpret: the runtime returns a type-erased pointer
-  // (e.g. `void*` from a by-name navigation) and the MIR re-types it at the
-  // call site. The C++ realization is a `static_cast` to the destination
-  // pointer spelling.
-  if (src_ty.Kind() == mir::TypeKind::kPointer &&
-      dst_ty.Kind() == mir::TypeKind::kPointer) {
-    auto dest_or = RenderTypeAsCpp(view.Unit(), view.Class(), expr.type);
-    if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-    return "static_cast<" + *dest_or + ">(" + *std::move(operand_or) + ")";
-  }
-  if (IsRealFamilyType(src_ty) && IsRealFamilyType(dst_ty)) {
-    return RenderRealConversion(*std::move(operand_or), src_ty, dst_ty);
-  }
-  if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
-    return RenderIntegralConversion(
-        view, expr.type, *std::move(operand_or), src_ty.AsIntegralPacked(),
-        dst_ty.AsIntegralPacked(), src_ty.IsEnum(), dst_ty.IsEnum());
-  }
-  if (src_ty.IsIntegralPacked() && IsRealFamilyType(dst_ty)) {
-    return RenderIntegralToRealConversion(*std::move(operand_or), dst_ty);
-  }
-  if (IsRealFamilyType(src_ty) && dst_ty.IsIntegralPacked()) {
-    return RenderRealToIntegralConversion(
-        *std::move(operand_or), dst_ty.AsIntegralPacked());
-  }
-  // LRM 21.3.4.3: $sscanf unpacked-array-of-byte source lifts to string.
-  // The lowering layer inserts the cast at the call boundary, leaving this
-  // site as the single emit point.
-  if (src_ty.Kind() == mir::TypeKind::kUnpackedArray &&
-      dst_ty.Kind() == mir::TypeKind::kString) {
-    return std::format(
-        "lyra::value::String::FromByteArray({})", *std::move(operand_or));
-  }
-  // LRM 6.16: build a string value from packed bits. FromPackedArray strips
-  // every NUL, so the empty (`8'h00`) and embedded-NUL cases need no operand
-  // special-case -- the render stays a pure type map.
-  if (src_ty.IsIntegralPacked() && dst_ty.Kind() == mir::TypeKind::kString) {
-    return std::format(
-        "lyra::value::String::FromPackedArray({})", *std::move(operand_or));
-  }
-  // Identity / no-op rendering: the cast exists in MIR but the operand's
-  // already-rendered C++ matches the destination shape (e.g. a string -> string
-  // lift).
-  return *std::move(operand_or);
+  auto dest_or = RenderTypeAsCpp(view.Unit(), view.Class(), expr.type);
+  if (!dest_or) return std::unexpected(std::move(dest_or.error()));
+  return "static_cast<" + *dest_or + ">(" + *std::move(operand_or) + ")";
 }
 
 // The bare C++ identifier this backend declares the builtin fn as. One
@@ -850,6 +738,18 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "GetSignal";
     case support::BuiltinFn::kGetChild:
       return "GetChild";
+    case support::BuiltinFn::kToInt64:
+      return "ToInt64";
+    case support::BuiltinFn::kRound:
+      return "Round";
+    case support::BuiltinFn::kFromInt:
+      return "FromInt";
+    case support::BuiltinFn::kConvertFrom:
+      return "ConvertFrom";
+    case support::BuiltinFn::kFromPackedArray:
+      return "FromPackedArray";
+    case support::BuiltinFn::kFromByteArray:
+      return "FromByteArray";
     case support::BuiltinFn::kFileOpen:
       return "Open";
     case support::BuiltinFn::kFileClose:

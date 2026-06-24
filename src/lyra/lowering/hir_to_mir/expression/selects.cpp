@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -115,12 +116,11 @@ auto UnsignedPackedCounterpart(
 // explicit `ConversionExpr` to `final_type` when the two differ. No-op when
 // the slice already matches the consumer's MIR type.
 auto WrapSliceSignReTag(
-    mir::Block& block, mir::Expr owned, mir::TypeId slice_type,
-    mir::TypeId final_type) -> mir::Expr {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::Expr owned,
+    mir::TypeId slice_type, mir::TypeId final_type) -> mir::Expr {
   if (slice_type == final_type) return owned;
   const mir::ExprId owned_id = block.exprs.Add(std::move(owned));
-  return mir::Expr{
-      .data = mir::CastExpr{.operand = owned_id}, .type = final_type};
+  return BuildValueConversion(unit, block, owned_id, final_type);
 }
 
 struct RangeLoHi {
@@ -658,7 +658,8 @@ auto LowerMemberAccessInner(
       side);
   mir::Expr owned = WrapPackedAsOwned(
       module.Unit(), block, std::move(slice_call), slice_type);
-  return WrapSliceSignReTag(block, std::move(owned), slice_type, result_type);
+  return WrapSliceSignReTag(
+      module.Unit(), block, std::move(owned), slice_type, result_type);
 }
 
 }  // namespace
