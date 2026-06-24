@@ -120,10 +120,7 @@ auto WrapSliceSignReTag(
   if (slice_type == final_type) return owned;
   const mir::ExprId owned_id = block.exprs.Add(std::move(owned));
   return mir::Expr{
-      .data =
-          mir::ConversionExpr{
-              .operand = owned_id, .kind = mir::ConversionKind::kImplicit},
-      .type = final_type};
+      .data = mir::CastExpr{.operand = owned_id}, .type = final_type};
 }
 
 struct RangeLoHi {
