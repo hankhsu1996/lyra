@@ -6,6 +6,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/inside_item.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -20,6 +21,7 @@ auto BuildHirInsideItemPredicate(
     -> diag::Result<mir::ExprId> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
+  const auto& unit = lowerer.Module().Unit();
   auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(hir_exprs.Get(id), frame);
     if (!lowered) {
@@ -33,44 +35,24 @@ auto BuildHirInsideItemPredicate(
           [&](const hir::ExprId& val_id) -> diag::Result<mir::ExprId> {
             auto v = lower_id(val_id);
             if (!v) return std::unexpected(std::move(v.error()));
-            return block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kWildcardEquality,
-                            .lhs = lhs_id,
-                            .rhs = *v},
-                    .type = result_type});
+            return block.exprs.Add(BuildMirBinaryExpr(
+                unit, block, mir::BinaryOp::kWildcardEquality, lhs_id, *v,
+                result_type));
           },
           [&](const hir::InsideRangePair& r) -> diag::Result<mir::ExprId> {
             auto lo = lower_id(r.lo);
             if (!lo) return std::unexpected(std::move(lo.error()));
             auto hi = lower_id(r.hi);
             if (!hi) return std::unexpected(std::move(hi.error()));
-            const mir::ExprId ge_id = block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kGreaterEqual,
-                            .lhs = lhs_id,
-                            .rhs = *lo},
-                    .type = result_type});
-            const mir::ExprId le_id = block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kLessEqual,
-                            .lhs = lhs_id,
-                            .rhs = *hi},
-                    .type = result_type});
-            return block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kLogicalAnd,
-                            .lhs = ge_id,
-                            .rhs = le_id},
-                    .type = result_type});
+            const mir::ExprId ge_id = block.exprs.Add(BuildMirBinaryExpr(
+                unit, block, mir::BinaryOp::kGreaterEqual, lhs_id, *lo,
+                result_type));
+            const mir::ExprId le_id = block.exprs.Add(BuildMirBinaryExpr(
+                unit, block, mir::BinaryOp::kLessEqual, lhs_id, *hi,
+                result_type));
+            return block.exprs.Add(BuildMirBinaryExpr(
+                unit, block, mir::BinaryOp::kLogicalAnd, ge_id, le_id,
+                result_type));
           },
       },
       item);

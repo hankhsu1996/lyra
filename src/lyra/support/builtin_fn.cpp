@@ -346,6 +346,42 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "from_packed_array";
     case BuiltinFn::kFromByteArray:
       return "from_byte_array";
+    case BuiltinFn::kPow:
+      return "pow";
+    case BuiltinFn::kShiftLeft:
+      return "shift_left";
+    case BuiltinFn::kLogicalShiftRight:
+      return "logical_shift_right";
+    case BuiltinFn::kArithmeticShiftRight:
+      return "arithmetic_shift_right";
+    case BuiltinFn::kBitwiseXnor:
+      return "bitwise_xnor";
+    case BuiltinFn::kLogicalImplication:
+      return "logical_implication";
+    case BuiltinFn::kLogicalEquivalence:
+      return "logical_equivalence";
+    case BuiltinFn::kWildcardEquals:
+      return "wildcard_equals";
+    case BuiltinFn::kCaseEqual:
+      return "case_equal";
+    case BuiltinFn::kCasezEquals:
+      return "casez_equals";
+    case BuiltinFn::kCasexEquals:
+      return "casex_equals";
+    case BuiltinFn::kReductionAnd:
+      return "reduction_and";
+    case BuiltinFn::kReductionOr:
+      return "reduction_or";
+    case BuiltinFn::kReductionXor:
+      return "reduction_xor";
+    case BuiltinFn::kReductionNand:
+      return "reduction_nand";
+    case BuiltinFn::kReductionNor:
+      return "reduction_nor";
+    case BuiltinFn::kReductionXnor:
+      return "reduction_xnor";
+    case BuiltinFn::kFromBool:
+      return "from_bool";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

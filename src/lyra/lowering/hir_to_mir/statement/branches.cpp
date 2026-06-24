@@ -161,7 +161,8 @@ auto LowerCaseStmt(
               return std::unexpected(std::move(lab_or.error()));
             }
             return label_frame.current_block->exprs.Add(*std::move(lab_or));
-          });
+          },
+          process.Module().Unit());
       if (!pred_or) return std::unexpected(std::move(pred_or.error()));
       predicates.push_back(*pred_or);
     }
@@ -192,7 +193,8 @@ auto LowerCaseStmt(
             return std::unexpected(std::move(lab_or.error()));
           }
           return label_frame.current_block->exprs.Add(*std::move(lab_or));
-        });
+        },
+        process.Module().Unit());
   };
 
   return BuildCaseCascade(
