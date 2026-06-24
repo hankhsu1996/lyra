@@ -16,6 +16,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -93,6 +94,41 @@ StructuralScopeLowerer::StructuralScopeLowerer(
       slang_scope_(&slang_scope),
       frame_(module.NextScopeFrameId()),
       entry_loop_var_bindings_(std::move(entry_loop_var_bindings)) {
+  // A `ref` / `const ref` port's internal variable aliases the connected
+  // variable rather than owning storage (LRM 23.3.3.2); record which of this
+  // body's variables those are so their members lower to a reference type. Only
+  // a module body declares ports; a generate-block scope has none.
+  const auto* body =
+      slang_scope.asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+  if (body == nullptr) {
+    return;
+  }
+  for (const auto* port_symbol : body->getPortList()) {
+    const auto* port = port_symbol->as_if<slang::ast::PortSymbol>();
+    if (port == nullptr ||
+        port->direction != slang::ast::ArgumentDirection::Ref ||
+        port->internalSymbol == nullptr) {
+      continue;
+    }
+    const auto* internal_var =
+        port->internalSymbol->as_if<slang::ast::VariableSymbol>();
+    const bool is_const =
+        internal_var != nullptr &&
+        internal_var->flags.has(slang::ast::VariableFlags::Const);
+    ref_port_internals_.emplace(
+        port->internalSymbol, is_const ? hir::ReferenceBinding::kConstRef
+                                       : hir::ReferenceBinding::kRef);
+  }
+}
+
+auto StructuralScopeLowerer::ReferenceBindingFor(
+    const slang::ast::VariableSymbol& var) const
+    -> std::optional<hir::ReferenceBinding> {
+  const auto it = ref_port_internals_.find(&var);
+  if (it == ref_port_internals_.end()) {
+    return std::nullopt;
+  }
+  return it->second;
 }
 
 auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
@@ -262,7 +298,8 @@ auto StructuralScopeLowerer::PopulateVariableMember(
           hir::StructuralVarDecl{
               .name = std::string{var.name},
               .type = *type_id_or,
-              .initializer = initializer_id});
+              .initializer = initializer_id,
+              .reference = ReferenceBindingFor(var)});
   module_->MapStructuralVarBinding(var, frame_, local, *type_id_or);
   return {};
 }

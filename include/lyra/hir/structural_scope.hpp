@@ -57,14 +57,14 @@ using PathStep = std::variant<MemberHop, IndexHop>;
 // Where a cross-unit reference starts its navigation. A downward reference
 // reaches into an owned child the referrer's own scope declares -- an
 // instance/instance-array member, or a generate block (LRM 27) identified by
-// its position in the scope. Both resolve to one owned-child companion var
-// at construction, so the navigation past the head is identical. An upward
-// reference (LRM 23.6) climbs the parent chain at construction to the
-// nearest matching ancestor named `ancestor_name`; from there both
-// directions share `path` to reach the leaf, by name across the unit
-// boundary -- the referrer never names the ancestor's unit type, which it
-// does not depend on. The child cannot know its depth at compile time, so it
-// locates the ancestor by name rather than a baked-in offset.
+// its position in the scope. Both resolve to one owned-child companion var at
+// construction, so the navigation past the head is identical. An upward
+// reference (LRM 23.6) climbs the parent chain at construction to the nearest
+// matching ancestor named `ancestor_name`; from there both directions share
+// `path` to reach the leaf, by name across the unit boundary -- the referrer
+// never names the ancestor's unit type, which it does not depend on. The child
+// cannot know its depth at compile time, so it locates the ancestor by name
+// rather than a baked-in offset.
 struct GenerateChildRef {
   GenerateId generate;
   StructuralScopeId scope;
@@ -90,10 +90,10 @@ struct UpwardHead {
 using CrossUnitRefHead = std::variant<DownwardHead, UpwardHead>;
 
 // A cross-unit reference resolved once at construction. `head` is where
-// navigation starts; `path` carries the shared navigation from the head down
-// to the referenced leaf, by name across the unit boundary; `type` is the
-// slang-resolved leaf type. The slot is read / written / observed through
-// one stored direct reference.
+// navigation starts; `path` carries the shared navigation from the head down to
+// the referenced leaf, by name across the unit boundary; `type` is the
+// slang-resolved leaf type. The slot is read / written / observed through one
+// stored direct reference.
 struct CrossUnitRefDecl {
   CrossUnitRefHead head;
   std::vector<PathStep> path;
@@ -109,6 +109,41 @@ struct InstanceMemberDecl {
   std::string instance_name;
   std::string target_unit;
   std::vector<std::uint32_t> array_dims;
+};
+
+enum class PortDirection : std::uint8_t { kInput, kOutput, kRef };
+
+// How the child port is reached, by realization. An input or output port has
+// its own cell and is realized as a reactive edge that reads it during
+// simulation, so it holds a persistent cross-unit reference (`cell`, a
+// `CrossUnitVarRef`). A `ref` port owns no cell; it is bound once in the
+// resolve phase, so it holds only the by-name reach (`head` + `path`, with
+// `type` the port value type) -- no persistent slot.
+struct PortCellEndpoint {
+  ExprId cell;
+};
+struct PortAliasEndpoint {
+  CrossUnitRefHead head;
+  std::vector<PathStep> path;
+  TypeId type;
+};
+using PortEndpoint = std::variant<PortCellEndpoint, PortAliasEndpoint>;
+
+// A module port connection at an instantiation (LRM 23.3.3). `endpoint` reaches
+// the child's port member; `peer` is the parent-side connected expression;
+// `direction` is the port direction; `sensitivity` is the read set the implied
+// continuous assignment waits on (the peer's reads for an input port, the child
+// port for an output port; empty for a `ref` port). HIR holds the connection
+// verbatim and HIR-to-MIR realizes it: an input or output port as the implied
+// continuous assignment between the two cells (LRM 23.3.3), a `ref` port as an
+// alias bind of the child's reference member to the peer's cell, performed in
+// the resolve phase (LRM 23.3.3.2).
+struct PortConnection {
+  diag::SourceSpan span;
+  PortDirection direction;
+  PortEndpoint endpoint;
+  ExprId peer;
+  std::vector<SensitivityEntry> sensitivity;
 };
 
 struct IfGenerate {
@@ -156,6 +191,7 @@ struct StructuralScope {
   base::Arena<ContinuousAssign, ContinuousAssignId> continuous_assigns;
   base::Arena<Generate, GenerateId> generates;
   base::Arena<InstanceMemberDecl, InstanceMemberId> instance_members;
+  std::vector<PortConnection> port_connections;
   base::Arena<CrossUnitRefDecl, CrossUnitRefId> cross_unit_refs;
   base::Arena<StructuralSubroutineDecl, StructuralSubroutineId>
       structural_subroutines;

@@ -794,10 +794,15 @@ class HirDumper {
       if (v.initializer.has_value()) {
         init_suffix = std::format(" init=Expr[{}]", v.initializer->value);
       }
+      std::string ref_suffix;
+      if (v.reference.has_value()) {
+        ref_suffix =
+            *v.reference == ReferenceBinding::kConstRef ? " const ref" : " ref";
+      }
       Line(
           std::format(
-              "StructuralVar[{}] \"{}\" : Type[{}]{}", i, v.name, v.type.value,
-              init_suffix));
+              "StructuralVar[{}] \"{}\" : Type[{}]{}{}", i, v.name,
+              v.type.value, ref_suffix, init_suffix));
     }
     for (std::size_t i = 0; i < s.loop_var_decls.size(); ++i) {
       const auto& lv =
@@ -843,6 +848,33 @@ class HirDumper {
           std::format(
               "InstanceMember[{}] \"{}\"{} : {}", i, im.instance_name,
               array_suffix, im.target_unit));
+    }
+    for (std::size_t i = 0; i < s.port_connections.size(); ++i) {
+      const auto& pc = s.port_connections[i];
+      std::string_view direction = "ref";
+      switch (pc.direction) {
+        case PortDirection::kInput:
+          direction = "input";
+          break;
+        case PortDirection::kOutput:
+          direction = "output";
+          break;
+        case PortDirection::kRef:
+          break;
+      }
+      const std::string endpoint = std::visit(
+          Overloaded{
+              [](const PortCellEndpoint& c) -> std::string {
+                return std::format("cell=Expr[{}]", c.cell.value);
+              },
+              [](const PortAliasEndpoint& a) -> std::string {
+                return std::format("alias_to:Type[{}]", a.type.value);
+              }},
+          pc.endpoint);
+      Line(
+          std::format(
+              "PortConnection[{}] {} {} peer=Expr[{}]", i, direction, endpoint,
+              pc.peer.value));
     }
     Dedent();
     scope_stack_.pop_back();

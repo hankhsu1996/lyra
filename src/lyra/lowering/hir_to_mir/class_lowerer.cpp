@@ -243,11 +243,11 @@ auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
 // An upward cross-unit reference materializes as an ExternalRef member: the
 // symbol -- ancestor name, by-name tail through its owned children, and leaf
 // signal -- lives on its type, and the runtime ExternUp member self-relocates
-// at Bind by climbing the parent chain then walking the tail. A downward
-// reference gets a borrowed-pointer slot member, null until the constructor
-// resolves it. Both run before processes so reads resolve to the slot; both
-// record their MIR read target as a StructuralVarRef to that member, in HIR
-// slot order. The returned vector carries the downward slot var per ref
+// in the resolve phase by climbing the parent chain then walking the tail. A
+// downward reference gets a borrowed-pointer slot member, null until the
+// constructor resolves it. Both run before processes so reads resolve to the
+// slot; both record their MIR read target as a StructuralVarRef to that member,
+// in HIR slot order. The returned vector carries the downward slot var per ref
 // (nullopt for upward), consumed by InstallCrossUnitRefs once the children
 // exist.
 auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
@@ -448,6 +448,98 @@ void InstallCrossUnitRefs(
         mir::Stmt{
             .label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
   }
+}
+
+// Realizes each port connection (LRM 23.3.3). An input or output port is the
+// implied continuous assignment between the two cells, materialized as the same
+// synthesized process a scope-level `assign` produces, registered as a process.
+// A `ref` port instead binds the child's reference member -- navigated by name
+// from the owned child -- to the connected variable's cell, emitted into the
+// resolve block: one assignment of a reference, with no second cell and no
+// continuous assignment.
+auto InstallPortConnections(
+    ClassLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
+    const std::vector<mir::MemberId>& instance_member_vars,
+    const std::vector<GenerateBindings>& gen_bindings) -> diag::Result<void> {
+  mir::Class& mir_class = *frame.current_class;
+  mir::Block& resolve_block = *resolve_frame.current_block;
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  ModuleLowerer& module = lowerer.Module();
+  const mir::TypeId scope_ptr_type = module.Unit().AddType(
+      mir::PointerType{
+          .pointee = module.Unit().AddType(mir::ScopeType{}),
+          .ownership = mir::PointerOwnership::kBorrowed});
+  for (const auto& pc : hir_scope.port_connections) {
+    if (pc.direction == hir::PortDirection::kRef) {
+      // Bind the child's reference member to the connected variable's cell in
+      // the resolve phase: navigate the owned child by name to its reference
+      // member and store a reference to the peer's cell into it.
+      const auto& alias = std::get<hir::PortAliasEndpoint>(pc.endpoint);
+      const auto* down = std::get_if<hir::DownwardHead>(&alias.head);
+      if (down == nullptr) {
+        throw InternalError(
+            "InstallPortConnections: a ref port reaches its child downward");
+      }
+      mir::MemberId head_var{};
+      if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
+        head_var = instance_member_vars.at(im->value);
+      } else {
+        const auto& g = std::get<hir::GenerateChildRef>(down->child);
+        head_var = gen_bindings.at(g.generate.value)
+                       .by_scope_id.at(g.scope.value)
+                       .var_id;
+      }
+      const auto& head_member = mir_class.members.Get(head_var);
+      const std::string head_name = head_member.source_name.empty()
+                                        ? head_member.name
+                                        : head_member.source_name;
+
+      const mir::TypeId value_type = module.TranslateType(alias.type);
+      const mir::TypeId ref_type = module.Unit().AddType(
+          mir::TypeData{
+              mir::RefType{.pointee = value_type, .is_const = false}});
+      const mir::TypeId slot_type = module.Unit().AddType(
+          mir::PointerType{
+              .pointee = ref_type,
+              .ownership = mir::PointerOwnership::kBorrowed});
+      const mir::ExprId nav = resolve_block.exprs.Add(BuildDownwardNavValue(
+          module, resolve_frame, head_name, alias.path, slot_type,
+          scope_ptr_type));
+      const mir::ExprId target = resolve_block.exprs.Add(
+          mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
+
+      auto peer_or =
+          lowerer.LowerLhsExpr(hir_scope.exprs.Get(pc.peer), resolve_frame);
+      if (!peer_or) return std::unexpected(std::move(peer_or.error()));
+      const mir::ExprId peer_cell =
+          resolve_block.exprs.Add(*std::move(peer_or));
+      const mir::ExprId ref_value = BuildReferenceArg(
+          module.Unit(), resolve_block, peer_cell,
+          resolve_block.exprs.Get(peer_cell).type);
+
+      const mir::ExprId assign = resolve_block.exprs.Add(
+          mir::Expr{
+              .data = mir::AssignExpr{.target = target, .value = ref_value},
+              .type = ref_type});
+      resolve_block.AppendStmt(
+          mir::Stmt{
+              .label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
+      continue;
+    }
+    const auto& cell = std::get<hir::PortCellEndpoint>(pc.endpoint);
+    const bool is_input = pc.direction == hir::PortDirection::kInput;
+    const hir::ContinuousAssign assign{
+        .span = pc.span,
+        .lhs = is_input ? cell.cell : pc.peer,
+        .rhs = is_input ? pc.peer : cell.cell,
+        .sensitivity_list = pc.sensitivity};
+    std::string name = std::format("process_{}", mir_class.processes.size());
+    auto proc_or =
+        LowerContinuousAssign(lowerer, frame, std::move(name), assign);
+    if (!proc_or) return std::unexpected(std::move(proc_or.error()));
+    mir_class.processes.Add(*std::move(proc_or));
+  }
+  return {};
 }
 
 void ValidateConstructOwnedObjectStmt(
@@ -760,6 +852,8 @@ auto ClassLowerer::Run(
       .params = {},
       .members = {},
       .constructor_block = {},
+      .resolve_block = {},
+      .initialize_block = {},
       .processes = {},
       .nested_classes = {},
       .methods = {},
@@ -788,16 +882,55 @@ auto ClassLowerer::Run(
   const auto self_read = [&]() -> mir::ExprId {
     return ctor_block.exprs.Add(MakeSelfRefExpr(scope_frame, self_ptr_type));
   };
+
+  // Variable initialization is a distinct phase from construction: the
+  // constructor only allocates and registers the shell, while initializers run
+  // after the whole tree's references are resolved, so an initializer observes
+  // connected and bound values. The init body is its own block with its own
+  // `self`; the constructor records signal addresses, the init body assigns
+  // values.
+  mir::Block initialize_block;
+  const mir::LocalId init_self_id = initialize_block.vars.Add(
+      mir::LocalDecl{.name = "self", .type = mir_class.self_pointer_type});
+  const WalkFrame init_frame =
+      frame.WithClass(&mir_class, outer_scope_link)
+          .WithBlock(&initialize_block)
+          .WithSelfBinding(init_self_id, frame.block_depth);
+  const auto init_self_read = [&]() -> mir::ExprId {
+    return initialize_block.exprs.Add(
+        MakeSelfRefExpr(init_frame, self_ptr_type));
+  };
+
+  // Cross-instance binding (a `ref` port binding its child's reference member)
+  // runs in the resolve phase, after the whole tree is constructed and before
+  // initialization. Like the init body it is its own block with its own `self`.
+  mir::Block resolve_block;
+  const mir::LocalId resolve_self_id = resolve_block.vars.Add(
+      mir::LocalDecl{.name = "self", .type = mir_class.self_pointer_type});
+  const WalkFrame resolve_frame =
+      frame.WithClass(&mir_class, outer_scope_link)
+          .WithBlock(&resolve_block)
+          .WithSelfBinding(resolve_self_id, frame.block_depth);
+
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
     const auto& d = hir_scope.structural_vars.Get(hir_id);
     const mir::TypeId mir_value_type = module.TranslateType(d.type);
 
     const auto& var_data = module.Unit().GetType(mir_value_type).data;
-    // A module-scope value-storage signal becomes an observable cell so
+    const bool is_reference = d.reference.has_value();
+    // A `ref` / `const ref` port member aliases the connected variable, filled
+    // by the parent at construction (LRM 23.3.3.2): its type is a reference,
+    // not its own cell, so it owns no storage and takes no value initializer.
+    // Any other module-scope value-storage signal becomes an observable cell so
     // writes route through `Var<T>::Set` and subscribers fire.
     const mir::TypeId mir_field_type =
-        MaybeWrapObservable(module, mir_value_type);
+        is_reference ? module.Unit().AddType(
+                           mir::TypeData{mir::RefType{
+                               .pointee = mir_value_type,
+                               .is_const = *d.reference ==
+                                           hir::ReferenceBinding::kConstRef}})
+                     : MaybeWrapObservable(module, mir_value_type);
     const mir::MemberId mir_id = mir_class.members.Add(
         mir::MemberDecl{.name = d.name, .type = mir_field_type});
     lowerer.MapStructuralVar(hir_id, mir_id);
@@ -806,9 +939,10 @@ auto ClassLowerer::Run(
     // refs, and named events have no "value assignment" -- their declaration
     // shape itself fixes the field at construction. Value-typed signals
     // (integral, string, real, unpacked / dynamic array) receive an LRM 10.5
-    // initialization statement before any RegisterSignal / CreateProcesses.
+    // initialization statement, run in the initialize phase after the tree's
+    // references resolve, not in the constructor.
     const bool is_assignable_value =
-        !std::holds_alternative<mir::PointerType>(var_data) &&
+        !is_reference && !std::holds_alternative<mir::PointerType>(var_data) &&
         !std::holds_alternative<mir::VectorType>(var_data) &&
         !std::holds_alternative<mir::ExternalRefType>(var_data) &&
         !std::holds_alternative<mir::ObjectType>(var_data) &&
@@ -818,28 +952,29 @@ auto ClassLowerer::Run(
       mir::ExprId value_id{};
       if (d.initializer.has_value()) {
         auto value_or =
-            lowerer.LowerExpr(hir_scope.exprs.Get(*d.initializer), scope_frame);
+            lowerer.LowerExpr(hir_scope.exprs.Get(*d.initializer), init_frame);
         if (!value_or) return std::unexpected(std::move(value_or.error()));
-        value_id = ctor_block.exprs.Add(*std::move(value_or));
+        value_id = initialize_block.exprs.Add(*std::move(value_or));
       } else {
-        value_id = ctor_block.exprs.Add(
-            BuildDefaultValueExpr(module, scope_frame, mir_value_type));
+        value_id = initialize_block.exprs.Add(
+            BuildDefaultValueExpr(module, init_frame, mir_value_type));
       }
-      const mir::ExprId init_target = ctor_block.exprs.Add(
+      const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeMemberAccessExpr(
-              self_read(), mir::MemberRef{.hops = {.value = 0}, .var = mir_id},
+              init_self_read(),
+              mir::MemberRef{.hops = {.value = 0}, .var = mir_id},
               mir_field_type));
       // An observable cell init routes through `Var<T>::Set` so the field's
-      // engine-side change-tracking sees the initial value. Plain fields use
-      // a regular `AssignExpr`.
-      const mir::ExprId services_id = ctor_block.exprs.Add(
+      // engine-side change-tracking sees the initial value. Plain fields use a
+      // regular `AssignExpr`.
+      const mir::ExprId services_id = initialize_block.exprs.Add(
           mir::MakeServicesCallExpr(
-              self_read(), module.Unit().builtins.services));
+              init_self_read(), module.Unit().builtins.services));
       const mir::Expr init_expr = BuildObservableAssignExpr(
-          module.Unit(), ctor_block, services_id, init_target, value_id,
+          module.Unit(), initialize_block, services_id, init_target, value_id,
           std::nullopt, mir_value_type, module.Unit().builtins.void_type);
-      const mir::ExprId assign_id = ctor_block.exprs.Add(init_expr);
-      ctor_block.AppendStmt(
+      const mir::ExprId assign_id = initialize_block.exprs.Add(init_expr);
+      initialize_block.AppendStmt(
           mir::Stmt{
               .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
     }
@@ -951,8 +1086,13 @@ auto ClassLowerer::Run(
   InstallCrossUnitRefs(
       lowerer, scope_frame, instance_member_vars, *bindings_r,
       cross_unit_slot_vars);
+  auto port_conn_r = InstallPortConnections(
+      lowerer, scope_frame, resolve_frame, instance_member_vars, *bindings_r);
+  if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
 
   mir_class.constructor_block = std::move(ctor_block);
+  mir_class.resolve_block = std::move(resolve_block);
+  mir_class.initialize_block = std::move(initialize_block);
 
   return mir_class;
 }

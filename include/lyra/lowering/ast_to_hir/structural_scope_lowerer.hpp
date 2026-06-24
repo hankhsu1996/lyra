@@ -1,6 +1,8 @@
 #pragma once
 
+#include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -72,6 +74,10 @@ class StructuralScopeLowerer {
   auto PopulateVariableMember(
       const slang::ast::VariableSymbol& var, WalkFrame frame)
       -> diag::Result<void>;
+  // The reference binding of `var` if it is the internal variable of a `ref` /
+  // `const ref` port of this module body (LRM 23.3.3.2); nullopt otherwise.
+  [[nodiscard]] auto ReferenceBindingFor(const slang::ast::VariableSymbol& var)
+      const -> std::optional<hir::ReferenceBinding>;
   auto PopulateSubroutineMember(
       const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
       -> diag::Result<void>;
@@ -114,6 +120,11 @@ class StructuralScopeLowerer {
   const slang::ast::Scope* slang_scope_;
   ScopeFrameId frame_;
   std::vector<ScopeEntryLoopVarBinding> entry_loop_var_bindings_;
+  // The internal variables of this body's `ref` / `const ref` ports, keyed by
+  // symbol; built once at construction from the module body's port list, empty
+  // for a scope (generate block) that declares no ports.
+  std::unordered_map<const slang::ast::Symbol*, hir::ReferenceBinding>
+      ref_port_internals_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

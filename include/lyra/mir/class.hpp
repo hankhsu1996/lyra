@@ -26,6 +26,12 @@ struct Class {
   base::Arena<ParamDecl, ParamId> params;
   base::Arena<MemberDecl, MemberId> members;
   Block constructor_block;
+  // Cross-instance binding (a `ref` port aliases the child's reference member
+  // to the connected variable, LRM 23.3.3.2), run after the tree is built.
+  Block resolve_block;
+  // Variable initializers (LRM 6.8), run after resolution so they observe bound
+  // values.
+  Block initialize_block;
   base::Arena<Process, ProcessId> processes;
   base::Arena<Class, ClassId> nested_classes;
   base::Arena<MethodDecl, MethodId> methods;

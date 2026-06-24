@@ -91,6 +91,13 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   deterministic name (module name + content hash of a canonical, structural serialization of its
   parameter bindings), computed independently by producer and consumer and matched by name;
   injective mangling, body fingerprinting, and a design-global key map are rejected.
+- [reference-as-data-type](reference-as-data-type.md) -- a reference is a direction at HIR and a
+  data type at MIR; one reference type serves both `ref` formals (body local) and `ref` ports (unit
+  member), distinct from a borrowed pointer because it preserves the observable-cell protocol.
+- [elaboration-lifecycle-phases](elaboration-lifecycle-phases.md) -- a generated constructor only
+  allocates; SystemVerilog elaboration is a staged build / resolve / initialize / activate protocol,
+  with connections declarative until a single resolve phase and initializers running after it;
+  recursive-constructor-as-executor is rejected.
 
 ### Compile-time model and specialization
 

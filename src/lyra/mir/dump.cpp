@@ -682,6 +682,16 @@ class MirDumper {
     DumpBlock(s.constructor_block);
     Dedent();
 
+    Line("Resolve:");
+    Indent();
+    DumpBlock(s.resolve_block);
+    Dedent();
+
+    Line("Initialize:");
+    Indent();
+    DumpBlock(s.initialize_block);
+    Dedent();
+
     Line("Processes:");
     Indent();
     for (std::size_t i = 0; i < s.processes.size(); ++i) {

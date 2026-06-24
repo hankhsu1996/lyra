@@ -92,14 +92,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `decisions/conversion-folding.md`.
 
 - [ ] R8 -- Unify the callable forms onto one concept, per `../decisions/unified-callable-model.md`.
-      Today a process (`mir::Process`), a method (`mir::MethodDecl`), the constructor block, and a
-      closure (`mir::ClosureExpr`) are separate constructs whose bodies are all the same `Block`,
-      and the same fact ("is this a coroutine") is encoded several ways. The target is one callable
-      concept -- callable code (a signature plus an internal body or an external symbol) and a
-      callable value (code plus a bound environment) -- with the result type carrying the call
-      protocol and parameter direction normalized to data flow. It rebases callable machinery across
-      lowering, MIR, the dumper, and the backend, so it lands in staged cuts, each its own focused
-      review:
+      Today a process (`mir::Process`), a method (`mir::MethodDecl`), the constructor block, the
+      per-class resolve and initialize phase bodies, and a closure (`mir::ClosureExpr`) are separate
+      constructs whose bodies are all the same `Block`, and the same fact ("is this a coroutine") is
+      encoded several ways. The target is one callable concept -- callable code (a signature plus an
+      internal body or an external symbol) and a callable value (code plus a bound environment) --
+      with the result type carrying the call protocol and parameter direction normalized to data
+      flow. It rebases callable machinery across lowering, MIR, the dumper, and the backend (where
+      the per-shape `Render*` paths collapse into one generic function renderer), so it lands in
+      staged cuts, each its own focused review:
   - [ ] R8a -- The result type is the sole carrier of the call protocol. A method's coroutine-ness
         is read from its result type (a coroutine result is a task, a value / void result a
         function), not a side enum; `MethodKind` is removed. Behavior-neutral; existing task /

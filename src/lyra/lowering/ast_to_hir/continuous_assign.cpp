@@ -1,4 +1,4 @@
-#include "lyra/lowering/ast_to_hir/continuous_assign.hpp"
+#include "lyra/hir/continuous_assign.hpp"
 
 #include <expected>
 #include <utility>
@@ -11,14 +11,18 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/kind.hpp"
-#include "lyra/hir/continuous_assign.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
+namespace {
+
+// Assembles a continuous assignment (LRM 10.3.2) from its two already-built
+// operand expressions and the read set its sensitivity derives from. The
+// sensitivity list is always `TranslateSensitivityReads(reads)`, the single
+// place a read set is mapped to its runtime projection.
 auto BuildContinuousAssign(
     ModuleLowerer& module, WalkFrame frame, diag::SourceSpan span,
     hir::Expr lhs, hir::Expr rhs, const std::vector<SensitivityRead>& reads)
@@ -32,6 +36,8 @@ auto BuildContinuousAssign(
       .sensitivity_list = module.TranslateSensitivityReads(reads, frame),
   };
 }
+
+}  // namespace
 
 auto StructuralScopeLowerer::LowerContinuousAssign(
     const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)

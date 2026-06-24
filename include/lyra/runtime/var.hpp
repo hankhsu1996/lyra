@@ -191,6 +191,10 @@ class Var : public Observable {
 template <value::LyraValue T>
 class Ref {
  public:
+  // A null view, default-constructed as a member and bound before first use:
+  // a `ref` port's child-side member is declared with the child and filled by
+  // the parent during elaboration (LRM 23.3.3.2), before simulation reads it.
+  Ref() = default;
   explicit Ref(Var<T>& cell) : signal_(&cell) {
   }
   explicit Ref(T& cell) : plain_(&cell) {
