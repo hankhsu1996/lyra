@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,13 +26,17 @@ struct Class {
   TimeResolution time_resolution;
   base::Arena<ParamDecl, ParamId> params;
   base::Arena<MemberDecl, MemberId> members;
+  // Construction logic, run when the object is allocated. The backend's C++
+  // constructor is the allocation shell that kicks this off; an empty body
+  // needs no kickoff.
   Block constructor_block;
   // Cross-instance binding (a `ref` port aliases the child's reference member
-  // to the connected variable, LRM 23.3.3.2), run after the tree is built.
-  Block resolve_block;
+  // to the connected variable, LRM 23.3.3.2), run after the whole tree is
+  // built. Absent when the scope binds no cross-instance reference.
+  std::optional<MethodDecl> resolve;
   // Variable initializers (LRM 6.8), run after resolution so they observe bound
-  // values.
-  Block initialize_block;
+  // values. Absent when the scope has no value initializers.
+  std::optional<MethodDecl> initialize;
   base::Arena<Process, ProcessId> processes;
   base::Arena<Class, ClassId> nested_classes;
   base::Arena<MethodDecl, MethodId> methods;

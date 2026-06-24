@@ -183,12 +183,20 @@ auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
         "cpp emit");
   }
   const std::string& name = view.Class().params.Get(r.param).name;
-  return "self->" + name;
+  return std::string(view.SelfSpelling()) + "->" + name;
 }
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
-  return view.BlockAtHops(ref.hops).vars.Get(ref.var).name;
+  // The receiver is the body's `vars[0]`, named `self` in MIR (invariant 11).
+  // How it spells in C++ depends on the enclosing method's form: a static
+  // method's first parameter (`self`) or a virtual method's implicit receiver
+  // (`this`).
+  const std::string& name = view.BlockAtHops(ref.hops).vars.Get(ref.var).name;
+  if (name == "self") {
+    return std::string(view.SelfSpelling());
+  }
+  return name;
 }
 
 // True iff the local holds a reference (its type is a `RefType`),

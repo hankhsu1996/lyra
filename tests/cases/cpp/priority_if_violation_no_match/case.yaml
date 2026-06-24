@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stderr:
-    exact: "warning: priority check failed: no condition matched\n"
+    exact: "main.sv:5:5: warning: priority check failed: no condition matched\n"

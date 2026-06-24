@@ -245,10 +245,18 @@ auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
                                    .WithCoroutineBody(true);
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
+  // A process is a coroutine; it completes by falling off its end through
+  // `co_return`, a real body statement (LRM 9.2).
+  process_block.AppendStmt(
+      mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
   return mir::Process{
       .kind = kind,
-      .name = std::string{process.CallableName()},
-      .root_block = std::move(process_block)};
+      .code = mir::MethodDecl{
+          .name = std::string{process.CallableName()},
+          .result_type = process.Module().Unit().builtins.coroutine,
+          .params = {},
+          .root_block = std::move(process_block),
+          .form = mir::MethodForm::kStatic}};
 }
 
 // Wraps the body in a `forever` loop. `implicit_sensitivity`, if present,
@@ -289,10 +297,16 @@ auto LowerForeverProcess(
               .condition = std::nullopt,
               .step = {},
               .scope = body_scope_id}});
+  process_block.AppendStmt(
+      mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
-      .name = std::string{process.CallableName()},
-      .root_block = std::move(process_block)};
+      .code = mir::MethodDecl{
+          .name = std::string{process.CallableName()},
+          .result_type = process.Module().Unit().builtins.coroutine,
+          .params = {},
+          .root_block = std::move(process_block),
+          .form = mir::MethodForm::kStatic}};
 }
 
 auto LowerParamDirection(hir::ParamDirection dir) -> mir::ParamDirection {
@@ -415,13 +429,20 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
         mir::ReturnStmt{
             .value = result_read,
             .is_coroutine_return = body_frame.is_coroutine_body});
+  } else if (body_is_coroutine) {
+    // A task is a coroutine with no result value: it completes by falling off
+    // its end through `co_return` (LRM 13.3). The completion is a real body
+    // statement, not a backend-appended epilogue.
+    body_block.AppendStmt(
+        mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
   }
 
   return mir::MethodDecl{
       .name = src.name,
       .result_type = result_type,
       .params = std::move(params),
-      .root_block = std::move(body_block)};
+      .root_block = std::move(body_block),
+      .form = mir::MethodForm::kStatic};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

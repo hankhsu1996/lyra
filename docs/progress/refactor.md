@@ -138,6 +138,17 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         DPI import is a bodyless external callable; a virtual call is an explicit call form resolved
         against the object's vtable layout.
 
+  - [x] R8f -- The scope's callables render through one backend method path. A process body and the
+        synthesized resolve / initialize lifecycle bodies join functions and tasks as one
+        `mir::MethodDecl` carrying a `MethodForm` -- a static function over an explicit `self`, or a
+        virtual instance method that overrides a runtime-base slot and reaches the scope through the
+        implicit receiver. The per-shape backend renderers collapse into one that reads the method's
+        fields (result type, name, parameters, body): `void` and the coroutine type are ordinary
+        result types, `co_return` is a body statement rather than a render-time epilogue, and the
+        receiver is spelled from the form. `mir::Process` now carries only its activation kind and
+        the body method; the two remaining backend-synthesized remnants -- process activation
+        registration and the upward-reference member initializer -- retire under R8d and R40.
+
 - [x] R9 -- AST-to-HIR migration to the class-based organization defined in
       `docs/architecture/lowering_organization.md`. The `*LoweringState` god-objects are gone;
       per-task-instance `ModuleLowerer`, `StructuralScopeLowerer`, `ProcessLowerer`, and

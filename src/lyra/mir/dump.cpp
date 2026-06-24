@@ -687,15 +687,19 @@ class MirDumper {
     DumpBlock(s.constructor_block);
     Dedent();
 
-    Line("Resolve:");
-    Indent();
-    DumpBlock(s.resolve_block);
-    Dedent();
+    if (s.resolve.has_value()) {
+      Line("Resolve:");
+      Indent();
+      DumpMethod(*s.resolve, 0);
+      Dedent();
+    }
 
-    Line("Initialize:");
-    Indent();
-    DumpBlock(s.initialize_block);
-    Dedent();
+    if (s.initialize.has_value()) {
+      Line("Initialize:");
+      Indent();
+      DumpMethod(*s.initialize, 0);
+      Dedent();
+    }
 
     Line("Processes:");
     Indent();
@@ -709,11 +713,9 @@ class MirDumper {
   }
 
   void DumpProcess(const Process& p, std::size_t index) {
-    Line(
-        std::format(
-            "Process[{}] {} name={}", index, FormatProcessKind(p), p.name));
+    Line(std::format("Process[{}] {}", index, FormatProcessKind(p)));
     Indent();
-    DumpBlock(p.root_block);
+    DumpMethod(p.code, index);
     Dedent();
   }
 
@@ -730,10 +732,22 @@ class MirDumper {
     throw InternalError("FormatParamDirection: unknown mir::ParamDirection");
   }
 
+  [[nodiscard]] static auto FormatMethodForm(MethodForm form)
+      -> std::string_view {
+    switch (form) {
+      case MethodForm::kStatic:
+        return "static";
+      case MethodForm::kVirtual:
+        return "virtual";
+    }
+    throw InternalError("FormatMethodForm: unknown mir::MethodForm");
+  }
+
   void DumpMethod(const MethodDecl& d, std::size_t index) {
     Line(
         std::format(
-            "[{}] \"{}\" : Type[{}]", index, d.name, d.result_type.value));
+            "[{}] {} \"{}\" : Type[{}]", index, FormatMethodForm(d.form),
+            d.name, d.result_type.value));
     Indent();
     for (std::size_t i = 0; i < d.params.size(); ++i) {
       const auto& param = d.params[i];
