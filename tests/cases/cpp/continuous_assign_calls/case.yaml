@@ -1,0 +1,13 @@
+id: cpp.continuous_assign_calls
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    fn_result: 10
+    rep: 1365
+    in_set: 1

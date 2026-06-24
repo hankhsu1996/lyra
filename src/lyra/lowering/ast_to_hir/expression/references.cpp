@@ -42,6 +42,23 @@ auto MakeEnumValueExpr(
   return MakeIntegralLiteralExpr(cv.integer(), type, span);
 }
 
+// LRM 7.12.4: a reference to an array-method `with`-clause iteration element
+// (`item`) lowers to an `IterationBindingRef` naming `clause` and the element
+// role, typed by its own reference type. The element is one of the clause's two
+// iteration parameters, not a variable of the enclosing scope, so neither pass
+// class's variable storage is consulted.
+auto MakeIterationElementRefExpr(
+    ModuleLowerer& module, const slang::ast::NamedValueExpression& named,
+    hir::WithClauseId clause, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = module.InternType(*named.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return MakeRefExpr(
+      hir::IterationBindingRef{
+          .clause = clause, .role = hir::IterationBindingRole::kElement},
+      *type_id, span);
+}
+
 }  // namespace
 
 auto LowerNamedValueProc(
@@ -51,6 +68,10 @@ auto LowerNamedValueProc(
   const auto& mapper = module.SourceMapper();
   const auto span = mapper.SpanOf(named.sourceRange);
   const auto& sym = named.symbol;
+
+  if (auto clause = frame.FindIterationClause(sym)) {
+    return MakeIterationElementRefExpr(module, named, *clause, span);
+  }
 
   if (sym.kind == slang::ast::SymbolKind::EnumValue) {
     auto type_id = module.InternType(*named.type, span);
@@ -271,6 +292,9 @@ auto LowerNamedValueStructural(
   const auto& mapper = module.SourceMapper();
   const auto span = mapper.SpanOf(named.sourceRange);
   const auto& sym = named.symbol;
+  if (auto clause = frame.FindIterationClause(sym)) {
+    return MakeIterationElementRefExpr(module, named, *clause, span);
+  }
   if (sym.kind == slang::ast::SymbolKind::EnumValue) {
     auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));

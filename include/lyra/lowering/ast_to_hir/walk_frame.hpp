@@ -12,12 +12,17 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/loop_label_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
+#include "lyra/hir/with_clause_id.hpp"
 
 namespace lyra::hir {
 struct Expr;
 struct StructuralScope;
 struct ProceduralBody;
 }  // namespace lyra::hir
+
+namespace slang::ast {
+class Symbol;
+}  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -27,6 +32,15 @@ namespace lyra::lowering::ast_to_hir {
 struct ScopeFrameId {
   std::uint32_t value;
   auto operator<=>(const ScopeFrameId&) const -> std::strong_ordering = default;
+};
+
+// One active array-method `with` clause whose body is being lowered: its slang
+// iterator symbol paired with the HIR identity assigned to the clause. A
+// reference whose symbol matches the iterator resolves to this clause's
+// element and index bindings.
+struct ActiveIterationClause {
+  const slang::ast::Symbol* element;
+  hir::WithClauseId clause;
 };
 
 // Per-recursion traversal context for AST-to-HIR. Carried by value through
@@ -90,6 +104,14 @@ struct WalkFrame {
   // Null outside a queue index / bound expression. Re-set per select, so each
   // `$` in a nested `q[r[$]]` binds to the array its own select indexes.
   std::optional<hir::ExprId> dollar_base = std::nullopt;
+
+  // The active LRM 7.12 array-method `with`-clause iterators whose bodies are
+  // being lowered, each enclosing clause kept so an inner body can still name
+  // an outer iterator. A reference matching a clause's element symbol resolves
+  // to that clause's `IterationBindingRef`, not the procedural-var path;
+  // foreach loop variables are also slang Iterator symbols, so the match is by
+  // symbol identity. Empty outside a with-clause body.
+  std::vector<ActiveIterationClause> active_iteration_clauses;
 
   [[nodiscard]] auto Current() const -> ScopeFrameId {
     if (structural_chain.empty()) {
@@ -166,6 +188,31 @@ struct WalkFrame {
     WalkFrame next = *this;
     next.dollar_base = base;
     return next;
+  }
+
+  // Marks the given `with` clause and its iterator symbol active while its body
+  // subtree is lowered (LRM 7.12.4). Pushed so a clause nested in the body sees
+  // every enclosing clause.
+  [[nodiscard]] auto WithIterationClause(
+      const slang::ast::Symbol& element, hir::WithClauseId clause) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.active_iteration_clauses.push_back(
+        ActiveIterationClause{.element = &element, .clause = clause});
+    return next;
+  }
+
+  // The active clause whose iterator is the given symbol, if any. Both an
+  // element read (`item`) and an index read (`item.index`, keyed by its
+  // receiver) resolve their clause through this.
+  [[nodiscard]] auto FindIterationClause(const slang::ast::Symbol& sym) const
+      -> std::optional<hir::WithClauseId> {
+    for (const auto& active : active_iteration_clauses) {
+      if (active.element == &sym) {
+        return active.clause;
+      }
+    }
+    return std::nullopt;
   }
 
   // Establishes `label` as the break target for the body being lowered. `used`

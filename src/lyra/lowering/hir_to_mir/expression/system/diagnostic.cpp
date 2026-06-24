@@ -37,7 +37,8 @@ auto LowerDiagnosticSystemSubroutineCall(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   std::vector<mir::ExprId> args;
-  args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
+  args.push_back(
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame)));
   args.push_back(items_array);
 
   return mir::Expr{

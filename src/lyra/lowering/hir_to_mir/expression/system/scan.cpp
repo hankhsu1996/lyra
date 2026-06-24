@@ -188,7 +188,7 @@ auto LowerScanSystemSubroutineCall(
     }
     fd_id = raw_source_id;
     const mir::ExprId services_id =
-        body.exprs.Add(BuildServicesCallExpr(process, closure_frame));
+        body.exprs.Add(BuildServicesCallExpr(process.Module(), closure_frame));
     const mir::ExprId files_id = body.exprs.Add(
         mir::Expr{
             .data =
@@ -267,7 +267,7 @@ auto LowerScanSystemSubroutineCall(
 
   if (is_file) {
     const mir::ExprId services_after =
-        body.exprs.Add(BuildServicesCallExpr(process, closure_frame));
+        body.exprs.Add(BuildServicesCallExpr(process.Module(), closure_frame));
     const mir::ExprId files_after = body.exprs.Add(
         mir::Expr{
             .data =
@@ -315,8 +315,8 @@ auto LowerScanSystemSubroutineCall(
     const mir::ExprId temp_read_id = then_body.exprs.Add(
         mir::MakeLocalRefExpr(
             mir::BlockHops{.value = 1}, temp_ids[k], target_types[k]));
-    const mir::ExprId services_id_then =
-        then_body.exprs.Add(BuildServicesCallExpr(process, then_frame));
+    const mir::ExprId services_id_then = then_body.exprs.Add(
+        BuildServicesCallExpr(process.Module(), then_frame));
     const mir::Expr assign_expr = BuildObservableAssignExpr(
         unit, then_body, services_id_then, lvalue_id, temp_read_id,
         std::nullopt, target_types[k], void_t);

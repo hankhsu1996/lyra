@@ -200,8 +200,8 @@ auto LowerDelayTimedStmt(
         auto ticks_or = ResolveDelayTicks(process, d);
         if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
         const auto& builtins = process.Module().Unit().builtins;
-        const mir::ExprId services_id =
-            child_block.exprs.Add(BuildServicesCallExpr(process, child_frame));
+        const mir::ExprId services_id = child_block.exprs.Add(
+            BuildServicesCallExpr(process.Module(), child_frame));
         const mir::ExprId duration_id = child_block.exprs.Add(
             mir::MakeInt32Literal(
                 builtins.int32, static_cast<std::int64_t>(*ticks_or)));
@@ -258,7 +258,7 @@ auto LowerEventTriggerStmt(
   // engine handle is a real trailing argument, threaded the same way every
   // runtime effect threads it.
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   mir::Expr call{
       .data =
           mir::CallExpr{

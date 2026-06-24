@@ -11,11 +11,16 @@ rejected alternatives.
 ## Actionable
 
 The generic arena (Phase 1) and the handler-sharing it enables (Phase 2) have landed in full on both
-lowering boundaries. The context-free expression handlers shared by the procedural and structural
-pass classes are single function templates over the pass class -- never duplicated twins -- at
-HIR-to-MIR and at AST-to-HIR alike. The procedural/structural distinction survives only where the
-two genuinely differ (statements versus members and generates, and name resolution) and is gone from
-the expression layer, where they are identical. This workstream is complete.
+lowering boundaries. Every context-free expression family -- including the call, `inside`, and
+replication families, the last holdouts -- is now a single function template over the pass class, so
+a continuous-assign right-hand side lowers the full value-expression set through the same handlers
+as a process body. The procedural/structural distinction survives only where the two genuinely
+differ (statements versus members and generates, name resolution, and the kinds the LRM allows only
+in procedural code) and is gone from the expression layer, where they are identical. See
+`../decisions/context-free-call-lowering.md`. The dispatch sharing (Phase 3) is complete at
+AST-to-HIR (one dispatcher template) and has one step left at HIR-to-MIR -- collapsing its two
+dispatchers, which sit in separate translation units, into one. The context-free handlers are
+already shared there, so the only remaining drift surface is the duplicated dispatch switch.
 
 The arena's surface is fixed by what consumers actually do: a const lookup by typed id, an append
 that returns the id, a count and an emptiness check, and an indexed iteration (the dumper prints
@@ -56,6 +61,22 @@ underneath.
       recursion entry point; name resolution and single-context kinds stay per-pass.
 - [x] `lowering_organization.md` records that a handler shared across pass classes is one template,
       never a duplicated twin.
+
+### Phase 3 -- Share the dispatch
+
+- [x] The call, `inside`, and replication families -- context-free but left procedural-only --
+      become templates over the pass class, and both pass-class dispatchers route their case through
+      the shared handler, so a continuous-assign right-hand side (a simulation-time expression the
+      structural scope owns) lowers function calls, `$isunknown`, `inside`, and replication through
+      the same handlers as a process body. The `with`-clause element and index become co-equal
+      closure parameters so the call family carries no procedural-body dependency. See
+      `../decisions/context-free-call-lowering.md`.
+- [x] AST-to-HIR collapses its two pass-class dispatchers (which share a translation unit) into one
+      dispatcher template the two entries delegate to, so even the dispatch switch is written once;
+      name resolution and the procedural-only kinds are the only parameterized arms.
+- [ ] HIR-to-MIR: collapse its two dispatchers likewise. They live in separate translation units
+      today, so this is a translation-unit move, not just a template; the context-free handlers are
+      already shared, so the remaining drift surface is only the duplicated dispatch switch.
 
 ## Coordination
 

@@ -175,8 +175,8 @@ auto LowerDestructuringAssign(
 
     mir::ExprId per_part_expr_id{};
     if (assign.kind == hir::AssignKind::kBlocking) {
-      const mir::ExprId services_id =
-          wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
+      const mir::ExprId services_id = wrapper.exprs.Add(
+          BuildServicesCallExpr(process.Module(), wrapper_frame));
       const mir::Expr part_assign_expr = BuildObservableAssignExpr(
           process.Module().Unit(), wrapper, services_id, part_lhs_id,
           rhs_for_part, std::nullopt, part_mir_type,
@@ -187,8 +187,8 @@ auto LowerDestructuringAssign(
           process.Module(), wrapper_frame, part_lhs_id, rhs_for_part,
           part_mir_type);
       const mir::ExprId closure_id = wrapper.exprs.Add(std::move(closure_expr));
-      const mir::ExprId services_id =
-          wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
+      const mir::ExprId services_id = wrapper.exprs.Add(
+          BuildServicesCallExpr(process.Module(), wrapper_frame));
       per_part_expr_id = wrapper.exprs.Add(
           mir::Expr{
               .data =
@@ -285,8 +285,8 @@ auto LowerSubroutineCallWithWritebacks(
         const bool root_is_cell = mir::IsObservableCellType(
             process.Module().Unit().GetType(wrapper.exprs.Get(root_id).type));
         if (root_is_cell && root_id != actual_id) {
-          const mir::ExprId services_id =
-              wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
+          const mir::ExprId services_id = wrapper.exprs.Add(
+              BuildServicesCallExpr(process.Module(), wrapper_frame));
           actual_id = RewriteLhsRootWithMutate(
               process.Module().Unit(), wrapper, actual_id, services_id);
         }
@@ -345,7 +345,7 @@ auto LowerSubroutineCallWithWritebacks(
   }
 
   const mir::ExprId services_id =
-      wrapper.exprs.Add(BuildServicesCallExpr(process, wrapper_frame));
+      wrapper.exprs.Add(BuildServicesCallExpr(process.Module(), wrapper_frame));
   return BuildCopyOutBlock(
       process.Module().Unit(), services_id, frame, std::move(wrapper),
       std::move(label), result_type, std::move(call_expr),

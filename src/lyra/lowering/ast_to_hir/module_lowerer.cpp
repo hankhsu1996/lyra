@@ -50,6 +50,10 @@ auto ModuleLowerer::NextScopeFrameId() -> ScopeFrameId {
   return ScopeFrameId{.value = next_scope_frame_++};
 }
 
+auto ModuleLowerer::NextWithClauseId() -> hir::WithClauseId {
+  return hir::WithClauseId{.value = next_with_clause_++};
+}
+
 void ModuleLowerer::MapStructuralVarBinding(
     const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
     hir::StructuralVarId local, hir::TypeId type) {

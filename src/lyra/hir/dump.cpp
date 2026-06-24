@@ -399,6 +399,12 @@ class HirDumper {
             [](const CrossUnitVarRef& r) -> std::string {
               return std::format("CrossUnitRef[{}]", r.id.value);
             },
+            [](const IterationBindingRef& r) -> std::string {
+              const char* role = r.role == IterationBindingRole::kElement
+                                     ? "Element"
+                                     : "Index";
+              return std::format("Iteration[{}].{}", r.clause.value, role);
+            },
         },
         p);
   }
@@ -526,9 +532,6 @@ class HirDumper {
               return std::format(
                   "BuiltinFn \"{}\"", support::BuiltinFnName(b.method));
             },
-            [](const IteratorIndexRef&) -> std::string {
-              return "IteratorIndexRef";
-            },
         },
         callee);
   }
@@ -627,8 +630,8 @@ class HirDumper {
               std::string with_text;
               if (c.with_clause.has_value()) {
                 with_text = std::format(
-                    " with={{iterator=ProceduralVarId[{}], expr=Expr[{}]}}",
-                    c.with_clause->iterator.value, c.with_clause->expr.value);
+                    " with={{element=\"{}\", expr=Expr[{}]}}",
+                    c.with_clause->element_name, c.with_clause->expr.value);
               }
               return std::format(
                   "CallExpr callee={} args=[{}]{}",

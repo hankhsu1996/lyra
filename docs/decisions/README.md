@@ -40,6 +40,9 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 - [array-method-dispatch](array-method-dispatch.md) -- LRM 7.12 array-method runtime semantics
   (empty-reduction zero, selection sort over standard introsort); the original per-family dispatch
   shape is superseded by [builtin-call-identity](builtin-call-identity.md).
+- [array-manipulation-entry-stream](array-manipulation-entry-stream.md) -- LRM 7.12 locator /
+  reduction / `map` families operate over an ordered `(index, element)` entry stream modeled on Rust
+  `Iterator` / C++ `std::ranges`; the ordering family stays an in-place positional permutation.
 - [format-dispatch](format-dispatch.md) -- value formatting dispatches through `Formatter<T>` and
   `FormatArg`.
 
@@ -66,6 +69,12 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   operator (`AddressOfExpr`), dual to `DerefExpr`. Runtime APIs taking pointers receive an explicit
   address-taken operand; the backend never injects `&`.
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control.
+- [generic-lowering-machinery](generic-lowering-machinery.md) -- generic arena and shared
+  context-free expression-handler templates over the pass class; node types stay typed.
+- [context-free-call-lowering](context-free-call-lowering.md) -- one expression dispatcher template
+  per boundary (context-free kinds listed once); the call family becomes a template across pass
+  classes once the `with`-clause element / index are co-equal closure parameters rather than a
+  procedural-body local.
 
 ### References and construction
 

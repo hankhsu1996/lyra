@@ -5,7 +5,7 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/inside_item.hpp"
-#include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -13,14 +13,15 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+template <ExprLowerer Lowerer>
 auto BuildHirInsideItemPredicate(
-    ProcessLowerer& proc, WalkFrame frame, mir::ExprId lhs_id,
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId lhs_id,
     const hir::InsideItem& item, mir::TypeId result_type)
     -> diag::Result<mir::ExprId> {
-  const auto& hir_body = proc.HirBody();
+  const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = proc.LowerExpr(hir_body.exprs.Get(id), frame);
+    auto lowered = lowerer.LowerExpr(hir_exprs.Get(id), frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
@@ -74,5 +75,12 @@ auto BuildHirInsideItemPredicate(
       },
       item);
 }
+
+template auto BuildHirInsideItemPredicate(
+    ProcessLowerer&, WalkFrame, mir::ExprId, const hir::InsideItem&,
+    mir::TypeId) -> diag::Result<mir::ExprId>;
+template auto BuildHirInsideItemPredicate(
+    const ClassLowerer&, WalkFrame, mir::ExprId, const hir::InsideItem&,
+    mir::TypeId) -> diag::Result<mir::ExprId>;
 
 }  // namespace lyra::lowering::hir_to_mir

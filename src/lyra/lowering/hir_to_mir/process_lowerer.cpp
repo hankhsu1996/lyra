@@ -66,11 +66,10 @@ auto DispatchLowerExpr(
             return LowerHirConversionExpr(process, frame, cv, result_type);
           },
           [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirCallExprProc(
-                process, frame, c, expr.span, result_type);
+            return LowerHirCallExpr(process, frame, c, expr.span, result_type);
           },
           [&](const hir::InsideExpr& in) -> diag::Result<mir::Expr> {
-            return LowerHirInsideExprProc(process, frame, in, result_type);
+            return LowerHirInsideExpr(process, frame, in, result_type);
           },
           [&](const hir::ElementSelectExpr& sel) -> diag::Result<mir::Expr> {
             return LowerHirElementSelectExpr(process, frame, sel, result_type);
@@ -85,7 +84,7 @@ auto DispatchLowerExpr(
             return LowerHirConcatExpr(process, frame, c, result_type);
           },
           [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
-            return LowerHirReplicationExprProc(process, frame, r, result_type);
+            return LowerHirReplicationExpr(process, frame, r, result_type);
           },
           [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
             return LowerHirAssignmentPatternExpr(

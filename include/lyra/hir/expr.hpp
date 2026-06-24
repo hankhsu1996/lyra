@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -76,17 +77,15 @@ struct IncDecExpr {
   ExprId target;
 };
 
-// LRM 7.12 array-method `with` clause. Present only on array-method calls
-// (sort, rsort, sum, product, and, or, xor) that take a `with`. `iterator`
-// is a procedural-var entry on the enclosing process body; references to it
-// inside `expr` resolve through the normal `LookupProceduralVar` path.
-// HIR -> MIR pre-allocates a body procedural var for the iterator at
-// closure-construction time and remaps this id to that body var, so the
-// closure's `LowerExpr` walk sees the iterator as a body-local. Captures
-// are discovered automatically by the `CaptureSink` installed around that
-// walk -- they are not pre-listed here.
+// LRM 7.12 array-method `with` clause. `id` names this clause; the element
+// (`item`) and its index (`item.index`) are referenced inside `expr` by that
+// identity and role (`IterationBindingRef`), so a clause nested in `expr` that
+// reads an outer iterator still names the outer clause. `element_name` is the
+// source iterator name, kept so the synthesized iteration closure's element
+// parameter renders readably.
 struct WithClause {
-  ProceduralVarId iterator;
+  WithClauseId id;
+  std::string element_name;
   ExprId expr;
 };
 

@@ -10,12 +10,11 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
@@ -24,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
+#include "lyra/lowering/hir_to_mir/iteration_binding_registry.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -48,17 +48,18 @@ namespace {
 // gates its call on `root_id != lhs_id` because a bare observable cell
 // should bind `Ref<T>` directly to the underlying `Var<T>&`, not via a
 // snapshot.
+template <ExprLowerer Lowerer>
 auto MaybeWrapObservableLhsWithMutate(
-    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
-    mir::ExprId lhs_id) -> mir::ExprId {
+    Lowerer& lowerer, WalkFrame frame, mir::Block& block, mir::ExprId lhs_id)
+    -> mir::ExprId {
   const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
   const bool root_is_cell = mir::IsObservableCellType(
-      process.Module().Unit().GetType(block.exprs.Get(root_id).type));
+      lowerer.Module().Unit().GetType(block.exprs.Get(root_id).type));
   if (!root_is_cell) return lhs_id;
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(lowerer.Module(), frame));
   return RewriteLhsRootWithMutate(
-      process.Module().Unit(), block, lhs_id, services_id);
+      lowerer.Module().Unit(), block, lhs_id, services_id);
 }
 
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
@@ -69,36 +70,35 @@ auto MaybeWrapObservableLhsWithMutate(
 // fires -- so it lowers to an immediately-invoked closure. The query is a pure
 // value member that mutates a plain body-local probe; the event-firing lives in
 // the ordinary observable write-back assignment, not in the query.
+template <ExprLowerer Lowerer>
 auto LowerAssociativeTraversal(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     support::BuiltinFn fn, mir::TypeId result_type) -> diag::Result<mir::Expr> {
   if (!c.arguments[1].has_value()) {
     throw InternalError(
         "LowerAssociativeTraversal: index argument unexpectedly elided");
   }
-  const auto& module = process.Module();
-  const auto& hir_proc = process.HirBody();
+  const auto& module = lowerer.Module();
+  const auto& hir_exprs = lowerer.HirExprs();
   const auto recv_hir = *c.arguments[0];
   const auto idx_hir = *c.arguments[1];
   const mir::TypeId key_type =
-      module.TranslateType(hir_proc.exprs.Get(idx_hir).type);
+      module.TranslateType(hir_exprs.Get(idx_hir).type);
   const mir::TypeId void_t = module.Unit().builtins.void_type;
 
-  ClosureBuilder closure(process.Module().Unit(), frame);
+  ClosureBuilder closure(lowerer.Module().Unit(), frame);
   mir::Block& body = closure.Body();
   const WalkFrame& closure_frame = closure.Frame();
 
   // probe = idx -- snapshot the current index value into a plain local.
-  auto idx_read_or =
-      process.LowerExpr(hir_proc.exprs.Get(idx_hir), closure_frame);
+  auto idx_read_or = lowerer.LowerExpr(hir_exprs.Get(idx_hir), closure_frame);
   if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
   const mir::LocalRef probe_ref = body.AppendLocal(
       mir::LocalDecl{.name = "_lyra_trav_probe", .type = key_type},
       body.exprs.Add(*std::move(idx_read_or)));
 
   // found = (map).<kind>(probe) -- pure query: mutates probe, yields 1/0.
-  auto map_read_or =
-      process.LowerExpr(hir_proc.exprs.Get(recv_hir), closure_frame);
+  auto map_read_or = lowerer.LowerExpr(hir_exprs.Get(recv_hir), closure_frame);
   if (!map_read_or) return std::unexpected(std::move(map_read_or.error()));
   const mir::ExprId map_read_id = body.exprs.Add(*std::move(map_read_or));
   const mir::ExprId probe_read_id =
@@ -115,14 +115,13 @@ auto LowerAssociativeTraversal(
       query_id);
 
   // idx = probe -- observable write-back fires the LRM 4.3 update event.
-  auto idx_lhs_or =
-      process.LowerLhsExpr(hir_proc.exprs.Get(idx_hir), closure_frame);
+  auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), closure_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
   const mir::ExprId idx_lhs_id = body.exprs.Add(*std::move(idx_lhs_or));
   const mir::ExprId probe_writeback_id =
       body.exprs.Add(mir::Expr{.data = probe_ref, .type = key_type});
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(process, closure_frame));
+      body.exprs.Add(BuildServicesCallExpr(lowerer.Module(), closure_frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
       module.Unit(), body, services_id, idx_lhs_id, probe_writeback_id,
       std::nullopt, key_type, void_t);
@@ -186,19 +185,20 @@ auto ArrayMethodResultProtoType(
       module.Unit().GetType(result_type).data);
 }
 
-// LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The iterator and
-// index are the closure's two parameters (LRM 7.12.4): the iterator HIR id
-// remaps to the `item` parameter and the index parameter resolves the
-// `IteratorIndexRef` callee. The body is a normal expression lowered through
-// `process.LowerExpr`. When the source has no `with` clause LRM 7.12.1 defines
-// the default as `with (item)`; this synthesises the identity closure (body
-// returns the iterator binding) so MIR always carries the closure argument and
-// downstream consumers see one uniform shape.
+// LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
+// index are the closure's two parameters (LRM 7.12.4); an `IterationBindingRef`
+// in the body resolves to one of them by the clause identity registered here.
+// The body is a normal expression lowered through `lowerer.LowerExpr`. When the
+// source has no `with` clause LRM 7.12.1 defines the default as `with (item)`;
+// this synthesises the identity closure (body returns the element parameter) so
+// MIR always carries the closure argument and downstream consumers see one
+// uniform shape.
+template <ExprLowerer Lowerer>
 auto BuildArrayMethodClosure(
-    ProcessLowerer& process, WalkFrame frame, hir::TypeId hir_receiver_type,
+    Lowerer& lowerer, WalkFrame frame, hir::TypeId hir_receiver_type,
     const hir::WithClause* with_clause) -> diag::Result<mir::Expr> {
-  const auto& module = process.Module();
-  const auto& hir_process = process.HirBody();
+  const auto& module = lowerer.Module();
+  const auto& hir_exprs = lowerer.HirExprs();
   const auto& hir_recv_ty = module.Hir().GetType(hir_receiver_type);
   const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
   if (!element_type.has_value()) {
@@ -215,28 +215,31 @@ auto BuildArrayMethodClosure(
     index_type = module.TranslateType(*assoc->key_type);
   }
   const std::string iterator_name =
-      with_clause != nullptr
-          ? hir_process.procedural_vars.Get(with_clause->iterator).name
-          : std::string{"item"};
+      with_clause != nullptr ? with_clause->element_name : std::string{"item"};
 
-  ClosureBuilder closure(process.Module().Unit(), frame);
+  ClosureBuilder closure(lowerer.Module().Unit(), frame);
   const mir::LocalId item_binding = closure.AddParam(iterator_name, item_type);
   const mir::LocalId index_binding = closure.AddParam("index", index_type);
   mir::Block& body = closure.Body();
 
   mir::ExprId body_return_value{};
   if (with_clause != nullptr) {
-    process.MapProceduralVar(
-        with_clause->iterator,
-        AutomaticVarBinding{
-            .declaration_procedural_depth = closure.Frame().block_depth,
-            .var = item_binding});
-    // `item.index` (LRM 7.12.4) resolves to the index parameter -- a
-    // with-clause-specific role, so the body lowers through a frame carrying
-    // that binding rather than the builder knowing about it.
-    auto body_expr_or = process.LowerExpr(
-        hir_process.exprs.Get(with_clause->expr),
-        closure.Frame().WithIndexBinding(index_binding));
+    // `item` and `item.index` (LRM 7.12.4) are this clause's two closure
+    // parameters; register them by clause identity so the body resolves each
+    // reference by identity and captures it when it crosses a closure boundary.
+    // The registry is shared down the nesting (an inner clause adds to the same
+    // one), so a clause nested in the body still reaches this outer iterator.
+    const BlockDepth decl_depth = closure.Frame().block_depth;
+    IterationBindingRegistry owned_registry;
+    IterationBindingRegistry* registry = frame.iteration_bindings != nullptr
+                                             ? frame.iteration_bindings
+                                             : &owned_registry;
+    registry->Register(
+        with_clause->id, {.var = item_binding, .decl_depth = decl_depth},
+        {.var = index_binding, .decl_depth = decl_depth});
+    auto body_expr_or = lowerer.LowerExpr(
+        hir_exprs.Get(with_clause->expr),
+        closure.Frame().WithIterationBindings(registry));
     if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
     body_return_value = body.exprs.Add(*std::move(body_expr_or));
   } else {
@@ -316,12 +319,12 @@ auto LowerSystemSubroutineCall(
 // ref alias the actual and copy nothing back (LRM 13.5.2), so they fall
 // through to the value-only lowering. The callee body receives its
 // instance handle as `arguments[0]`; SV actuals follow.
+template <ExprLowerer Lowerer>
 auto LowerStructuralSubroutineCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const hir::StructuralSubroutineRef& usr, diag::SourceSpan span,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& lowerer = process.Owner();
-  const auto& hir_process = process.HirBody();
+  const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const hir::StructuralSubroutineDecl& decl =
       lowerer.LookupHirSubroutine(usr.hops, usr.subroutine);
@@ -353,21 +356,19 @@ auto LowerStructuralSubroutineCall(
          decl.params[i].direction == hir::ParamDirection::kConstRef);
     mir::ExprId actual_id{};
     if (is_ref_formal) {
-      auto arg_or =
-          process.LowerLhsExpr(hir_process.exprs.Get(*c.arguments[i]), frame);
+      auto arg_or = lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments[i]), frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       actual_id = block.exprs.Add(*std::move(arg_or));
       const mir::ExprId root_id = FindLhsRootId(block, actual_id);
       if (root_id != actual_id) {
         actual_id =
-            MaybeWrapObservableLhsWithMutate(process, frame, block, actual_id);
+            MaybeWrapObservableLhsWithMutate(lowerer, frame, block, actual_id);
       }
       args.push_back(BuildReferenceArg(
-          process.Module().Unit(), block, actual_id,
+          lowerer.Module().Unit(), block, actual_id,
           block.exprs.Get(actual_id).type));
     } else {
-      auto arg_or =
-          process.LowerExpr(hir_process.exprs.Get(*c.arguments[i]), frame);
+      auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       args.push_back(block.exprs.Add(*std::move(arg_or)));
     }
@@ -387,8 +388,9 @@ auto LowerStructuralSubroutineCall(
 // call (`MyEnum::first()`) it is a discardable bearer whose type supplies
 // the static callee's `type_qual`. Either way, the for-loop below skips
 // index 0 and starts the real user-argument scan at index 1.
+template <ExprLowerer Lowerer>
 auto LowerBuiltinMethodCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const hir::BuiltinMethodRef& b, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   if (c.arguments.empty()) {
@@ -404,13 +406,13 @@ auto LowerBuiltinMethodCall(
   // expression position. The other associative methods are plain member
   // calls handled by the generic path below.
   if (support::IsAssociativeTraversalFn(b.method)) {
-    return LowerAssociativeTraversal(process, frame, c, b.method, result_type);
+    return LowerAssociativeTraversal(lowerer, frame, c, b.method, result_type);
   }
-  const auto& module = process.Module();
-  const auto& hir_process = process.HirBody();
+  const auto& module = lowerer.Module();
+  const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const hir::TypeId hir_dispatch_type =
-      hir_process.exprs.Get(*c.arguments.front()).type;
+      hir_exprs.Get(*c.arguments.front()).type;
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
 
@@ -433,15 +435,15 @@ auto LowerBuiltinMethodCall(
     const bool method_mutates = mir::IsMutatingCallee(mir_callee);
     mir::ExprId receiver_id{};
     if (method_mutates) {
-      auto recv_or = process.LowerLhsExpr(
-          hir_process.exprs.Get(*c.arguments.front()), frame);
+      auto recv_or =
+          lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver_id = block.exprs.Add(*std::move(recv_or));
       receiver_id =
-          MaybeWrapObservableLhsWithMutate(process, frame, block, receiver_id);
+          MaybeWrapObservableLhsWithMutate(lowerer, frame, block, receiver_id);
     } else {
       auto recv_or =
-          process.LowerExpr(hir_process.exprs.Get(*c.arguments.front()), frame);
+          lowerer.LowerExpr(hir_exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver_id = block.exprs.Add(*std::move(recv_or));
     }
@@ -454,8 +456,7 @@ auto LowerBuiltinMethodCall(
     if (!c.arguments[i].has_value()) {
       throw InternalError("builtin-method call argument unexpectedly elided");
     }
-    auto arg_or =
-        process.LowerExpr(hir_process.exprs.Get(*c.arguments[i]), frame);
+    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     args.push_back(block.exprs.Add(*std::move(arg_or)));
   }
@@ -467,7 +468,7 @@ auto LowerBuiltinMethodCall(
   // one uniform shape per kind.
   if (support::ArrayMethodTakesClosure(b.method)) {
     auto closure_or = BuildArrayMethodClosure(
-        process, frame, hir_dispatch_type,
+        lowerer, frame, hir_dispatch_type,
         c.with_clause.has_value() ? &*c.with_clause : nullptr);
     if (!closure_or) return std::unexpected(std::move(closure_or.error()));
     args.push_back(block.exprs.Add(*std::move(closure_or)));
@@ -494,7 +495,8 @@ auto LowerBuiltinMethodCall(
   // one. (`-> e` is the only producer of the trigger kind and lowers through
   // the event-trigger stmt path; `await` takes no services.)
   if (b.method == support::BuiltinFn::kTriggered) {
-    args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
+    args.push_back(
+        block.exprs.Add(BuildServicesCallExpr(lowerer.Module(), frame)));
   }
 
   return mir::Expr{
@@ -502,49 +504,47 @@ auto LowerBuiltinMethodCall(
       .type = result_type};
 }
 
-// LRM 7.12.4 `item.index` reads the second parameter of the enclosing
-// array-method with-clause closure (LRM 7.12 closures pass both `item`
-// and `index` to each invocation). The binding is installed by
-// `BuildArrayMethodClosure`; reaching here without it is an upstream
-// lowering bug.
-auto LowerIteratorIndexCall(WalkFrame frame, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  if (!frame.active_index_binding.has_value()) {
-    throw InternalError(
-        "LowerIteratorIndexCall: IteratorIndexRef outside an array-method "
-        "`with` body (LRM 7.12.4)");
-  }
-  return mir::Expr{
-      .data =
-          mir::LocalRef{
-              .hops = mir::BlockHops{.value = 0},
-              .var = *frame.active_index_binding},
-      .type = result_type};
-}
-
 }  // namespace
 
-auto LowerHirCallExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
+template <ExprLowerer Lowerer>
+auto LowerHirCallExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
   return std::visit(
       Overloaded{
           [&](const hir::SystemSubroutineRef& sys) -> diag::Result<mir::Expr> {
-            return LowerSystemSubroutineCall(process, frame, c, sys, span);
+            // System subroutines (the print / scan / file families plus the
+            // value functions) are lowered through statement-flavored handlers
+            // bound to a process body; a continuous-assign RHS reaching one is
+            // a value system function ($time and the like), which is the only
+            // form legal in expression position there but not yet wired on the
+            // structural path.
+            if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+              return LowerSystemSubroutineCall(lowerer, frame, c, sys, span);
+            } else {
+              return diag::Fail(
+                  span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                  "a system subroutine call is not yet supported in a "
+                  "continuous assignment");
+            }
           },
           [&](const hir::StructuralSubroutineRef& usr)
               -> diag::Result<mir::Expr> {
             return LowerStructuralSubroutineCall(
-                process, frame, c, usr, span, result_type);
+                lowerer, frame, c, usr, span, result_type);
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
-            return LowerBuiltinMethodCall(process, frame, c, b, result_type);
-          },
-          [&](const hir::IteratorIndexRef&) -> diag::Result<mir::Expr> {
-            return LowerIteratorIndexCall(frame, result_type);
+            return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);
           },
       },
       c.callee);
 }
+
+template auto LowerHirCallExpr(
+    ProcessLowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr>;
+template auto LowerHirCallExpr(
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

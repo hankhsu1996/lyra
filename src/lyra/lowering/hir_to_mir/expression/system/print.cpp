@@ -32,7 +32,7 @@ auto BuildFilesCall(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block& block)
     -> mir::ExprId {
   const mir::ExprId services =
-      block.exprs.Add(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -73,7 +73,7 @@ auto EmitFormatThenWrite(
     -> mir::ExprId {
   auto& unit = process.Module().Unit();
   const mir::ExprId services =
-      block.exprs.Add(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   const mir::ExprId text = block.exprs.Add(
       mir::Expr{
           .data =
@@ -179,7 +179,7 @@ auto LowerStrobeCall(
 
   const mir::ExprId closure_id = block.exprs.Add(closure.BuildVoid());
   const mir::ExprId services =
-      block.exprs.Add(BuildServicesCallExpr(process, frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   return mir::Expr{
       .data =
           mir::CallExpr{

@@ -49,12 +49,18 @@ auto LowerAssociativeAssignmentPattern(
     const slang::ast::StructuredAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
-// Replication (LRM 11.4.12.1) and the dynamic-array constructor `new[N]`
-// (LRM 7.5.1) have no structural form, so they stay procedural-only handlers.
-auto LowerReplicationExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
+// Replication (LRM 11.4.12.1) is an ordinary value expression, legal wherever a
+// value is, so it is one template over the pass class like the other aggregate
+// families.
+template <ExprLowerer Lowerer>
+auto LowerReplicationExpr(
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ReplicationExpression& rp, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
+
+// The dynamic-array constructor `new[N]` (LRM 7.5.1) allocates simulation-time
+// storage, which a constructor-time structural expression cannot do, so it
+// stays a procedural-only handler.
 auto LowerNewArrayExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NewArrayExpression& na, diag::SourceSpan span)

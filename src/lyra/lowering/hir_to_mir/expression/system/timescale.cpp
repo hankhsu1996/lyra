@@ -32,7 +32,8 @@ auto LowerTimeFormatSystemSubroutineCall(
   }
 
   std::vector<mir::ExprId> call_args;
-  call_args.push_back(body.exprs.Add(BuildServicesCallExpr(process, frame)));
+  call_args.push_back(
+      body.exprs.Add(BuildServicesCallExpr(process.Module(), frame)));
   for (const auto& arg : args) {
     if (!arg.has_value()) {
       throw InternalError(
@@ -59,7 +60,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   const auto resolution = process.Resolution();
 
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(process, frame));
+      body.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   const mir::ExprId scope_name_lit = body.exprs.Add(
       mir::Expr{
           .data =
