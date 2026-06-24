@@ -29,6 +29,7 @@ enum class TypeKind {
   kScope,
   kServices,
   kFiles,
+  kDiagnostic,
   kRuntimeLibrary,
   kCoroutine,
   kReference,
@@ -165,6 +166,15 @@ struct ServicesType {
 // future `Open` / `Close` / ...). Opaque, never inspected by MIR.
 struct FilesType {
   auto operator==(const FilesType&) const -> bool = default;
+};
+
+// The diagnostic subsystem handle `lyra::runtime::DiagnosticDispatcher`,
+// reached from `RuntimeServices` through its `Diagnostic` method. The
+// receiver of severity-fixed emit methods (`EmitInfo` / `EmitWarning` /
+// `EmitError`) carrying a pre-formatted text. Opaque, never inspected by
+// MIR.
+struct DiagnosticType {
+  auto operator==(const DiagnosticType&) const -> bool = default;
 };
 
 // A pass-through value type from the runtime library that MIR never inspects:
@@ -304,8 +314,8 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, ServicesType, FilesType, RuntimeLibraryType, CoroutineType,
-    RefType, PointerType, VectorType, TupleType, ExternalRefType,
+    ScopeType, ServicesType, FilesType, DiagnosticType, RuntimeLibraryType,
+    CoroutineType, RefType, PointerType, VectorType, TupleType, ExternalRefType,
     ObservableType>;
 
 struct Type {

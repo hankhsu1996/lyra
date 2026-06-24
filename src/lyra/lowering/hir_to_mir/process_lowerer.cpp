@@ -176,13 +176,13 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
             return LowerForkStmt(*this, frame, stmt.label, f);
           },
           [&](const hir::IfStmt& i) {
-            return LowerIfStmt(*this, frame, stmt.label, i);
+            return LowerIfStmt(*this, frame, stmt.label, i, stmt.span);
           },
           [&](const hir::CaseStmt& c) {
-            return LowerCaseStmt(*this, frame, stmt.label, c);
+            return LowerCaseStmt(*this, frame, stmt.label, c, stmt.span);
           },
           [&](const hir::CaseInsideStmt& c) {
-            return LowerCaseInsideStmt(*this, frame, stmt.label, c);
+            return LowerCaseInsideStmt(*this, frame, stmt.label, c, stmt.span);
           },
           [&](const hir::ForStmt& f) {
             return LowerForStmt(*this, frame, stmt.label, f);

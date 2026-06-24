@@ -133,6 +133,16 @@ enum class BuiltinFn : std::uint16_t {
   kFormat,
   kWrite,
   kWriteln,
+  // Diagnostic subsystem accessor and severity-fixed emit operations.
+  // `Diagnostic` is a `RuntimeServices` method returning the
+  // `DiagnosticDispatcher` broker. `EmitInfo` / `EmitWarning` / `EmitError`
+  // are dispatcher methods taking a pre-formatted text (LRM 20.10), one
+  // method per severity rather than a single emit-with-tag, mirroring the
+  // `Write` / `Writeln` split.
+  kDiagnostic,
+  kEmitInfo,
+  kEmitWarning,
+  kEmitError,
   // LRM 21.3.4.3 scan primitives. `Scan` is a pure value-layer parser;
   // `PeekBuffered` / `AdvanceFd` are the file-side bytes-and-position
   // operations a `$fscanf` lowering composes with `Scan`.

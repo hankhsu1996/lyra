@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stderr:
-    exact: "warning: value is 42\n"
+    exact: "main.sv:3:5: warning: value is 42\n"

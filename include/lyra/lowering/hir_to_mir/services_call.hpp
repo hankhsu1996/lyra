@@ -1,10 +1,23 @@
 #pragma once
 
+#include <string>
+
+#include "lyra/diag/source_manager.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+// Formats `span` as "basename:line:col" for the runtime diagnostic origin tag.
+// SV simulators print diagnostics with the source file name, not its absolute
+// path (LRM 20.10 examples and the Verilator / VCS / Modelsim convention), so
+// the runtime origin uses the basename rather than
+// `diag::FormatSourceLocation`'s full path. Empty when the span has no
+// resolvable file.
+[[nodiscard]] auto FormatRuntimeOriginString(
+    diag::SourceSpan span, const diag::SourceManager& mgr) -> std::string;
 
 // Builds the engine-handle expression `self.Services()`: a `Services`
 // scope-method call whose receiver is the body's self read, interned as a
@@ -24,5 +37,14 @@ auto BuildServicesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
 // of their FileTable methods.
 auto BuildFilesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
     -> mir::Expr;
+
+// Builds the diagnostic broker expression `services.Diagnostic()`: a
+// `Diagnostic` method call on the engine handle, typed as the unit's
+// `diagnostic` builtin. Returns the outer call detached; the caller interns
+// it. The inner services call is interned into `frame.current_block` as a
+// child. LRM 20.10 `$info` / `$warning` / `$error` thread the resulting
+// handle as the receiver of their severity-fixed Emit methods.
+auto BuildDiagnosticCallExpr(
+    const ModuleLowerer& module, const WalkFrame& frame) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

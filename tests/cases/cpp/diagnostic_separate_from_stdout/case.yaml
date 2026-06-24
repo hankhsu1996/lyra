@@ -12,4 +12,4 @@ expect:
       on stdout
       still on stdout
   stderr:
-    exact: "warning: on stderr\n"
+    exact: "main.sv:4:5: warning: on stderr\n"
