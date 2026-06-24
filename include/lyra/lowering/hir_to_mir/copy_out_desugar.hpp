@@ -55,8 +55,8 @@ auto BuildOutputArgSlot(
 // statement. The completed `wrapper` is installed as a child of
 // `*parent_frame.current_block`, and the returned Stmt's BlockStmt
 // references it by id. When `call_suspends` (a bare task call -- LRM 13.4), the
-// call statement is emitted as a suspension (`AwaitStmt`); an `lhs = f(...)`
-// shape is a function and never suspends.
+// call is wrapped in an awaited expression whose void completion the statement
+// discards; an `lhs = f(...)` shape is a function and never suspends.
 auto BuildCopyOutBlock(
     const mir::CompilationUnit& unit, mir::ExprId services_id,
     WalkFrame parent_frame, mir::Block wrapper,

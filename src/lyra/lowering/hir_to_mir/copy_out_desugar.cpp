@@ -69,7 +69,10 @@ auto BuildCopyOutBlock(
     const mir::ExprId assign_id = wrapper.exprs.Add(assign_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
   } else if (call_suspends) {
-    wrapper.AppendStmt(mir::AwaitStmt{.awaitable = call_id});
+    const mir::ExprId await_id = wrapper.exprs.Add(
+        mir::Expr{
+            .data = mir::AwaitExpr{.awaitable = call_id}, .type = void_type});
+    wrapper.AppendStmt(mir::ExprStmt{.expr = await_id});
   } else {
     wrapper.AppendStmt(mir::ExprStmt{.expr = call_id});
   }

@@ -378,9 +378,10 @@ auto LowerExprStmt(
 
   // A call statement. Resolving the callee here -- once -- decides both the
   // output-arg desugar shape (LRM 13.5) and whether the call is a suspension
-  // point. A suspending callee ($finish, a task) lowers to `AwaitStmt`; LRM
-  // 13.4 keeps every suspending call void and statement-positioned, so a bare
-  // call is the only place suspension arises.
+  // point. A suspending callee ($finish, a task) lowers to an awaited
+  // expression whose completion yields nothing here (a bare call with no
+  // outputs), so the await result is void and the enclosing statement discards
+  // it.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
     if (const auto* decl = SubroutineWithWritebacks(process.Owner(), *call)) {
       return LowerSubroutineCallWithWritebacks(
@@ -417,9 +418,12 @@ auto LowerExprStmt(
     if (!call_or) return std::unexpected(std::move(call_or.error()));
     const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
     if (suspends) {
+      const mir::ExprId await_id = block.exprs.Add(
+          mir::Expr{
+              .data = mir::AwaitExpr{.awaitable = call_id},
+              .type = process.Module().Unit().builtins.void_type});
       return mir::Stmt{
-          .label = std::move(label),
-          .data = mir::AwaitStmt{.awaitable = call_id}};
+          .label = std::move(label), .data = mir::ExprStmt{.expr = await_id}};
     }
     return mir::Stmt{
         .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};

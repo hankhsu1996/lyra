@@ -90,8 +90,14 @@ struct CompilationUnit {
             .format_spec = AddType(
                 TypeData{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kFormatSpec}}),
-            .coroutine = AddType(TypeData{CoroutineType{}}),
+            .coroutine = TypeId{},
         } {
+    // A bare coroutine yields nothing, so its completion payload is `Void`. It
+    // is interned in the body rather than the member list because it reads back
+    // the already-interned `void_type`; the member-list value above is an
+    // unused placeholder overwritten here.
+    builtins.coroutine =
+        AddType(TypeData{CoroutineType{.payload = builtins.void_type}});
   }
 
   [[nodiscard]] auto GetType(TypeId id) const -> const Type& {

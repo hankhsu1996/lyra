@@ -131,9 +131,64 @@ This makes copy-out timing correct by construction (the writes happen after comp
 copy-out ownership at the call site (the caller owns the actual place -- home 3, not the body),
 needs no per-exit-path copy-out epilogue (the output pack rides the existing return mechanism), and
 is the concrete reason `Coroutine<T>` must be parameterized rather than a marker. Only `ref` is a
-true alias and therefore the only direction that becomes a reference-typed parameter. (Lowering
-details -- a function with outputs in expression position, and `output` under an abnormal `disable`
-termination -- are HIR-to-MIR concerns, not part of this contract.)
+true alias and therefore the only direction that becomes a reference-typed parameter.
+
+### The completion payload is one value, normalized by arity
+
+A function's explicit return and its `output` / `inout` formals are not two parallel result
+channels: they are the components of a single **completion payload**, the one value a completion
+yields. The components, in order, are the explicit function return (if the callable returns a
+non-void value) followed by each `output` / `inout` value in formal-declaration order. The payload
+type is then normalized by component count:
+
+| Component count | Completion payload type     |
+| --------------: | --------------------------- |
+|               0 | `Void`                      |
+|               1 | that component's type       |
+|             >=2 | a `Tuple` of the components |
+
+So `function int g(input int a)` keeps a bare `int` result;
+`function int f(input int a, output int b)` has result `Tuple<int, int>` (`[return, b]`);
+`task t(output int b)` has result `Coroutine<int>`; `task t(output int b, inout int c)` has result
+`Coroutine<Tuple<int, int>>`; and `task t(input int a)` has result `Coroutine<Void>`. A
+bare-when-single result keeps the common no-output path off a tuple, and a single coroutine
+completion value (never a return plus a separate output channel) matches `Coroutine<T>` carrying
+exactly one `T`.
+
+The pack is positional. A `Tuple` carries component types only; the meaning of each position is the
+callable's declaration order, which any consumer holding the callee declaration reads directly -- no
+component-name record is stored. Only a consumer that holds a bare result `TypeId` without knowing
+the callee needs the projection spelled explicitly (a tuple-get by index), never inferred by name.
+
+### The await is typed: `Await : Coroutine<T> -> T`
+
+The completion payload reaches the call site through a **typed await**: awaiting a `Coroutine<T>`
+yields a value of `T`, and the output writebacks are projections of that value. A pure suspension
+(an event control, a delay, a `$finish`, a task with no outputs) awaits a `Coroutine<Void>` and
+yields nothing; it is the zero-component case of the same one await, not a separate statement form.
+A task call with outputs awaits a `Coroutine<Tuple<...>>` and the writebacks read its components.
+
+The typed await is what makes the runtime realization a backend choice that does not touch MIR.
+Whether the payload travels through a caller-provided result slot or a value held in the coroutine
+object is home 4; under both, the MIR meaning is identical (`await` of a `Coroutine<T>` is a `T`). A
+backend's hidden result slot is therefore **not** a MIR parameter: putting it into the callable's
+signature would merely rename `output` / `inout` to a synthetic `Ref<pack>` parameter and reinstate
+the abstraction this decision removes. The MIR signature carries `self`, the `input` values, and the
+`ref` aliases; nothing else.
+
+### Two lowering invariants the output pack must hold
+
+These are contracts, not optional lowering details:
+
+- **An output / inout actual place is bound exactly once, at call entry.** `t(arr[i++], obj.f)`
+  evaluates each destination lvalue once before the call; the post-completion writeback writes the
+  already-bound place. Re-evaluating the actual at completion would, after a suspension, write a
+  different place than the one the call named.
+- **The result slot outlives any write the callee can still make to it.** While a callee may still
+  write its completion payload, the storage that receives it is live. For a direct task call the
+  awaiting frame owns that storage and is suspended (alive) until completion, so the contract holds;
+  abnormal termination (`disable`, `disable fork`) and forked task calls are where this needs
+  explicit care, tracked with the object-model and scheduling work, not assumed.
 
 ### Internal versus external callables: DPI is a structural form
 
