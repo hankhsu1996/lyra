@@ -507,14 +507,14 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
           `$display` lands on. The `LyraTimeFormat` and `LyraPrintTimescale` runtime free functions
           retire; the timescale runtime header is deleted.
 
-- [ ] R38 -- Move `Format` from `RuntimeServices` to the value layer. Today `services.Format(items)`
-      pulls `TimeFormat()` from engine state and runs a per-item value-format walk; the engine-state
-      pull is the only reason it lives on services rather than as a pure
-      `value::Format(items, time_format)` free function the caller threads explicitly. With R37
-      complete the pattern of "pure value ops live at `lyra::value`, engine state is reached through
-      `services`" is consistent everywhere except Format; this entry closes the exception. **Blocked
-      on R37**: once it lands and the value-layer free-function surface is the established pattern,
-      the exception closes.
+- [x] R38 -- `Format` moved from `RuntimeServices` to the value layer. The per-item value-format
+      walk is now the pure free function `value::Format(items, time_format)`; the engine's
+      `$timeformat` state is reached through a `TimeFormat` reader on `services` and threaded into
+      the call as an explicit operand at lowering, so the format step holds no engine state of its
+      own. The four format sites (`$display` family, `$info` family, `$sformat` family, the
+      deferred-check cascade) share one lowering builder that assembles the call and its
+      `TimeFormat` operand. This makes "pure value ops live at `lyra::value`, engine state is
+      reached through `services`" consistent everywhere, closing the last exception R37 left open.
 
 - [ ] R39 -- Lift the implicit `Ref<T>` access into explicit MIR calls. R12 / the
       value-type-concepts cut lifted observable-cell reads / writes / mutations into explicit

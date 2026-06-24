@@ -192,6 +192,10 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // acquired by `FileTable::CancellationFor(fd)` at `$fstrobe` submit time
   // and queried in the postponed-body guard.
   kChannelCancellation,
+  // LRM 20.4.3 `$timeformat` display state: `lyra::value::TimeFormat`, read by
+  // the value-layer format step for `%t` directives. Threaded into `Format` as
+  // an explicit operand from the engine's current state.
+  kTimeFormat,
 };
 
 struct RuntimeLibraryType {

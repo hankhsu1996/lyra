@@ -8,6 +8,11 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 
+namespace lyra::mir {
+struct CompilationUnit;
+struct Block;
+}  // namespace lyra::mir
+
 namespace lyra::lowering::hir_to_mir {
 
 // Formats `span` as "basename:line:col" for the runtime diagnostic origin tag.
@@ -46,5 +51,18 @@ auto BuildFilesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
 // handle as the receiver of their severity-fixed Emit methods.
 auto BuildDiagnosticCallExpr(
     const ModuleLowerer& module, const WalkFrame& frame) -> mir::Expr;
+
+// Builds the format-text expression `value::Format(items,
+// services.TimeFormat())`: a value-layer free call over the print-item array
+// that yields an SV `string`, taking the engine's `$timeformat` state as an
+// explicit operand. The `TimeFormat` reader call is interned into `block` as a
+// child; the outer Format call is returned detached for the caller to intern.
+// The caller supplies `services_id` because its hop depth varies by call site
+// (a process body reads `self` directly, a deferred-check cascade body one hop
+// up). LRM 20.4.3 / 21.2.1: the `$display`, `$info`, and `$sformat` families
+// and the deferred-check cascade all format through this one path.
+auto BuildFormatCallExpr(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::ExprId services_id, mir::ExprId items_array) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

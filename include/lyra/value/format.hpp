@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <variant>
 
@@ -231,5 +232,13 @@ struct PrintValueItem {
 };
 
 using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
+
+// Walks the print items into one SV string per their FormatSpec, appending
+// literal items verbatim and formatting each value item through the per-arg
+// Format overload. `time_format` supplies the `$timeformat` display state `%t`
+// reads (LRM 20.4.3 / 21.2.1); the caller threads it from the engine, so this
+// step holds no engine state.
+[[nodiscard]] auto Format(
+    std::span<const PrintItem> items, const TimeFormat& time_format) -> String;
 
 }  // namespace lyra::value

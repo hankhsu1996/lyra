@@ -690,6 +690,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "EmitError";
     case support::BuiltinFn::kEmitFatal:
       return "EmitFatal";
+    case support::BuiltinFn::kTimeFormat:
+      return "TimeFormat";
     case support::BuiltinFn::kSetTimeFormat:
       return "SetTimeFormat";
     case support::BuiltinFn::kResetTimeFormat:
@@ -890,6 +892,7 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
 auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
   switch (id) {
     case support::BuiltinFn::kScan:
+    case support::BuiltinFn::kFormat:
       return "lyra::value";
     case support::BuiltinFn::kDelay:
     case support::BuiltinFn::kSimTime:
