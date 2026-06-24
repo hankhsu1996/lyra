@@ -74,7 +74,9 @@ class RuntimeServices {
   //                        (`#0` delay).
   // ScheduleAtTime      -- enqueue at a future SimTime (`#N` delay).
   // RequestFinish       -- mark simulation to stop after the current slot
-  //                        completes (`$finish`).
+  //                        completes (`$finish` and the implicit shutdown
+  //                        from `$fatal`; `fatal` true makes the eventual
+  //                        Run() return a non-zero exit code per LRM 20.10).
   // Now                 -- current simulation time.
   //
   // The scheduled unit is the coroutine frame that suspended (the innermost one
@@ -83,7 +85,7 @@ class RuntimeServices {
   void ScheduleNextDelta(CoroutineHandle handle);
   void ScheduleInactive(CoroutineHandle handle);
   void ScheduleAtTime(SimTime when, CoroutineHandle handle);
-  void RequestFinish(int level);
+  void RequestFinish(int level, bool fatal = false);
   void Spawn(Coroutine coroutine);
   [[nodiscard]] auto Now() const -> SimTime;
 

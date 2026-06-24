@@ -135,14 +135,16 @@ enum class BuiltinFn : std::uint16_t {
   kWriteln,
   // Diagnostic subsystem accessor and severity-fixed emit operations.
   // `Diagnostic` is a `RuntimeServices` method returning the
-  // `DiagnosticDispatcher` broker. `EmitInfo` / `EmitWarning` / `EmitError`
-  // are dispatcher methods taking a pre-formatted text (LRM 20.10), one
-  // method per severity rather than a single emit-with-tag, mirroring the
-  // `Write` / `Writeln` split.
+  // `DiagnosticDispatcher` broker. `EmitInfo` / `EmitWarning` / `EmitError` /
+  // `EmitFatal` are dispatcher methods taking a pre-formatted text (LRM 20.10),
+  // one method per severity rather than a single emit-with-tag, mirroring the
+  // `Write` / `Writeln` split. `EmitFatal` pairs with a subsequent `Finish`
+  // call to realize the LRM 20.10 "implicit $finish" requirement.
   kDiagnostic,
   kEmitInfo,
   kEmitWarning,
   kEmitError,
+  kEmitFatal,
   // LRM 21.3.4.3 scan primitives. `Scan` is a pure value-layer parser;
   // `PeekBuffered` / `AdvanceFd` are the file-side bytes-and-position
   // operations a `$fscanf` lowering composes with `Scan`.
@@ -183,8 +185,11 @@ enum class BuiltinFn : std::uint16_t {
   kRealTime,
   // LRM 20.2 simulation termination. Takes the engine handle and the LRM
   // diagnostic level (0 / 1 / 2). The call suspends and never resumes; the
-  // engine drops the process at the next dispatch.
+  // engine drops the process at the next dispatch. `kFatalFinish` is the
+  // $fatal sibling (LRM 20.10): same shutdown protocol, but marks the
+  // termination as a fatal error so the engine returns a non-zero exit code.
   kFinish,
+  kFatalFinish,
   // Resolves an `ExternUp<T>` member into a borrowed pointer to the
   // observable cell it currently refers to. Used by sensitivity-leaf
   // lowering so the wait expression carries an explicit observable handle

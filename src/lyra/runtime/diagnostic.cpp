@@ -21,6 +21,8 @@ auto SeverityText(Severity s) -> std::string_view {
       return "warning";
     case Severity::kError:
       return "error";
+    case Severity::kFatal:
+      return "fatal";
   }
   return "info";
 }
@@ -63,6 +65,15 @@ void DiagnosticDispatcher::EmitError(
   Emit(
       DiagnosticRecord{
           .severity = Severity::kError,
+          .origin = std::string{origin.View()},
+          .body = std::string{text.View()}});
+}
+
+void DiagnosticDispatcher::EmitFatal(
+    const lyra::value::String& origin, const lyra::value::String& text) {
+  Emit(
+      DiagnosticRecord{
+          .severity = Severity::kFatal,
           .origin = std::string{origin.View()},
           .body = std::string{text.View()}});
 }

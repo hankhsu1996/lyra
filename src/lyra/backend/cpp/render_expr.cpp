@@ -671,6 +671,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "EmitWarning";
     case support::BuiltinFn::kEmitError:
       return "EmitError";
+    case support::BuiltinFn::kEmitFatal:
+      return "EmitFatal";
     case support::BuiltinFn::kScan:
       return "Scan";
     case support::BuiltinFn::kPeekBuffered:
@@ -815,6 +817,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "RealTimeInUnit";
     case support::BuiltinFn::kFinish:
       return "Finish";
+    case support::BuiltinFn::kFatalFinish:
+      return "FatalFinish";
     case support::BuiltinFn::kAsObservable:
       return "AsObservable";
     case support::BuiltinFn::kRegisterSignal:
@@ -871,6 +875,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kSTime:
     case support::BuiltinFn::kRealTime:
     case support::BuiltinFn::kFinish:
+    case support::BuiltinFn::kFatalFinish:
       return "lyra::runtime";
     default:
       return "";
