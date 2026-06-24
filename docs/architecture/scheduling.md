@@ -114,15 +114,20 @@ The third case is the one a lowering pass must reason about. A lowering that emi
 capturing a procedural lvalue is responsible for establishing the fire-before-frame-dies guarantee,
 or it must refuse the capture.
 
-## MIR boundary: no pointers, only captures
+## MIR boundary: a place model, not storage layout
 
-MIR carries no pointer type, no reference type, no `AddressOf`, no `Deref`. Where a runtime
-mechanism needs the shape of "this place, written later" -- NBA commit, postponed strobe, callback
-registration -- MIR expresses it as a closure whose capture list includes the place to write. The
-C++ backend renders by-reference captures as `&` lambda captures; the resulting C++ holds the
-reference directly.
+MIR carries a place model in the shape of Rust MIR and LLVM IR: a borrowed pointer type, `DerefExpr`
+(pointer -> place) and its dual `AddressOfExpr` (place -> pointer), a reference type for `ref`
+formals and alias captures, a pointer cast, and a null pointer literal. `self` is a borrowed
+pointer. What MIR does not carry is storage _layout_ -- offsets, byte sizes, alignment -- which
+belongs to LIR; the engine, not MIR, owns where storage lives. See
+`decisions/address-of-primitive.md`.
 
-Pointers are not added to MIR. Captures already express the "hold a place for later" pattern in the
-shape a software engineer would write by hand, and a parallel pointer mechanism would split the same
-concept across two MIR vocabularies. Pointers would also invite storage-layout decisions to leak
-into MIR; the engine, not MIR, owns where storage lives.
+The deferred-write pattern -- "this place, written later" for an NBA commit, a postponed strobe, a
+callback -- is still expressed as a closure whose capture list owns the place. Whether a captured
+field is a snapshot or an alias is the field's _type_: a value-typed field is a snapshot, a
+reference-typed field aliases the live storage (LRM 6.21). The discipline is that a place held
+across a suspension or a region boundary is a reference-typed capture field, not raw pointer
+arithmetic threaded by hand. The C++ backend realizes such a field as an owned reference value (a
+`Ref<T>` by-value capture, never a `&` lambda capture), so a write through it still wakes the cell's
+subscribers and nothing dangles when the closure outlives the frame that built it.

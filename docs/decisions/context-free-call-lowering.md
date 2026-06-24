@@ -62,7 +62,7 @@ the other a class. It is the dispatch, not the pass class, that is shared.
 
 An LRM 7.12 array-manipulation method with a `with` clause iterates an ordered entry stream of
 `(index, element)` pairs (`array-manipulation-entry-stream.md`). At HIR-to-MIR the clause becomes a
-closure (`closure.md`) whose two per-invocation parameters are the element and the index --
+closure (`callable.md`) whose two per-invocation parameters are the element and the index --
 co-equal, exactly as every modern array callback passes them: JavaScript
 `arr.map((element, index) => ...)`, Rust `arr.iter().enumerate()` yielding `(index, element)`,
 Python `enumerate`, C++23 `views::enumerate`. None of these treats the index as an attribute of the
@@ -110,7 +110,7 @@ positions.
   holdouts.
 - `array-manipulation-entry-stream.md` -- the `(index, element)` entry-stream model the element and
   index refer into.
-- `closure.md` -- the `with` clause lowers to a closure whose per-invocation parameters are the
+- `callable.md` -- the `with` clause lowers to a closure whose per-invocation parameters are the
   element and the index.
 - `runtime_model.md` -- constructor-time (structural) versus simulation-time (process) expressions;
   a continuous-assign right-hand side is simulation-time, so it carries the full value-expression
