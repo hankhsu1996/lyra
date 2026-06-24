@@ -4,15 +4,22 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/closure.hpp"
+#include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -28,6 +35,27 @@ auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
       return mir::JoinMode::kNone;
   }
   throw InternalError("LowerJoinMode: unknown hir::JoinMode");
+}
+
+// Whether a branch closure aliases an enclosing automatic cell. LRM 6.21
+// requires the scope enclosing a fork-join to keep its automatic storage alive
+// for every spawned branch; Lyra does not yet extend a non-persistent (task or
+// fork-branch) activation frame to cover a detached branch, so a branch that
+// aliases one of its locals would dangle once that frame is gone. The alias is
+// a `RefType` capture binding (LRM 6.21); a static / module variable instead
+// reaches the branch through `self` (captures[0], a pointer, never a
+// `RefType`), so persistent storage never matches.
+auto AliasesEnclosingAutomatic(
+    const mir::CompilationUnit& unit, const mir::Expr& branch) -> bool {
+  const auto& closure = std::get<mir::ClosureExpr>(branch.data);
+  for (const mir::Capture& capture : closure.captures) {
+    const mir::TypeId binding_type =
+        closure.body->vars.Get(capture.binding).type;
+    if (std::holds_alternative<mir::RefType>(unit.GetType(binding_type).data)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -69,7 +97,14 @@ auto LowerForkStmt(
       return std::unexpected(std::move(lowered.error()));
     }
     closure.Body().AppendStmt(*std::move(lowered));
-    branches.push_back(fork_block.exprs.Add(closure.BuildCoroutine()));
+    mir::Expr branch_closure = closure.BuildCoroutine();
+    if (AliasesEnclosingAutomatic(process.Module().Unit(), branch_closure)) {
+      return diag::Fail(
+          branch.span, diag::DiagCode::kUnsupportedForkJoinForm,
+          "a fork-join branch by-reference capturing an enclosing automatic "
+          "variable is not yet supported (LRM 6.21)");
+    }
+    branches.push_back(fork_block.exprs.Add(std::move(branch_closure)));
   }
 
   const mir::BlockId scope_id =
