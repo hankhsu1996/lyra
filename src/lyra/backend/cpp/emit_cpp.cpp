@@ -3,6 +3,7 @@
 #include <format>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -72,6 +73,76 @@ auto CtorParamName(std::size_t index) -> std::string {
   return "param" + std::to_string(index);
 }
 
+auto RenderMethodParam(
+    const mir::CompilationUnit& unit, const mir::Class& s,
+    const mir::MethodParam& param) -> diag::Result<std::string> {
+  auto type_or = RenderTypeAsCpp(unit, s, param.type);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  // An `input` formal is by value (LRM 13.5.1); a `ref` / `const ref` formal is
+  // also by value, but its `RefType` already renders as `(const) Ref<T>` so the
+  // reference value carries the aliasing (LRM 13.5.2). An `output` / `inout`
+  // formal binds the caller's writeback temp by reference (`T&`).
+  switch (param.direction) {
+    case mir::ParamDirection::kInput:
+      return *type_or + " " + param.name;
+    case mir::ParamDirection::kOutput:
+    case mir::ParamDirection::kInOut:
+      return *type_or + "& " + param.name;
+  }
+  throw InternalError("RenderMethodParam: unknown ParamDirection");
+}
+
+// The one renderer for every method. A method's declaration is rendered from
+// its fields: the result type (whose `void` and coroutine cases are ordinary
+// types, handled in `RenderTypeAsCpp`), the name, the parameters, and the body
+// (a plain statement render, including any `co_return` that is itself a body
+// statement). The `form` decides how the receiver `self` is bound: a `kStatic`
+// method takes it as an explicit first parameter and spells it `self`; a
+// `kVirtual` method takes it implicitly, spells it `this`, and overrides a
+// runtime-base slot.
+auto RenderMethod(
+    const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
+    const mir::Class& s, const mir::MethodDecl& m, std::size_t indent)
+    -> diag::Result<std::string> {
+  const bool is_static = m.form == mir::MethodForm::kStatic;
+  const ScopeView base_view =
+      (parent_struct_view == nullptr)
+          ? ScopeView::ForRoot(unit, s, m.root_block)
+          : parent_struct_view->WithClass(s, m.root_block);
+  const ScopeView body_view =
+      base_view.WithSelfSpelling(is_static ? "self" : "this");
+
+  auto ret_or = RenderTypeAsCpp(unit, s, m.result_type);
+  if (!ret_or) return std::unexpected(std::move(ret_or.error()));
+
+  std::string sig =
+      std::string(is_static ? "static auto " : "auto ") + m.name + "(";
+  bool first = true;
+  if (is_static) {
+    sig += s.name + "* self";
+    first = false;
+  }
+  for (const auto& param : m.params) {
+    auto param_or = RenderMethodParam(unit, s, param);
+    if (!param_or) return std::unexpected(std::move(param_or.error()));
+    if (!first) sig += ", ";
+    sig += *param_or;
+    first = false;
+  }
+  sig += ") -> " + *ret_or;
+  if (!is_static) {
+    sig += " override";
+  }
+
+  std::string out;
+  out += Indent(indent) + sig + " {\n";
+  auto body_or = RenderBlockStatements(body_view, indent + 1);
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
+  out += *body_or;
+  out += Indent(indent) + "}\n";
+  return out;
+}
+
 auto RenderConstructor(
     const ScopeView& scope_view, const mir::Class& s,
     const std::string& base_class, std::size_t indent)
@@ -90,131 +161,21 @@ auto RenderConstructor(
   }
   sig += ") : " + init_list;
 
+  // The C++ constructor is the one shape that is not an ordinary method: it has
+  // no result type and runs a member-init list before its body, so it cannot
+  // run a virtual override during construction. It is an allocation shell that
+  // forwards to the base and the param members, then kicks off the construction
+  // body -- a static worker over `self`, the same body shape every method uses.
+  // An empty body needs no kickoff.
   if (s.constructor_block.root_stmts.empty()) {
     return Indent(indent) + sig + " {}\n";
   }
   std::string out;
   out += Indent(indent) + sig + " { init(this); }\n";
-  out += Indent(indent) + "static void init(" + s.name + "* self) {\n";
-  auto rendered_or = RenderBlockStatements(scope_view, indent + 1);
-  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-  out += *rendered_or;
-  out += Indent(indent) + "}\n";
-  return out;
-}
-
-auto RenderResolveState(
-    const ScopeView& resolve_view, const mir::Class& s, std::size_t indent)
-    -> diag::Result<std::string> {
-  if (s.resolve_block.root_stmts.empty()) {
-    return std::string{};
-  }
-  std::string out;
-  out += Indent(indent) + "void ResolveState() override { resolve(this); }\n";
-  out += Indent(indent) + "static void resolve(" + s.name + "* self) {\n";
-  auto rendered_or = RenderBlockStatements(resolve_view, indent + 1);
-  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-  out += *rendered_or;
-  out += Indent(indent) + "}\n";
-  return out;
-}
-
-auto RenderInitializeState(
-    const ScopeView& init_view, const mir::Class& s, std::size_t indent)
-    -> diag::Result<std::string> {
-  if (s.initialize_block.root_stmts.empty()) {
-    return std::string{};
-  }
-  std::string out;
-  out += Indent(indent) +
-         "void InitializeState() override { init_state(this); }\n";
-  out += Indent(indent) + "static void init_state(" + s.name + "* self) {\n";
-  auto rendered_or = RenderBlockStatements(init_view, indent + 1);
-  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-  out += *rendered_or;
-  out += Indent(indent) + "}\n";
-  return out;
-}
-
-auto RenderProcessMethod(
-    const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
-    const mir::Class& s, const mir::Process& process, std::size_t indent)
-    -> diag::Result<std::string> {
-  const ScopeView proc_view =
-      (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, process.root_block)
-          : parent_struct_view->WithClass(s, process.root_block);
-
-  std::string out;
-  out += Indent(indent) + "static auto " + process.name + "(" + s.name +
-         "* self) -> lyra::runtime::Coroutine {\n";
-  auto rendered_or = RenderBlockStatements(proc_view, indent + 1);
-  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-  out += *rendered_or;
-  out += Indent(indent + 1) + "co_return;\n";
-  out += Indent(indent) + "}\n";
-  return out;
-}
-
-// A value-returning function renders its result type; a void function or task
-// renders C++ `void`.
-auto RenderMethodResultType(
-    const mir::CompilationUnit& unit, const mir::Class& s,
-    mir::TypeId result_type) -> diag::Result<std::string> {
-  if (std::holds_alternative<mir::VoidType>(unit.GetType(result_type).data)) {
-    return std::string{"void"};
-  }
-  return RenderTypeAsCpp(unit, s, result_type);
-}
-
-auto RenderMethod(
-    const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
-    const mir::Class& s, const mir::MethodDecl& sub, std::size_t indent)
-    -> diag::Result<std::string> {
-  // The result type carries the call protocol: a coroutine type renders a
-  // `co_await`-enabled coroutine (a time-consuming task, LRM 13.3), any other
-  // type a zero-time function returning that type (LRM 13.4).
-  const bool is_coroutine = std::holds_alternative<mir::CoroutineType>(
-      unit.GetType(sub.result_type).data);
-  auto return_or = RenderMethodResultType(unit, s, sub.result_type);
-  if (!return_or) return std::unexpected(std::move(return_or.error()));
-  const std::string return_type = *std::move(return_or);
-
-  std::string sig =
-      "static " + return_type + " " + sub.name + "(" + s.name + "* self";
-  for (const auto& param : sub.params) {
-    auto type_or = RenderTypeAsCpp(unit, s, param.type);
-    if (!type_or) return std::unexpected(std::move(type_or.error()));
-    sig += ", ";
-    // An `input` formal is by value (LRM 13.5.1); a `ref` / `const ref` formal
-    // is also passed by value, but its type is a `RefType` so `*type_or` is
-    // already `(const) lyra::runtime::Ref<T>` (LRM 13.5.2). An `output` /
-    // `inout` formal binds the caller's writeback temp by reference (`T&`).
-    switch (param.direction) {
-      case mir::ParamDirection::kInput:
-        sig += *type_or + " " + param.name;
-        break;
-      case mir::ParamDirection::kOutput:
-      case mir::ParamDirection::kInOut:
-        sig += *type_or + "& " + param.name;
-        break;
-    }
-  }
-  sig += ")";
-
-  const ScopeView sub_view =
-      parent_struct_view == nullptr
-          ? ScopeView::ForRoot(unit, s, sub.root_block)
-          : parent_struct_view->WithClass(s, sub.root_block);
-
-  std::string out;
-  out += Indent(indent) + sig + " {\n";
-  auto rendered_or = RenderBlockStatements(sub_view, indent + 1);
-  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-  out += *rendered_or;
-  if (is_coroutine) {
-    out += Indent(indent + 1) + "co_return;\n";
-  }
+  out += Indent(indent) + "static auto init(" + s.name + "* self) -> void {\n";
+  auto body_or = RenderBlockStatements(scope_view, indent + 1);
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
+  out += *body_or;
   out += Indent(indent) + "}\n";
   return out;
 }
@@ -229,13 +190,16 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
   throw InternalError("RenderProcessKindLiteral: unknown ProcessKind");
 }
 
+// Process activation: the constructor-time registration of each process body
+// with the engine, by lifecycle kind. The bodies themselves are ordinary
+// methods rendered by `RenderMethod`; this only wires their registration.
 auto RenderCreateProcesses(const mir::Class& s, std::size_t indent)
     -> std::string {
   std::string out;
   out += Indent(indent) + "void CreateProcesses() override {\n";
   for (const auto& p : s.processes) {
     out += Indent(indent + 1) + "AddProcess(" +
-           RenderProcessKindLiteral(p.kind) + ", " + p.name + "(this));\n";
+           RenderProcessKindLiteral(p.kind) + ", " + p.code.name + "(this));\n";
   }
   out += Indent(indent) + "}\n";
   return out;
@@ -285,30 +249,22 @@ auto RenderScopeAsClass(
   if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
   out += *ctor_or;
 
-  // Cross-instance binding (ref ports) is a separate method the engine runs
-  // after the whole tree is constructed; the constructor only allocates.
-  const ScopeView resolve_anchor =
-      (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, s.resolve_block)
-          : parent_struct_view->WithClass(s, s.resolve_block);
-  auto resolve_or = RenderResolveState(resolve_anchor, s, indent + 1);
-  if (!resolve_or) return std::unexpected(std::move(resolve_or.error()));
-  if (!resolve_or->empty()) {
+  // The resolve and initialize phases run after construction; each is a
+  // virtual override the engine dispatches, present only when the scope has
+  // work for that phase. They render through the one method renderer.
+  if (s.resolve.has_value()) {
     out += "\n";
-    out += *resolve_or;
+    auto body_or =
+        RenderMethod(parent_struct_view, unit, s, *s.resolve, indent + 1);
+    if (!body_or) return std::unexpected(std::move(body_or.error()));
+    out += *body_or;
   }
-
-  // Variable initialization is a separate method the engine runs after the
-  // resolve phase; the constructor only allocates and registers.
-  const ScopeView init_anchor =
-      (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, s.initialize_block)
-          : parent_struct_view->WithClass(s, s.initialize_block);
-  auto init_or = RenderInitializeState(init_anchor, s, indent + 1);
-  if (!init_or) return std::unexpected(std::move(init_or.error()));
-  if (!init_or->empty()) {
+  if (s.initialize.has_value()) {
     out += "\n";
-    out += *init_or;
+    auto body_or =
+        RenderMethod(parent_struct_view, unit, s, *s.initialize, indent + 1);
+    if (!body_or) return std::unexpected(std::move(body_or.error()));
+    out += *body_or;
   }
 
   // Child links are registered automatically at construction and walked by the
@@ -355,17 +311,17 @@ auto RenderScopeAsClass(
 
   for (const auto& p : s.processes) {
     out += "\n";
-    auto method_or =
-        RenderProcessMethod(parent_struct_view, unit, s, p, indent + 1);
-    if (!method_or) return std::unexpected(std::move(method_or.error()));
-    out += *method_or;
+    auto body_or =
+        RenderMethod(parent_struct_view, unit, s, p.code, indent + 1);
+    if (!body_or) return std::unexpected(std::move(body_or.error()));
+    out += *body_or;
   }
 
   for (const auto& sub : s.methods) {
     out += "\n";
-    auto method_or = RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
-    if (!method_or) return std::unexpected(std::move(method_or.error()));
-    out += *method_or;
+    auto body_or = RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
+    if (!body_or) return std::unexpected(std::move(body_or.error()));
+    out += *body_or;
   }
 
   out += Indent(indent) + "};\n";

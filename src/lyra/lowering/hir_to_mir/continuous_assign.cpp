@@ -78,10 +78,16 @@ auto LowerContinuousAssign(
               .condition = std::nullopt,
               .step = {},
               .scope = body_scope_id}});
+  process_block.AppendStmt(
+      mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
-      .name = std::move(name),
-      .root_block = std::move(process_block)};
+      .code = mir::MethodDecl{
+          .name = std::move(name),
+          .result_type = lowerer.Module().Unit().builtins.coroutine,
+          .params = {},
+          .root_block = std::move(process_block),
+          .form = mir::MethodForm::kStatic}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

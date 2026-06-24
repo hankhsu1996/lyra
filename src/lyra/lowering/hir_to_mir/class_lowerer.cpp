@@ -852,8 +852,8 @@ auto ClassLowerer::Run(
       .params = {},
       .members = {},
       .constructor_block = {},
-      .resolve_block = {},
-      .initialize_block = {},
+      .resolve = std::nullopt,
+      .initialize = std::nullopt,
       .processes = {},
       .nested_classes = {},
       .methods = {},
@@ -1091,8 +1091,27 @@ auto ClassLowerer::Run(
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
 
   mir_class.constructor_block = std::move(ctor_block);
-  mir_class.resolve_block = std::move(resolve_block);
-  mir_class.initialize_block = std::move(initialize_block);
+  // The resolve and initialize phases are synthesized callables run by the
+  // engine after construction (LRM 23.3.3.2 / 6.8): each is a virtual override
+  // the runtime base dispatches, present only when the scope has work for that
+  // phase. They reach the scope through the implicit receiver, so `self` is
+  // bound as the body's receiver rather than passed as a parameter.
+  if (!resolve_block.root_stmts.empty()) {
+    mir_class.resolve = mir::MethodDecl{
+        .name = "ResolveState",
+        .result_type = void_type,
+        .params = {},
+        .root_block = std::move(resolve_block),
+        .form = mir::MethodForm::kVirtual};
+  }
+  if (!initialize_block.root_stmts.empty()) {
+    mir_class.initialize = mir::MethodDecl{
+        .name = "InitializeState",
+        .result_type = void_type,
+        .params = {},
+        .root_block = std::move(initialize_block),
+        .form = mir::MethodForm::kVirtual};
+  }
 
   return mir_class;
 }

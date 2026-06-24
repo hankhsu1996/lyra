@@ -2,9 +2,8 @@
 
 #include <compare>
 #include <cstdint>
-#include <string>
 
-#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/method.hpp"
 
 namespace lyra::mir {
 
@@ -19,10 +18,14 @@ enum class ProcessKind : std::uint8_t {
   kFinal,
 };
 
+// An activation registration: the scope's constructor-time decision to run
+// `code` (a coroutine callable) at simulation start (`kInitial`) or shutdown
+// (`kFinal`, LRM 9.2.3). The kind is the lifecycle registration, not a property
+// of the callable body; `code` is an ordinary `MethodDecl` rendered like any
+// other method.
 struct Process {
   ProcessKind kind = ProcessKind::kInitial;
-  std::string name;
-  Block root_block;
+  MethodDecl code;
 };
 
 }  // namespace lyra::mir
