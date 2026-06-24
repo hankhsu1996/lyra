@@ -12,14 +12,14 @@
 // LRM 7.12 array manipulation algorithms. The locator / reduction / map family
 // runs over a container's entry stream -- a lazily iterated sequence of
 // `(index, element)` pairs in the container's natural order. The index is the
-// container's index type (an ordinal int for the sequence containers, the key
-// for an associative array), so these algorithms never synthesize it and never
-// name a container type; they are generic combinators over any range whose
-// element is an `Entry`. The container supplies that range (see each
+// container's index type (an ordinal int for the sequence containers, the
+// key for an associative array), so these algorithms never synthesize it and
+// never name a container type; they are generic combinators over any range
+// whose element is an `Entry`. The container supplies that range (see each
 // container's `Entries()`), and shapes the result. The ordering family
-// (`reverse` / `sort`) is a separate, sequence-only in-place permutation that
-// needs random-access storage; it stays on the positional `Seq&` form below.
-// See `docs/decisions/array-manipulation-entry-stream.md`.
+// (`reverse` / `sort`) is a separate, sequence-only in-place permutation
+// that needs random-access storage; it stays on the positional `Seq&` form
+// below.
 namespace lyra::value::detail {
 
 // One entry of a container's 7.12 stream: the element by const pointer (a

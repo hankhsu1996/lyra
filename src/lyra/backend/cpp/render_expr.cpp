@@ -18,7 +18,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
@@ -204,17 +203,6 @@ auto IsReferenceLocal(const ScopeView& view, const mir::LocalRef& ref) -> bool {
 }
 
 }  // namespace
-
-auto RenderMemberName(const ScopeView& view, const mir::MemberRef& ref)
-    -> diag::Result<std::string> {
-  if (ref.hops.value != 0) {
-    return diag::Fail(
-        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-        "cross-scope member access is not yet implemented in cpp "
-        "emit");
-  }
-  return "self->" + view.Class().members.Get(ref.var).name;
-}
 
 namespace {
 
@@ -632,8 +620,7 @@ auto RenderConversionExpr(
   }
   // LRM 6.16: build a string value from packed bits. FromPackedArray strips
   // every NUL, so the empty (`8'h00`) and embedded-NUL cases need no operand
-  // special-case -- the render stays a pure type map (conversion-folding.md;
-  // decisions/string-packed-conversion.md).
+  // special-case -- the render stays a pure type map.
   if (src_ty.IsIntegralPacked() && dst_ty.Kind() == mir::TypeKind::kString) {
     return std::format(
         "lyra::value::String::FromPackedArray({})", *std::move(operand_or));
@@ -810,6 +797,24 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Next";
     case support::BuiltinFn::kAssocPrev:
       return "Prev";
+    case support::BuiltinFn::kDelay:
+      return "Delay";
+    case support::BuiltinFn::kSimTime:
+      return "SimTimeInUnit";
+    case support::BuiltinFn::kSTime:
+      return "STimeInUnit";
+    case support::BuiltinFn::kRealTime:
+      return "RealTimeInUnit";
+    case support::BuiltinFn::kFinish:
+      return "Finish";
+    case support::BuiltinFn::kAsObservable:
+      return "AsObservable";
+    case support::BuiltinFn::kRegisterSignal:
+      return "RegisterSignal";
+    case support::BuiltinFn::kGetSignal:
+      return "GetSignal";
+    case support::BuiltinFn::kGetChild:
+      return "GetChild";
   }
   throw InternalError("BuiltinFnCppName: unknown BuiltinFn");
 }
@@ -829,16 +834,21 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
   switch (id) {
     case support::BuiltinFn::kScan:
       return "lyra::value";
+    case support::BuiltinFn::kDelay:
+    case support::BuiltinFn::kSimTime:
+    case support::BuiltinFn::kSTime:
+    case support::BuiltinFn::kRealTime:
+    case support::BuiltinFn::kFinish:
+      return "lyra::runtime";
     default:
       return "";
   }
 }
 
 // `recv.name(args)` or `recv->name(args)` -- the receiver's MIR type
-// (pointer vs value) selects the C++ separator. Reading the type is reading
-// a fact MIR already states (mir.md invariant 10); a backend never
-// re-derives, but mechanical translation of stated structure is its job.
-// See `docs/decisions/builtin-call-identity.md` for the rendering rationale.
+// (pointer vs value) selects the C++ separator. The pointer-vs-value fact is
+// already on the receiver expression's type; the backend reads it and picks
+// the separator mechanically.
 auto RenderBuiltinFnCall(
     const ScopeView& view, const mir::CallExpr& call, support::BuiltinFn id)
     -> diag::Result<std::string> {
@@ -906,7 +916,10 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
       Overloaded{
           [](const support::TerminationSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
-            return std::string_view{"lyra::runtime::Finish"};
+            throw InternalError(
+                "RenderSystemSubroutineEntryName: termination id reached "
+                "system subroutine render path; finish family is "
+                "BuiltinFn-routed");
           },
           [](const support::PrintSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
@@ -944,18 +957,11 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
             // resolves.
             return std::string_view{"lyra::runtime::LyraTimeFormat"};
           },
-          [](const support::TimeSystemSubroutineInfo& time)
+          [](const support::TimeSystemSubroutineInfo&)
               -> diag::Result<std::string_view> {
-            switch (time.kind) {
-              case support::TimeKind::kTime:
-                return std::string_view{"lyra::runtime::SimTimeInUnit"};
-              case support::TimeKind::kStime:
-                return std::string_view{"lyra::runtime::STimeInUnit"};
-              case support::TimeKind::kRealtime:
-                return std::string_view{"lyra::runtime::RealTimeInUnit"};
-            }
             throw InternalError(
-                "RenderSystemSubroutineEntryName: unknown TimeKind");
+                "RenderSystemSubroutineEntryName: time id reached system "
+                "subroutine render path; time family is BuiltinFn-routed");
           },
           [](const support::FileIOSystemSubroutineInfo& file_io)
               -> diag::Result<std::string_view> {
@@ -1027,18 +1033,12 @@ auto RenderSystemSubroutineCall(
 
 // Constructs a value of the call's result data type: `<TypeName>(args)`, the
 // type name from `RenderTypeAsCpp` (a constructor is a call whose callee is the
-// type's constructor), the arguments rendered like any other call's. An empty
-// argument list against a pointer type value-initializes to `nullptr` (the
-// functional-cast `T*()` is ill-formed for a raw pointer). A `RefType` cell
-// argument renders as a bare signal read, which is the cell itself -- the
-// `Ref<T>` constructor binds it.
+// type's constructor), the arguments rendered like any other call's. A
+// `RefType` cell argument renders as a bare signal read, which is the cell
+// itself -- the `Ref<T>` constructor binds it.
 auto RenderConstructorCall(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> diag::Result<std::string> {
-  if (call.arguments.empty() && std::holds_alternative<mir::PointerType>(
-                                    view.Unit().GetType(result_type).data)) {
-    return std::string{"nullptr"};
-  }
   auto type_or = RenderTypeAsCpp(view.Unit(), view.Class(), result_type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   std::string args;
@@ -1070,9 +1070,9 @@ auto RenderCallExpr(
             const auto& cls = view.EnclosingClassAtHops(
                 mir::EnclosingHops{.value = ref.hops.value});
             const auto& decl = cls.methods.Get(ref.method);
-            // arguments[0] is the callee's `self` handle (mir.md invariant 11);
-            // a ref / const ref actual is already a reference-construct
-            // (`Ref<T>(cell)`) in MIR, so every argument renders uniformly.
+            // arguments[0] is the callee's `self` handle; a ref / const ref
+            // actual is already a reference-construct (`Ref<T>(cell)`) in MIR,
+            // so every argument renders uniformly.
             std::string args;
             for (std::size_t i = 0; i < call.arguments.size(); ++i) {
               auto arg_or = RenderExpr(view, view.Expr(call.arguments[i]));
@@ -1104,51 +1104,6 @@ auto RenderCallExpr(
               args += *std::move(arg_or);
             }
             return "(" + *closure_or + ")(" + args + ")";
-          },
-          [&](const mir::RuntimeNavCallee& nav) -> diag::Result<std::string> {
-            auto base_or = RenderExpr(view, view.Expr(call.arguments.at(0)));
-            if (!base_or) return std::unexpected(std::move(base_or.error()));
-            switch (nav.fn) {
-              case mir::RuntimeFn::kGetChild: {
-                std::string indices = "{}";
-                if (call.arguments.size() > 1) {
-                  indices = "std::array{";
-                  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-                    auto idx_or =
-                        RenderExpr(view, view.Expr(call.arguments.at(i)));
-                    if (!idx_or)
-                      return std::unexpected(std::move(idx_or.error()));
-                    if (i != 1) indices += ", ";
-                    indices +=
-                        "std::size_t((" + *std::move(idx_or) + ").ToInt64())";
-                  }
-                  indices += "}";
-                }
-                return *base_or + "->GetChild(\"" + nav.name + "\", " +
-                       indices + ")";
-              }
-              case mir::RuntimeFn::kGetSignal: {
-                // GetSignal returns an untyped storage pointer; the call's
-                // result type names the cell, so the cast is fixed by that
-                // type.
-                auto cell_or =
-                    RenderTypeAsCpp(view.Unit(), view.Class(), result_type);
-                if (!cell_or)
-                  return std::unexpected(std::move(cell_or.error()));
-                return "static_cast<" + *cell_or + ">(" + *base_or +
-                       "->GetSignal(\"" + nav.name + "\"))";
-              }
-              case mir::RuntimeFn::kRegisterSignal: {
-                // Registers the signal's own cell address under its name; the
-                // var argument renders as a bare lvalue so `&` takes the cell.
-                auto var_or =
-                    RenderLhsExpr(view, view.Expr(call.arguments.at(1)));
-                if (!var_or) return std::unexpected(std::move(var_or.error()));
-                return *base_or + "->RegisterSignal(\"" + nav.name + "\", &" +
-                       *var_or + ")";
-              }
-            }
-            throw InternalError("RenderCallExpr: unknown RuntimeFn");
           },
           [&](const mir::ConstructorCallee&) -> diag::Result<std::string> {
             return RenderConstructorCall(view, call, result_type);
@@ -1303,12 +1258,11 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
            ", " + *value_or + ")";
   }
 
-  // Mechanical render: the observable cell's `Set` is now an explicit
-  // `CallExpr(ObservableMethod{kSet}, ...)` and `Mutate` shows up as a
-  // `DerefExpr(CallExpr(ObservableMethod{kMutate}, ...))` at the chain root
-  // -- both injected at HIR-to-MIR
-  // (`docs/decisions/value-type-concepts.md`). This render emits a plain
-  // C++ assignment over whatever `RenderLhsExpr` produces.
+  // Mechanical render: an observable cell's write surfaces in MIR as an
+  // explicit `CallExpr` against the cell type's `Set` method, and a partial
+  // mutation surfaces as `DerefExpr` over a `Mutate` call at the chain root.
+  // Both shapes arrive from HIR-to-MIR already lowered, so this path emits a
+  // plain C++ assignment over whatever the LHS render produces.
   if (IsLhsBarePrimary(lhs_expr)) {
     auto root_or = RenderLhsExpr(view, lhs_expr);
     if (!root_or) return std::unexpected(std::move(root_or.error()));
@@ -1586,13 +1540,41 @@ auto RenderReplicationExpr(
 // Read-side render of a borrowed-pointer dereference: the cell is reached
 // with `(*ptr)`. The `.Get()` unwrap, if applicable, is emitted by the
 // explicit `ObservableMethod{kGet}` call that HIR-to-MIR wraps around an
-// observable read (`docs/decisions/value-type-concepts.md`).
+// observable read.
 auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
     -> diag::Result<std::string> {
   const mir::Expr& ptr_expr = view.Expr(d.pointer);
   auto ptr_or = RenderExpr(view, ptr_expr);
   if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
   return "(*" + *ptr_or + ")";
+}
+
+// `&place` emitted as the C++ address-of operator. Backend-side
+// canonicalization: `&(*p)` collapses to `p` directly, avoiding a no-op
+// round-trip through the address-of/dereference pair.
+auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
+    -> diag::Result<std::string> {
+  const mir::Expr& operand_expr = view.Expr(a.operand);
+  if (const auto* deref = std::get_if<mir::DerefExpr>(&operand_expr.data)) {
+    return RenderExpr(view, view.Expr(deref->pointer));
+  }
+  auto operand_or = RenderLhsExpr(view, operand_expr);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  return "&" + *operand_or;
+}
+
+// Reinterprets a borrowed pointer as a different pointer type stated by the
+// expression's `type`. Renders as `static_cast<DestType>(operand)`; the
+// destination spelling comes from the type table, not from any local
+// inference.
+auto RenderPointerCastExpr(
+    const ScopeView& view, const mir::PointerCastExpr& cast, mir::TypeId dest)
+    -> diag::Result<std::string> {
+  auto operand_or = RenderExpr(view, view.Expr(cast.operand));
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  auto dest_or = RenderTypeAsCpp(view.Unit(), view.Class(), dest);
+  if (!dest_or) return std::unexpected(std::move(dest_or.error()));
+  return "static_cast<" + *dest_or + ">(" + *operand_or + ")";
 }
 
 }  // namespace
@@ -1614,6 +1596,9 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           },
           [&](const mir::RealLiteral& r) -> diag::Result<std::string> {
             return RenderRealLiteralExpr(view, expr, r);
+          },
+          [](const mir::NullLiteral&) -> diag::Result<std::string> {
+            return std::string{"nullptr"};
           },
           [&](const mir::ParamRef& r) -> diag::Result<std::string> {
             return RenderParamExpr(view, r);
@@ -1645,6 +1630,12 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
           },
           [&](const mir::DerefExpr& d) -> diag::Result<std::string> {
             return RenderDerefExpr(view, d);
+          },
+          [&](const mir::AddressOfExpr& a) -> diag::Result<std::string> {
+            return RenderAddressOfExpr(view, a);
+          },
+          [&](const mir::PointerCastExpr& c) -> diag::Result<std::string> {
+            return RenderPointerCastExpr(view, c, expr.type);
           },
           [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
             const auto& cls = view.EnclosingClassAtHops(m.member.hops);

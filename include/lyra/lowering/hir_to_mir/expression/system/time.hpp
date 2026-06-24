@@ -15,7 +15,6 @@ namespace lyra::lowering::hir_to_mir {
 // kind: 64-bit time, 32-bit int, or real.
 auto LowerTimeSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame,
-    support::SystemSubroutineId id,
     const support::TimeSystemSubroutineInfo& info) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

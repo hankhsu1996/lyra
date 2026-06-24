@@ -391,11 +391,6 @@ class MirDumper {
               return std::format(
                   "ClosureRef[closure=Expr[{}]]", cr.closure.value);
             },
-            [](const RuntimeNavCallee& nav) -> std::string {
-              return std::format(
-                  "RuntimeNavCallee[fn={}, name=\"{}\"]",
-                  static_cast<int>(nav.fn), nav.name);
-            },
             [](const BuiltinFnCallee& b) -> std::string {
               return std::format(
                   "BuiltinFnCallee[id=\"{}\"]", support::BuiltinFnName(b.id));
@@ -489,6 +484,15 @@ class MirDumper {
             },
             [](const RealLiteral& lit) -> std::string {
               return std::format("RealLiteral({})", lit.value);
+            },
+            [](const NullLiteral&) -> std::string { return "NullLiteral"; },
+            [](const AddressOfExpr& a) -> std::string {
+              return std::format(
+                  "AddressOfExpr operand=Expr[{}]", a.operand.value);
+            },
+            [](const PointerCastExpr& c) -> std::string {
+              return std::format(
+                  "PointerCastExpr operand=Expr[{}]", c.operand.value);
             },
             [this](const ParamRef& r) -> std::string {
               const auto& owner = ResolveScopeAtHops(r.hops.value);
@@ -848,11 +852,6 @@ class MirDumper {
               DumpConstructExternalUnitStmt(id, s);
             },
             [&](const ForStmt& s) { DumpForStmt(enclosing, s, id); },
-            [&](const DelayStmt& d) {
-              Line(
-                  std::format(
-                      "Stmt[{}] DelayStmt ticks={}", id.value, d.duration));
-            },
             [&](const WhileStmt& s) { DumpWhileStmt(enclosing, s, id); },
             [&](const DoWhileStmt& s) { DumpDoWhileStmt(enclosing, s, id); },
             [&](const BreakStmt& s) {
@@ -900,13 +899,13 @@ class MirDumper {
               Line(std::format("Stmt[{}] SensitivityWaitStmt", id.value));
               Indent();
               for (const auto& r : s.reads) {
-                const std::string ref_str = std::format(
-                    "MemberRef hops={} var=Member[{}]", r.ref.hops.value,
-                    r.ref.var.value);
                 Line(
                     std::format(
-                        "{} lsb={} width={} edge={}", ref_str, r.lsb_bit_offset,
-                        r.bit_width, FormatEventEdge(r.edge_kind)));
+                        "observable=Expr[{}] {} lsb={} width={} edge={}",
+                        r.observable_ptr.value,
+                        FormatExpr(enclosing, r.observable_ptr),
+                        r.lsb_bit_offset, r.bit_width,
+                        FormatEventEdge(r.edge_kind)));
               }
               Dedent();
             },

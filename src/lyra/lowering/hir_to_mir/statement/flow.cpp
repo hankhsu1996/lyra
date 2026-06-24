@@ -34,8 +34,7 @@ namespace {
 // declaration itself emits nothing. The mangled name carries
 // `<callable>__<source>_<hir_var_id>` so sibling callables sharing a source
 // name (`static int x;` in two processes of the same module) and nested
-// blocks repeating an identifier do not collide on the owner's
-// member arena (`docs/decisions/variable-lifetime-storage.md`).
+// blocks repeating an identifier do not collide on the owner's member arena.
 auto LowerStaticVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
@@ -70,10 +69,9 @@ auto LowerStaticVarDeclStmt(
           mir::MemberRef{
               .hops = mir::EnclosingHops{.value = 0}, .var = static_var},
           type));
-  // A static-lifetime local lives as a member on the owner; if its
-  // declared type is an observable cell wrapper the init must route through
-  // `Var<T>::Set` so subscribers fire on its initial value (LRM 13.3.1 +
-  // `docs/decisions/value-type-concepts.md`).
+  // A static-lifetime local lives as a member on the owner; if its declared
+  // type is an observable cell wrapper the init must route through
+  // `Var<T>::Set` so subscribers fire on its initial value (LRM 13.3.1).
   const mir::ExprId services_id = ctor_block.exprs.Add(
       mir::MakeServicesCallExpr(
           ctor_self_read, process.Module().Unit().builtins.services));

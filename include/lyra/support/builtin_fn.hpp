@@ -10,8 +10,7 @@ namespace lyra::support {
 // imports the other's. The receiver type at the call site names the runtime
 // library type whose method is being invoked (value-layer containers,
 // observable storage cells, runtime services, scope handle); this enum
-// carries only the method identity. See
-// `docs/decisions/builtin-call-identity.md`.
+// carries only the method identity.
 enum class BuiltinFn : std::uint16_t {
   // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access. Bare returns value
   // form; `Ref` returns write-through reference. `Slice` is read,
@@ -140,6 +139,36 @@ enum class BuiltinFn : std::uint16_t {
   kScan,
   kPeekBuffered,
   kAdvanceFd,
+  // LRM 9.4.1 `#N`. The runtime free function the scheduler suspends on.
+  // The call takes the engine handle, the duration in the calling scope's
+  // precision steps, and the calling scope's precision power; the runtime
+  // scales to the design-global tick (LRM 3.14.3).
+  kDelay,
+  // LRM 20.3 simulation-time read functions. Each takes the engine handle
+  // and the calling scope's unit power; the runtime scales the design-global
+  // tick down to that unit. `$time` rounds and yields a 64-bit `time`,
+  // `$stime` yields the low 32 bits as an `int`, `$realtime` keeps the
+  // fractional part as a `realtime`.
+  kSimTime,
+  kSTime,
+  kRealTime,
+  // LRM 20.2 simulation termination. Takes the engine handle and the LRM
+  // diagnostic level (0 / 1 / 2). The call suspends and never resumes; the
+  // engine drops the process at the next dispatch.
+  kFinish,
+  // Resolves an `ExternUp<T>` member into a borrowed pointer to the
+  // observable cell it currently refers to. Used by sensitivity-leaf
+  // lowering so the wait expression carries an explicit observable handle
+  // rather than letting the backend derive one from the member's type.
+  kAsObservable,
+  // By-name scope navigation: a constructor walks a sibling unit's
+  // interface, looks up an owned child by name (and per-dimension index),
+  // looks up a signal by name, or registers its own signal under a name.
+  // All three are instance methods on the scope handle (`args[0]`); the
+  // name (and the index array for `kGetChild`) is a regular argument.
+  kRegisterSignal,
+  kGetSignal,
+  kGetChild,
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,

@@ -11,9 +11,9 @@ namespace lyra::mir {
 struct Block;
 
 // Binds the body's `binding` var to the value of `value` at closure
-// construction. Snapshot or alias is decided by the binding var's type, not by
-// a separate capture kind (closure.md): a value-typed binding owns a snapshot;
-// a `RefType` binding aliases an enclosing cell (`value` constructs the
+// construction. Snapshot or alias is decided by the binding var's type, not
+// by a separate capture kind: a value-typed binding owns a snapshot; a
+// `RefType` binding aliases an enclosing cell (`value` constructs the
 // reference, LRM 6.21), so the body's reads / writes route through the live
 // cell. The receiver `self` is always `captures[0]`.
 struct Capture {

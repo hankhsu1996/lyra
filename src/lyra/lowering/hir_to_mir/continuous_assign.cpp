@@ -65,7 +65,8 @@ auto LowerContinuousAssign(
       mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
 
-  body_block.AppendStmt(MakeSensitivityWaitStmt(lowerer, src.sensitivity_list));
+  body_block.AppendStmt(MakeSensitivityWaitStmt(
+      body_block, body_frame, lowerer, src.sensitivity_list));
 
   const mir::BlockId body_scope_id =
       process_block.child_scopes.Add(std::move(body_block));

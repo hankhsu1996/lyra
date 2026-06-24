@@ -226,8 +226,7 @@ class PackedArray {
   // View the bit vector as a byte sequence, most significant byte first
   // (`bit_width / 8` bytes; a byte with any x or z bit yields `0x00`). The
   // shared producer for the LRM 6.16 string lift and the LRM 21.2.1.7 `%s`
-  // formatter, which post-process the NUL byte differently
-  // (decisions/string-packed-conversion.md).
+  // formatter, which post-process the NUL byte differently.
   [[nodiscard]] auto ByteString() const -> std::string;
 
   // Typed view accessors. The atom encoded in `is_four_state_` selects which
@@ -253,8 +252,7 @@ class PackedArray {
   // Width-aware copy preserving THIS object's shape. The shape
   // (bit_width / signedness / 4-state / dims) is declared type information
   // fixed at construction; assignment keeps it and copies the source's bits
-  // in (docs/decisions/integral-representation.md). ExpectSameShape guards a
-  // missing upstream ConvertFrom.
+  // in. ExpectSameShape guards a missing upstream ConvertFrom.
   auto AssignFrom(const PackedArray& other) -> void;
 
   // Storage-level swap, bypassing AssignFrom's shape-preservation rule.

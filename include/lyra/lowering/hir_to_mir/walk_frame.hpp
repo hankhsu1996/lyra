@@ -17,15 +17,13 @@ namespace lyra::lowering::hir_to_mir {
 
 class CaptureSink;
 
-// Singly-linked node carrying a class's parent chain so a leaf reference can
-// read the declared type of a member at `hops > 0`. Each node lives on the
-// stack of the `ClassLowerer::Run` that pushed it; the chain extends one node
-// per class opened during traversal. This is the construction-side half of the
-// shared walk position
-// (docs/architecture/lowering_organization.md "The Walk Position"): the
-// rendering fold's read-only `ScopeView` resolves the same (hops, var)
-// reference by climbing its own parent link, so both reach the same
-// `mir::MemberDecl`.
+// Singly-linked node carrying a class's parent chain so a leaf reference
+// can read the declared type of a member at `hops > 0`. Each node lives on
+// the stack of the `ClassLowerer::Run` that pushed it; the chain extends
+// one node per class opened during traversal. This is the construction-side
+// half of the shared walk position: the rendering fold's read-only
+// `ScopeView` resolves the same (hops, var) reference by climbing its own
+// parent link, so both reach the same `mir::MemberDecl`.
 struct ScopeChainNode {
   const mir::Class* cls;
   const ScopeChainNode* parent;
@@ -87,11 +85,11 @@ struct WalkFrame {
   // lowering. Empty outside a with-clause body.
   std::optional<mir::LocalId> active_index_binding;
 
-  // The `self` binding (mir.md invariant 11) at the root of the current body.
-  // Set at body entry (process / method / constructor / closure) and
-  // unchanged through the body walk; updated on entry into a fresh body to
-  // that body's own self id. Empty before any body has been entered. The
-  // declaration depth records where the binding was declared so a deeper
+  // The `self` binding at the root of the current body. Set at body entry
+  // (process / method / constructor / closure) and unchanged through the
+  // body walk; updated on entry into a fresh body to that body's own self
+  // id. Empty before any body has been entered. The declaration depth
+  // records where the binding was declared so a deeper
   // reader can compute hops as `current_depth - self_decl_depth`.
   std::optional<mir::LocalId> self_binding;
   BlockDepth self_decl_depth{};

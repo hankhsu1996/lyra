@@ -28,7 +28,7 @@ struct CrossUnitRefId {
 // A reference whose target lives in another compilation unit (a child
 // instance's member). Resolved once at construction into a stored direct
 // reference; the navigation recipe lives in the enclosing scope's
-// `cross_unit_refs` table keyed by this id (see reference_resolution.md).
+// `cross_unit_refs` table keyed by this id.
 struct CrossUnitVarRef {
   CrossUnitRefId id;
 

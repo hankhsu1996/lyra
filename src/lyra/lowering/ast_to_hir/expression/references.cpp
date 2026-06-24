@@ -134,8 +134,7 @@ auto LowerNamedValueProc(
 // owned child -- an instance member or a generate block; an upward path
 // (`Top.g`, `Top.sib.y`) starts by climbing the parent chain to the named
 // ancestor -- a module instance, a named generate block, or the root. The
-// shared tail (`path.subspan(1)`) reaches the leaf in both directions. See
-// reference_resolution.md, docs/decisions/hierarchical-reference-resolution.md.
+// shared tail (`path.subspan(1)`) reaches the leaf in both directions.
 auto LowerHierarchicalValueProc(
     ModuleLowerer& module, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)

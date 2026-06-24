@@ -20,25 +20,24 @@ class CompilationUnit;
 
 namespace lyra::lowering::hir_to_mir {
 
-// A closure under construction (closure.md). The constructor opens a fresh body
-// scope with `self` as captures[0] and installs a capture sink, so a read of an
+// A closure under construction. The constructor opens a fresh body scope
+// with `self` as captures[0] and installs a capture sink, so a read of an
 // enclosing variable while lowering the body through `Frame()` becomes a
-// capture (LRM 6.21). A site that authors the body by hand instead of lowering
-// HIR snapshots specific outer expressions with `CaptureByValue`; the two
-// capture paths coexist, and `self` is always first.
+// capture (LRM 6.21). A site that authors the body by hand instead of
+// lowering HIR snapshots specific outer expressions with `CaptureByValue`;
+// the two capture paths coexist, and `self` is always first.
 //
-// `coroutine` selects a fork-branch body (LRM 9.3.2): its `return`s render as
-// `co_return` and the terminal is `BuildCoroutine`. `by_value_depth` is the
-// sink snapshot boundary -- a capture declared at that depth is snapshotted by
-// value, any deeper-enclosing capture aliases the live cell; pass it for a fork
-// branch (block-item locals snapshot) and leave it empty for a synchronous body
-// (every sink capture aliases).
+// `coroutine` selects a fork-branch body (LRM 9.3.2): its `return`s render
+// as `co_return` and the terminal is `BuildCoroutine`. `by_value_depth` is
+// the sink snapshot boundary -- a capture declared at that depth is
+// snapshotted by value, any deeper-enclosing capture aliases the live cell;
+// pass it for a fork branch (block-item locals snapshot) and leave it empty
+// for a synchronous body (every sink capture aliases).
 //
-// A closure is a value; how it is invoked -- an immediately-invoked call
-// (`BuildClosureCallExpr`), a fork spawn, a deferred submit, a with-clause
-// iteration -- is the caller's concern, not the builder's (mir.md).
-// Non-movable: `Frame()` hands out a frame that points into the owned body
-// scope and sink.
+// A closure is a value; how it is invoked -- an immediately-invoked call, a
+// fork spawn, a deferred submit, a with-clause iteration -- is the caller's
+// concern, not the builder's. Non-movable: `Frame()` hands out a frame that
+// points into the owned body scope and sink.
 class ClosureBuilder {
  public:
   ClosureBuilder(

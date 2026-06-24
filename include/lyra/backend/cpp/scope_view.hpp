@@ -11,17 +11,15 @@
 
 namespace lyra::backend::cpp {
 
-// The rendering fold's walk position
-// (docs/architecture/lowering_organization.md "The Walk Position"). The
-// MIR-to-C++ emit is a fold, not a construction pass: it accumulates nothing
-// and owns no output, so this carries only what reading a node needs -- the
-// unit (for type and arena lookups) and the chain of enclosing scopes. A
-// hops-relative reference resolves by climbing that chain, exactly as the
-// construction-side `WalkFrame` resolves it; this is the read-only twin of that
-// frame, thin because every decision is already baked into the MIR it reads.
-// Immutable and copied on descent (`WithBlock` /
-// `WithClass`); it grows no member per concept, so it is not the
-// forbidden growing `*Context`.
+// The rendering fold's walk position. The MIR-to-C++ emit is a fold, not a
+// construction pass: it accumulates nothing and owns no output, so this
+// carries only what reading a node needs -- the unit (for type and arena
+// lookups) and the chain of enclosing scopes. A hops-relative reference
+// resolves by climbing that chain, exactly as the construction-side
+// `WalkFrame` resolves it; this is the read-only twin of that frame, thin
+// because every decision is already baked into the MIR it reads. Immutable
+// and copied on descent (`WithBlock` / `WithClass`); it grows no member per
+// concept, so it is not the forbidden growing `*Context`.
 class ScopeView {
  public:
   static auto ForRoot(

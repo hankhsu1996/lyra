@@ -213,8 +213,7 @@ auto LowerHirIncDecExprProc(
   mir::ExprId target_id = block.exprs.Add(*std::move(target_or));
 
   // If the LHS reaches an observable storage cell, the mutation runs inside
-  // a `ScopedMutation` snapshot so subscribers fire once on destructor commit
-  // (`docs/decisions/value-type-concepts.md`).
+  // a `ScopedMutation` snapshot so subscribers fire once on destructor commit.
   const mir::ExprId root_id = FindLhsRootId(block, target_id);
   if (mir::IsObservableCellType(
           process.Module().Unit().GetType(block.exprs.Get(root_id).type))) {

@@ -93,8 +93,7 @@ against them.
   - `std::array` over C arrays
   - `std::optional`, `std::expected` for error handling
   - Structured bindings, range-based for loops
-- No block-comment parameter labels at call sites (`/*param=*/value`). IDE inlay hints make them
-  redundant.
+- Comments: follow `docs/code-comments.md` (read pre-plan, pre-write, post-edit).
 
 ## Error Handling
 

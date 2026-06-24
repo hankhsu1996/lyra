@@ -40,6 +40,12 @@ struct RealLiteral {
   double value;
 };
 
+// The null borrowed-pointer value. Distinct from `IntegerLiteral{0}`: the
+// type system carries the pointee identity, and C++ rejects the functional-
+// cast construction (`T*()`) that the constructor primitive would otherwise
+// produce for a default-init pointer.
+struct NullLiteral {};
+
 struct UnaryExpr {
   UnaryOp op;
   ExprId operand;
@@ -116,28 +122,6 @@ struct ClosureRef {
   ExprId closure{};
 };
 
-enum class RuntimeFn : std::uint8_t {
-  kGetChild,
-  kGetSignal,
-  kRegisterSignal,
-};
-
-// Calls a runtime by-name interface method on a scope handle. `fn` selects the
-// method; `name` is the compile-time signal / child name. Argument 0 is the
-// scope handle the method is invoked on:
-//   - `kGetChild`: the remaining arguments are the per-dimension array indices
-//     (none for a scalar), each a runtime expression; renders
-//     `<scope>->GetChild(name, {indices})`.
-//   - `kGetSignal`: renders `<scope>->GetSignal(name)`.
-//   - `kRegisterSignal`: argument 1 is the signal var whose address is
-//     registered under `name`; renders `<scope>->RegisterSignal(name, &<var>)`.
-//     A scope records its own by-name interface during construction with this.
-// The name and indices are never bundled into one struct.
-struct RuntimeNavCallee {
-  RuntimeFn fn;
-  std::string name;
-};
-
 // Constructs a value of the call's result data type from the positional
 // arguments -- the data type's constructor, which is just a call whose callee
 // is the type itself (Python's `T(args)`, Rust's `T::new(args)`). The backend
@@ -149,7 +133,7 @@ struct ConstructorCallee {};
 
 using Callee = std::variant<
     SystemSubroutineCallee, MethodRef, BuiltinFnCallee, BuiltinStaticCallee,
-    FreeFnCallee, ClosureRef, RuntimeNavCallee, ConstructorCallee>;
+    FreeFnCallee, ClosureRef, ConstructorCallee>;
 
 struct CallExpr {
   Callee callee;
@@ -161,6 +145,25 @@ struct CallExpr {
 // pointee value type.
 struct DerefExpr {
   ExprId pointer;
+};
+
+// Takes the address of a place expression, yielding a borrowed pointer to
+// that storage. The dual of `DerefExpr`. `operand` must be an addressable
+// place (a primary value reference, a member access, a dereference, or a
+// place-producing access primitive); a value expression is not addressable.
+// `Expr::type` is `PointerType{ ownership = kBorrowed, pointee = operand.type
+// }`. `AddressOf(Deref(p))` collapses to `p` at backend lowering.
+struct AddressOfExpr {
+  ExprId operand;
+};
+
+// Reinterprets a borrowed pointer as a pointer to a different pointee type.
+// `operand` is a pointer-typed expression; `Expr::type` is the destination
+// `PointerType`. Used when a runtime entry returns a type-erased pointer
+// (`void*`) that the call site re-types -- the lowering states the
+// destination type in MIR so the backend never picks it from context.
+struct PointerCastExpr {
+  ExprId operand;
 };
 
 // Class-member access through an explicit receiver expression. `receiver`
@@ -202,10 +205,11 @@ struct TupleExpr {
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, ParamRef, LocalRef,
-    UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr, CallExpr,
-    DerefExpr, MemberAccessExpr, ConversionExpr, ClosureExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr, TupleExpr>;
+    IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
+    ParamRef, LocalRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
+    IncDecExpr, CallExpr, DerefExpr, AddressOfExpr, PointerCastExpr,
+    MemberAccessExpr, ConversionExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
+    ArrayLiteralExpr, TupleExpr>;
 
 struct Expr {
   ExprData data;
@@ -284,6 +288,14 @@ struct Expr {
               .callee = BuiltinFnCallee{.id = support::BuiltinFn::kMutate},
               .arguments = {cell, services}},
       .type = value_type};
+}
+
+// `&place` -- the address-of dual of `DerefExpr`. `pointer_type` must be
+// `PointerType{ kBorrowed, pointee = <operand expr's type> }`; the caller
+// supplies it so this helper need not look up the operand's type.
+[[nodiscard]] inline auto MakeAddressOfExpr(ExprId operand, TypeId pointer_type)
+    -> Expr {
+  return Expr{.data = AddressOfExpr{.operand = operand}, .type = pointer_type};
 }
 
 }  // namespace lyra::mir

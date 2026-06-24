@@ -12,7 +12,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 
@@ -236,9 +235,8 @@ auto LowerEventTriggerStmt(
 }
 
 // LRM 9.4.3 `wait (cond) body`. Sensitivity is precomputed by driving slang's
-// flow analysis on `w.cond` via a per-wait `DefaultDFA` run inside
-// `BuildSensitivityReadStore` (see `docs/decisions/read-set-inference.md`).
-// We look up the result here keyed by the cond expression.
+// flow analysis on `w.cond` via a per-wait `DefaultDFA` run upstream; the
+// result is looked up here keyed by the cond expression.
 auto LowerWaitStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::WaitStatement& w,
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {

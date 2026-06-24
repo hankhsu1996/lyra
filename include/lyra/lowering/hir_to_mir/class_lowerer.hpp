@@ -135,12 +135,11 @@ class ClassLowerer {
   // with the slot's MIR type so a body reader can decide whether the read
   // dereferences without re-touching the structural scope.
   struct CrossUnitRefMeta {
-    mir::SensitivityRef target;
+    mir::MemberRef target;
     mir::TypeId slot_type;
   };
 
-  void AddCrossUnitRefTarget(
-      mir::SensitivityRef target, mir::TypeId slot_type) {
+  void AddCrossUnitRefTarget(mir::MemberRef target, mir::TypeId slot_type) {
     cross_unit_ref_targets_.push_back(
         CrossUnitRefMeta{.target = std::move(target), .slot_type = slot_type});
   }

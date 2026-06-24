@@ -456,10 +456,12 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
           `BuiltinFnCallee` method on `files` (`files.Open`, `files.Close`, `files.Read`, ...).
           Runtime free-function `Lyra*` entries retire; the methods are the only surface.
   - Engine forwarders on `services`:
-    - [ ] `$time` / `$stime` / `$realtime`: read engine state through services methods.
-    - [ ] `$finish` / `$exit` / `$stop`: engine-side control through services methods (today the
-          control flow goes through an await-shape; that stays, the callee identity is what
-          changes).
+    - [x] `$time` / `$stime` / `$realtime`: each lowers to a `FreeFnCallee` against the matching
+          runtime entry with the engine handle and the calling scope's unit power as ordinary
+          operands.
+    - [x] `$finish` / `$exit` / `$stop`: `$finish` is on the same `FreeFnCallee` shape; the
+          await-suspension wrapping is unchanged. `$exit` / `$stop` are not yet wired and pick up
+          the shape when they land.
     - [ ] `$timeformat` / `$printtimescale`: state setter / formatted-print compositions through
           services + files in the same shape as print.
 
@@ -471,6 +473,85 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `services`" is consistent everywhere except Format; this entry closes the exception.
       **Trigger**: after R37 lands and the value-layer free-function surface is the established
       pattern.
+
+- [ ] R39 -- Lift the implicit `Ref<T>` access into explicit MIR calls. R12 / the
+      value-type-concepts cut lifted observable-cell reads / writes / mutations into explicit
+      `BuiltinFnCallee` (`kGet` / `kSet` / `kMutate`) calls at HIR-to-MIR so the backend renders
+      them mechanically. The sibling axis -- a procedural `ref` / `const ref` formal (LRM 13.5.2),
+      whose binding kind is `ParamDirection::kRef` / `kConstRef` and whose MIR type is `RefType{T}`
+      -- is still implicit: a read of such a local is silently rendered with a `.Get()` suffix, and
+      a whole-cell write through one conjures an engine handle argument the MIR call does not carry.
+      Both are `mir.md` invariant 10 violations of the same shape the observable axis just resolved.
+      Apply the same lift: HIR-to-MIR emits `BuiltinFnCallee{kRefGet}` / `BuiltinFnCallee{kRefSet}`
+      whose argument vector is complete (services included). Compound / partial writes through a ref
+      formal become well-defined in the same step (today the render path bails). See
+      `decisions/value-type-concepts.md` for the pattern this generalizes.
+
+- [ ] R40 -- Retire the construct- / control-stmt shapes that the backend completes from outside
+      MIR. `ForkStmt`, `ConstructOwnedObjectStmt`, and `ConstructExternalUnitStmt` each name a
+      runtime entry the render path looks up by stmt kind and string-injects a `self->Services()`
+      argument the MIR did not state. `ConstructOwnedObjectStmt` additionally emits a companion
+      `RegisterChild` call after the construction -- a runtime mutation that exists nowhere in MIR.
+      `DelayStmt` has already retired this way: `#N` now lowers to `AwaitStmt` over a
+      `FreeFnCallee{kDelay}` call whose argument vector states services, the literal duration, and
+      the calling scope's precision power. Apply the same frame to the remaining three: each stmt
+      decomposes to `AwaitStmt` plus a generic `CallExpr` (or a sequence of them) whose argument
+      vector is complete; services flows as an explicit operand; companion runtime registrations are
+      MIR statements of their own. The stmt-kind-as-runtime-entry-tag layer disappears; the
+      constructor receiver pattern aligns with `decisions/callable-receiver.md`.
+
+- [x] R41 -- Push the sensitivity-leaf subscription target into MIR. Each `SensitivityRead` carries
+      an explicit observable-pointer expression chosen at HIR-to-MIR: an `AddressOf` of the cell
+      member, a bare borrowed-pointer slot, or a `Call(kAsObservable, ...)` for an upward reference.
+      The render-side type-kind dispatch is gone. Address-of itself was lifted to MIR via the new
+      primitive (see `decisions/address-of-primitive.md`).
+
+- [x] R42 -- Retired `RuntimeNavCallee`. The three by-name scope operations (`kRegisterSignal` /
+      `kGetSignal` / `kGetChild`) now ride `BuiltinFnCallee` with the signal / child name as a
+      regular `StringLiteral` argument and the index list as an `ArrayLiteralExpr`. The `kGetSignal`
+      cast is lifted to a new MIR `PointerCastExpr` primitive whose destination type is the call
+      site's slot type; the backend emits `static_cast<T>(...)` mechanically from a stated MIR fact.
+      The `kGetChild` index conversion moved into the runtime (which now accepts
+      `std::span<const value::PackedArray>` and calls `.ToInt64()` itself), so the render side has
+      no `.ToInt64()` injection and no `std::array{...}` wrapper. Every call -- regardless of callee
+      variant -- now renders as `fn(rendered_args...)`.
+
+- [x] R43 -- Replace the constructor-of-pointer fallback. The expression set grew a `NullLiteral`
+      primitive that the default-value lowering emits directly for borrowed-pointer members; the
+      `ConstructorCallee` render path no longer pattern-matches on empty-args-against-pointer.
+
+- [x] R44 -- Swept the pre-existing code-comment doc-reference violations alongside the policy
+      landing. Every comment in `src/` and `include/` now states the code's own contract; no
+      `docs/`, decision-doc name, or "invariant N" back-references remain.
+
+- [ ] R45 -- Unify MIR's call shape. Today `mir::Callee` is a 7-arm `std::variant`
+      (`SystemSubroutineCallee` / `MethodRef` / `BuiltinFnCallee` / `BuiltinStaticCallee` /
+      `FreeFnCallee` / `ClosureRef` / `ConstructorCallee`); four of those arms (System / Method /
+      Builtin / BuiltinStatic / FreeFn -- 5 actually) are sub-categorizations of the same structural
+      concept "a direct call to a named symbol", differing only in C++ rendering convention. The
+      `mir.md` identity ("a generic programming-language IR") admits three call shapes: direct
+      (named symbol), indirect (computed callable, currently `ClosureRef`), and type-driven
+      (constructor of the result type, currently `ConstructorCallee`). The 5-way splintering is SV
+      organizational scheme leaking into MIR -- a real architectural mismatch. Target:
+      `Callee = variant<Direct{symbol}, Indirect{expr},     Constructor{}>`; per-symbol metadata
+      (instance-method-form, namespace path, qualifier) moves into a backend-side table extending
+      today's `BuiltinFnCppName`. Each backend reads the symbol id and consults its own table --
+      LLVM doesn't consult at all, since `call     @symbol(args)` has no method/free distinction.
+      **Blocker**: R37 still in flight retiring `SystemSubroutineCallee`; do that first so the
+      call-shape unification sees the final set of named-symbol callees.
+
+- [ ] R46 -- Unify `ConversionExpr` and `PointerCastExpr` into one `CastExpr { operand, kind }`.
+      Both primitives produce a value of a different type from their operand; both render as
+      `static_cast<DestType>(operand)` in the C++ backend; both lower to a cast-family instruction
+      in LLVM (`zext` / `sext` / `bitcast` / ...). The split is conceptual ("ConversionExpr is
+      LRM-defined value conversion, PointerCastExpr is backend type-erasure bridge") but the
+      emission shape is identical -- Clang AST and Rust MIR both consolidate this into one cast
+      primitive with a kind axis. Today's `ConversionKind` has 5 LRM-specific kinds (`kImplicit` /
+      `kPropagated` / `kStreamingConcat` / `kExplicit` / `kBitstreamCast`); the unified kind axis
+      would add `kPointerReinterpret` (and likely future `kIntToInt`, `kFloatToInt` etc. as the LIR
+      / LLVM backend appears and needs explicit kinds for the cast-family instruction selection).
+      **Trigger**: when the LIR backend wants explicit cast kinds for instruction selection, or when
+      a third cast-like primitive is about to be added (whichever comes first).
 
 ## Out of Scope
 

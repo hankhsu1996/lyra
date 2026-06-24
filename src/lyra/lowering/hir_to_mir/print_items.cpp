@@ -77,10 +77,10 @@ auto BuildPrintValueItem(
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
 
-  // %s formats by operand type (LRM 21.2.1.7,
-  // decisions/string-packed-conversion.md): a String and a packed value each
-  // format directly, without building a string value. Only an unpacked byte
-  // array is not directly formattable, so it lifts to a string value here.
+  // %s formats by operand type (LRM 21.2.1.7): a String and a packed value
+  // each format directly, without building a string value. Only an unpacked
+  // byte array is not directly formattable, so it lifts to a string value
+  // here.
   const auto& value_type = process.Module().Unit().GetType(lowered.type);
   if (spec.kind == value::FormatKind::kString &&
       value_type.Kind() != mir::TypeKind::kString &&

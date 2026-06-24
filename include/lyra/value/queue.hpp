@@ -34,7 +34,7 @@ namespace lyra::value {
 // written, so a const read returns it directly with no scrub. `discard_sink_`
 // is the throwaway an invalid-index write lands on; the non-const write path
 // scrubs it to canonical via `T::ResetToDefault` before handing out the
-// reference. See `docs/decisions/runtime-shape-and-default-value.md`.
+// reference.
 template <typename T>
 class Queue {
  public:
@@ -89,10 +89,10 @@ class Queue {
 
   Queue(const Queue&) = default;
   Queue(Queue&&) noexcept = default;
-  // LRM 10.6.1 / `value-assignment-and-moved-from.md`: the element shape and
-  // the LRM 7.10.5 bound are declared-type properties of the variable, not
-  // value content. A declared queue is default-constructed and then initialized
-  // by assignment, so an as-yet-unseeded target adopts the source's element
+  // LRM 10.6.1: the element shape and the LRM 7.10.5 bound are declared-type
+  // properties of the variable, not value content. A declared queue is
+  // default-constructed and then initialized by assignment, so an as-yet-
+  // unseeded target adopts the source's element
   // shape (and an unbounded target the source's bound) on that first store;
   // once seeded it keeps its own shape and bound on every later assignment and
   // copies only the elements in -- so assigning the empty `{}` or an unbounded

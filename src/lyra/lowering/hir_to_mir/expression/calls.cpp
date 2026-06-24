@@ -269,7 +269,7 @@ auto LowerSystemSubroutineCall(
           [&](const support::TerminationSystemSubroutineInfo& term)
               -> diag::Result<mir::Expr> {
             return LowerFinishSystemSubroutineCall(
-                process, frame, call, desc.id, desc.name, term, span);
+                process, frame, call, desc.name, term, span);
           },
           [&](const support::DiagnosticSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
@@ -293,8 +293,7 @@ auto LowerSystemSubroutineCall(
           },
           [&](const support::TimeSystemSubroutineInfo& time_info)
               -> diag::Result<mir::Expr> {
-            return LowerTimeSystemSubroutineCall(
-                process, frame, desc.id, time_info);
+            return LowerTimeSystemSubroutineCall(process, frame, time_info);
           },
           [&](const support::TimeFormatSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
@@ -316,8 +315,7 @@ auto LowerSystemSubroutineCall(
 // where the copy-out statement has nowhere to be sequenced. ref / const
 // ref alias the actual and copy nothing back (LRM 13.5.2), so they fall
 // through to the value-only lowering. The callee body receives its
-// instance handle as `arguments[0]` (mir.md invariant 11); SV actuals
-// follow.
+// instance handle as `arguments[0]`; SV actuals follow.
 auto LowerStructuralSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
     const hir::StructuralSubroutineRef& usr, diag::SourceSpan span,
@@ -491,11 +489,10 @@ auto LowerBuiltinMethodCall(
   }
 
   // LRM 15.5.3: `e.triggered` reads the triggered flag out of
-  // RuntimeServices. The engine handle is a real trailing argument,
-  // threaded the same way every runtime effect threads it
-  // (docs/decisions/runtime-effects-as-generic-calls.md), not a backend-
-  // fabricated one. (`-> e` is the only producer of the trigger kind and
-  // lowers through LowerEventTriggerStmt; `await` takes no services.)
+  // RuntimeServices. The engine handle is a real trailing argument, threaded
+  // the same way every runtime effect threads it -- not a backend-fabricated
+  // one. (`-> e` is the only producer of the trigger kind and lowers through
+  // the event-trigger stmt path; `await` takes no services.)
   if (b.method == support::BuiltinFn::kTriggered) {
     args.push_back(block.exprs.Add(BuildServicesCallExpr(process, frame)));
   }

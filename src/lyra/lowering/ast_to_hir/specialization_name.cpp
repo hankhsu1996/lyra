@@ -16,9 +16,9 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// FNV-1a, so producer and consumer agree on the name across separately compiled
-// units and across sessions. A process-seeded or pointer-derived hash would not
-// (incremental_build.md forbids it as a key); this folds only the bytes.
+// FNV-1a, so producer and consumer agree on the name across separately
+// compiled units and across sessions. A process-seeded or pointer-derived
+// hash would not be reproducible across runs; this folds only the bytes.
 auto Fnv1a64(std::string_view bytes) -> std::uint64_t {
   std::uint64_t hash = 0xcbf29ce484222325ULL;
   for (const unsigned char byte : bytes) {

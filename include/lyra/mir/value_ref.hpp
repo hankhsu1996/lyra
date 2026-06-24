@@ -17,10 +17,4 @@ struct LocalRef {
   LocalId var{};
 };
 
-// A sensitivity leaf observes a member that resolves to a stored
-// `Observable` the scheduler subscribes to: a plain signal, an upward
-// ExternalRef member, or a downward borrowed-pointer slot. All three are
-// MemberRefs; the var's type tells the renderer how to reach the cell.
-using SensitivityRef = MemberRef;
-
 }  // namespace lyra::mir
