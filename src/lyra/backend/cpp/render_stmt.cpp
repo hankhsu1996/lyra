@@ -128,8 +128,8 @@ auto RenderForkStmtNode(
   auto locals_or = RenderBlockStatements(fork_view, indent + 1);
   if (!locals_or) return std::unexpected(std::move(locals_or.error()));
   out += *locals_or;
-  out += Indent(indent + 1) + "std::vector<lyra::runtime::Coroutine> " + vec +
-         ";\n";
+  out += Indent(indent + 1) + "std::vector<lyra::runtime::Coroutine<void>> " +
+         vec + ";\n";
   for (const auto branch : s.branches) {
     auto closure_or = RenderExpr(fork_view, fork_view.Expr(branch));
     if (!closure_or) return std::unexpected(std::move(closure_or.error()));
@@ -404,19 +404,18 @@ auto RenderStmt(
             return Indent(indent) + "continue;\n";
           },
           [&](const mir::ReturnStmt& s) -> diag::Result<std::string> {
-            // The `is_coroutine_return` attribute (set at HIR-to-MIR from the
-            // enclosing callable's coroutine-ness, mir/stmt.hpp) is a C++
-            // render hint -- LIR / LLVM ignore it. A task's `return` is
-            // `co_return` and carries no value (LRM 13.3 / 13.4.1).
-            if (s.is_coroutine_return) {
-              return Indent(indent) + "co_return;\n";
-            }
+            // `is_coroutine_return` (set at HIR-to-MIR from the enclosing
+            // callable's coroutine-ness, mir/stmt.hpp) is a C++ render hint --
+            // LIR / LLVM ignore it -- choosing `co_return` over `return`. A
+            // value rides the result either way (LRM 13.3 / 13.4.1).
+            const std::string keyword =
+                s.is_coroutine_return ? "co_return" : "return";
             if (!s.value.has_value()) {
-              return Indent(indent) + "return;\n";
+              return Indent(indent) + keyword + ";\n";
             }
             auto value_or = RenderExpr(view, view.Expr(*s.value));
             if (!value_or) return std::unexpected(std::move(value_or.error()));
-            return Indent(indent) + "return " + *value_or + ";\n";
+            return Indent(indent) + keyword + " " + *value_or + ";\n";
           },
           [&](const mir::SensitivityWaitStmt& s) -> diag::Result<std::string> {
             return RenderSensitivityWaitStmt(view, s, indent);

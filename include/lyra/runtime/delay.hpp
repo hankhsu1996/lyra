@@ -43,13 +43,15 @@ class DelayAwaitable {
     return false;
   }
 
-  void await_suspend(CoroutineHandle handle) noexcept {
+  template <class P>
+  void await_suspend(std::coroutine_handle<P> handle) noexcept {
+    CoroutineHandle token = &handle.promise();
     if (duration_ == 0) {
-      services_->ScheduleInactive(handle);
+      services_->ScheduleInactive(token);
     } else {
       const SimDuration global_ticks = ScaleToGlobalTicks(
           duration_, precision_power_, services_->GlobalPrecisionPower());
-      services_->ScheduleAtTime(services_->Now() + global_ticks, handle);
+      services_->ScheduleAtTime(services_->Now() + global_ticks, token);
     }
   }
 

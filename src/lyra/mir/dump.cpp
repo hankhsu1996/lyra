@@ -599,6 +599,11 @@ class MirDumper {
               return std::format(
                   "AwaitExpr awaitable=Expr[{}]", a.awaitable.value);
             },
+            [](const TupleGetExpr& g) -> std::string {
+              return std::format(
+                  "TupleGetExpr tuple=Expr[{}] index={}", g.tuple.value,
+                  g.index);
+            },
         },
         e.data);
     return std::format("{} type=Type[{}]", formatted, e.type.value);
@@ -699,19 +704,6 @@ class MirDumper {
     Dedent();
   }
 
-  [[nodiscard]] static auto FormatParamDirection(ParamDirection dir)
-      -> std::string_view {
-    switch (dir) {
-      case ParamDirection::kInput:
-        return "input";
-      case ParamDirection::kOutput:
-        return "output";
-      case ParamDirection::kInOut:
-        return "inout";
-    }
-    throw InternalError("FormatParamDirection: unknown mir::ParamDirection");
-  }
-
   [[nodiscard]] static auto FormatMethodForm(MethodForm form)
       -> std::string_view {
     switch (form) {
@@ -733,9 +725,7 @@ class MirDumper {
       const auto& param = d.params[i];
       Line(
           std::format(
-              "Param[{}] {} \"{}\" : Type[{}]", i,
-              FormatParamDirection(param.direction), param.name,
-              param.type.value));
+              "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
     }
     DumpBlock(d.root_block);
     Dedent();

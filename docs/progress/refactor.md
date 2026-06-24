@@ -106,7 +106,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         function), not a side enum; `MethodKind` is removed. Behavior-neutral; existing task /
         function tests prove no regression.
 
-  - [ ] R8b -- Parameter direction normalizes to data flow. `output` / `inout` formals stop being
+  - [x] R8b -- Parameter direction normalizes to data flow. `output` / `inout` formals stop being
         reference parameters and become components of the callable's completion payload -- the
         explicit return (if any) followed by each `output` / `inout` value, normalized by count
         (zero is `Void`, one is a bare type, two or more a tuple), riding the result type and

@@ -136,17 +136,22 @@ auto LowerReturnStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ReturnStmt& r) -> diag::Result<mir::Stmt> {
   auto& block = *frame.current_block;
-  std::optional<mir::ExprId> value;
+  std::optional<mir::ExprId> explicit_value;
   if (r.value.has_value()) {
     auto value_or =
         process.LowerExpr(process.HirBody().exprs.Get(*r.value), frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    value = block.exprs.Add(*std::move(value_or));
+    explicit_value = block.exprs.Add(*std::move(value_or));
   }
+  // The returned value is the completion payload: this return's explicit value
+  // (or the implicit result variable) plus each output / inout local, assembled
+  // by the subroutine's lowering so the copy-out rides the result (LRM 13.5).
+  const std::optional<mir::ExprId> payload =
+      process.BuildReturnPayload(block, frame, explicit_value);
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::ReturnStmt{
-          .value = value, .is_coroutine_return = frame.is_coroutine_body}};
+          .value = payload, .is_coroutine_return = frame.is_coroutine_body}};
 }
 
 auto LowerBreakStmt(
