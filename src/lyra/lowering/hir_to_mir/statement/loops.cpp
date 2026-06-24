@@ -44,7 +44,8 @@ auto LowerForStmt(
               process.MapProceduralVar(
                   d.var, AutomaticVarBinding{
                              .declaration_procedural_depth = frame.block_depth,
-                             .var = local_id});
+                             .var = local_id,
+                             .type = type});
               mir::ExprId init_id{};
               if (d.init.has_value()) {
                 auto init_or =

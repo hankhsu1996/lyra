@@ -173,10 +173,8 @@ auto LowerProceduralVarRefExpr(
   const auto& ab = std::get<AutomaticVarBinding>(binding);
   if (auto* sink = frame.capture_sink) {
     if (ab.declaration_procedural_depth < sink->BoundaryDepth()) {
-      return mir::Expr{
-          .data = sink->Capture(
-              ab.var, ab.declaration_procedural_depth, type, frame.block_depth),
-          .type = type};
+      return sink->Capture(
+          ab.var, ab.declaration_procedural_depth, type, frame.block_depth);
     }
   }
   if (ab.declaration_procedural_depth > frame.block_depth) {
@@ -185,7 +183,7 @@ auto LowerProceduralVarRefExpr(
         "(forward reference into a child scope)");
   }
   return mir::MakeLocalRefExpr(
-      frame.block_depth - ab.declaration_procedural_depth, ab.var, type);
+      frame.block_depth - ab.declaration_procedural_depth, ab.var, ab.type);
 }
 
 auto LowerCrossUnitVarRefExpr(
@@ -240,10 +238,8 @@ auto LowerIterationBindingRefExpr(
       frame.iteration_bindings->Lookup(ref.clause, ref.role);
   if (auto* sink = frame.capture_sink) {
     if (binding.decl_depth < sink->BoundaryDepth()) {
-      return mir::Expr{
-          .data = sink->Capture(
-              binding.var, binding.decl_depth, type, frame.block_depth),
-          .type = type};
+      return sink->Capture(
+          binding.var, binding.decl_depth, type, frame.block_depth);
     }
   }
   return mir::MakeLocalRefExpr(

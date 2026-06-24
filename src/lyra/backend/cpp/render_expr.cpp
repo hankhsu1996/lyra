@@ -199,16 +199,6 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
   return name;
 }
 
-// True iff the local holds a reference (its type is a `RefType`),
-// rendered as a `Ref<T>` whose read is `.Get()` and whose write is
-// `.Set(Services(), ...)` (LRM 13.5.2), the same surface as a member.
-auto IsReferenceLocal(const ScopeView& view, const mir::LocalRef& ref) -> bool {
-  const mir::TypeId var_type =
-      view.BlockAtHops(ref.hops).vars.Get(ref.var).type;
-  return std::holds_alternative<mir::RefType>(
-      view.Unit().GetType(var_type).data);
-}
-
 }  // namespace
 
 namespace {
@@ -993,37 +983,10 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
 
 namespace {
 
-// Walks an LHS expression through container-access calls (per
-// `mir::IsContainerAccessCall`) to its root primary. Whether a write
-// touches a reference formal is decided by what that root is.
-auto LhsRootPrimary(const ScopeView& view, const mir::Expr& expr)
-    -> const mir::Expr& {
-  const mir::Expr* current = &expr;
-  while (true) {
-    const auto* call = std::get_if<mir::CallExpr>(&current->data);
-    if (call == nullptr) return *current;
-    if (!mir::IsContainerAccessCallee(call->callee) ||
-        call->arguments.empty()) {
-      return *current;
-    }
-    current = &view.Expr(call->arguments.front());
-  }
-}
-
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
   return std::holds_alternative<mir::MemberAccessExpr>(expr.data) ||
          std::holds_alternative<mir::DerefExpr>(expr.data) ||
          std::holds_alternative<mir::LocalRef>(expr.data);
-}
-
-// The root local iff the LHS root is a `ref` / `const ref` formal,
-// else nullptr. A write whose root is a reference formal must route through
-// `Ref::Set` (LRM 13.5.2).
-auto LhsRootReferenceLocal(const ScopeView& view, const mir::Expr& expr)
-    -> const mir::LocalRef* {
-  const auto* pvr =
-      std::get_if<mir::LocalRef>(&LhsRootPrimary(view, expr).data);
-  return pvr != nullptr && IsReferenceLocal(view, *pvr) ? pvr : nullptr;
 }
 
 // Render a compound op suffix for the SV `op=` family. Arithmetic /
@@ -1075,21 +1038,6 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
 
   const mir::Expr& lhs_expr = view.Expr(a.target);
 
-  // A `ref` / `const ref` formal aliases the actual's cell; a whole write
-  // routes through `Ref::Set` so the actual's update-event path fires (LRM
-  // 13.5.2). Compound and partial writes through a ref formal are not yet
-  // supported.
-  if (const auto* ref_root = LhsRootReferenceLocal(view, lhs_expr)) {
-    if (!IsLhsBarePrimary(lhs_expr) || a.compound_op.has_value()) {
-      return diag::Fail(
-          diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-          "compound or partial assignment through a ref / const ref formal is "
-          "not yet implemented in cpp emit");
-    }
-    return LookupLocalName(view, *ref_root) + ".Set(" + "self->Services()" +
-           ", " + *value_or + ")";
-  }
-
   // Mechanical render: an observable cell's write surfaces in MIR as an
   // explicit `CallExpr` against the cell type's `Set` method, and a partial
   // mutation surfaces as `DerefExpr` over a `Mutate` call at the chain root.
@@ -1116,12 +1064,6 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
 auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
     -> diag::Result<std::string> {
   const mir::Expr& target_expr = view.Expr(inc.target);
-  if (LhsRootReferenceLocal(view, target_expr) != nullptr) {
-    return diag::Fail(
-        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-        "increment / decrement of a ref / const ref formal is not yet "
-        "implemented in cpp emit");
-  }
   auto lhs_or = RenderLhsExpr(view, target_expr);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   std::string lhs = *std::move(lhs_or);
@@ -1422,8 +1364,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
             return RenderParamExpr(view, r);
           },
           [&](const mir::LocalRef& l) -> diag::Result<std::string> {
-            const std::string name = LookupLocalName(view, l);
-            return IsReferenceLocal(view, l) ? name + ".Get()" : name;
+            return LookupLocalName(view, l);
           },
           [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
             return RenderUnaryExpr(view, expr, u);

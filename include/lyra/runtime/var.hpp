@@ -217,6 +217,14 @@ class Ref {
     }
   }
 
+  // RAII entry to partial-write context, mirroring `Var<T>::Mutate`: the
+  // returned handle snapshots the referenced cell, forwards chain methods so a
+  // selector chain lands in the snapshot, and writes the snapshot back through
+  // `Ref::Set` in its destructor (firing subscribers when the backing is
+  // observable).
+  [[nodiscard]] auto Mutate(RuntimeServices& services) const
+      -> ScopedMutation<T>;
+
  private:
   Var<T>* signal_ = nullptr;
   T* plain_ = nullptr;
@@ -319,21 +327,22 @@ void Var<T>::Set(RuntimeServices& services, const T& new_val) {
   }
 }
 
-// RAII handle that owns a snapshot of `var.Get()` for the lifetime of one
-// partial-write expression. The destructor calls `Var::Set` with the
-// (possibly mutated) snapshot -- subscribers fire on change. Non-copyable
-// and non-movable: the contract is that it lives only until the end of the
-// constructing full expression. Returning it by value from `Var<T>::Mutate`
-// relies on C++17 mandatory copy elision (prvalues are materialized in the
-// caller's storage with no copy/move).
+// RAII handle that owns a snapshot of the referenced cell for the lifetime of
+// one partial-write expression. The destructor writes the (possibly mutated)
+// snapshot back through `Ref<T>::Set` -- subscribers fire on change when the
+// backing is observable, a raw store when it is plain. Non-copyable and
+// non-movable: the contract is that it lives only until the end of the
+// constructing full expression. Returning it by value from `Var<T>::Mutate` /
+// `Ref<T>::Mutate` relies on C++17 mandatory copy elision (prvalues are
+// materialized in the caller's storage with no copy/move).
 //
 // `operator*` is the single access point -- all chain methods, operators,
 // and selectors are reached through the deref'd T directly.
 template <value::LyraValue T>
 class ScopedMutation {
  public:
-  ScopedMutation(RuntimeServices& services, Var<T>& var)
-      : services_(&services), var_(&var), snapshot_(var.Get()) {
+  ScopedMutation(RuntimeServices& services, Ref<T> ref)
+      : services_(&services), ref_(ref), snapshot_(ref.Get()) {
   }
 
   ScopedMutation(const ScopedMutation&) = delete;
@@ -342,7 +351,7 @@ class ScopedMutation {
   auto operator=(ScopedMutation&&) -> ScopedMutation& = delete;
 
   ~ScopedMutation() {
-    var_->Set(*services_, std::move(snapshot_));
+    ref_.Set(*services_, std::move(snapshot_));
   }
 
   auto operator*() -> T& {
@@ -351,12 +360,17 @@ class ScopedMutation {
 
  private:
   RuntimeServices* services_;
-  Var<T>* var_;
+  Ref<T> ref_;
   T snapshot_;
 };
 
 template <value::LyraValue T>
 auto Var<T>::Mutate(RuntimeServices& services) -> ScopedMutation<T> {
+  return ScopedMutation<T>{services, Ref<T>{*this}};
+}
+
+template <value::LyraValue T>
+auto Ref<T>::Mutate(RuntimeServices& services) const -> ScopedMutation<T> {
   return ScopedMutation<T>{services, *this};
 }
 
