@@ -295,16 +295,6 @@ auto LowerForeverProcess(
       .root_block = std::move(process_block)};
 }
 
-auto LowerSubroutineKind(hir::SubroutineKind kind) -> mir::MethodKind {
-  switch (kind) {
-    case hir::SubroutineKind::kTask:
-      return mir::MethodKind::kTask;
-    case hir::SubroutineKind::kFunction:
-      return mir::MethodKind::kFunction;
-  }
-  throw InternalError("LowerSubroutineKind: unknown hir::SubroutineKind");
-}
-
 auto LowerParamDirection(hir::ParamDirection dir) -> mir::ParamDirection {
   switch (dir) {
     case hir::ParamDirection::kInput:
@@ -395,7 +385,12 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   // (named distinctly from the C++ method so a self-recursive call still
   // resolves to the method), then close the body with `return <result>`.
   // void functions and tasks have no result variable and no trailing return.
-  const mir::TypeId result_type = module_->TranslateType(src.result_type);
+  // A task's call protocol is the coroutine type (LRM 13.3); a function's is
+  // its declared value or void type (LRM 13.4). The result type is the sole
+  // carrier of that protocol.
+  const mir::TypeId result_type = body_is_coroutine
+                                      ? module_->Unit().builtins.coroutine
+                                      : module_->TranslateType(src.result_type);
   std::optional<mir::LocalRef> result_ref;
   if (src.result_var.has_value()) {
     const mir::ExprId default_init = body_block.exprs.Add(
@@ -424,7 +419,6 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
 
   return mir::MethodDecl{
       .name = src.name,
-      .kind = LowerSubroutineKind(src.kind),
       .result_type = result_type,
       .params = std::move(params),
       .root_block = std::move(body_block)};

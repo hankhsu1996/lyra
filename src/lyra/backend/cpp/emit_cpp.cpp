@@ -138,18 +138,14 @@ auto RenderMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::MethodDecl& sub, std::size_t indent)
     -> diag::Result<std::string> {
-  // A task may suspend on timing controls, so it is a coroutine enabled with
-  // `co_await`; a function executes in zero time and renders its result type
-  // (LRM 13.3 / 13.4).
-  const bool is_task = sub.kind == mir::MethodKind::kTask;
-  std::string return_type;
-  if (is_task) {
-    return_type = "lyra::runtime::Coroutine";
-  } else {
-    auto result_or = RenderMethodResultType(unit, s, sub.result_type);
-    if (!result_or) return std::unexpected(std::move(result_or.error()));
-    return_type = *std::move(result_or);
-  }
+  // The result type carries the call protocol: a coroutine type renders a
+  // `co_await`-enabled coroutine (a time-consuming task, LRM 13.3), any other
+  // type a zero-time function returning that type (LRM 13.4).
+  const bool is_coroutine = std::holds_alternative<mir::CoroutineType>(
+      unit.GetType(sub.result_type).data);
+  auto return_or = RenderMethodResultType(unit, s, sub.result_type);
+  if (!return_or) return std::unexpected(std::move(return_or.error()));
+  const std::string return_type = *std::move(return_or);
 
   std::string sig =
       "static " + return_type + " " + sub.name + "(" + s.name + "* self";
@@ -183,7 +179,7 @@ auto RenderMethod(
   auto rendered_or = RenderBlockStatements(sub_view, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
-  if (is_task) {
+  if (is_coroutine) {
     out += Indent(indent + 1) + "co_return;\n";
   }
   out += Indent(indent) + "}\n";

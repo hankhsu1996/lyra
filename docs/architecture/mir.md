@@ -45,9 +45,11 @@ what the construct means.
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
   named); two composing wrappers, owning pointer and vector; and the tuple, a heterogeneous product
   of component types (the generic-language product type, distinct from the homogeneous vector).
-- Callables: functions, tasks, constructors, processes, and assertion actions. Every callable body's
-  first binding is `self`, a pointer to the enclosing class; the body reaches every value it needs
-  through its parameter list and captures, never through implicit context.
+- Callables: one concept -- callable code (a signature plus an internal body or an external symbol)
+  and a callable value (code plus a bound environment). Every callable body's first binding is
+  `self`, a pointer to the enclosing class; the body reaches every value it needs through its
+  parameters and bound environment, never through implicit context. `callable.md` is the canonical
+  contract.
 - The identity of each object and member within a compilation unit.
 - Lightweight structured control flow inside a callable body: `if`, loop, and sequence. No basic
   blocks at this layer.
@@ -123,18 +125,10 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     member -- a member variable, a service call, a child instance -- flows through `MemberAccess`
     whose receiver expression reaches the class by traversing from `self`. A callable has no
     implicit access to its enclosing state; the receiver is reached through an explicit binding,
-    never through an expression that means "look around and figure it out". The body's view of
-    `self` is uniform across every callable form -- the read site reads `vars[0]` the same way in a
-    process, a task, a function, a constructor body, and a closure.
-
-    Where `self`'s value comes from differs by callable form, following the natural binding shape of
-    each: process, method, and constructor bodies receive `self` as their first formal parameter
-    (each caller -- the runtime, a call site, the instance constructor -- supplies it); every
-    closure -- including a fork branch -- carries `self` as its first by-value capture (the
-    enclosing scope snapshots its own `self` at construction, because no later invoker of the
-    closure value can be relied on to know the receiver). Both supply mechanisms land the same
-    binding at `body.vars[0]`; the body code does not know or care which one filled it. See
-    `docs/decisions/callable-receiver.md`.
+    never through an expression that means "look around and figure it out". `self` is uniform across
+    every callable: it is the code's first parameter, read as `vars[0]` the same way in every body,
+    and a callable value binds it like any other environment field. `callable.md` is the canonical
+    callable contract.
 
     _Programming-language consequence: methods take `self` explicitly. This is the C++ `this`, the
     Python `self`, the Rust `&self`. Languages that hide it behind keyword sugar at source level
@@ -243,19 +237,11 @@ expression set that decomposes the ternary. Value-build primitives for aggregate
 expressions are access primitives. Each of these stays in MIR for the same reason: removing it would
 require expanding into a statement-form rewrite that does not fit the expression context.
 
-A closure is a captured callable value: a capture list, a parameter list, a result type (the closure
-expression's own type), and a block body. It is the one IR shape for "a body bound to its
-environment, run later," synthesized only by HIR-to-MIR. `closure.md` is the canonical contract: the
-capture model, snapshot-versus-alias as a captured field's type, and coroutine-ness as the result
-type all live there.
-
-Process, method, and closure are three callable forms whose bodies are all the same block; they
-differ in how each is invoked and in how `self` is supplied. A process / method / constructor body
-receives `self` as its first formal parameter at every invocation. Every closure -- including a fork
-branch -- carries `self` as its first by-value capture (`captures[0]`): the enclosing scope
-snapshots its own `self` at construction, because no later invoker of the closure value can be
-relied on to know the receiver. Both supply paths end at the same place: `body.vars[0]` is `self`,
-read identically by every member access in the body.
+A callable is one concept: callable code (a signature plus an internal body or an external symbol)
+and a callable value (code plus a bound environment). A closure is a callable value with a captured
+environment, synthesized only by HIR-to-MIR. `self` is the code's receiver parameter, the result
+type is the call protocol, and a bound field is a snapshot or an alias by its type. `callable.md` is
+the canonical contract.
 
 An access through a runtime library wrapper type illustrates the boundary between MIR's vocabulary
 and a backend's storage realization. The C++ backend wraps an observable signal's storage in

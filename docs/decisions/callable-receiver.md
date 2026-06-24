@@ -185,7 +185,7 @@ binding pushes the answer up to one place that every backend just reads.
   static `init(this)` call. Closures emit as
   `[self = <enclosing self expr>, cap1 = ..., cap2 = <reference value>](closure_params) -> R { ... }`
   -- every capture is name-explicit and by-value; an alias capture binds a reference value, never a
-  C++ `[&]` reference (see `docs/architecture/closure.md` for why). `CreateProcesses()` adapts:
+  C++ `[&]` reference (see `docs/architecture/callable.md` for why). `CreateProcesses()` adapts:
   where it previously emitted `AddProcess(kind, process_N())` it now emits
   `AddProcess(kind, process_N(this))`.
 
@@ -198,7 +198,7 @@ binding pushes the answer up to one place that every backend just reads.
 
 ## Cross-references
 
-- `docs/architecture/closure.md` (closure model: capture, references as a field type,
+- `docs/architecture/callable.md` (closure model: capture, references as a field type,
   coroutine-ness)
 - `docs/architecture/mir.md` (callable shape, expression set)
 - `docs/progress/refactor.md` R16

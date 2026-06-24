@@ -3,13 +3,19 @@
 Tracks architectural debt and cleanup work that has been deferred because the immediate task did not
 need it -- but that we have agreed should land eventually. Distinct from the per-feature progress
 files (which track in-flight language-feature work); this file is the queue of "architecturally we
-know this is wrong, here is the target shape, here is what triggers picking it up".
+know this is wrong, here is the target shape, and what (if anything) blocks it from landing now".
 
 Each entry states:
 
 - The current shape (what is awkward today)
 - The target shape (what it should look like)
-- The trigger (when to pick it up)
+- What blocks it, if anything -- a named prerequisite that must land first
+
+An entry with no blocker is doable now; it is unlanded only because no one has picked it up. Per the
+project's clean-code-outranks-scope stance, an architecture-correctness cut lands when its code is
+next touched, not when some future event is deemed to "trigger" it. The only honest reasons to leave
+an entry open are a named unlanded prerequisite (it is blocked), or a cut large and cross-cutting
+enough to warrant its own focused review.
 
 Entries get checked off as their PRs land. When the last entry lands, the file is deleted.
 
@@ -85,26 +91,40 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       constant case, which is acceptable -- it faithfully mirrors the MIR. See
       `decisions/conversion-folding.md`.
 
-- [ ] R8 -- Unify the callable forms onto one concept. Today a process (`mir::Process`), a method
-      (`mir::MethodDecl`), and a closure (`mir::ClosureExpr`) are three separate types whose bodies
-      are all the same `Block`; the code already notes the duplication ("a method is a callable peer
-      of a process"). Each hardcodes a fixed point in three orthogonal axes: how the body binds
-      outer state (the enclosing object only / named parameters / captured values), whether the body
-      is a coroutine, and whether it is an anonymous value or a named declaration. The combinations
-      in use today are partial -- process is (object-only, coroutine, value-spawned-at-startup),
-      function is (params, plain, named, returns), task is (params, coroutine, named), closure is
-      (captures or params, anonymous value). A fork-join branch is a closure with a coroutine result
-      type, distinguished from a synchronous closure by that type, not by a flag on the node -- so a
-      closure already spans both coroutine and plain without a suspend axis. Target shape: a single
-      callable concept carrying a `Block` body, a list of bound inputs that unifies parameters and
-      captures behind one binding-mode axis, and a result type (the coroutine type when the body
-      suspends); the five forms become instances differing only in their axis values and in how the
-      referencing site invokes them (spawn at startup, call, submit, spawn concurrently). **Why
-      deferred**: this rebases the whole process / method / closure machinery across lowering, MIR,
-      the dumper, and the backend; the fork work needed only a coroutine result type on the closure
-      and reached it without touching processes or methods, so folding the full merge in would be
-      scope explosion. **Trigger**: when a further feature needs yet another axis combination, or
-      when a change has to be made three times across the duplicated forms.
+- [ ] R8 -- Unify the callable forms onto one concept, per `../decisions/unified-callable-model.md`.
+      Today a process (`mir::Process`), a method (`mir::MethodDecl`), the constructor block, and a
+      closure (`mir::ClosureExpr`) are separate constructs whose bodies are all the same `Block`,
+      and the same fact ("is this a coroutine") is encoded several ways. The target is one callable
+      concept -- callable code (a signature plus an internal body or an external symbol) and a
+      callable value (code plus a bound environment) -- with the result type carrying the call
+      protocol and parameter direction normalized to data flow. It rebases callable machinery across
+      lowering, MIR, the dumper, and the backend, so it lands in staged cuts, each its own focused
+      review:
+  - [ ] R8a -- The result type is the sole carrier of the call protocol. A method's coroutine-ness
+        is read from its result type (a coroutine result is a task, a value / void result a
+        function), not a side enum; `MethodKind` is removed. Behavior-neutral; existing task /
+        function tests prove no regression.
+
+  - [ ] R8b -- Parameter direction normalizes to data flow. `output` / `inout` formals stop being
+        reference parameters and become components of the callable's result -- an output pack riding
+        the result type, written to the caller's actual after completion -- so copy-out timing is
+        correct under suspension; `ref` / `const ref` stay reference-typed parameters. The `kOutput`
+        / `kInOut` directions are removed (a parameter becomes a typed binding). This is what forces
+        the coroutine result type to be parameterized (`Coroutine<T>`): a task's output pack is its
+        completion payload.
+
+  - [ ] R8c -- Callable code versus callable value. A closure constructs a callable value (code plus
+        a bound environment); a directly-invoked named callable receives its environment from the
+        caller. `self` is the code's first parameter, bound into a value's environment when needed,
+        not a privileged `captures[0]` slot.
+
+  - [ ] R8d -- `mir::Process` dissolves into a callable value registered at constructor time
+        (per-instance, generate-dependent), with `initial` and `final` as distinct lifecycle
+        registrations. `ProcessKind` is removed.
+
+  - [ ] R8e -- External callables and virtual dispatch, gated on the object-model design (R47): a
+        DPI import is a bodyless external callable; a virtual call is an explicit call form resolved
+        against the object's vtable layout.
 
 - [x] R9 -- AST-to-HIR migration to the class-based organization defined in
       `docs/architecture/lowering_organization.md`. The `*LoweringState` god-objects are gone;
@@ -142,7 +162,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `WalkFrame`) does not transfer cleanly to the render layer -- rendering is mechanical
       translation, not semantic lowering, so the per-task state model is fundamentally different
       (see R18). The mutable escape hatch is the one shape that is unambiguously wrong from any
-      vantage. **Trigger**: standalone -- can be picked up at any time.
+      vantage.
 
 - [x] R12 -- A signal read / write is an explicit access call in MIR, not a render-time decision.
       The observable-storage wrapper is a first-class MIR type (sibling to the owning-pointer and
@@ -186,8 +206,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       etc.) and threads it into the lowering so the returned `Process` is constant -- no post-hoc
       mutation. The `WithStaticFrame(...)` install in the cpp backend now reads
       `process.name + "__static"` rather than computing from an iteration index; the walker-state
-      propagation of the frame field name continues until R18 dissolves the walk frame. **Trigger**:
-      scheduled in front of R18.
+      propagation of the frame field name continues until R18 dissolves the walk frame.
 
 - [x] R16 -- Give every MIR callable body an explicit `self` first binding -- `body.vars[0]` is a
       local of borrowed-pointer-to-enclosing-class type, named `self`. Route every class-member
@@ -211,8 +230,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       capture is name-explicit, the clause never contains `[this]`, `[=]`, or `[&]`.
       `CreateProcesses()` remains a virtual instance method (C++ requires it) and emits
       `AddProcess(kind, process_N(this))`. The receiver-related `RenderContext` machinery disappears
-      in lockstep. See `docs/decisions/callable-receiver.md`. **Trigger**: scheduled in front of
-      R18.
+      in lockstep. See `docs/decisions/callable-receiver.md`.
 
 - [x] R17 -- Selector and packed-struct field access lower to explicit built-in method calls for
       element access, slice, and the borrowed-to-owned materialisation. The dedicated element-select
@@ -301,22 +319,6 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `Call(ArrayMethod{kToOwned})` node in MIR (Rust's `ToOwned` trait). HIR-to-MIR inserts the
       wrap at the read boundary; render is a mechanical translation. The `RenderExpr` /
       `RenderExprNatural` split and `ProducesPackedArrayRef` predicate are gone.
-
-- [ ] R24 -- Dispatch the "sized collection" concept through one resolver instead of branching on
-      the concrete container at each call site. R29 absorbed the cross-container collapse for the
-      shared method (every container's element count is one `BuiltinFn` identity now), so the only
-      remaining branch is `Size` (LRM 7.4.3 / 7.5 / 7.10.2 dynamic / associative / queue) vs `Len`
-      (LRM 6.16.1 string-mandated name); a single lowering site handles it today and serves as the
-      one place that translates "sized collection" to its container's element-count method. Under
-      static dispatch the concept is a compile-time resolver and never persists as an IR node. **Why
-      deferred**: only one consumer today, so the resolver is a one-caller function -- the interface
-      payoff is multiple generic callers sharing the table, which do not exist yet. **Trigger**: a
-      second generic consumer of collection-size dispatch (a locator / reduction lowering, an
-      array-querying system function, or a generic-algorithm pass). A separate, structural
-      sub-question rides along: whether fixed unpacked and packed arrays should also be "sized
-      collections" with a runtime element-count query (a type-model decision, distinct from how
-      `foreach` iterates them -- `foreach` over a fixed array uses its declared range and direction,
-      not a count, so that split is a real semantic difference, not the same redundancy).
 
 - [x] R25 -- **Closed: both carve-outs resolved.** The two value-query families this entry set aside
       as not fitting the generic `(receiver).name(args)` member-call rule are both settled. Enum
@@ -424,7 +426,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       needs a MIR member-access form that descends into an owned child object's member, resolving
       the member against the receiver's type. Member access today is hops-relative to the enclosing
       class and cannot descend, so this rests on a new member-access capability that touches the
-      member-access model. **Trigger**: when that descend capability is designed and built.
+      member-access model.
 
 - [x] R36 -- The container default-value slot fused the read-miss value with the discarded-write
       target, forcing the const read to scrub the slot a prior write may have dirtied before
@@ -474,9 +476,9 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       pull is the only reason it lives on services rather than as a pure
       `value::Format(items, time_format)` free function the caller threads explicitly. With R37
       complete the pattern of "pure value ops live at `lyra::value`, engine state is reached through
-      `services`" is consistent everywhere except Format; this entry closes the exception.
-      **Trigger**: after R37 lands and the value-layer free-function surface is the established
-      pattern.
+      `services`" is consistent everywhere except Format; this entry closes the exception. **Blocked
+      on R37**: once it lands and the value-layer free-function surface is the established pattern,
+      the exception closes.
 
 - [ ] R39 -- Lift the implicit `Ref<T>` access into explicit MIR calls. R12 / the
       value-type-concepts cut lifted observable-cell reads / writes / mutations into explicit
@@ -554,8 +556,24 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `kPropagated` / `kStreamingConcat` / `kExplicit` / `kBitstreamCast`); the unified kind axis
       would add `kPointerReinterpret` (and likely future `kIntToInt`, `kFloatToInt` etc. as the LIR
       / LLVM backend appears and needs explicit kinds for the cast-family instruction selection).
-      **Trigger**: when the LIR backend wants explicit cast kinds for instruction selection, or when
-      a third cast-like primitive is about to be added (whichever comes first).
+      **Not blocked**: nothing prevents merging the two primitives -- they already render
+      identically. The unified kind axis gains `kPointerReinterpret` now and further cast kinds
+      (`kIntToInt`, `kFloatToInt`, ...) as the LIR / LLVM backend needs explicit
+      instruction-selection kinds. Land it when this cast machinery is next touched, or when a third
+      cast-like primitive would otherwise be added.
+
+- [ ] R47 -- Design the object model that SV classes need, distinct from the module / scope object.
+      The MIR concept currently named a "class" is a compiled module / scope, carrying
+      module-specific structure (an elaboration and construction graph, owned children, generated
+      members, lifecycle registrations). An SV class (LRM 8) needs heap allocation, handles and
+      null, inheritance, dynamic dispatch, object identity, and a reference-lifetime policy. The
+      likely factoring is a shared object type (fields, methods, and a virtual / dispatch layout
+      where applicable) plus a separate module-specific instance / elaboration plan -- "a module is
+      an object type plus an instance plan," not "an SV class is a module in another mode" -- so
+      module construction policy does not contaminate heap classes. **Design first**: this is the
+      gating prerequisite for SV classes and for the virtual-dispatch facet of R8
+      (`../decisions/unified-callable-model.md`). No implementation until the object model is
+      designed.
 
 ## Out of Scope
 
