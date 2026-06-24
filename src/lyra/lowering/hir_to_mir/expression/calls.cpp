@@ -301,12 +301,11 @@ auto LowerSystemSubroutineCall(
           [&](const support::TimeFormatSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
             return LowerTimeFormatSystemSubroutineCall(
-                process, frame, call, desc.id, span);
+                process, frame, call, span);
           },
           [&](const support::PrintTimescaleSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
-            return LowerPrintTimescaleSystemSubroutineCall(
-                process, frame, desc.id);
+            return LowerPrintTimescaleSystemSubroutineCall(process, frame);
           },
       },
       desc.semantic);

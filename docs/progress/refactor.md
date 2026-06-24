@@ -486,8 +486,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
     - [x] `$finish` / `$exit` / `$stop`: `$finish` is on the same `FreeFnCallee` shape; the
           await-suspension wrapping is unchanged. `$exit` / `$stop` are not yet wired and pick up
           the shape when they land.
-    - [ ] `$timeformat` / `$printtimescale`: state setter / formatted-print compositions through
-          services + files in the same shape as print.
+    - [x] `$timeformat` / `$printtimescale`: `$timeformat` lowers to
+          `services.SetTimeFormat(units, precision, suffix, min_width)` (four-argument form) or
+          `services.ResetTimeFormat()` (no-argument form), one method per form rather than an
+          arity-driven branch. `$printtimescale` desugars at lowering time: the scope name, unit
+          power, and precision power are all compile-time facts of the enclosing scope, so the full
+          "Time scale of (...) is X / Y" message is assembled into a string literal and routed
+          through `services.Files().Writeln(STDOUT_FD, msg)`, the same sink-write path that
+          `$display` lands on. The `LyraTimeFormat` and `LyraPrintTimescale` runtime free functions
+          retire; the timescale runtime header is deleted.
 
 - [ ] R38 -- Move `Format` from `RuntimeServices` to the value layer. Today `services.Format(items)`
       pulls `TimeFormat()` from engine state and runs a per-item value-format walk; the engine-state

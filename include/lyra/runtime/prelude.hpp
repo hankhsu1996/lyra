@@ -38,7 +38,6 @@
 #include "lyra/runtime/sim_time.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/simulation_entry.hpp"   // IWYU pragma: keep
 #include "lyra/runtime/stream_dispatcher.hpp"  // IWYU pragma: keep
-#include "lyra/runtime/timescale.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/trigger.hpp"            // IWYU pragma: keep
 #include "lyra/runtime/var.hpp"                // IWYU pragma: keep
 #include "lyra/value/array_case_equal.hpp"     // IWYU pragma: keep
