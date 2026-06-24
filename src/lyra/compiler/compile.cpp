@@ -54,7 +54,8 @@ auto Compile(
   std::vector<mir::CompilationUnit> units;
   units.reserve(result.artifacts.hir_units->size());
   for (const auto& hir_unit : *result.artifacts.hir_units) {
-    lowering::hir_to_mir::ModuleLowerer module(hir_unit);
+    lowering::hir_to_mir::ModuleLowerer module(
+        hir_unit, result.artifacts.parse->diag_sources);
     auto unit_or = module.Run();
     if (!unit_or) {
       sink.Report(std::move(unit_or.error()));

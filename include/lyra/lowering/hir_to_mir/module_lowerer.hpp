@@ -4,6 +4,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -23,7 +24,9 @@ namespace lyra::lowering::hir_to_mir {
 // the const overload, which is the same shape they hold post-move.
 class ModuleLowerer {
  public:
-  explicit ModuleLowerer(const hir::ModuleUnit& hir) : hir_(&hir) {
+  ModuleLowerer(
+      const hir::ModuleUnit& hir, const diag::SourceManager& source_manager)
+      : hir_(&hir), source_manager_(&source_manager) {
   }
 
   auto Run() -> diag::Result<mir::CompilationUnit>;
@@ -42,6 +45,13 @@ class ModuleLowerer {
 
   [[nodiscard]] auto Hir() const -> const hir::ModuleUnit& {
     return *hir_;
+  }
+
+  // Resolves a `SourceSpan` to a "file:line:col" string for diagnostic
+  // origin tagging (LRM 20.10 source identification). Returned by value so
+  // the caller can intern it as a MIR `StringLiteral` at the emit site.
+  [[nodiscard]] auto SourceManager() const -> const diag::SourceManager& {
+    return *source_manager_;
   }
 
   [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
@@ -64,6 +74,7 @@ class ModuleLowerer {
       -> mir::TypeData;
 
   const hir::ModuleUnit* hir_;
+  const diag::SourceManager* source_manager_;
   mir::CompilationUnit unit_;
   std::vector<mir::TypeId> type_map_;
 };

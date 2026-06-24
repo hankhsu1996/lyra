@@ -9,14 +9,14 @@ expect:
   exit: 0
   stderr:
     exact: |
-      warning: repeating
-      warning: repeating
-      warning: repeating
-      warning: repeating
-      warning: repeating
-      warning: repeating
-      warning: repeating
-      warning: repeating
-      warning: repeating
-      warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
+      main.sv:4:7: warning: repeating
       lyra: warning: further messages from this site suppressed after 10 occurrences

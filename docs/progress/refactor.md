@@ -451,10 +451,14 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
           print already uses) returning a string; for `$sformat` the call result is assigned to the
           output lvalue. The dedicated `LyraSFormat` runtime entry retires.
   - Diagnostic subsystem (`services.Diagnostic()`):
-    - [ ] `$info` / `$warning` / `$error` / `$fatal`: decompose to `services.Format(items)` for the
-          message text, then `services.Diagnostic().Emit{Info,Warning,Error,Fatal}(text)` for the
-          severity-tagged emit. The four severities are distinct methods (parallel to print's
-          `Write` / `Writeln` split), not a single `Emit(severity, text)` with a tag arg.
+    - [x] `$info` / `$warning` / `$error`: each decomposes to `services.Format(items)` for the
+          message text, then `services.Diagnostic().Emit{Info,Warning,Error}(origin, text)` for the
+          severity-tagged emit, with `origin` carrying the call's `file:line:col` so the dispatcher
+          can prefix the message and key its rate-limit counter per site (LRM 20.10). The
+          severities are distinct `BuiltinFn` methods (parallel to print's `Write` / `Writeln`
+          split), not a single `Emit(severity, text)` with a tag arg. The unique / priority
+          deferred-check cascade synthesizes its warning through the same broker. `$fatal` picks
+          up the shape when it lands.
   - File-IO subsystem (`services.Files()`):
     - [x] `$fopen` / `$fclose` / `$fread` / `$fseek` / `$rewind` / `$ftell` / `$feof` / `$ferror` /
           `$fflush` / `$fgetc` / `$ungetc` / `$fgets`: each lowers to a `BuiltinFnCallee` method on

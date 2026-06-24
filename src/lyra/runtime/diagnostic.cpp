@@ -3,16 +3,11 @@
 #include <cstdint>
 #include <format>
 #include <functional>
-#include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 
-#include "lyra/base/overloaded.hpp"
-#include "lyra/runtime/runtime_services.hpp"
-#include "lyra/value/format.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -30,10 +25,6 @@ auto SeverityText(Severity s) -> std::string_view {
   return "info";
 }
 
-auto FormatOrigin(const SourceLocation& loc) -> std::string {
-  return std::format("{}:{}:{}", loc.file, loc.line, loc.col);
-}
-
 }  // namespace
 
 auto DiagnosticDispatcher::CountKeyHash::operator()(
@@ -49,12 +40,36 @@ DiagnosticDispatcher::DiagnosticDispatcher(
     : sink_(std::move(sink)), rate_limit_(rate_limit) {
 }
 
-void DiagnosticDispatcher::Emit(DiagnosticRecord record) {
-  const std::string origin_text =
-      record.origin.has_value() ? FormatOrigin(*record.origin) : std::string{};
+void DiagnosticDispatcher::EmitInfo(
+    const lyra::value::String& origin, const lyra::value::String& text) {
+  Emit(
+      DiagnosticRecord{
+          .severity = Severity::kInfo,
+          .origin = std::string{origin.View()},
+          .body = std::string{text.View()}});
+}
 
+void DiagnosticDispatcher::EmitWarning(
+    const lyra::value::String& origin, const lyra::value::String& text) {
+  Emit(
+      DiagnosticRecord{
+          .severity = Severity::kWarning,
+          .origin = std::string{origin.View()},
+          .body = std::string{text.View()}});
+}
+
+void DiagnosticDispatcher::EmitError(
+    const lyra::value::String& origin, const lyra::value::String& text) {
+  Emit(
+      DiagnosticRecord{
+          .severity = Severity::kError,
+          .origin = std::string{origin.View()},
+          .body = std::string{text.View()}});
+}
+
+void DiagnosticDispatcher::Emit(DiagnosticRecord record) {
   if (rate_limit_ > 0) {
-    const CountKey key{.origin = origin_text, .severity = record.severity};
+    const CountKey key{.origin = record.origin, .severity = record.severity};
     auto& count = emit_counts_[key];
     if (count >= rate_limit_) {
       if (count == rate_limit_) {
@@ -73,8 +88,8 @@ void DiagnosticDispatcher::Emit(DiagnosticRecord record) {
   }
 
   std::string line;
-  if (!origin_text.empty()) {
-    line += origin_text;
+  if (!record.origin.empty()) {
+    line += record.origin;
     line += ": ";
   }
   line += SeverityText(record.severity);
@@ -82,49 +97,6 @@ void DiagnosticDispatcher::Emit(DiagnosticRecord record) {
   line += record.body;
   line += "\n";
   sink_(line);
-}
-
-void LyraDiagnostic(
-    RuntimeServices& services, Severity severity,
-    std::optional<SourceLocation> origin,
-    std::span<const value::PrintItem> items) {
-  std::string body;
-  for (const value::PrintItem& item : items) {
-    std::visit(
-        Overloaded{
-            [&](const value::PrintLiteralItem& lit) {
-              body.append(std::string_view{lit.data, lit.size});
-            },
-            [&](const value::PrintValueItem& v) {
-              body.append(
-                  value::Format(
-                      v.spec, v.arg,
-                      value::FormatContext{
-                          .time_format = &services.TimeFormat()}));
-            },
-        },
-        item);
-  }
-  services.Diagnostic().Emit(
-      DiagnosticRecord{
-          .severity = severity,
-          .origin = std::move(origin),
-          .body = std::move(body)});
-}
-
-void LyraInfo(
-    RuntimeServices& services, std::span<const value::PrintItem> items) {
-  LyraDiagnostic(services, Severity::kInfo, std::nullopt, items);
-}
-
-void LyraWarning(
-    RuntimeServices& services, std::span<const value::PrintItem> items) {
-  LyraDiagnostic(services, Severity::kWarning, std::nullopt, items);
-}
-
-void LyraError(
-    RuntimeServices& services, std::span<const value::PrintItem> items) {
-  LyraDiagnostic(services, Severity::kError, std::nullopt, items);
 }
 
 }  // namespace lyra::runtime

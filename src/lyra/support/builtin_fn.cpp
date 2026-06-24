@@ -316,6 +316,14 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "file_error";
     case BuiltinFn::kFileFlush:
       return "file_flush";
+    case BuiltinFn::kDiagnostic:
+      return "diagnostic";
+    case BuiltinFn::kEmitInfo:
+      return "emit_info";
+    case BuiltinFn::kEmitWarning:
+      return "emit_warning";
+    case BuiltinFn::kEmitError:
+      return "emit_error";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

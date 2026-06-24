@@ -181,6 +181,7 @@ class MirDumper {
             [](const ScopeType&) -> std::string { return "Scope"; },
             [](const ServicesType&) -> std::string { return "Services"; },
             [](const FilesType&) -> std::string { return "Files"; },
+            [](const DiagnosticType&) -> std::string { return "Diagnostic"; },
             [](const RuntimeLibraryType& r) -> std::string {
               switch (r.kind) {
                 case RuntimeLibraryKind::kPrintItem:

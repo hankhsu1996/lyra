@@ -10,14 +10,14 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower a severity-bearing system subroutine call ($info, $warning, $error)
-// into a generic `CallExpr` whose first argument is `self.Services()` and whose
-// second is the print-item array. Severity travels on `id`; the backend selects
-// the matching diagnostic runtime entry. Shares format-item parsing with the
-// print-task lowering, but routes through the runtime diagnostic channel.
+// Lower $info / $warning / $error into the two-step composition the print
+// family uses: `services.Format(items)` yields the formatted text, then
+// `services.Diagnostic().EmitX(text)` emits at the severity selected by
+// `info.builtin_fn` (LRM 20.10). Shares format-item parsing with the print
+// path; the returned expression is the void Emit call.
 auto LowerDiagnosticSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::SystemSubroutineId id, diag::SourceSpan span)
+    const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

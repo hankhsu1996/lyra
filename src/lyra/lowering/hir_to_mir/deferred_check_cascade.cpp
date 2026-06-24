@@ -9,11 +9,13 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -27,7 +29,6 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -108,7 +109,7 @@ auto SnapshotPredicate(
 auto BuildDiagnosticThenScope(
     mir::CompilationUnit& unit, mir::TypeId self_pointer_type,
     mir::LocalId self_binding, mir::LocalId count_var,
-    const CheckVerdict& verdict) -> mir::Block {
+    const CheckVerdict& verdict, std::string origin) -> mir::Block {
   mir::Block block;
   const mir::TypeId int32_type = unit.builtins.int32;
 
@@ -145,29 +146,56 @@ auto BuildDiagnosticThenScope(
   const mir::ExprId services = block.exprs.Add(
       mir::MakeServicesCallExpr(self_read, unit.builtins.services));
 
-  const support::SystemSubroutineDesc* warning_desc =
-      support::FindSystemSubroutine("$warning");
-  if (warning_desc == nullptr) {
-    throw InternalError(
-        "BuildDiagnosticThenScope: $warning system subroutine not registered");
-  }
-
-  std::vector<mir::ExprId> args{services, items_array};
-  const mir::ExprId diag_call_id = block.exprs.Add(
+  // Format the verdict text, then route through the diagnostic broker's
+  // EmitWarning method (LRM 20.10): unique / priority deferred-check failures
+  // are warning-severity by spec. The origin tag is the qualified statement's
+  // source location, threaded in from the cascade entry.
+  const mir::ExprId text_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::SystemSubroutineCallee{.id = warning_desc->id},
-                  .arguments = std::move(args)},
+                  .callee =
+                      mir::BuiltinFnCallee{.id = support::BuiltinFn::kFormat},
+                  .arguments = {services, items_array}},
+          .type = unit.builtins.string});
+  const mir::ExprId diagnostic_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{
+                          .id = support::BuiltinFn::kDiagnostic},
+                  .arguments = {services}},
+          .type = unit.builtins.diagnostic});
+  const mir::ExprId origin_lit = block.exprs.Add(
+      mir::Expr{
+          .data = mir::StringLiteral{.value = std::move(origin)},
+          .type = unit.builtins.string});
+  const mir::ExprId origin_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::ConstructorCallee{},
+                  .arguments = {origin_lit}},
+          .type = unit.builtins.string});
+  const mir::ExprId emit_call_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{
+                          .id = support::BuiltinFn::kEmitWarning},
+                  .arguments = {diagnostic_id, origin_id, text_id}},
           .type = unit.builtins.void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = diag_call_id});
+  block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
   return block;
 }
 
 auto BuildUniqueCheckClosure(
     ModuleLowerer& module, const WalkFrame& wrapper_frame, mir::Block& wrapper,
     hir::UniquePriorityCheck check,
-    const std::vector<mir::LocalId>& snapshot_vars) -> mir::Expr {
+    const std::vector<mir::LocalId>& snapshot_vars, std::string origin)
+    -> mir::Expr {
   ClosureBuilder closure(module.Unit(), wrapper_frame);
   mir::Block& body = closure.Body();
 
@@ -264,7 +292,8 @@ auto BuildUniqueCheckClosure(
           .type = int32_type});
 
   mir::Block diag_block = BuildDiagnosticThenScope(
-      module.Unit(), self_ptr_type, self_binding, count_var, verdict);
+      module.Unit(), self_ptr_type, self_binding, count_var, verdict,
+      std::move(origin));
 
   const mir::BlockId diag_scope_id =
       body.child_scopes.Add(std::move(diag_block));
@@ -284,7 +313,8 @@ auto BuildDeferredCheckCascade(
     ModuleLowerer& module, WalkFrame frame, mir::Block wrapper,
     std::vector<DeferredCheckBranch> branches,
     std::optional<mir::Block> tail_else, hir::UniquePriorityCheck check,
-    std::optional<std::string> outer_label) -> mir::Stmt {
+    std::optional<std::string> outer_label, diag::SourceSpan span)
+    -> mir::Stmt {
   const mir::TypeId void_type = module.Unit().builtins.void_type;
   const mir::TypeId int32_type = module.Unit().builtins.int32;
 
@@ -306,7 +336,8 @@ auto BuildDeferredCheckCascade(
   }
 
   mir::Expr closure = BuildUniqueCheckClosure(
-      module, wrapper_frame, wrapper, check, snapshot_vars);
+      module, wrapper_frame, wrapper, check, snapshot_vars,
+      FormatRuntimeOriginString(span, module.SourceManager()));
   const mir::ExprId closure_expr_id = wrapper.exprs.Add(std::move(closure));
 
   const mir::DeferredCheckSiteId site_id =
@@ -395,7 +426,7 @@ auto BuildDeferredCheckCascade(
 
 auto LowerUniqueIfStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::IfStmt& root) -> diag::Result<mir::Stmt> {
+    const hir::IfStmt& root, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   const auto& hir_proc = process.HirBody();
   const auto cascade = FlattenUniqueCascade(hir_proc, root);
 
@@ -444,7 +475,7 @@ auto LowerUniqueIfStmt(
 
   return BuildDeferredCheckCascade(
       process.Module(), frame, std::move(wrapper), std::move(branches),
-      std::move(tail_scope), *root.check, std::move(label));
+      std::move(tail_scope), *root.check, std::move(label), span);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

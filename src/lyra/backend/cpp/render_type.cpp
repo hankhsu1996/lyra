@@ -121,6 +121,9 @@ auto RenderTypeAsCpp(
           [](const mir::FilesType&) -> diag::Result<std::string> {
             return std::string{"lyra::runtime::FileTable&"};
           },
+          [](const mir::DiagnosticType&) -> diag::Result<std::string> {
+            return std::string{"lyra::runtime::DiagnosticDispatcher&"};
+          },
           [](const mir::RuntimeLibraryType& r) -> diag::Result<std::string> {
             switch (r.kind) {
               case mir::RuntimeLibraryKind::kPrintItem:

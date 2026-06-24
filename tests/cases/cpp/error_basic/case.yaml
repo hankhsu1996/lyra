@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stderr:
-    exact: "error: something bad\n"
+    exact: "main.sv:3:5: error: something bad\n"
