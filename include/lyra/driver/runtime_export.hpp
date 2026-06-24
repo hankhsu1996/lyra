@@ -15,10 +15,10 @@ struct RuntimeLocation {
   std::filesystem::path lib;
 };
 
-// Locate the Lyra C++ runtime for the binary at `binary_path`. Resolution is a
-// single seam (see docs/architecture/runtime_distribution.md): today it reads
-// the binary's Bazel runfiles tree; a released binary will resolve relative to
-// its own install location. Callers depend only on the returned paths.
+// Locate the Lyra C++ runtime for the binary at `binary_path`. Resolution is
+// a single seam: today it reads the binary's Bazel runfiles tree; a released
+// binary will resolve relative to its own install location. Callers depend
+// only on the returned paths.
 auto ResolveRuntimeLocation(std::string_view binary_path)
     -> std::expected<RuntimeLocation, std::string>;
 

@@ -48,9 +48,8 @@ class String {
   }
 
   // LRM 6.16: a string value holds no NUL, so building one from bits strips
-  // every NUL byte -- which is also why the empty `""` (the packed `8'h00` of
-  // LRM 11.10.3) strips to the empty string. See
-  // decisions/string-packed-conversion.md.
+  // every NUL byte -- which is also why the empty `""` (the packed `8'h00`
+  // of LRM 11.10.3) strips to the empty string.
   [[nodiscard]] static auto FromPackedArray(const PackedArray& bits) -> String {
     std::string out;
     for (char c : bits.ByteString()) {
@@ -91,10 +90,9 @@ class String {
     return PackedArray::Bit(false);
   }
 
-  // LRM Table 6-7: the string default is the empty string. This is the
-  // container OOB-shield contract shared with the other value types
-  // (docs/decisions/runtime-shape-and-default-value.md), so a `string` can be
-  // an unpacked-array element.
+  // LRM Table 6-7: the string default is the empty string. Satisfies the
+  // container OOB-shield contract shared with the other value types, so a
+  // `string` can be an unpacked-array element.
   auto ResetToDefault() -> void {
     impl_.clear();
   }

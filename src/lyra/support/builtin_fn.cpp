@@ -263,6 +263,24 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "peek_buffered";
     case BuiltinFn::kAdvanceFd:
       return "advance_fd";
+    case BuiltinFn::kDelay:
+      return "delay";
+    case BuiltinFn::kSimTime:
+      return "sim_time";
+    case BuiltinFn::kSTime:
+      return "stime";
+    case BuiltinFn::kRealTime:
+      return "realtime";
+    case BuiltinFn::kFinish:
+      return "finish";
+    case BuiltinFn::kAsObservable:
+      return "as_observable";
+    case BuiltinFn::kRegisterSignal:
+      return "register_signal";
+    case BuiltinFn::kGetSignal:
+      return "get_signal";
+    case BuiltinFn::kGetChild:
+      return "get_child";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

@@ -28,11 +28,10 @@ namespace lyra::value {
 // It carries the element's runtime shape (bit width, signedness, 2/4-state for
 // `T = PackedArray`) that the C++ type alone cannot recover, so it is supplied
 // at construction. It is only ever read or copied, never written, so a const
-// read returns it directly with no scrub. `discard_sink_` is the throwaway an
-// invalid-index write lands on; the non-const write path scrubs it to canonical
-// via `T::ResetToDefault` before handing out the reference, so a discarded
-// write never leaks into a later access. See
-// `docs/decisions/runtime-shape-and-default-value.md`.
+// read returns it directly with no scrub. `discard_sink_` is the throwaway
+// an invalid-index write lands on; the non-const write path scrubs it to
+// canonical via `T::ResetToDefault` before handing out the reference, so a
+// discarded write never leaks into a later access.
 template <typename T>
 class DynamicArray {
  public:

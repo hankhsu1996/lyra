@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/base/time.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -30,7 +29,7 @@ struct StmtId {
 // Identifies a loop as a non-local break target (the outermost loop of a
 // multi-dimensional `foreach`). The universal labeled-break primitive; the C++
 // backend renders it as a `goto` to a label after the loop, an LLVM backend as
-// a branch. See `docs/decisions/foreach-lowering.md`.
+// a branch.
 struct LoopLabelId {
   std::uint32_t value;
 
@@ -132,19 +131,6 @@ enum class EventEdge : std::uint8_t {
   kBothEdges,
 };
 
-// LRM 9.4.1 `#N`. A time-anchored suspension: the engine schedules the next
-// resume at `now + duration`. Standalone -- the controlled body (if any) is
-// a separate statement in the enclosing block. Disjoint from the value-change
-// suspension family (`SensitivityWaitStmt`) and the named-event method-call
-// family: those are data-dependency anchored, this one is clock anchored.
-// See `docs/decisions/event-control-unification.md` for the rationale.
-struct DelayStmt {
-  // `duration` is in the declaring scope's time-precision steps. The scope owns
-  // its precision (emitted as a class constant); the runtime scales from there
-  // to the design-global tick (LRM 3.14.3).
-  SimDuration duration;
-};
-
 struct WhileStmt {
   ExprId condition;
   BlockId scope;
@@ -184,15 +170,20 @@ struct AwaitStmt {
   ExprId awaitable;
 };
 
-// One leaf entry of a wait's projection set. Identity-only: which member, the
+// One leaf entry of a wait's projection set: an expression yielding a
+// borrowed pointer to the observable cell the leaf subscribes to, plus the
 // observed bit projection of its packed encoding as a `(lsb_bit_offset,
-// bit_width)` pair, and what edge polarity the leaf was subscribed under (LRM
-// 9.4.2 / 9.4.2.2 / 9.4.3). A `bit_width` of 0 is the whole signal observed on
-// any change; an edge reduces to the bit at `lsb_bit_offset`. The projection is
-// resolved at HIR-to-MIR from the SV-level footprint so a backend emits the
-// pair directly. `kAnyChange` is the edge for implicit sensitivity.
+// bit_width)` pair, and the edge polarity the leaf was subscribed under (LRM
+// 9.4.2 / 9.4.2.2 / 9.4.3). A `bit_width` of 0 is the whole signal observed
+// on any change; an edge reduces to the bit at `lsb_bit_offset`. The
+// projection is resolved at HIR-to-MIR from the SV-level footprint so a
+// backend emits the pair directly. `kAnyChange` is the edge for implicit
+// sensitivity. The pointer expression's exact shape -- `AddressOf` of a
+// place, a bare borrowed-pointer member access, or a call that resolves an
+// upward reference to its current observable -- is stated by HIR-to-MIR so
+// the backend never re-derives it from the leaf's type.
 struct SensitivityRead {
-  SensitivityRef ref;
+  ExprId observable_ptr{};
   std::uint64_t lsb_bit_offset = 0;
   std::uint64_t bit_width = 0;
   EventEdge edge_kind = EventEdge::kAnyChange;
@@ -208,8 +199,8 @@ struct SensitivityWaitStmt {
 
 using StmtData = std::variant<
     EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt,
-    ConstructOwnedObjectStmt, ConstructExternalUnitStmt, ForStmt, DelayStmt,
-    WhileStmt, DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt, AwaitStmt,
+    ConstructOwnedObjectStmt, ConstructExternalUnitStmt, ForStmt, WhileStmt,
+    DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt, AwaitStmt,
     SensitivityWaitStmt>;
 
 struct Stmt {

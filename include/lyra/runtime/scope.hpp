@@ -59,11 +59,11 @@ class Scope {
     return {};
   }
 
-  // Records, during construction, the address of a signal this scope owns under
-  // its source name, and the owned child reachable at `name` plus one index per
-  // array dimension (empty for a scalar). A unit answers by-name queries about
-  // its own interface from these registrations; it never inspects who asks
-  // (reference_resolution.md). `name` points at an emitted string literal; the
+  // Records, during construction, the address of a signal this scope owns
+  // under its source name, and the owned child reachable at `name` plus one
+  // index per array dimension (empty for a scalar). A unit answers by-name
+  // queries about its own interface from these registrations; it never
+  // inspects who asks. `name` points at an emitted string literal; the
   // indices are copied so the entry outlives the constructor's arguments.
   void RegisterSignal(std::string_view name, void* address);
   void RegisterChild(
@@ -78,7 +78,8 @@ class Scope {
   // the simulation path.
   [[nodiscard]] auto GetSignal(std::string_view name) -> void*;
   [[nodiscard]] auto GetChild(
-      std::string_view name, std::span<const std::size_t> indices) -> Scope*;
+      std::string_view name, std::span<const lyra::value::PackedArray> indices)
+      -> Scope*;
 
   // Climbs the parent chain to the nearest ancestor named `key` and returns it
   // (LRM 23.8). `match` selects the name compared: `kDefName` matches an
@@ -111,9 +112,8 @@ class Scope {
 
   // Last-write-wins per site within a time slot: re-submit at the same site
   // overwrites the prior closure, which suppresses settle-time glitches. The
-  // site id is the compile-time-fixed slot index passed as an SV integer
-  // (`value-type-concepts.md`); the runtime projects to `std::size_t`
-  // internally at the API boundary.
+  // site id is the compile-time-fixed slot index passed as an SV integer;
+  // the runtime projects to `std::size_t` internally at the API boundary.
   void SubmitObserved(
       const lyra::value::PackedArray& site_id, std::function<void()> fn);
   void DrainObserved();
@@ -175,9 +175,8 @@ class Scope {
   std::vector<ExternBase*> externs_;
 };
 
-// A module / interface / program instance: an owned child built from another
-// compilation unit, reached across the unit boundary
-// (hierarchy_and_generate.md).
+// A module / interface / program instance: an owned child built from
+// another compilation unit, reached across the unit boundary.
 class Instance : public Scope {
  public:
   using Scope::Scope;

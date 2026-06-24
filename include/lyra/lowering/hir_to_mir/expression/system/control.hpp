@@ -19,8 +19,8 @@ namespace lyra::lowering::hir_to_mir {
 // user diagnostic if the level arg is non-literal or out of range.
 auto LowerFinishSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame,
-    const hir::CallExpr& call, support::SystemSubroutineId id,
-    std::string_view name, const support::TerminationSystemSubroutineInfo& info,
-    diag::SourceSpan span) -> diag::Result<mir::Expr>;
+    const hir::CallExpr& call, std::string_view name,
+    const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

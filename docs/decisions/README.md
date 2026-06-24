@@ -62,6 +62,9 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 - [builtin-call-identity](builtin-call-identity.md) -- built-in method calls carry a flat
   closed-namespace identifier (`support::BuiltinFn`) shared between HIR and MIR; per-family enum
   splits are out.
+- [address-of-primitive](address-of-primitive.md) -- MIR carries an explicit place-to-pointer
+  operator (`AddressOfExpr`), dual to `DerefExpr`. Runtime APIs taking pointers receive an explicit
+  address-taken operand; the backend never injects `&`.
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control.
 
 ### References and construction

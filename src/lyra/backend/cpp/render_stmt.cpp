@@ -341,37 +341,13 @@ auto RenderDoWhileStmtNode(
   return result;
 }
 
-// The Observable pointer a sensitivity leaf subscribes to: a plain member
-// yields the address of its own field; an ExternalRef member subscribes
-// through its resolved cell (AsObservable); a downward slot is already a
-// resolved `Var<T>*`, so the slot name is the pointer.
-auto RenderSensitivityRefPtr(
-    const ScopeView& view, const mir::SensitivityRef& ref)
-    -> diag::Result<std::string> {
-  auto name = RenderMemberName(view, ref);
-  if (!name) return std::unexpected(std::move(name.error()));
-  const auto& var = view.EnclosingClassAtHops(ref.hops).members.Get(ref.var);
-  if (std::holds_alternative<mir::ExternalRefType>(
-          view.Unit().GetType(var.type).data)) {
-    return *name + ".AsObservable()";
-  }
-  // A borrowed-pointer slot already holds a `Var<T>*` (= Observable*); the
-  // pointer value is the subscription target, no address-of.
-  if (const auto* ptr =
-          std::get_if<mir::PointerType>(&view.Unit().GetType(var.type).data);
-      ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
-    return *name;
-  }
-  return "&" + *name;
-}
-
 auto RenderSensitivityWaitStmt(
     const ScopeView& view, const mir::SensitivityWaitStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
   std::string result = Indent(indent) + "co_await lyra::runtime::WaitAny({";
   for (std::size_t i = 0; i < s.reads.size(); ++i) {
     const auto& read = s.reads[i];
-    auto ptr_or = RenderSensitivityRefPtr(view, read.ref);
+    auto ptr_or = RenderExpr(view, view.Expr(read.observable_ptr));
     if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
     if (i != 0) result += ", ";
     result += "{" + *ptr_or + ", " +
@@ -396,11 +372,6 @@ auto RenderStmt(
       Overloaded{
           [&](const mir::EmptyStmt&) -> diag::Result<std::string> {
             return Indent(indent) + ";\n";
-          },
-          [&](const mir::DelayStmt& s) -> diag::Result<std::string> {
-            return Indent(indent) + "co_await lyra::runtime::Delay(" +
-                   "self->Services()" + ", " + std::to_string(s.duration) +
-                   ", kTimePrecisionPower);\n";
           },
           [&](const mir::LocalDeclStmt& s) -> diag::Result<std::string> {
             return RenderLocalDeclStmt(view, s, indent);

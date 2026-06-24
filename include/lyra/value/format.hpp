@@ -178,8 +178,8 @@ struct PrintLiteralItem {
 
   // Borrows the text bytes of `text`. The caller materializes `text` as a
   // temporary in the same full-expression as the runtime print call, so the
-  // borrowed bytes outlive the walk (the same lifetime contract FormatArg
-  // relies on; see docs/decisions/format-dispatch.md).
+  // borrowed bytes outlive the walk (the same lifetime contract `FormatArg`
+  // relies on).
   explicit PrintLiteralItem(const String& text);
 };
 
