@@ -125,11 +125,12 @@ enum class BuiltinFn : std::uint16_t {
   kCancellationFor,
   kIsCancelled,
   // Print decomposes into a pure-value format step and a sink-write step.
-  // `Format` is a `RuntimeServices` method that walks the items, honoring
-  // the engine's `$timeformat` for `%t`, and yields an SV `string`.
-  // `Write` / `Writeln` are `FileTable` methods that emit that string to
-  // the descriptor's sink (LRM 21.2.1 / 21.3.1); the `ln` variant appends
-  // a trailing newline.
+  // `Format` is a `lyra::value` free function that walks the items and yields
+  // an SV `string`; it takes the engine's `$timeformat` state (for `%t`) as an
+  // explicit operand the caller supplies from `TimeFormat`, so the format step
+  // holds no engine state of its own. `Write` / `Writeln` are `FileTable`
+  // methods that emit that string to the descriptor's sink (LRM 21.2.1 /
+  // 21.3.1); the `ln` variant appends a trailing newline.
   kFormat,
   kWrite,
   kWriteln,
@@ -145,12 +146,14 @@ enum class BuiltinFn : std::uint16_t {
   kEmitWarning,
   kEmitError,
   kEmitFatal,
-  // LRM 20.4.3 `$timeformat` state setter / reset on `RuntimeServices`. The
+  // LRM 20.4.3 `$timeformat` display state on `RuntimeServices`. `TimeFormat`
+  // reads the current state, threaded into `Format` as the `%t` operand. The
   // setter takes the four `%t` display arguments (units power, precision,
   // suffix, minimum field width) as SV values; the reset form takes none and
-  // restores the LRM Table 20-3 defaults. Two distinct methods rather than
-  // one with arity-driven branching, mirroring the print `Write` / `Writeln`
-  // and diagnostic `EmitX` splits.
+  // restores the LRM Table 20-3 defaults. Distinct methods rather than one with
+  // arity-driven branching, mirroring the print `Write` / `Writeln` and
+  // diagnostic `EmitX` splits.
+  kTimeFormat,
   kSetTimeFormat,
   kResetTimeFormat,
   // LRM 21.3.4.3 scan primitives. `Scan` is a pure value-layer parser;

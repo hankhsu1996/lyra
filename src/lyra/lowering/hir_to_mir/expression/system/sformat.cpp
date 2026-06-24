@@ -50,12 +50,7 @@ auto BuildSFormatCallExpr(
   const mir::ExprId services_id =
       block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
 
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = support::BuiltinFn::kFormat},
-              .arguments = {services_id, items_array}},
-      .type = unit.builtins.string};
+  return BuildFormatCallExpr(unit, block, services_id, items_array);
 }
 
 auto RejectNonStringOutput(std::string_view name, diag::SourceSpan span)

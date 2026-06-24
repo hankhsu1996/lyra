@@ -34,6 +34,7 @@ struct BuiltinMirTypes {
   TypeId print_literal_item;
   TypeId print_value_item;
   TypeId format_spec;
+  TypeId time_format;
   TypeId coroutine;
 };
 
@@ -90,6 +91,9 @@ struct CompilationUnit {
             .format_spec = AddType(
                 TypeData{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kFormatSpec}}),
+            .time_format = AddType(
+                TypeData{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kTimeFormat}}),
             .coroutine = TypeId{},
         } {
     // A bare coroutine yields nothing, so its completion payload is `Void`. It

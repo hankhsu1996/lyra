@@ -4,11 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/value/integral_format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -72,6 +75,25 @@ auto PackedArrayLowWord(const PackedArray& pa) -> std::uint64_t {
 auto Format(const FormatSpec& spec, FormatArg arg, const FormatContext& ctx)
     -> std::string {
   return arg.format_fn(spec, arg.ptr, ctx);
+}
+
+auto Format(std::span<const PrintItem> items, const TimeFormat& time_format)
+    -> String {
+  const FormatContext ctx{.time_format = &time_format};
+  std::string out;
+  for (const PrintItem& item : items) {
+    std::visit(
+        Overloaded{
+            [&](const PrintLiteralItem& lit) {
+              out.append(std::string_view{lit.data, lit.size});
+            },
+            [&](const PrintValueItem& v) {
+              out.append(Format(v.spec, v.arg, ctx));
+            },
+        },
+        item);
+  }
+  return String(std::move(out));
 }
 
 auto Formatter<PackedArray>::Format(

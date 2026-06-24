@@ -136,6 +136,8 @@ auto RenderTypeAsCpp(
                 return std::string{"lyra::value::FormatSpec"};
               case mir::RuntimeLibraryKind::kChannelCancellation:
                 return std::string{"lyra::runtime::ChannelCancellation"};
+              case mir::RuntimeLibraryKind::kTimeFormat:
+                return std::string{"lyra::value::TimeFormat"};
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },
