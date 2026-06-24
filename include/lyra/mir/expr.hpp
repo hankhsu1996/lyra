@@ -17,7 +17,6 @@
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/mir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
 
@@ -88,10 +87,6 @@ struct IncDecExpr {
   ExprId target;
 };
 
-struct SystemSubroutineCallee {
-  support::SystemSubroutineId id;
-};
-
 // Calls a compiler-recognized runtime entry whose identity is a closed-
 // namespace `support::BuiltinFn`. Instance form: `args[0]` is the value
 // receiver; remaining args are the SV arguments.
@@ -132,8 +127,8 @@ struct ClosureRef {
 struct ConstructorCallee {};
 
 using Callee = std::variant<
-    SystemSubroutineCallee, MethodRef, BuiltinFnCallee, BuiltinStaticCallee,
-    FreeFnCallee, ClosureRef, ConstructorCallee>;
+    MethodRef, BuiltinFnCallee, BuiltinStaticCallee, FreeFnCallee, ClosureRef,
+    ConstructorCallee>;
 
 struct CallExpr {
   Callee callee;

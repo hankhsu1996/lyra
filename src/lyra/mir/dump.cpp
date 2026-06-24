@@ -381,9 +381,6 @@ class MirDumper {
   [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {
     return std::visit(
         Overloaded{
-            [](const SystemSubroutineCallee& s) -> std::string {
-              return std::format("SystemSubroutineCallee[id={}]", s.id.value);
-            },
             [this](const MethodRef& r) -> std::string {
               const auto& owner = ResolveScopeAtHops(r.hops.value);
               const auto& target = owner.methods.Get(r.method);
