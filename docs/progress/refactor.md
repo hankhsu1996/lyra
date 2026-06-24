@@ -516,18 +516,25 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `TimeFormat` operand. This makes "pure value ops live at `lyra::value`, engine state is
       reached through `services`" consistent everywhere, closing the last exception R37 left open.
 
-- [ ] R39 -- Lift the implicit `Ref<T>` access into explicit MIR calls. R12 / the
-      value-type-concepts cut lifted observable-cell reads / writes / mutations into explicit
-      `BuiltinFnCallee` (`kGet` / `kSet` / `kMutate`) calls at HIR-to-MIR so the backend renders
-      them mechanically. The sibling axis -- a procedural `ref` / `const ref` formal (LRM 13.5.2),
-      whose binding kind is `ParamDirection::kRef` / `kConstRef` and whose MIR type is `RefType{T}`
-      -- is still implicit: a read of such a local is silently rendered with a `.Get()` suffix, and
-      a whole-cell write through one conjures an engine handle argument the MIR call does not carry.
-      Both are `mir.md` invariant 10 violations of the same shape the observable axis just resolved.
-      Apply the same lift: HIR-to-MIR emits `BuiltinFnCallee{kRefGet}` / `BuiltinFnCallee{kRefSet}`
-      whose argument vector is complete (services included). Compound / partial writes through a ref
-      formal become well-defined in the same step (today the render path bails). See
-      `decisions/value-type-concepts.md` for the pattern this generalizes.
+- [x] R39 -- The implicit `Ref<T>` access is lifted into explicit MIR calls, reusing the observable
+      cell protocol rather than inventing a parallel one. R12 lifted observable-cell reads / writes
+      / mutations into explicit `BuiltinFnCallee` (`kGet` / `kSet` / `kMutate`) calls at HIR-to-MIR
+      so the backend renders them mechanically. A `ref` / `const ref` formal (LRM 13.5.2) and a
+      by-reference capture (LRM 6.21) carry a `RefType` whose access -- by
+      `reference-as-data-type.md` F3 -- is the same cell protocol (read, update-event `Set`,
+      partial-write `Mutate`). The lift therefore routes through the same three callees: the callee
+      names the access; the receiver's `RefType` (vs `ObservableType`) selects `Ref<T>` vs `Var<T>`
+      at render, exactly as `builtin-call-identity.md` D3 prescribes -- no `RefType`-specific
+      callee. The root cause was a single typing asymmetry: a reference-to-a-ref-binding was typed
+      with the unwrapped value, so the auto-`kGet` wrap and the `Set` / `Mutate` write-routing
+      (which already admit every cell-type, including `RefType`) skipped it, forcing the render path
+      to re-derive ref-ness from the slot type and inject `.Get()` / a spliced engine handle -- a
+      `mir.md` invariant 10 violation. Typing the reference with its `RefType` slot makes the
+      existing lift catch it; whole writes, compound / partial writes, and increment / decrement
+      through a ref are now all well-defined (the render previously bailed on the latter two). The
+      runtime `Ref<T>` gained `Mutate`, and `ScopedMutation` now commits through a `Ref<T>` so
+      observable and reference partial writes share one handle. See
+      `decisions/value-type-concepts.md` and `decisions/reference-as-data-type.md`.
 
 - [ ] R40 -- Retire the construct- / control-stmt shapes that the backend completes from outside
       MIR. `ForkStmt`, `ConstructOwnedObjectStmt`, and `ConstructExternalUnitStmt` each name a

@@ -92,9 +92,10 @@ auto LowerAutomaticVarDeclStmt(
   const mir::LocalId local_id =
       block.vars.Add(mir::LocalDecl{.name = hir_local.name, .type = type});
   process.MapProceduralVar(
-      v.var,
-      AutomaticVarBinding{
-          .declaration_procedural_depth = frame.block_depth, .var = local_id});
+      v.var, AutomaticVarBinding{
+                 .declaration_procedural_depth = frame.block_depth,
+                 .var = local_id,
+                 .type = type});
 
   mir::ExprId init_value{};
   if (v.init.has_value()) {

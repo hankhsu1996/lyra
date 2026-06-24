@@ -30,6 +30,13 @@ namespace lyra::lowering::hir_to_mir {
 struct AutomaticVarBinding {
   BlockDepth declaration_procedural_depth;
   mir::LocalId var;
+  // The slot's declared MIR type, carried here because the declaring block is
+  // not reachable while the enclosing body is still being lowered -- unlike a
+  // static var, whose member type is read live from the already-built class
+  // arena. A `ref` / `const ref` formal's slot is a `RefType`, so a reference
+  // to it lifts to the cell protocol (`kGet` / `kSet` / `kMutate`) instead of
+  // reading the unwrapped value.
+  mir::TypeId type;
 };
 
 struct StaticVarBinding {
