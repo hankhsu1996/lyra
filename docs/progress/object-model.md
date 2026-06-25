@@ -23,7 +23,7 @@ each stage establishes, not how.
       adequately from how a member is owned today; a base-lineage read is a later purity refinement,
       not done as a standalone non-neutral change.)
 
-- [ ] Each post-construction lifecycle body (the scope's resolve / initialize / activate work) is an
+- [x] Each post-construction lifecycle body (the scope's resolve / initialize / activate work) is an
       ordinary method that records, as a first-class fact, which runtime-base method it overrides --
       a resolved declaration reference, not a textual name. The per-phase special fields on the
       object declaration are gone. The full dynamic-dispatch slot machinery is not introduced here;

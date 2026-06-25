@@ -121,10 +121,12 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
       mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
   return mir::MethodDecl{
       .name = std::string{process.CallableName()},
-      .code = mir::CallableCode{
-          .params = {self_id},
-          .result_type = process.Module().Unit().builtins.coroutine,
-          .body = std::move(process_block)}};
+      .code =
+          mir::CallableCode{
+              .params = {self_id},
+              .result_type = process.Module().Unit().builtins.coroutine,
+              .body = std::move(process_block)},
+      .overrides = std::nullopt};
 }
 
 // Wraps the body in a `forever` loop. `implicit_sensitivity`, if present,
@@ -169,10 +171,12 @@ auto LowerForeverProcess(
       mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
   return mir::MethodDecl{
       .name = std::string{process.CallableName()},
-      .code = mir::CallableCode{
-          .params = {self_id},
-          .result_type = process.Module().Unit().builtins.coroutine,
-          .body = std::move(process_block)}};
+      .code =
+          mir::CallableCode{
+              .params = {self_id},
+              .result_type = process.Module().Unit().builtins.coroutine,
+              .body = std::move(process_block)},
+      .overrides = std::nullopt};
 }
 
 }  // namespace
@@ -318,10 +322,12 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
 
   return mir::MethodDecl{
       .name = src.name,
-      .code = mir::CallableCode{
-          .params = std::move(params),
-          .result_type = result_type,
-          .body = std::move(body_block)}};
+      .code =
+          mir::CallableCode{
+              .params = std::move(params),
+              .result_type = result_type,
+              .body = std::move(body_block)},
+      .overrides = std::nullopt};
 }
 
 auto ProcessLowerer::BuildReturnPayload(

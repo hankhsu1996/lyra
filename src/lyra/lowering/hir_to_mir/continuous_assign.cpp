@@ -83,10 +83,12 @@ auto LowerContinuousAssign(
       mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
   return mir::MethodDecl{
       .name = std::move(name),
-      .code = mir::CallableCode{
-          .params = {self_id},
-          .result_type = lowerer.Module().Unit().builtins.coroutine,
-          .body = std::move(process_block)}};
+      .code =
+          mir::CallableCode{
+              .params = {self_id},
+              .result_type = lowerer.Module().Unit().builtins.coroutine,
+              .body = std::move(process_block)},
+      .overrides = std::nullopt};
 }
 
 }  // namespace lyra::lowering::hir_to_mir
