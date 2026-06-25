@@ -224,6 +224,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "GetSignal";
     case support::BuiltinFn::kGetChild:
       return "GetChild";
+    case support::BuiltinFn::kRegisterInitial:
+      return "RegisterInitial";
+    case support::BuiltinFn::kRegisterFinal:
+      return "RegisterFinal";
     case support::BuiltinFn::kVectorEmplace:
       return "push_back";
     case support::BuiltinFn::kVectorBack:

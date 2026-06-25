@@ -24,7 +24,6 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/method.hpp"
-#include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -90,9 +89,11 @@ class ProcessLowerer {
   }
 
   // Lowers an entire HIR process (initial / final / always / always_ff /
-  // always_comb / always_latch) into a `mir::Process`. Constructs the process
-  // root scope on the stack and walks `src`'s body into it.
-  auto Run(const hir::Process& src) -> diag::Result<mir::Process>;
+  // always_comb / always_latch) into its `mir::MethodDecl` body. Constructs the
+  // process root scope on the stack and walks `src`'s body into it. Binding the
+  // body to its startup / shutdown lifecycle is the caller's concern (it reads
+  // the HIR process kind), not a property of the returned body.
+  auto Run(const hir::Process& src) -> diag::Result<mir::MethodDecl>;
 
   // Lowers a HIR subroutine declaration into a `mir::MethodDecl`.
   // Pre-registers the formal params as body locals so call references resolve,

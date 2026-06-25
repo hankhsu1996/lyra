@@ -22,11 +22,10 @@ struct ContinuousAssignId {
 // into the containing `StructuralScope.exprs` pool, matching how every other
 // scope-level expression (parameter values, variable initialisers) is stored.
 // The `lhs` form is restricted to a structural-var-rooted addressable
-// expression. HIR -> MIR
-// translates this into a synthesised `mir::Process` whose body is
-// `forever { lhs = rhs; SensitivityWaitStmt(sensitivity_list); }`, giving
-// continuous assignment the same runtime mental model as always_comb
-// (LRM 9.2.2.2.1).
+// expression. HIR -> MIR translates this into a synthesised process body
+// `forever { lhs = rhs; SensitivityWaitStmt(sensitivity_list); }`, registered
+// as a startup activation, giving continuous assignment the same runtime
+// mental model as always_comb (LRM 9.2.2.2.1).
 struct ContinuousAssign {
   diag::SourceSpan span;
   ExprId lhs;

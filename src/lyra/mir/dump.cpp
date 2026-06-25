@@ -18,7 +18,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/member.hpp"
-#include "lyra/mir/process.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -622,16 +621,6 @@ class MirDumper {
     return std::format("Type[{}]", type.value);
   }
 
-  static auto FormatProcessKind(const Process& p) -> std::string {
-    switch (p.kind) {
-      case ProcessKind::kInitial:
-        return "Initial";
-      case ProcessKind::kFinal:
-        return "Final";
-    }
-    throw InternalError("MirDumper: unknown ProcessKind");
-  }
-
   void DumpClass(const Class& s) {
     scope_stack_.push_back(&s);
     Line(std::format("Class \"{}\"", s.name));
@@ -702,22 +691,15 @@ class MirDumper {
       Dedent();
     }
 
-    Line("Processes:");
-    Indent();
-    for (std::size_t i = 0; i < s.processes.size(); ++i) {
-      DumpProcess(s.processes.Get(ProcessId{static_cast<std::uint32_t>(i)}), i);
+    if (s.activate.has_value()) {
+      Line("Activate:");
+      Indent();
+      DumpMethod(*s.activate, 0);
+      Dedent();
     }
-    Dedent();
 
     Dedent();
     scope_stack_.pop_back();
-  }
-
-  void DumpProcess(const Process& p, std::size_t index) {
-    Line(std::format("Process[{}] {}", index, FormatProcessKind(p)));
-    Indent();
-    DumpMethod(p.code, index);
-    Dedent();
   }
 
   void DumpMethod(const MethodDecl& d, std::size_t index) {

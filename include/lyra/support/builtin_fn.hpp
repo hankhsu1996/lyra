@@ -243,6 +243,13 @@ enum class BuiltinFn : std::uint16_t {
   kForkWaitAll,
   kForkWaitFirst,
   kSpawnAll,
+  // Lifecycle activation registration (LRM 9.2): binds a process body's
+  // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
+  // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
+  // initial and final are different registrations. Instance methods on the
+  // scope handle (`args[0]`); the coroutine to register is a regular argument.
+  kRegisterInitial,
+  kRegisterFinal,
   // Value-layer conversion factories. HIR-to-MIR dispatches on the (src, dst)
   // type pair and emits a `CallExpr` to the matching factory; the C++ backend
   // renders each as the corresponding `lyra::value::T::Method(...)` static call
