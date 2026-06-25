@@ -14,19 +14,11 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
-#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
-#include "lyra/lowering/hir_to_mir/expression/inside.hpp"
-#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/expression/references.hpp"
-#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -1580,123 +1572,6 @@ auto ClassLowerer::Run(
   }
 
   return mir_class;
-}
-
-auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
-    -> diag::Result<mir::Expr> {
-  const mir::TypeId result_type = module_->TranslateType(expr.type);
-  auto raw_or = std::visit(
-      Overloaded{
-          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
-            return LowerHirPrimaryExprStructural(
-                *this, frame, p.data, result_type);
-          },
-          [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
-            return LowerHirUnaryExpr(*this, frame, u, result_type);
-          },
-          [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
-            return LowerHirBinaryExpr(*this, frame, b, result_type);
-          },
-          [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConditionalExpr(*this, frame, c, result_type);
-          },
-          [](const hir::AssignExpr&) -> diag::Result<mir::Expr> {
-            throw InternalError(
-                "ClassLowerer::LowerExpr: HIR AssignExpr does not "
-                "appear in constructor-side expressions; structural code has "
-                "no general assignment");
-          },
-          [](const hir::IncDecExpr&) -> diag::Result<mir::Expr> {
-            throw InternalError(
-                "ClassLowerer::LowerExpr: HIR IncDecExpr does not "
-                "appear in constructor-side expressions; structural code has "
-                "no increment / decrement");
-          },
-          [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
-            return LowerHirConversionExpr(*this, frame, cv, result_type);
-          },
-          [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirCallExpr(*this, frame, c, expr.span, result_type);
-          },
-          [&](const hir::InsideExpr& in) -> diag::Result<mir::Expr> {
-            return LowerHirInsideExpr(*this, frame, in, result_type);
-          },
-          [&](const hir::ElementSelectExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirElementSelectExpr(*this, frame, s, result_type);
-          },
-          [&](const hir::RangeSelectExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirRangeSelectExpr(*this, frame, s, result_type);
-          },
-          [&](const hir::MemberAccessExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirMemberAccessExpr(*this, frame, s, result_type);
-          },
-          [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExpr(*this, frame, c, result_type);
-          },
-          [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
-            return LowerHirReplicationExpr(*this, frame, r, result_type);
-          },
-          [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
-            return LowerHirAssignmentPatternExpr(*this, frame, a, result_type);
-          },
-          [&](const hir::AssignmentPatternReplicationExpr& a)
-              -> diag::Result<mir::Expr> {
-            return LowerHirAssignmentPatternReplicationExpr(
-                *this, frame, a, result_type);
-          },
-          [](const hir::DynamicArrayNewExpr&) -> diag::Result<mir::Expr> {
-            return diag::Fail(
-                diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                "dynamic-array new[] is not allowed in constructor "
-                "expressions; LRM 7.5.1 restricts it to blocking assignments");
-          },
-          [&](const hir::AssociativeAssignmentPatternExpr& a)
-              -> diag::Result<mir::Expr> {
-            return LowerHirAssociativeAssignmentPatternExpr(
-                *this, frame, a, result_type);
-          },
-      },
-      expr.data);
-  if (!raw_or) return raw_or;
-  // Same as ProcessLowerer::LowerExpr: unwrap an observable cell leaf with
-  // an explicit `Get` call so the surrounding structural expression sees
-  // the value (e.g. a continuous assign whose RHS reads a signal).
-  if (mir::IsObservableCellType(module_->Unit().GetType(raw_or->type))) {
-    const mir::ExprId cell_id =
-        frame.current_block->exprs.Add(*std::move(raw_or));
-    return mir::MakeObservableGetCallExpr(cell_id, result_type);
-  }
-  return raw_or;
-}
-
-auto ClassLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
-    -> diag::Result<mir::Expr> {
-  const mir::TypeId result_type = module_->TranslateType(expr.type);
-  return std::visit(
-      Overloaded{
-          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
-            return LowerHirPrimaryExprStructural(
-                *this, frame, p.data, result_type);
-          },
-          [&](const hir::ElementSelectExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirElementSelectExprLhs(*this, frame, s, result_type);
-          },
-          [&](const hir::RangeSelectExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirRangeSelectExprLhs(*this, frame, s, result_type);
-          },
-          [&](const hir::MemberAccessExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirMemberAccessExprLhs(*this, frame, s, result_type);
-          },
-          [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExpr(*this, frame, c, result_type);
-          },
-          [](const auto&) -> diag::Result<mir::Expr> {
-            throw InternalError(
-                "ClassLowerer::LowerLhsExpr: non-addressable HIR "
-                "expression in LHS context");
-          },
-      },
-      expr.data);
 }
 
 }  // namespace lyra::lowering::hir_to_mir
