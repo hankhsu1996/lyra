@@ -115,9 +115,12 @@ struct RangeSelectExpr {
   RangeBounds bounds;
 };
 
-// LRM 7.2.1 packed struct field access. `field_index` identifies the member
-// in the base expression's PackedStructType field table; offset / width come
-// from that table at every consumer site.
+// Struct / union field access (LRM 7.2 / 7.3). `field_index` identifies the
+// member by its declaration-order position in the base expression's aggregate
+// type. How a consumer resolves that index depends on the base type: a packed
+// aggregate reads the field's offset / width from its field table (a bit
+// slice), while an unpacked aggregate selects the member's independent storage
+// by index.
 struct MemberAccessExpr {
   ExprId base_value;
   std::uint32_t field_index;
