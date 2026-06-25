@@ -431,8 +431,8 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 - [x] R34 -- Unify the procedural and structural AST-to-HIR expression-lowering paths. The two
       carried parallel handlers per expression family that built the same HIR node but guarded their
       accepted operand types independently, so the two drifted. Resolved as the AST-to-HIR slice of
-      `generic-lowering.md` Phase 2: each context-free family is now one function template over the
-      pass class, so there is a single guard and the drift cannot recur. The specific string
+      the generic-lowering work: each context-free family is now one function template over the pass
+      class, so there is a single guard and the drift cannot recur. The specific string
       element-select concern turned out to need no separate fix -- slang rejects an element of a
       dynamic type outside procedural code, so a structural string `s[i]` never reaches lowering,
       and the value realization (getc for a string base, element access for an array) was already a
