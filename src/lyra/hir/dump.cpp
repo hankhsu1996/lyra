@@ -183,6 +183,25 @@ class HirDumper {
                   "Enum(base=Type[{}], members=[{}])", e.base_type.value,
                   members);
             },
+            [](const UnpackedStructType& s) -> std::string {
+              std::string fields;
+              for (std::size_t i = 0; i < s.fields.size(); ++i) {
+                if (i > 0) fields += ", ";
+                fields += std::format(
+                    "{}:Type[{}]", s.fields[i].name, s.fields[i].type.value);
+              }
+              return std::format("UnpackedStruct(fields=[{}])", fields);
+            },
+            [](const UnpackedUnionType& u) -> std::string {
+              std::string fields;
+              for (std::size_t i = 0; i < u.fields.size(); ++i) {
+                if (i > 0) fields += ", ";
+                fields += std::format(
+                    "{}:Type[{}]", u.fields[i].name, u.fields[i].type.value);
+              }
+              return std::format(
+                  "UnpackedUnion(tagged={}, fields=[{}])", u.tagged, fields);
+            },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
                   "UnpackedArray(elem=Type[{}], dim=[{}:{}])",
