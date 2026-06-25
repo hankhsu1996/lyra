@@ -45,12 +45,16 @@ void Scope::RegisterSignal(std::string_view name, void* address) {
 }
 
 void Scope::RegisterChild(
-    std::string_view name, std::span<const std::size_t> indices, Scope& child) {
+    std::string_view name, std::span<const lyra::value::PackedArray> indices,
+    Scope& child) {
+  std::vector<std::size_t> host_indices;
+  host_indices.reserve(indices.size());
+  for (const auto& idx : indices) {
+    host_indices.push_back(static_cast<std::size_t>(idx.ToInt64()));
+  }
   child_entries_.push_back(
       ChildEntry{
-          .name = name,
-          .indices = std::vector<std::size_t>(indices.begin(), indices.end()),
-          .scope = &child});
+          .name = name, .indices = std::move(host_indices), .scope = &child});
 }
 
 auto Scope::GetSignal(std::string_view name) -> void* {

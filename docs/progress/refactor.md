@@ -537,7 +537,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       observable and reference partial writes share one handle. See
       `decisions/value-type-concepts.md` and `decisions/reference-as-data-type.md`.
 
-- [ ] R40 -- Retire the construct- / control-stmt shapes that the backend completes from outside
+- [x] R40 -- Retire the construct- / control-stmt shapes that the backend completes from outside
       MIR. `ForkStmt`, `ConstructOwnedObjectStmt`, and `ConstructExternalUnitStmt` each name a
       runtime entry the render path looks up by stmt kind and string-injects a `self->Services()`
       argument the MIR did not state. `ConstructOwnedObjectStmt` additionally emits a companion

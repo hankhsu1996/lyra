@@ -67,7 +67,7 @@ class Scope {
   // entry outlives the constructor's arguments.
   void RegisterSignal(std::string_view name, void* address);
   void RegisterChild(
-      std::string_view name, std::span<const std::size_t> indices,
+      std::string_view name, std::span<const lyra::value::PackedArray> indices,
       Scope& child);
 
   // Returns the address of the signal registered under `name`, or the owned

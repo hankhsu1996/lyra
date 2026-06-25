@@ -86,52 +86,6 @@ auto RenderBlockStmt(
   return result;
 }
 
-auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
-  switch (mode) {
-    case mir::JoinMode::kAll:
-      return "lyra::runtime::JoinMode::kAll";
-    case mir::JoinMode::kAny:
-      return "lyra::runtime::JoinMode::kAny";
-    case mir::JoinMode::kNone:
-      return "lyra::runtime::JoinMode::kNone";
-  }
-  throw InternalError("RenderForkJoinModeLiteral: unknown JoinMode value");
-}
-
-// LRM 9.3.2: a fork is a block, rendered as a C++ block at the fork
-// site. Its block_item_declarations initialize first, in the parent, before any
-// branch spawns -- so a branch's by-value argument of one of them is a
-// snapshot. Each branch is a coroutine-typed closure; the shared closure
-// renderer emits it as a stateless coroutine lambda invoked on its captures,
-// yielding a `lyra::runtime::Coroutine` collected into `fork_branches`. The
-// fork then waits per the join mode.
-auto RenderForkStmt(
-    const ScopeView& view, const mir::ForkStmt& s, std::size_t indent)
-    -> std::string {
-  // The fork-branches vector lives in this fork's own `{...}` block scope
-  // (opened just below), so a fixed name suffices -- a sibling fork in the
-  // surrounding scope, or a nested fork in a branch lambda body, each has
-  // its own `fork_branches` in its own C++ scope.
-  const std::string vec = "fork_branches";
-  const ScopeView fork_view =
-      view.WithBlock(view.Block().child_scopes.Get(s.scope));
-  std::string out = std::format("{}{{\n", Indent(indent));
-  out += RenderBlockStatements(fork_view, indent + 1);
-  out += std::format(
-      "{}std::vector<lyra::runtime::Coroutine<void>> {};\n", Indent(indent + 1),
-      vec);
-  for (const auto branch : s.branches) {
-    out += std::format(
-        "{}{}.push_back({});\n", Indent(indent + 1), vec,
-        RenderExpr(fork_view, fork_view.Expr(branch)));
-  }
-  out += std::format(
-      "{}co_await lyra::runtime::Fork(self->Services(), std::move({}), {});\n",
-      Indent(indent + 1), vec, RenderForkJoinModeLiteral(s.mode));
-  out += std::format("{}}}\n", Indent(indent));
-  return out;
-}
-
 auto RenderIfStmt(
     const ScopeView& view, const mir::IfStmt& s, std::size_t indent)
     -> std::string {
@@ -150,94 +104,6 @@ auto RenderIfStmt(
   }
   result += "\n";
   return result;
-}
-
-auto RenderConstructOwnedObjectStmt(
-    const ScopeView& view, const mir::ConstructOwnedObjectStmt& s,
-    std::size_t indent) -> std::string {
-  const auto& var = view.Class().members.Get(s.target);
-  const auto& target_scope = view.Class().nested_classes.Get(s.scope_id);
-  std::string trailing_args;
-  for (const auto arg_id : s.args) {
-    trailing_args += std::format(", {}", RenderExpr(view, view.Expr(arg_id)));
-  }
-  const auto child = mir::GetChildScope(view.Unit(), var.type);
-  if (!child.has_value() ||
-      !std::holds_alternative<mir::GenerateScopeChild>(*child)) {
-    throw InternalError(
-        "ConstructOwnedObjectStmt target is not an owned object var");
-  }
-  const std::string lhs = std::format("self->{}", var.name);
-  // The runtime scope name is the source-level label (LRM 27.6) -- the name an
-  // upward climb and a by-name child lookup match against -- not the emitted
-  // class name.
-  const std::string reg_name =
-      var.source_name.empty() ? var.name : var.source_name;
-  const std::string make = std::format(
-      "std::make_unique<{}>(self, \"{}\", self->Services(){})",
-      target_scope.name, reg_name, trailing_args);
-  if (std::holds_alternative<mir::VectorType>(
-          view.Unit().GetType(var.type).data)) {
-    return std::format(
-        "{}{}.push_back({});\n{}self->RegisterChild(\"{}\", "
-        "std::array{{{}.size() - 1}}, *{}.back());\n",
-        Indent(indent), lhs, make, Indent(indent), reg_name, lhs, lhs);
-  }
-  return std::format(
-      "{}{} = {};\n{}self->RegisterChild(\"{}\", {{}}, *{});\n", Indent(indent),
-      lhs, make, Indent(indent), reg_name, lhs);
-}
-
-// Materializes an external-unit member by recursing on its type, mirroring the
-// type walk in RenderTypeAsCpp: each vector layer emits a counted loop that
-// grows the vector and recurses into the new element; the owning-pointer leaf
-// assigns a freshly constructed child whose parent is `this` and whose name is
-// the member's compile-time label. `dims` carries one element count per vector
-// layer, so a scalar (no vector layer) renders just the leaf.
-auto RenderExternalUnitFill(
-    const ScopeView& view, const std::string& lvalue, mir::TypeId type,
-    const std::string& unit_name, const std::string& label,
-    const std::vector<std::uint32_t>& dims, std::size_t depth,
-    std::size_t indent) -> std::string {
-  if (const auto* vec =
-          std::get_if<mir::VectorType>(&view.Unit().GetType(type).data)) {
-    const std::string idx = std::format("i{}", depth);
-    std::string out;
-    out += std::format(
-        "{}for (std::size_t {} = 0; {} < {}; ++{}) {{\n", Indent(indent), idx,
-        idx, dims.at(depth), idx);
-    out += std::format("{}{}.emplace_back();\n", Indent(indent + 1), lvalue);
-    out += RenderExternalUnitFill(
-        view, std::format("{}[{}]", lvalue, idx), vec->element, unit_name,
-        label, dims, depth + 1, indent + 1);
-    out += std::format("{}}}\n", Indent(indent));
-    return out;
-  }
-  std::string out = std::format(
-      "{}{} = std::make_unique<{}>(self, \"{}\", self->Services());\n",
-      Indent(indent), lvalue, unit_name, label);
-  std::string idx = "{}";
-  if (depth > 0) {
-    idx = "std::array{";
-    for (std::size_t d = 0; d < depth; ++d) {
-      if (d != 0) idx += ", ";
-      idx += std::format("i{}", d);
-    }
-    idx += "}";
-  }
-  out += std::format(
-      "{}self->RegisterChild(\"{}\", {}, *{});\n", Indent(indent), label, idx,
-      lvalue);
-  return out;
-}
-
-auto RenderConstructExternalUnitStmt(
-    const ScopeView& view, const mir::ConstructExternalUnitStmt& s,
-    std::size_t indent) -> std::string {
-  const auto& var = view.Class().members.Get(s.target);
-  return RenderExternalUnitFill(
-      view, std::format("self->{}", var.name), var.type, s.unit_name, var.name,
-      s.dims, 0, indent);
 }
 
 // C++ has no labeled break, so a `foreach` break that must leave every nested
@@ -345,17 +211,8 @@ auto RenderStmt(
           [&](const mir::BlockStmt& s) -> std::string {
             return RenderBlockStmt(view, s, indent);
           },
-          [&](const mir::ForkStmt& s) -> std::string {
-            return RenderForkStmt(view, s, indent);
-          },
           [&](const mir::IfStmt& s) -> std::string {
             return RenderIfStmt(view, s, indent);
-          },
-          [&](const mir::ConstructOwnedObjectStmt& s) -> std::string {
-            return RenderConstructOwnedObjectStmt(view, s, indent);
-          },
-          [&](const mir::ConstructExternalUnitStmt& s) -> std::string {
-            return RenderConstructExternalUnitStmt(view, s, indent);
           },
           [&](const mir::ForStmt& s) -> std::string {
             return RenderForStmt(view, s, indent);

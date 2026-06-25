@@ -5,6 +5,7 @@
 #include <expected>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -29,6 +30,7 @@
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/class.hpp"
@@ -38,6 +40,7 @@
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -205,13 +208,227 @@ auto MakeExternalUnitMemberType(
   return type;
 }
 
+// Recursively emits the per-leaf construction stmts for an external-unit
+// instance member with `dims` remaining at this level. `chain_expr_id` is the
+// vector the next operation pushes into; `chain_type` is its MIR type. At the
+// innermost level the leaf is built (`make_unique<ExtUnit>`), pushed into the
+// chain, and registered on `self` for by-name lookup. At an outer level the
+// recursion enumerates the current dim, pushes an empty inner vector per
+// iteration, and recurses on the just-pushed inner via `vector_back`. The
+// chain reads are idempotent C++ expressions, so a re-read after a push
+// observes the new back element -- the recursive structure relies on that
+// ordering.
+void EmitExternalUnitDimLevel(
+    ModuleLowerer& module, const WalkFrame& frame,
+    mir::ExprId self_id_for_register, const std::string& runtime_label,
+    mir::TypeId leaf_pointer_type, mir::ExprId chain_expr_id,
+    mir::TypeId chain_type, std::span<const std::uint32_t> dims,
+    std::vector<mir::ExprId>& indices) {
+  mir::Block& block = *frame.current_block;
+  const auto& builtins = module.Unit().builtins;
+  const auto host_int_lit = [&](std::int64_t v) -> mir::ExprId {
+    return block.exprs.Add(mir::MakeInt32Literal(builtins.int32, v));
+  };
+  const auto string_literal = [&](const std::string& s) -> mir::ExprId {
+    return block.exprs.Add(
+        mir::Expr{
+            .data = mir::StringLiteral{.value = s}, .type = builtins.string});
+  };
+  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
+  const auto self_read = [&]() -> mir::ExprId {
+    return block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
+  };
+
+  if (dims.empty()) {
+    std::vector<mir::ExprId> ctor_args = {
+        self_id_for_register, string_literal(runtime_label),
+        block.exprs.Add(BuildServicesCallExpr(module, frame))};
+    const mir::ExprId ctor_call_id = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::ConstructorCallee{},
+                    .arguments = std::move(ctor_args)},
+            .type = leaf_pointer_type});
+
+    if (indices.empty()) {
+      // Scalar member: chain is the member slot itself, assign in place.
+      const mir::ExprId assign_id = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::AssignExpr{
+                      .target = chain_expr_id, .value = ctor_call_id},
+              .type = leaf_pointer_type});
+      block.AppendStmt(
+          mir::Stmt{
+              .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
+    } else {
+      const mir::ExprId emplace_id = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::BuiltinFnCallee{
+                              .id = support::BuiltinFn::kVectorEmplace},
+                      .arguments = {chain_expr_id, ctor_call_id}},
+              .type = builtins.void_type});
+      block.AppendStmt(
+          mir::Stmt{
+              .label = std::nullopt,
+              .data = mir::ExprStmt{.expr = emplace_id}});
+    }
+
+    // The just-built child is reachable via the scalar slot directly or via
+    // `chain.back()` for the vector case; either way one dereference yields
+    // the ExternalUnitObject reference `RegisterChild` consumes.
+    mir::ExprId leaf_handle_id = chain_expr_id;
+    if (!indices.empty()) {
+      leaf_handle_id = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::BuiltinFnCallee{
+                              .id = support::BuiltinFn::kVectorBack},
+                      .arguments = {chain_expr_id}},
+              .type = leaf_pointer_type});
+    }
+    const mir::TypeId leaf_object_type =
+        std::get<mir::PointerType>(
+            module.Unit().GetType(leaf_pointer_type).data)
+            .pointee;
+    const mir::ExprId leaf_deref_id = block.exprs.Add(
+        mir::Expr{
+            .data = mir::DerefExpr{.pointer = leaf_handle_id},
+            .type = leaf_object_type});
+
+    const mir::TypeId indices_type = module.Unit().AddType(
+        mir::UnpackedArrayType{
+            .element_type = builtins.int32, .size = indices.size()});
+    const mir::ExprId indices_id = block.exprs.Add(
+        mir::Expr{
+            .data = mir::ArrayLiteralExpr{.elements = indices},
+            .type = indices_type});
+
+    const mir::ExprId register_id = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinFnCallee{
+                            .id = support::BuiltinFn::kRegisterChild},
+                    .arguments =
+                        {self_read(), string_literal(runtime_label), indices_id,
+                         leaf_deref_id}},
+            .type = builtins.void_type});
+    block.AppendStmt(
+        mir::Stmt{
+            .label = std::nullopt, .data = mir::ExprStmt{.expr = register_id}});
+    return;
+  }
+
+  const mir::TypeId inner_type =
+      std::get<mir::VectorType>(module.Unit().GetType(chain_type).data).element;
+  const std::span<const std::uint32_t> remaining_dims = dims.subspan(1);
+  const std::uint32_t count = dims.front();
+  for (std::uint32_t i = 0; i < count; ++i) {
+    // Push an empty inner vector / leaf slot at this position. For an
+    // intermediate level the inner is itself a vector; for the about-to-be
+    // leaf level we still emplace through `EmitExternalUnitDimLevel` below.
+    const mir::ExprId empty_inner_id = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::ConstructorCallee{}, .arguments = {}},
+            .type = inner_type});
+    if (!remaining_dims.empty()) {
+      // For intermediate levels, push the empty inner first then recurse
+      // into it via `back()`. The leaf level handles its own emplace below.
+      const mir::ExprId emplace_id = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::BuiltinFnCallee{
+                              .id = support::BuiltinFn::kVectorEmplace},
+                      .arguments = {chain_expr_id, empty_inner_id}},
+              .type = builtins.void_type});
+      block.AppendStmt(
+          mir::Stmt{
+              .label = std::nullopt,
+              .data = mir::ExprStmt{.expr = emplace_id}});
+      const mir::ExprId inner_chain_id = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::BuiltinFnCallee{
+                              .id = support::BuiltinFn::kVectorBack},
+                      .arguments = {chain_expr_id}},
+              .type = inner_type});
+      indices.push_back(host_int_lit(static_cast<std::int64_t>(i)));
+      EmitExternalUnitDimLevel(
+          module, frame, self_id_for_register, runtime_label, leaf_pointer_type,
+          inner_chain_id, inner_type, remaining_dims, indices);
+      indices.pop_back();
+    } else {
+      // About to emit a leaf at this position. Recursion into the leaf
+      // branch above (with dims empty) handles the emplace + register.
+      indices.push_back(host_int_lit(static_cast<std::int64_t>(i)));
+      EmitExternalUnitDimLevel(
+          module, frame, self_id_for_register, runtime_label, leaf_pointer_type,
+          chain_expr_id, chain_type, remaining_dims, indices);
+      indices.pop_back();
+    }
+  }
+}
+
+// Lowers an external-unit instance member to the explicit MIR call sequence
+// that builds each instance, stores it in its (possibly nested) vector slot,
+// and registers it on the parent for by-name lookup. The construction lives
+// in the parent's constructor block at depth zero; multi-dimensional members
+// unroll into `dims[0] * dims[1] * ...` leaf sequences threading a
+// `vector::back()` chain at each nesting level so the register call can reach
+// the just-emplaced child.
+void AppendExternalUnitConstruction(
+    ModuleLowerer& module, const WalkFrame& frame, mir::MemberId target,
+    const std::string& runtime_label, std::span<const std::uint32_t> dims) {
+  mir::Block& block = *frame.current_block;
+  const mir::Class& owner_class = *frame.current_class;
+  const mir::MemberDecl& var = owner_class.members.Get(target);
+  const mir::TypeId self_ptr_type = owner_class.self_pointer_type;
+
+  // Peel the vector layers off the member type to land on the leaf
+  // `unique_ptr<ExternalUnit>` type; the constructor builds that pointer and
+  // the chain operations propagate down to it.
+  mir::TypeId leaf_pointer_type = var.type;
+  for (std::size_t i = 0; i < dims.size(); ++i) {
+    const auto& chain_data = module.Unit().GetType(leaf_pointer_type).data;
+    if (!std::holds_alternative<mir::VectorType>(chain_data)) {
+      throw InternalError(
+          "AppendExternalUnitConstruction: dims exceed member vector depth");
+    }
+    leaf_pointer_type = std::get<mir::VectorType>(chain_data).element;
+  }
+
+  const mir::ExprId self_id =
+      block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
+  const mir::ExprId chain_id = block.exprs.Add(
+      mir::MakeMemberAccessExpr(
+          self_id, mir::MemberRef{.hops = {.value = 0}, .var = target},
+          var.type));
+  std::vector<mir::ExprId> indices;
+  EmitExternalUnitDimLevel(
+      module, frame, self_id, runtime_label, leaf_pointer_type, chain_id,
+      var.type, dims, indices);
+}
+
 // Returns the StructuralVarId of each instance member, indexed by
 // InstanceMemberId, so cross-unit reference resolution can reach the child
 // instance var by the same id the HIR recipe carries.
 auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
     -> std::vector<mir::MemberId> {
   mir::Class& mir_class = *frame.current_class;
-  mir::Block& ctor_block = *frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   std::vector<mir::MemberId> instance_member_vars;
   instance_member_vars.reserve(hir_scope.instance_members.size());
@@ -229,13 +446,8 @@ auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
         mir::MemberDecl{.name = im.instance_name, .type = var_type});
     instance_member_vars.push_back(var_id);
 
-    ctor_block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::ConstructExternalUnitStmt{
-                .target = var_id,
-                .unit_name = im.target_unit,
-                .dims = im.array_dims}});
+    AppendExternalUnitConstruction(
+        lowerer.Module(), frame, var_id, im.instance_name, im.array_dims);
   }
   return instance_member_vars;
 }
@@ -543,44 +755,214 @@ auto InstallPortConnections(
   return {};
 }
 
-void ValidateConstructOwnedObjectStmt(
+void ValidateOwnedChildConstruction(
     const mir::CompilationUnit& unit, const mir::Class& owner_class,
-    const mir::Block& block, const mir::ConstructOwnedObjectStmt& stmt) {
-  if (stmt.scope_id.value >= owner_class.nested_classes.size()) {
+    const mir::Block& block, mir::MemberId target_var,
+    mir::ClassId child_scope_id, std::span<const mir::ExprId> ctor_args) {
+  if (child_scope_id.value >= owner_class.nested_classes.size()) {
     throw InternalError(
-        "ConstructOwnedObjectStmt: scope_id is not a direct child of the "
+        "owned-child construction: child scope is not a direct child of the "
         "enclosing class");
   }
-  if (stmt.target.value >= owner_class.members.size()) {
+  if (target_var.value >= owner_class.members.size()) {
     throw InternalError(
-        "ConstructOwnedObjectStmt: target is out of range in the enclosing "
+        "owned-child construction: target is out of range in the enclosing "
         "class");
   }
-  const auto& var = owner_class.members.Get(stmt.target);
+  const auto& var = owner_class.members.Get(target_var);
   const auto child = mir::GetChildScope(unit, var.type);
   const auto* generate =
       child ? std::get_if<mir::GenerateScopeChild>(&*child) : nullptr;
-  const auto& child_scope = owner_class.nested_classes.Get(stmt.scope_id);
+  const auto& child_scope = owner_class.nested_classes.Get(child_scope_id);
   if (generate == nullptr || generate->name != child_scope.name) {
     throw InternalError(
-        "ConstructOwnedObjectStmt: target var does not own the requested "
+        "owned-child construction: target var does not own the requested "
         "class");
   }
-  if (stmt.args.size() != child_scope.params.size()) {
+  if (ctor_args.size() != child_scope.params.size()) {
     throw InternalError(
-        "ConstructOwnedObjectStmt: args count does not match child class "
+        "owned-child construction: args count does not match child class "
         "param count");
   }
-  for (std::size_t i = 0; i < stmt.args.size(); ++i) {
-    const auto& arg = block.exprs.Get(stmt.args[i]);
+  for (std::size_t i = 0; i < ctor_args.size(); ++i) {
+    const auto& arg = block.exprs.Get(ctor_args[i]);
     const auto& param =
         child_scope.params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
     if (arg.type != param.type) {
       throw InternalError(
-          "ConstructOwnedObjectStmt: arg type does not match structural "
+          "owned-child construction: arg type does not match structural "
           "param type");
     }
   }
+}
+
+// Lowers an owned-child construction site to the explicit MIR call shape:
+// `make_unique<Child>(self, label, services, ctor_args...)` produces the
+// child instance and `RegisterChild(self, label, indices, *child)` records
+// it on the parent for by-name lookup. A scalar member assigns the unique
+// pointer to its slot; a vector member emplaces into the storage vector and
+// the register call reaches the just-pushed element through `vector_back`.
+// `arm_frame` must point at the block where the stmts land and carry the
+// correct hop count to `self` (the parent constructor's first local) for
+// the lowering site's depth.
+void AppendOwnedChildConstruction(
+    ModuleLowerer& module, const WalkFrame& arm_frame, mir::MemberId target_var,
+    mir::ClassId child_scope_id, std::vector<mir::ExprId> ctor_args,
+    std::optional<mir::ExprId> array_index) {
+  mir::Block& arm_block = *arm_frame.current_block;
+  const mir::Class& owner_class = *arm_frame.current_class;
+  ValidateOwnedChildConstruction(
+      module.Unit(), owner_class, arm_block, target_var, child_scope_id,
+      ctor_args);
+
+  const mir::MemberDecl& var = owner_class.members.Get(target_var);
+  const std::string& runtime_label =
+      var.source_name.empty() ? var.name : var.source_name;
+  const auto& builtins = module.Unit().builtins;
+  const mir::TypeId self_ptr_type = owner_class.self_pointer_type;
+
+  // The child pointer type the constructor produces: `unique_ptr<Child>` for
+  // both scalar and vector storage (the vector wraps an N-length sequence of
+  // these slots, the scalar holds one directly).
+  const mir::TypeId child_ptr_type =
+      std::holds_alternative<mir::VectorType>(
+          module.Unit().GetType(var.type).data)
+          ? std::get<mir::VectorType>(module.Unit().GetType(var.type).data)
+                .element
+          : var.type;
+  const auto& child_ptr_data = module.Unit().GetType(child_ptr_type).data;
+  if (!std::holds_alternative<mir::PointerType>(child_ptr_data) ||
+      std::get<mir::PointerType>(child_ptr_data).ownership !=
+          mir::PointerOwnership::kUnique) {
+    throw InternalError(
+        "owned-child construction: target slot type is not a unique pointer");
+  }
+
+  const auto string_literal = [&](const std::string& s) -> mir::ExprId {
+    return arm_block.exprs.Add(
+        mir::Expr{
+            .data = mir::StringLiteral{.value = s}, .type = builtins.string});
+  };
+  const auto self_read = [&]() -> mir::ExprId {
+    return arm_block.exprs.Add(MakeSelfRefExpr(arm_frame, self_ptr_type));
+  };
+
+  std::vector<mir::ExprId> ctor_call_args;
+  ctor_call_args.reserve(3 + ctor_args.size());
+  ctor_call_args.push_back(self_read());
+  ctor_call_args.push_back(string_literal(runtime_label));
+  ctor_call_args.push_back(
+      arm_block.exprs.Add(BuildServicesCallExpr(module, arm_frame)));
+  for (const mir::ExprId arg : ctor_args) {
+    ctor_call_args.push_back(arg);
+  }
+  const mir::ExprId ctor_call_id = arm_block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::ConstructorCallee{},
+                  .arguments = std::move(ctor_call_args)},
+          .type = child_ptr_type});
+
+  // Target member access reads self each time so reads and writes share no
+  // implicit pointer; the slot stores either the unique pointer directly
+  // (scalar) or the storage vector (vector member).
+  const mir::ExprId member_access_id = arm_block.exprs.Add(
+      mir::MakeMemberAccessExpr(
+          self_read(), mir::MemberRef{.hops = {.value = 0}, .var = target_var},
+          var.type));
+
+  // The child slot we hand to `RegisterChild` is `*self->member` for the
+  // scalar case and `*self->member.back()` for the vector case (the vector
+  // already grew by `push_back` of the just-built pointer).
+  mir::ExprId child_ref_id{};
+  if (std::holds_alternative<mir::VectorType>(
+          module.Unit().GetType(var.type).data)) {
+    const mir::ExprId emplace_call_id = arm_block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinFnCallee{
+                            .id = support::BuiltinFn::kVectorEmplace},
+                    .arguments = {member_access_id, ctor_call_id}},
+            .type = builtins.void_type});
+    arm_block.AppendStmt(
+        mir::Stmt{
+            .label = std::nullopt,
+            .data = mir::ExprStmt{.expr = emplace_call_id}});
+
+    // Re-read the member; the back-element call yields a reference to the
+    // most-recently-pushed unique pointer.
+    const mir::ExprId vector_access_id = arm_block.exprs.Add(
+        mir::MakeMemberAccessExpr(
+            self_read(),
+            mir::MemberRef{.hops = {.value = 0}, .var = target_var}, var.type));
+    const mir::ExprId back_call_id = arm_block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinFnCallee{
+                            .id = support::BuiltinFn::kVectorBack},
+                    .arguments = {vector_access_id}},
+            .type = child_ptr_type});
+    child_ref_id = arm_block.exprs.Add(
+        mir::Expr{
+            .data = mir::DerefExpr{.pointer = back_call_id},
+            .type = std::get<mir::PointerType>(child_ptr_data).pointee});
+  } else {
+    const mir::ExprId assign_id = arm_block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::AssignExpr{
+                    .target = member_access_id, .value = ctor_call_id},
+            .type = child_ptr_type});
+    arm_block.AppendStmt(
+        mir::Stmt{
+            .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
+
+    const mir::ExprId scalar_access_id = arm_block.exprs.Add(
+        mir::MakeMemberAccessExpr(
+            self_read(),
+            mir::MemberRef{.hops = {.value = 0}, .var = target_var}, var.type));
+    child_ref_id = arm_block.exprs.Add(
+        mir::Expr{
+            .data = mir::DerefExpr{.pointer = scalar_access_id},
+            .type = std::get<mir::PointerType>(child_ptr_data).pointee});
+  }
+
+  // Index array argument: an empty `UnpackedArray<int32, 0>` for a scalar
+  // member, a single-element array carrying the loop-induction value for a
+  // vector member. The runtime walks the span and calls `.ToInt64()` per
+  // entry, matching the `kGetChild` by-name lookup signature.
+  std::vector<mir::ExprId> index_elems;
+  if (array_index.has_value()) {
+    index_elems.push_back(*array_index);
+  }
+  const mir::TypeId indices_type = module.Unit().AddType(
+      mir::UnpackedArrayType{
+          .element_type = builtins.int32, .size = index_elems.size()});
+  const mir::ExprId indices_id = arm_block.exprs.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(index_elems)},
+          .type = indices_type});
+
+  const mir::ExprId register_call_id = arm_block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{
+                          .id = support::BuiltinFn::kRegisterChild},
+                  .arguments =
+                      {self_read(), string_literal(runtime_label), indices_id,
+                       child_ref_id}},
+          .type = builtins.void_type});
+  arm_block.AppendStmt(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data = mir::ExprStmt{.expr = register_call_id}});
 }
 
 // The for-stmt body block is one level below the parent constructor block where
@@ -595,28 +977,41 @@ auto MakeForBodyInductionVarArg(mir::LocalId induction_var_id, mir::TypeId type)
       .type = type};
 }
 
+// Builds the body block of a single generate arm. Each arm constructs one
+// owned-child instance (scalar for `if` / `case` generate, one element of the
+// member-vector per iteration for `for` generate) and records it on the parent
+// for by-name lookup. `depth_offset` tells the lowering how many levels below
+// `frame.block_depth` the produced block will run -- the call shape inside
+// references `self` through a hop count derived from that depth, so the caller
+// must pass the offset that matches where it places the returned block in its
+// control-flow scaffold (an if-then-scope or for-body sits one level deeper;
+// a case-cascade body sits `1 + item_index + 1` deeper). The optional
+// `array_index_arg` populates the runtime index slot for a vector member; for
+// a scalar member it is `nullopt` (the registered index list is empty).
 auto BuildGenerateArmBody(
-    const ModuleLowerer& module, WalkFrame frame,
+    ModuleLowerer& module, WalkFrame frame, std::size_t depth_offset,
     const GenerateBindings& gen_bindings, hir::StructuralScopeId arm_scope_id,
-    std::vector<mir::Expr> args) -> mir::Block {
+    std::vector<mir::Expr> args, std::optional<mir::Expr> array_index_arg)
+    -> mir::Block {
   const auto& binding = gen_bindings.by_scope_id.at(arm_scope_id.value);
 
   mir::Block arm_block;
+  const WalkFrame arm_frame =
+      frame.WithBlock(&arm_block).DeeperBy(depth_offset);
+
   std::vector<mir::ExprId> arg_ids;
   arg_ids.reserve(args.size());
   for (auto& arg : args) {
     arg_ids.push_back(arm_block.exprs.Add(std::move(arg)));
   }
+  std::optional<mir::ExprId> array_index_id;
+  if (array_index_arg.has_value()) {
+    array_index_id = arm_block.exprs.Add(std::move(*array_index_arg));
+  }
 
-  const mir::ConstructOwnedObjectStmt construct_stmt{
-      .target = binding.var_id,
-      .scope_id = binding.scope_id,
-      .args = std::move(arg_ids)};
-  ValidateConstructOwnedObjectStmt(
-      module.Unit(), *frame.current_class, arm_block, construct_stmt);
-
-  arm_block.AppendStmt(
-      mir::Stmt{.label = std::nullopt, .data = construct_stmt});
+  AppendOwnedChildConstruction(
+      module, arm_frame, binding.var_id, binding.scope_id, std::move(arg_ids),
+      array_index_id);
   return arm_block;
 }
 
@@ -633,12 +1028,14 @@ auto LowerIfGenerate(
   const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
 
   const mir::BlockId then_id = block.child_scopes.Add(BuildGenerateArmBody(
-      lowerer.Module(), frame, gen_bindings, if_gen.then_scope, {}));
+      lowerer.Module(), frame, 1, gen_bindings, if_gen.then_scope, {},
+      std::nullopt));
 
   std::optional<mir::BlockId> else_id;
   if (if_gen.else_scope.has_value()) {
     else_id = block.child_scopes.Add(BuildGenerateArmBody(
-        lowerer.Module(), frame, gen_bindings, *if_gen.else_scope, {}));
+        lowerer.Module(), frame, 1, gen_bindings, *if_gen.else_scope, {},
+        std::nullopt));
   }
 
   return mir::Stmt{
@@ -665,17 +1062,27 @@ auto LowerCaseGenerate(
   const CaseSnapshotRefs snapshot =
       AppendCaseSnapshot(lowerer.Module(), wrapper_frame, cond_expr_id);
 
+  // Case-cascade nesting places body_scope[k] one level below the cascade
+  // chain entry that selects it: item 0 sits two blocks below the outer
+  // BlockStmt (wrapper / item-0 then-scope), item 1 sits three blocks below
+  // (wrapper / level(1) / item-1 then-scope), and so on. The default scope
+  // lands as the deepest else branch -- the same depth the last item occupies.
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(case_gen.items.size());
-  for (const auto& item : case_gen.items) {
+  for (std::size_t i = 0; i < case_gen.items.size(); ++i) {
+    const std::size_t arm_depth = 2 + i;
     body_scopes.push_back(BuildGenerateArmBody(
-        lowerer.Module(), frame, gen_bindings, item.scope, {}));
+        lowerer.Module(), frame, arm_depth, gen_bindings,
+        case_gen.items[i].scope, {}, std::nullopt));
   }
 
   std::optional<mir::Block> default_scope;
   if (case_gen.default_scope.has_value()) {
+    const std::size_t default_depth =
+        case_gen.items.empty() ? 1 : 1 + case_gen.items.size();
     default_scope = BuildGenerateArmBody(
-        lowerer.Module(), frame, gen_bindings, *case_gen.default_scope, {});
+        lowerer.Module(), frame, default_depth, gen_bindings,
+        *case_gen.default_scope, {}, std::nullopt);
   }
 
   auto build_predicate =
@@ -748,13 +1155,20 @@ auto LowerLoopGenerate(
               mir::AssignExpr{.target = step_target_id, .value = step_value_id},
           .type = step_type});
 
+  // The induction variable feeds two slots: as a structural-param ctor arg
+  // (so each generated child binds its `genvar` per LRM 27.4) and as the
+  // array index `RegisterChild` records (so a hierarchical lookup `c[i]`
+  // reaches the same slot). Build two fresh reads so each consumer reaches
+  // the loop local through its own MIR node.
   std::vector<mir::Expr> body_args;
   body_args.push_back(MakeForBodyInductionVarArg(loop_local_id, genvar_type));
+  mir::Expr array_index_arg =
+      MakeForBodyInductionVarArg(loop_local_id, genvar_type);
 
   const mir::BlockId loop_scope_id =
       block.child_scopes.Add(BuildGenerateArmBody(
-          lowerer.Module(), frame, gen_bindings, loop.scope,
-          std::move(body_args)));
+          lowerer.Module(), frame, 1, gen_bindings, loop.scope,
+          std::move(body_args), std::move(array_index_arg)));
 
   return mir::Stmt{
       .label = std::nullopt,
