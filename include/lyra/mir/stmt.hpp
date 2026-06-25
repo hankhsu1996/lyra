@@ -57,52 +57,10 @@ struct BlockStmt {
   BlockId scope;
 };
 
-// LRM 9.3.2 Table 9-1: when the forking process resumes relative to its
-// branches.
-enum class JoinMode : std::uint8_t {
-  kAll,
-  kAny,
-  kNone,
-};
-
-// LRM 9.3.2 parallel block. The fork is itself a block: `scope` (in the
-// enclosing block's child_scopes) holds the block_item_declaration locals,
-// which are initialized at block entry -- in the
-// parent, before any branch spawns -- giving each spawned branch a by-value
-// snapshot. Each branch is a coroutine-typed ClosureExpr in `scope`'s expr
-// arena, referenced here by id; the branch captures its environment (its
-// receiver `self`, a fork-scope local by value, an enclosing variable by
-// reference through a `Ref<T>`, LRM 6.21). The backend spawns each branch's
-// coroutine and the parent waits per `mode`. The branch runs as a coroutine
-// because its result type is the coroutine type, not because of any flag on the
-// closure node.
-struct ForkStmt {
-  JoinMode mode;
-  BlockId scope;
-  std::vector<ExprId> branches;
-};
-
 struct IfStmt {
   ExprId condition;
   BlockId then_scope;
   std::optional<BlockId> else_scope;
-};
-
-struct ConstructOwnedObjectStmt {
-  MemberId target;
-  ClassId scope_id;
-  std::vector<ExprId> args;
-};
-
-// The cross-unit twin of ConstructOwnedObjectStmt: it carries no scope_id
-// because the child is a separate compilation unit, not a nested scope of this
-// one. `dims` is empty for a scalar instance and holds one element count per
-// array dimension, outermost first; the backend materializes the nested vector
-// by replication over these counts.
-struct ConstructExternalUnitStmt {
-  MemberId target;
-  std::string unit_name;
-  std::vector<std::uint32_t> dims;
 };
 
 struct ForInitDecl {
@@ -186,8 +144,7 @@ struct SensitivityWaitStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt,
-    ConstructOwnedObjectStmt, ConstructExternalUnitStmt, ForStmt, WhileStmt,
+    EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, IfStmt, ForStmt, WhileStmt,
     DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt, SensitivityWaitStmt>;
 
 struct Stmt {
