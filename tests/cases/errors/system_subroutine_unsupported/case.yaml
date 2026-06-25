@@ -1,0 +1,17 @@
+id: errors.system_subroutine_unsupported
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "$readmemh"
+      - "not yet supported"
+    not_contains:
+      - "internal error"

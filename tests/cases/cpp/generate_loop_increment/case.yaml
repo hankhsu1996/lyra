@@ -1,0 +1,14 @@
+id: cpp.generate_loop_increment
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    inc: 15
+    dec: 15
+    compound: 15
+    assign_form: 15

@@ -1,0 +1,16 @@
+id: errors.continuous_assign_uninstantiated_branch
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "continuous-assignment form"
+    not_contains:
+      - "internal error"
