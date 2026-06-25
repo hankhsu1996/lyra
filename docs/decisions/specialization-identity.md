@@ -15,8 +15,7 @@ each behave according to their own parameters. Today a compiled unit's identity 
 name, so two specializations of one module (e.g. `Reg #(.INIT(3))` and `Reg #(.INIT(7))`) carry the
 same name; emitting more than one collapses them and the last one wins. This record fixes how a
 specialization is identified, named, and reached across the unit boundary. It binds every
-parameterized instantiation and constrains the deferred specialization-dedup optimization
-(`docs/progress/performance.md`).
+parameterized instantiation and constrains the deferred specialization-dedup optimization.
 
 ## Findings that shaped the design
 
@@ -73,11 +72,10 @@ Rust cannot.
    or enumeration order (`specialization_model.md` inv 6).
 
 3. **The serializer is subset-agnostic; which bindings feed it is policy.** Functional
-   specialization (the current requirement, `docs/progress/hierarchy.md` Stage A) feeds all
-   parameters. The deferred dedup optimization (`docs/progress/performance.md`) feeds only
-   code-shape-affecting bindings and demotes value-only parameters to constructor inputs resolved at
-   construction. The identity mechanism does not change across that shift; only the input subset
-   does.
+   specialization (the current requirement) feeds all parameters. The deferred dedup optimization
+   feeds only code-shape-affecting bindings and demotes value-only parameters to constructor inputs
+   resolved at construction. The identity mechanism does not change across that shift; only the
+   input subset does.
 
 4. **The identity is computed at AST-to-HIR and carried by name thereafter.** HIR owns identity and
    frontend ids end there (`hir.md`); the cross-unit reference and the construct carry the name, and

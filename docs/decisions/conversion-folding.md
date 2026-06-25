@@ -70,4 +70,3 @@ living in the render layer. Removing it, not relocating it, is the fix.
 
 - `architecture/mir.md` invariant 10 (a backend never re-derives a stated fact) and Notes (MIR is
   primitives shaped for the downstream optimizer to fold).
-- `progress/refactor.md` R7.

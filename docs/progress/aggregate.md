@@ -30,7 +30,6 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA6b | Done: `with` clause + iterator on sort / rsort / reduction methods.     |
 | DA6c | Done: locator family (find\*, min, max, unique\*).                      |
 | DA6d | Done: `map` projection (LRM 7.12.5) on the sequence containers.         |
-| DA6e | Open: `shuffle` (LRM 7.12.2); needs a seeded simulation RNG.            |
 | DA6f | Done: two-name iterator / index argument form (LRM 7.12.4).             |
 | DA6g | Done: `string` / `real` / `shortreal` as an unpacked-array element.     |
 | DA7  | Done: invalid-index handling.                                           |
@@ -115,19 +114,14 @@ The numeric IDs are stable references and do not imply execution order beyond DA
 
 - [x] DA6c -- The locator-family methods that return an index or element queue (`find` family,
       `min`, `max`, `unique`, `unique_index`), including the optional `with` clause for `min` /
-      `max` / `unique`. `shuffle()` (needs an RNG model) remains the standalone follow-up.
+      `max` / `unique`. `shuffle()` consumes a simulation RNG and is tracked under
+      `simulation-rng.md`.
 
 - [x] DA6d -- The `map()` projection (LRM 7.12.5) with its mandatory `with` clause. Each element and
       its index pass through the expression into a result whose shape and index type match the
       receiver (dynamic array, queue, or fixed unpacked) and whose element type is the expression's
       self-determined type, so it may differ from the source (e.g. `int` to `bit`, `string`, or
       `real`). An empty receiver yields an empty result.
-
-- [ ] DA6e -- `shuffle()` (LRM 7.12.2) on every unpacked container. Needs a seeded simulation RNG;
-      none exists yet (`$random` / `$urandom` are unimplemented), and that same RNG is the
-      foundation for those system functions. `shuffle` is the first array method that consumes
-      simulation state rather than being a pure function of its receiver, so it also introduces
-      threading that state into an array-method call.
 
 - [x] DA6f -- The two-name iterator / index argument form of the LRM 7.12 family
       (`a.method(item, idx) with (...)`, LRM 7.12.4), which renames the iterator and the index-query
@@ -183,7 +177,7 @@ optional right bound (`q[$:N]`).
       7.12.4). Locator methods return a queue of elements or of `int` per LRM 7.12.1; reduction
       result width follows the `with`-expression type. The semantics and the `with`-clause closure
       are the same as for the dynamic-array receiver. The `map` projection (LRM 7.12.5) is shared
-      and done on a queue receiver too; `shuffle` remains the shared follow-up noted under DA6c.
+      and done on a queue receiver too; `shuffle` is tracked under `simulation-rng.md`.
 
 ## Associative Array
 
