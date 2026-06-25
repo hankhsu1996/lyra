@@ -36,6 +36,7 @@ struct BuiltinMirTypes {
   TypeId print_value_item;
   TypeId format_spec;
   TypeId time_format;
+  TypeId hierarchy_segment;
   TypeId coroutine;
   TypeId wildcard_index;
 };
@@ -100,6 +101,9 @@ struct CompilationUnit {
             .time_format = AddType(
                 TypeData{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kTimeFormat}}),
+            .hierarchy_segment = AddType(
+                TypeData{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kHierarchySegment}}),
             .coroutine = TypeId{},
             .wildcard_index = AddType(TypeData{WildcardIndexType{}}),
         } {

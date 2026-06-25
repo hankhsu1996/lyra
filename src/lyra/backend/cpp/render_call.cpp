@@ -218,8 +218,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "AsObservable";
     case support::BuiltinFn::kRegisterSignal:
       return "RegisterSignal";
-    case support::BuiltinFn::kRegisterChild:
-      return "RegisterChild";
+    case support::BuiltinFn::kAttachChild:
+      return "AttachChild";
     case support::BuiltinFn::kGetSignal:
       return "GetSignal";
     case support::BuiltinFn::kGetChild:
@@ -310,6 +310,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Error";
     case support::BuiltinFn::kFileFlush:
       return "Flush";
+    case support::BuiltinFn::kHierarchicalPath:
+      return "HierarchicalPath";
   }
   throw InternalError("BuiltinFnCppName: unknown BuiltinFn");
 }

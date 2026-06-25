@@ -291,8 +291,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "as_observable";
     case BuiltinFn::kRegisterSignal:
       return "register_signal";
-    case BuiltinFn::kRegisterChild:
-      return "register_child";
+    case BuiltinFn::kAttachChild:
+      return "attach_child";
     case BuiltinFn::kGetSignal:
       return "get_signal";
     case BuiltinFn::kGetChild:
@@ -401,6 +401,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "reduction_xnor";
     case BuiltinFn::kFromBool:
       return "from_bool";
+    case BuiltinFn::kHierarchicalPath:
+      return "hierarchical_path";
   }
   throw InternalError("BuiltinFnName: unknown BuiltinFn");
 }

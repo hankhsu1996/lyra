@@ -81,10 +81,10 @@ struct TimeFormat {
 
 // Per-call context routed alongside the spec into every Formatter::Format.
 // Holds the design-wide bits that a formatter sometimes needs but the spec
-// itself cannot carry (the spec is closed and shared across call sites). At
-// present only `%t` consults it; future kinds (e.g. `%m` hierarchical name)
-// will add fields here. `time_format == nullptr` means the calling context
-// has no time-format vocabulary; a formatter that needs one throws.
+// itself cannot carry (the spec is closed and shared across call sites).
+// `%t` is the only consumer today. `time_format == nullptr` means the
+// calling context has no time-format vocabulary; a formatter that needs one
+// throws.
 struct FormatContext {
   const TimeFormat* time_format = nullptr;
 };
@@ -124,11 +124,11 @@ template <typename T>
                       const FormatContext& ctx) -> std::string {
         const T& v = *static_cast<const T*>(p);
         // Per-formatter signature lookup: those that consult design-wide
-        // context (`%t` needing `TimeFormat`, future `%m` needing scope)
-        // declare `Format(spec, value, ctx)`; those that do not (string,
-        // aggregate -- never reach a context-bound kind) declare just
-        // `Format(spec, value)`. The lambda absorbs both shapes so the
-        // `FormatArg.format_fn` signature stays uniform.
+        // context (`%t` needing `TimeFormat`) declare `Format(spec, value,
+        // ctx)`; those that do not (string, aggregate -- never reach a
+        // context-bound kind) declare just `Format(spec, value)`. The lambda
+        // absorbs both shapes so the `FormatArg.format_fn` signature stays
+        // uniform.
         if constexpr (requires { Formatter<T>::Format(spec, v, ctx); }) {
           return Formatter<T>::Format(spec, v, ctx);
         } else {

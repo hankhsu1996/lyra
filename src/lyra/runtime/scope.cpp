@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -18,43 +19,23 @@
 
 namespace lyra::runtime {
 
-Scope::Scope(Scope* parent, std::string name, RuntimeServices& services)
-    : parent_(parent), name_(std::move(name)), services_(&services) {
-  if (parent_ != nullptr) {
-    parent_->AddChild(*this);
-  }
+Scope::Scope(Scope* parent, HierarchySegment segment, RuntimeServices& services)
+    : parent_(parent), segment_(std::move(segment)), services_(&services) {
 }
 
-void Scope::AddChild(Scope& child) {
-  // Linking establishes the full bidirectional edge. A child built under a
-  // parent already set `parent_` in its constructor; a top-level block is
-  // constructed parentless and adopts `$root` as its parent here, so an
-  // upward climb from inside a top reaches the root (LRM 23.6).
+void Scope::AttachChild(Scope& child) {
   child.parent_ = this;
-  children_.push_back(&child);
+  attached_children_.push_back(&child);
 }
 
 void Scope::ForEachChild(const ChildVisitor& fn) {
-  for (Scope* child : children_) {
+  for (Scope* child : attached_children_) {
     fn(*child);
   }
 }
 
 void Scope::RegisterSignal(std::string_view name, void* address) {
   signals_.push_back(SignalEntry{.name = name, .address = address});
-}
-
-void Scope::RegisterChild(
-    std::string_view name, std::span<const lyra::value::PackedArray> indices,
-    Scope& child) {
-  std::vector<std::size_t> host_indices;
-  host_indices.reserve(indices.size());
-  for (const auto& idx : indices) {
-    host_indices.push_back(static_cast<std::size_t>(idx.ToInt64()));
-  }
-  child_entries_.push_back(
-      ChildEntry{
-          .name = name, .indices = std::move(host_indices), .scope = &child});
 }
 
 auto Scope::GetSignal(std::string_view name) -> void* {
@@ -69,19 +50,24 @@ auto Scope::GetSignal(std::string_view name) -> void* {
 auto Scope::GetChild(
     std::string_view name, std::span<const lyra::value::PackedArray> indices)
     -> Scope* {
-  for (const ChildEntry& child : child_entries_) {
-    if (child.name != name || child.indices.size() != indices.size()) {
+  for (Scope* child : attached_children_) {
+    const HierarchySegment& seg = child->segment_;
+    if (seg.BaseName() != name) {
+      continue;
+    }
+    const auto child_indices = seg.Indices();
+    if (child_indices.size() != indices.size()) {
       continue;
     }
     bool matched = true;
     for (std::size_t i = 0; i < indices.size(); ++i) {
-      if (child.indices[i] != static_cast<std::size_t>(indices[i].ToInt64())) {
+      if (child_indices[i].ToInt64() != indices[i].ToInt64()) {
         matched = false;
         break;
       }
     }
     if (matched) {
-      return child.scope;
+      return child;
     }
   }
   return nullptr;
@@ -91,8 +77,37 @@ auto Scope::Parent() const -> Scope* {
   return parent_;
 }
 
+auto Scope::Segment() const -> const HierarchySegment& {
+  return segment_;
+}
+
+auto Scope::DisplaySegment() const -> std::string {
+  return segment_.Display();
+}
+
 auto Scope::Name() const -> std::string_view {
-  return name_;
+  return segment_.BaseName();
+}
+
+auto Scope::HierarchicalPath() const -> lyra::value::String {
+  // Each segment is the scope's own LRM display form (carrying any per-dim
+  // bracketed index it acquired at construction). Stopping at
+  // `parent_ == nullptr` drops the implicit `$root` from the joined output
+  // -- the root anchors top-level adoption but is not part of a
+  // user-visible hierarchical path.
+  std::vector<std::string> parts;
+  for (const Scope* cur = this; cur != nullptr && cur->parent_ != nullptr;
+       cur = cur->parent_) {
+    parts.push_back(cur->segment_.Display());
+  }
+  std::string out;
+  for (const std::string& part : std::views::reverse(parts)) {
+    if (!out.empty()) {
+      out.push_back('.');
+    }
+    out.append(part);
+  }
+  return lyra::value::String(std::move(out));
 }
 
 void Scope::Resolve() {
