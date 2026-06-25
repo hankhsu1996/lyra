@@ -7,6 +7,7 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
@@ -14,6 +15,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
@@ -240,14 +242,74 @@ auto StructuralScopeLowerer::BuildCaseGenerate(
 
 namespace {
 
+// Intern a genvar step's non-loop-variable operand, promoting it to the loop
+// variable's type when it differs. A genvar is four-state, so a two-state step
+// amount -- a synthesized one, or a compound right-hand side taken without the
+// promotion slang wraps it in -- must be widened, or the two operands mismatch
+// in state-kind at evaluation.
+auto AddStepOperand(
+    WalkFrame frame, hir::Expr operand, hir::TypeId loop_var_type,
+    diag::SourceSpan span) -> hir::ExprId {
+  const bool needs_promotion = operand.type != loop_var_type;
+  const hir::ExprId operand_id = frame.Exprs().Add(std::move(operand));
+  if (!needs_promotion) {
+    return operand_id;
+  }
+  return frame.Exprs().Add(
+      hir::Expr{
+          .type = loop_var_type,
+          .data =
+              hir::ConversionExpr{
+                  .operand = operand_id,
+                  .kind = hir::ConversionKind::kImplicit},
+          .span = span});
+}
+
 // Lower the iter expression of a loop_generate header into the loop's
-// next-value expression for its loop variable (LRM 27.5).
+// next-value expression for its loop variable (LRM 27.4).
 auto LowerLoopIterNextValue(
     StructuralScopeLowerer& parent, ModuleLowerer& module,
     const slang::ast::Expression& iter, WalkFrame frame)
     -> diag::Result<hir::Expr> {
   const auto& mapper = module.SourceMapper();
   const auto span = mapper.SpanOf(iter.sourceRange);
+
+  // An increment / decrement iter (`i++`, `--i`) carries no right-hand side;
+  // its next value is the loop variable plus or minus one.
+  if (iter.kind == slang::ast::ExpressionKind::UnaryOp) {
+    const auto& un = iter.as<slang::ast::UnaryExpression>();
+    std::optional<hir::BinaryOp> step_op;
+    switch (un.op) {
+      case slang::ast::UnaryOperator::Preincrement:
+      case slang::ast::UnaryOperator::Postincrement:
+        step_op = hir::BinaryOp::kAdd;
+        break;
+      case slang::ast::UnaryOperator::Predecrement:
+      case slang::ast::UnaryOperator::Postdecrement:
+        step_op = hir::BinaryOp::kSub;
+        break;
+      default:
+        break;
+    }
+    if (step_op.has_value()) {
+      auto read = parent.LowerExpr(un.operand(), frame);
+      if (!read) return std::unexpected(std::move(read.error()));
+      const hir::ExprId read_id = frame.Exprs().Add(*std::move(read));
+
+      auto type_id = module.InternType(*iter.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+
+      const hir::ExprId one_id = AddStepOperand(
+          frame, hir::MakeInt32Literal(1, module.Unit().builtins.int32, span),
+          *type_id, span);
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::BinaryExpr{.op = *step_op, .lhs = read_id, .rhs = one_id},
+          .span = span,
+      };
+    }
+  }
 
   if (iter.kind != slang::ast::ExpressionKind::Assignment) {
     return diag::Fail(
@@ -264,13 +326,15 @@ auto LowerLoopIterNextValue(
   if (!read) return std::unexpected(std::move(read.error()));
   const hir::ExprId read_id = frame.Exprs().Add(*std::move(read));
 
+  auto type_id = module.InternType(*iter.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+
   const auto& bare_rhs = BareCompoundUserRhs(assign.right());
   auto rhs = parent.LowerExpr(bare_rhs, frame);
   if (!rhs) return std::unexpected(std::move(rhs.error()));
-  const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs));
+  const hir::ExprId rhs_id =
+      AddStepOperand(frame, *std::move(rhs), *type_id, span);
 
-  auto type_id = module.InternType(*iter.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
       .data =

@@ -325,11 +325,34 @@ auto LowerCallExpr(
       };
     }
 
+    // `$signed` / `$unsigned` reinterpret the operand under the named
+    // signedness. The result type already carries that signedness, so this is a
+    // value conversion to the result type, not a runtime call.
+    if (info.subroutine != nullptr &&
+        (info.subroutine->knownNameId ==
+             slang::parsing::KnownSystemName::Signed ||
+         info.subroutine->knownNameId ==
+             slang::parsing::KnownSystemName::Unsigned)) {
+      auto type_id = module.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::ConversionExpr{
+                  .operand = *arg_ids.front(),
+                  .kind = hir::ConversionKind::kImplicit},
+          .span = span,
+      };
+    }
+
     const auto* desc = support::FindSystemSubroutine(name);
     if (desc == nullptr) {
-      throw InternalError(
-          std::string{"AST->HIR call: unresolved system subroutine '"} +
-          std::string{name} + "' after slang resolution");
+      // slang resolved a system task / function that Lyra's registry does not
+      // carry: a legitimate but unimplemented construct, not a compiler bug.
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          std::string{"system task / function '"} + std::string{name} +
+              "' is not yet supported");
     }
     const auto frontend_kind = FromSlangSubroutineKind(info.subroutine->kind);
     if (desc->kind != frontend_kind) {

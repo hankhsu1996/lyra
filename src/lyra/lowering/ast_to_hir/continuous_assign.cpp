@@ -8,7 +8,6 @@
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
@@ -59,9 +58,12 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
 
   const auto& assignment_expr = sym.getAssignment();
   if (assignment_expr.kind != slang::ast::ExpressionKind::Assignment) {
-    throw InternalError(
-        "StructuralScopeLowerer::LowerContinuousAssign: ContinuousAssignSymbol."
-        "getAssignment() did not return an AssignmentExpression");
+    // slang bound the continuous assignment to a form other than a plain
+    // assignment (a legitimate construct Lyra does not lower yet), not a
+    // compiler-invariant violation.
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedContinuousAssignForm,
+        "this continuous-assignment form is not yet supported");
   }
   const auto& assign = assignment_expr.as<slang::ast::AssignmentExpression>();
 
