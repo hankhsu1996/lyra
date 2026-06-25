@@ -130,5 +130,3 @@ structural fact explicit.
   implicit render to explicit MIR `CallExpr` -- same family of fix on a different axis).
 - `decisions/callable-receiver.md` (the "C++ plumbing, not MIR-modeled" precedent for virtual
   overrides, sharpened above).
-- `progress/refactor.md` R41 / R42 (the entries this decision closes by lowering the
-  sensitivity-leaf and signal-registration paths to MIR-explicit shape).

@@ -163,4 +163,3 @@ _Rejected alternatives:_
   `ResetToDefault`.
 - `include/lyra/value/dynamic_array.hpp`, `include/lyra/value/unpacked_array.hpp` -- first wrappers
   to adopt the default / sink pattern.
-- `docs/progress/aggregate.md` -- variable-size aggregate workstream.

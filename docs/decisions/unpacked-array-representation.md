@@ -205,7 +205,7 @@ Out of scope but unblocked by this design:
   `std::vector` storage spine and extend it with size-mutation semantics.
 - Whole-array `Var<UnpackedArray<T>>` wrapping is in place and an unpacked signal reacts under
   `wait` / `always_comb` / `@*` (the wrapper's `IsBitIdentical` drives any-change detection); a
-  non-integral input port is admitted too. See `refactor.md` R2.
+  non-integral input port is admitted too.
 
 ## Alternatives considered
 
