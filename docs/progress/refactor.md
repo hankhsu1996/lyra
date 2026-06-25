@@ -616,6 +616,21 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       (`../decisions/unified-callable-model.md`). No implementation until the object model is
       designed.
 
+- [ ] R48 -- Let an object type name its class directly, so emit resolves the owning class in O(1)
+      instead of searching. A member or method reference names only its class-local id; the class it
+      belongs to is the receiver's class, which the backend recovers by matching the receiver's
+      `ObjectType` against every class reachable from the render position (current class, its nested
+      classes, the enclosing chain) -- a linear search per access. `ObjectType` carries only a name
+      string today; giving it a unit-unique class identity would make the receiver-to-class step a
+      direct lookup and delete the search entirely. **Blocker**: class identity is parent-local --
+      each scope owns its nested classes in its own arena, and a class's self object type is built
+      before the class is appended -- so a unit-wide class id needs a flat unit-level class table or
+      an equivalent identity assigned before layout. Correctness is unaffected (the search is
+      sound); this is an emit-time resolution cleanup that also removes the one remaining place the
+      backend re-derives information the lowering already had. **Trigger**: standalone; pairs
+      naturally with R45's call-shape work, which also moves per-symbol resolution off the reference
+      node.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

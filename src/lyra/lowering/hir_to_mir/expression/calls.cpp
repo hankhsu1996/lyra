@@ -31,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -337,8 +338,13 @@ auto LowerStructuralSubroutineCall(
   }
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
-  args.push_back(block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)));
+  // The callee is reached through the object that owns it: at hops 0 the
+  // current body's `self`, above that an enclosing scope's object navigated
+  // through `Parent()`. The same receiver path a structural member access
+  // takes, so the callee's class is named by this receiver's type.
+  args.push_back(BuildEnclosingScopeReceiver(
+      frame, lowerer.Module().Unit(),
+      mir::EnclosingHops{.value = usr.hops.value}));
   for (std::size_t i = 0; i < c.arguments.size(); ++i) {
     if (!c.arguments[i].has_value()) {
       throw InternalError("user-function call argument unexpectedly elided");

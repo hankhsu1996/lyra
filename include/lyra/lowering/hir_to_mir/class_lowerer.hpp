@@ -238,8 +238,7 @@ class ClassLowerer {
       hir::StructuralHops hops, hir::StructuralSubroutineId hir_id) const
       -> mir::MethodRef {
     const mir::MethodId mir_id = LookupStructuralSubroutineAtHops(hops, hir_id);
-    return mir::MethodRef{
-        .hops = mir::EnclosingHops{.value = hops.value}, .method = mir_id};
+    return mir::MethodRef{.method = mir_id};
   }
 
  private:

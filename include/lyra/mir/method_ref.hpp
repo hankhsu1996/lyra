@@ -3,8 +3,6 @@
 #include <compare>
 #include <cstdint>
 
-#include "lyra/mir/enclosing_hops.hpp"
-
 namespace lyra::mir {
 
 struct MethodId {
@@ -13,8 +11,10 @@ struct MethodId {
   auto operator<=>(const MethodId&) const -> std::strong_ordering = default;
 };
 
+// A method of a class, named by its class-local id. The class a call reaches is
+// determined by the call's receiver (the method belongs to the receiver's
+// class), not carried here -- a reference names the method, not its owner.
 struct MethodRef {
-  EnclosingHops hops = {};
   MethodId method = {};
 };
 

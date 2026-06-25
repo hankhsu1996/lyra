@@ -362,17 +362,24 @@ auto RenderCalleePart(
   return std::visit(
       Overloaded{
           [&](const mir::MethodRef& ref) -> CalleeRender {
-            if (ref.hops.value != 0) {
-              throw InternalError(
-                  "method call across classes is not yet "
-                  "implemented in cpp emit");
+            // The callee's class is named by the `self` handle threaded as the
+            // first argument: the method belongs to the receiver's class. The
+            // class qualifies the emitted static call, and `self` stays an
+            // ordinary leading argument (no skip).
+            if (call.arguments.empty()) {
+              throw InternalError("MethodRef call expects a receiver argument");
             }
-            const auto& cls = view.EnclosingClassAtHops(
-                mir::EnclosingHops{.value = ref.hops.value});
-            // The first argument is the callee's `self` handle, threaded as
-            // an ordinary argument; no leading skip.
+            const mir::Expr& receiver = view.Expr(call.arguments[0]);
+            const mir::TypeId object_type =
+                std::get<mir::PointerType>(
+                    view.Unit().GetType(receiver.type).data)
+                    .pointee;
+            const auto& cls = view.ClassByObjectType(object_type);
             return {
-                .expr = std::string(cls.methods.Get(ref.method).name),
+                .expr = std::format(
+                    "{}::{}",
+                    RenderTypeAsCpp(view.Unit(), view.Class(), object_type),
+                    cls.methods.Get(ref.method).name),
                 .leading_arg_count = 0};
           },
           [&](const mir::BuiltinFnCallee& b) -> CalleeRender {
