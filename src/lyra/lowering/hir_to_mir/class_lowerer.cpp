@@ -1094,25 +1094,26 @@ auto ClassLowerer::Run(
 
   mir_class.constructor_block = std::move(ctor_block);
   // The resolve and initialize phases are synthesized callables run by the
-  // engine after construction (LRM 23.3.3.2 / 6.8): each is a virtual override
-  // the runtime base dispatches, present only when the scope has work for that
-  // phase. They reach the scope through the implicit receiver, so `self` is
-  // bound as the body's receiver rather than passed as a parameter.
+  // engine after construction (LRM 23.3.3.2 / 6.8), present only when the scope
+  // has work for that phase. Their bodies are uniform callables over the
+  // explicit `self` (`code.params[0]`); the engine reaches them through a
+  // virtual-dispatch shim the backend emits as separate plumbing, the same way
+  // the constructor delegates to its static body.
   if (!resolve_block.root_stmts.empty()) {
     mir_class.resolve = mir::MethodDecl{
         .name = "ResolveState",
-        .result_type = void_type,
-        .params = {},
-        .root_block = std::move(resolve_block),
-        .form = mir::MethodForm::kVirtual};
+        .code = mir::CallableCode{
+            .params = {resolve_self_id},
+            .result_type = void_type,
+            .body = std::move(resolve_block)}};
   }
   if (!initialize_block.root_stmts.empty()) {
     mir_class.initialize = mir::MethodDecl{
         .name = "InitializeState",
-        .result_type = void_type,
-        .params = {},
-        .root_block = std::move(initialize_block),
-        .form = mir::MethodForm::kVirtual};
+        .code = mir::CallableCode{
+            .params = {init_self_id},
+            .result_type = void_type,
+            .body = std::move(initialize_block)}};
   }
 
   return mir_class;

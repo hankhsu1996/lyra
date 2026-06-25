@@ -3,7 +3,6 @@
 #include <format>
 #include <span>
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -71,7 +70,7 @@ auto CtorParamName(std::size_t index) -> std::string {
 
 auto RenderMethodParam(
     const mir::CompilationUnit& unit, const mir::Class& s,
-    const mir::MethodParam& param) -> std::string {
+    const mir::LocalDecl& param) -> std::string {
   // Every formal is a value parameter: an `input` by value (LRM 13.5.1), a
   // `ref` / `const ref` whose `RefType` already renders as `(const) Ref<T>` so
   // the reference value carries the aliasing (LRM 13.5.2). `output` / `inout`
@@ -79,44 +78,31 @@ auto RenderMethodParam(
   return std::format("{} {}", RenderTypeAsCpp(unit, s, param.type), param.name);
 }
 
-// The one renderer for every method. A method's declaration is rendered from
-// its fields: the result type (whose `void` and coroutine cases are ordinary
-// types, handled in `RenderTypeAsCpp`), the name, the parameters, and the body
-// (a plain statement render, including any `co_return` that is itself a body
-// statement). The `form` decides how the receiver `self` is bound: a `kStatic`
-// method takes it as an explicit first parameter and spells it `self`; a
-// `kVirtual` method takes it implicitly, spells it `this`, and overrides a
-// runtime-base slot.
+// The one renderer for every callable body. A body renders uniformly as a
+// static function over the explicit receiver `self`: the result type (whose
+// `void` and coroutine cases are ordinary types, handled in `RenderTypeAsCpp`),
+// the name, every parameter (`self` is `params[0]`, rendered like any other),
+// and the body (a plain statement render, including any `co_return` that is
+// itself a body statement). How the engine or a call site reaches the body --
+// a direct call, a process registration, a lifecycle shim -- is separate
+// dispatch plumbing, not a property of the body.
 auto RenderMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::MethodDecl& m, std::size_t indent)
     -> std::string {
-  const bool is_static = m.form == mir::MethodForm::kStatic;
-  const ScopeView base_view =
-      (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, m.root_block)
-          : parent_struct_view->WithClass(s, m.root_block);
   const ScopeView body_view =
-      base_view.WithSelfSpelling(is_static ? "self" : "this");
+      (parent_struct_view == nullptr)
+          ? ScopeView::ForRoot(unit, s, m.code.body)
+          : parent_struct_view->WithClass(s, m.code.body);
 
-  std::string ret = RenderTypeAsCpp(unit, s, m.result_type);
+  std::string ret = RenderTypeAsCpp(unit, s, m.code.result_type);
 
-  std::string sig =
-      std::format("{}{}(", is_static ? "static auto " : "auto ", m.name);
-  bool first = true;
-  if (is_static) {
-    sig += std::format("{}* self", s.name);
-    first = false;
-  }
-  for (const auto& param : m.params) {
-    if (!first) sig += ", ";
-    sig += RenderMethodParam(unit, s, param);
-    first = false;
+  std::string sig = std::format("static auto {}(", m.name);
+  for (std::size_t i = 0; i < m.code.params.size(); ++i) {
+    if (i != 0) sig += ", ";
+    sig += RenderMethodParam(unit, s, m.code.body.vars.Get(m.code.params[i]));
   }
   sig += std::format(") -> {}", ret);
-  if (!is_static) {
-    sig += " override";
-  }
 
   std::string out;
   out += std::format("{}{} {{\n", Indent(indent), sig);
@@ -225,16 +211,24 @@ auto RenderScopeAsClass(
 
   out += RenderConstructor(this_anchor, s, base_class, indent + 1);
 
-  // The resolve and initialize phases run after construction; each is a
-  // virtual override the engine dispatches, present only when the scope has
-  // work for that phase. They render through the one method renderer.
+  // The resolve and initialize phases run after construction, present only
+  // when the scope has work for that phase. Each body renders as the uniform
+  // static callable; the engine dispatches it through a thin virtual override
+  // that forwards to the static body over `this`, the same plumbing pattern the
+  // constructor uses for `init`.
+  const auto render_lifecycle = [&](const mir::MethodDecl& m) -> std::string {
+    return RenderMethod(parent_struct_view, unit, s, m, indent + 1) +
+           std::format(
+               "{}void {}() override {{ {}(this); }}\n", Indent(indent + 1),
+               m.name, m.name);
+  };
   if (s.resolve.has_value()) {
     out += "\n";
-    out += RenderMethod(parent_struct_view, unit, s, *s.resolve, indent + 1);
+    out += render_lifecycle(*s.resolve);
   }
   if (s.initialize.has_value()) {
     out += "\n";
-    out += RenderMethod(parent_struct_view, unit, s, *s.initialize, indent + 1);
+    out += render_lifecycle(*s.initialize);
   }
 
   // Child links are registered automatically at construction and walked by the

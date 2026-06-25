@@ -7,6 +7,7 @@
 
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -28,8 +29,8 @@ ClosureBuilder::ClosureBuilder(
       body_.vars.Add(mir::LocalDecl{.name = "self", .type = self_pointer_type});
   const mir::ExprId outer_self_read =
       outer_->exprs.Add(MakeSelfRefExpr(enclosing, self_pointer_type));
-  captures_.push_back(
-      mir::Capture{.value = outer_self_read, .binding = self_binding_});
+  environment_.push_back(
+      mir::EnvBinding{.param = self_binding_, .value = outer_self_read});
   frame_ = enclosing.WithBlock(&body_)
                .Deeper()
                .WithCaptureSink(&sink_)
@@ -41,7 +42,7 @@ auto ClosureBuilder::AddParam(std::string_view name, mir::TypeId type)
     -> mir::LocalId {
   const mir::LocalId binding =
       body_.vars.Add(mir::LocalDecl{.name = std::string(name), .type = type});
-  params_.push_back(mir::Parameter{.binding = binding});
+  invocation_params_.push_back(binding);
   return binding;
 }
 
@@ -53,7 +54,7 @@ auto ClosureBuilder::CaptureByValue(mir::ExprId outer_id, std::string_view name)
   }
   const mir::LocalId binding = body_.vars.Add(
       mir::LocalDecl{.name = std::string(name), .type = outer_expr.type});
-  captures_.push_back(mir::Capture{.value = outer_id, .binding = binding});
+  environment_.push_back(mir::EnvBinding{.param = binding, .value = outer_id});
   return body_.exprs.Add(
       mir::Expr{
           .data =
@@ -63,13 +64,25 @@ auto ClosureBuilder::CaptureByValue(mir::ExprId outer_id, std::string_view name)
 
 auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
   for (const CaptureRequest& request : sink_.TakeRequests()) {
-    captures_.push_back(
-        mir::Capture{.value = request.source, .binding = request.binding});
+    environment_.push_back(
+        mir::EnvBinding{.param = request.binding, .value = request.source});
   }
+  // The signature is `self` (always `params[0]`) followed by the per-invocation
+  // parameters. Captured locals are not parameters -- they are the bound
+  // environment, reached as fields, distinct from the call signature.
+  std::vector<mir::LocalId> params;
+  params.reserve(1 + invocation_params_.size());
+  params.push_back(self_binding_);
+  for (const mir::LocalId param : invocation_params_) {
+    params.push_back(param);
+  }
+  auto code = std::make_unique<mir::CallableCode>(mir::CallableCode{
+      .params = std::move(params),
+      .result_type = result_type,
+      .body = std::move(body_)});
   mir::ClosureExpr closure;
-  closure.captures = std::move(captures_);
-  closure.params = std::move(params_);
-  closure.body = std::make_unique<mir::Block>(std::move(body_));
+  closure.code = std::move(code);
+  closure.environment = std::move(environment_);
   return mir::Expr{.data = std::move(closure), .type = result_type};
 }
 

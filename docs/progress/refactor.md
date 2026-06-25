@@ -125,7 +125,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         place is bound exactly once at call entry, and the completion slot outlives any write the
         callee can still make. Per `../decisions/unified-callable-model.md`.
 
-  - [ ] R8c -- Callable code versus callable value. A closure constructs a callable value (code plus
+  - [x] R8c -- Callable code versus callable value. A closure constructs a callable value (code plus
         a bound environment); a directly-invoked named callable receives its environment from the
         caller. `self` is the code's first parameter, bound into a value's environment when needed,
         not a privileged `captures[0]` slot.
@@ -139,14 +139,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         against the object's vtable layout.
 
   - [x] R8f -- The scope's callables render through one backend method path. A process body and the
-        synthesized resolve / initialize lifecycle bodies join functions and tasks as one
-        `mir::MethodDecl` carrying a `MethodForm` -- a static function over an explicit `self`, or a
-        virtual instance method that overrides a runtime-base slot and reaches the scope through the
-        implicit receiver. The per-shape backend renderers collapse into one that reads the method's
+        synthesized resolve / initialize lifecycle bodies join functions and tasks as one uniform
+        callable: a static function over the explicit receiver `self`, with no per-shape kind tag.
+        The per-shape backend renderers collapse into one mechanical fold that reads the body's
         fields (result type, name, parameters, body): `void` and the coroutine type are ordinary
         result types, `co_return` is a body statement rather than a render-time epilogue, and the
-        receiver is spelled from the form. `mir::Process` now carries only its activation kind and
-        the body method; the two remaining backend-synthesized remnants -- process activation
+        receiver is always `self`. How a referencing site reaches a body -- a direct call, a process
+        registration, an engine-dispatched lifecycle hook -- is separate dispatch plumbing (a thin
+        virtual shim forwarding to the static body, the pattern the constructor already uses), never
+        a property of the body. The two remaining backend-synthesized remnants -- process activation
         registration and the upward-reference member initializer -- retire under R8d and R40.
 
 - [x] R9 -- AST-to-HIR migration to the class-based organization defined in
