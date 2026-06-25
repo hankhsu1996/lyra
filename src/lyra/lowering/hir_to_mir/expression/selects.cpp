@@ -48,10 +48,10 @@ namespace {
 // see `include/lyra/value/concepts.hpp`.
 enum class AccessSide : std::uint8_t { kRead, kLhs };
 
-auto ElementAccessCallee(AccessSide side) -> mir::BuiltinFnCallee {
-  return mir::BuiltinFnCallee{
-      .id = side == AccessSide::kLhs ? support::BuiltinFn::kElementRef
-                                     : support::BuiltinFn::kElement};
+auto ElementAccessCallee(AccessSide side) -> mir::Direct {
+  return mir::Direct{
+      .target = side == AccessSide::kLhs ? support::BuiltinFn::kElementRef
+                                         : support::BuiltinFn::kElement};
 }
 
 // LRM 7.2.1 / 7.2.2: packed struct or union field table accessor. Used by
@@ -89,8 +89,7 @@ auto WrapPackedAsOwned(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kToOwned},
+              .callee = mir::Direct{.target = support::BuiltinFn::kToOwned},
               .arguments = {access_id}},
       .type = result_type};
 }
@@ -558,8 +557,7 @@ auto BuildRangeSliceCallExpr(
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee =
-                    mir::BuiltinFnCallee{.id = support::BuiltinFn::kSlice},
+                .callee = mir::Direct{.target = support::BuiltinFn::kSlice},
                 .arguments = {base_id, bounds_or->lo, bounds_or->hi}},
         .type = result_type};
   }
@@ -571,10 +569,10 @@ auto BuildRangeSliceCallExpr(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinFnCallee{
-                      .id = side == AccessSide::kLhs
-                                ? support::BuiltinFn::kSliceRef
-                                : support::BuiltinFn::kSlice},
+                  mir::Direct{
+                      .target = side == AccessSide::kLhs
+                                    ? support::BuiltinFn::kSliceRef
+                                    : support::BuiltinFn::kSlice},
               .arguments = {base_id, bounds_or->lo, count_id}},
       .type = result_type};
 }
@@ -596,10 +594,10 @@ auto BuildFieldSliceCallExpr(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinFnCallee{
-                      .id = side == AccessSide::kLhs
-                                ? support::BuiltinFn::kSliceRef
-                                : support::BuiltinFn::kSlice},
+                  mir::Direct{
+                      .target = side == AccessSide::kLhs
+                                    ? support::BuiltinFn::kSliceRef
+                                    : support::BuiltinFn::kSlice},
               .arguments = {base_id, offset_id, count_id}},
       .type = result_type};
 }
@@ -691,7 +689,7 @@ auto LowerHirElementSelectExpr(
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee = mir::BuiltinFnCallee{.id = support::BuiltinFn::kGetc},
+                .callee = mir::Direct{.target = support::BuiltinFn::kGetc},
                 .arguments = {base_id, idx_id}},
         .type = result_type};
   }

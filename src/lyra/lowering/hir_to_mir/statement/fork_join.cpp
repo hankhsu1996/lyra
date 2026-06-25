@@ -94,7 +94,7 @@ auto LowerForkStmt(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::FreeFnCallee{.id = callee_id},
+                  .callee = mir::Direct{.target = callee_id},
                   .arguments = std::move(call_args)},
           .type = builtins.void_type});
 

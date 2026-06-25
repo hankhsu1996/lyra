@@ -157,8 +157,7 @@ auto BuildDiagnosticThenScope(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = support::BuiltinFn::kDiagnostic},
+                      mir::Direct{.target = support::BuiltinFn::kDiagnostic},
                   .arguments = {services}},
           .type = unit.builtins.diagnostic});
   const mir::ExprId origin_lit = block.exprs.Add(
@@ -169,16 +168,14 @@ auto BuildDiagnosticThenScope(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::ConstructorCallee{},
-                  .arguments = {origin_lit}},
+                  .callee = mir::Construct{}, .arguments = {origin_lit}},
           .type = unit.builtins.string});
   const mir::ExprId emit_call_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = support::BuiltinFn::kEmitWarning},
+                      mir::Direct{.target = support::BuiltinFn::kEmitWarning},
                   .arguments = {diagnostic_id, origin_id, text_id}},
           .type = unit.builtins.void_type});
   block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
@@ -346,8 +343,8 @@ auto BuildDeferredCheckCascade(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = support::BuiltinFn::kSubmitObserved},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kSubmitObserved},
                   .arguments = {self_id, site_id_expr, closure_expr_id}},
           .type = void_type});
   wrapper.AppendStmt(

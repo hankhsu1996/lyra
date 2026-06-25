@@ -74,7 +74,7 @@ auto LowerFinishSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::FreeFnCallee{.id = support::BuiltinFn::kFinish},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFinish},
               .arguments = {services_id, level_id}},
       .type = builtins.void_type};
 }

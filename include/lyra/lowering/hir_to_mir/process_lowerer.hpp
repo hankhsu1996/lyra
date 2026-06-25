@@ -156,7 +156,7 @@ class ProcessLowerer {
   }
   [[nodiscard]] auto TranslateStructuralSubroutine(
       hir::StructuralHops hops, hir::StructuralSubroutineId id) const
-      -> mir::MethodRef {
+      -> mir::Direct {
     return owner_->TranslateStructuralSubroutine(hops, id);
   }
 

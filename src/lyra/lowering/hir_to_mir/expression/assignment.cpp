@@ -154,7 +154,7 @@ auto MakeStringMethodCallExpr(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = fn},
+              .callee = mir::Direct{.target = fn},
               .arguments = std::move(args)},
       .type = type};
 }
@@ -234,8 +234,7 @@ auto ApplyAssignEffect(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kSubmitNba},
+              .callee = mir::Direct{.target = support::BuiltinFn::kSubmitNba},
               .arguments = {services_id, closure_id}},
       .type = process.Module().Unit().builtins.void_type};
 }

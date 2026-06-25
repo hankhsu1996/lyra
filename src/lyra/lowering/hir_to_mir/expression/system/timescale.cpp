@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
 
-#include <cstdint>
 #include <expected>
 #include <format>
 #include <string>
@@ -53,7 +52,7 @@ auto LowerTimeFormatSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = builtin},
+              .callee = mir::Direct{.target = builtin},
               .arguments = std::move(call_args)},
       .type = process.Module().Unit().builtins.void_type};
 }
@@ -81,7 +80,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::ConstructorCallee{}, .arguments = {text_lit}},
+                  .callee = mir::Construct{}, .arguments = {text_lit}},
           .type = builtins.string});
 
   const mir::ExprId fd_id =
@@ -91,8 +90,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kWriteln},
+              .callee = mir::Direct{.target = support::BuiltinFn::kWriteln},
               .arguments = {files_id, fd_id, text_id}},
       .type = builtins.void_type};
 }

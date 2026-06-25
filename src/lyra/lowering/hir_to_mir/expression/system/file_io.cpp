@@ -46,7 +46,7 @@ auto BuildFileIoCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = builtin_fn},
+              .callee = mir::Direct{.target = builtin_fn},
               .arguments = std::move(args)},
       .type = result_type};
 }

@@ -203,7 +203,7 @@ auto MakeBuiltinFnCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = id},
+              .callee = mir::Direct{.target = id},
               .arguments = std::move(arguments)},
       .type = result_type};
 }
@@ -214,9 +214,9 @@ auto MakeFromBoolCall(mir::ExprId bool_expr_id, mir::TypeId result_type)
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinStaticCallee{
-                      .id = support::BuiltinFn::kFromBool,
-                      .type_qual = result_type},
+                  mir::Direct{
+                      .target = support::BuiltinFn::kFromBool,
+                      .qualification = mir::TypeQualifier{.type = result_type}},
               .arguments = {bool_expr_id}},
       .type = result_type};
 }
@@ -289,8 +289,8 @@ auto BuildMirUnaryExpr(
   const auto& operand_ty = unit.GetType(block.exprs.Get(operand_id).type);
 
   // LRM 11.4.9 reduction operators: render as `PackedArray::ReductionX()`,
-  // routed through `BuiltinFnCallee` so the backend's render path collapses
-  // to mechanical method dispatch.
+  // routed through a `Direct` builtin call so the backend's render path
+  // collapses to mechanical method dispatch.
   if (auto builtin = UnaryOpAsBuiltinFn(op)) {
     return MakeBuiltinFnCall(*builtin, {operand_id}, result_type);
   }
@@ -366,7 +366,7 @@ auto BuildMirBinaryExpr(
   }
 
   // LRM 11.4 method-style binary ops (shifts, power, xnor, wildcard /
-  // case / implication / equivalence): route through `BuiltinFnCallee`.
+  // case / implication / equivalence): route through a `Direct` builtin call.
   if (auto builtin = BinaryOpAsBuiltinFn(op)) {
     return MakeBuiltinFnCall(*builtin, {lhs_id, rhs_id}, result_type);
   }
