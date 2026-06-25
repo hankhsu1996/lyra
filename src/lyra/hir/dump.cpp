@@ -963,9 +963,10 @@ class HirDumper {
             ProceduralVarId{static_cast<std::uint32_t>(i)});
         Line(
             std::format(
-                "ProceduralVar[{}] \"{}\" : Type[{}]{}", i, lv.name,
+                "ProceduralVar[{}] \"{}\" : Type[{}]{}{}", i, lv.name,
                 lv.type.value,
-                lv.lifetime == VariableLifetime::kStatic ? " static" : ""));
+                lv.lifetime == VariableLifetime::kStatic ? " static" : "",
+                lv.lifetime_extended ? " lifetime-extended" : ""));
       }
       Dedent();
     }

@@ -333,15 +333,25 @@ auto RenderCastExpr(
 // `Mutate(svc)` adapter is already in MIR as a `DerefExpr` wrapping an
 // `ObservableMethod{kMutate}` call -- this render emits nothing implicit
 // on top of the explicit MIR shape.
+// The C++ field name a member access reaches. The member belongs to the
+// receiver's class, named by the receiver's object type -- so the class is
+// resolved from the receiver, not from the ambient enclosing-class chain.
+auto MemberFieldName(const ScopeView& view, const mir::MemberAccessExpr& m)
+    -> const std::string& {
+  const mir::TypeId recv_type = view.Expr(m.receiver).type;
+  const auto& ptr =
+      std::get<mir::PointerType>(view.Unit().GetType(recv_type).data);
+  return view.ClassByObjectType(ptr.pointee).members.Get(m.member.var).name;
+}
+
 auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
     -> std::string {
   return std::visit(
       Overloaded{
           [&](const mir::MemberAccessExpr& m) -> std::string {
-            const auto& cls = view.EnclosingClassAtHops(m.member.hops);
-            const auto& var = cls.members.Get(m.member.var);
             return std::format(
-                "{}->{}", RenderExpr(view, view.Expr(m.receiver)), var.name);
+                "{}->{}", RenderExpr(view, view.Expr(m.receiver)),
+                MemberFieldName(view, m));
           },
           [&](const mir::LocalRef& l) -> std::string {
             return LookupLocalName(view, l);
@@ -709,6 +719,16 @@ auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
   return std::format("&{}", RenderLhsExpr(view, operand_expr));
 }
 
+// Reinterprets a borrowed pointer as a different pointer type stated by the
+// expression's `type`. Renders as `static_cast<DestType>(operand)`; the
+// destination spelling comes from the type table, not from any local inference.
+auto RenderPointerCastExpr(
+    const ScopeView& view, const mir::PointerCastExpr& cast, mir::TypeId dest)
+    -> std::string {
+  return "static_cast<" + RenderTypeAsCpp(view.Unit(), view.Class(), dest) +
+         ">(" + RenderExpr(view, view.Expr(cast.operand)) + ")";
+}
+
 }  // namespace
 
 auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
@@ -769,11 +789,13 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::AddressOfExpr& a) -> std::string {
             return RenderAddressOfExpr(view, a);
           },
+          [&](const mir::PointerCastExpr& c) -> std::string {
+            return RenderPointerCastExpr(view, c, expr.type);
+          },
           [&](const mir::MemberAccessExpr& m) -> std::string {
-            const auto& cls = view.EnclosingClassAtHops(m.member.hops);
-            const auto& var = cls.members.Get(m.member.var);
             return std::format(
-                "{}->{}", RenderExpr(view, view.Expr(m.receiver)), var.name);
+                "{}->{}", RenderExpr(view, view.Expr(m.receiver)),
+                MemberFieldName(view, m));
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl, expr.type);

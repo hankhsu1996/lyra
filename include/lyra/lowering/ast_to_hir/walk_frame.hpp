@@ -83,10 +83,8 @@ struct WalkFrame {
   // `WithProceduralBody`. Null outside a process or subroutine body.
   hir::ProceduralBody* current_procedural_body = nullptr;
 
-  // Nonzero while a fork-join branch body is being lowered. A procedural-var
-  // reference inside a branch is rejected (FJ1 has no per-branch local
-  // storage yet). Counter so a nested fork stays rejected correctly. Zero
-  // outside a process body.
+  // Nonzero while a fork-join branch body is being lowered. Counter so a nested
+  // fork is tracked correctly. Zero outside a process body.
   std::uint32_t fork_branch_depth = 0;
 
   // Non-local break target for the innermost enclosing loop. A `foreach`
