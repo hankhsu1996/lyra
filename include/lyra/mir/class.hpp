@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,8 +18,23 @@
 
 namespace lyra::mir {
 
+// The base class a class extends. A class is a generic object type; whether it
+// is a node in the runtime object tree, and which runtime base it inherits, is
+// stated here rather than inferred by a backend. `kInstance` is a top-level
+// module instance, `kGenScope` a nested generate scope (both runtime Scope
+// subclasses). A class with no base is a plain object -- members only, not a
+// tree node -- constructed and held directly rather than registered.
+enum class RuntimeBaseClass : std::uint8_t {
+  kInstance,
+  kGenScope,
+};
+
 struct Class {
   std::string name;
+  // The runtime base this class extends, or absent for a plain object. A
+  // backend realizes the base, the registering constructor, and the tree-node
+  // overrides only when a base is present; a baseless class is a plain struct.
+  std::optional<RuntimeBaseClass> base;
   TypeId self_pointer_type;
   // The class's resolved time unit and precision (LRM 3.14.2). The emitted
   // class exposes the precision so the engine can take the design-global

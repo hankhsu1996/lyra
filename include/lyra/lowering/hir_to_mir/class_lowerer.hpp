@@ -160,10 +160,8 @@ class ClassLowerer {
 
   [[nodiscard]] auto TranslateStructuralVar(
       hir::StructuralHops hops, hir::StructuralVarId hir_id) const
-      -> mir::MemberRef {
-    const mir::MemberId mir_id = LookupStructuralVarAtHops(hops, hir_id);
-    return mir::MemberRef{
-        .hops = mir::EnclosingHops{.value = hops.value}, .var = mir_id};
+      -> mir::MemberId {
+    return LookupStructuralVarAtHops(hops, hir_id);
   }
 
   void MapLoopVarAsStructuralParam(

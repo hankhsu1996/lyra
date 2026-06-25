@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/Statement.h>
@@ -41,6 +42,12 @@ class ProcessLowerer {
   auto Run(
       const slang::ast::ProceduralBlockSymbol& proc, WalkFrame parent_frame)
       -> diag::Result<hir::Process>;
+
+  // Computes which automatic locals a detached fork branch borrows and can
+  // outlive (LRM 6.21), as a set of slang symbols. Run once over the body
+  // before it is lowered, so `AddProceduralVar` knows each decl's status at
+  // creation rather than back-patching it at a later reference.
+  void AnalyzeLifetimeExtended(const slang::ast::Statement& body);
 
   // Composite: appends a `ProceduralVarDecl` to `body` and registers the
   // slang-to-HIR binding for `var` in the procedural-var registry. The two
@@ -85,6 +92,7 @@ class ProcessLowerer {
   // Registry.
   std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>
       procedural_var_bindings_;
+  std::unordered_set<const slang::ast::VariableSymbol*> lifetime_extended_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

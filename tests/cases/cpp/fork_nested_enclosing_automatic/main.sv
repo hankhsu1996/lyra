@@ -5,7 +5,7 @@ module Test;
       begin
         automatic int outer_k = 7;
         fork
-          #10 $display("%0d", outer_k);
+          #10 $display("inner outer_k=%0d", outer_k);
         join_none
       end
     join_none

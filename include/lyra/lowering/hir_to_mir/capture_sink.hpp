@@ -69,7 +69,22 @@ class CaptureSink {
   auto Capture(
       mir::LocalId var, BlockDepth decl_depth, mir::TypeId type,
       BlockDepth current_depth) -> mir::Expr {
-    mir::LocalId binding = FindOrCreate(var, decl_depth, type);
+    mir::LocalId binding =
+        FindOrCreate(var, decl_depth, type, by_value_depth_ == decl_depth);
+    return mir::Expr{
+        .data =
+            mir::LocalRef{
+                .hops = current_depth - boundary_depth_, .var = binding},
+        .type = body_->vars.Get(binding).type};
+  }
+
+  // Capture `var` by value regardless of depth: the body binding owns a copy of
+  // the value. Used for a shared activation handle, whose copy is a
+  // refcount-bumping snapshot that keeps the activation alive for the branch.
+  auto CaptureByValue(
+      mir::LocalId var, BlockDepth decl_depth, mir::TypeId type,
+      BlockDepth current_depth) -> mir::Expr {
+    mir::LocalId binding = FindOrCreate(var, decl_depth, type, true);
     return mir::Expr{
         .data =
             mir::LocalRef{
@@ -82,7 +97,8 @@ class CaptureSink {
   }
 
  private:
-  auto FindOrCreate(mir::LocalId var, BlockDepth decl_depth, mir::TypeId type)
+  auto FindOrCreate(
+      mir::LocalId var, BlockDepth decl_depth, mir::TypeId type, bool by_value)
       -> mir::LocalId {
     for (const auto& request : requests_) {
       if (request.decl_depth == decl_depth && request.var == var) {
@@ -100,7 +116,7 @@ class CaptureSink {
     const std::string name = "_lyra_cap_" + std::to_string(requests_.size());
     mir::LocalId binding{};
     mir::ExprId source{};
-    if (by_value_depth_ == decl_depth) {
+    if (by_value) {
       // By-value snapshot: the binding owns a copy; the source is the read.
       binding = body_->vars.Add(mir::LocalDecl{.name = name, .type = type});
       source = cell;

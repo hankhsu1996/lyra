@@ -12,7 +12,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

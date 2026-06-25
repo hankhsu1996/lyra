@@ -8,6 +8,8 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -79,11 +81,40 @@ class ScopeView {
         mir::EnclosingHops{.value = hops.value - 1});
   }
 
+  // The class a member access reaches, resolved from the receiver's object
+  // type: the member belongs to the receiver's class. A receiver is `self`
+  // (the current class), an `(Outer*)self->Parent()` navigation (an enclosing
+  // class), or a handle to a nested object (a nested class). Searched among the
+  // current class, its nested classes, and its enclosing chain -- the classes
+  // reachable from this render position.
+  [[nodiscard]] auto ClassByObjectType(mir::TypeId object_type) const
+      -> const mir::Class& {
+    if (ObjectTypeOf(*class_) == object_type) {
+      return *class_;
+    }
+    for (const auto& nested : class_->nested_classes) {
+      if (ObjectTypeOf(nested) == object_type) {
+        return nested;
+      }
+    }
+    if (class_parent_ != nullptr) {
+      return class_parent_->ClassByObjectType(object_type);
+    }
+    throw InternalError("ScopeView::ClassByObjectType: no class for type");
+  }
+
   [[nodiscard]] auto Expr(mir::ExprId id) const -> const mir::Expr& {
     return block_->exprs.Get(id);
   }
 
  private:
+  // The object type a class instance has -- the pointee of its self pointer.
+  [[nodiscard]] auto ObjectTypeOf(const mir::Class& cls) const -> mir::TypeId {
+    return std::get<mir::PointerType>(
+               unit_->GetType(cls.self_pointer_type).data)
+        .pointee;
+  }
+
   ScopeView(
       const mir::CompilationUnit& unit, const mir::Class& cls,
       const mir::Block& block)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -44,11 +45,23 @@ struct StaticVarBinding {
   mir::MemberId var;
 };
 
+// LRM 6.21: an automatic local a detached fork branch borrows and can outlive
+// is lifted into a shared activation object. Its reads / writes reach a member
+// of that object through a handle local (a shared pointer) declared at
+// `handle_depth`; a branch reaches the same member through a by-value copy of
+// the handle. `handle_type` is the handle's `PointerType{kShared}` type.
+struct PromotedVarBinding {
+  BlockDepth handle_depth;
+  mir::LocalId handle;
+  mir::TypeId handle_type;
+  mir::MemberId member;
+};
+
 // LRM 13.3.1: a static-lifetime body local is realized as a member on the
 // callable's owner class, so a HIR procedural-var-ref dispatches to a
 // MemberAccess instead of a LocalRef.
 using ProceduralVarBinding =
-    std::variant<AutomaticVarBinding, StaticVarBinding>;
+    std::variant<AutomaticVarBinding, StaticVarBinding, PromotedVarBinding>;
 
 // Per-process / method lowering registries. Carries facts to the
 // surrounding module and class, time resolution, the HIR body, and
@@ -170,6 +183,29 @@ class ProcessLowerer {
     return bindings_[hir_id.value];
   }
 
+  // An activation scope is opened at block entry -- the box and its handle are
+  // built then -- but a promoted var's binding must register in HIR id order at
+  // its declaration like any other. The block-entry pass records the slot here;
+  // the declaration consumes it (`TakePendingActivation`) and registers the
+  // binding in order.
+  void RecordPendingActivation(
+      hir::ProceduralVarId hir_id, PromotedVarBinding binding) {
+    pending_activation_.insert_or_assign(hir_id, binding);
+  }
+
+  [[nodiscard]] auto TakePendingActivation(hir::ProceduralVarId hir_id)
+      -> PromotedVarBinding {
+    const auto it = pending_activation_.find(hir_id);
+    if (it == pending_activation_.end()) {
+      throw InternalError(
+          "ProcessLowerer::TakePendingActivation: var was not opened into an "
+          "activation scope");
+    }
+    const PromotedVarBinding binding = it->second;
+    pending_activation_.erase(it);
+    return binding;
+  }
+
   // The synthesized identifier for the callable being lowered (e.g.
   // `"process_3"`, or a method's user-given name). Consumed by the
   // static-local lowering to mangle the member name on the owner
@@ -221,6 +257,8 @@ class ProcessLowerer {
   std::vector<mir::LocalId> output_pack_vars_;
   std::vector<mir::TypeId> output_pack_types_;
   mir::TypeId completion_payload_type_{};
+
+  std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

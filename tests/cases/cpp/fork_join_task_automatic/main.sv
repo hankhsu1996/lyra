@@ -3,7 +3,7 @@ module Test;
   task automatic run_branches();
     automatic int x = 5;
     fork
-      #10 $display("%0d", x);
+      #10 $display("x=%0d", x);
     join
   endtask
 

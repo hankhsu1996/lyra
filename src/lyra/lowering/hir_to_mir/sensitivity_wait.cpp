@@ -44,11 +44,11 @@ auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
 // pointer (already an observable*), and a directly owned cell (address-of).
 auto BuildObservablePtrExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    const mir::MemberRef& member) -> mir::ExprId {
+    mir::EnclosingHops hops, mir::MemberId var) -> mir::ExprId {
   const mir::TypeId field_type =
-      frame.EnclosingClassAtHops(member.hops).members.Get(member.var).type;
+      frame.EnclosingClassAtHops(hops).members.Get(var).type;
   const mir::ExprId member_access_id =
-      block.exprs.Add(BuildStructuralMemberAccessExpr(frame, member));
+      block.exprs.Add(BuildStructuralMemberAccessExpr(frame, unit, hops, var));
   const auto& field_type_data = unit.GetType(field_type).data;
 
   if (std::holds_alternative<mir::ExternalRefType>(field_type_data)) {
@@ -85,18 +85,24 @@ auto MakeSensitivityWaitStmt(
   std::vector<mir::SensitivityRead> reads;
   reads.reserve(sensitivity_list.size());
   for (const auto& entry : sensitivity_list) {
-    const mir::MemberRef member = std::visit(
+    const auto [hops, var] = std::visit(
         Overloaded{
-            [&](const hir::StructuralVarRef& r) -> mir::MemberRef {
-              return lowerer.TranslateStructuralVar(r.hops, r.var);
+            [&](const hir::StructuralVarRef& r)
+                -> std::pair<mir::EnclosingHops, mir::MemberId> {
+              return {
+                  mir::EnclosingHops{.value = r.hops.value},
+                  lowerer.TranslateStructuralVar(r.hops, r.var)};
             },
-            [&](const hir::CrossUnitVarRef& r) -> mir::MemberRef {
-              return lowerer.CrossUnitRefTarget(r.id).target;
+            [&](const hir::CrossUnitVarRef& r)
+                -> std::pair<mir::EnclosingHops, mir::MemberId> {
+              return {
+                  mir::EnclosingHops{.value = 0},
+                  lowerer.CrossUnitRefTarget(r.id).target.var};
             },
         },
         entry.ref);
     const mir::ExprId observable_ptr_id =
-        BuildObservablePtrExpr(target_block, frame, unit, member);
+        BuildObservablePtrExpr(target_block, frame, unit, hops, var);
     // LRM 9.4.2 / 9.4.2.2 / 9.4.3: a bit-addressed footprint becomes
     // `(lsb, hi - lsb + 1)`; a whole-signal read (no footprint) is encoded
     // as width 0 (the any-change form at the runtime trigger).

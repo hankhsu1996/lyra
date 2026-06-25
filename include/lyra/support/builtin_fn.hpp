@@ -290,6 +290,12 @@ enum class BuiltinFn : std::uint16_t {
   kReductionNor,
   kReductionXnor,
   kFromBool,
+  // Typed parent navigation: `scope->Parent()` returns the enclosing scope as
+  // the runtime `Scope` base pointer. An intra-unit upward member access casts
+  // the result to the enclosing class and reads the member directly (the unit
+  // owns the enclosing class's layout); distinct from the by-name `kGetSignal`
+  // / `kGetChild` cross-unit navigation.
+  kParent,
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,
