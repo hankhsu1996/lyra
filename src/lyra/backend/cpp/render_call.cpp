@@ -314,15 +314,14 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
   throw InternalError("BuiltinFnCppName: unknown BuiltinFn");
 }
 
-// The C++ namespace path the builtin fn is declared in (e.g. `lyra::value`
-// for `lyra::value::Scan`). A separate axis from the bare name and from the
-// calling shape in the MIR `Callee` variant. Every id may declare one; render
-// paths choose whether to consume it -- a `FreeFnCallee` must (no receiver
-// supplies the scope), a `BuiltinFnCallee` need not (the receiver
-// expression's type already names the enclosing class), a `BuiltinStaticCallee`
-// need not (the `type_qual` already names the SV type). Returns empty for ids
-// whose render path never needs an explicit qualifier; extend this table when
-// adding a free function or any caller that wants the fully-qualified path.
+// The C++ namespace the runtime helper is declared in (e.g. `lyra::value`
+// for `lyra::value::Scan`). Used only for the free-function render form --
+// a built-in whose id has no receiver and is not qualified by the call
+// site needs the namespace to spell its symbol. A built-in id with a
+// receiver consumes its receiver expression instead; a static-qualified
+// call (per `IsStaticBuiltinFn`) consumes the call site's qualification.
+// An empty return means "no namespace declared"; ids whose render does
+// not need one (instance and static forms) leave this unset.
 auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
   switch (id) {
     case support::BuiltinFn::kScan:
@@ -343,99 +342,115 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
   }
 }
 
-// Each callee variant resolves to a `(callee_expr, leading_arg_count)` pair:
+// Each callee shape resolves to a `(callee_expr, leading_arg_count)` pair:
 // the C++ text written before the `(args)` list, and how many leading MIR
 // arguments are absorbed into the callee text (the receiver of an instance
 // method) and skipped when rendering the user-visible argument list. The
 // outer `RenderCallExpr` then does one concatenation -- `{callee}({args})` --
-// so every shape (instance, free function, static method, closure, scope
-// method, type constructor, heap-construct `make_unique<T>`) renders through
-// the same final formatter.
+// so every form (instance, type-qualified static, free function, indirect
+// closure, type constructor, heap-construct `make_unique<T>`) renders
+// through the same final formatter.
 struct CalleeRender {
   std::string expr;
   std::size_t leading_arg_count;
 };
+
+// Renders a `Direct` callee whose target is a user-declared `MethodId`.
+// The callee's class is named by the `self` handle threaded as the first
+// argument: the method belongs to the receiver's class. The class
+// qualifies the emitted static call, and `self` stays an ordinary leading
+// argument (no skip). No qualification is allowed today -- cross-class
+// method calls are gated on SV class support.
+auto RenderDirectMethodCall(
+    const ScopeView& view, const mir::CallExpr& call, mir::MethodId method_id,
+    const std::optional<mir::ScopeQualifier>& qualification) -> CalleeRender {
+  if (qualification.has_value()) {
+    throw InternalError(
+        "Direct method call: qualification is not yet implemented");
+  }
+  if (call.arguments.empty()) {
+    throw InternalError("Direct method call expects a receiver argument");
+  }
+  const mir::Expr& receiver = view.Expr(call.arguments[0]);
+  const mir::TypeId object_type =
+      std::get<mir::PointerType>(view.Unit().GetType(receiver.type).data)
+          .pointee;
+  const auto& cls = view.ClassByObjectType(object_type);
+  return {
+      .expr = std::format(
+          "{}::{}", RenderTypeAsCpp(view.Unit(), view.Class(), object_type),
+          cls.methods.Get(method_id).name),
+      .leading_arg_count = 0};
+}
+
+// Renders a `Direct` callee whose target is a `BuiltinFn`. Picks one of
+// three C++ forms from the id's metadata: qualification present -> type-
+// qualified static `Qual::Name(args)`; no qualification + declared
+// namespace -> free function `ns::Name(args)`; otherwise -> instance form
+// `(args[0]).Name(rest)`. The form is a fixed function of the id and the
+// presence of a qualification on the call.
+auto RenderDirectBuiltinCall(
+    const ScopeView& view, const mir::CallExpr& call, support::BuiltinFn id,
+    const std::optional<mir::ScopeQualifier>& qualification) -> CalleeRender {
+  if (qualification.has_value()) {
+    const auto& tq = std::get<mir::TypeQualifier>(*qualification);
+    return {
+        .expr = std::format(
+            "{}::{}", RenderTypeAsCpp(view.Unit(), view.Class(), tq.type),
+            BuiltinFnCppName(id)),
+        .leading_arg_count = 0};
+  }
+  const std::string_view ns = BuiltinFnCppNamespace(id);
+  if (!ns.empty()) {
+    return {
+        .expr = std::format("{}::{}", ns, BuiltinFnCppName(id)),
+        .leading_arg_count = 0};
+  }
+  if (call.arguments.empty()) {
+    throw InternalError(
+        "Direct builtin call: instance form expects a receiver argument");
+  }
+  const mir::Expr& receiver = view.Expr(call.arguments[0]);
+  const std::string_view sep =
+      view.Unit().GetType(receiver.type).Kind() == mir::TypeKind::kPointer
+          ? "->"
+          : ".";
+  return {
+      .expr = std::format(
+          "({}){}{}", RenderExpr(view, receiver), sep, BuiltinFnCppName(id)),
+      .leading_arg_count = 1};
+}
 
 auto RenderCalleePart(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> CalleeRender {
   return std::visit(
       Overloaded{
-          [&](const mir::MethodRef& ref) -> CalleeRender {
-            // The callee's class is named by the `self` handle threaded as the
-            // first argument: the method belongs to the receiver's class. The
-            // class qualifies the emitted static call, and `self` stays an
-            // ordinary leading argument (no skip).
-            if (call.arguments.empty()) {
-              throw InternalError("MethodRef call expects a receiver argument");
-            }
-            const mir::Expr& receiver = view.Expr(call.arguments[0]);
-            const mir::TypeId object_type =
-                std::get<mir::PointerType>(
-                    view.Unit().GetType(receiver.type).data)
-                    .pointee;
-            const auto& cls = view.ClassByObjectType(object_type);
+          [&](const mir::Direct& d) -> CalleeRender {
+            return std::visit(
+                Overloaded{
+                    [&](const mir::MethodId& m) {
+                      return RenderDirectMethodCall(
+                          view, call, m, d.qualification);
+                    },
+                    [&](const support::BuiltinFn& id) {
+                      return RenderDirectBuiltinCall(
+                          view, call, id, d.qualification);
+                    },
+                },
+                d.target);
+          },
+          [&](const mir::Indirect& i) -> CalleeRender {
             return {
-                .expr = std::format(
-                    "{}::{}",
-                    RenderTypeAsCpp(view.Unit(), view.Class(), object_type),
-                    cls.methods.Get(ref.method).name),
+                .expr =
+                    std::format("({})", RenderExpr(view, view.Expr(i.closure))),
                 .leading_arg_count = 0};
           },
-          [&](const mir::BuiltinFnCallee& b) -> CalleeRender {
-            // Instance method: render the receiver, pick `.` or `->` from
-            // its MIR type, append the method name. The receiver consumes
-            // the first MIR argument.
-            if (call.arguments.empty()) {
-              throw InternalError(
-                  "BuiltinFnCallee: instance call expects a receiver "
-                  "argument");
-            }
-            const mir::Expr& receiver = view.Expr(call.arguments[0]);
-            const std::string_view sep =
-                view.Unit().GetType(receiver.type).Kind() ==
-                        mir::TypeKind::kPointer
-                    ? "->"
-                    : ".";
-            return {
-                .expr = std::format(
-                    "({}){}{}", RenderExpr(view, receiver), sep,
-                    BuiltinFnCppName(b.id)),
-                .leading_arg_count = 1};
-          },
-          [&](const mir::BuiltinStaticCallee& b) -> CalleeRender {
-            // Type-qualified static call: `Qualifier::name`. The qualifier
-            // is just the result of rendering the SV type as C++ -- enum
-            // types fold through `RenderEnumClassName` inside there, so the
-            // call site does not need to discriminate on the type kind.
-            return {
-                .expr = std::format(
-                    "{}::{}",
-                    RenderTypeAsCpp(view.Unit(), view.Class(), b.type_qual),
-                    BuiltinFnCppName(b.id)),
-                .leading_arg_count = 0};
-          },
-          [&](const mir::FreeFnCallee& f) -> CalleeRender {
-            const std::string_view ns = BuiltinFnCppNamespace(f.id);
-            if (ns.empty()) {
-              throw InternalError("FreeFnCallee: id has no declared namespace");
-            }
-            return {
-                .expr = std::format("{}::{}", ns, BuiltinFnCppName(f.id)),
-                .leading_arg_count = 0};
-          },
-          [&](const mir::ClosureRef& cr) -> CalleeRender {
-            return {
-                .expr = std::format(
-                    "({})", RenderExpr(view, view.Expr(cr.closure))),
-                .leading_arg_count = 0};
-          },
-          [&](const mir::ConstructorCallee&) -> CalleeRender {
+          [&](const mir::Construct&) -> CalleeRender {
             // The result type names what is being constructed. A
             // `unique_ptr<T>` constructor is `std::make_unique<T>` -- it
-            // forwards the arguments to T's constructor and heap-allocates
-            // -- so the call site stays an ordinary `ConstructorCallee`,
-            // and which C++ syntax to spell is read off the result type.
+            // forwards the arguments to T's constructor and heap-allocates --
+            // so which C++ syntax to spell is read off the result type.
             const auto& result_ty = view.Unit().GetType(result_type);
             if (const auto* ptr =
                     std::get_if<mir::PointerType>(&result_ty.data);

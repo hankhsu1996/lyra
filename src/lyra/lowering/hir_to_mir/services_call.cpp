@@ -43,7 +43,7 @@ auto BuildFilesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = support::BuiltinFn::kFiles},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
               .arguments = {services_id}},
       .type = builtins.files};
 }
@@ -57,8 +57,7 @@ auto BuildDiagnosticCallExpr(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kDiagnostic},
+              .callee = mir::Direct{.target = support::BuiltinFn::kDiagnostic},
               .arguments = {services_id}},
       .type = builtins.diagnostic};
 }
@@ -72,14 +71,13 @@ auto BuildFormatCallExpr(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = support::BuiltinFn::kTimeFormat},
+                      mir::Direct{.target = support::BuiltinFn::kTimeFormat},
                   .arguments = {services_id}},
           .type = builtins.time_format});
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::FreeFnCallee{.id = support::BuiltinFn::kFormat},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFormat},
               .arguments = {items_array, time_format_id}},
       .type = builtins.string};
 }

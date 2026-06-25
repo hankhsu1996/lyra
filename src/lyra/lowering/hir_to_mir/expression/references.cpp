@@ -128,8 +128,7 @@ auto LowerHirStringLiteral(
   const mir::ExprId lit = block.exprs.Add(
       mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type});
   return mir::Expr{
-      .data =
-          mir::CallExpr{.callee = mir::ConstructorCallee{}, .arguments = {lit}},
+      .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {lit}},
       .type = type};
 }
 

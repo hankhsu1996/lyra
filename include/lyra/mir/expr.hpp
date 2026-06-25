@@ -12,7 +12,7 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/method_ref.hpp"
+#include "lyra/mir/method_id.hpp"
 #include "lyra/mir/param.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/mir/value_ref.hpp"
@@ -102,55 +102,71 @@ struct AssignExpr {
 // LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Mirrors hir::IncDecExpr. The
 // `target` ExprId points at an addressable expression (a PrimaryExpr var
 // reference or an addressable container-access chain per
-// `mir::IsContainerAccessCall`); ConcatExpr-as-target is illegal per
+// `mir::IsContainerAccessCallee`); ConcatExpr-as-target is illegal per
 // slang.
 struct IncDecExpr {
   IncDecOp op;
   ExprId target;
 };
 
-// Calls a compiler-recognized runtime entry whose identity is a closed-
-// namespace `support::BuiltinFn`. Instance form: `args[0]` is the value
-// receiver; remaining args are the SV arguments.
-struct BuiltinFnCallee {
-  support::BuiltinFn id;
+// A spelling / scope qualifier the call site provides at the point of
+// invocation -- the namespace path a direct call resolves through, exactly
+// the role `MyEnum::` plays in `MyEnum::first()` or `PackedArray::` in
+// `PackedArray::FromInt(...)`. Distinct from the symbol's declaration owner
+// (which the target's metadata knows): a qualifier is a property of this
+// call, not of the symbol. Today the only arm is `TypeQualifier`; SV
+// packages (LRM 26) bring `Namespace{NamespaceId}` and a `Path` composition
+// for namespace-and-then-type calls.
+struct TypeQualifier {
+  TypeId type;
 };
 
-// Type-namespace-qualified static call (e.g. `MyEnum::first()`). No value
-// receiver in `args`; `type_qual` is part of the symbol identity and rides
-// on the callee. Backends consume the qualifier directly.
-struct BuiltinStaticCallee {
-  support::BuiltinFn id;
-  TypeId type_qual;
+using ScopeQualifier = std::variant<TypeQualifier>;
+
+// The target of a `Direct` call -- the symbol identity. Two identity
+// spaces today: built-in runtime entries (closed-namespace `BuiltinFn`)
+// and user-declared class methods (per-class `MethodId` arena). The two
+// collapse into one `CallableId` once external callables (DPI) and SV
+// class statics share one callable-declaration shape.
+using DirectTarget = std::variant<MethodId, support::BuiltinFn>;
+
+// A direct call to a named symbol. The single shape for every direct
+// invocation -- user method, built-in instance method, type-qualified
+// static, runtime free function. The render mode (instance form
+// `recv.name(rest)`, type-qualified `Q::name(args)`, or free
+// `ns::name(args)`) is a fixed function of the target's signature and
+// whether `qualification` is present; it is not encoded as a separate arm.
+//
+// Receiver, when the target's signature declares one, is `args[0]` --
+// the explicit-receiver model `mir.md` invariant 11 requires. Instance
+// and static dispatch differ only in whether the signature has a `self`
+// formal, not in MIR's call shape.
+struct Direct {
+  DirectTarget target;
+  std::optional<ScopeQualifier> qualification = std::nullopt;
 };
 
-// A free function (no receiver, no SV-type qualifier). Distinct from
-// `BuiltinStaticCallee` whose qualifier names an SV type.
-struct FreeFnCallee {
-  support::BuiltinFn id;
-};
-
-// Calls a closure stored as an expression in the same block.
-// The backend renders the call as `(closure_lambda)(args)` -- the standard
-// IIFE shape when invoked synchronously. Used for SV expression-position
-// constructs whose evaluation has side effects (e.g., `$sscanf` writing
-// through its output args while yielding the matched count).
-struct ClosureRef {
-  ExprId closure{};
+// A call to a computed callable value -- a closure expression that
+// evaluates to the callable to invoke. The indirect-call shape, the dual
+// of `Direct`. Used for SV expression-position constructs whose
+// evaluation has side effects (e.g., `$sscanf` writing through its output
+// args while yielding the matched count).
+struct Indirect {
+  ExprId closure;
 };
 
 // Constructs a value of the call's result data type from the positional
-// arguments -- the data type's constructor, which is just a call whose callee
-// is the type itself (Python's `T(args)`, Rust's `T::new(args)`). The backend
-// renders it as `<TypeName>(args)`, the type name from the result type; it
-// carries no knowledge of which data type it builds (a reference from a cell, a
-// runtime-sized container from a size, a default value from no arguments). The
-// brace-list aggregate form is `ArrayLiteralExpr`, a value literal, not this.
-struct ConstructorCallee {};
+// arguments -- the data type's constructor, which is just a call whose
+// callee is the type itself (Python's `T(args)`, Rust's `T::new(args)`).
+// The backend renders it from the result type; it carries no knowledge of
+// which data type it builds. Distinct from `Direct` because it is not a
+// named-symbol invocation: object/storage creation, ownership attachment,
+// initialization ordering, and (future) heap allocation are the
+// constructor's job, not an ordinary call's. The brace-list aggregate
+// form is `ArrayLiteralExpr`, a value literal, not this.
+struct Construct {};
 
-using Callee = std::variant<
-    MethodRef, BuiltinFnCallee, BuiltinStaticCallee, FreeFnCallee, ClosureRef,
-    ConstructorCallee>;
+using Callee = std::variant<Direct, Indirect, Construct>;
 
 struct CallExpr {
   Callee callee;
@@ -283,8 +299,9 @@ struct Expr {
       .data = AssignExpr{.target = target, .value = value}, .type = type};
 }
 
-// Whether the call's receiver is mutated by the dispatch. Dispatches across
-// the two builtin callee shapes; non-builtin callees return false.
+// Whether the call's receiver is mutated by the dispatch. True only for a
+// direct call to a built-in whose id is in the mutating set; everything
+// else (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
 
 // Whether the call's `args[0]` is the container being accessed (indexed or
@@ -298,7 +315,7 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = BuiltinFnCallee{.id = support::BuiltinFn::kServices},
+              .callee = Direct{.target = support::BuiltinFn::kServices},
               .arguments = {self}},
       .type = services};
 }
@@ -309,7 +326,7 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = BuiltinFnCallee{.id = support::BuiltinFn::kGet},
+              .callee = Direct{.target = support::BuiltinFn::kGet},
               .arguments = {cell}},
       .type = value_type};
 }
@@ -321,7 +338,7 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = BuiltinFnCallee{.id = support::BuiltinFn::kSet},
+              .callee = Direct{.target = support::BuiltinFn::kSet},
               .arguments = {cell, services, value}},
       .type = void_type};
 }
@@ -334,7 +351,7 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = BuiltinFnCallee{.id = support::BuiltinFn::kMutate},
+              .callee = Direct{.target = support::BuiltinFn::kMutate},
               .arguments = {cell, services}},
       .type = value_type};
 }

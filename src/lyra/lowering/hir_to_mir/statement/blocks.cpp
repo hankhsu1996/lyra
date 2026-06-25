@@ -81,9 +81,7 @@ void OpenActivationScope(
   mir::Block& block = *frame.current_block;
   const mir::ExprId init = block.exprs.Add(
       mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::ConstructorCallee{}, .arguments = {}},
+          .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
           .type = handle_type});
   const mir::LocalRef handle = block.AppendLocal(
       mir::LocalDecl{.name = box_name + "_h", .type = handle_type}, init);

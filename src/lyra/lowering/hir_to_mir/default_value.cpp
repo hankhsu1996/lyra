@@ -80,7 +80,7 @@ auto BuildDefaultValueExpr(
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::ConstructorCallee{}, .arguments = {lit}},
+                        .callee = mir::Construct{}, .arguments = {lit}},
                 .type = type};
           },
           [&](const mir::RealType&) -> mir::Expr {
@@ -117,7 +117,7 @@ auto BuildDefaultValueExpr(
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::ConstructorCallee{},
+                        .callee = mir::Construct{},
                         .arguments = {element_default}},
                 .type = type};
           },
@@ -139,7 +139,7 @@ auto BuildDefaultValueExpr(
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::ConstructorCallee{},
+                        .callee = mir::Construct{},
                         .arguments = std::move(args)},
                 .type = type};
           },
@@ -152,7 +152,7 @@ auto BuildDefaultValueExpr(
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::ConstructorCallee{},
+                        .callee = mir::Construct{},
                         .arguments = {element_default}},
                 .type = type};
           },
@@ -165,15 +165,13 @@ auto BuildDefaultValueExpr(
           [&](const mir::EventType&) -> mir::Expr {
             return mir::Expr{
                 .data =
-                    mir::CallExpr{
-                        .callee = mir::ConstructorCallee{}, .arguments = {}},
+                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
           [&](const mir::ObjectType&) -> mir::Expr {
             return mir::Expr{
                 .data =
-                    mir::CallExpr{
-                        .callee = mir::ConstructorCallee{}, .arguments = {}},
+                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
           [&](const mir::PointerType&) -> mir::Expr {
@@ -182,8 +180,7 @@ auto BuildDefaultValueExpr(
           [&](const mir::VectorType&) -> mir::Expr {
             return mir::Expr{
                 .data =
-                    mir::CallExpr{
-                        .callee = mir::ConstructorCallee{}, .arguments = {}},
+                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
           [&](const auto&) -> mir::Expr {
@@ -235,7 +232,7 @@ auto BuildArrayConstructionCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::ConstructorCallee{}, .arguments = std::move(args)},
+              .callee = mir::Construct{}, .arguments = std::move(args)},
       .type = array_type};
 }
 
@@ -285,7 +282,7 @@ auto BuildAssociativeConstructionCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::ConstructorCallee{}, .arguments = std::move(args)},
+              .callee = mir::Construct{}, .arguments = std::move(args)},
       .type = assoc_type};
 }
 

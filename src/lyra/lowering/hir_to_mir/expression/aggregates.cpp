@@ -193,7 +193,7 @@ auto LowerHirDynamicArrayNewExprProc(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::ConstructorCallee{}, .arguments = std::move(args)},
+              .callee = mir::Construct{}, .arguments = std::move(args)},
       .type = result_type};
 }
 

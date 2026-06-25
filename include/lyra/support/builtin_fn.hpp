@@ -226,7 +226,7 @@ enum class BuiltinFn : std::uint16_t {
   // Distinct from `kPushBack` (LRM 7.10 queue method) so each entry pins
   // one receiver type with no dispatch at render. (`std::make_unique<T>` is
   // the constructor of `unique_ptr<T>` rather than a free function -- it
-  // rides through `ConstructorCallee` so the result type drives the
+  // rides through `Construct` so the result type drives the
   // `make_unique<T>` emit, no special builtin id needed.)
   kVectorEmplace,
   kVectorBack,
@@ -306,9 +306,9 @@ enum class BuiltinFn : std::uint16_t {
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,
-// the qualifier is part of the symbol identity (e.g. `MyEnum::first()`).
-// Used by HIR-to-MIR to pick `BuiltinStaticCallee` vs `BuiltinFnCallee`
-// without re-deriving the family axis.
+// the qualifier rides on the call site as the `Direct::qualification`
+// (e.g. `MyEnum::first()`). Used by HIR-to-MIR to decide whether to attach
+// a qualification to the call.
 [[nodiscard]] constexpr auto IsStaticBuiltinFn(BuiltinFn id) -> bool {
   return id == BuiltinFn::kEnumFirst || id == BuiltinFn::kEnumLast ||
          id == BuiltinFn::kEnumNum || id == BuiltinFn::kFromInt ||

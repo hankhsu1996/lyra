@@ -121,8 +121,7 @@ auto LowerNamedEventTimedStmt(
         mir::Expr await_call{
             .data =
                 mir::CallExpr{
-                    .callee =
-                        mir::BuiltinFnCallee{.id = support::BuiltinFn::kAwait},
+                    .callee = mir::Direct{.target = support::BuiltinFn::kAwait},
                     .arguments = {receiver_id},
                 },
             .type = process.Module().Unit().builtins.void_type};
@@ -218,7 +217,7 @@ auto LowerDelayTimedStmt(
                 .data =
                     mir::CallExpr{
                         .callee =
-                            mir::FreeFnCallee{.id = support::BuiltinFn::kDelay},
+                            mir::Direct{.target = support::BuiltinFn::kDelay},
                         .arguments = {services_id, duration_id, precision_id}},
                 .type = builtins.void_type});
         const mir::ExprId await_expr_id = child_block.exprs.Add(
@@ -270,8 +269,7 @@ auto LowerEventTriggerStmt(
   mir::Expr call{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kTrigger},
+              .callee = mir::Direct{.target = support::BuiltinFn::kTrigger},
               .arguments = {receiver_id, services_id},
           },
       .type = process.Module().Unit().builtins.void_type};

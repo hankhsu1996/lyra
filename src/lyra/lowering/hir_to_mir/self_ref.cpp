@@ -34,7 +34,7 @@ auto BuildEnclosingScopeReceiver(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{.id = support::BuiltinFn::kParent},
+                        mir::Direct{.target = support::BuiltinFn::kParent},
                     .arguments = {nav}},
             .type = unit.builtins.scope_ptr});
   }
@@ -66,8 +66,7 @@ auto BuildReferenceArg(
     return block.exprs.Add(
         mir::Expr{
             .data =
-                mir::CallExpr{
-                    .callee = mir::ConstructorCallee{}, .arguments = {cell}},
+                mir::CallExpr{.callee = mir::Construct{}, .arguments = {cell}},
             .type = pointee});
   }
   // The reference aliases the cell's value, not its storage wrapper: a `Ref<T>`
@@ -81,8 +80,7 @@ auto BuildReferenceArg(
   return block.exprs.Add(
       mir::Expr{
           .data =
-              mir::CallExpr{
-                  .callee = mir::ConstructorCallee{}, .arguments = {cell}},
+              mir::CallExpr{.callee = mir::Construct{}, .arguments = {cell}},
           .type = ref_type});
 }
 

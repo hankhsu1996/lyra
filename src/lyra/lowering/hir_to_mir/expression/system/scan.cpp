@@ -89,8 +89,7 @@ auto EmitIsUnknownGuard(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = support::BuiltinFn::kIsUnknown},
+                      mir::Direct{.target = support::BuiltinFn::kIsUnknown},
                   .arguments = {operand_id}},
           .type = bit_t});
 
@@ -188,8 +187,7 @@ auto LowerScanSystemSubroutineCall(
         mir::Expr{
             .data =
                 mir::CallExpr{
-                    .callee =
-                        mir::BuiltinFnCallee{.id = support::BuiltinFn::kFiles},
+                    .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
                     .arguments = {services_id}},
             .type = unit.builtins.files});
     source_id = body.exprs.Add(
@@ -197,8 +195,8 @@ auto LowerScanSystemSubroutineCall(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kPeekBuffered},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kPeekBuffered},
                     .arguments = {files_id, fd_id}},
             .type = string_t});
   } else {
@@ -252,7 +250,7 @@ auto LowerScanSystemSubroutineCall(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::FreeFnCallee{.id = support::BuiltinFn::kScan},
+                  .callee = mir::Direct{.target = support::BuiltinFn::kScan},
                   .arguments = std::move(scan_args)},
           .type = integer_t});
 
@@ -267,8 +265,7 @@ auto LowerScanSystemSubroutineCall(
         mir::Expr{
             .data =
                 mir::CallExpr{
-                    .callee =
-                        mir::BuiltinFnCallee{.id = support::BuiltinFn::kFiles},
+                    .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
                     .arguments = {services_after}},
             .type = unit.builtins.files});
     const mir::ExprId consumed_read =
@@ -278,8 +275,7 @@ auto LowerScanSystemSubroutineCall(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kAdvanceFd},
+                        mir::Direct{.target = support::BuiltinFn::kAdvanceFd},
                     .arguments = {files_after, fd_id, consumed_read}},
             .type = void_t});
     body.AppendStmt(mir::ExprStmt{.expr = advance_call});

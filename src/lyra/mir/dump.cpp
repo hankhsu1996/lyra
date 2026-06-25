@@ -377,32 +377,46 @@ class MirDumper {
     throw InternalError("MirDumper: unknown BinaryOp");
   }
 
-  [[nodiscard]] static auto FormatCallee(const Callee& callee) -> std::string {
+  [[nodiscard]] auto FormatDirectTarget(const DirectTarget& target) const
+      -> std::string {
     return std::visit(
         Overloaded{
-            [](const MethodRef& r) -> std::string {
-              return std::format("MethodRef[method={}]", r.method.value);
+            [this](const MethodId& m) -> std::string {
+              const auto& owner = ResolveScopeAtHops(0);
+              const auto& method = owner.methods.Get(m);
+              return std::format("method={} \"{}\"", m.value, method.name);
             },
-            [](const ClosureRef& cr) -> std::string {
+            [](const support::BuiltinFn& id) -> std::string {
+              return std::format("builtin=\"{}\"", support::BuiltinFnName(id));
+            },
+        },
+        target);
+  }
+
+  [[nodiscard]] static auto FormatQualification(
+      const std::optional<ScopeQualifier>& q) -> std::string {
+    if (!q.has_value()) return "";
+    return std::visit(
+        Overloaded{
+            [](const TypeQualifier& tq) -> std::string {
+              return std::format(", qualification=Type[{}]", tq.type.value);
+            },
+        },
+        *q);
+  }
+
+  [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {
+    return std::visit(
+        Overloaded{
+            [this](const Direct& d) -> std::string {
               return std::format(
-                  "ClosureRef[closure=Expr[{}]]", cr.closure.value);
+                  "Direct[{}{}]", FormatDirectTarget(d.target),
+                  FormatQualification(d.qualification));
             },
-            [](const BuiltinFnCallee& b) -> std::string {
-              return std::format(
-                  "BuiltinFnCallee[id=\"{}\"]", support::BuiltinFnName(b.id));
+            [](const Indirect& i) -> std::string {
+              return std::format("Indirect[closure=Expr[{}]]", i.closure.value);
             },
-            [](const BuiltinStaticCallee& b) -> std::string {
-              return std::format(
-                  "BuiltinStaticCallee[id=\"{}\", type_qual=Type[{}]]",
-                  support::BuiltinFnName(b.id), b.type_qual.value);
-            },
-            [](const FreeFnCallee& f) -> std::string {
-              return std::format(
-                  "FreeFnCallee[id=\"{}\"]", support::BuiltinFnName(f.id));
-            },
-            [](const ConstructorCallee&) -> std::string {
-              return "ConstructorCallee";
-            },
+            [](const Construct&) -> std::string { return "Construct"; },
         },
         callee);
   }
@@ -539,7 +553,7 @@ class MirDumper {
               return std::format(
                   "IncDecExpr op={} target=Expr[{}]", op_str, inc.target.value);
             },
-            [](const CallExpr& c) -> std::string {
+            [this](const CallExpr& c) -> std::string {
               std::string args;
               for (std::size_t i = 0; i < c.arguments.size(); ++i) {
                 if (i != 0) {

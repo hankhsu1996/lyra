@@ -181,7 +181,7 @@ auto BuildFormatSpecExpr(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::ConstructorCallee{}, .arguments = std::move(args)},
+              .callee = mir::Construct{}, .arguments = std::move(args)},
       .type = unit.builtins.format_spec};
 }
 
@@ -200,14 +200,13 @@ auto BuildPrintItemExpr(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
-                            .callee = mir::ConstructorCallee{},
+                            .callee = mir::Construct{},
                             .arguments = {text_lit}},
                     .type = unit.builtins.string});
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::ConstructorCallee{},
-                        .arguments = {text}},
+                        .callee = mir::Construct{}, .arguments = {text}},
                 .type = unit.builtins.print_literal_item};
           },
           [&](const mir::RuntimePrintValue& v) -> mir::Expr {
@@ -216,7 +215,7 @@ auto BuildPrintItemExpr(
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::ConstructorCallee{},
+                        .callee = mir::Construct{},
                         .arguments = {v.value, spec}},
                 .type = unit.builtins.print_value_item};
           }},

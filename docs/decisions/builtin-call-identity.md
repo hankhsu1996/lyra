@@ -33,17 +33,21 @@ dedicated `IteratorIndexRef` arm in `SubroutineRef`, beside `BuiltinMethodRef`) 
 level is preserved; the separate arm encodes the "rewrites away" translation behaviour in the type,
 where it drives mechanical dispatch at HIR-to-MIR.
 
-MIR's callee is one of `BuiltinFnCallee{id: BuiltinFn}` (instance call: receiver is `args[0]`),
-`BuiltinStaticCallee{id: BuiltinFn, type_qual: TypeId}` (type-namespace-qualified static call: no
-receiver, the SV-type qualifier rides on the callee), or `FreeFnCallee{id: BuiltinFn}` (free
-function: no receiver, no SV-type qualifier -- the function's C++ namespace is a per-id backend
-fact, orthogonal to the callee variant). The instance / static / free split is structural at MIR
-because the calling convention differs; the property is recoverable from the `BuiltinFn` id itself,
-but pushing it into a separate variant arm spares every backend from re-deriving the distinction at
-render time.
+MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn, qualification }` -- shared
+with user-method calls, where `target` is the symbol identity (one of `variant<MethodId, BuiltinFn>`
+today; R49 collapses to one `CallableId`) and `qualification` is `Some(TypeQualifier{TypeId})` when
+the call site provides a type-namespace qualifier (e.g. `MyEnum::first`, `PackedArray::FromInt`) or
+`None` otherwise (instance calls, where the receiver is `args[0]`; or runtime helpers with no
+source-level qualifier). The instance / static / free distinction is **not** structural at MIR: at
+the generic-language layer these are one direct invocation, differing only in whether the callee's
+signature declares a self formal (driving the `args[0]`-as-receiver convention at any call site) and
+whether the call site provides a scope qualifier. The split into `BuiltinFnCallee` /
+`BuiltinStaticCallee` / `FreeFnCallee` arms was a backend-convenience pre-classification that
+violated `mir.md` invariant 10 (a field a backend's realization can ignore, restating what the id
+and signature already fix); it retires under refactor R45.
 
-HIR-to-MIR is a near-identity translation: pick the right MIR arm based on the id's
-static-vs-instance classification and pass the `BuiltinFn` through.
+HIR-to-MIR is a near-identity translation: pass the `BuiltinFn` through as `Direct::target`, and set
+`Direct::qualification` to the SV-type qualifier the source named (when one was named).
 
 AST-to-HIR still dispatches by receiver type to choose which name-to-id lookup table to query --
 `first` on an enum receiver resolves to `kEnumFirst`, `first` on an associative array resolves to

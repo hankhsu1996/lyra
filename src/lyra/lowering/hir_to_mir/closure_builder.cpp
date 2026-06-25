@@ -108,8 +108,7 @@ auto BuildClosureCallExpr(mir::Block& block, mir::Expr closure) -> mir::Expr {
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::ClosureRef{.closure = closure_id},
-              .arguments = {}},
+              .callee = mir::Indirect{.closure = closure_id}, .arguments = {}},
       .type = result_type};
 }
 
