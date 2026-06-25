@@ -1,0 +1,18 @@
+id: cpp.named_event
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    basic: 1
+    w1: 1
+    w2: 2
+    in_slot: 1
+    after: 1
+    b1: 1
+    b2: 2
+    b3: 3
