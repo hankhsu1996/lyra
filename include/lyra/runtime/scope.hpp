@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -11,8 +10,10 @@
 #include <vector>
 
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -26,20 +27,21 @@ inline constexpr std::int8_t kUnspecifiedTimePrecisionPower = 127;
 
 // How an upward hierarchical reference matches its ancestor while climbing the
 // parent chain (LRM 23.8): against the ancestor's module definition name
-// (`DefName()`, a module-instance head) or against the scope's own name
-// (`Name()`, a named generate block or `$root`).
+// (`DefName()`, a module-instance head) or against the scope's own segment
+// base name (`Segment().BaseName()`, a named generate block or `$root`).
 enum class UpwardMatch : std::uint8_t { kDefName, kScopeName };
 
 // A node in the one canonical object tree. Every constructed SystemVerilog
 // scope -- a module instance, a generate block, the implicit `$root` -- is a
-// Scope. It carries the scope's identity (name, parent), the services handle
-// its bodies reach through, its own processes, and the observed-region pending
-// closures. The scheduler walks this same tree; there is no parallel topology.
+// Scope. It carries the scope's structural identity (parent plus
+// HierarchySegment), the services handle its bodies reach through, its own
+// processes, and the observed-region pending closures. The scheduler walks
+// this same tree; there is no parallel topology.
 class Scope {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
-  Scope(Scope* parent, std::string name, RuntimeServices& services);
+  Scope(Scope* parent, HierarchySegment segment, RuntimeServices& services);
   virtual ~Scope() = default;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
@@ -47,7 +49,27 @@ class Scope {
   auto operator=(Scope&&) -> Scope& = delete;
 
   [[nodiscard]] auto Parent() const -> Scope*;
+
+  // The scope's structural identity at this level: the parent-side label
+  // plus per-dimension indices (empty for a scalar, `{i}` for a generate-for
+  // iteration, `{i, j}` for a multi-dim instance array). Fixed at
+  // construction and never observed before then.
+  [[nodiscard]] auto Segment() const -> const HierarchySegment&;
+
+  // The LRM 27.6 display form of `Segment()` -- `loop[0]`, `m`, `gblk`.
+  [[nodiscard]] auto DisplaySegment() const -> std::string;
+
+  // The base label of `Segment()`. Carries the source-level identifier
+  // without any per-dimension index decoration; used by cross-unit by-name
+  // lookup keys and by upward `kScopeName` resolution.
   [[nodiscard]] auto Name() const -> std::string_view;
+
+  // Joins each ancestor's display segment with `.`, ordered from the
+  // outermost named ancestor inward (LRM 21.2.1.1; `%m` resolves to this
+  // string). The walk stops at the implicit `$root` so multi-top output
+  // reads `Top.mid.x` rather than `$root.Top.mid.x`. Walked on demand:
+  // the object tree is sealed by Activate.
+  [[nodiscard]] auto HierarchicalPath() const -> lyra::value::String;
 
   // The scope's module definition name. An upward hierarchical reference climbs
   // the parent chain matching against this (LRM 23.8): the referrer's emitted
@@ -58,16 +80,19 @@ class Scope {
     return {};
   }
 
-  // Records, during construction, the address of a signal this scope owns under
-  // its source name, and the owned child reachable at `name` plus one index per
-  // array dimension (empty for a scalar). A unit answers by-name queries about
-  // its own interface from these registrations; it never inspects who asks.
-  // `name` points at an emitted string literal; the indices are copied so the
-  // entry outlives the constructor's arguments.
+  // Records, during construction, the address of a signal this scope owns
+  // under its source name. A unit answers by-name signal queries from these
+  // registrations; it never inspects who asks. `name` points at an emitted
+  // string literal.
   void RegisterSignal(std::string_view name, void* address);
-  void RegisterChild(
-      std::string_view name, std::span<const lyra::value::PackedArray> indices,
-      Scope& child);
+
+  // Wires `child` into this scope's object-tree edge: sets `child.parent_`
+  // to `this`, places `child` in the attached-children relation, and makes
+  // it findable through `GetChild` (key derived from `child.Segment()`).
+  // One write point per child edge; the parent never re-states identity
+  // the child already holds. Called after the typed owner commits the
+  // child, so a thrown ctor leaves no half-attached scope.
+  void AttachChild(Scope& child);
 
   // Returns the address of the signal registered under `name`, or the owned
   // child registered at `name` with `indices`; nullptr if none. A cross-unit
@@ -125,9 +150,6 @@ class Scope {
       const lyra::value::PackedArray& site_id, std::function<void()> fn);
   void DrainObserved();
 
-  // Links a child into this scope. Owned children register themselves here
-  // from their constructor; the engine adds the top-level blocks to `$root`.
-  void AddChild(Scope& child);
   void ForEachChild(const ChildVisitor& fn);
 
   template <typename Fn>
@@ -173,24 +195,20 @@ class Scope {
     std::string_view name;
     void* address;
   };
-  struct ChildEntry {
-    std::string_view name;
-    std::vector<std::size_t> indices;
-    Scope* scope;
-  };
 
   Scope* parent_ = nullptr;
-  std::string name_;
+  HierarchySegment segment_;
   // Borrowed; set in the constructor.
   RuntimeServices* services_ = nullptr;
-  // Non-owning child links; the typed members on the derived class own the
-  // children. This is the object tree's own structure, not a parallel one.
-  std::vector<Scope*> children_;
-  // By-name interface this scope answers cross-unit queries from. Filled during
-  // construction; scanned only at construction-time resolution, never on the
-  // simulation path.
+  // The single object-tree edge: every child this scope owns appears here
+  // once, with its `Segment()` carrying both the LRM display name and the
+  // by-name lookup key. Traversal walks this in deterministic attach order;
+  // by-name lookup scans it and compares each child's segment.
+  std::vector<Scope*> attached_children_;
+  // By-name interface this scope answers cross-unit signal queries from.
+  // Filled during construction; scanned only at construction-time
+  // resolution, never on the simulation path.
   std::vector<SignalEntry> signals_;
-  std::vector<ChildEntry> child_entries_;
   std::vector<std::unique_ptr<RuntimeProcess>> processes_;
   // Empty std::function == clean slot; no parallel dirty bitmap needed.
   std::vector<std::function<void()>> observed_pending_;

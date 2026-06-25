@@ -1,0 +1,18 @@
+id: cpp.percent_m_hierarchical_name
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      top=Top
+      mid=Top.m
+      leaf=Top.m.l
+      gblk=Top.m.gblk
+      loop=Top.m.loop[0]
+      c0=100 c1=200 g0=10 g1=11
+      strobe=Top

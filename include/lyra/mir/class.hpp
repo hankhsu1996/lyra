@@ -39,6 +39,18 @@ struct Class {
   // class exposes the precision so the engine can take the design-global
   // minimum (LRM 3.14.3) and so delays scale to it.
   TimeResolution time_resolution;
+  // The C++ ctor params that forward to the runtime base ctor -- the
+  // `(parent, segment, services)` trio for a Scope-derived class, the
+  // empty list for a baseless plain object. The lowering populates them
+  // by reading the runtime SDK contract for the chosen base; the render
+  // walks the list to emit the prefix signature and the base init list
+  // generically. Decoupling type names from the render layer: the only
+  // place that knows "Scope* / HierarchySegment / RuntimeServices&" mean
+  // those C++ tokens is the MIR-level RenderTypeAsCpp dispatch.
+  base::Arena<ParamDecl, ParamId> ctor_prefix_params;
+  // Structural ctor params that also install a same-named member field
+  // (a genvar binding, an upward-class param). Each renders as a ctor
+  // param after the prefix list and as a `field(param)` mem-init entry.
   base::Arena<ParamDecl, ParamId> params;
   base::Arena<MemberDecl, MemberId> members;
   // Construction logic, run when the object is allocated. The backend's C++

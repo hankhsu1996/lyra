@@ -19,11 +19,13 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/format.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -105,10 +107,33 @@ auto BuildPrintItemFromDirective(
     case support::FormatDirectiveKind::kLiteral:
       return mir::RuntimePrintLiteral{.text = directive.literal};
 
-    case support::FormatDirectiveKind::kModulePath:
-      return diag::Fail(
-          span, diag::DiagCode::kFormatModulePathNotImplemented,
-          "format specifier %m is not yet supported");
+    case support::FormatDirectiveKind::kModulePath: {
+      // LRM 21.2.1.1: the hierarchical name of the enclosing scope. Reach it
+      // through `self`, the body's first binding -- the same receiver pattern
+      // every other scope-method call uses. A deferred caller ($strobe, NBA)
+      // captures `self` via the closure builder, so a delayed fire still
+      // reads the issuing scope's path. The directive carries no operand, so
+      // the print loop's value_index is untouched; the receiver's modifiers
+      // ride through the string-format spec like an ordinary `%s` argument.
+      auto& block = *frame.current_block;
+      const auto& builtins = process.Module().Unit().builtins;
+      const mir::ExprId self_id = block.exprs.Add(
+          MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+      const mir::ExprId path_id = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{
+                              .target = support::BuiltinFn::kHierarchicalPath},
+                      .arguments = {self_id}},
+              .type = builtins.string});
+      return mir::RuntimePrintValue(
+          path_id, builtins.string,
+          mir::FormatSpec(
+              value::FormatKind::kString,
+              ToMirFormatModifiers(directive.modifiers)));
+    }
 
     case support::FormatDirectiveKind::kTime:
     case support::FormatDirectiveKind::kChar:

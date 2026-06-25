@@ -205,6 +205,12 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // the value-layer format step for `%t` directives. Threaded into `Format` as
   // an explicit operand from the engine's current state.
   kTimeFormat,
+  // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
+  // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
+  // child carries from construction (base name plus per-dimension indices).
+  // The owner of a child threads this into the child's constructor as a
+  // single packaged value.
+  kHierarchySegment,
 };
 
 struct RuntimeLibraryType {
