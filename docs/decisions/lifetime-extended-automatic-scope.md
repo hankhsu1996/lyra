@@ -48,12 +48,18 @@ Two facts make the revision clean:
 ## Decision
 
 **An automatic lexical scope that may be borrowed by a process able to outlive it is realized as an
-explicit, shared-owned activation object rather than as coroutine-frame locals. A borrowed closure
-capture carries two independent things: a place identity and a lifetime authority.**
+explicit, shared-owned activation object rather than as coroutine-frame locals. The activation is
+reached through a handle exactly as a callable reaches its enclosing object through `self`: the
+handle is a pointer, and a promoted local is a member read as `handle->local`. The handle's type is
+`PointerType{kShared}` -- a shared pointer to the activation, the first producer of `kShared`.**
 
-- **Place identity** is `RefType` (`Ref<T>`): how the body reads and writes the cell. Unchanged.
-- **Lifetime authority** is `PointerType{kShared}` (a shared handle to the activation object): why
-  the cell is still alive. This is the first producer of `kShared`.
+The handle is the whole mechanism. In the scope that declares the locals it is an ordinary local
+variable holding the shared pointer. A detached branch that borrows a promoted local captures that
+handle by value -- a shared-pointer copy, exactly how `self` is captured (a by-value pointer copy)
+and how a `move` closure in Rust captures an `Rc`. That single by-value capture does both jobs at
+once: the copy keeps the activation alive, and member access through it (`handle->local`) reads and
+writes the cell. There is no separate reference-into-the-cell and no separate lifetime token; the
+captured shared handle is both, which is ordinary shared-pointer practice.
 
 The model in detail:
 
@@ -64,41 +70,40 @@ The model in detail:
   to a slot resolving to one logical cell, so a parent write and a branch read can never target
   different backing. A nested automatic block whose lifetime differs gets its own activation owner.
 
-- **The lease is an owned capture field, propagated by the capture layer.** A borrowing branch holds
-  the activation's shared handle as one more owned field on its closure, alongside the `Ref<T>`
-  place fields. Capture resolution forwards the lifetime authority together with the place,
-  transitively through nested closures -- the lease propagates exactly as the place does (place:
-  scope -> outer branch -> inner branch; lease: activation -> outer branch -> inner branch). Their
-  dedup keys differ: a place dedups by visible-binding identity, a lease dedups by **activation
-  identity** -- a branch that borrows several locals of one promoted scope holds **one** lease, not
-  one per variable.
+- **A borrowing branch captures one handle per activation, by value.** Reaching the activation's
+  members needs only the handle, so a branch that borrows several locals of one activation captures
+  that activation's handle once and reads each local as `handle->local`; the dedup is the ordinary
+  one-capture-per-captured-value, by activation identity, with nothing per variable. The capture
+  propagates through nested closures exactly as `self` does: a nested branch that reaches an outer
+  activation captures the handle at each closure boundary it crosses.
 
-- **Lease lifetime is creation-to-terminal-disposal.** A branch acquires the lease when its closure
-  is constructed (before the parent can return; acquiring a lease does not read the cell, so the
-  branch still observes parent writes made after the fork). It releases the lease when the branch
-  becomes terminally unable to run again -- normal completion, `disable fork`, named-block disable,
-  `$finish` teardown, or any path that destroys the branch process. Because the lease lives as a
-  field of the branch's coroutine frame, this release is RAII: destroying the frame by any path
-  drops the handle, and the activation is freed when the last holder drops.
+- **Lifetime is creation-to-terminal-disposal, by shared-pointer refcount.** The declaring scope
+  holds the original handle; each borrowing branch holds a by-value copy taken when its closure is
+  constructed (before the parent can return, and without reading the cell, so the branch still
+  observes parent writes made after the fork). A holder drops its copy when its frame is destroyed
+  by any path -- normal completion, `disable fork`, named-block disable, `$finish` teardown. The
+  activation is freed when the last copy drops. This is plain RAII on the shared pointer; no
+  explicit acquire / release step exists.
 
-- **`join_any` needs no special ownership rule.** A completed branch releases its lease; remaining
-  branches keep theirs; the parent may proceed and release its own; the activation survives exactly
-  while any dependent branch retains it.
+- **`join_any` needs no special ownership rule.** A completed branch drops its handle copy;
+  remaining branches keep theirs; the parent may proceed and drop its own; the activation survives
+  exactly while any holder retains a copy.
 
 - **Shared-owned values are constructed by a generic MIR operation**, parallel to the `kUnique`
   owned-object construction, not by a backend-only `make_shared` trick. Scope-activation lowering is
   its first producer; the construction story is general so a future consumer reuses it.
 
 - **The ownership graph is a refcounted DAG; no tracing GC.** The invariant that keeps it acyclic:
-  the scheduler owns process objects; a process closure owns its `Shared<activation>` leases; an
-  activation owns **only data slots** -- never a process, a closure, or a join group. The join group
-  stays a pure synchronization object and never owns scope storage, so no
+  the scheduler owns process objects; a process closure owns its by-value `Shared<activation>`
+  handle copies; an activation owns **only data slots** -- never a process, a closure, or a join
+  group. The join group stays a pure synchronization object and never owns scope storage, so no
   `activation -> process -> activation` cycle can form.
 
-The implementation surface is minimal now: the activation object and its lease for the detached-fork
-case. The `kShared` ownership contract is general (a copyable handle that retains on copy, releases
-on destruction, has stable identity, and yields borrowed access) so the mode is not fork-specific,
-but no broad "every runtime object is shared" facility is built ahead of a second consumer.
+The implementation surface is minimal now: the activation object and its shared handle for the
+detached-fork case. The `kShared` ownership contract is general (a copyable handle that retains on
+copy, releases on destruction, has stable identity, and yields borrowed access) so the mode is not
+fork-specific, but no broad "every runtime object is shared" facility is built ahead of a second
+consumer.
 
 ## Rejected alternatives
 
@@ -120,14 +125,14 @@ but no broad "every runtime object is shared" facility is built ahead of a secon
 - **The join group owns the scope storage.** Would let an activation be reached through the join
   group that retains the branches that retain the activation -- the cycle the DAG invariant forbids
   -- and composes poorly when one branch borrows from several unrelated activations. Closure-held
-  leases compose; the join group stays a synchronization object.
+  handles compose; the join group stays a synchronization object.
 
 ## Consequences
 
 - The detached-borrow-of-enclosing-automatic case (LRM 6.21) is supported; the `unsupported`
   diagnostic Lyra emits for it is removed once the mechanism lands.
 - A nested fork whose inner branch reaches an outer branch's automatic is no longer a separate
-  problem: the lease propagates transitively exactly as the borrowed place does.
+  problem: the handle propagates transitively exactly as `self` does.
 - `kShared` gains its first producer. The general shared-ownership contract this establishes is
   available to later consumers (e.g. dynamically allocated, reference-counted runtime objects);
   cycle collection, if a future consumer needs it, is a separate decision revisited against that
@@ -136,19 +141,22 @@ but no broad "every runtime object is shared" facility is built ahead of a secon
   so ordinary procedural code is unchanged. A read or write in a promoted scope carries one pointer
   indirection.
 - Backend proof obligations the mechanism must satisfy: every reference to a promoted local -- read,
-  write, reference-construction, and member / index projection -- resolves to the activation field,
-  not a bare name; local declarations preserve their initialization order and side effects when
-  realized as activation fields; an activation destroys its fields when the last lease drops, not
-  when the parent returns; and no generated helper, capture wiring, system-task lowering, or debug
-  mapping emits a promoted local's bare name outside the single resolution path.
+  write, reference-construction, and member / index projection -- resolves to member access through
+  the activation handle (`handle->local`), not a bare name; in the declaring scope the handle is a
+  local, in a detached branch it is a by-value-captured copy; local declarations preserve their
+  initialization order and side effects when realized as activation members; the activation is
+  destroyed when the last handle copy drops, not when the parent returns; and no generated helper,
+  capture wiring, system-task lowering, or debug mapping emits a promoted local's bare name outside
+  this single resolution path.
 
 ## Cross-references
 
 - [`variable-lifetime-storage`](variable-lifetime-storage.md) -- settled the bare/static and
   fork-scope cases; this decision revises its rejection of escape-boxing and frame-retention for the
   explicitly-automatic case.
-- `architecture/closure.md` -- a capture is an owned field whose type carries its semantics; the
-  lease is an owned field of type `PointerType{kShared}`, needing no new capture-kind axis.
+- `architecture/callable.md` -- a capture is an owned field whose snapshot-versus-alias is its type;
+  the activation handle is a by-value capture of a `PointerType{kShared}`, reached like `self`,
+  needing no new capture-kind axis.
 - `architecture/scheduling.md` -- closure capture lifetime: a lowering capturing a procedural lvalue
   must establish the fire-before-frame-dies guarantee or refuse; this decision is the "establish the
   guarantee" path for the detached-branch case.

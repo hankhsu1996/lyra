@@ -29,6 +29,12 @@ struct ProceduralVarDecl {
   std::string name;
   TypeId type;
   VariableLifetime lifetime = VariableLifetime::kAutomatic;
+  // An automatic local a detached (join_none / join_any) fork branch borrows
+  // and can outlive (LRM 6.21). Its storage is lifted into a shared object so
+  // the branch keeps it alive after the declaring frame returns. Decided by a
+  // pre-pass over the body before the decl is interned, so it is known at
+  // creation rather than discovered (and back-patched) at a later reference.
+  bool lifetime_extended = false;
 };
 
 }  // namespace lyra::hir

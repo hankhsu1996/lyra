@@ -307,6 +307,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "fork_wait_first";
     case BuiltinFn::kSpawnAll:
       return "spawn_all";
+    case BuiltinFn::kParent:
+      return "parent";
     case BuiltinFn::kFileOpen:
       return "file_open";
     case BuiltinFn::kFileClose:

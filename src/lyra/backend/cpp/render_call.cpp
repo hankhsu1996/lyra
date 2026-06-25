@@ -24,6 +24,8 @@ namespace {
 // receiver expression / type qualifier supplied by the callee variant.
 auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
   switch (id) {
+    case support::BuiltinFn::kParent:
+      return "Parent";
     case support::BuiltinFn::kServices:
       return "Services";
     case support::BuiltinFn::kGet:
@@ -431,6 +433,16 @@ auto RenderCalleePart(
               return {
                   .expr = std::format(
                       "std::make_unique<{}>",
+                      RenderTypeAsCpp(view.Unit(), view.Class(), ptr->pointee)),
+                  .leading_arg_count = 0};
+            }
+            if (const auto* ptr =
+                    std::get_if<mir::PointerType>(&result_ty.data);
+                ptr != nullptr &&
+                ptr->ownership == mir::PointerOwnership::kShared) {
+              return {
+                  .expr = std::format(
+                      "std::make_shared<{}>",
                       RenderTypeAsCpp(view.Unit(), view.Class(), ptr->pointee)),
                   .leading_arg_count = 0};
             }

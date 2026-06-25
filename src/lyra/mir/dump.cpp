@@ -478,6 +478,10 @@ class MirDumper {
               return std::format(
                   "AddressOfExpr operand=Expr[{}]", a.operand.value);
             },
+            [](const PointerCastExpr& c) -> std::string {
+              return std::format(
+                  "PointerCastExpr operand=Expr[{}]", c.operand.value);
+            },
             [](const CastExpr& c) -> std::string {
               return std::format("CastExpr operand=Expr[{}]", c.operand.value);
             },
@@ -553,9 +557,8 @@ class MirDumper {
             },
             [](const MemberAccessExpr& m) -> std::string {
               return std::format(
-                  "MemberAccessExpr receiver=Expr[{}] hops={} "
-                  "var=Member[{}]",
-                  m.receiver.value, m.member.hops.value, m.member.var.value);
+                  "MemberAccessExpr receiver=Expr[{}] var=Member[{}]",
+                  m.receiver.value, m.member.var.value);
             },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
@@ -633,6 +636,13 @@ class MirDumper {
     scope_stack_.push_back(&s);
     Line(std::format("Class \"{}\"", s.name));
     Indent();
+
+    if (s.base.has_value()) {
+      Line(
+          std::format(
+              "Base: {}", *s.base == RuntimeBaseClass::kInstance ? "Instance"
+                                                                 : "GenScope"));
+    }
 
     Line("NestedClasses:");
     Indent();

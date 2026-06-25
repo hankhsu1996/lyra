@@ -12,7 +12,9 @@ namespace lyra::base {
 // minted per append, in insertion order, and stays valid for the life of the
 // arena. Lookup is by id only -- there is no raw integer index -- so the typed
 // id is the one handle a consumer holds. There is no mutable lookup: a node is
-// built before it is appended and is never edited in place.
+// built before it is appended and is never edited in place. This immutability
+// is load-bearing -- an appended node is final, so other nodes may reference it
+// and a later shard may cache it without coordination.
 template <typename T, typename Id>
 class Arena {
  public:

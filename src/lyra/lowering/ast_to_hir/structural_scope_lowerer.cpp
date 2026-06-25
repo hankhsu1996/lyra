@@ -316,6 +316,7 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
 
   hir::ProceduralBody sub_body;
   ProcessLowerer sub_lowerer(*module_, sym);
+  sub_lowerer.AnalyzeLifetimeExtended(sym.getBody());
   const WalkFrame sub_frame =
       frame.WithProceduralBody(&sub_body, &sub_body.exprs);
 

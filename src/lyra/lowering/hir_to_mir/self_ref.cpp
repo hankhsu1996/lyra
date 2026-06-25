@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 
+#include <cstdint>
 #include <variant>
 
 #include "lyra/mir/class.hpp"
@@ -7,6 +8,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -17,13 +19,46 @@ auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
       self_ptr_type);
 }
 
-auto BuildStructuralMemberAccessExpr(
-    const WalkFrame& frame, const mir::MemberRef& member) -> mir::Expr {
-  const mir::TypeId field_type =
-      frame.EnclosingClassAtHops(member.hops).members.Get(member.var).type;
-  const mir::ExprId receiver = frame.current_block->exprs.Add(
+// The receiver object that owns a member at `hops` enclosing-class levels up.
+// At hops 0 it is the current body's `self`. Above that, the member lives in an
+// enclosing class whose runtime object is this scope's ancestor: navigate up
+// the object tree `hops` times through the runtime `Scope::Parent()` handle and
+// cast the result to the enclosing class. The cast is sound because the
+// reference is intra-unit -- the unit owns the enclosing class's layout, so the
+// ancestor's concrete type is known at compile time.
+auto BuildEnclosingScopeReceiver(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    mir::EnclosingHops hops) -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  mir::ExprId nav = block.exprs.Add(
       MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-  return mir::MakeMemberAccessExpr(receiver, member, field_type);
+  if (hops.value == 0) {
+    return nav;
+  }
+  for (std::uint32_t step = 0; step < hops.value; ++step) {
+    nav = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinFnCallee{.id = support::BuiltinFn::kParent},
+                    .arguments = {nav}},
+            .type = unit.builtins.scope_ptr});
+  }
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::PointerCastExpr{.operand = nav},
+          .type = frame.EnclosingClassAtHops(hops).self_pointer_type});
+}
+
+auto BuildStructuralMemberAccessExpr(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    mir::EnclosingHops hops, mir::MemberId var) -> mir::Expr {
+  const mir::TypeId field_type =
+      frame.EnclosingClassAtHops(hops).members.Get(var).type;
+  const mir::ExprId receiver = BuildEnclosingScopeReceiver(frame, unit, hops);
+  return mir::MakeMemberAccessExpr(
+      receiver, mir::MemberRef{.var = var}, field_type);
 }
 
 auto BuildReferenceArg(

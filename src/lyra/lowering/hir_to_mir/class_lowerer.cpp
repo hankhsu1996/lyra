@@ -415,8 +415,7 @@ void AppendExternalUnitConstruction(
       block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
   const mir::ExprId chain_id = block.exprs.Add(
       mir::MakeMemberAccessExpr(
-          self_id, mir::MemberRef{.hops = {.value = 0}, .var = target},
-          var.type));
+          self_id, mir::MemberRef{.var = target}, var.type));
   std::vector<mir::ExprId> indices;
   EmitExternalUnitDimLevel(
       module, frame, self_id, runtime_label, leaf_pointer_type, chain_id,
@@ -500,8 +499,7 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
               .signal = std::move(signal)});
       const mir::MemberId var = mir_class.members.Add(
           mir::MemberDecl{.name = std::move(member_name), .type = ext_type});
-      lowerer.AddCrossUnitRefTarget(
-          mir::MemberRef{.hops = {.value = 0}, .var = var}, ext_type);
+      lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = var}, ext_type);
       slot_vars.emplace_back(std::nullopt);
     } else {
       // The pointee matches the producer's storage cell. A producer-side
@@ -515,8 +513,7 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
               .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed});
       const mir::MemberId slot = mir_class.members.Add(
           mir::MemberDecl{.name = std::move(member_name), .type = slot_type});
-      lowerer.AddCrossUnitRefTarget(
-          mir::MemberRef{.hops = {.value = 0}, .var = slot}, slot_type);
+      lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = slot}, slot_type);
       slot_vars.emplace_back(slot);
     }
   }
@@ -650,8 +647,7 @@ void InstallCrossUnitRefs(
             .data =
                 mir::MemberAccessExpr{
                     .receiver = self_for_target,
-                    .member =
-                        mir::MemberRef{.hops = {.value = 0}, .var = slot}},
+                    .member = mir::MemberRef{.var = slot}},
             .type = slot_type});
     const mir::ExprId assign = ctor_block.exprs.Add(
         mir::Expr{
@@ -869,8 +865,7 @@ void AppendOwnedChildConstruction(
   // (scalar) or the storage vector (vector member).
   const mir::ExprId member_access_id = arm_block.exprs.Add(
       mir::MakeMemberAccessExpr(
-          self_read(), mir::MemberRef{.hops = {.value = 0}, .var = target_var},
-          var.type));
+          self_read(), mir::MemberRef{.var = target_var}, var.type));
 
   // The child slot we hand to `RegisterChild` is `*self->member` for the
   // scalar case and `*self->member.back()` for the vector case (the vector
@@ -896,8 +891,7 @@ void AppendOwnedChildConstruction(
     // most-recently-pushed unique pointer.
     const mir::ExprId vector_access_id = arm_block.exprs.Add(
         mir::MakeMemberAccessExpr(
-            self_read(),
-            mir::MemberRef{.hops = {.value = 0}, .var = target_var}, var.type));
+            self_read(), mir::MemberRef{.var = target_var}, var.type));
     const mir::ExprId back_call_id = arm_block.exprs.Add(
         mir::Expr{
             .data =
@@ -924,8 +918,7 @@ void AppendOwnedChildConstruction(
 
     const mir::ExprId scalar_access_id = arm_block.exprs.Add(
         mir::MakeMemberAccessExpr(
-            self_read(),
-            mir::MemberRef{.hops = {.value = 0}, .var = target_var}, var.type));
+            self_read(), mir::MemberRef{.var = target_var}, var.type));
     child_ref_id = arm_block.exprs.Add(
         mir::Expr{
             .data = mir::DerefExpr{.pointer = scalar_access_id},
@@ -1263,6 +1256,8 @@ auto ClassLowerer::Run(
           .ownership = mir::PointerOwnership::kBorrowed});
   mir::Class mir_class{
       .name = name_,
+      .base = parent_ == nullptr ? mir::RuntimeBaseClass::kInstance
+                                 : mir::RuntimeBaseClass::kGenScope,
       .self_pointer_type = self_pointer_type,
       .time_resolution = hir_scope.time_resolution,
       .params = {},
@@ -1377,9 +1372,7 @@ auto ClassLowerer::Run(
       }
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeMemberAccessExpr(
-              init_self_read(),
-              mir::MemberRef{.hops = {.value = 0}, .var = mir_id},
-              mir_field_type));
+              init_self_read(), mir::MemberRef{.var = mir_id}, mir_field_type));
       // An observable cell init routes through `Var<T>::Set` so the field's
       // engine-side change-tracking sees the initial value. Plain fields use a
       // regular `AssignExpr`.
@@ -1408,8 +1401,7 @@ auto ClassLowerer::Run(
     if (is_signal) {
       const mir::ExprId var_ref = ctor_block.exprs.Add(
           mir::MakeMemberAccessExpr(
-              self_read(), mir::MemberRef{.hops = {.value = 0}, .var = mir_id},
-              mir_field_type));
+              self_read(), mir::MemberRef{.var = mir_id}, mir_field_type));
       const mir::TypeId var_ptr_type = module.Unit().AddType(
           mir::PointerType{
               .pointee = mir_field_type,

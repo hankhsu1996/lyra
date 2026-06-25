@@ -173,9 +173,19 @@ auto RenderCreateProcesses(const mir::Class& s, std::size_t indent)
   return out;
 }
 
+auto RenderRuntimeBaseClass(mir::RuntimeBaseClass base) -> std::string {
+  switch (base) {
+    case mir::RuntimeBaseClass::kInstance:
+      return "lyra::runtime::Instance";
+    case mir::RuntimeBaseClass::kGenScope:
+      return "lyra::runtime::GenScope";
+  }
+  throw InternalError("RenderRuntimeBaseClass: unknown RuntimeBaseClass");
+}
+
 auto RenderScopeAsClass(
     const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
-    bool is_top_level, const ScopeView* parent_struct_view) -> std::string {
+    const ScopeView* parent_struct_view) -> std::string {
   // `this_anchor` is bound to `s.constructor_block` so it doubles as the
   // view for rendering the constructor body. Children's bodies use it as
   // their enclosing class (one hop above the child).
@@ -184,32 +194,38 @@ auto RenderScopeAsClass(
           ? ScopeView::ForRoot(unit, s, s.constructor_block)
           : parent_struct_view->WithClass(s, s.constructor_block);
 
-  // A unit-root scope is an instance; a nested generate block is a generate
-  // scope. The base type carries the kind.
-  const std::string base_class =
-      is_top_level ? "lyra::runtime::Instance" : "lyra::runtime::GenScope";
-
   std::string out;
-  out += std::format(
-      "{}class {} final : public {} {{\n", Indent(indent), s.name, base_class);
-  out += std::format("{} public:\n", Indent(indent));
+  out += Indent(indent) + "class " + s.name + " final";
+  if (s.base.has_value()) {
+    out += " : public " + RenderRuntimeBaseClass(*s.base);
+  }
+  out += " {\n";
+  out += Indent(indent) + " public:\n";
 
   // The scope's own time precision (LRM 3.14.2). The engine takes the minimum
   // across the tree as the design-global tick (LRM 3.14.3); the runtime scales
-  // a local-precision delay from this value to that tick.
-  out += std::format(
-      "{}auto TimePrecisionPower() const -> std::int8_t override {{ return "
-      "{}; }}\n\n",
-      Indent(indent + 1), static_cast<int>(s.time_resolution.precision_power));
+  // a local-precision delay from this value to that tick. Only a tree node --
+  // a class with a runtime base -- overrides it.
+  if (s.base.has_value()) {
+    out += Indent(indent + 1) +
+           "auto TimePrecisionPower() const -> std::int8_t override { return " +
+           std::to_string(static_cast<int>(s.time_resolution.precision_power)) +
+           "; }\n\n";
+  }
 
   for (const auto& child : s.nested_classes) {
-    out += RenderScopeAsClass(unit, child, indent + 1, false, &this_anchor);
+    out += RenderScopeAsClass(unit, child, indent + 1, &this_anchor);
   }
   if (!s.nested_classes.empty()) {
     out += "\n";
   }
 
-  out += RenderConstructor(this_anchor, s, base_class, indent + 1);
+  // A plain object (no runtime base) is not a tree node: it needs no
+  // registering constructor, only the implicit default one.
+  if (s.base.has_value()) {
+    out += RenderConstructor(
+        this_anchor, s, RenderRuntimeBaseClass(*s.base), indent + 1);
+  }
 
   // The resolve and initialize phases run after construction, present only
   // when the scope has work for that phase. Each body renders as the uniform
@@ -238,13 +254,12 @@ auto RenderScopeAsClass(
     out += RenderCreateProcesses(s, indent + 1);
   }
 
-  // A unit-root scope is a module; its name is the def-name an upward reference
-  // matches when climbing the parent chain (LRM 23.8).
-  if (is_top_level) {
-    out += std::format(
-        "{}auto DefName() const -> std::string_view override {{ return "
-        "\"{}\"; }}\n",
-        Indent(indent + 1), s.name);
+  // A unit-root scope is a module instance; its name is the def-name an upward
+  // reference matches when climbing the parent chain (LRM 23.8).
+  if (s.base == mir::RuntimeBaseClass::kInstance) {
+    out += Indent(indent + 1) +
+           "auto DefName() const -> std::string_view override { return \"" +
+           s.name + "\"; }\n";
   }
 
   // Members follow the constructor and methods. They are public so cross-unit
@@ -388,7 +403,7 @@ auto RenderScopeHeaderFile(
   if (any_alias) {
     out += "\n";
   }
-  out += RenderScopeAsClass(unit, s, 0, true, nullptr);
+  out += RenderScopeAsClass(unit, s, 0, nullptr);
   return out;
 }
 

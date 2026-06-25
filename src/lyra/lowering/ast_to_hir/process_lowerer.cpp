@@ -4,7 +4,6 @@
 #include <expected>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -20,6 +19,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/ast_to_hir/lifetime_extension.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
@@ -77,6 +77,11 @@ auto IsLocalTo(
 
 }  // namespace
 
+void ProcessLowerer::AnalyzeLifetimeExtended(
+    const slang::ast::Statement& body) {
+  lifetime_extended_ = CollectLifetimeExtendedVars(body);
+}
+
 ProcessLowerer::ProcessLowerer(
     ModuleLowerer& module, const slang::ast::Symbol& containing_symbol)
     : module_(&module), containing_symbol_(&containing_symbol) {
@@ -88,6 +93,7 @@ auto ProcessLowerer::Run(
   hir::ProceduralBody body;
   const WalkFrame frame = parent_frame.WithProceduralBody(&body, &body.exprs);
 
+  AnalyzeLifetimeExtended(proc.getBody());
   auto root_stmt = LowerStmt(proc.getBody(), frame);
   if (!root_stmt) return std::unexpected(std::move(root_stmt.error()));
   body.root_stmt = body.stmts.Add(*std::move(root_stmt));
@@ -129,7 +135,8 @@ auto ProcessLowerer::AddProceduralVar(
           .type = type,
           .lifetime = var.lifetime == slang::ast::VariableLifetime::Automatic
                           ? hir::VariableLifetime::kAutomatic
-                          : hir::VariableLifetime::kStatic});
+                          : hir::VariableLifetime::kStatic,
+          .lifetime_extended = lifetime_extended_.contains(&var)});
   const auto [_, inserted] = procedural_var_bindings_.emplace(&var, id);
   if (!inserted) {
     throw InternalError(

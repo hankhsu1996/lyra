@@ -58,8 +58,8 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   locals.
 - [lifetime-extended-automatic-scope](lifetime-extended-automatic-scope.md) -- an automatic scope
   borrowed by a process that may outlive it is realized as a shared-owned activation object
-  (`PointerType{kShared}`'s first producer); a borrowed capture carries place identity (`Ref<T>`)
-  and lifetime authority (`Shared<activation>`) separately.
+  (`PointerType{kShared}`'s first producer); a detached branch captures the activation handle by
+  value, reached like `self` (`handle->local`), so one shared handle is both access and lifetime.
 - [read-set-inference](read-set-inference.md) -- read-set inference via slang flow analysis.
 - [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) -- runtime effects
   (`$display`, `$finish`, file IO) lower to ordinary `CallExpr` with the engine handle as one

@@ -154,8 +154,10 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 auto LowerStructuralVarRefExpr(
     const ClassLowerer& lowerer, const WalkFrame& frame,
     const hir::StructuralVarRef& m) -> mir::Expr {
-  const mir::MemberRef member = lowerer.TranslateStructuralVar(m.hops, m.var);
-  return BuildStructuralMemberAccessExpr(frame, member);
+  const mir::MemberId var = lowerer.TranslateStructuralVar(m.hops, m.var);
+  return BuildStructuralMemberAccessExpr(
+      frame, lowerer.Module().Unit(), mir::EnclosingHops{.value = m.hops.value},
+      var);
 }
 
 auto LowerProceduralVarRefExpr(
@@ -166,9 +168,29 @@ auto LowerProceduralVarRefExpr(
   // owner class (LRM 13.3.1); the read reaches it through `self` like any
   // member ref.
   if (const auto* sb = std::get_if<StaticVarBinding>(&binding)) {
-    const mir::MemberRef member{
-        .hops = mir::EnclosingHops{.value = 0}, .var = sb->var};
-    return BuildStructuralMemberAccessExpr(frame, member);
+    return BuildStructuralMemberAccessExpr(
+        frame, process.Module().Unit(), mir::EnclosingHops{.value = 0},
+        sb->var);
+  }
+  // A lifetime-extended automatic (LRM 6.21) lives in a shared activation
+  // object; the read / write reaches its member through the handle. Inside a
+  // detached branch the handle is above the closure boundary, so it is captured
+  // by value -- a shared-pointer copy that keeps the activation alive.
+  if (const auto* pb = std::get_if<PromotedVarBinding>(&binding)) {
+    auto& block = *frame.current_block;
+    mir::ExprId handle_ref{};
+    if (auto* sink = frame.capture_sink;
+        sink != nullptr && pb->handle_depth < sink->BoundaryDepth()) {
+      handle_ref = block.exprs.Add(sink->CaptureByValue(
+          pb->handle, pb->handle_depth, pb->handle_type, frame.block_depth));
+    } else {
+      handle_ref = block.exprs.Add(
+          mir::MakeLocalRefExpr(
+              frame.block_depth - pb->handle_depth, pb->handle,
+              pb->handle_type));
+    }
+    return mir::MakeMemberAccessExpr(
+        handle_ref, mir::MemberRef{.var = pb->member}, type);
   }
   const auto& ab = std::get<AutomaticVarBinding>(binding);
   if (auto* sink = frame.capture_sink) {

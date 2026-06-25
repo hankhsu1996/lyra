@@ -16,7 +16,6 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/member.hpp"
@@ -65,10 +64,7 @@ auto LowerStaticVarDeclStmt(
       ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type));
   const mir::ExprId target = ctor_block.exprs.Add(
       mir::MakeMemberAccessExpr(
-          ctor_self_read,
-          mir::MemberRef{
-              .hops = mir::EnclosingHops{.value = 0}, .var = static_var},
-          type));
+          ctor_self_read, mir::MemberRef{.var = static_var}, type));
   // A static-lifetime local lives as a member on the owner; if its declared
   // type is an observable cell wrapper the init must route through
   // `Var<T>::Set` so subscribers fire on its initial value (LRM 13.3.1).
@@ -117,6 +113,39 @@ auto LowerAutomaticVarDeclStmt(
           .init = init_value}};
 }
 
+// A lifetime-extended automatic (LRM 6.21) is a member of the scope's shared
+// activation object; its declaration assigns the initial value into that member
+// through the handle (`handle->member = init`) rather than into a frame local.
+// The slot was recorded when the activation scope opened; consume it here, in
+// HIR id order, to register the binding its references resolve through.
+auto LowerPromotedVarDeclStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::VarDeclStmt& v, mir::TypeId type) -> diag::Result<mir::Stmt> {
+  const PromotedVarBinding pb = process.TakePendingActivation(v.var);
+  process.MapProceduralVar(v.var, pb);
+  auto& block = *frame.current_block;
+  const mir::ExprId handle_ref = block.exprs.Add(
+      mir::MakeLocalRefExpr(
+          frame.block_depth - pb.handle_depth, pb.handle, pb.handle_type));
+  const mir::ExprId target = block.exprs.Add(
+      mir::MakeMemberAccessExpr(
+          handle_ref, mir::MemberRef{.var = pb.member}, type));
+  mir::ExprId init_value{};
+  if (v.init.has_value()) {
+    auto init_or =
+        process.LowerExpr(process.HirBody().exprs.Get(*v.init), frame);
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    init_value = block.exprs.Add(*std::move(init_or));
+  } else {
+    init_value =
+        block.exprs.Add(BuildDefaultValueExpr(process.Module(), frame, type));
+  }
+  const mir::ExprId assign =
+      block.exprs.Add(mir::MakeAssignExpr(target, init_value, type));
+  return mir::Stmt{
+      .label = std::move(label), .data = mir::ExprStmt{.expr = assign}};
+}
+
 }  // namespace
 
 auto LowerVarDeclStmt(
@@ -124,6 +153,9 @@ auto LowerVarDeclStmt(
     const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
   const auto& hir_local = process.HirBody().procedural_vars.Get(v.var);
   const mir::TypeId type = process.Module().TranslateType(hir_local.type);
+  if (hir_local.lifetime_extended) {
+    return LowerPromotedVarDeclStmt(process, frame, std::move(label), v, type);
+  }
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
     return LowerStaticVarDeclStmt(
         process, frame, std::move(label), v, hir_local, type);

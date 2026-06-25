@@ -27,6 +27,7 @@ struct BuiltinMirTypes {
   TypeId realtime;
   TypeId time;
   TypeId services;
+  TypeId scope_ptr;
   TypeId files;
   TypeId diagnostic;
   TypeId channel_cancellation;
@@ -75,6 +76,10 @@ struct CompilationUnit {
                     .dims = {PackedRange{.left = 63, .right = 0}},
                     .form = PackedArrayForm::kTime}}),
             .services = AddType(TypeData{ServicesType{}}),
+            .scope_ptr = AddType(
+                TypeData{PointerType{
+                    .pointee = AddType(TypeData{ScopeType{}}),
+                    .ownership = PointerOwnership::kBorrowed}}),
             .files = AddType(TypeData{FilesType{}}),
             .diagnostic = AddType(TypeData{DiagnosticType{}}),
             .channel_cancellation = AddType(
