@@ -42,15 +42,15 @@ auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
 // for every spawned branch; Lyra does not yet extend a non-persistent (task or
 // fork-branch) activation frame to cover a detached branch, so a branch that
 // aliases one of its locals would dangle once that frame is gone. The alias is
-// a `RefType` capture binding (LRM 6.21); a static / module variable instead
-// reaches the branch through `self` (captures[0], a pointer, never a
-// `RefType`), so persistent storage never matches.
+// a `RefType` environment binding (LRM 6.21); a static / module variable
+// instead reaches the branch through `self` (the receiver binding, a pointer,
+// never a `RefType`), so persistent storage never matches.
 auto AliasesEnclosingAutomatic(
     const mir::CompilationUnit& unit, const mir::Expr& branch) -> bool {
   const auto& closure = std::get<mir::ClosureExpr>(branch.data);
-  for (const mir::Capture& capture : closure.captures) {
+  for (const mir::EnvBinding& binding : closure.environment) {
     const mir::TypeId binding_type =
-        closure.body->vars.Get(capture.binding).type;
+        closure.code->body.vars.Get(binding.param).type;
     if (std::holds_alternative<mir::RefType>(unit.GetType(binding_type).data)) {
       return true;
     }
