@@ -195,14 +195,18 @@ auto RenderConstructor(
       RenderBlockStatements(scope_view, indent + 1));
 }
 
-auto RenderRuntimeBaseClass(mir::RuntimeBaseClass base) -> std::string {
-  switch (base) {
-    case mir::RuntimeBaseClass::kInstance:
-      return "lyra::runtime::Instance";
-    case mir::RuntimeBaseClass::kGenScope:
-      return "lyra::runtime::GenScope";
-  }
-  throw InternalError("RenderRuntimeBaseClass: unknown RuntimeBaseClass");
+auto RenderBaseClass(const mir::ClassRef& base) -> std::string {
+  return std::visit(
+      [](const mir::RuntimeLibraryClassRef& ref) -> std::string {
+        switch (ref.kind) {
+          case mir::RuntimeClassKind::kInstance:
+            return "lyra::runtime::Instance";
+          case mir::RuntimeClassKind::kGenScope:
+            return "lyra::runtime::GenScope";
+        }
+        throw InternalError("RenderBaseClass: unknown RuntimeClassKind");
+      },
+      base);
 }
 
 auto RenderScopeAsClass(
@@ -219,7 +223,7 @@ auto RenderScopeAsClass(
   std::string out;
   out += Indent(indent) + "class " + s.name + " final";
   if (s.base.has_value()) {
-    out += " : public " + RenderRuntimeBaseClass(*s.base);
+    out += " : public " + RenderBaseClass(*s.base);
   }
   out += " {\n";
   out += Indent(indent) + " public:\n";
@@ -245,8 +249,8 @@ auto RenderScopeAsClass(
   // A plain object (no runtime base) is not a tree node: it needs no
   // registering constructor, only the implicit default one.
   if (s.base.has_value()) {
-    out += RenderConstructor(
-        this_anchor, s, RenderRuntimeBaseClass(*s.base), indent + 1);
+    out +=
+        RenderConstructor(this_anchor, s, RenderBaseClass(*s.base), indent + 1);
   }
 
   // The resolve and initialize phases run after construction, present only
@@ -278,7 +282,11 @@ auto RenderScopeAsClass(
 
   // A unit-root scope is a module instance; its name is the def-name an upward
   // reference matches when climbing the parent chain (LRM 23.8).
-  if (s.base == mir::RuntimeBaseClass::kInstance) {
+  const auto* base_instance =
+      s.base.has_value() ? std::get_if<mir::RuntimeLibraryClassRef>(&*s.base)
+                         : nullptr;
+  if (base_instance != nullptr &&
+      base_instance->kind == mir::RuntimeClassKind::kInstance) {
     out += Indent(indent + 1) +
            "auto DefName() const -> std::string_view override { return \"" +
            s.name + "\"; }\n";
