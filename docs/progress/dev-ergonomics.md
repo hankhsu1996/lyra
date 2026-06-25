@@ -13,19 +13,16 @@ layer directly.
 - [x] D4 -- Emitting the C++ backend produces a self-contained project that rebuilds and runs on
       another machine of the same platform without a Lyra checkout.
 
-- [ ] D5 -- A failing end-to-end case surfaces its underlying cause -- the emitted-C++ compile error
-      or the runtime message -- directly from the test command. Today that detail is truncated in
-      the test summary and the full text lives only in per-shard log files outside the readable
-      path, so finding why a case failed takes several manual reruns of the same suite.
+- [x] D5 -- A failing end-to-end case surfaces its underlying cause -- the emitted-C++ compile error
+      or the runtime message -- directly from the test command when it is run unpiped. The detail
+      was always captured; the project test convention now keeps it visible by not routing the run
+      through a downstream filter that scrolls it away.
 
-- [ ] D6 -- A test run reports its true pass/fail outcome even when its output is filtered. Piping a
-      `bazel test` through `tail` (or any filter) makes the pipeline's exit status that of the
-      filter, not of bazel, so a failing suite looks like it passed -- and a backgrounded run's
-      completion status is then a false green that can hide a regression until an unfiltered run
-      catches it. Target: a test command, wrapper, or convention whose exit status reflects the
-      actual test outcome regardless of output handling (e.g. `pipefail`, or a runner that records
-      the bazel result separately from the streamed text). Related to D5 but more fundamental: D5 is
-      about seeing _why_ a case failed; this is about not missing _that_ it failed.
+- [x] D6 -- A test run reports its true pass/fail outcome when run unpiped. The convention is to run
+      the test command without a downstream filter: piping through `tail` would make the exit status
+      the filter's, not the test's, so a failing suite reads as green -- a false pass that is most
+      dangerous for a backgrounded run. Related to D5 but more fundamental: D5 is about seeing _why_
+      a case failed; this is about not missing _that_ it failed.
 
 ## Out of Scope
 

@@ -1,0 +1,14 @@
+id: cpp.event_control_integration
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    list_wakes: 3
+    w1: 1
+    w2: 2
+    nba_q: 42

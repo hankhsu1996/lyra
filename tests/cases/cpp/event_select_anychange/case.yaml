@@ -1,0 +1,15 @@
+id: cpp.event_select_anychange
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    bus_woke: 10
+    bus_wakes: 2
+    md_woke: 10
+    asc_woke: 10
+    neg_woke: 10
