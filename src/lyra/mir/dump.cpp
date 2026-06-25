@@ -377,15 +377,11 @@ class MirDumper {
     throw InternalError("MirDumper: unknown BinaryOp");
   }
 
-  [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {
+  [[nodiscard]] static auto FormatCallee(const Callee& callee) -> std::string {
     return std::visit(
         Overloaded{
-            [this](const MethodRef& r) -> std::string {
-              const auto& owner = ResolveScopeAtHops(r.hops.value);
-              const auto& target = owner.methods.Get(r.method);
-              return std::format(
-                  "MethodRef[hops={}, method={}] \"{}\"", r.hops.value,
-                  r.method.value, target.name);
+            [](const MethodRef& r) -> std::string {
+              return std::format("MethodRef[method={}]", r.method.value);
             },
             [](const ClosureRef& cr) -> std::string {
               return std::format(
@@ -543,7 +539,7 @@ class MirDumper {
               return std::format(
                   "IncDecExpr op={} target=Expr[{}]", op_str, inc.target.value);
             },
-            [this](const CallExpr& c) -> std::string {
+            [](const CallExpr& c) -> std::string {
               std::string args;
               for (std::size_t i = 0; i < c.arguments.size(); ++i) {
                 if (i != 0) {
