@@ -1,0 +1,18 @@
+id: cpp.event_edge_detection
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pos_done: 1
+    neg_done: 1
+    wrong_wake: 0
+    both_count: 2
+    p_0x: 1
+    p_x1: 1
+    n_1x: 1
+    n_x0: 1

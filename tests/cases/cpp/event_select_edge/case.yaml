@@ -1,0 +1,20 @@
+id: cpp.event_select_edge
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    whole: 1
+    whole_snap: 0
+    nft: 1
+    nft_snap: 0
+    neg: 1
+    both: 2
+    rng: 1
+    rng_snap: 0
+    up: 1
+    dn: 1
