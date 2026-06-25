@@ -208,14 +208,15 @@ enum class BuiltinFn : std::uint16_t {
   kAsObservable,
   // By-name scope navigation: a constructor walks a sibling unit's
   // interface, looks up an owned child by name (and per-dimension index),
-  // looks up a signal by name, or registers its own signal / child under a
-  // name. All four are instance methods on the scope handle (`args[0]`);
-  // the name (and the index array for `kGetChild` / `kRegisterChild`) is a
-  // regular argument. `kRegisterChild` records an owned child instance
-  // (scalar: empty index array; vector dimension: one entry per axis) so
-  // by-name lookup from a sibling reaches it.
+  // looks up a signal by name, or attaches a freshly-built child into its
+  // parent. All four are instance methods on the scope handle (`args[0]`).
+  // `kRegisterSignal` and `kGetSignal` carry the signal name as a regular
+  // argument. `kGetChild` carries the lookup name and per-axis index array.
+  // `kAttachChild` carries only the borrowed reference to the already-built
+  // child -- the child's own `Segment()` supplies both the by-name lookup
+  // key and the LRM display form, so the parent never re-states them.
   kRegisterSignal,
-  kRegisterChild,
+  kAttachChild,
   kGetSignal,
   kGetChild,
   // C++ `std::vector` operations exposed to MIR so the constructor
@@ -303,6 +304,12 @@ enum class BuiltinFn : std::uint16_t {
   // owns the enclosing class's layout); distinct from the by-name `kGetSignal`
   // / `kGetChild` cross-unit navigation.
   kParent,
+  // LRM 21.2.1.1 `%m` source: yields the receiver scope's hierarchical name
+  // as an SV `string`. Walks `Parent()` from the receiver up to the implicit
+  // root and joins each scope's own name with `.`; `%m` lowering reads it as
+  // an ordinary value-string print item rather than as a context-dependent
+  // format kind.
+  kHierarchicalPath,
 };
 
 // True iff `id` is a type-namespace-qualified static call -- no receiver,

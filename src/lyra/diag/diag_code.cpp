@@ -158,11 +158,6 @@ constexpr std::array kEntries{
         DiagCode::kErrorDisplayMissingArg,
         DiagCodeInfo{.kind = DiagKind::kError, .name = "display_missing_arg"}},
     std::pair{
-        DiagCode::kFormatModulePathNotImplemented,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "format_module_path_not_implemented"}},
-    std::pair{
         DiagCode::kSystemSubroutineExecutionNotImplemented,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

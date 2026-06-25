@@ -16,8 +16,11 @@ since the test harness can only probe a variable whose type has an implemented s
       20.4.3), applied design-wide.
 - [x] DI3 -- `%f` / `%e` / `%g` (real). Default precision 6 per LRM Table 21-2. Coverage tracked
       under `datatypes.md` Real C1.
-- [ ] DI4 -- `%m` (hierarchical name). Requires runtime exposure of the current scope's hierarchical
-      path; shares its mechanism with archive item `hierarchy/refs`.
+- [x] DI4 -- `%m` (hierarchical name). HIR-to-MIR lowers `%m` to a plain string-valued `CallExpr`
+      against the enclosing scope's `self`, so the format pipeline carries no `%m`-specific arm and
+      the runtime returns an ordinary SV string; the path itself derives from object-tree ownership
+      (closes `hierarchy.md` D5). Width modifiers on `%m` are rejected at the slang frontend per LRM
+      21.2.1.1.
 - [x] DI5 -- File sink. Twelve `$display` / `$write` / `$fdisplay` / `$fwrite` variants
       (default-decimal plus `b` / `h` / `o` radix variants per LRM 21.2.1.1); descriptors per LRM
       21.3.1 (MCD with bit 0 = stdout, FD with bit 31 set, OR-able MCDs that fan output across

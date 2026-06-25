@@ -130,6 +130,8 @@ auto RenderTypeAsCpp(
                 return std::string{"lyra::runtime::ChannelCancellation"};
               case mir::RuntimeLibraryKind::kTimeFormat:
                 return std::string{"lyra::value::TimeFormat"};
+              case mir::RuntimeLibraryKind::kHierarchySegment:
+                return std::string{"lyra::runtime::HierarchySegment"};
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },

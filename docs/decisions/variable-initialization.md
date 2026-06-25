@@ -22,7 +22,7 @@ Before this decision, MIR carried the variable initializer two ways:
 
 1. `mir::MemberDecl.initializer: ExprId` -- the init expression as a field on the declaration
    itself.
-2. `constructor_block.root_stmts` -- the constructor-time statement sequence (`RegisterChild`,
+2. `constructor_block.root_stmts` -- the constructor-time statement sequence (`AttachChild`,
    `RegisterSignal`, `CreateProcesses`, generate construction, ...).
 
 The C++ backend plucked path (1) into an inline class-body NSDMI (`Var<int> a{1};`) and rendered
@@ -39,7 +39,7 @@ to a C++-specific syntactic mode dependency that a LIR / LLVM-IR backend would h
 **MIR has exactly one shape for construction-time work: statements in
 `constructor_block.root_stmts`. For every value-assignable member, HIR-to-MIR inserts an
 `AssignExpr(MemberAccess(self, var), value)` statement at the position the variable is declared in
-source order, before any `RegisterSignal` / `RegisterChild` / `CreateProcesses` for the same scope.
+source order, before any `RegisterSignal` / `AttachChild` / `CreateProcesses` for the same scope.
 The value is the user-supplied expression when present, otherwise the LRM Table 6-7 type default;
 the statement shape is uniform either way. The `mir::MemberDecl.initializer` field is removed; a
 member declaration carries name and type only.**

@@ -110,40 +110,89 @@ auto RenderMethod(
   return out;
 }
 
+// Joins string parts with ", " for emission of ctor sig args, base init
+// forwards, and member-init list entries. Local to RenderConstructor; the
+// rest of the file does not yet need a shared helper.
+auto JoinCommaSeparated(const std::vector<std::string>& parts) -> std::string {
+  std::string out;
+  for (const auto& part : parts) {
+    if (!out.empty()) {
+      out.append(", ");
+    }
+    out.append(part);
+  }
+  return out;
+}
+
 auto RenderConstructor(
     const ScopeView& scope_view, const mir::Class& s,
     const std::string& base_class, std::size_t indent) -> std::string {
-  std::string sig = std::format(
-      "{}(lyra::runtime::Scope* parent, std::string name, "
-      "lyra::runtime::RuntimeServices& services",
-      s.name);
-  std::string init_list =
-      std::format("{}(parent, std::move(name), services)", base_class);
+  // The render iterates every ctor entry in MIR-stated order without
+  // switching on what each type means: ctor_prefix_params forward to the
+  // base by name, structural params bind to same-named member fields.
+  // Each type goes through the single RenderTypeAsCpp dispatch, so the
+  // C++ form of every type lives in exactly one place. Base forwarding is
+  // plain pass-through (no std::move) -- C++ may copy a HierarchySegment
+  // once at construction, which the iteration-time budget can absorb.
+  // The follow-up that retires this interim is tracked under R51.
+  const auto& unit = scope_view.Unit();
+  const auto render_typed_name = [&](mir::TypeId type, std::string_view name) {
+    return std::format("{} {}", RenderTypeAsCpp(unit, s, type), name);
+  };
+
+  std::vector<std::string> sig_args;
+  std::vector<std::string> base_forwards;
+  std::vector<std::string> field_inits;
+  sig_args.reserve(s.ctor_prefix_params.size() + s.params.size());
+  base_forwards.reserve(s.ctor_prefix_params.size());
+  field_inits.reserve(s.params.size());
+
+  for (std::size_t i = 0; i < s.ctor_prefix_params.size(); ++i) {
+    const auto& p =
+        s.ctor_prefix_params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
+    sig_args.push_back(render_typed_name(p.type, p.name));
+    base_forwards.push_back(p.name);
+  }
   for (std::size_t i = 0; i < s.params.size(); ++i) {
     const auto& p = s.params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
     const auto param_name = CtorParamName(i);
-    sig += std::format(
-        ", {} {}", RenderTypeAsCpp(scope_view.Unit(), s, p.type), param_name);
-    init_list += std::format(", {}({})", p.name, param_name);
+    sig_args.push_back(render_typed_name(p.type, param_name));
+    field_inits.push_back(std::format("{}({})", p.name, param_name));
   }
-  sig += std::format(") : {}", init_list);
 
-  // The C++ constructor is the one shape that is not an ordinary method: it has
-  // no result type and runs a member-init list before its body, so it cannot
-  // run a virtual override during construction. It is an allocation shell that
-  // forwards to the base and the param members, then kicks off the construction
-  // body -- a static worker over `self`, the same body shape every method uses.
-  // An empty body needs no kickoff.
+  std::vector<std::string> init_parts;
+  init_parts.reserve(1 + field_inits.size());
+  if (!s.ctor_prefix_params.empty()) {
+    init_parts.push_back(
+        std::format("{}({})", base_class, JoinCommaSeparated(base_forwards)));
+  }
+  for (auto& f : field_inits) {
+    init_parts.push_back(std::move(f));
+  }
+
+  const std::string sig =
+      init_parts.empty()
+          ? std::format("{}({})", s.name, JoinCommaSeparated(sig_args))
+          : std::format(
+                "{}({}) : {}", s.name, JoinCommaSeparated(sig_args),
+                JoinCommaSeparated(init_parts));
+
+  // The C++ constructor is the one shape that is not an ordinary method:
+  // it has no result type and runs a member-init list before its body, so
+  // it cannot run a virtual override during construction. It is an
+  // allocation shell that forwards to the base and the field members, then
+  // kicks off the body -- a static worker over `self`, the same shape
+  // every method uses. An empty body needs no kickoff.
   if (s.constructor_block.root_stmts.empty()) {
     return std::format("{}{} {{}}\n", Indent(indent), sig);
   }
-  std::string out;
-  out += std::format("{}{} {{ init(this); }}\n", Indent(indent), sig);
-  out += std::format(
-      "{}static auto init({}* self) -> void {{\n", Indent(indent), s.name);
-  out += RenderBlockStatements(scope_view, indent + 1);
-  out += std::format("{}}}\n", Indent(indent));
-  return out;
+  return std::format(
+      "{0}{1} {{ init(this); }}\n"
+      "{0}static auto init({2}* self) -> void {{\n"
+      "{3}"
+      "{0}}}\n",
+      Indent(indent), sig, s.name,
+      RenderBlockStatements(scope_view, indent + 1));
 }
 
 auto RenderRuntimeBaseClass(mir::RuntimeBaseClass base) -> std::string {
@@ -387,9 +436,18 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   out += "auto main() -> int {\n";
   out += "  lyra::runtime::Engine engine;\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
+    // A top instance's structural identity is fixed at this construction
+    // site: the segment carries the top's source name with no per-dimension
+    // indices, which $root then reads back when binding the design. The
+    // segment type name comes from the canonical RenderTypeAsCpp mapping
+    // so this harness file does not repeat a type literal already owned
+    // by MIR's builtin TypeId table.
+    const auto& unit = *tops[i].unit;
+    const std::string segment_cpp =
+        RenderTypeAsCpp(unit, unit.top_class, unit.builtins.hierarchy_segment);
     out += std::format(
-        "  {} top{}{{nullptr, \"{}\", engine.Services()}};\n",
-        tops[i].unit->top_class.name, i, tops[i].name);
+        "  {0} top{1}{{nullptr, {2}{{\"{3}\", {{}}}}, engine.Services()}};\n",
+        tops[i].unit->top_class.name, i, segment_cpp, tops[i].name);
   }
   out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {

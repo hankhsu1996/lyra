@@ -32,7 +32,10 @@ shared by all consumers: external references, child routing, and construction.
 3. A named generate scope is a first-class constructed object. An unnamed generate scope is not
    addressable and is not materialized as an object.
 4. External references, runtime child routing, and the runtime constructor all navigate the same
-   object tree. No consumer has its own topology representation.
+   object tree. Typed members on the derived class are the ownership locus; a single non-owning
+   generic adjacency list on the base scope, populated by one attachment operation per child, serves
+   both deterministic traversal and by-name lookup. No second list of child pointers is maintained
+   in parallel, and the parent never restates a child's identity that the child already carries.
 5. The same compilation unit compiled once serves every instance of that unit. Hierarchy does not
    fork the unit's compile-time artifacts.
 6. Parameters affect constructor-time construction, not compile-time identity. A parameter value
@@ -55,6 +58,13 @@ shared by all consumers: external references, child routing, and construction.
    generate construct. A generate builds named child scopes as constructor-time logic; an array
    replicates one child member. Either may appear without the other, and a generate scope may itself
    contain instance arrays. Neither axis subsumes the other.
+10. Scope identity is structural and complete at construction. A child's identity at one hierarchy
+    edge is the pair `(parent, segment)`, where the segment is the source-level label plus any
+    per-dimension elaborated indices. The child receives that segment from its constructor's caller,
+    holds it for its lifetime, and remains the sole authoritative source of its own identity; no
+    consumer reconstructs the bracketed name by reverse-searching a parent registry, and the parent
+    never re-states an identity the child already carries. `%m`, hierarchical paths, debug output,
+    and by-name lookup all read from this single source.
 
 ## Boundary to Adjacent Layers
 
@@ -78,7 +88,10 @@ shared by all consumers: external references, child routing, and construction.
 - A topology representation owned by the driver or a central map instead of by the object tree
   itself.
 - Separate hierarchy models for compile-time and runtime. Only one model exists.
-- Dual representation (object tree plus a coordinate or ordinal system).
+- Two independently maintained runtime child views that can drift -- e.g., one list for traversal
+  plus a separate registry for by-name lookup, each written by a distinct opcode and at a distinct
+  construction-time moment. One non-owning adjacency relation serves both, populated by one
+  attachment operation per child.
 - A child-routing or external-reference path that reconstructs hierarchy from flattened symbol
   names.
 - Per-instance generate trees that duplicate the unit's construction logic.
@@ -87,6 +100,13 @@ shared by all consumers: external references, child routing, and construction.
   construction. The two axes must not be conflated or made to subsume each other.
 - Parameter values used as part of compile-time identity. Parameters are constructor inputs that
   steer construction, not identity keys that fork compile-time artifacts.
+- Splitting a child's hierarchy identity between the child and a parent-side registry -- the child
+  carrying only an un-indexed label while bracketed indices live in a parent table that consumers
+  reverse-search to recover the full name. The child carries its complete `(base, indices)` segment;
+  any per-dim decoration is the child's own property, never parent metadata about the child.
+- A scope's base constructor side-effecting its own attachment into the parent. Attachment is one
+  explicit operation the parent performs once the child is fully constructed and its typed owner has
+  committed, so a partially-built child is never visible in the parent's adjacency relation.
 
 ## Notes / Examples
 

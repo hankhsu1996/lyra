@@ -662,6 +662,25 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       naturally with R45's call-shape work, which also moves per-symbol resolution off the reference
       node.
 
+- [ ] R51 -- Close R45's last asymmetry: a class constructor should be a `mir::MethodDecl` whose
+      signature MIR states in full, not a special `Block` on the side. R45 unified the call side
+      onto `Direct / Indirect / Construct`, so a child construction at a parent's body already emits
+      a generic `Construct(self, segment, services, structural...)` callee whose args are plain MIR
+      primitives. The receiver side -- the constructor declaration -- is still a bare
+      `Class::constructor_block` with `body.vars[0] = self`; the C++ ctor entry args
+      (`parent / segment / services / structural...`) are not in MIR at all. The interim shape lands
+      the prefix args as `Class::ctor_prefix_params` so the render can iterate without restating any
+      type literal, and the render forwards each prefix arg to the base by pure name pass-through
+      (no `std::move`) -- which causes one `HierarchySegment` copy per scope construction. The
+      principled close: make the constructor a `MethodDecl` carrying its full signature, let the
+      call site's `Construct` callee resolve to it like any other callable, and let the C++ render
+      share the generic method renderer with one C++-specific mem-init mapping. Moving args into the
+      base init list then becomes an explicit MIR primitive (a `Move(expr)` wrapper or equivalent
+      data-flow encoding) rather than a render-time type-kind heuristic, so the copy can be elided
+      without the render learning what `HierarchySegment` / `Scope*` / `RuntimeServices&` mean.
+      **Likely interacts with**: R8 (callable-model unification) and R47 (SV class object model),
+      since both touch what "a class with a body" looks like at MIR.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

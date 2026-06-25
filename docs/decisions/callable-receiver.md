@@ -97,17 +97,18 @@ not MIR-modeled.
 ### Child-instance construction receiver triple
 
 When a parent scope instantiates an owned child or external-unit child, the call carries the
-parent's `self`, the child's source-level label, and the engine handle as the first three arguments
-before any user-supplied structural parameters. The MIR shape is one explicit `CallExpr` against
-`ConstructorCallee` whose result type is `unique_ptr<Child>` and whose arguments are
-`[self, "label", services, structural_args...]`. The render is mechanical: it reads the
-unique-pointer result type and emits
-`std::make_unique<Child>(self, "label", services, structural_args...)`. After the construction
-returns its `unique_ptr<Child>` -- assigned to the slot for a scalar member, pushed into the vector
-for an array element -- an explicit `RegisterChild` call records the new instance under its label so
-a sibling's cross-unit `GetChild` lookup reaches it by name. Neither the receiver triple nor the
-register call lives in any stmt-kind dispatch; both are ordinary `CallExpr` nodes, and every backend
-reads them the same way.
+parent's `self`, the child's structural `HierarchySegment` (label plus per-dim elaborated indices),
+and the engine handle as the first three arguments before any user-supplied structural parameters.
+The MIR shape is one explicit `CallExpr` against `ConstructorCallee` whose result type is
+`unique_ptr<Child>` and whose arguments are `[self, segment, services, structural_args...]`. The
+render is mechanical: it reads the unique-pointer result type and emits
+`std::make_unique<Child>(self, HierarchySegment{...}, services, structural_args...)`. After the
+construction returns its `unique_ptr<Child>` -- assigned to the slot for a scalar member, pushed
+into the vector for an array element -- an explicit `AttachChild` call wires the parent edge.
+Identity rides on the child (its segment is the single source of `%m`, by-name lookup, and debug
+output); the parent never re-states the label or indices. Neither the receiver triple nor the attach
+call lives in any stmt-kind dispatch; both are ordinary `CallExpr` nodes, and every backend reads
+them the same way.
 
 ### Why always include `self`, not derive from "body touches class state"
 

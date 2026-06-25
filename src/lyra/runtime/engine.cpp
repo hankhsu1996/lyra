@@ -42,12 +42,14 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
     throw InternalError("Engine::BindDesign called more than once");
   }
   bound_ = true;
-  root_ = std::make_unique<Scope>(nullptr, "$root", services_);
+  root_ = std::make_unique<Scope>(
+      nullptr, HierarchySegment{"$root", {}}, services_);
   for (const auto& top : tops) {
-    root_->AddChild(*top.scope);
-    // A `$root`-anchored absolute path descends from the root by name, so the
-    // root answers GetChild for each top under its name (LRM 23.6).
-    root_->RegisterChild(top.scope->Name(), {}, *top.scope);
+    // A `$root`-anchored absolute path descends from the root by name, so
+    // the root answers GetChild for each top under its segment (LRM 23.6).
+    // AttachChild reads the top's own Segment() -- the base name set when
+    // main constructed it -- and uses that as the lookup key.
+    root_->AttachChild(*top.scope);
   }
   // Link every top before any phase runs, so an upward climb during resolution
   // sees the whole tree (the root and all sibling tops already exist). The

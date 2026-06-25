@@ -159,8 +159,17 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       signal changes, across paths spanning multiple levels, several instances read within one
       process, and upward references alongside downward ones. The process subscribes to every
       referenced signal regardless of direction or depth, and each source re-triggers independently.
-- [ ] D5 -- The hierarchical path of an instance (for `%m`, display, and scope queries) derives from
-      object-tree ownership.
+- [x] D5 -- The hierarchical path of an instance (for `%m`, display, and scope queries) derives from
+      object-tree ownership. Each runtime scope receives its complete `HierarchySegment` (base label
+      plus per-dimension elaborated indices) from its parent at construction; `%m` walks the parent
+      chain and joins each scope's own segment, never reverse-searching a parent registry for a
+      child's bracketed name. A generate-loop iteration's identity therefore lives entirely on
+      itself: `loop[0]` is what the iteration scope holds, not metadata the parent decorates onto an
+      un-indexed `"loop"`. The walk stops at the implicit `$root` so multi-top output reads `Top.x`
+      rather than `$root.Top.x`. Closure-deferred prints (`$strobe`) capture `self` via the closure
+      builder, so the path printed is the issuing scope's, not whatever scope is active when the
+      postponed region drains. VPI-style scope queries (`$scope`, `$function`) stay out of scope --
+      they belong to the assertion/debug workstream.
 - [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
       element, including multi-dimensional arrays (`c[i][j].x`).
 - [x] D7 -- A hierarchical reference crosses a generate-block scope boundary. A by-name reference
