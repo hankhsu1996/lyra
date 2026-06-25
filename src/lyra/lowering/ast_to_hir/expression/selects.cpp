@@ -7,6 +7,7 @@
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/types/Type.h>
+#include <slang/numeric/ConstantValue.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -15,6 +16,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -110,13 +112,34 @@ auto LowerRangeSelectExpr(
 
   const WalkFrame bound_frame =
       sel.value().type->isQueue() ? frame.WithDollarBase(base_id) : frame;
-  auto left_or = lowerer.LowerExpr(sel.left(), bound_frame);
-  if (!left_or) return std::unexpected(std::move(left_or.error()));
-  const hir::ExprId left_id = frame.Exprs().Add(*std::move(left_or));
 
-  auto right_or = lowerer.LowerExpr(sel.right(), bound_frame);
-  if (!right_or) return std::unexpected(std::move(right_or.error()));
-  const hir::ExprId right_id = frame.Exprs().Add(*std::move(right_or));
+  // A bound slang has evaluated to a constant (an `[msb:lsb]` endpoint or an
+  // indexed-select width, both required constant by LRM 11.5.1) folds to a
+  // literal from slang's value, so the downstream layer reads the constant
+  // directly instead of re-deriving it from a structural parameter expression.
+  // A non-constant bound -- a variable indexed-select base, a queue `$` --
+  // falls back to structural lowering.
+  auto lower_bound =
+      [&](const slang::ast::Expression& bound) -> diag::Result<hir::ExprId> {
+    if (const auto* constant = bound.getConstant(); constant != nullptr) {
+      auto bound_type = lowerer.Module().InternType(*bound.type, span);
+      if (!bound_type) return std::unexpected(std::move(bound_type.error()));
+      auto literal = MakeConstantValueExpr(*constant, *bound_type, span);
+      if (!literal) return std::unexpected(std::move(literal.error()));
+      return frame.Exprs().Add(*std::move(literal));
+    }
+    auto lowered = lowerer.LowerExpr(bound, bound_frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return frame.Exprs().Add(*std::move(lowered));
+  };
+
+  auto left_res = lower_bound(sel.left());
+  if (!left_res) return std::unexpected(std::move(left_res.error()));
+  const hir::ExprId left_id = *left_res;
+
+  auto right_res = lower_bound(sel.right());
+  if (!right_res) return std::unexpected(std::move(right_res.error()));
+  const hir::ExprId right_id = *right_res;
 
   hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
     switch (sel.getSelectionKind()) {
