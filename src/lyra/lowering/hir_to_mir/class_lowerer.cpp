@@ -676,7 +676,7 @@ void AppendProcessRegistration(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::MethodRef{.hops = {}, .method = body},
+                  .callee = mir::MethodRef{.method = body},
                   .arguments = {body_self}},
           .type = module.Unit().builtins.coroutine});
   const mir::ExprId reg_self =
