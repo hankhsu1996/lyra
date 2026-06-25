@@ -11,7 +11,6 @@
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/param.hpp"
-#include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_alias.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -53,7 +52,11 @@ struct Class {
   // Variable initializers (LRM 6.8), run after resolution so they observe bound
   // values. Absent when the scope has no value initializers.
   std::optional<MethodDecl> initialize;
-  base::Arena<Process, ProcessId> processes;
+  // Process activation (LRM 9.2): the scope's startup and shutdown lifecycle
+  // registrations for its `initial` / `final` / `always*` / continuous-assign
+  // bodies, run after initialization. The bodies are ordinary callables; this
+  // body holds their registrations. Absent when the scope has no process.
+  std::optional<MethodDecl> activate;
   base::Arena<Class, ClassId> nested_classes;
   base::Arena<MethodDecl, MethodId> methods;
   std::vector<TypeAliasDecl> type_aliases;

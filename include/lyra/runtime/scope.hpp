@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/value/packed_array.hpp"
 
@@ -140,8 +139,12 @@ class Scope {
   }
 
  protected:
-  auto AddProcess(ProcessKind kind, Coroutine<void> coroutine)
-      -> RuntimeProcess&;
+  // Reached by the emitted `CreateProcesses` body to bind a process coroutine
+  // to this scope's startup (`RegisterInitial`, LRM 9.2) or shutdown
+  // (`RegisterFinal`, LRM 9.2.3) lifecycle. Distinct entries, not one kind-
+  // tagged call, mirroring the two MIR registration callees.
+  void RegisterInitial(Coroutine<void> coroutine);
+  void RegisterFinal(Coroutine<void> coroutine);
 
   // Reached by emitted process and subroutine bodies for every runtime
   // service call (print, delay, NBA submit, file I/O, the deferred-check

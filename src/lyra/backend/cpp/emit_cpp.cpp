@@ -18,7 +18,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/param.hpp"
-#include "lyra/mir/process.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -147,32 +146,6 @@ auto RenderConstructor(
   return out;
 }
 
-auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
-  switch (kind) {
-    case mir::ProcessKind::kInitial:
-      return "lyra::runtime::ProcessKind::kInitial";
-    case mir::ProcessKind::kFinal:
-      return "lyra::runtime::ProcessKind::kFinal";
-  }
-  throw InternalError("RenderProcessKindLiteral: unknown ProcessKind");
-}
-
-// Process activation: the constructor-time registration of each process body
-// with the engine, by lifecycle kind. The bodies themselves are ordinary
-// methods rendered by `RenderMethod`; this only wires their registration.
-auto RenderCreateProcesses(const mir::Class& s, std::size_t indent)
-    -> std::string {
-  std::string out;
-  out += std::format("{}void CreateProcesses() override {{\n", Indent(indent));
-  for (const auto& p : s.processes) {
-    out += std::format(
-        "{}AddProcess({}, {}(this));\n", Indent(indent + 1),
-        RenderProcessKindLiteral(p.kind), p.code.name);
-  }
-  out += std::format("{}}}\n", Indent(indent));
-  return out;
-}
-
 auto RenderRuntimeBaseClass(mir::RuntimeBaseClass base) -> std::string {
   switch (base) {
     case mir::RuntimeBaseClass::kInstance:
@@ -246,12 +219,12 @@ auto RenderScopeAsClass(
     out += "\n";
     out += render_lifecycle(*s.initialize);
   }
-
-  // Child links are registered automatically at construction and walked by the
-  // base; only a scope's own processes need a per-class override.
-  if (!s.processes.empty()) {
+  // The activate body registers this scope's processes (its `CreateProcesses`
+  // override); child links are registered automatically at construction and
+  // walked by the base, so only a scope with its own processes has one.
+  if (s.activate.has_value()) {
     out += "\n";
-    out += RenderCreateProcesses(s, indent + 1);
+    out += render_lifecycle(*s.activate);
   }
 
   // A unit-root scope is a module instance; its name is the def-name an upward
@@ -277,18 +250,13 @@ auto RenderScopeAsClass(
     out += RenderField(this_anchor, v, indent + 1);
   }
 
-  if (s.processes.empty() && s.methods.empty()) {
+  if (s.methods.empty()) {
     out += std::format("{}}};\n", Indent(indent));
     return out;
   }
 
   out += "\n";
   out += std::format("{} private:\n", Indent(indent));
-
-  for (const auto& p : s.processes) {
-    out += "\n";
-    out += RenderMethod(parent_struct_view, unit, s, p.code, indent + 1);
-  }
 
   for (const auto& sub : s.methods) {
     out += "\n";
@@ -334,7 +302,6 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/finish.hpp\"\n";
   out += "#include \"lyra/runtime/fork.hpp\"\n";
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
-  out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/sim_time.hpp\"\n";
