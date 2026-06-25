@@ -140,11 +140,16 @@ auto Scope::Services() -> RuntimeServices& {
   return *services_;
 }
 
-auto Scope::AddProcess(ProcessKind kind, Coroutine<void> coroutine)
-    -> RuntimeProcess& {
+void Scope::RegisterInitial(Coroutine<void> coroutine) {
   processes_.push_back(
-      std::make_unique<RuntimeProcess>(kind, std::move(coroutine)));
-  return *processes_.back();
+      std::make_unique<RuntimeProcess>(
+          ProcessKind::kInitial, std::move(coroutine)));
+}
+
+void Scope::RegisterFinal(Coroutine<void> coroutine) {
+  processes_.push_back(
+      std::make_unique<RuntimeProcess>(
+          ProcessKind::kFinal, std::move(coroutine)));
 }
 
 void Scope::SubmitObserved(

@@ -11,7 +11,7 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/process.hpp"
+#include "lyra/mir/method.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -20,13 +20,14 @@ namespace lyra::lowering::hir_to_mir {
 // runtime mental model: re-evaluate the assignment whenever any RHS read
 // changes. HIR keeps continuous assignment as a distinct scope-level node so
 // source diagnostics retain provenance; at HIR -> MIR we materialise the
-// runtime shape directly here as `mir::Process { kInitial, forever { lhs =
-// rhs; SensitivityWaitStmt(reads); } }`. The body executes once at t=0 (the
-// natural fall-through of the eternal loop) before the first wait, matching
-// LRM 9.2.2.2's "evaluate at time 0" requirement for inferred sensitivity.
+// runtime shape directly here as a coroutine body `forever { lhs = rhs;
+// SensitivityWaitStmt(reads); }`, which the caller registers as a startup
+// activation. The body executes once at t=0 (the natural fall-through of the
+// eternal loop) before the first wait, matching LRM 9.2.2.2's "evaluate at
+// time 0" requirement for inferred sensitivity.
 auto LowerContinuousAssign(
     const ClassLowerer& lowerer, WalkFrame frame, std::string name,
-    const hir::ContinuousAssign& src) -> diag::Result<mir::Process> {
+    const hir::ContinuousAssign& src) -> diag::Result<mir::MethodDecl> {
   mir::Block process_block;
   const mir::LocalId self_id = process_block.vars.Add(
       mir::LocalDecl{
@@ -80,14 +81,12 @@ auto LowerContinuousAssign(
               .scope = body_scope_id}});
   process_block.AppendStmt(
       mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
-  return mir::Process{
-      .kind = mir::ProcessKind::kInitial,
-      .code = mir::MethodDecl{
-          .name = std::move(name),
-          .code = mir::CallableCode{
-              .params = {self_id},
-              .result_type = lowerer.Module().Unit().builtins.coroutine,
-              .body = std::move(process_block)}}};
+  return mir::MethodDecl{
+      .name = std::move(name),
+      .code = mir::CallableCode{
+          .params = {self_id},
+          .result_type = lowerer.Module().Unit().builtins.coroutine,
+          .body = std::move(process_block)}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

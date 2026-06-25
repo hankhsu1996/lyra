@@ -31,7 +31,6 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -234,8 +233,8 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
   return {};
 }
 
-auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
-    -> diag::Result<mir::Process> {
+auto LowerStraightLineProcess(ProcessLowerer& process)
+    -> diag::Result<mir::MethodDecl> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::Block process_block;
   const mir::LocalId self_id = process_block.vars.Add(
@@ -250,14 +249,12 @@ auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
   // `co_return`, a real body statement (LRM 9.2).
   process_block.AppendStmt(
       mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
-  return mir::Process{
-      .kind = kind,
-      .code = mir::MethodDecl{
-          .name = std::string{process.CallableName()},
-          .code = mir::CallableCode{
-              .params = {self_id},
-              .result_type = process.Module().Unit().builtins.coroutine,
-              .body = std::move(process_block)}}};
+  return mir::MethodDecl{
+      .name = std::string{process.CallableName()},
+      .code = mir::CallableCode{
+          .params = {self_id},
+          .result_type = process.Module().Unit().builtins.coroutine,
+          .body = std::move(process_block)}};
 }
 
 // Wraps the body in a `forever` loop. `implicit_sensitivity`, if present,
@@ -267,7 +264,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
 auto LowerForeverProcess(
     ProcessLowerer& process,
     const std::vector<hir::SensitivityEntry>* implicit_sensitivity)
-    -> diag::Result<mir::Process> {
+    -> diag::Result<mir::MethodDecl> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::Block process_block;
   const mir::LocalId self_id = process_block.vars.Add(
@@ -300,25 +297,22 @@ auto LowerForeverProcess(
               .scope = body_scope_id}});
   process_block.AppendStmt(
       mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
-  return mir::Process{
-      .kind = mir::ProcessKind::kInitial,
-      .code = mir::MethodDecl{
-          .name = std::string{process.CallableName()},
-          .code = mir::CallableCode{
-              .params = {self_id},
-              .result_type = process.Module().Unit().builtins.coroutine,
-              .body = std::move(process_block)}}};
+  return mir::MethodDecl{
+      .name = std::string{process.CallableName()},
+      .code = mir::CallableCode{
+          .params = {self_id},
+          .result_type = process.Module().Unit().builtins.coroutine,
+          .body = std::move(process_block)}};
 }
 
 }  // namespace
 
 auto ProcessLowerer::Run(const hir::Process& src)
-    -> diag::Result<mir::Process> {
+    -> diag::Result<mir::MethodDecl> {
   switch (src.kind) {
     case hir::ProcessKind::kInitial:
-      return LowerStraightLineProcess(*this, mir::ProcessKind::kInitial);
     case hir::ProcessKind::kFinal:
-      return LowerStraightLineProcess(*this, mir::ProcessKind::kFinal);
+      return LowerStraightLineProcess(*this);
     case hir::ProcessKind::kAlways:
     case hir::ProcessKind::kAlwaysFf:
       return LowerForeverProcess(*this, nullptr);

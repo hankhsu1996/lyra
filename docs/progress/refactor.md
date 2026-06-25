@@ -130,7 +130,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         caller. `self` is the code's first parameter, bound into a value's environment when needed,
         not a privileged `captures[0]` slot.
 
-  - [ ] R8d -- `mir::Process` dissolves into a callable value registered at constructor time
+  - [x] R8d -- `mir::Process` dissolves into a callable value registered at constructor time
         (per-instance, generate-dependent), with `initial` and `final` as distinct lifecycle
         registrations. `ProcessKind` is removed.
 

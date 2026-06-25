@@ -659,6 +659,44 @@ void InstallCrossUnitRefs(
   }
 }
 
+// Appends one process activation registration to the scope's `activate` body:
+// invokes `body` over the activate frame's `self` to produce the coroutine,
+// then registers it for the scope's startup (`is_final == false`) or shutdown
+// (`is_final == true`) lifecycle (LRM 9.2). Startup and shutdown are distinct
+// registration callees, not one tagged call.
+void AppendProcessRegistration(
+    ModuleLowerer& module, const WalkFrame& activate_frame, mir::MethodId body,
+    bool is_final) {
+  mir::Block& block = *activate_frame.current_block;
+  const mir::TypeId self_ptr_type =
+      activate_frame.current_class->self_pointer_type;
+  const mir::ExprId body_self =
+      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
+  const mir::ExprId body_call = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::MethodRef{.hops = {}, .method = body},
+                  .arguments = {body_self}},
+          .type = module.Unit().builtins.coroutine});
+  const mir::ExprId reg_self =
+      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
+  const mir::ExprId reg_call = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinFnCallee{
+                          .id = is_final
+                                    ? support::BuiltinFn::kRegisterFinal
+                                    : support::BuiltinFn::kRegisterInitial},
+                  .arguments = {reg_self, body_call}},
+          .type = module.Unit().builtins.void_type});
+  block.AppendStmt(
+      mir::Stmt{
+          .label = std::nullopt, .data = mir::ExprStmt{.expr = reg_call}});
+}
+
 // Realizes each port connection (LRM 23.3.3). An input or output port is the
 // implied continuous assignment between the two cells, materialized as the same
 // synthesized process a scope-level `assign` produces, registered as a process.
@@ -668,6 +706,7 @@ void InstallCrossUnitRefs(
 // continuous assignment.
 auto InstallPortConnections(
     ClassLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
+    WalkFrame activate_frame,
     const std::vector<mir::MemberId>& instance_member_vars,
     const std::vector<GenerateBindings>& gen_bindings) -> diag::Result<void> {
   mir::Class& mir_class = *frame.current_class;
@@ -742,11 +781,12 @@ auto InstallPortConnections(
         .lhs = is_input ? cell.cell : pc.peer,
         .rhs = is_input ? pc.peer : cell.cell,
         .sensitivity_list = pc.sensitivity};
-    std::string name = std::format("process_{}", mir_class.processes.size());
-    auto proc_or =
+    std::string name = std::format("process_{}", mir_class.methods.size());
+    auto decl_or =
         LowerContinuousAssign(lowerer, frame, std::move(name), assign);
-    if (!proc_or) return std::unexpected(std::move(proc_or.error()));
-    mir_class.processes.Add(*std::move(proc_or));
+    if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+    const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
+    AppendProcessRegistration(module, activate_frame, body, false);
   }
   return {};
 }
@@ -1265,7 +1305,7 @@ auto ClassLowerer::Run(
       .constructor_block = {},
       .resolve = std::nullopt,
       .initialize = std::nullopt,
-      .processes = {},
+      .activate = std::nullopt,
       .nested_classes = {},
       .methods = {},
       .type_aliases = {}};
@@ -1322,6 +1362,17 @@ auto ClassLowerer::Run(
       frame.WithClass(&mir_class, outer_scope_link)
           .WithBlock(&resolve_block)
           .WithSelfBinding(resolve_self_id, frame.block_depth);
+
+  // Process activation runs after initialization (LRM 9.2). Like the resolve
+  // and init bodies it is its own block with its own `self`; it holds the
+  // lifecycle registration for every process this scope owns.
+  mir::Block activate_block;
+  const mir::LocalId activate_self_id = activate_block.vars.Add(
+      mir::LocalDecl{.name = "self", .type = mir_class.self_pointer_type});
+  const WalkFrame activate_frame =
+      frame.WithClass(&mir_class, outer_scope_link)
+          .WithBlock(&activate_block)
+          .WithSelfBinding(activate_self_id, frame.block_depth);
 
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
@@ -1460,21 +1511,24 @@ auto ClassLowerer::Run(
   }
 
   for (const auto& p : hir_scope.processes) {
-    std::string name = std::format("process_{}", mir_class.processes.size());
+    std::string name = std::format("process_{}", mir_class.methods.size());
     ProcessLowerer process_lowerer(
         module, lowerer, hir_scope.time_resolution, p.body, std::move(name),
         scope_frame);
-    auto proc_or = process_lowerer.Run(p);
-    if (!proc_or) return std::unexpected(std::move(proc_or.error()));
-    mir_class.processes.Add(*std::move(proc_or));
+    auto decl_or = process_lowerer.Run(p);
+    if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+    const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
+    AppendProcessRegistration(
+        module, activate_frame, body, p.kind == hir::ProcessKind::kFinal);
   }
 
   for (const auto& ca : hir_scope.continuous_assigns) {
-    std::string name = std::format("process_{}", mir_class.processes.size());
-    auto proc_or =
+    std::string name = std::format("process_{}", mir_class.methods.size());
+    auto decl_or =
         LowerContinuousAssign(lowerer, scope_frame, std::move(name), ca);
-    if (!proc_or) return std::unexpected(std::move(proc_or.error()));
-    mir_class.processes.Add(*std::move(proc_or));
+    if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+    const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
+    AppendProcessRegistration(module, activate_frame, body, false);
   }
 
   auto bindings_r = InstallGenerateOwnedChildScopes(lowerer, scope_frame);
@@ -1495,16 +1549,17 @@ auto ClassLowerer::Run(
       lowerer, scope_frame, instance_member_vars, *bindings_r,
       cross_unit_slot_vars);
   auto port_conn_r = InstallPortConnections(
-      lowerer, scope_frame, resolve_frame, instance_member_vars, *bindings_r);
+      lowerer, scope_frame, resolve_frame, activate_frame, instance_member_vars,
+      *bindings_r);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
 
   mir_class.constructor_block = std::move(ctor_block);
-  // The resolve and initialize phases are synthesized callables run by the
-  // engine after construction (LRM 23.3.3.2 / 6.8), present only when the scope
-  // has work for that phase. Their bodies are uniform callables over the
-  // explicit `self` (`code.params[0]`); the engine reaches them through a
-  // virtual-dispatch shim the backend emits as separate plumbing, the same way
-  // the constructor delegates to its static body.
+  // The resolve, initialize, and activate phases are synthesized callables run
+  // by the engine after construction (LRM 23.3.3.2 / 6.8 / 9.2), present only
+  // when the scope has work for that phase. Their bodies are uniform callables
+  // over the explicit `self` (`code.params[0]`); the engine reaches them
+  // through a virtual-dispatch shim the backend emits as separate plumbing, the
+  // same way the constructor delegates to its static body.
   if (!resolve_block.root_stmts.empty()) {
     mir_class.resolve = mir::MethodDecl{
         .name = "ResolveState",
@@ -1520,6 +1575,14 @@ auto ClassLowerer::Run(
             .params = {init_self_id},
             .result_type = void_type,
             .body = std::move(initialize_block)}};
+  }
+  if (!activate_block.root_stmts.empty()) {
+    mir_class.activate = mir::MethodDecl{
+        .name = "CreateProcesses",
+        .code = mir::CallableCode{
+            .params = {activate_self_id},
+            .result_type = void_type,
+            .body = std::move(activate_block)}};
   }
 
   return mir_class;
