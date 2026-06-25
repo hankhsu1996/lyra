@@ -97,5 +97,3 @@ Make the machinery generic; keep the nodes typed.
   enclosing callable is forbidden).
 - `architecture/lowering_organization.md` (the pass / dispatcher / handler / walk-frame shape this
   refines).
-- `progress/generic-lowering.md` (the staged migration).
-- `progress/refactor.md` R34 (the AST-to-HIR drift-bug slice).

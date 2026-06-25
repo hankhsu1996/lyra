@@ -147,7 +147,5 @@ Decisions about the OUTPUT shape, independent of dispatch:
 
 ## Cross-references
 
-- `progress/display.md` DI7
-- `progress/aggregate.md` DA4
 - `decisions/unpacked-array-representation.md`
 - `decisions/runtime-shape-and-default-value.md`

@@ -90,5 +90,3 @@ the argument vector.
   item still uses at execution time).
 - `decisions/callable-receiver.md` (`self` binding; `self.Services()` reaches the engine through
   it).
-- `progress/refactor.md` R20 (tracks which runtime-effect families have moved onto this shape and
-  which remain).

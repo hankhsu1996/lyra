@@ -33,7 +33,7 @@ The entanglement surfaces as two visible smells:
   is "is this storage a module-level cell", not "is its value type integral" -- and it leaks because
   the value-type layer never declared which types are eligible for observable wrapping.
 
-`refactor.md` R12 plans to lift the observable wrapping into MIR's type system as a first-class
+A planned refactor will lift the observable wrapping into MIR's type system as a first-class
 `ObservableType`. That cleanup is blocked on a clean answer to "which value types are eligible to be
 wrapped". The answer cannot be a predicate the backend recomputes -- it must be a contract the value
 types declare and the type system enforces.

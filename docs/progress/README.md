@@ -42,5 +42,7 @@ nothing more -- never a rewrite into a past-tense account of what landed. The re
 recorded in the code and the decision doc; that the work happened is recorded in git.
 
 When the last item lands, the file is deleted, and any cross-reference to it from another progress
-file is updated in the same change so no dangling pointer remains. The git history is the record
-that the work happened.
+file is updated in the same change so no dangling pointer remains. Only another progress file can
+hold such a pointer: architecture, decision, and glossary docs are forbidden from referencing a
+progress file (see `../style.md`), so deletion never strands a permanent doc. The git history is the
+record that the work happened.

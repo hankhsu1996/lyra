@@ -221,4 +221,3 @@ binding pushes the answer up to one place that every backend just reads.
 - `docs/architecture/callable.md` (closure model: capture, references as a field type,
   coroutine-ness)
 - `docs/architecture/mir.md` (callable shape, expression set)
-- `docs/progress/refactor.md` R16

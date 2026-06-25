@@ -14,8 +14,7 @@ A SystemVerilog `ref` formal argument (LRM 13.5.2) and a `ref` port (LRM 23.3.3.
 owned somewhere else: reading the alias reads that storage, writing it writes that storage, and the
 alias holds no storage of its own. This record fixes which layer a reference lives in, why it is a
 data type and not a borrowed pointer, and that the two SystemVerilog constructs share one
-representation. It binds the `ref`-port work (`docs/progress/hierarchy.md` E7) and the existing
-pass-by-reference formal lowering.
+representation. It binds the `ref`-port work and the existing pass-by-reference formal lowering.
 
 ## Findings that shaped the design
 

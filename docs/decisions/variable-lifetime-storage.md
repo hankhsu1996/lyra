@@ -20,7 +20,8 @@ Two forces made the storage of static locals a real decision:
    branch is a separate coroutine that may run after the parent `initial` has returned. For it to
    observe the local (LRM 9.3.2 reads the enclosing loop variable's final value after the loop), the
    local's storage must outlive the parent's activation -- i.e. it must be genuinely static, not a
-   parent-frame local. This is the case that forced the issue (`fork-join.md` FJ4).
+   parent-frame local. This is the case that forced the issue (a detached fork branch capturing a
+   parent loop variable).
 2. **The frontend resolves a bare declaration (`int x = 0;`, no keyword) to static lifetime** and
    only warns (it does not reject). So static-lifetime body locals are pervasive, not rare, and they
    reach lowering already classified as static.
@@ -100,14 +101,7 @@ is out.
   still live in the postponed region; it is not snapshotted at the call. A later same-timestep write
   is therefore observed.
 - **The emitted static local is not in place.** It appears as a per-instance member with an id
-  suffix, away from its source position. This is inherent to per-instance static storage and is
-  recorded as out of scope in `emit-readability.md`.
+  suffix, away from its source position. This is inherent to per-instance static storage and is out
+  of scope here.
 - **An automatic local in a trace task (`$strobe` / `$monitor`) is rejected**, since it is not live
   in the postponed region.
-
-## Cross-references
-
-- `progress/processes.md` P15
-- `progress/functions.md` F3
-- `progress/fork-join.md` FJ4
-- `progress/emit-readability.md`

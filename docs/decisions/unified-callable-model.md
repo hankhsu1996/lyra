@@ -1,7 +1,6 @@
 # Unified callable model
 
-Date: 2026-06-24 Status: accepted as the target model; not yet implemented (gap tracked in
-`../progress/refactor.md` R8 and the object-model entry).
+Date: 2026-06-24 Status: accepted as the target model; not yet implemented.
 
 ## Context
 
@@ -242,8 +241,7 @@ object identity, reference-lifetime policy). The likely factoring is an `ObjectT
 methods, and a dispatch/virtual layout where applicable) shared by both, plus a separate
 module-specific instance/elaboration plan -- "a module is an object type plus an instance plan," not
 "an SV class is a module in another mode" -- so that module construction policy does not contaminate
-heap classes. Designing this is a separate effort tracked in `../progress/refactor.md`; the callable
-model rides on its result.
+heap classes. Designing this is a separate effort; the callable model rides on its result.
 
 ## Rejected alternatives
 
@@ -291,4 +289,3 @@ model rides on its result.
   receiver to a uniform code-level parameter.
 - `decisions/address-of-primitive.md` -- MIR's place model (the reference class is Rust MIR / LLVM
   IR), which supports reference-typed `ref` parameters.
-- `progress/refactor.md` -- R8 (the implementation gap) and the object-model design entry.

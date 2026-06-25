@@ -81,7 +81,7 @@ does not depend on. So the referrer holds a wrapper-typed member and the runtime
   generate scope -- resolves at compile time as a typed member access plus a compile-time offset.
   The code currently lowers such a reference through the cross-unit by-name path instead. Closing
   that gap needs a MIR member-access form that descends into an owned child object's member; it is
-  tracked in `refactor.md`, not decided here.
+  tracked separately, not decided here.
 - **A reference whose head is a named procedural block** has no constructed scope to anchor on (its
   locals live on the enclosing unit), so it is not expressible in this model without first giving
   such blocks a navigable scope.

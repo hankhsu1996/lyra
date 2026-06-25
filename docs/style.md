@@ -63,15 +63,19 @@ reason and any rejected alternative that is non-obvious.
 ## Architecture vs Other Docs
 
 Architecture docs under `architecture/` are the source of truth for the system's target shape. The
-dependency between doc kinds is strictly one-way:
+dependency between doc kinds is strictly one-way, from permanent to ephemeral:
 
 - `architecture/` defines the system.
-- `decisions/` records dated decisions with rationale. Entries may reference architecture docs.
+- `decisions/` records dated decisions with rationale. Entries may reference architecture docs and
+  other decisions.
 - `glossary/` defines terminology used by architecture docs.
-- Any future working docs reference architecture, never the other way around.
+- `progress/` tracks the delta between current code and the target. It is the most downstream doc
+  kind: it may reference architecture and decisions, never the reverse.
 
-An architecture doc that cites a decision, a queue, or a working doc is a violation of this rule.
-Architecture is upstream of everything else in `docs/`.
+An architecture doc that cites a decision, a queue, or a working doc is a violation of this rule. A
+decision or glossary doc that cites a `progress/` file is the same violation: a permanent doc must
+not depend on an ephemeral queue. Because nothing permanent points at `progress/`, a completed
+progress file can be deleted with no dangling pointer left behind.
 
 ## Editing Discipline
 

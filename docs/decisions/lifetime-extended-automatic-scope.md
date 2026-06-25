@@ -160,4 +160,3 @@ consumer.
 - `architecture/scheduling.md` -- closure capture lifetime: a lowering capturing a procedural lvalue
   must establish the fire-before-frame-dies guarantee or refuse; this decision is the "establish the
   guarantee" path for the detached-branch case.
-- `progress/fork-join.md` -- FJ4 and the by-reference-capture lifetime cases.

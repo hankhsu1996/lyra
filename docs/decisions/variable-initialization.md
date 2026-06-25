@@ -194,4 +194,3 @@ pointers). The filter is structural: any var whose MIR type is in the set
 - LRM 10.6.1 -- Variable declaration assignment shape preservation
 - `docs/architecture/mir.md` -- invariant 11 (`self` binding); Forbidden Shapes
 - `docs/decisions/callable-receiver.md` -- explicit `self` first binding
-- `docs/progress/refactor.md` -- R19

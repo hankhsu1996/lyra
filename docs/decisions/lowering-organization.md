@@ -6,10 +6,9 @@ Date: 2026-06-08 Status: accepted (rendering classification revised 2026-06-19 -
 
 The lowering layer carried god-objects -- `ProcessLoweringState`, `UnitLoweringState`,
 `StructuralScopeLoweringState`, `ProceduralScopeLoweringState` -- each mixing several categories of
-state. R9 and R10 in `docs/progress/refactor.md` identified the smell: `const ProcessLoweringState&`
-qualifiers compensating for a misleading `*State` name; helper signatures threading four references
-where typically one is the real input; ambient mutable state on objects whose names claimed to be
-const-friendly.
+state. The smell was concrete: `const ProcessLoweringState&` qualifiers compensating for a
+misleading `*State` name; helper signatures threading four references where typically one is the
+real input; ambient mutable state on objects whose names claimed to be const-friendly.
 
 Successive closure-shaped features (NBA submit, fork-join branch, scan IIFE, with-clause plus
 iterator index) each added a new ambient field to `ProcessLoweringState` and a parallel install /
@@ -160,8 +159,8 @@ share only the pattern shape.
   registries, and walk-frame fields are layer-specific. Nested builders are never class members at
   any layer; the root output is always a class member.
 
-- The R9 and R10 entries in `refactor.md` close at the target-shape level. Their implementation PRs
-  remain open until the migration lands across all three passes.
+- This decision fixes the target shape; adopting it across all three passes is incremental
+  implementation work.
 
 ## Follow-up Decision: Multi-File Organization Within an Expression / Statement Layer
 
