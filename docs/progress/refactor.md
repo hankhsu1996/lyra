@@ -134,9 +134,10 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         (per-instance, generate-dependent), with `initial` and `final` as distinct lifecycle
         registrations. `ProcessKind` is removed.
 
-  - [ ] R8e -- External callables and virtual dispatch, gated on the object-model design (R47): a
-        DPI import is a bodyless external callable; a virtual call is an explicit call form resolved
-        against the object's vtable layout.
+  - [ ] R8e -- A DPI import is a bodyless external callable: the foreign-symbol implementation form,
+        the external twin of an internal body. The virtual-dispatch facet this entry once bundled is
+        the object model's dynamic dispatch, now tracked in `object-model.md`; with the object model
+        designed, the external-callable work is no longer gated.
 
   - [x] R8f -- The scope's callables render through one backend method path. A process body and the
         synthesized resolve / initialize lifecycle bodies join functions and tasks as one uniform
@@ -634,18 +635,14 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       this is a refactor of MIR's existing qualifier shape to match the feature's needs, not an
       independent migration.
 
-- [ ] R47 -- Design the object model that SV classes need, distinct from the module / scope object.
-      The MIR concept currently named a "class" is a compiled module / scope, carrying
-      module-specific structure (an elaboration and construction graph, owned children, generated
-      members, lifecycle registrations). An SV class (LRM 8) needs heap allocation, handles and
-      null, inheritance, dynamic dispatch, object identity, and a reference-lifetime policy. The
-      likely factoring is a shared object type (fields, methods, and a virtual / dispatch layout
-      where applicable) plus a separate module-specific instance / elaboration plan -- "a module is
-      an object type plus an instance plan," not "an SV class is a module in another mode" -- so
-      module construction policy does not contaminate heap classes. **Design first**: this is the
-      gating prerequisite for SV classes and for the virtual-dispatch facet of R8
-      (`../decisions/unified-callable-model.md`). No implementation until the object model is
-      designed.
+- [ ] R47 -- The object model is designed: a module instance, a generate scope, and a SystemVerilog
+      class are one generic nominal object type, differing only in which base they extend, which
+      reference reaches their instances, and which lifecycle they participate in -- not a
+      module-specific object set against a class-specific one. The contract is
+      `../architecture/object_model.md` and the resolved trade-offs are
+      `../decisions/object-model.md`. The staged implementation -- generalizing the module-side
+      object model, then putting SystemVerilog classes on it -- is tracked in `object-model.md`. The
+      design gate this entry held over SV classes and over R8's virtual-dispatch facet is lifted.
 
 - [ ] R48 -- Let an object type name its class directly, so emit resolves the owning class in O(1)
       instead of searching. A member or method reference names only its class-local id; the class it

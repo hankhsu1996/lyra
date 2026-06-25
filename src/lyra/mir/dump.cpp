@@ -639,10 +639,12 @@ class MirDumper {
     Indent();
 
     if (s.base.has_value()) {
+      const auto& ref = std::get<RuntimeLibraryClassRef>(*s.base);
       Line(
           std::format(
-              "Base: {}", *s.base == RuntimeBaseClass::kInstance ? "Instance"
-                                                                 : "GenScope"));
+              "Base: {}", ref.kind == RuntimeClassKind::kInstance
+                              ? "Instance"
+                              : "GenScope"));
     }
 
     Line("NestedClasses:");

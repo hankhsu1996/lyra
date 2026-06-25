@@ -1299,8 +1299,9 @@ auto ClassLowerer::Run(
           .ownership = mir::PointerOwnership::kBorrowed});
   mir::Class mir_class{
       .name = name_,
-      .base = parent_ == nullptr ? mir::RuntimeBaseClass::kInstance
-                                 : mir::RuntimeBaseClass::kGenScope,
+      .base = mir::ClassRef{mir::RuntimeLibraryClassRef{
+          .kind = parent_ == nullptr ? mir::RuntimeClassKind::kInstance
+                                     : mir::RuntimeClassKind::kGenScope}},
       .self_pointer_type = self_pointer_type,
       .time_resolution = hir_scope.time_resolution,
       .ctor_prefix_params = {},

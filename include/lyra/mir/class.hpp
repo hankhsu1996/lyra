@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -17,23 +18,34 @@
 
 namespace lyra::mir {
 
-// The base class a class extends. A class is a generic object type; whether it
-// is a node in the runtime object tree, and which runtime base it inherits, is
-// stated here rather than inferred by a backend. `kInstance` is a top-level
-// module instance, `kGenScope` a nested generate scope (both runtime Scope
-// subclasses). A class with no base is a plain object -- members only, not a
-// tree node -- constructed and held directly rather than registered.
-enum class RuntimeBaseClass : std::uint8_t {
+// A fixed runtime-library base class. These are object types the runtime
+// library provides, not classes of any compilation unit: `kInstance` is a
+// module / interface / program instance and `kGenScope` a named generate scope,
+// both nodes in the runtime object tree.
+enum class RuntimeClassKind : std::uint8_t {
   kInstance,
   kGenScope,
 };
 
+// A reference to a runtime-library base class.
+struct RuntimeLibraryClassRef {
+  RuntimeClassKind kind;
+
+  auto operator==(const RuntimeLibraryClassRef&) const -> bool = default;
+};
+
+// A reference to the object type an object extends. A consumer resolves it
+// through one path rather than switching a closed classification; a base is a
+// runtime-library class.
+using ClassRef = std::variant<RuntimeLibraryClassRef>;
+
 struct Class {
   std::string name;
-  // The runtime base this class extends, or absent for a plain object. A
-  // backend realizes the base, the registering constructor, and the tree-node
-  // overrides only when a base is present; a baseless class is a plain struct.
-  std::optional<RuntimeBaseClass> base;
+  // The base this object extends, or absent for a plain object that is not a
+  // tree node. A backend realizes the base, the registering constructor, and
+  // the tree-node overrides only when a base is present; a baseless object is a
+  // plain struct.
+  std::optional<ClassRef> base;
   TypeId self_pointer_type;
   // The class's resolved time unit and precision (LRM 3.14.2). The emitted
   // class exposes the precision so the engine can take the design-global

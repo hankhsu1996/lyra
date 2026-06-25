@@ -120,20 +120,22 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     instead. The primitive set does grow, but only for a genuinely new generic-language concept,
     never to model a backend / library / sugar shape (see Owns). _Programming-language consequence:
     the program text is the program; consumers do not invent vocabulary the language does not have._
-11. Every callable body's first binding is `self`, a pointer to its enclosing class --
-    `body.vars[0]` is a local declaration of that pointer type, named `self`. Access to any class
+11. Every instance-method callable body's first binding is `self`, a pointer to its enclosing class
+    -- `body.vars[0]` is a local declaration of that pointer type, named `self`. Access to any class
     member -- a member variable, a service call, a child instance -- flows through `MemberAccess`
-    whose receiver expression reaches the class by traversing from `self`. A callable has no
+    whose receiver expression reaches the class by traversing from `self`. An instance method has no
     implicit access to its enclosing state; the receiver is reached through an explicit binding,
     never through an expression that means "look around and figure it out". `self` is uniform across
-    every callable: it is the code's first parameter, read as `vars[0]` the same way in every body,
-    and a callable value binds it like any other environment field. `callable.md` is the canonical
-    callable contract.
+    every instance method: it is the code's first parameter, read as `vars[0]` the same way in every
+    body, and a callable value binds it like any other environment field. A type-associated (static)
+    function has no receiver and no `self` binding; the receiver is a property of an instance
+    method, not of every callable. `object_model.md` owns the receiver rule; `callable.md` is the
+    canonical callable contract.
 
-    _Programming-language consequence: methods take `self` explicitly. This is the C++ `this`, the
-    Python `self`, the Rust `&self`. Languages that hide it behind keyword sugar at source level
-    still expose it explicitly in their IRs (LLVM IR's first parameter, Python's
-    `__call__(self, ...)`); MIR does the same._
+    _Programming-language consequence: instance methods take `self` explicitly. This is the C++
+    `this`, the Python `self`, the Rust `&self`. Languages that hide it behind keyword sugar at
+    source level still expose it explicitly in their IRs (LLVM IR's first parameter, Python's
+    `__call__(self, ...)`); MIR does the same. A static method, like a free function, takes none._
 
 ## Boundary to Adjacent Layers
 
