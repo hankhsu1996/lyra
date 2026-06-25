@@ -1,8 +1,10 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/class_ref.hpp"
 
 namespace lyra::mir {
 
@@ -16,11 +18,17 @@ namespace lyra::mir {
 // callable: a static function over the explicit receiver `self`. How a
 // referencing site reaches the callable -- a direct call, a constructor-time
 // process registration, an engine-dispatched lifecycle hook -- is the
-// referencing site's concern, realized as separate dispatch plumbing, not a
-// property carried on the body.
+// referencing site's concern, realized as separate dispatch plumbing. The
+// declaration records one dispatch fact of its own, the base method it
+// overrides when it overrides one, which leaves the uniform body untouched.
 struct MethodDecl {
   std::string name;
   CallableCode code;
+  // The base method this declaration overrides, resolved to a declaration
+  // reference, or absent for a method that introduces no override. A lifecycle
+  // body overrides the runtime base's matching hook; a backend reads the
+  // override target here rather than re-deriving it from the method name.
+  std::optional<OverriddenMethodRef> overrides;
 };
 
 }  // namespace lyra::mir
