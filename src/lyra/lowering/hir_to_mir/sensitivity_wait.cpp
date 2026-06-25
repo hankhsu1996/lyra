@@ -57,8 +57,8 @@ auto BuildObservablePtrExpr(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kAsObservable},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kAsObservable},
                     .arguments = {member_access_id}},
             .type = field_type});
   }

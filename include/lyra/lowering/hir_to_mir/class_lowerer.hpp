@@ -236,9 +236,9 @@ class ClassLowerer {
 
   [[nodiscard]] auto TranslateStructuralSubroutine(
       hir::StructuralHops hops, hir::StructuralSubroutineId hir_id) const
-      -> mir::MethodRef {
+      -> mir::Direct {
     const mir::MethodId mir_id = LookupStructuralSubroutineAtHops(hops, hir_id);
-    return mir::MethodRef{.method = mir_id};
+    return mir::Direct{.target = mir_id};
   }
 
  private:

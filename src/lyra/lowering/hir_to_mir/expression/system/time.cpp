@@ -49,7 +49,7 @@ auto LowerTimeSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::FreeFnCallee{.id = fn.id},
+              .callee = mir::Direct{.target = fn.id},
               .arguments = {services_id, unit_power_id}},
       .type = fn.result_type};
 }

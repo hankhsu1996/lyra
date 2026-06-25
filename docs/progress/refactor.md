@@ -574,21 +574,31 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       landing. Every comment in `src/` and `include/` now states the code's own contract; no
       `docs/`, decision-doc name, or "invariant N" back-references remain.
 
-- [ ] R45 -- Unify MIR's call shape. Today `mir::Callee` is a 7-arm `std::variant`
-      (`SystemSubroutineCallee` / `MethodRef` / `BuiltinFnCallee` / `BuiltinStaticCallee` /
-      `FreeFnCallee` / `ClosureRef` / `ConstructorCallee`); four of those arms (System / Method /
-      Builtin / BuiltinStatic / FreeFn -- 5 actually) are sub-categorizations of the same structural
-      concept "a direct call to a named symbol", differing only in C++ rendering convention. The
-      `mir.md` identity ("a generic programming-language IR") admits three call shapes: direct
-      (named symbol), indirect (computed callable, currently `ClosureRef`), and type-driven
-      (constructor of the result type, currently `ConstructorCallee`). The 5-way splintering is SV
-      organizational scheme leaking into MIR -- a real architectural mismatch. Target:
-      `Callee = variant<Direct{symbol}, Indirect{expr},     Constructor{}>`; per-symbol metadata
-      (instance-method-form, namespace path, qualifier) moves into a backend-side table extending
-      today's `BuiltinFnCppName`. Each backend reads the symbol id and consults its own table --
-      LLVM doesn't consult at all, since `call     @symbol(args)` has no method/free distinction.
-      **Blocker**: R37 still in flight retiring `SystemSubroutineCallee`; do that first so the
-      call-shape unification sees the final set of named-symbol callees.
+- [ ] R45 -- Unify MIR's call shape. Today `mir::Callee` is a 6-arm `std::variant` (`MethodRef` /
+      `BuiltinFnCallee` / `BuiltinStaticCallee` / `FreeFnCallee` / `ClosureRef` /
+      `ConstructorCallee`); the first four are the same generic-language concept "a direct call to a
+      named symbol" -- instance method, type-static, free function are not three call kinds, just
+      three signature / qualifier shapes of one direct invocation, the way Rust sugars
+      `Vec::push(&mut v, x)` to `v.push(x)`. The arm split lets `mir.md` invariant 10 ("a node field
+      that no backend's realization reads, or that restates what the node's structural context
+      already fixes") be violated -- the LLVM backend's realization does not consult the arm; for
+      the C++ backend, instance-form / free-form is a per-id render fact, not structure. Target:
+      `Callee = variant<Direct, Indirect, Construct>`, where
+      `Direct { target, qualification: optional<ScopeQualifier> }`. `target` is the symbol identity
+      (`variant<MethodId, BuiltinFn>` today; R49 unifies into one `CallableId`). `ScopeQualifier`
+      starts as `variant<TypeQualifier{TypeId}>`; R50 adds `Namespace{...}` for future SV packages.
+      `MethodRef`'s `hops` field retires -- the receiver becomes explicit
+      (`Deref(LocalRef(self_at_hops))` in `args[0]`), the receiver's type pins the enclosing class
+      whose `methods` arena names the `MethodId`. Render mode is read off the callee's signature: a
+      self formal (built-in: per-`BuiltinFn` metadata table; user method:
+      `MethodDecl.code.params[0]`) drives `args[0].name(rest)`; a qualification drives
+      `Q::name(args)`; neither drives `<backend_ns>::name(args)`, where `<backend_ns>` is per-id
+      backend metadata (the C++ namespace a runtime helper lives in, no MIR-level meaning). The
+      `decisions/builtin-call-identity.md` paragraph that justified the instance / static / free
+      split as "structural at MIR" for backend convenience is rewritten -- the split was an
+      invariant-10 violation, not a structural fact. Reserves the seat for `Virtual` (R8e) without
+      inventing it now: gated on R47, a future `Virtual { slot, static_receiver_type }` arm slots in
+      as an additional `Callee` arm with no change to the others.
 
 - [x] R46 -- MIR's value-reinterpretation primitive is one `CastExpr{operand}` carrying no kind
       axis. The destination type is stated on the enclosing `Expr::type`; the source type is read
@@ -602,6 +612,27 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       the one MIR primitive at HIR-to-MIR. The kind axis Clang's AST carries exists because Clang
       drives LLVM codegen directly; Lyra's MIR is a higher layer and the (src, dst) type pair
       already names the same dispatch.
+
+- [ ] R49 -- Unify callable identity. Today `mir::Direct::target` is `variant<MethodId, BuiltinFn>`
+      -- a built-in is a closed-enum global id; a user method is a per-class arena id. As DPI
+      imports, future SV class statics, and future package-level free functions land, each currently
+      brings a new identity space (the historical pattern is one variant arm per origin). The target
+      is one `CallableId` space whose entries name a `CallableDecl` carrying signature,
+      implementation form (internal body / external symbol / built-in intrinsic), receiver
+      convention, and per-backend render metadata. `mir::Direct::target` becomes a single
+      `CallableId`; the `MethodId` / `BuiltinFn` distinction collapses into the declaration's
+      implementation form. Backend tables (`BuiltinFnCppName`, `BuiltinFnCppNamespace`) re-key by
+      `CallableId`. **Gated on**: R8e (external callable form) and a co-design with DPI's
+      symbol-contract structure -- the `CallableDecl` shape is the same one those features need.
+
+- [ ] R50 -- Add `Namespace` qualifier to `mir::ScopeQualifier`. Today the type carries one arm
+      (`TypeQualifier{TypeId}`) because SV only exposes type-as-namespace at the source level
+      (`MyEnum::first`, `PackedArray::FromInt`). SV packages (LRM 26) expose namespace-as-namespace
+      (`P::pkg_func`, `P::MyEnum::first`); for a package-qualified call the call site provides a
+      `NamespaceId` instead of (or composed with) a `TypeId`. Adds `Namespace{NamespaceId}` and a
+      `Path` composition for the cross-cut case. **Gated on**: SV package support landing in HIR --
+      this is a refactor of MIR's existing qualifier shape to match the feature's needs, not an
+      independent migration.
 
 - [ ] R47 -- Design the object model that SV classes need, distinct from the module / scope object.
       The MIR concept currently named a "class" is a compiled module / scope, carrying

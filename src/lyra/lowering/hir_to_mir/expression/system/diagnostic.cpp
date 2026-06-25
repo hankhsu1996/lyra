@@ -29,7 +29,7 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Materializes `origin` as a `value::String` MIR expression: a `StringLiteral`
-// renders as a raw C string in C++, so a `ConstructorCallee` of `string` type
+// renders as a raw C string in C++, so a `Construct` of `string` type
 // wraps it to satisfy the runtime method's `const value::String&` parameter.
 auto BuildOriginStringExpr(
     const mir::CompilationUnit& unit, mir::Block& block, std::string origin)
@@ -43,8 +43,7 @@ auto BuildOriginStringExpr(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::ConstructorCallee{},
-                  .arguments = {origin_lit}},
+                  .callee = mir::Construct{}, .arguments = {origin_lit}},
           .type = string_type});
 }
 
@@ -124,7 +123,7 @@ auto LowerDiagnosticSystemSubroutineCall(
   mir::Expr emit_call{
       .data =
           mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = info.builtin_fn},
+              .callee = mir::Direct{.target = info.builtin_fn},
               .arguments = {diagnostic_id, origin_id, text_id}},
       .type = unit.builtins.void_type};
 
@@ -145,8 +144,7 @@ auto LowerDiagnosticSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::FreeFnCallee{.id = support::BuiltinFn::kFatalFinish},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFatalFinish},
               .arguments = {finish_services_id, level_id}},
       .type = unit.builtins.void_type};
 }

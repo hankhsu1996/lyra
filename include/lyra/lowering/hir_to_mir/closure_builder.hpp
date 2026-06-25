@@ -108,8 +108,9 @@ class ClosureBuilder {
 };
 
 // Builds the immediately-invoked call of `closure` (the IIFE shape): adds the
-// closure expression to `block` and returns a `CallExpr` over a `ClosureRef` to
-// it, with no arguments. The call's type is the closure's result type.
+// closure expression to `block` and returns a `CallExpr` over an `Indirect`
+// callee referencing it, with no arguments. The call's type is the closure's
+// result type.
 auto BuildClosureCallExpr(mir::Block& block, mir::Expr closure) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

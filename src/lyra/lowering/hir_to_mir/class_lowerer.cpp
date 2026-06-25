@@ -247,7 +247,7 @@ void EmitExternalUnitDimLevel(
         mir::Expr{
             .data =
                 mir::CallExpr{
-                    .callee = mir::ConstructorCallee{},
+                    .callee = mir::Construct{},
                     .arguments = std::move(ctor_args)},
             .type = leaf_pointer_type});
 
@@ -268,8 +268,8 @@ void EmitExternalUnitDimLevel(
               .data =
                   mir::CallExpr{
                       .callee =
-                          mir::BuiltinFnCallee{
-                              .id = support::BuiltinFn::kVectorEmplace},
+                          mir::Direct{
+                              .target = support::BuiltinFn::kVectorEmplace},
                       .arguments = {chain_expr_id, ctor_call_id}},
               .type = builtins.void_type});
       block.AppendStmt(
@@ -288,8 +288,8 @@ void EmitExternalUnitDimLevel(
               .data =
                   mir::CallExpr{
                       .callee =
-                          mir::BuiltinFnCallee{
-                              .id = support::BuiltinFn::kVectorBack},
+                          mir::Direct{
+                              .target = support::BuiltinFn::kVectorBack},
                       .arguments = {chain_expr_id}},
               .type = leaf_pointer_type});
     }
@@ -315,8 +315,8 @@ void EmitExternalUnitDimLevel(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kRegisterChild},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kRegisterChild},
                     .arguments =
                         {self_read(), string_literal(runtime_label), indices_id,
                          leaf_deref_id}},
@@ -337,9 +337,7 @@ void EmitExternalUnitDimLevel(
     // leaf level we still emplace through `EmitExternalUnitDimLevel` below.
     const mir::ExprId empty_inner_id = block.exprs.Add(
         mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::ConstructorCallee{}, .arguments = {}},
+            .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
             .type = inner_type});
     if (!remaining_dims.empty()) {
       // For intermediate levels, push the empty inner first then recurse
@@ -349,8 +347,8 @@ void EmitExternalUnitDimLevel(
               .data =
                   mir::CallExpr{
                       .callee =
-                          mir::BuiltinFnCallee{
-                              .id = support::BuiltinFn::kVectorEmplace},
+                          mir::Direct{
+                              .target = support::BuiltinFn::kVectorEmplace},
                       .arguments = {chain_expr_id, empty_inner_id}},
               .type = builtins.void_type});
       block.AppendStmt(
@@ -362,8 +360,8 @@ void EmitExternalUnitDimLevel(
               .data =
                   mir::CallExpr{
                       .callee =
-                          mir::BuiltinFnCallee{
-                              .id = support::BuiltinFn::kVectorBack},
+                          mir::Direct{
+                              .target = support::BuiltinFn::kVectorBack},
                       .arguments = {chain_expr_id}},
               .type = inner_type});
       indices.push_back(host_int_lit(static_cast<std::int64_t>(i)));
@@ -575,8 +573,7 @@ auto BuildDownwardNavValue(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kGetChild},
+                        mir::Direct{.target = support::BuiltinFn::kGetChild},
                     .arguments =
                         {cur, string_literal(hops[i].name), indices_id}},
             .type = scope_ptr_type});
@@ -590,8 +587,7 @@ auto BuildDownwardNavValue(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = support::BuiltinFn::kGetSignal},
+                      mir::Direct{.target = support::BuiltinFn::kGetSignal},
                   .arguments = {cur, string_literal(hops.back().name)}},
           .type = void_ptr_type});
   // Pointer-to-pointer reinterpret of the void* slot to the typed pointer
@@ -676,7 +672,7 @@ void AppendProcessRegistration(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::MethodRef{.method = body},
+                  .callee = mir::Direct{.target = body},
                   .arguments = {body_self}},
           .type = module.Unit().builtins.coroutine});
   const mir::ExprId reg_self =
@@ -686,10 +682,10 @@ void AppendProcessRegistration(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = is_final
-                                    ? support::BuiltinFn::kRegisterFinal
-                                    : support::BuiltinFn::kRegisterInitial},
+                      mir::Direct{
+                          .target = is_final
+                                        ? support::BuiltinFn::kRegisterFinal
+                                        : support::BuiltinFn::kRegisterInitial},
                   .arguments = {reg_self, body_call}},
           .type = module.Unit().builtins.void_type});
   block.AppendStmt(
@@ -896,7 +892,7 @@ void AppendOwnedChildConstruction(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::ConstructorCallee{},
+                  .callee = mir::Construct{},
                   .arguments = std::move(ctor_call_args)},
           .type = child_ptr_type});
 
@@ -918,8 +914,8 @@ void AppendOwnedChildConstruction(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kVectorEmplace},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kVectorEmplace},
                     .arguments = {member_access_id, ctor_call_id}},
             .type = builtins.void_type});
     arm_block.AppendStmt(
@@ -937,8 +933,7 @@ void AppendOwnedChildConstruction(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kVectorBack},
+                        mir::Direct{.target = support::BuiltinFn::kVectorBack},
                     .arguments = {vector_access_id}},
             .type = child_ptr_type});
     child_ref_id = arm_block.exprs.Add(
@@ -986,8 +981,7 @@ void AppendOwnedChildConstruction(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = support::BuiltinFn::kRegisterChild},
+                      mir::Direct{.target = support::BuiltinFn::kRegisterChild},
                   .arguments =
                       {self_read(), string_literal(runtime_label), indices_id,
                        child_ref_id}},
@@ -1468,8 +1462,8 @@ auto ClassLowerer::Run(
               .data =
                   mir::CallExpr{
                       .callee =
-                          mir::BuiltinFnCallee{
-                              .id = support::BuiltinFn::kRegisterSignal},
+                          mir::Direct{
+                              .target = support::BuiltinFn::kRegisterSignal},
                       .arguments = {self_read(), name_id, addr_id}},
               .type = void_type});
       ctor_block.AppendStmt(

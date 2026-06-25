@@ -68,8 +68,7 @@ auto EmitFormatThenWrite(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::BuiltinFnCallee{
-                          .id = WriteCalleeFor(append_newline)},
+                      mir::Direct{.target = WriteCalleeFor(append_newline)},
                   .arguments = {files, fd, text}},
           .type = unit.builtins.void_type});
 }
@@ -103,8 +102,8 @@ auto LowerStrobeCall(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kCancellationFor},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kCancellationFor},
                     .arguments = {outer_files, *outer_user_descriptor}},
             .type = unit.builtins.channel_cancellation});
   }
@@ -126,8 +125,7 @@ auto LowerStrobeCall(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::BuiltinFnCallee{
-                            .id = support::BuiltinFn::kIsCancelled},
+                        mir::Direct{.target = support::BuiltinFn::kIsCancelled},
                     .arguments = {cancellation}},
             .type = unit.builtins.bit1});
     mir::Block guard;
@@ -165,8 +163,7 @@ auto LowerStrobeCall(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinFnCallee{
-                      .id = support::BuiltinFn::kSubmitPostponed},
+                  mir::Direct{.target = support::BuiltinFn::kSubmitPostponed},
               .arguments = {services, closure_id}},
       .type = void_type};
 }

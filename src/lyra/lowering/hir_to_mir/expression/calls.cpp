@@ -108,7 +108,7 @@ auto LowerAssociativeTraversal(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::BuiltinFnCallee{.id = fn},
+                  .callee = mir::Direct{.target = fn},
                   .arguments = {map_read_id, probe_read_id}},
           .type = result_type});
   const mir::LocalRef found_ref = body.AppendLocal(
@@ -141,10 +141,12 @@ auto MakeBuiltinMirCallee(
     const ModuleLowerer& module, const hir::BuiltinMethodRef& b,
     hir::TypeId hir_dispatch_type) -> mir::Callee {
   if (support::IsStaticBuiltinFn(b.method)) {
-    return mir::BuiltinStaticCallee{
-        .id = b.method, .type_qual = module.TranslateType(hir_dispatch_type)};
+    return mir::Direct{
+        .target = b.method,
+        .qualification = mir::TypeQualifier{
+            .type = module.TranslateType(hir_dispatch_type)}};
   }
-  return mir::BuiltinFnCallee{.id = b.method};
+  return mir::Direct{.target = b.method};
 }
 
 // The LRM 7.12 family shares one closure shape across every unpacked-array
@@ -434,8 +436,9 @@ auto LowerBuiltinMethodCall(
   // snapshot whose destructor commits via `Var::Set`); non-mutating
   // methods consume a value, so the default value path (which auto-wraps
   // in `Get`) applies.
+  const auto* direct = std::get_if<mir::Direct>(&mir_callee);
   const bool has_receiver =
-      !std::holds_alternative<mir::BuiltinStaticCallee>(mir_callee);
+      direct != nullptr && !direct->qualification.has_value();
   if (has_receiver) {
     const bool method_mutates = mir::IsMutatingCallee(mir_callee);
     mir::ExprId receiver_id{};

@@ -47,8 +47,7 @@ auto BuildRealConstructorCall(mir::ExprId operand_id, mir::TypeId dst_type)
     -> mir::Expr {
   return mir::Expr{
       .data =
-          mir::CallExpr{
-              .callee = mir::ConstructorCallee{}, .arguments = {operand_id}},
+          mir::CallExpr{.callee = mir::Construct{}, .arguments = {operand_id}},
       .type = dst_type};
 }
 
@@ -57,8 +56,7 @@ auto BuildToInt64Call(const mir::CompilationUnit& unit, mir::ExprId operand_id)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::BuiltinFnCallee{.id = support::BuiltinFn::kToInt64},
+              .callee = mir::Direct{.target = support::BuiltinFn::kToInt64},
               .arguments = {operand_id}},
       .type = unit.builtins.int32};
 }
@@ -68,7 +66,7 @@ auto BuildRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::BuiltinFnCallee{.id = support::BuiltinFn::kRound},
+              .callee = mir::Direct{.target = support::BuiltinFn::kRound},
               .arguments = {operand_id}},
       .type = unit.builtins.int32};
 }
@@ -84,9 +82,9 @@ auto BuildPackedArrayFromInt(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinStaticCallee{
-                      .id = support::BuiltinFn::kFromInt,
-                      .type_qual = dst_type},
+                  mir::Direct{
+                      .target = support::BuiltinFn::kFromInt,
+                      .qualification = mir::TypeQualifier{.type = dst_type}},
               .arguments = std::move(args)},
       .type = dst_type};
 }
@@ -102,9 +100,9 @@ auto BuildPackedArrayConvertFrom(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinStaticCallee{
-                      .id = support::BuiltinFn::kConvertFrom,
-                      .type_qual = dst_type},
+                  mir::Direct{
+                      .target = support::BuiltinFn::kConvertFrom,
+                      .qualification = mir::TypeQualifier{.type = dst_type}},
               .arguments = std::move(args)},
       .type = dst_type};
 }
@@ -118,8 +116,10 @@ auto BuildStringFromFactory(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::BuiltinStaticCallee{
-                      .id = id, .type_qual = unit.builtins.string},
+                  mir::Direct{
+                      .target = id,
+                      .qualification =
+                          mir::TypeQualifier{.type = unit.builtins.string}},
               .arguments = {src_id}},
       .type = unit.builtins.string};
 }
@@ -167,7 +167,7 @@ auto BuildValueConversion(
   // Integral -> integral: width / signedness / state reshape, with an enum
   // wrap at either end if the LRM 6.19.3 type axis crosses the enum class
   // boundary. The shape-change inner step is `PackedArray::ConvertFrom`; the
-  // enum-wrap outer step is a ConstructorCallee that calls the destination
+  // enum-wrap outer step is a Construct that calls the destination
   // class's converting ctor (enum class for dst-enum, plain PackedArray for
   // src-enum slicing).
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
@@ -186,8 +186,7 @@ auto BuildValueConversion(
     if (dst_is_enum || src_is_enum) {
       return mir::Expr{
           .data =
-              mir::CallExpr{
-                  .callee = mir::ConstructorCallee{}, .arguments = {body_id}},
+              mir::CallExpr{.callee = mir::Construct{}, .arguments = {body_id}},
           .type = dst_type};
     }
     if (same_shape) {
