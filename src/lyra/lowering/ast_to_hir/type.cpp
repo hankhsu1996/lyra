@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -203,6 +204,48 @@ auto LowerPackedUnion(
   };
 }
 
+auto LowerUnpackedAggregateFields(
+    std::span<const slang::ast::FieldSymbol* const> fields,
+    diag::SourceSpan decl_span, ModuleLowerer& module)
+    -> diag::Result<std::vector<hir::UnpackedAggregateField>> {
+  std::vector<hir::UnpackedAggregateField> out;
+  out.reserve(fields.size());
+  for (const auto* field : fields) {
+    auto field_type_or = module.InternType(field->getType(), decl_span);
+    if (!field_type_or) {
+      return std::unexpected(std::move(field_type_or.error()));
+    }
+    out.push_back(
+        hir::UnpackedAggregateField{
+            .name = std::string(field->name),
+            .type = *field_type_or,
+        });
+  }
+  return out;
+}
+
+auto LowerUnpackedStruct(
+    const slang::ast::UnpackedStructType& struct_type,
+    diag::SourceSpan decl_span, ModuleLowerer& module)
+    -> diag::Result<hir::UnpackedStructType> {
+  auto fields_or =
+      LowerUnpackedAggregateFields(struct_type.fields, decl_span, module);
+  if (!fields_or) return std::unexpected(std::move(fields_or.error()));
+  return hir::UnpackedStructType{.fields = *std::move(fields_or)};
+}
+
+auto LowerUnpackedUnion(
+    const slang::ast::UnpackedUnionType& union_type, diag::SourceSpan decl_span,
+    ModuleLowerer& module) -> diag::Result<hir::UnpackedUnionType> {
+  auto fields_or =
+      LowerUnpackedAggregateFields(union_type.fields, decl_span, module);
+  if (!fields_or) return std::unexpected(std::move(fields_or.error()));
+  return hir::UnpackedUnionType{
+      .fields = *std::move(fields_or),
+      .tagged = union_type.isTagged,
+  };
+}
+
 auto LowerEnum(
     const slang::ast::EnumType& enum_type, diag::SourceSpan decl_span,
     ModuleLowerer& module) -> diag::Result<hir::EnumType> {
@@ -368,14 +411,18 @@ auto TranslateTypeData(
           .key_type = *key_id_or,
       }};
     }
-    case slang::ast::SymbolKind::UnpackedStructType:
-      return diag::Fail(
-          decl_span, diag::DiagCode::kUnsupportedUnpackedStructType,
-          "unpacked struct types are not supported");
-    case slang::ast::SymbolKind::UnpackedUnionType:
-      return diag::Fail(
-          decl_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
-          "unpacked union types are not supported");
+    case slang::ast::SymbolKind::UnpackedStructType: {
+      auto s = LowerUnpackedStruct(
+          canonical.as<slang::ast::UnpackedStructType>(), decl_span, module);
+      if (!s) return std::unexpected(std::move(s.error()));
+      return hir::TypeData{*std::move(s)};
+    }
+    case slang::ast::SymbolKind::UnpackedUnionType: {
+      auto u = LowerUnpackedUnion(
+          canonical.as<slang::ast::UnpackedUnionType>(), decl_span, module);
+      if (!u) return std::unexpected(std::move(u.error()));
+      return hir::TypeData{*std::move(u)};
+    }
     default:
       return diag::Fail(
           decl_span, diag::DiagCode::kUnsupportedTypeKind,
@@ -394,7 +441,7 @@ auto ModuleLowerer::InternType(
   }
   auto data_or = TranslateTypeData(*this, type, span);
   if (!data_or) return std::unexpected(std::move(data_or.error()));
-  const hir::TypeId id = unit_.AddType(*std::move(data_or));
+  const hir::TypeId id = unit_.AddType(*std::move(data_or), span);
   type_cache_.emplace(canonical, id);
   return id;
 }

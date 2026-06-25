@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -16,6 +17,8 @@ enum class TypeKind {
   kPackedStruct,
   kPackedUnion,
   kEnum,
+  kUnpackedStruct,
+  kUnpackedUnion,
   kUnpackedArray,
   kDynamicArray,
   kQueue,
@@ -110,6 +113,34 @@ struct PackedUnionType {
   std::vector<PackedAggregateField> fields;
 };
 
+// A named member of an unpacked aggregate (struct or union). Unlike a packed
+// aggregate field, an unpacked member has its own independent storage of its
+// declared type -- there is no shared bit vector, so no offset or width. The
+// member is identified by its position in declaration order (LRM 7.2 / 7.3),
+// the same index a member-access expression carries.
+struct UnpackedAggregateField {
+  std::string name;
+  TypeId type;
+};
+
+// LRM 7.2 unpacked structure: a heterogeneous aggregate whose members each hold
+// independent storage of their declared type. Distinct from a packed struct,
+// whose members share one bit vector; an unpacked member may be any type,
+// including a string, another unpacked aggregate, or a variable-size container.
+struct UnpackedStructType {
+  std::vector<UnpackedAggregateField> fields;
+};
+
+// LRM 7.3 unpacked union: one storage shared across the member types, with one
+// member usable at a time. `tagged` (LRM 7.3.2) marks a type-checked union that
+// carries a tag identifying the active member; an untagged union (the default)
+// is the type-loophole form with no tag. A tagged union may declare a `void`
+// member (LRM 7.3.2) when all information is in the tag.
+struct UnpackedUnionType {
+  std::vector<UnpackedAggregateField> fields;
+  bool tagged;
+};
+
 struct UnpackedRange {
   std::int64_t left;
   std::int64_t right;
@@ -151,12 +182,17 @@ struct VoidType {};
 
 using TypeData = std::variant<
     PackedArrayType, PackedStructType, PackedUnionType, EnumType,
-    UnpackedArrayType, DynamicArrayType, QueueType, AssociativeArrayType,
-    WildcardIndexType, StringType, EventType, RealType, ShortRealType,
-    RealTimeType, ChandleType, VoidType>;
+    UnpackedStructType, UnpackedUnionType, UnpackedArrayType, DynamicArrayType,
+    QueueType, AssociativeArrayType, WildcardIndexType, StringType, EventType,
+    RealType, ShortRealType, RealTimeType, ChandleType, VoidType>;
 
 struct Type {
   TypeData data;
+
+  // The declaration site that first interned this type. A downstream layer
+  // that cannot represent the type anchors its diagnostic here. Builtin types
+  // have no source and carry `UnknownSpan`.
+  diag::DiagSpan span;
 
   [[nodiscard]] auto Kind() const -> TypeKind;
   [[nodiscard]] auto IsPackedArray() const -> bool;

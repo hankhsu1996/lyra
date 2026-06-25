@@ -3,6 +3,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/mir/type.hpp"
@@ -60,11 +61,12 @@ auto TranslatePackedRanges(const std::vector<hir::PackedRange>& src)
 
 }  // namespace
 
-auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
-    -> mir::TypeData {
+auto ModuleLowerer::TranslateTypeData(
+    const hir::TypeData& data, diag::DiagSpan type_span) const
+    -> diag::Result<mir::TypeData> {
   return std::visit(
       Overloaded{
-          [&](const hir::PackedArrayType& src) -> mir::TypeData {
+          [&](const hir::PackedArrayType& src) -> diag::Result<mir::TypeData> {
             return mir::PackedArrayType{
                 .atom = TranslateBitAtom(src.atom),
                 .signedness = TranslateSignedness(src.signedness),
@@ -72,7 +74,7 @@ auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
                 .form = TranslatePackedArrayForm(src.form),
             };
           },
-          [&](const hir::PackedStructType& src) -> mir::TypeData {
+          [&](const hir::PackedStructType& src) -> diag::Result<mir::TypeData> {
             // LRM 7.2.1: "treated as a single vector". MIR keeps only that
             // projection -- a PackedArrayType. Per-field offset / width get
             // baked into constant-bounds RangeSelect at expression
@@ -84,7 +86,7 @@ auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
                 .form = TranslatePackedArrayForm(src.base.form),
             };
           },
-          [&](const hir::PackedUnionType& src) -> mir::TypeData {
+          [&](const hir::PackedUnionType& src) -> diag::Result<mir::TypeData> {
             // LRM 7.3.1: untagged packed union "appears as a primary" is
             // "treated as a single vector". Same MIR shape as packed
             // struct -- the per-member (offset=0, width) table flows
@@ -96,7 +98,7 @@ auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
                 .form = TranslatePackedArrayForm(src.base.form),
             };
           },
-          [&](const hir::EnumType& src) -> mir::TypeData {
+          [&](const hir::EnumType& src) -> diag::Result<mir::TypeData> {
             // Enum is kept as a distinct mir::EnumType wrapping its base
             // PackedArray plus the member table. Value-level operations
             // unwrap via Type::AsIntegralPacked(); method dispatch reads the
@@ -125,7 +127,20 @@ auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
                 .members = std::move(members),
             };
           },
-          [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
+          [type_span](
+              const hir::UnpackedStructType&) -> diag::Result<mir::TypeData> {
+            return diag::Fail(
+                type_span, diag::DiagCode::kUnsupportedUnpackedStructType,
+                "unpacked struct types are not yet supported");
+          },
+          [type_span](
+              const hir::UnpackedUnionType&) -> diag::Result<mir::TypeData> {
+            return diag::Fail(
+                type_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
+                "unpacked union types are not yet supported");
+          },
+          [&](const hir::UnpackedArrayType& src)
+              -> diag::Result<mir::TypeData> {
             const std::int64_t span = (src.dim.left >= src.dim.right)
                                           ? (src.dim.left - src.dim.right)
                                           : (src.dim.right - src.dim.left);
@@ -134,43 +149,48 @@ auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
                 .size = static_cast<std::uint64_t>(span) + 1U,
             };
           },
-          [&](const hir::DynamicArrayType& src) -> mir::TypeData {
+          [&](const hir::DynamicArrayType& src) -> diag::Result<mir::TypeData> {
             return mir::DynamicArrayType{
                 .element_type = TranslateType(src.element_type),
             };
           },
-          [&](const hir::QueueType& src) -> mir::TypeData {
+          [&](const hir::QueueType& src) -> diag::Result<mir::TypeData> {
             return mir::QueueType{
                 .element_type = TranslateType(src.element_type),
                 .max_bound = src.max_bound,
             };
           },
-          [&](const hir::AssociativeArrayType& src) -> mir::TypeData {
+          [&](const hir::AssociativeArrayType& src)
+              -> diag::Result<mir::TypeData> {
             return mir::AssociativeArrayType{
                 .element_type = TranslateType(src.element_type),
                 .key_type = TranslateType(src.key_type),
             };
           },
-          [](const hir::WildcardIndexType&) -> mir::TypeData {
+          [](const hir::WildcardIndexType&) -> diag::Result<mir::TypeData> {
             return mir::WildcardIndexType{};
           },
-          [](const hir::StringType&) -> mir::TypeData {
+          [](const hir::StringType&) -> diag::Result<mir::TypeData> {
             return mir::StringType{};
           },
-          [](const hir::EventType&) -> mir::TypeData {
+          [](const hir::EventType&) -> diag::Result<mir::TypeData> {
             return mir::EventType{};
           },
-          [](const hir::RealType&) -> mir::TypeData { return mir::RealType{}; },
-          [](const hir::ShortRealType&) -> mir::TypeData {
+          [](const hir::RealType&) -> diag::Result<mir::TypeData> {
+            return mir::RealType{};
+          },
+          [](const hir::ShortRealType&) -> diag::Result<mir::TypeData> {
             return mir::ShortRealType{};
           },
-          [](const hir::RealTimeType&) -> mir::TypeData {
+          [](const hir::RealTimeType&) -> diag::Result<mir::TypeData> {
             return mir::RealTimeType{};
           },
-          [](const hir::ChandleType&) -> mir::TypeData {
+          [](const hir::ChandleType&) -> diag::Result<mir::TypeData> {
             return mir::ChandleType{};
           },
-          [](const hir::VoidType&) -> mir::TypeData { return mir::VoidType{}; },
+          [](const hir::VoidType&) -> diag::Result<mir::TypeData> {
+            return mir::VoidType{};
+          },
       },
       data);
 }

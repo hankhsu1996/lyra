@@ -62,9 +62,10 @@ struct ModuleUnit {
     return types.at(id.value);
   }
 
-  auto AddType(TypeData data) -> TypeId {
+  auto AddType(TypeData data, diag::DiagSpan span = diag::UnknownSpan{})
+      -> TypeId {
     const TypeId id{static_cast<std::uint32_t>(types.size())};
-    types.push_back(Type{.data = std::move(data)});
+    types.push_back(Type{.data = std::move(data), .span = span});
     return id;
   }
 };

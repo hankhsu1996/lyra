@@ -86,6 +86,8 @@ auto Type::Kind() const -> TypeKind {
           [](const PackedStructType&) { return TypeKind::kPackedStruct; },
           [](const PackedUnionType&) { return TypeKind::kPackedUnion; },
           [](const EnumType&) { return TypeKind::kEnum; },
+          [](const UnpackedStructType&) { return TypeKind::kUnpackedStruct; },
+          [](const UnpackedUnionType&) { return TypeKind::kUnpackedUnion; },
           [](const UnpackedArrayType&) { return TypeKind::kUnpackedArray; },
           [](const DynamicArrayType&) { return TypeKind::kDynamicArray; },
           [](const QueueType&) { return TypeKind::kQueue; },
@@ -143,6 +145,8 @@ auto Type::IsValueChangeObservable() const -> bool {
     case TypeKind::kPackedStruct:
     case TypeKind::kPackedUnion:
     case TypeKind::kEnum:
+    case TypeKind::kUnpackedStruct:
+    case TypeKind::kUnpackedUnion:
     case TypeKind::kUnpackedArray:
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
