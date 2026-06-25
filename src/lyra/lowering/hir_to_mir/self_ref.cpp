@@ -19,13 +19,6 @@ auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
       self_ptr_type);
 }
 
-// The receiver object that owns a member at `hops` enclosing-class levels up.
-// At hops 0 it is the current body's `self`. Above that, the member lives in an
-// enclosing class whose runtime object is this scope's ancestor: navigate up
-// the object tree `hops` times through the runtime `Scope::Parent()` handle and
-// cast the result to the enclosing class. The cast is sound because the
-// reference is intra-unit -- the unit owns the enclosing class's layout, so the
-// ancestor's concrete type is known at compile time.
 auto BuildEnclosingScopeReceiver(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops) -> mir::ExprId {

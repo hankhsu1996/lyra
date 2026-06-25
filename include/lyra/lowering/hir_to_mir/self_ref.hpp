@@ -22,6 +22,18 @@ namespace lyra::lowering::hir_to_mir {
 auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr;
 
+// The receiver object that owns something at `hops` enclosing-class levels up.
+// At hops 0 it is the current body's `self`; above that the thing lives in an
+// enclosing class whose runtime object is this scope's ancestor, reached by
+// navigating up the object tree `hops` times through the runtime
+// `Scope::Parent()` handle and casting to the enclosing class. The cast is
+// sound because the reference is intra-unit -- the unit owns the enclosing
+// class's layout. Shared by a structural member access and a call to a
+// subroutine declared in an enclosing scope.
+auto BuildEnclosingScopeReceiver(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    mir::EnclosingHops hops) -> mir::ExprId;
+
 // Builds a read of a structural var through the current body's `self`:
 // `MemberAccess(self, member)`. The result type is the var's declared MIR
 // storage type, read from the constructed scope at `member.hops` (a wrapper
