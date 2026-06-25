@@ -84,10 +84,10 @@ auto LowerContinuousAssign(
       .kind = mir::ProcessKind::kInitial,
       .code = mir::MethodDecl{
           .name = std::move(name),
-          .result_type = lowerer.Module().Unit().builtins.coroutine,
-          .params = {},
-          .root_block = std::move(process_block),
-          .form = mir::MethodForm::kStatic}};
+          .code = mir::CallableCode{
+              .params = {self_id},
+              .result_type = lowerer.Module().Unit().builtins.coroutine,
+              .body = std::move(process_block)}}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

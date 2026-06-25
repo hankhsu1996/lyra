@@ -562,8 +562,9 @@ class MirDumper {
             },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
-                  "ClosureExpr captures={} params={}", cl.captures.size(),
-                  cl.params.size());
+                  "ClosureExpr params={} environment={}",
+                  cl.code == nullptr ? 0 : cl.code->params.size(),
+                  cl.environment.size());
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -709,30 +710,18 @@ class MirDumper {
     Dedent();
   }
 
-  [[nodiscard]] static auto FormatMethodForm(MethodForm form)
-      -> std::string_view {
-    switch (form) {
-      case MethodForm::kStatic:
-        return "static";
-      case MethodForm::kVirtual:
-        return "virtual";
-    }
-    throw InternalError("FormatMethodForm: unknown mir::MethodForm");
-  }
-
   void DumpMethod(const MethodDecl& d, std::size_t index) {
     Line(
         std::format(
-            "[{}] {} \"{}\" : Type[{}]", index, FormatMethodForm(d.form),
-            d.name, d.result_type.value));
+            "[{}] \"{}\" : Type[{}]", index, d.name, d.code.result_type.value));
     Indent();
-    for (std::size_t i = 0; i < d.params.size(); ++i) {
-      const auto& param = d.params[i];
+    for (std::size_t i = 0; i < d.code.params.size(); ++i) {
+      const auto& param = d.code.body.vars.Get(d.code.params[i]);
       Line(
           std::format(
               "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
     }
-    DumpBlock(d.root_block);
+    DumpBlock(d.code.body);
     Dedent();
   }
 
@@ -923,50 +912,48 @@ class MirDumper {
   }
 
   void DumpClosureExpr(const ClosureExpr& closure, const Block& enclosing) {
-    if (closure.captures.empty()) {
-      Line("captures: (none)");
-    } else {
-      Line("captures:");
-      Indent();
-      for (std::size_t i = 0; i < closure.captures.size(); ++i) {
-        DumpCapture(i, closure.captures[i], enclosing);
-      }
-      Dedent();
+    if (closure.code == nullptr) {
+      Line("code: <null>");
+      return;
     }
-    if (closure.params.empty()) {
+    const std::vector<LocalId>& params = closure.code->params;
+    if (params.empty()) {
       Line("params: (none)");
     } else {
       Line("params:");
       Indent();
-      for (std::size_t i = 0; i < closure.params.size(); ++i) {
-        Line(
-            std::format(
-                "[{}] Parameter binding=LocalId{{{}}}", i,
-                closure.params[i].binding.value));
+      for (std::size_t i = 0; i < params.size(); ++i) {
+        Line(std::format("[{}] Param LocalId{{{}}}", i, params[i].value));
       }
       Dedent();
     }
-    if (closure.body == nullptr) {
-      Line("body: <null>");
+    if (closure.environment.empty()) {
+      Line("environment: (none)");
     } else {
-      Line("body:");
+      Line("environment:");
       Indent();
-      DumpBlock(*closure.body);
+      for (std::size_t i = 0; i < closure.environment.size(); ++i) {
+        DumpEnvBinding(i, closure.environment[i], enclosing);
+      }
       Dedent();
     }
+    Line("body:");
+    Indent();
+    DumpBlock(closure.code->body);
+    Dedent();
   }
 
-  void DumpCapture(
-      std::size_t index, const Capture& capture, const Block& enclosing) {
+  void DumpEnvBinding(
+      std::size_t index, const EnvBinding& binding, const Block& enclosing) {
     Line(
         std::format(
-            "[{}] Capture value=Expr[{}] binding=LocalId{{{}}}", index,
-            capture.value.value, capture.binding.value));
+            "[{}] EnvBinding param=LocalId{{{}}} value=Expr[{}]", index,
+            binding.param.value, binding.value.value));
     Indent();
     Line(
         std::format(
-            "Expr[{}] {}", capture.value.value,
-            FormatExpr(enclosing, capture.value)));
+            "Expr[{}] {}", binding.value.value,
+            FormatExpr(enclosing, binding.value)));
     Dedent();
   }
 

@@ -1,5 +1,6 @@
 #include "lyra/backend/cpp/render_expr.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -168,20 +169,15 @@ auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
         "cpp emit");
   }
   const std::string& name = view.Class().params.Get(r.param).name;
-  return std::format("{}->{}", view.SelfSpelling(), name);
+  return std::format("self->{}", name);
 }
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
-  // The receiver is the body's `vars[0]`, named `self` in MIR (invariant 11).
-  // How it spells in C++ depends on the enclosing method's form: a static
-  // method's first parameter (`self`) or a virtual method's implicit receiver
-  // (`this`).
-  const std::string& name = view.BlockAtHops(ref.hops).vars.Get(ref.var).name;
-  if (name == "self") {
-    return std::string(view.SelfSpelling());
-  }
-  return name;
+  // Every callable body is a static function over the explicit receiver `self`
+  // (its `vars[0]`), so a local reference renders as its own name -- `self`
+  // included, which is just the first parameter's name.
+  return view.BlockAtHops(ref.hops).vars.Get(ref.var).name;
 }
 
 }  // namespace
@@ -907,64 +903,77 @@ auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
       bind.name);
 }
 
-// A closure renders from its captures, parameters, result type, and body alone.
-// A synchronous closure is a capture-clause lambda. A coroutine closure (result
-// type `Coroutine`) is a stateless lambda whose captures pass as frame-copied
-// parameters and are supplied by an immediate call -- a capturing coroutine
-// lambda would dangle once the spawned branch outlives the referencing site.
+// A closure renders from its code (parameters, result type, body) and its bound
+// environment alone. A synchronous closure is a capture-clause lambda whose
+// captures are the bound parameters and whose lambda parameters are the unbound
+// (per-invocation) ones. A coroutine closure (result type `Coroutine`) is a
+// stateless lambda whose bound parameters pass as frame-copied lambda
+// parameters supplied by an immediate call -- a capturing coroutine lambda
+// would dangle once the spawned branch outlives the referencing site.
 auto RenderClosureExpr(
     const ScopeView& view, const mir::ClosureExpr& closure,
     mir::TypeId result_type) -> std::string {
-  if (closure.body == nullptr) {
-    throw InternalError("RenderClosureExpr: closure has no body");
+  if (closure.code == nullptr) {
+    throw InternalError("RenderClosureExpr: closure has no code");
   }
+  const mir::CallableCode& code = *closure.code;
 
   const std::string return_clause = std::format(
       " -> {}", RenderTypeAsCpp(view.Unit(), view.Class(), result_type));
 
   const ScopeView body_view =
-      ScopeView::ForRoot(view.Unit(), view.Class(), *closure.body);
+      ScopeView::ForRoot(view.Unit(), view.Class(), code.body);
   const std::string body =
       std::format(" {{\n{}}}", RenderBlockStatements(body_view, 1));
 
+  const auto is_bound = [&](mir::LocalId param) {
+    return std::ranges::any_of(
+        closure.environment,
+        [&](const mir::EnvBinding& b) { return b.param == param; });
+  };
+
   if (std::holds_alternative<mir::CoroutineType>(
           view.Unit().GetType(result_type).data)) {
-    if (!closure.params.empty()) {
-      throw InternalError(
-          "RenderClosureExpr: coroutine closure has parameters");
+    for (const mir::LocalId param : code.params) {
+      if (!is_bound(param)) {
+        throw InternalError(
+            "RenderClosureExpr: coroutine closure has an unbound parameter");
+      }
     }
     std::string params;
     std::string args;
-    for (std::size_t i = 0; i < closure.captures.size(); ++i) {
-      const auto& bind = closure.body->vars.Get(closure.captures[i].binding);
+    for (std::size_t i = 0; i < closure.environment.size(); ++i) {
+      const auto& bind = code.body.vars.Get(closure.environment[i].param);
       if (i != 0) {
         params += ", ";
         args += ", ";
       }
       params += RenderBindingParamDecl(view, bind);
-      args += RenderExpr(view, view.Expr(closure.captures[i].value));
+      args += RenderExpr(view, view.Expr(closure.environment[i].value));
     }
     return std::format("[]({}){}{}({})", params, return_clause, body, args);
   }
 
   // The capture clause never contains `[this]`, `[=]`, or `[&]` -- every entry
-  // is a named by-value binding `name = <value>`; an alias capture's value is a
+  // is a named by-value binding `name = <value>`; an alias binding's value is a
   // reference-construct, so it binds a `Ref<T>` without a hidden C++ reference.
   std::string captures_text;
-  for (std::size_t i = 0; i < closure.captures.size(); ++i) {
+  for (std::size_t i = 0; i < closure.environment.size(); ++i) {
     const std::string& bind_name =
-        closure.body->vars.Get(closure.captures[i].binding).name;
+        code.body.vars.Get(closure.environment[i].param).name;
     if (i != 0) captures_text += ", ";
     captures_text += std::format(
         "{} = {}", bind_name,
-        RenderExpr(view, view.Expr(closure.captures[i].value)));
+        RenderExpr(view, view.Expr(closure.environment[i].value)));
   }
 
   std::string params_text;
-  for (std::size_t i = 0; i < closure.params.size(); ++i) {
-    const auto& bind = closure.body->vars.Get(closure.params[i].binding);
-    if (i != 0) params_text += ", ";
-    params_text += RenderBindingParamDecl(view, bind);
+  bool first_param = true;
+  for (const mir::LocalId param : code.params) {
+    if (is_bound(param)) continue;
+    if (!first_param) params_text += ", ";
+    params_text += RenderBindingParamDecl(view, code.body.vars.Get(param));
+    first_param = false;
   }
 
   return std::format(

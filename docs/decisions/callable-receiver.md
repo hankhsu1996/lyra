@@ -51,14 +51,15 @@ shape:
   parameter. Each caller knows its own receiver -- the runtime constructing a process coroutine, a
   call site invoking a method, the C++ constructor running the init body -- and supplies it at
   invocation. The body's binding is filled by the call.
-- **Closure** carries `self` as the first by-value capture (`captures[0]` is a `ByValueCapture`
-  whose `value` is the enclosing scope's read of its own `self` and whose `binding` points at the
-  closure body's `vars[0]`). This holds for every closure form, the fork branch included. No invoker
-  of a closure value -- the NBA / postponed-`$strobe` / deferred-check region runner, the fork
-  scheduler, the with-clause iterator -- can be relied on to know which receiver belongs in the
-  body, because a closure value can outlive the enclosing-scope frame that knows. The enclosing
-  scope snapshots its own `self` into the closure at construction; the body reads the captured
-  value.
+- **Closure** binds `self` -- the code's first parameter (`code.params[0]`, landing at the body's
+  `vars[0]`) -- into its environment, the enclosing scope's read of its own `self` supplying the
+  bound value at construction. `self` is an ordinary environment field, bound like any other
+  captured variable, not a privileged slot (see `unified-callable-model.md`). This holds for every
+  closure form, the fork branch included. No invoker of a closure value -- the NBA /
+  postponed-`$strobe` / deferred-check region runner, the fork scheduler, the with-clause iterator
+  -- can be relied on to know which receiver belongs in the body, because a closure value can
+  outlive the enclosing-scope frame that knows. The enclosing scope snapshots its own `self` into
+  the closure's environment at construction; the body reads the bound value.
 
 This partition is not a stylistic choice -- it follows from "who knows the receiver?". A method-form
 callable has a caller-who-knows; a closure does not. Forcing both forms onto one supply mechanism
@@ -84,13 +85,14 @@ The C++ backend renders each form in its natural idiom:
   realization of the same captures, since a capturing coroutine lambda would dangle; the MIR closure
   still carries `self` and the rest as captures.
 
-The constructor body is the only callable whose corresponding C++ entry cannot be static (the real
-C++ constructor must be an instance constructor for instance creation to work). The constructor body
-lowers to a static `init(M* self)` that the C++ constructor invokes with `init(this)`; the
-constructor itself is the only place where C++'s implicit `this` is used at all, and only as the
-argument to `init`. `CreateProcesses()` (and any other Scope-base virtual override) is C++ plumbing,
-not an SV-derived callable; it remains a virtual instance method, and its body's implicit `this` is
-C++-language-required, not MIR-modeled.
+Every callable body lowers to a static function over the explicit receiver `self`. The callables an
+engine or the C++ language reaches through an instance entry -- the C++ constructor (instance
+creation requires a real constructor), the post-construction lifecycle hooks (`ResolveState` /
+`InitializeState`), and `CreateProcesses` -- keep that uniform static body and add a thin non-static
+shim that forwards to it: the constructor runs `init(this)`, a lifecycle override runs
+`ResolveState(this)`. C++'s implicit `this` appears only in these dispatch shims, as the argument to
+the static body, never inside a body. The shims are C++ plumbing, not SV-derived callables, and are
+not MIR-modeled.
 
 ### Why always include `self`, not derive from "body touches class state"
 
@@ -164,11 +166,12 @@ binding pushes the answer up to one place that every backend just reads.
   `self` binding at `body.vars[0]` whose type is the borrowed-pointer to the enclosing class. The
   binding's name is `self`; the type makes the pointee unambiguous.
 
-- For method-form callables (process, method, constructor body) the `self` binding is the first
-  formal parameter; the caller supplies it at invocation. For a closure -- every closure, the fork
-  branch included -- the `self` binding is the first by-value capture (`captures[0]`); the enclosing
-  scope's read of its own `self` supplies the capture value at construction. Both land at
-  `body.vars[0]`.
+- `self` is the code's first parameter (`code.params[0]`) for every callable, landing at
+  `body.vars[0]`. For method-form callables (process, method, constructor body) the caller supplies
+  it at invocation. For a closure -- every closure, the fork branch included -- the closure value
+  binds it into its environment, the enclosing scope's read of its own `self` supplying the bound
+  value at construction. It is an ordinary environment field, not a privileged slot
+  (`unified-callable-model.md`).
 
 - A new MIR expression `MemberAccessExpr { receiver: ExprId, var: MemberRef-fields }` replaces the
   implicit-receiver member reference. The receiver expression is rendered before the access; the
@@ -180,9 +183,11 @@ binding pushes the answer up to one place that every backend just reads.
   `ServicesRef()`, and `DeferredByValueCapture()` are removed. Receiver-related walker state on
   `RenderContext` is gone.
 
-- C++ emit shape changes: process / method / constructor bodies emit as
-  `static auto <name>(M* self, ...) -> ... { ... }`; the C++ constructor delegates the body to a
-  static `init(this)` call. Closures emit as
+- C++ emit shape changes: every callable body -- process, function / task, constructor, and the
+  resolve / initialize lifecycle hooks -- emits as
+  `static auto <name>(M* self, ...) -> ... { ... }`. An engine-dispatched entry adds a thin
+  non-static shim forwarding to the static body: the C++ constructor runs `init(this)`, a lifecycle
+  override runs `<name>(this)`. Closures emit as
   `[self = <enclosing self expr>, cap1 = ..., cap2 = <reference value>](closure_params) -> R { ... }`
   -- every capture is name-explicit and by-value; an alias capture binds a reference value, never a
   C++ `[&]` reference (see `docs/architecture/callable.md` for why). `CreateProcesses()` adapts:

@@ -2,7 +2,7 @@
 
 #include <memory>
 
-#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/callable_code.hpp"
 
 namespace lyra::mir {
 
@@ -12,19 +12,17 @@ ClosureExpr::ClosureExpr(ClosureExpr&&) noexcept = default;
 auto ClosureExpr::operator=(ClosureExpr&&) noexcept -> ClosureExpr& = default;
 
 ClosureExpr::ClosureExpr(const ClosureExpr& other)
-    : captures(other.captures),
-      params(other.params),
-      body(
-          other.body == nullptr ? nullptr
-                                : std::make_unique<Block>(*other.body)) {
+    : code(
+          other.code == nullptr ? nullptr
+                                : std::make_unique<CallableCode>(*other.code)),
+      environment(other.environment) {
 }
 
 auto ClosureExpr::operator=(const ClosureExpr& other) -> ClosureExpr& {
   if (this != &other) {
-    captures = other.captures;
-    params = other.params;
-    body =
-        other.body == nullptr ? nullptr : std::make_unique<Block>(*other.body);
+    code = other.code == nullptr ? nullptr
+                                 : std::make_unique<CallableCode>(*other.code);
+    environment = other.environment;
   }
   return *this;
 }

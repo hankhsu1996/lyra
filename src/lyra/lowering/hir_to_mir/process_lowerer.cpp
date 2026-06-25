@@ -254,10 +254,10 @@ auto LowerStraightLineProcess(ProcessLowerer& process, mir::ProcessKind kind)
       .kind = kind,
       .code = mir::MethodDecl{
           .name = std::string{process.CallableName()},
-          .result_type = process.Module().Unit().builtins.coroutine,
-          .params = {},
-          .root_block = std::move(process_block),
-          .form = mir::MethodForm::kStatic}};
+          .code = mir::CallableCode{
+              .params = {self_id},
+              .result_type = process.Module().Unit().builtins.coroutine,
+              .body = std::move(process_block)}}};
 }
 
 // Wraps the body in a `forever` loop. `implicit_sensitivity`, if present,
@@ -304,10 +304,10 @@ auto LowerForeverProcess(
       .kind = mir::ProcessKind::kInitial,
       .code = mir::MethodDecl{
           .name = std::string{process.CallableName()},
-          .result_type = process.Module().Unit().builtins.coroutine,
-          .params = {},
-          .root_block = std::move(process_block),
-          .form = mir::MethodForm::kStatic}};
+          .code = mir::CallableCode{
+              .params = {self_id},
+              .result_type = process.Module().Unit().builtins.coroutine,
+              .body = std::move(process_block)}}};
 }
 
 }  // namespace
@@ -350,7 +350,7 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   // live alias); an `inout` is both an input parameter and a payload component.
   // Every formal is a body local at depth 0 so the body's references resolve.
   completion_decl_depth_ = body_frame.block_depth;
-  std::vector<mir::MethodParam> params;
+  std::vector<mir::LocalId> params{self_id};
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.Get(param.var);
     const mir::TypeId value_type = module_->TranslateType(hir_var.type);
@@ -390,7 +390,7 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
                        .declaration_procedural_depth = body_frame.block_depth,
                        .var = mir_var,
                        .type = type});
-    params.push_back(mir::MethodParam{.name = hir_var.name, .type = type});
+    params.push_back(mir_var);
     if (dir == hir::ParamDirection::kInOut) {
       output_pack_vars_.push_back(mir_var);
       output_pack_types_.push_back(value_type);
@@ -454,10 +454,10 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
 
   return mir::MethodDecl{
       .name = src.name,
-      .result_type = result_type,
-      .params = std::move(params),
-      .root_block = std::move(body_block),
-      .form = mir::MethodForm::kStatic};
+      .code = mir::CallableCode{
+          .params = std::move(params),
+          .result_type = result_type,
+          .body = std::move(body_block)}};
 }
 
 auto ProcessLowerer::BuildReturnPayload(

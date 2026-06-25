@@ -20,12 +20,13 @@ class CompilationUnit;
 
 namespace lyra::lowering::hir_to_mir {
 
-// A closure under construction. The constructor opens a fresh body scope
-// with `self` as captures[0] and installs a capture sink, so a read of an
-// enclosing variable while lowering the body through `Frame()` becomes a
-// capture (LRM 6.21). A site that authors the body by hand instead of
-// lowering HIR snapshots specific outer expressions with `CaptureByValue`;
-// the two capture paths coexist, and `self` is always first.
+// A closure under construction. The constructor opens a fresh body scope, makes
+// `self` the code's first parameter (`code.params[0]`), binds it into the
+// environment, and installs a capture sink, so a read of an enclosing variable
+// while lowering the body through `Frame()` becomes an environment binding
+// (LRM 6.21). A site that authors the body by hand instead of lowering HIR
+// snapshots specific outer expressions with `CaptureByValue`; the two binding
+// paths coexist, and `self` is always the first bound parameter.
 //
 // `coroutine` selects a fork-branch body (LRM 9.3.2): its `return`s render
 // as `co_return` and the terminal is `BuildCoroutine`. `by_value_depth` is
@@ -62,8 +63,8 @@ class ClosureBuilder {
   [[nodiscard]] auto Body() -> mir::Block& {
     return body_;
   }
-  // The `self` receiver binding (captures[0]), for a hand-authored body that
-  // builds its own `self` reads.
+  // The `self` receiver binding (`code.params[0]`), for a hand-authored body
+  // that builds its own `self` reads.
   [[nodiscard]] auto SelfBinding() const -> mir::LocalId {
     return self_binding_;
   }
@@ -76,14 +77,14 @@ class ClosureBuilder {
   auto AddParam(std::string_view name, mir::TypeId type) -> mir::LocalId;
 
   // Snapshots an outer-scope expression into the body by value: allocates a
-  // body binding, records a by-value capture of `outer_id`, and returns the
+  // body parameter, binds it to `outer_id` in the environment, and returns the
   // body-side read. An integer literal clones verbatim so the body still sees a
-  // literal (constant-extracting passes depend on that shape) and no capture is
+  // literal (constant-extracting passes depend on that shape) and no binding is
   // made.
   auto CaptureByValue(mir::ExprId outer_id, std::string_view name)
       -> mir::ExprId;
 
-  // Closes the body with `return result`, assembles the captures, and yields
+  // Closes the body with `return result`, assembles the environment, and yields
   // the closure value typed as the result expression. Single-use.
   [[nodiscard]] auto Build(mir::ExprId result) -> mir::Expr;
   // Closes a fork-branch body with `co_return` and yields the coroutine-typed
@@ -102,8 +103,8 @@ class ClosureBuilder {
   mir::LocalId self_binding_{};
   CaptureSink sink_;
   WalkFrame frame_;
-  std::vector<mir::Capture> captures_;
-  std::vector<mir::Parameter> params_;
+  std::vector<mir::EnvBinding> environment_;
+  std::vector<mir::LocalId> invocation_params_;
 };
 
 // Builds the immediately-invoked call of `closure` (the IIFE shape): adds the
