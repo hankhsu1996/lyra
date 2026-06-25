@@ -22,21 +22,23 @@ Read top to bottom on first pass:
 8. `mir.md` -- object-oriented semantic IR (objects, members, callables)
 9. `callable.md` -- the one callable concept; callable code vs callable value; capture model;
    references as a field type
-10. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
-11. `activation.md` -- the runtime execution instance; completion slot; ownership / continuation /
+10. `object_model.md` -- the one nominal object model; module / scope / class as one object type;
+    inheritance, dispatch, construction, references and handles
+11. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
+12. `activation.md` -- the runtime execution instance; completion slot; ownership / continuation /
     cancellation relations
-12. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
-13. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-14. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
+13. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
+14. `hierarchy_and_generate.md` -- hierarchy and generate ownership
+15. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
     construction-time resolution
-15. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
+16. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
     cross-unit resolution through the SDK
-16. `identity_and_ownership.md` -- identity rules and forbidden shapes
-17. `lowering_boundaries.md` -- what each lowering may and may not do
-18. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+17. `identity_and_ownership.md` -- identity rules and forbidden shapes
+18. `lowering_boundaries.md` -- what each lowering may and may not do
+19. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-19. `incremental_build.md` -- query-based incremental compilation and caching
-20. `testing_strategy.md` -- test categories and structure
+20. `incremental_build.md` -- query-based incremental compilation and caching
+21. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -62,6 +64,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | MIR shape (objects, members, callables)                                   | `mir.md`                    |
 | Member and type model; object types; owning pointer; vector wrapper       | `mir.md`                    |
 | Callable model; code vs value; captures; references as a field type       | `callable.md`               |
+| Object model; nominal object types; inheritance; dispatch; handles        | `object_model.md`           |
 | LIR shape (CFG, basic blocks, storage)                                    | `lir.md`                    |
 | Activation; execution instance; completion slot; cancellation domain      | `activation.md`             |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit  | `scheduling.md`             |
@@ -87,6 +90,7 @@ it compiles and passes tests.
 | Compilation boundaries / unit dependencies / incrementality  | `north_star`, `compilation_unit_model`, `incremental_build`                                               |
 | Hierarchy / generate / object graph / construction           | `north_star`, `hierarchy_and_generate`, `runtime_model`, `elaboration_lifecycle`                          |
 | Identity / ownership / id kinds                              | `north_star`, `identity_and_ownership`                                                                    |
+| Object model / classes / inheritance / dispatch / handles    | `north_star`, `object_model`, `mir`, `callable`, `runtime_model`                                          |
 
 The failure mode this guards against: anchoring on current code -- which may be a transitional
 shortcut -- instead of the contract. Current code that contradicts a contract is wrong; read the

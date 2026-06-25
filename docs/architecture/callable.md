@@ -52,12 +52,14 @@ closure is code plus a captured environment, and "async" is the result type (`as
    callable value's construction, not to a code declaration; one body can take different bound
    environments._
 
-2. **`self` is the code's first parameter.** Every callable body reaches its enclosing object's
-   members through `self`, the code's first ordinary parameter, read as `body.vars[0]` by every
-   member access. A callable value binds `self` into its environment; a direct call supplies it per
-   invocation. Whether a bound `self` is realized as a passed parameter or a captured field is a
-   backend realization driven by lifetime, not a MIR distinction. _Consequence: there is no
-   privileged `self` capture slot and no per-form receiver mechanism; `self` is uniform._
+2. **`self` is an instance method's first parameter.** Every instance-method body reaches its
+   enclosing object's members through `self`, the code's first ordinary parameter, read as
+   `body.vars[0]` by every member access. A callable value binds `self` into its environment; a
+   direct call supplies it per invocation. Whether a bound `self` is realized as a passed parameter
+   or a captured field is a backend realization driven by lifetime, not a MIR distinction. A
+   type-associated (static) function has no receiver and no `self`. _Consequence: there is no
+   privileged `self` capture slot and no per-form receiver mechanism; `self` is uniform across
+   instance methods, and a static function simply omits it._
 
 3. **The result type is the call protocol.** A coroutine result type means the callable is entered
    and completed through the coroutine protocol -- the invocation yields a coroutine object the site
