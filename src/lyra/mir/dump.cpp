@@ -13,6 +13,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -691,27 +692,6 @@ class MirDumper {
     DumpBlock(s.constructor_block);
     Dedent();
 
-    if (s.resolve.has_value()) {
-      Line("Resolve:");
-      Indent();
-      DumpMethod(*s.resolve, 0);
-      Dedent();
-    }
-
-    if (s.initialize.has_value()) {
-      Line("Initialize:");
-      Indent();
-      DumpMethod(*s.initialize, 0);
-      Dedent();
-    }
-
-    if (s.activate.has_value()) {
-      Line("Activate:");
-      Indent();
-      DumpMethod(*s.activate, 0);
-      Dedent();
-    }
-
     Dedent();
     scope_stack_.pop_back();
   }
@@ -721,6 +701,16 @@ class MirDumper {
         std::format(
             "[{}] \"{}\" : Type[{}]", index, d.name, d.code.result_type.value));
     Indent();
+    if (d.overrides.has_value()) {
+      const auto& ref = std::get<RuntimeLibraryMethodRef>(*d.overrides);
+      std::string_view target = "Resolve";
+      if (ref.method == RuntimeMethod::kInitialize) {
+        target = "Initialize";
+      } else if (ref.method == RuntimeMethod::kActivate) {
+        target = "Activate";
+      }
+      Line(std::format("Overrides: {}", target));
+    }
     for (std::size_t i = 0; i < d.code.params.size(); ++i) {
       const auto& param = d.code.body.vars.Get(d.code.params[i]);
       Line(

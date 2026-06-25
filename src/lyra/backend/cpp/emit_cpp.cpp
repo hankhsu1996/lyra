@@ -15,6 +15,7 @@
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/param.hpp"
@@ -77,14 +78,29 @@ auto RenderMethodParam(
   return std::format("{} {}", RenderTypeAsCpp(unit, s, param.type), param.name);
 }
 
+// The C++ name of a runtime-base virtual hook. The mapping from the resolved
+// override reference to the emitted token lives only here, so the override
+// relation stays a declaration reference everywhere else.
+auto RenderRuntimeMethodName(mir::RuntimeMethod method) -> std::string_view {
+  switch (method) {
+    case mir::RuntimeMethod::kResolve:
+      return "ResolveState";
+    case mir::RuntimeMethod::kInitialize:
+      return "InitializeState";
+    case mir::RuntimeMethod::kActivate:
+      return "CreateProcesses";
+  }
+  throw InternalError("RenderRuntimeMethodName: unknown RuntimeMethod");
+}
+
 // The one renderer for every callable body. A body renders uniformly as a
 // static function over the explicit receiver `self`: the result type (whose
 // `void` and coroutine cases are ordinary types, handled in `RenderTypeAsCpp`),
 // the name, every parameter (`self` is `params[0]`, rendered like any other),
 // and the body (a plain statement render, including any `co_return` that is
-// itself a body statement). How the engine or a call site reaches the body --
-// a direct call, a process registration, a lifecycle shim -- is separate
-// dispatch plumbing, not a property of the body.
+// itself a body statement). A method that overrides a runtime-base hook also
+// emits the thin virtual shim the engine dispatches through; it forwards to the
+// static body over `this`, the same plumbing the constructor uses for `init`.
 auto RenderMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::MethodDecl& m, std::size_t indent)
@@ -107,6 +123,15 @@ auto RenderMethod(
   out += std::format("{}{} {{\n", Indent(indent), sig);
   out += RenderBlockStatements(body_view, indent + 1);
   out += std::format("{}}}\n", Indent(indent));
+  if (m.overrides.has_value()) {
+    const std::string_view hook = std::visit(
+        [](const mir::RuntimeLibraryMethodRef& ref) {
+          return RenderRuntimeMethodName(ref.method);
+        },
+        *m.overrides);
+    out += std::format(
+        "{}void {}() override {{ {}(this); }}\n", Indent(indent), hook, m.name);
+  }
   return out;
 }
 
@@ -251,33 +276,6 @@ auto RenderScopeAsClass(
   if (s.base.has_value()) {
     out +=
         RenderConstructor(this_anchor, s, RenderBaseClass(*s.base), indent + 1);
-  }
-
-  // The resolve and initialize phases run after construction, present only
-  // when the scope has work for that phase. Each body renders as the uniform
-  // static callable; the engine dispatches it through a thin virtual override
-  // that forwards to the static body over `this`, the same plumbing pattern the
-  // constructor uses for `init`.
-  const auto render_lifecycle = [&](const mir::MethodDecl& m) -> std::string {
-    return RenderMethod(parent_struct_view, unit, s, m, indent + 1) +
-           std::format(
-               "{}void {}() override {{ {}(this); }}\n", Indent(indent + 1),
-               m.name, m.name);
-  };
-  if (s.resolve.has_value()) {
-    out += "\n";
-    out += render_lifecycle(*s.resolve);
-  }
-  if (s.initialize.has_value()) {
-    out += "\n";
-    out += render_lifecycle(*s.initialize);
-  }
-  // The activate body registers this scope's processes (its `CreateProcesses`
-  // override); child links are registered automatically at construction and
-  // walked by the base, so only a scope with its own processes has one.
-  if (s.activate.has_value()) {
-    out += "\n";
-    out += render_lifecycle(*s.activate);
   }
 
   // A unit-root scope is a module instance; its name is the def-name an upward

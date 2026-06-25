@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -1308,9 +1309,6 @@ auto ClassLowerer::Run(
       .params = {},
       .members = {},
       .constructor_block = {},
-      .resolve = std::nullopt,
-      .initialize = std::nullopt,
-      .activate = std::nullopt,
       .nested_classes = {},
       .methods = {},
       .type_aliases = {}};
@@ -1576,33 +1574,45 @@ auto ClassLowerer::Run(
   mir_class.constructor_block = std::move(ctor_block);
   // The resolve, initialize, and activate phases are synthesized callables run
   // by the engine after construction (LRM 23.3.3.2 / 6.8 / 9.2), present only
-  // when the scope has work for that phase. Their bodies are uniform callables
-  // over the explicit `self` (`code.params[0]`); the engine reaches them
-  // through a virtual-dispatch shim the backend emits as separate plumbing, the
-  // same way the constructor delegates to its static body.
+  // when the scope has work for that phase. Each is an ordinary method that
+  // overrides the matching runtime-base hook; the override target is a resolved
+  // reference, so the engine reaches the body through one override-driven shim
+  // -- the same machinery a user-defined virtual method uses.
   if (!resolve_block.root_stmts.empty()) {
-    mir_class.resolve = mir::MethodDecl{
-        .name = "ResolveState",
-        .code = mir::CallableCode{
-            .params = {resolve_self_id},
-            .result_type = void_type,
-            .body = std::move(resolve_block)}};
+    mir_class.methods.Add(
+        mir::MethodDecl{
+            .name = "ResolveState",
+            .code =
+                mir::CallableCode{
+                    .params = {resolve_self_id},
+                    .result_type = void_type,
+                    .body = std::move(resolve_block)},
+            .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
+                .method = mir::RuntimeMethod::kResolve}}});
   }
   if (!initialize_block.root_stmts.empty()) {
-    mir_class.initialize = mir::MethodDecl{
-        .name = "InitializeState",
-        .code = mir::CallableCode{
-            .params = {init_self_id},
-            .result_type = void_type,
-            .body = std::move(initialize_block)}};
+    mir_class.methods.Add(
+        mir::MethodDecl{
+            .name = "InitializeState",
+            .code =
+                mir::CallableCode{
+                    .params = {init_self_id},
+                    .result_type = void_type,
+                    .body = std::move(initialize_block)},
+            .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
+                .method = mir::RuntimeMethod::kInitialize}}});
   }
   if (!activate_block.root_stmts.empty()) {
-    mir_class.activate = mir::MethodDecl{
-        .name = "CreateProcesses",
-        .code = mir::CallableCode{
-            .params = {activate_self_id},
-            .result_type = void_type,
-            .body = std::move(activate_block)}};
+    mir_class.methods.Add(
+        mir::MethodDecl{
+            .name = "CreateProcesses",
+            .code =
+                mir::CallableCode{
+                    .params = {activate_self_id},
+                    .result_type = void_type,
+                    .body = std::move(activate_block)},
+            .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
+                .method = mir::RuntimeMethod::kActivate}}});
   }
 
   return mir_class;
