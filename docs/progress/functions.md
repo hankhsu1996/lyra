@@ -90,9 +90,9 @@ everything and the inline "rides on" notes record the real dependencies.
       concatenated and computed string returns.
 - [ ] F8 -- Container arguments and return values: dynamic array, queue, associative array. Managed
       ownership and lifecycle across the boundary, including `output` / `inout` containers and the
-      outdated-reference rules of LRM 13.5.2. Blocked: these container types do not yet exist as
-      runtime values; the boundary work waits on the container datatype workstream, not on the
-      subroutine ABI. See [Blocked](#blocked).
+      outdated-reference rules of LRM 13.5.2. The container value types now exist (`aggregate.md`),
+      so the subroutine ABI carries them by value through the same path as any other type; what
+      remains is the cross-boundary lifecycle and the LRM 13.5.2 outdated-reference rules.
 - [ ] F9 -- `chandle` arguments and return values (LRM 6.14). Identity round-trip and `null`
       handling through the subroutine boundary.
 
@@ -112,10 +112,9 @@ everything and the inline "rides on" notes record the real dependencies.
 
 ## Blocked
 
-| Item                                                    | Blocked on                                                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module-scoped subroutine accessing per-instance storage | Module hierarchy. A subroutine declared in a module reads and writes the storage of the specific instance that called it; correct per-instance addressing needs the instantiation / object-tree model that does not yet exist. Tracked under `architecture-reset.md` hierarchy.                       |
-| F8 -- container arguments and returns                   | Dynamic array, queue, and associative array do not yet exist as runtime value types. The cross-boundary lifecycle rides on those types' own copy / move / destroy semantics, so F8 waits on the container datatype workstream. F7 (string) is unblocked because the string value type already exists. |
+| Item                                                    | Blocked on                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module-scoped subroutine accessing per-instance storage | Module hierarchy. A subroutine declared in a module reads and writes the storage of the specific instance that called it; correct per-instance addressing needs the instantiation / object-tree model that does not yet exist. Tracked under `architecture-reset.md` hierarchy. |
 
 ## Out of Scope
 

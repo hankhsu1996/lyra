@@ -2,22 +2,23 @@
 
 Tracks SystemVerilog data type coverage on the current pipeline. The integral family (`int`, `byte`,
 `shortint`, `longint`, `time`, `integer`, `bit [N:0]`, `logic [N:0]`) lives in `integral.md`. This
-file covers every other family: `datatypes/enum`, `datatypes/string`, `datatypes/unpacked`,
-`datatypes/general` (dynamic array / queue / associative), `datatypes/real`,
+file covers every other family: `datatypes/enum`, `datatypes/string`, `datatypes/unpacked` (fixed
+unpacked arrays here; the variable-size aggregate family in `aggregate.md`; unpacked struct / union
+in `struct-union.md`), `datatypes/general` (chandle, parameters, typedef), `datatypes/real`,
 `datatypes/default_init`, `datatypes/representation`.
 
 ## Actionable
 
 Enum, real, string, fixed-size unpacked arrays, the integral-family declaration initializers, and
 parameter references in expressions are complete. The variable-size aggregate family (dynamic array,
-queue, associative array) is in flight under `aggregate.md`. The default-init and representation
-families remain.
+queue, associative array) is complete; see `aggregate.md`. Unpacked struct and union are tracked in
+`struct-union.md`. The default-init and representation families remain.
 
-| Item | Status                                                  |
-| ---- | ------------------------------------------------------- |
-| -    | `datatypes/general` -- `aggregate.md`.                  |
-| -    | `datatypes/default_init`, `datatypes/representation` -- |
-|      | no progress sub-steps opened yet.                       |
+| Item | Status                                                                                    |
+| ---- | ----------------------------------------------------------------------------------------- |
+| -    | Variable-size aggregates (array / queue / assoc) -- `aggregate.md` (complete).            |
+| -    | Unpacked struct / union -- `struct-union.md` (open).                                      |
+| -    | `datatypes/default_init`, `datatypes/representation` -- no progress sub-steps opened yet. |
 
 ## Enum
 

@@ -3,6 +3,15 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 
+# Promote a small set of always-real warnings to errors on Lyra's own sources.
+# Scoped per-target so external dependencies keep their own warning policy.
+# -Wswitch catches a no-default switch that omits an enumerator; -Wreturn-type
+# catches falling off the end of a non-void function.
+LYRA_COPTS = [
+    "-Werror=switch",
+    "-Werror=return-type",
+]
+
 filegroup(
     name = "runtime_headers",
     srcs = glob([
@@ -27,6 +36,7 @@ cc_library(
     name = "base",
     srcs = glob(["src/lyra/base/*.cpp"]),
     hdrs = glob(["include/lyra/base/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
 )
@@ -35,6 +45,7 @@ cc_library(
     name = "support",
     srcs = glob(["src/lyra/support/*.cpp"]),
     hdrs = glob(["include/lyra/support/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -47,6 +58,7 @@ cc_library(
     name = "diag",
     srcs = glob(["src/lyra/diag/*.cpp"]),
     hdrs = glob(["include/lyra/diag/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -58,6 +70,7 @@ cc_library(
 cc_library(
     name = "slang_source",
     hdrs = ["include/lyra/frontend/slang_source_mapper.hpp"],
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -70,6 +83,7 @@ cc_library(
     name = "value",
     srcs = glob(["src/lyra/value/*.cpp"]),
     hdrs = glob(["include/lyra/value/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -81,6 +95,7 @@ cc_library(
     name = "runtime",
     srcs = glob(["src/lyra/runtime/*.cpp"]),
     hdrs = glob(["include/lyra/runtime/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -100,6 +115,7 @@ cc_library(
     name = "hir",
     srcs = glob(["src/lyra/hir/*.cpp"]),
     hdrs = glob(["include/lyra/hir/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -112,6 +128,7 @@ cc_library(
     name = "mir",
     srcs = glob(["src/lyra/mir/*.cpp"]),
     hdrs = glob(["include/lyra/mir/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -124,6 +141,7 @@ cc_library(
     name = "frontend",
     srcs = glob(["src/lyra/frontend/*.cpp"]),
     hdrs = glob(["include/lyra/frontend/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -139,6 +157,7 @@ cc_library(
     name = "ast_to_hir",
     srcs = glob(["src/lyra/lowering/ast_to_hir/**/*.cpp"]),
     hdrs = glob(["include/lyra/lowering/ast_to_hir/**/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -154,6 +173,7 @@ cc_library(
     name = "hir_to_mir",
     srcs = glob(["src/lyra/lowering/hir_to_mir/**/*.cpp"]),
     hdrs = glob(["include/lyra/lowering/hir_to_mir/**/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -168,6 +188,7 @@ cc_library(
     name = "backend_cpp",
     srcs = glob(["src/lyra/backend/cpp/*.cpp"]),
     hdrs = glob(["include/lyra/backend/cpp/*.hpp"]),
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -180,6 +201,7 @@ cc_library(
     name = "compiler",
     srcs = ["src/lyra/compiler/compile.cpp"],
     hdrs = ["include/lyra/compiler/compile.hpp"],
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -206,6 +228,7 @@ cc_library(
         "include/lyra/driver/project_layout.hpp",
         "include/lyra/driver/runtime_export.hpp",
     ],
+    copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -220,6 +243,7 @@ cc_library(
 cc_binary(
     name = "lyra",
     srcs = ["src/lyra/driver/cli.cpp"],
+    copts = LYRA_COPTS,
     data = [
         ":cpp_runtime",
         ":runtime_headers",
