@@ -782,33 +782,6 @@ class MirDumper {
     Dedent();
   }
 
-  void DumpConstructOwnedObjectStmt(
-      StmtId id, const ConstructOwnedObjectStmt& s) {
-    std::string args_str;
-    for (std::size_t i = 0; i < s.args.size(); ++i) {
-      if (i != 0) args_str += ", ";
-      args_str += std::format("Expr[{}]", s.args[i].value);
-    }
-    Line(
-        std::format(
-            "Stmt[{}] ConstructOwnedObjectStmt target=Member[{}] "
-            "scope=Class[{}] args=[{}]",
-            id.value, s.target.value, s.scope_id.value, args_str));
-  }
-
-  void DumpConstructExternalUnitStmt(
-      StmtId id, const ConstructExternalUnitStmt& s) {
-    std::string dims;
-    for (const auto dim : s.dims) {
-      dims += std::format("[{}]", dim);
-    }
-    Line(
-        std::format(
-            "Stmt[{}] ConstructExternalUnitStmt target=Member[{}] "
-            "unit=\"{}\"{}",
-            id.value, s.target.value, s.unit_name, dims));
-  }
-
   void DumpStmt(const Block& enclosing, StmtId id) {
     const auto& stmt = enclosing.stmts.Get(id);
     if (stmt.label.has_value()) {
@@ -824,14 +797,7 @@ class MirDumper {
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(enclosing, s, id); },
-            [&](const ForkStmt& s) { DumpForkStmt(enclosing, s, id); },
             [&](const IfStmt& s) { DumpIfStmt(enclosing, s, id); },
-            [&](const ConstructOwnedObjectStmt& s) {
-              DumpConstructOwnedObjectStmt(id, s);
-            },
-            [&](const ConstructExternalUnitStmt& s) {
-              DumpConstructExternalUnitStmt(id, s);
-            },
             [&](const ForStmt& s) { DumpForStmt(enclosing, s, id); },
             [&](const WhileStmt& s) { DumpWhileStmt(enclosing, s, id); },
             [&](const DoWhileStmt& s) { DumpDoWhileStmt(enclosing, s, id); },
@@ -989,18 +955,6 @@ class MirDumper {
         item);
   }
 
-  static auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
-    switch (mode) {
-      case JoinMode::kAll:
-        return "join";
-      case JoinMode::kAny:
-        return "join_any";
-      case JoinMode::kNone:
-        return "join_none";
-    }
-    throw InternalError("ForkJoinModeLabel: unknown JoinMode");
-  }
-
   static auto DumpFormatKindLabel(value::FormatKind k) -> std::string_view {
     switch (k) {
       case value::FormatKind::kDecimal:
@@ -1121,22 +1075,6 @@ class MirDumper {
             "Stmt[{}] BlockStmt scope=BlockId{{{}}}", id.value, s.scope.value));
     Indent();
     DumpBlock(enclosing.child_scopes.Get(s.scope));
-    Dedent();
-  }
-
-  void DumpForkStmt(const Block& enclosing, const ForkStmt& s, StmtId id) {
-    Line(
-        std::format(
-            "Stmt[{}] ForkStmt {} (branches={})", id.value,
-            ForkJoinModeLabel(s.mode), s.branches.size()));
-    Indent();
-    for (const auto branch : s.branches) {
-      Line(std::format("branch=Expr[{}]", branch.value));
-    }
-    Line(std::format("scope (BlockId={}):", s.scope.value));
-    Indent();
-    DumpBlock(enclosing.child_scopes.Get(s.scope));
-    Dedent();
     Dedent();
   }
 

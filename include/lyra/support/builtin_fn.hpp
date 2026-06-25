@@ -208,12 +208,41 @@ enum class BuiltinFn : std::uint16_t {
   kAsObservable,
   // By-name scope navigation: a constructor walks a sibling unit's
   // interface, looks up an owned child by name (and per-dimension index),
-  // looks up a signal by name, or registers its own signal under a name.
-  // All three are instance methods on the scope handle (`args[0]`); the
-  // name (and the index array for `kGetChild`) is a regular argument.
+  // looks up a signal by name, or registers its own signal / child under a
+  // name. All four are instance methods on the scope handle (`args[0]`);
+  // the name (and the index array for `kGetChild` / `kRegisterChild`) is a
+  // regular argument. `kRegisterChild` records an owned child instance
+  // (scalar: empty index array; vector dimension: one entry per axis) so
+  // by-name lookup from a sibling reaches it.
   kRegisterSignal,
+  kRegisterChild,
   kGetSignal,
   kGetChild,
+  // C++ `std::vector` operations exposed to MIR so the constructor
+  // lowering carries the vector growth and back-element reach as explicit
+  // calls rather than letting the backend string-inject them. `kVectorEmplace`
+  // appends a value to a vector member (`vec.push_back(value)`); `kVectorBack`
+  // yields a reference to the most-recently-pushed element (`vec.back()`).
+  // Distinct from `kPushBack` (LRM 7.10 queue method) so each entry pins
+  // one receiver type with no dispatch at render. (`std::make_unique<T>` is
+  // the constructor of `unique_ptr<T>` rather than a free function -- it
+  // rides through `ConstructorCallee` so the result type drives the
+  // `make_unique<T>` emit, no special builtin id needed.)
+  kVectorEmplace,
+  kVectorBack,
+  // Fork-join branch dispatch. Each entry spawns every branch as its own
+  // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
+  // for `join` (resume after the last branch), `kForkWaitFirst` for
+  // `join_any` (resume after the first), `kSpawnAll` for `join_none` (no
+  // wait; the call's result is `void` so the caller never awaits it). The
+  // mode lives in the callee identity rather than as an enum operand so MIR
+  // never carries a join-mode datum and the call's result type is what
+  // selects await vs not. Each takes the services handle followed by a
+  // variadic branch list -- the runtime entry is a variadic template that
+  // assembles the move-only branches into the internal coroutine vector.
+  kForkWaitAll,
+  kForkWaitFirst,
+  kSpawnAll,
   // Value-layer conversion factories. HIR-to-MIR dispatches on the (src, dst)
   // type pair and emits a `CallExpr` to the matching factory; the C++ backend
   // renders each as the corresponding `lyra::value::T::Method(...)` static call

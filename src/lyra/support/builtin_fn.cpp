@@ -21,6 +21,7 @@ auto IsMutatingBuiltinFn(BuiltinFn id) -> bool {
     case BuiltinFn::kPopBack:
     case BuiltinFn::kPushFront:
     case BuiltinFn::kPushBack:
+    case BuiltinFn::kVectorEmplace:
       return true;
     default:
       return false;
@@ -290,10 +291,22 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "as_observable";
     case BuiltinFn::kRegisterSignal:
       return "register_signal";
+    case BuiltinFn::kRegisterChild:
+      return "register_child";
     case BuiltinFn::kGetSignal:
       return "get_signal";
     case BuiltinFn::kGetChild:
       return "get_child";
+    case BuiltinFn::kVectorEmplace:
+      return "vector_emplace";
+    case BuiltinFn::kVectorBack:
+      return "vector_back";
+    case BuiltinFn::kForkWaitAll:
+      return "fork_wait_all";
+    case BuiltinFn::kForkWaitFirst:
+      return "fork_wait_first";
+    case BuiltinFn::kSpawnAll:
+      return "spawn_all";
     case BuiltinFn::kFileOpen:
       return "file_open";
     case BuiltinFn::kFileClose:
