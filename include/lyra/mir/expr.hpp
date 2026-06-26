@@ -137,10 +137,10 @@ using DirectTarget = std::variant<MethodId, support::BuiltinFn>;
 // `ns::name(args)`) is a fixed function of the target's signature and
 // whether `qualification` is present; it is not encoded as a separate arm.
 //
-// Receiver, when the target's signature declares one, is `args[0]` --
-// the explicit-receiver model `mir.md` invariant 11 requires. Instance
-// and static dispatch differ only in whether the signature has a `self`
-// formal, not in MIR's call shape.
+// Receiver, when the target's signature declares one, is `args[0]` -- an
+// instance method reaches its receiver explicitly as the first argument,
+// never through implicit context. Instance and static dispatch differ only in
+// whether the signature has a `self` formal, not in MIR's call shape.
 struct Direct {
   DirectTarget target;
   std::optional<ScopeQualifier> qualification = std::nullopt;

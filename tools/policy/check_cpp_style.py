@@ -51,6 +51,15 @@ Rules:
         objects).
         Scope: every .cpp/.hpp under src/, include/, tests/.
 
+  S007  No project-documentation references in comments. A comment that names
+        a `docs/` path, a project `.md` file (architecture / decision /
+        progress / glossary), or a numbered "invariant N" couples the code to
+        a document that renames and rots. The LRM (IEEE 1800 SystemVerilog
+        spec) is the one allowed external citation, and it never appears as a
+        `.md` file -- so seeing a `.md` reference is enough to know the comment
+        cites a project doc. State the stable contract inline instead.
+        Scope: every .cpp/.hpp under src/, include/.
+
 Usage:
   python3 tools/policy/check_cpp_style.py
 """
@@ -122,6 +131,18 @@ VOID_DISCARD_PATTERNS = [
 # S006: the `[[maybe_unused]]` attribute. Same smell as S005 -- it keeps an
 # unused parameter/variable and silences the warning instead of removing it.
 MAYBE_UNUSED_PATTERN = re.compile(r"\[\[\s*maybe_unused\s*\]\]")
+
+# S007: references to project documentation. A `docs/` path, any project `.md`
+# filename, or a numbered "invariant N" all point at a document that renames
+# and rots. The LRM is cited as "LRM <section>" and matches none of these, so
+# it stays the one allowed external citation. The patterns are deliberately
+# generic: any `.md` mention is taken as a doc reference rather than enumerating
+# specific doc names (which would themselves rot).
+DOC_REFERENCE_PATTERNS = [
+    (re.compile(r"\bdocs/"), "docs/ path"),
+    (re.compile(r"\b[\w-]+\.md\b"), ".md document"),
+    (re.compile(r"(?i)\binvariant\s+\d+\b"), "numbered invariant"),
+]
 
 
 def iter_cpp_files(repo_root: Path, roots=("src", "include", "tests")):
@@ -241,6 +262,32 @@ def check_s006(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_s007(repo_root: Path) -> list[str]:
+    """Forbid project-documentation references in src/ and include/ comments.
+
+    Tests are excluded for the same reason as S003: fixtures may legitimately
+    mention these tokens.
+    """
+    errors = []
+    seen_per_line = set()
+    for path, rel in iter_cpp_files(repo_root, roots=("src", "include")):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            for pattern, label in DOC_REFERENCE_PATTERNS:
+                m = pattern.search(line)
+                if m is None:
+                    continue
+                key = (rel, lineno, label)
+                if key in seen_per_line:
+                    continue
+                seen_per_line.add(key)
+                errors.append(
+                    f"  {rel}:{lineno}: S007 comment references project "
+                    f"documentation '{m.group(0)}' ({label}); source comments "
+                    f"cite only the LRM, never a project doc"
+                )
+    return errors
+
+
 def run_self_tests() -> bool:
     def expect(cond, msg):
         if not cond:
@@ -307,6 +354,22 @@ def run_self_tests() -> bool:
                  "S006 attribute")
     ok &= expect(not MAYBE_UNUSED_PATTERN.search("int x = 0;"),
                  "S006 unrelated")
+
+    def doc_hits(text):
+        return any(p.search(text) for p, _ in DOC_REFERENCE_PATTERNS)
+
+    ok &= expect(doc_hits("see decisions/unpacked-struct-representation.md"),
+                 "S007 .md reference")
+    ok &= expect(doc_hits("docs/architecture/mir.md"), "S007 docs/ path")
+    ok &= expect(doc_hits("the model mir.md invariant 11 requires"),
+                 "S007 .md plus invariant")
+    ok &= expect(doc_hits("restores invariant 7"), "S007 numbered invariant")
+    ok &= expect(not doc_hits("LRM 21.3.4.3 wildcard equality"),
+                 "S007 spares LRM citation")
+    ok &= expect(not doc_hits("maintains the invariant that x > 0"),
+                 "S007 spares unnumbered invariant")
+    ok &= expect(not doc_hits("the explicit-receiver model"),
+                 "S007 spares plain prose")
     return ok
 
 
@@ -318,6 +381,7 @@ CHECKS = [
     ("S004 include style (stdlib <>, lyra \"\")", check_s004),
     ("S005 cast-to-void unused-parameter/variable suppression", check_s005),
     ("S006 [[maybe_unused]] suppression", check_s006),
+    ("S007 project-documentation references in comments", check_s007),
 ]
 
 
@@ -338,7 +402,12 @@ def main() -> int:
             print()
 
     if failed:
-        print("See tools/policy/check_cpp_style.py for rule definitions.")
+        print(
+            "These are project C++ comment and style conventions. Read the "
+            "failing rule's definition at the top of this file to understand "
+            "the convention, then fix the code to satisfy it -- do not work "
+            "around the check."
+        )
         return 1
 
     print("OK: C++ style enforced")

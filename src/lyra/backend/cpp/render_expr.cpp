@@ -367,6 +367,15 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::DerefExpr& d) -> std::string {
             return std::format("(*{})", RenderExpr(view, view.Expr(d.pointer)));
           },
+          // An unpacked-struct member write: a tuple component reached through
+          // an addressable base (the Mutate snapshot). The deducing-this `Get`
+          // yields a mutable reference on the mutable base, so the projection
+          // is itself the assignment target.
+          [&](const mir::TupleGetExpr& g) -> std::string {
+            return std::format(
+                "({}).template Get<{}>()",
+                RenderLhsExpr(view, view.Expr(g.tuple)), g.index);
+          },
           [&](const auto&) -> std::string {
             throw InternalError(
                 "RenderLhsExpr: expression form is not addressable; the "
@@ -818,8 +827,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::TupleGetExpr& g) -> std::string {
             return std::format(
-                "std::get<{}>({})", g.index,
-                RenderExpr(view, view.Expr(g.tuple)));
+                "({}).template Get<{}>()", RenderExpr(view, view.Expr(g.tuple)),
+                g.index);
           },
       },
       expr.data);

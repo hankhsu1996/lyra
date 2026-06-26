@@ -54,7 +54,8 @@ auto MaybeWrapObservable(ModuleLowerer& module, mir::TypeId t) -> mir::TypeId {
                     std::holds_alternative<mir::UnpackedArrayType>(data) ||
                     std::holds_alternative<mir::DynamicArrayType>(data) ||
                     std::holds_alternative<mir::QueueType>(data) ||
-                    std::holds_alternative<mir::AssociativeArrayType>(data);
+                    std::holds_alternative<mir::AssociativeArrayType>(data) ||
+                    std::holds_alternative<mir::TupleType>(data);
   if (!wrap) {
     return t;
   }
