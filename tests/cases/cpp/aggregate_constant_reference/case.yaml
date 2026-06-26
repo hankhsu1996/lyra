@@ -1,0 +1,14 @@
+id: cpp.aggregate_constant_reference
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    ca_first: 10
+    ca_last: 40
+    ca_gen0: 11
+    sum: 50

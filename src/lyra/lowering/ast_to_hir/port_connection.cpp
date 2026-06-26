@@ -130,7 +130,8 @@ auto ConnectElementPorts(
             throw InternalError(
                 "ConnectElementPorts: port default did not fold to a constant");
           }
-          auto peer_or = MakeConstantValueExpr(*constant, *type_id, span);
+          auto peer_or = MakeConstantValueExpr(
+              module.Unit(), frame, *constant, *type_id, span);
           if (!peer_or) return std::unexpected(std::move(peer_or.error()));
           peer = frame.Exprs().Add(*std::move(peer_or));
         } else {
