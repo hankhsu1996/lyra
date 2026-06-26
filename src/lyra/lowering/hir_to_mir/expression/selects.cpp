@@ -82,7 +82,7 @@ auto WrapPackedAsOwned(
     const mir::CompilationUnit& unit, mir::Block& block, mir::Expr access_call,
     mir::TypeId result_type) -> mir::Expr {
   if (!std::holds_alternative<mir::PackedArrayType>(
-          unit.GetType(result_type).data)) {
+          unit.types.Get(result_type).data)) {
     return access_call;
   }
   const mir::ExprId access_id = block.exprs.Add(std::move(access_call));
@@ -102,13 +102,13 @@ auto WrapPackedAsOwned(
 // then re-tags to the consumer's signed type.
 auto UnsignedPackedCounterpart(
     mir::CompilationUnit& unit, mir::TypeId result_type) -> mir::TypeId {
-  const auto& ty = unit.GetType(result_type);
+  const auto& ty = unit.types.Get(result_type);
   if (!ty.IsPackedArray()) return result_type;
   const auto& pa = ty.AsPackedArray();
   if (pa.signedness == mir::Signedness::kUnsigned) return result_type;
   auto unsigned_pa = pa;
   unsigned_pa.signedness = mir::Signedness::kUnsigned;
-  return unit.AddType(mir::TypeData{std::move(unsigned_pa)});
+  return unit.types.Intern(std::move(unsigned_pa));
 }
 
 // Wraps a slice result that was rendered at `slice_type` (unsigned) with an
@@ -172,7 +172,7 @@ auto BuildOffsetDeltaExpr(
     const ModuleLowerer& module, mir::Block& block, mir::ExprId base,
     std::int64_t value, mir::BinaryOp op) -> mir::Expr {
   const auto base_type = block.exprs.Get(base).type;
-  const auto& base_ty = module.Unit().GetType(base_type);
+  const auto& base_ty = module.Unit().types.Get(base_type);
   const bool four_state =
       base_ty.IsIntegralPacked() && base_ty.AsIntegralPacked().IsFourState();
   const auto delta_lit = block.exprs.Add(
@@ -531,7 +531,7 @@ auto BuildRangeSliceCallExpr(
     strategy.container = RangeContainer::kQueue;
   } else if (
       const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
-    const auto& result_ty = module.Unit().GetType(result_type);
+    const auto& result_ty = module.Unit().types.Get(result_type);
     strategy.container = RangeContainer::kUnpacked;
     strategy.unpacked_declared = &ua->dim;
     strategy.unpacked_count = static_cast<std::uint32_t>(
@@ -561,7 +561,8 @@ auto BuildRangeSliceCallExpr(
                 .arguments = {base_id, bounds_or->lo, bounds_or->hi}},
         .type = result_type};
   }
-  const auto count = SliceResultOuterCount(module.Unit().GetType(result_type));
+  const auto count =
+      SliceResultOuterCount(module.Unit().types.Get(result_type));
   const auto count_id = block.exprs.Add(
       mir::MakeInt32Literal(
           module.Unit().builtins.int32, static_cast<std::int64_t>(count)));
@@ -682,7 +683,7 @@ auto LowerHirElementSelectExpr(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  const auto& hir_base_ty = module.Hir().types.Get(hir_base.type);
   // LRM 6.16.3: a string has no element lvalue, so an index read realizes as
   // the getc query (the write side realizes as putc in the assignment path).
   if (hir_base_ty.Kind() == hir::TypeKind::kString) {
@@ -726,7 +727,7 @@ auto LowerHirRangeSelectExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return block.exprs.Add(*std::move(lowered));
   };
-  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  const auto& hir_base_ty = module.Hir().types.Get(hir_base.type);
   return LowerRangeSelectInner(
       module, block, hir_base_ty, sel.bounds, base_id, result_type, lower_one,
       AccessSide::kRead);
@@ -746,7 +747,7 @@ auto LowerHirMemberAccessExpr(
   const auto& base_hir_expr = exprs.Get(sel.base_value);
   // LRM 7.2: an unpacked struct lowers to a generic product (`TupleType`);
   // member access is a positional projection by declaration-order index.
-  if (module.Hir().GetType(base_hir_expr.type).Kind() ==
+  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedStruct) {
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -756,7 +757,7 @@ auto LowerHirMemberAccessExpr(
         .type = result_type};
   }
   const auto& fields =
-      GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
+      GetAggregateFields(module.Hir().types.Get(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
     throw InternalError("LowerHirMemberAccessExpr: field_index out of range");
   }
@@ -786,7 +787,7 @@ auto LowerHirElementSelectExprLhs(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  const auto& hir_base_ty = module.Hir().types.Get(hir_base.type);
   return LowerElementSelectInner(
       module, block, hir_base_ty, module.TranslateType(hir_idx.type), base_id,
       idx_id, AccessSide::kLhs, result_type, false);
@@ -810,7 +811,7 @@ auto LowerHirRangeSelectExprLhs(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return block.exprs.Add(*std::move(lowered));
   };
-  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  const auto& hir_base_ty = module.Hir().types.Get(hir_base.type);
   return LowerRangeSelectInner(
       module, block, hir_base_ty, sel.bounds, base_id, result_type, lower_one,
       AccessSide::kLhs);
@@ -827,7 +828,7 @@ auto LowerHirMemberAccessExprLhs(
   // LRM 7.2: an unpacked-struct member write is a positional projection by
   // index over the base place. The observable root's write routes through the
   // cell's mutate path later, so the place is just the projection here.
-  if (module.Hir().GetType(base_hir_expr.type).Kind() ==
+  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedStruct) {
     auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -837,7 +838,7 @@ auto LowerHirMemberAccessExprLhs(
         .type = result_type};
   }
   const auto& fields =
-      GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
+      GetAggregateFields(module.Hir().types.Get(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
     throw InternalError(
         "LowerHirMemberAccessExprLhs: field_index out of range");

@@ -44,7 +44,7 @@ namespace {
 // / external ref / external unit object) and named events (LRM 15 -- carry
 // their own subscribe mechanism) pass through unwrapped.
 auto MaybeWrapObservable(ModuleLowerer& module, mir::TypeId t) -> mir::TypeId {
-  const auto& data = module.Unit().GetType(t).data;
+  const auto& data = module.Unit().types.Get(t).data;
   const bool wrap = std::holds_alternative<mir::PackedArrayType>(data) ||
                     std::holds_alternative<mir::EnumType>(data) ||
                     std::holds_alternative<mir::StringType>(data) ||
@@ -59,7 +59,7 @@ auto MaybeWrapObservable(ModuleLowerer& module, mir::TypeId t) -> mir::TypeId {
   if (!wrap) {
     return t;
   }
-  return module.Unit().AddType(mir::TypeData{mir::ObservableType{.value = t}});
+  return module.Unit().types.Intern(mir::ObservableType{.value = t});
 }
 
 auto ChildScopeNameFor(std::size_t gen_index, std::string_view arm_tag)
@@ -172,20 +172,18 @@ auto EnumerateGenerateChildSpecs(
 
 auto MakeUniqueObjectPointer(ModuleLowerer& module, std::string scope_name)
     -> mir::TypeId {
-  const mir::TypeId object_type =
-      module.Unit().AddType(mir::ObjectType{.name = std::move(scope_name)});
-  return module.Unit().AddType(
-      mir::PointerType{
-          .pointee = object_type, .ownership = mir::PointerOwnership::kUnique});
+  const mir::TypeId object_type = module.Unit().types.Intern(
+      mir::ObjectType{.name = std::move(scope_name)});
+  return module.Unit().types.PointerTo(
+      object_type, mir::PointerOwnership::kUnique);
 }
 
 auto MakeUniqueExternalUnitPointer(ModuleLowerer& module, std::string unit_name)
     -> mir::TypeId {
-  const mir::TypeId object_type = module.Unit().AddType(
+  const mir::TypeId object_type = module.Unit().types.Intern(
       mir::ExternalUnitObjectType{.unit_name = std::move(unit_name)});
-  return module.Unit().AddType(
-      mir::PointerType{
-          .pointee = object_type, .ownership = mir::PointerOwnership::kUnique});
+  return module.Unit().types.PointerTo(
+      object_type, mir::PointerOwnership::kUnique);
 }
 
 // Builds an external-unit member type: a unique pointer to the unit's object,
@@ -197,7 +195,7 @@ auto MakeExternalUnitMemberType(
   mir::TypeId type =
       MakeUniqueExternalUnitPointer(module, std::move(unit_name));
   for (std::size_t i = 0; i < num_dims; ++i) {
-    type = module.Unit().AddType(mir::VectorType{.element = type});
+    type = module.Unit().types.Intern(mir::VectorType{.element = type});
   }
   return type;
 }
@@ -237,7 +235,7 @@ void EmitExternalUnitDimLevel(
     // The child's structural identity, fixed before its constructor runs.
     // Indices reflect the position this leaf occupies in its enclosing
     // dim chain (empty for a scalar instance).
-    const mir::TypeId indices_type = module.Unit().AddType(
+    const mir::TypeId indices_type = module.Unit().types.Intern(
         mir::UnpackedArrayType{
             .element_type = builtins.int32, .size = indices.size()});
     const mir::ExprId indices_id = block.exprs.Add(
@@ -307,7 +305,7 @@ void EmitExternalUnitDimLevel(
     }
     const mir::TypeId leaf_object_type =
         std::get<mir::PointerType>(
-            module.Unit().GetType(leaf_pointer_type).data)
+            module.Unit().types.Get(leaf_pointer_type).data)
             .pointee;
     const mir::ExprId leaf_deref_id = block.exprs.Add(
         mir::Expr{
@@ -329,7 +327,8 @@ void EmitExternalUnitDimLevel(
   }
 
   const mir::TypeId inner_type =
-      std::get<mir::VectorType>(module.Unit().GetType(chain_type).data).element;
+      std::get<mir::VectorType>(module.Unit().types.Get(chain_type).data)
+          .element;
   const std::span<const std::uint32_t> remaining_dims = dims.subspan(1);
   const std::uint32_t count = dims.front();
   for (std::uint32_t i = 0; i < count; ++i) {
@@ -402,7 +401,7 @@ void AppendExternalUnitConstruction(
   // the chain operations propagate down to it.
   mir::TypeId leaf_pointer_type = var.type;
   for (std::size_t i = 0; i < dims.size(); ++i) {
-    const auto& chain_data = module.Unit().GetType(leaf_pointer_type).data;
+    const auto& chain_data = module.Unit().types.Get(leaf_pointer_type).data;
     if (!std::holds_alternative<mir::VectorType>(chain_data)) {
       throw InternalError(
           "AppendExternalUnitConstruction: dims exceed member vector depth");
@@ -476,7 +475,7 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
       // constructor body (see `InstallCrossUnitRefs`).
       const mir::TypeId leaf = module.TranslateType(cu.type);
       const mir::TypeId ext_type =
-          module.Unit().AddType(mir::ExternalRefType{.element = leaf});
+          module.Unit().types.Intern(mir::ExternalRefType{.element = leaf});
       const mir::MemberId var = mir_class.members.Add(
           mir::MemberDecl{.name = std::move(member_name), .type = ext_type});
       lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = var}, ext_type);
@@ -488,9 +487,8 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
       // at the same wrapped cell -- otherwise the C++ types mismatch.
       const mir::TypeId leaf =
           MaybeWrapObservable(module, module.TranslateType(cu.type));
-      const mir::TypeId slot_type = module.Unit().AddType(
-          mir::PointerType{
-              .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed});
+      const mir::TypeId slot_type =
+          module.Unit().types.PointerTo(leaf, mir::PointerOwnership::kBorrowed);
       const mir::MemberId slot = mir_class.members.Add(
           mir::MemberDecl{.name = std::move(member_name), .type = slot_type});
       lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = slot}, slot_type);
@@ -543,7 +541,7 @@ auto BuildDownwardNavValue(
 
   mir::ExprId cur = ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
   for (std::size_t i = 0; i + 1 < hops.size(); ++i) {
-    const mir::TypeId indices_type = module.Unit().AddType(
+    const mir::TypeId indices_type = module.Unit().types.Intern(
         mir::UnpackedArrayType{
             .element_type = builtins.int32, .size = hops[i].indices.size()});
     const mir::ExprId indices_id = ctor_block.exprs.Add(
@@ -560,10 +558,8 @@ auto BuildDownwardNavValue(
                         {cur, string_literal(hops[i].name), indices_id}},
             .type = scope_ptr_type});
   }
-  const mir::TypeId void_ptr_type = module.Unit().AddType(
-      mir::PointerType{
-          .pointee = builtins.void_type,
-          .ownership = mir::PointerOwnership::kBorrowed});
+  const mir::TypeId void_ptr_type = module.Unit().types.PointerTo(
+      builtins.void_type, mir::PointerOwnership::kBorrowed);
   const mir::ExprId get_signal_id = ctor_block.exprs.Add(
       mir::Expr{
           .data =
@@ -592,7 +588,7 @@ auto BuildIndicesArrayExpr(
     index_exprs.push_back(block.exprs.Add(
         mir::MakeInt32Literal(builtins.int32, static_cast<std::int64_t>(idx))));
   }
-  const mir::TypeId indices_type = module.Unit().AddType(
+  const mir::TypeId indices_type = module.Unit().types.Intern(
       mir::UnpackedArrayType{
           .element_type = builtins.int32, .size = indices.size()});
   return block.exprs.Add(
@@ -708,10 +704,7 @@ void InstallCrossUnitRefs(
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   ModuleLowerer& module = lowerer.Module();
   const auto& builtins = module.Unit().builtins;
-  const mir::TypeId scope_ptr_type = module.Unit().AddType(
-      mir::PointerType{
-          .pointee = module.Unit().AddType(mir::ScopeType{}),
-          .ownership = mir::PointerOwnership::kBorrowed});
+  const mir::TypeId scope_ptr_type = builtins.scope_ptr;
   const auto string_literal = [&](const std::string& s) -> mir::ExprId {
     return ctor_block.exprs.Add(
         mir::Expr{
@@ -798,7 +791,7 @@ void AppendProcessRegistration(
               mir::CallExpr{
                   .callee = mir::Direct{.target = body},
                   .arguments = {body_self}},
-          .type = module.Unit().builtins.coroutine});
+          .type = module.Unit().builtins.coroutine_void});
   const mir::ExprId reg_self =
       block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
   const mir::ExprId reg_call = block.exprs.Add(
@@ -833,10 +826,7 @@ auto InstallPortConnections(
   mir::Block& resolve_block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   ModuleLowerer& module = lowerer.Module();
-  const mir::TypeId scope_ptr_type = module.Unit().AddType(
-      mir::PointerType{
-          .pointee = module.Unit().AddType(mir::ScopeType{}),
-          .ownership = mir::PointerOwnership::kBorrowed});
+  const mir::TypeId scope_ptr_type = module.Unit().builtins.scope_ptr;
   for (const auto& pc : hir_scope.port_connections) {
     if (pc.direction == hir::PortDirection::kRef) {
       // Bind the child's reference member to the connected variable's cell in
@@ -863,13 +853,10 @@ auto InstallPortConnections(
                                         : head_member.source_name;
 
       const mir::TypeId value_type = module.TranslateType(alias.type);
-      const mir::TypeId ref_type = module.Unit().AddType(
-          mir::TypeData{
-              mir::RefType{.pointee = value_type, .is_const = false}});
-      const mir::TypeId slot_type = module.Unit().AddType(
-          mir::PointerType{
-              .pointee = ref_type,
-              .ownership = mir::PointerOwnership::kBorrowed});
+      const mir::TypeId ref_type = module.Unit().types.Intern(
+          mir::RefType{.pointee = value_type, .is_const = false});
+      const mir::TypeId slot_type = module.Unit().types.PointerTo(
+          ref_type, mir::PointerOwnership::kBorrowed);
       const mir::ExprId nav = resolve_block.exprs.Add(BuildDownwardNavValue(
           module, resolve_frame, head_name, alias.path, slot_type,
           scope_ptr_type));
@@ -983,17 +970,22 @@ void AppendOwnedChildConstruction(
   // these slots, the scalar holds one directly).
   const mir::TypeId child_ptr_type =
       std::holds_alternative<mir::VectorType>(
-          module.Unit().GetType(var.type).data)
-          ? std::get<mir::VectorType>(module.Unit().GetType(var.type).data)
+          module.Unit().types.Get(var.type).data)
+          ? std::get<mir::VectorType>(module.Unit().types.Get(var.type).data)
                 .element
           : var.type;
-  const auto& child_ptr_data = module.Unit().GetType(child_ptr_type).data;
+  const auto& child_ptr_data = module.Unit().types.Get(child_ptr_type).data;
   if (!std::holds_alternative<mir::PointerType>(child_ptr_data) ||
       std::get<mir::PointerType>(child_ptr_data).ownership !=
           mir::PointerOwnership::kUnique) {
     throw InternalError(
         "owned-child construction: target slot type is not a unique pointer");
   }
+  // Capture the pointee by id now. A reference into the type arena is a
+  // transient view: interning any later type into the arena invalidates it, and
+  // that happens below. Reads after that point go through the id.
+  const mir::TypeId child_pointee =
+      std::get<mir::PointerType>(child_ptr_data).pointee;
 
   const auto string_literal = [&](const std::string& s) -> mir::ExprId {
     return arm_block.exprs.Add(
@@ -1014,7 +1006,7 @@ void AppendOwnedChildConstruction(
   if (array_index.has_value()) {
     index_elems.push_back(*array_index);
   }
-  const mir::TypeId indices_type = module.Unit().AddType(
+  const mir::TypeId indices_type = module.Unit().types.Intern(
       mir::UnpackedArrayType{
           .element_type = builtins.int32, .size = index_elems.size()});
   const mir::ExprId indices_id = arm_block.exprs.Add(
@@ -1060,7 +1052,7 @@ void AppendOwnedChildConstruction(
   // half-attached scope in the parent's child relation.
   mir::ExprId child_ref_id{};
   if (std::holds_alternative<mir::VectorType>(
-          module.Unit().GetType(var.type).data)) {
+          module.Unit().types.Get(var.type).data)) {
     const mir::ExprId emplace_call_id = arm_block.exprs.Add(
         mir::Expr{
             .data =
@@ -1091,7 +1083,7 @@ void AppendOwnedChildConstruction(
     child_ref_id = arm_block.exprs.Add(
         mir::Expr{
             .data = mir::DerefExpr{.pointer = back_call_id},
-            .type = std::get<mir::PointerType>(child_ptr_data).pointee});
+            .type = child_pointee});
   } else {
     const mir::ExprId assign_id = arm_block.exprs.Add(
         mir::Expr{
@@ -1109,7 +1101,7 @@ void AppendOwnedChildConstruction(
     child_ref_id = arm_block.exprs.Add(
         mir::Expr{
             .data = mir::DerefExpr{.pointer = scalar_access_id},
-            .type = std::get<mir::PointerType>(child_ptr_data).pointee});
+            .type = child_pointee});
   }
 
   const mir::ExprId attach_call_id = arm_block.exprs.Add(
@@ -1389,7 +1381,8 @@ auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
       mir::TypeId var_type = MakeUniqueObjectPointer(
           module, mir_class.nested_classes.Get(child_id).name);
       if (spec.is_repeated) {
-        var_type = module.Unit().AddType(mir::VectorType{.element = var_type});
+        var_type =
+            module.Unit().types.Intern(mir::VectorType{.element = var_type});
       }
       const mir::MemberId var_id = mir_class.members.Add(
           mir::MemberDecl{
@@ -1417,11 +1410,9 @@ auto ClassLowerer::Run(
   ClassLowerer& lowerer = *this;
 
   const mir::TypeId self_object_type =
-      module.Unit().AddType(mir::ObjectType{.name = name_});
-  const mir::TypeId self_pointer_type = module.Unit().AddType(
-      mir::PointerType{
-          .pointee = self_object_type,
-          .ownership = mir::PointerOwnership::kBorrowed});
+      module.Unit().types.Intern(mir::ObjectType{.name = name_});
+  const mir::TypeId self_pointer_type = module.Unit().types.PointerTo(
+      self_object_type, mir::PointerOwnership::kBorrowed);
   mir::Class mir_class{
       .name = name_,
       .base = mir::ClassRef{mir::RuntimeLibraryClassRef{
@@ -1470,7 +1461,7 @@ auto ClassLowerer::Run(
       frame.WithClass(&mir_class, outer_scope_link)
           .WithBlock(&ctor_block)
           .WithSelfBinding(self_id, frame.block_depth);
-  const mir::TypeId void_type = module.Unit().AddType(mir::VoidType{});
+  const mir::TypeId void_type = module.Unit().builtins.void_type;
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
   const auto self_read = [&]() -> mir::ExprId {
     return ctor_block.exprs.Add(MakeSelfRefExpr(scope_frame, self_ptr_type));
@@ -1521,7 +1512,11 @@ auto ClassLowerer::Run(
     const auto& d = hir_scope.structural_vars.Get(hir_id);
     const mir::TypeId mir_value_type = module.TranslateType(d.type);
 
-    const auto& var_data = module.Unit().GetType(mir_value_type).data;
+    // The value type's kind classifies the member in the checks below: a plain
+    // value is an assignable signal; a pointer / vector / object / ref slot is
+    // not.
+    const mir::TypeKind var_kind =
+        module.Unit().types.Get(mir_value_type).Kind();
     const bool is_reference = d.reference.has_value();
     // A `ref` / `const ref` port member aliases the connected variable, filled
     // by the parent at construction (LRM 23.3.3.2): its type is a reference,
@@ -1529,11 +1524,11 @@ auto ClassLowerer::Run(
     // Any other module-scope value-storage signal becomes an observable cell so
     // writes route through `Var<T>::Set` and subscribers fire.
     const mir::TypeId mir_field_type =
-        is_reference ? module.Unit().AddType(
-                           mir::TypeData{mir::RefType{
+        is_reference ? module.Unit().types.Intern(
+                           mir::RefType{
                                .pointee = mir_value_type,
                                .is_const = *d.reference ==
-                                           hir::ReferenceBinding::kConstRef}})
+                                           hir::ReferenceBinding::kConstRef})
                      : MaybeWrapObservable(module, mir_value_type);
     const mir::MemberId mir_id = mir_class.members.Add(
         mir::MemberDecl{.name = d.name, .type = mir_field_type});
@@ -1546,12 +1541,12 @@ auto ClassLowerer::Run(
     // initialization statement, run in the initialize phase after the tree's
     // references resolve, not in the constructor.
     const bool is_assignable_value =
-        !is_reference && !std::holds_alternative<mir::PointerType>(var_data) &&
-        !std::holds_alternative<mir::VectorType>(var_data) &&
-        !std::holds_alternative<mir::ExternalRefType>(var_data) &&
-        !std::holds_alternative<mir::ObjectType>(var_data) &&
-        !std::holds_alternative<mir::ExternalUnitObjectType>(var_data) &&
-        !std::holds_alternative<mir::EventType>(var_data);
+        !is_reference && var_kind != mir::TypeKind::kPointer &&
+        var_kind != mir::TypeKind::kVector &&
+        var_kind != mir::TypeKind::kExternalRef &&
+        var_kind != mir::TypeKind::kObject &&
+        var_kind != mir::TypeKind::kExternalUnitObject &&
+        var_kind != mir::TypeKind::kEvent;
     if (is_assignable_value) {
       mir::ExprId value_id{};
       if (d.initializer.has_value()) {
@@ -1585,20 +1580,17 @@ auto ClassLowerer::Run(
     // cross-unit referrer resolves it by name at construction. The excluded
     // members -- owned children and cross-unit reference slots -- are not
     // signals.
-    const bool is_signal =
-        !std::holds_alternative<mir::PointerType>(var_data) &&
-        !std::holds_alternative<mir::VectorType>(var_data) &&
-        !std::holds_alternative<mir::ExternalRefType>(var_data) &&
-        !std::holds_alternative<mir::ObjectType>(var_data) &&
-        !std::holds_alternative<mir::ExternalUnitObjectType>(var_data);
+    const bool is_signal = var_kind != mir::TypeKind::kPointer &&
+                           var_kind != mir::TypeKind::kVector &&
+                           var_kind != mir::TypeKind::kExternalRef &&
+                           var_kind != mir::TypeKind::kObject &&
+                           var_kind != mir::TypeKind::kExternalUnitObject;
     if (is_signal) {
       const mir::ExprId var_ref = ctor_block.exprs.Add(
           mir::MakeMemberAccessExpr(
               self_read(), mir::MemberRef{.var = mir_id}, mir_field_type));
-      const mir::TypeId var_ptr_type = module.Unit().AddType(
-          mir::PointerType{
-              .pointee = mir_field_type,
-              .ownership = mir::PointerOwnership::kBorrowed});
+      const mir::TypeId var_ptr_type = module.Unit().types.PointerTo(
+          mir_field_type, mir::PointerOwnership::kBorrowed);
       const mir::ExprId addr_id =
           ctor_block.exprs.Add(mir::MakeAddressOfExpr(var_ref, var_ptr_type));
       const mir::ExprId name_id = ctor_block.exprs.Add(

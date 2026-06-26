@@ -29,13 +29,7 @@ auto NormalizeCompletionPayload(
     -> mir::TypeId {
   if (components.empty()) return unit.builtins.void_type;
   if (components.size() == 1) return components.front();
-  return unit.AddType(mir::TypeData{mir::TupleType{.elements = components}});
-}
-
-auto CoroutineOf(mir::CompilationUnit& unit, mir::TypeId payload)
-    -> mir::TypeId {
-  if (payload == unit.builtins.void_type) return unit.builtins.coroutine;
-  return unit.AddType(mir::TypeData{mir::CoroutineType{.payload = payload}});
+  return unit.types.Intern(mir::TupleType{.elements = components});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

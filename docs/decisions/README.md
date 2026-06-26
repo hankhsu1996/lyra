@@ -83,6 +83,12 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control.
 - [generic-lowering-machinery](generic-lowering-machinery.md) -- generic arena and shared
   context-free expression-handler templates over the pass class; node types stay typed.
+- [arena-reference-lifetime](arena-reference-lifetime.md) -- `Arena::Get` is a transient view; a
+  same-arena `Add` invalidates prior references, and the `Id` is the only durable handle, so
+  lowering projects value facts before mutating; stable-reference storage is rejected.
+- [mir-type-interning](mir-type-interning.md) -- the MIR type pool is a structural-equality
+  interner, not a plain arena: each semantic type has one canonical `TypeId`, object types keyed by
+  class identity (enums by their scope-unique enumerators), enabling recursive class types.
 - [context-free-call-lowering](context-free-call-lowering.md) -- one expression dispatcher template
   per boundary (context-free kinds listed once); the call family becomes a template across pass
   classes once the `with`-clause element / index are co-equal closure parameters rather than a

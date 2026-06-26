@@ -70,6 +70,8 @@ struct PackedRange {
   [[nodiscard]] auto IsAscending() const -> bool;
   [[nodiscard]] auto Contains(std::int64_t index) const -> bool;
   [[nodiscard]] auto LinearOffset(std::int64_t index) const -> std::uint64_t;
+
+  auto operator==(const PackedRange&) const -> bool = default;
 };
 
 struct PackedArrayType {
@@ -85,6 +87,8 @@ struct PackedArrayType {
 struct EnumMember {
   std::string name;
   std::int64_t value;
+
+  auto operator==(const EnumMember&) const -> bool = default;
 };
 
 struct EnumType {
@@ -107,20 +111,28 @@ struct EnumType {
 struct UnpackedArrayType {
   TypeId element_type;
   std::uint64_t size;
+
+  auto operator==(const UnpackedArrayType&) const -> bool = default;
 };
 
 struct DynamicArrayType {
   TypeId element_type;
+
+  auto operator==(const DynamicArrayType&) const -> bool = default;
 };
 
 struct QueueType {
   TypeId element_type;
   std::optional<std::uint64_t> max_bound;
+
+  auto operator==(const QueueType&) const -> bool = default;
 };
 
 struct AssociativeArrayType {
   TypeId element_type;
   TypeId key_type;
+
+  auto operator==(const AssociativeArrayType&) const -> bool = default;
 };
 
 // LRM 7.8.1 wildcard index type (`[*]`): the key type of an associative array
@@ -129,15 +141,31 @@ struct AssociativeArrayType {
 // is `lyra::value::WildcardKey`; it is the key type that selects the
 // magnitude-identified, width-independent ordering instead of the fixed-shape
 // integral or lexicographic-string orderings.
-struct WildcardIndexType {};
+struct WildcardIndexType {
+  auto operator==(const WildcardIndexType&) const -> bool = default;
+};
 
-struct StringType {};
-struct EventType {};
-struct RealType {};
-struct ShortRealType {};
-struct RealTimeType {};
-struct ChandleType {};
-struct VoidType {};
+struct StringType {
+  auto operator==(const StringType&) const -> bool = default;
+};
+struct EventType {
+  auto operator==(const EventType&) const -> bool = default;
+};
+struct RealType {
+  auto operator==(const RealType&) const -> bool = default;
+};
+struct ShortRealType {
+  auto operator==(const ShortRealType&) const -> bool = default;
+};
+struct RealTimeType {
+  auto operator==(const RealTimeType&) const -> bool = default;
+};
+struct ChandleType {
+  auto operator==(const ChandleType&) const -> bool = default;
+};
+struct VoidType {
+  auto operator==(const VoidType&) const -> bool = default;
+};
 
 struct ObjectType {
   std::string name;

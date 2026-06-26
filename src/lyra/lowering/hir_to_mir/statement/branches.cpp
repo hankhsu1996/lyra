@@ -95,7 +95,7 @@ auto LowerCaseStmt(
   // would make the snapshot 2-state while wildcard labels are 4-state and
   // PackedArray::ExpectSameShape rejects the per-label compare.
   auto packed_state = [&](mir::TypeId tid) -> std::optional<bool> {
-    const auto& ty = process.Module().Unit().GetType(tid);
+    const auto& ty = process.Module().Unit().types.Get(tid);
     if (const auto* pa = std::get_if<mir::PackedArrayType>(&ty.data)) {
       return pa->IsFourState();
     }

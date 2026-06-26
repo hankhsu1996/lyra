@@ -194,7 +194,7 @@ auto RenderTypeAsCpp(
                 "cut");
           },
       },
-      unit.GetType(type_id).data);
+      unit.types.Get(type_id).data);
 }
 
 }  // namespace lyra::backend::cpp

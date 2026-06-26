@@ -124,7 +124,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
       .code =
           mir::CallableCode{
               .params = {self_id},
-              .result_type = process.Module().Unit().builtins.coroutine,
+              .result_type = process.Module().Unit().builtins.coroutine_void,
               .body = std::move(process_block)},
       .overrides = std::nullopt};
 }
@@ -174,7 +174,7 @@ auto LowerForeverProcess(
       .code =
           mir::CallableCode{
               .params = {self_id},
-              .result_type = process.Module().Unit().builtins.coroutine,
+              .result_type = process.Module().Unit().builtins.coroutine_void,
               .body = std::move(process_block)},
       .overrides = std::nullopt};
 }
@@ -246,10 +246,10 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
                               dir == hir::ParamDirection::kConstRef;
     const mir::TypeId type =
         by_reference
-            ? module_->Unit().AddType(
-                  mir::TypeData{mir::RefType{
+            ? module_->Unit().types.Intern(
+                  mir::RefType{
                       .pointee = value_type,
-                      .is_const = dir == hir::ParamDirection::kConstRef}})
+                      .is_const = dir == hir::ParamDirection::kConstRef})
             : value_type;
     const mir::LocalId mir_var =
         body_block.vars.Add(mir::LocalDecl{.name = hir_var.name, .type = type});
@@ -297,8 +297,9 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   completion_payload_type_ =
       NormalizeCompletionPayload(module_->Unit(), payload_components);
   const mir::TypeId result_type =
-      body_is_coroutine ? CoroutineOf(module_->Unit(), completion_payload_type_)
-                        : completion_payload_type_;
+      body_is_coroutine
+          ? module_->Unit().types.CoroutineOf(completion_payload_type_)
+          : completion_payload_type_;
 
   auto lowered = LowerStraightLineBodyInto(*this, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));

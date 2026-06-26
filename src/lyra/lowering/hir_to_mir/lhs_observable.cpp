@@ -52,13 +52,17 @@ auto RewriteLhsRootWithMutate(
   }
   if (AsContainerAccessBase(expr) != nullptr) {
     auto rewritten_call = std::get<mir::CallExpr>(expr.data);
+    // Read the type out before the recursive rewrite below: that recursion
+    // appends to the same expression arena, which invalidates the `expr`
+    // reference.
+    const mir::TypeId expr_type = expr.type;
     rewritten_call.arguments.front() = RewriteLhsRootWithMutate(
         unit, block, rewritten_call.arguments.front(), services_id);
     return block.exprs.Add(
-        mir::Expr{.data = std::move(rewritten_call), .type = expr.type});
+        mir::Expr{.data = std::move(rewritten_call), .type = expr_type});
   }
   const mir::TypeId value_type =
-      mir::ObservableInnerValueType(unit.GetType(expr.type));
+      mir::ObservableInnerValueType(unit.types.Get(expr.type));
   const mir::ExprId mutate_id = block.exprs.Add(
       mir::MakeObservableMutateCallExpr(lhs_id, services_id, value_type));
   return block.exprs.Add(
@@ -73,7 +77,7 @@ auto BuildObservableAssignExpr(
     mir::TypeId void_type) -> mir::Expr {
   const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
   const bool root_is_cell =
-      mir::IsObservableCellType(unit.GetType(block.exprs.Get(root_id).type));
+      mir::IsObservableCellType(unit.types.Get(block.exprs.Get(root_id).type));
   if (!root_is_cell) {
     return mir::Expr{
         .data =

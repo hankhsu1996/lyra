@@ -46,7 +46,7 @@ auto LowerSignalEventTrigger(
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
-  const auto& expr_type = proc.Module().Unit().GetType(expr_or->type);
+  const auto& expr_type = proc.Module().Unit().types.Get(expr_or->type);
   if (sig.edge != slang::ast::EdgeKind::None) {
     // The runtime classifies an edge only on a packed bit-vector cell (LRM
     // 9.4.2 Table 9-2); slang already restricts an edge to an integral operand.

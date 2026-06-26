@@ -104,7 +104,7 @@ auto ModuleLowerer::TranslateTypeData(
             // unwrap via Type::AsIntegralPacked(); method dispatch reads the
             // members from this struct directly.
             const auto& base_mir_data =
-                Unit().GetType(TranslateType(src.base_type)).data;
+                Unit().types.Get(TranslateType(src.base_type)).data;
             const auto* base_pa =
                 std::get_if<mir::PackedArrayType>(&base_mir_data);
             if (base_pa == nullptr) {
