@@ -24,10 +24,4 @@ auto NormalizeCompletionPayload(
     mir::CompilationUnit& unit, const std::vector<mir::TypeId>& components)
     -> mir::TypeId;
 
-// The coroutine call protocol carrying a completion payload. A `Void` payload
-// reuses the interned bare coroutine so no-output tasks and processes share one
-// type identity.
-auto CoroutineOf(mir::CompilationUnit& unit, mir::TypeId payload)
-    -> mir::TypeId;
-
 }  // namespace lyra::lowering::hir_to_mir

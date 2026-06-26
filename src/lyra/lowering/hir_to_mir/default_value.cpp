@@ -54,7 +54,7 @@ auto BuildDefaultValueExpr(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId type)
     -> mir::Expr {
   auto& block = *frame.current_block;
-  const auto& ty = module.Unit().GetType(type);
+  const auto& ty = module.Unit().types.Get(type);
   return std::visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> mir::Expr {
@@ -212,7 +212,7 @@ auto BuildArrayConstructionCall(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr {
   auto& block = *frame.current_block;
-  const auto& ty = module.Unit().GetType(array_type);
+  const auto& ty = module.Unit().types.Get(array_type);
   const mir::TypeId element_type = std::visit(
       [](const auto& t) -> mir::TypeId {
         using TyT = std::decay_t<decltype(t)>;
@@ -258,7 +258,7 @@ auto BuildAssociativeConstructionCall(
     std::optional<mir::ExprId> user_default) -> mir::Expr {
   auto& block = *frame.current_block;
   const auto* assoc = std::get_if<mir::AssociativeArrayType>(
-      &module.Unit().GetType(assoc_type).data);
+      &module.Unit().types.Get(assoc_type).data);
   if (assoc == nullptr) {
     throw InternalError(
         "BuildAssociativeConstructionCall: result type is not "
@@ -267,7 +267,7 @@ auto BuildAssociativeConstructionCall(
   const mir::TypeId key_type = assoc->key_type;
   const mir::TypeId element_type = assoc->element_type;
 
-  const mir::TypeId tuple_type = module.Unit().AddType(
+  const mir::TypeId tuple_type = module.Unit().types.Intern(
       mir::TupleType{.elements = {key_type, element_type}});
   std::vector<mir::ExprId> tuple_ids;
   tuple_ids.reserve(entries.size());
@@ -277,7 +277,7 @@ auto BuildAssociativeConstructionCall(
             .data = mir::TupleExpr{.components = {key_id, value_id}},
             .type = tuple_type}));
   }
-  const mir::TypeId entries_type = module.Unit().AddType(
+  const mir::TypeId entries_type = module.Unit().types.Intern(
       mir::UnpackedArrayType{
           .element_type = tuple_type,
           .size = static_cast<std::uint64_t>(tuple_ids.size())});

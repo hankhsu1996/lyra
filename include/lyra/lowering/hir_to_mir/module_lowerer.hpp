@@ -31,11 +31,11 @@ class ModuleLowerer {
 
   auto Run() -> diag::Result<mir::CompilationUnit>;
 
-  // Access to the in-progress compilation unit. The const overload mirrors the
-  // interface downstream consumers see post-`Run`; the mutable overload lets
-  // handlers reach the unit's own append-only API (e.g. `AddType`,
-  // `AllocateDeferredCheckSiteId`) directly, matching the discipline used for
-  // nested-scope writes through `frame.current_*_scope`.
+  // Access to the in-progress compilation unit. The const overload is the
+  // read-only view downstream consumers see once lowering finishes; the mutable
+  // overload lets a handler append unit-wide output -- a synthesized type, a
+  // deferred-check site -- to the unit, the same discipline by which nested IR
+  // is written through the frame's current targets.
   [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
     return unit_;
   }

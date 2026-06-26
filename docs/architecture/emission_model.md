@@ -128,8 +128,6 @@ Construction state for the extern member (the canonical head identity, the desce
 signal name) arrives as ordinary MIR primitives in the constructor body, not as type payload --
 `backend_contract.md` keeps render mechanical.
 
-The current C++ backend collapses all units into a single translation unit (one `main.cpp` that
-transitively includes every unit header, with bodies inline). That is a transitional convenience of
-the C++ build step, not a relaxation of invariant 1: any artifact that aggregates multiple units'
-bodies is still wrong and is marked for removal. The per-unit artifact boundary and the resolution
-rules above are the contract the LLVM backend must satisfy and the C++ backend must converge to.
+Any artifact that aggregates multiple units' bodies into one is forbidden, however a build step
+packages the emitted sources: the per-unit artifact boundary and the resolution rules above are the
+contract every backend must satisfy.

@@ -358,11 +358,12 @@ auto RenderScopeHeaderFile(
   out += "\n";
   bool any_enum = false;
   for (std::size_t i = 0; i < unit.types.size(); ++i) {
-    const auto* enum_type = std::get_if<mir::EnumType>(&unit.types[i].data);
+    const mir::TypeId type_id{static_cast<std::uint32_t>(i)};
+    const auto* enum_type =
+        std::get_if<mir::EnumType>(&unit.types.Get(type_id).data);
     if (enum_type == nullptr) continue;
     any_enum = true;
-    const auto class_name =
-        RenderEnumClassName(s, mir::TypeId{static_cast<std::uint32_t>(i)});
+    const auto class_name = RenderEnumClassName(s, type_id);
     const auto& base = enum_type->base;
     const char* signed_lit =
         base.signedness == mir::Signedness::kSigned ? "true" : "false";

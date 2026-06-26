@@ -441,7 +441,8 @@ auto ModuleLowerer::InternType(
   }
   auto data_or = TranslateTypeData(*this, type, span);
   if (!data_or) return std::unexpected(std::move(data_or.error()));
-  const hir::TypeId id = unit_.AddType(*std::move(data_or), span);
+  const hir::TypeId id =
+      unit_.types.Add(hir::Type{.data = *std::move(data_or), .span = span});
   type_cache_.emplace(canonical, id);
   return id;
 }

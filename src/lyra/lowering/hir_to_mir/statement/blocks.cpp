@@ -66,18 +66,15 @@ void OpenActivationScope(
             .name = decl.name, .type = module.TranslateType(decl.type)}));
   }
   const mir::TypeId box_object =
-      unit.AddType(mir::ObjectType{.name = box_name});
-  box.self_pointer_type = unit.AddType(
-      mir::PointerType{
-          .pointee = box_object,
-          .ownership = mir::PointerOwnership::kBorrowed});
+      unit.types.Intern(mir::ObjectType{.name = box_name});
+  box.self_pointer_type =
+      unit.types.PointerTo(box_object, mir::PointerOwnership::kBorrowed);
   owner.nested_classes.Add(std::move(box));
 
   // The handle: a shared pointer to the box, allocated by make_shared. Declared
   // first in the scope, before the promoted locals it stands in for.
-  const mir::TypeId handle_type = unit.AddType(
-      mir::PointerType{
-          .pointee = box_object, .ownership = mir::PointerOwnership::kShared});
+  const mir::TypeId handle_type =
+      unit.types.PointerTo(box_object, mir::PointerOwnership::kShared);
   mir::Block& block = *frame.current_block;
   const mir::ExprId init = block.exprs.Add(
       mir::Expr{

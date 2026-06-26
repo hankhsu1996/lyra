@@ -120,7 +120,7 @@ auto RenderPackedArrayIntegerLiteral(
 auto RenderIntegerLiteralExpr(
     const ScopeView& view, const mir::Expr& expr,
     const mir::IntegerLiteral& lit) -> std::string {
-  const auto& ty = view.Unit().GetType(expr.type);
+  const auto& ty = view.Unit().types.Get(expr.type);
   if (!ty.IsIntegralPacked()) {
     throw InternalError(
         "RenderIntegerLiteralExpr: IntegerLiteral not typed as "
@@ -148,7 +148,7 @@ auto RenderRealLiteralExpr(
   // rejects (a digit sequence followed by `f` is not a valid float suffix).
   // Force a decimal point when the formatted body has neither `.` nor an
   // exponent, so `0` -> `0.0`, `42` -> `42.0`.
-  const auto& ty = view.Unit().GetType(expr.type);
+  const auto& ty = view.Unit().types.Get(expr.type);
   const bool is_short = ty.Kind() == mir::TypeKind::kShortReal;
   std::string body = is_short ? std::format("{:.9g}", r.value)
                               : std::format("{:.17g}", r.value);
@@ -340,7 +340,7 @@ auto MemberFieldName(const ScopeView& view, const mir::MemberAccessExpr& m)
     -> const std::string& {
   const mir::TypeId recv_type = view.Expr(m.receiver).type;
   const auto& ptr =
-      std::get<mir::PointerType>(view.Unit().GetType(recv_type).data);
+      std::get<mir::PointerType>(view.Unit().types.Get(recv_type).data);
   return view.ClassByObjectType(ptr.pointee).members.Get(m.member.var).name;
 }
 
@@ -521,7 +521,7 @@ auto RenderClosureExpr(
   };
 
   if (std::holds_alternative<mir::CoroutineType>(
-          view.Unit().GetType(result_type).data)) {
+          view.Unit().types.Get(result_type).data)) {
     for (const mir::LocalId param : code.params) {
       if (!is_bound(param)) {
         throw InternalError(
@@ -583,7 +583,7 @@ auto RenderQueueConcat(
       RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id));
   for (std::size_t i = 0; i < c.operands.size(); ++i) {
     const auto& op_expr = view.Expr(c.operands[i]);
-    const auto& op_ty = view.Unit().GetType(op_expr.type);
+    const auto& op_ty = view.Unit().types.Get(op_expr.type);
     const bool spread =
         std::holds_alternative<mir::QueueType>(op_ty.data) ||
         std::holds_alternative<mir::DynamicArrayType>(op_ty.data) ||
@@ -600,7 +600,7 @@ auto RenderQueueConcat(
 auto RenderConcatExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
     -> std::string {
-  const auto& result_ty = view.Unit().GetType(expr.type);
+  const auto& result_ty = view.Unit().types.Get(expr.type);
   if (std::holds_alternative<mir::QueueType>(result_ty.data)) {
     return RenderQueueConcat(view, result_ty, c);
   }
@@ -639,7 +639,7 @@ auto RenderConcatExpr(
 auto RenderArrayLiteralExpr(
     const ScopeView& view, const mir::Expr& expr,
     const mir::ArrayLiteralExpr& a) -> std::string {
-  const auto& container_ty = view.Unit().GetType(expr.type);
+  const auto& container_ty = view.Unit().types.Get(expr.type);
   const mir::TypeId elem_type_id = std::visit(
       [](const auto& ty) -> mir::TypeId {
         using TyT = std::decay_t<decltype(ty)>;
@@ -688,11 +688,11 @@ auto RenderReplicationExpr(
     -> std::string {
   std::string count = RenderExpr(view, view.Expr(r.count));
   std::string concat = RenderExpr(view, view.Expr(r.concat));
-  const auto& count_ty = view.Unit().GetType(view.Expr(r.count).type);
+  const auto& count_ty = view.Unit().types.Get(view.Expr(r.count).type);
   std::string count_text = count_ty.IsIntegralPacked()
                                ? std::format("({}).ToInt64()", count)
                                : count;
-  const auto& result_ty = view.Unit().GetType(expr.type);
+  const auto& result_ty = view.Unit().types.Get(expr.type);
   if (result_ty.IsIntegralPacked()) {
     return std::format(
         "lyra::value::PackedArray::Replicate({}, "

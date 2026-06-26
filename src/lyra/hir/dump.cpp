@@ -788,7 +788,10 @@ class HirDumper {
     Line("Types:");
     Indent();
     for (std::size_t i = 0; i < u.types.size(); ++i) {
-      Line(std::format("[{}] {}", i, FormatType(u.types[i])));
+      Line(
+          std::format(
+              "[{}] {}", i,
+              FormatType(u.types.Get(TypeId{static_cast<std::uint32_t>(i)}))));
     }
     Dedent();
 

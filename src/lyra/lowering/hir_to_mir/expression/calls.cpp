@@ -55,7 +55,7 @@ auto MaybeWrapObservableLhsWithMutate(
     -> mir::ExprId {
   const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
   const bool root_is_cell = mir::IsObservableCellType(
-      lowerer.Module().Unit().GetType(block.exprs.Get(root_id).type));
+      lowerer.Module().Unit().types.Get(block.exprs.Get(root_id).type));
   if (!root_is_cell) return lhs_id;
   const mir::ExprId services_id =
       block.exprs.Add(BuildServicesCallExpr(lowerer.Module(), frame));
@@ -185,7 +185,7 @@ auto ArrayMethodResultProtoType(
           [](const mir::AssociativeArrayType& t) { return t.element_type; },
           [result_type](const auto&) { return result_type; },
       },
-      module.Unit().GetType(result_type).data);
+      module.Unit().types.Get(result_type).data);
 }
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
@@ -202,7 +202,7 @@ auto BuildArrayMethodClosure(
     const hir::WithClause* with_clause) -> diag::Result<mir::Expr> {
   const auto& module = lowerer.Module();
   const auto& hir_exprs = lowerer.HirExprs();
-  const auto& hir_recv_ty = module.Hir().GetType(hir_receiver_type);
+  const auto& hir_recv_ty = module.Hir().types.Get(hir_receiver_type);
   const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
   if (!element_type.has_value()) {
     throw InternalError(

@@ -113,7 +113,7 @@ auto StringBytesToConstant(
 auto LowerHirStringLiteral(
     const ModuleLowerer& module, const WalkFrame& frame,
     const hir::StringLiteral& s, mir::TypeId type) -> mir::Expr {
-  const auto& ty = module.Unit().GetType(type);
+  const auto& ty = module.Unit().types.Get(type);
   if (ty.IsIntegralPacked()) {
     return mir::Expr{
         .data =
@@ -216,7 +216,7 @@ auto LowerCrossUnitVarRefExpr(
   const mir::ExprId self_ref =
       frame.current_block->exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
   const auto* ptr = std::get_if<mir::PointerType>(
-      &lowerer.Module().Unit().GetType(meta.slot_type).data);
+      &lowerer.Module().Unit().types.Get(meta.slot_type).data);
   if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
     const mir::ExprId pointer = frame.current_block->exprs.Add(
         mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type));

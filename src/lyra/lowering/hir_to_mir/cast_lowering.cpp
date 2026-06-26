@@ -134,8 +134,8 @@ auto BuildValueConversion(
   if (src_type == dst_type) {
     return operand_expr;
   }
-  const auto& src_ty = unit.GetType(src_type);
-  const auto& dst_ty = unit.GetType(dst_type);
+  const auto& src_ty = unit.types.Get(src_type);
+  const auto& dst_ty = unit.types.Get(dst_type);
   const auto src_kind = src_ty.Kind();
   const auto dst_kind = dst_ty.Kind();
 

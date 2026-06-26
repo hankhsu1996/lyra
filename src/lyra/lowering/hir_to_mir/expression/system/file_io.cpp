@@ -216,7 +216,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
       // generic CallExpr whose operands are the temp, the descriptor, and --
       // for the memory form -- the declared bounds plus start / count.
       const auto& dest_hir = hir_proc.exprs.Get(*call.arguments[0]);
-      const auto& dest_hir_ty = module.Hir().GetType(dest_hir.type);
+      const auto& dest_hir_ty = module.Hir().types.Get(dest_hir.type);
       const auto& builtins = process.Module().Unit().builtins;
       const auto* unpacked =
           std::get_if<hir::UnpackedArrayType>(&dest_hir_ty.data);
@@ -236,7 +236,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
         // Memory form. Only 1D unpacked of integral packed elements is in
         // scope; struct / union / multi-dim / dynamic-array element types
         // are deferred.
-        const auto& elem_ty = module.Hir().GetType(unpacked->element_type);
+        const auto& elem_ty = module.Hir().types.Get(unpacked->element_type);
         if (!std::holds_alternative<hir::PackedArrayType>(elem_ty.data)) {
           return diag::Fail(
               diag::DiagCode::kUnsupportedSubroutineArgument,

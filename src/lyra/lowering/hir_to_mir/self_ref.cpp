@@ -57,7 +57,7 @@ auto BuildStructuralMemberAccessExpr(
 auto BuildReferenceArg(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId {
-  const auto& pointee_ty = unit.GetType(pointee);
+  const auto& pointee_ty = unit.types.Get(pointee);
   // Referencing a value that is itself a reference seals to the same final
   // cell: a `Ref<T>` taken over a `Ref<T>` aliases what that reference aliases,
   // never nesting into `Ref<Ref<T>>` (LRM 23.3.3.2). The argument is the
@@ -75,8 +75,8 @@ auto BuildReferenceArg(
   if (std::holds_alternative<mir::ObservableType>(pointee_ty.data)) {
     pointee = std::get<mir::ObservableType>(pointee_ty.data).value;
   }
-  const mir::TypeId ref_type = unit.AddType(
-      mir::TypeData{mir::RefType{.pointee = pointee, .is_const = false}});
+  const mir::TypeId ref_type =
+      unit.types.Intern(mir::RefType{.pointee = pointee, .is_const = false});
   return block.exprs.Add(
       mir::Expr{
           .data =

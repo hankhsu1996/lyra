@@ -57,7 +57,7 @@ auto LowerDestructuringAssign(
   std::uint64_t total_width = 0;
   for (const hir::ExprId op_id : lhs_concat.operands) {
     const hir::Expr& op = hir_proc.exprs.Get(op_id);
-    const hir::Type& op_ty = process.Module().Hir().GetType(op.type);
+    const hir::Type& op_ty = process.Module().Hir().types.Get(op.type);
     if (!op_ty.IsPackedArray()) {
       throw InternalError(
           "LowerDestructuringAssign: destructuring operand is not "
@@ -74,13 +74,13 @@ auto LowerDestructuringAssign(
         "LowerDestructuringAssign: destructuring total width must be positive");
   }
 
-  const mir::TypeId temp_type = process.Module().Unit().AddType(
-      mir::TypeData{mir::PackedArrayType{
+  const mir::TypeId temp_type = process.Module().Unit().types.Intern(
+      mir::PackedArrayType{
           .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
           .signedness = mir::Signedness::kUnsigned,
           .dims = {mir::PackedRange{
               .left = static_cast<std::int64_t>(total_width) - 1, .right = 0}},
-          .form = mir::PackedArrayForm::kExplicit}});
+          .form = mir::PackedArrayForm::kExplicit});
 
   const mir::ExprId temp_default_init = wrapper.exprs.Add(
       BuildDefaultValueExpr(process.Module(), wrapper_frame, temp_type));
@@ -134,13 +134,13 @@ auto LowerDestructuringAssign(
             static_cast<std::int64_t>(w)));
     const mir::ExprId temp_ref =
         wrapper.exprs.Add(mir::Expr{.data = snapshot_ref, .type = temp_type});
-    const mir::TypeId slice_type = process.Module().Unit().AddType(
-        mir::TypeData{mir::PackedArrayType{
+    const mir::TypeId slice_type = process.Module().Unit().types.Intern(
+        mir::PackedArrayType{
             .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
             .signedness = mir::Signedness::kUnsigned,
             .dims = {mir::PackedRange{
                 .left = static_cast<std::int64_t>(w) - 1, .right = 0}},
-            .form = mir::PackedArrayForm::kExplicit}});
+            .form = mir::PackedArrayForm::kExplicit});
     const mir::ExprId raw_slice_id = wrapper.exprs.Add(
         mir::Expr{
             .data =
@@ -258,7 +258,7 @@ auto LowerSubroutineCallWithWritebacks(
   const mir::TypeId payload_type = NormalizeCompletionPayload(unit, components);
   const bool is_task = decl.kind == hir::SubroutineKind::kTask;
   const mir::TypeId call_result_type =
-      is_task ? CoroutineOf(unit, payload_type) : payload_type;
+      is_task ? unit.types.CoroutineOf(payload_type) : payload_type;
 
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size() + 1);
@@ -324,7 +324,7 @@ auto LowerSubroutineCallWithWritebacks(
       mir::ExprId actual_id = wrapper.exprs.Add(*std::move(arg_or));
       const mir::ExprId root_id = FindLhsRootId(wrapper, actual_id);
       const bool root_is_cell = mir::IsObservableCellType(
-          unit.GetType(wrapper.exprs.Get(root_id).type));
+          unit.types.Get(wrapper.exprs.Get(root_id).type));
       if (root_is_cell && root_id != actual_id) {
         const mir::ExprId services_id =
             wrapper.exprs.Add(BuildServicesCallExpr(module, wrapper_frame));

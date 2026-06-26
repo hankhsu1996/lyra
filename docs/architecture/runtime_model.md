@@ -64,10 +64,9 @@ an upward reference to an ancestor, a `$root`-anchored path (see `reference_reso
 `emission_model.md`).
 
 `elaboration_lifecycle.md` refines this construction-vs-simulation boundary into ordered phases
-(build / resolve / initialize / activate) and is the authority on _when_ each piece runs. It
-supersedes the "downward resolved in the constructor, upward at bind" split described historically
-here: all cross-instance references resolve in one resolve phase after the shell graph is built, and
-variable initializers run in the initialize phase after resolution, not inside the constructor. The
+(build / resolve / initialize / activate) and is the authority on _when_ each piece runs: all
+cross-instance references resolve in one resolve phase after the shell graph is built, and variable
+initializers run in the initialize phase after resolution, not inside the constructor. The
 constructor allocates the shell; it is not the executor of elaboration semantics.
 
 ## Generate is not compile-time expansion

@@ -133,7 +133,7 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       expr.data);
   if (!raw_or) return raw_or;
   if (mir::IsObservableCellType(
-          lowerer.Module().Unit().GetType(raw_or->type))) {
+          lowerer.Module().Unit().types.Get(raw_or->type))) {
     const mir::ExprId cell_id =
         frame.current_block->exprs.Add(*std::move(raw_or));
     return mir::MakeObservableGetCallExpr(cell_id, result_type);

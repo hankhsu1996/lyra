@@ -83,7 +83,7 @@ auto BuildPrintValueItem(
   // each format directly, without building a string value. Only an unpacked
   // byte array is not directly formattable, so it lifts to a string value
   // here.
-  const auto& value_type = process.Module().Unit().GetType(lowered.type);
+  const auto& value_type = process.Module().Unit().types.Get(lowered.type);
   if (spec.kind == value::FormatKind::kString &&
       value_type.Kind() != mir::TypeKind::kString &&
       !value_type.IsIntegralPacked()) {
@@ -338,9 +338,9 @@ auto BuildPrintItemsArray(
     elements.push_back(block.exprs.Add(
         BuildPrintItemExpr(unit, block, item, time_unit_power)));
   }
-  const mir::TypeId array_type = unit.AddType(
-      mir::TypeData{mir::UnpackedArrayType{
-          .element_type = unit.builtins.print_item, .size = items.size()}});
+  const mir::TypeId array_type = unit.types.Intern(
+      mir::UnpackedArrayType{
+          .element_type = unit.builtins.print_item, .size = items.size()});
   return mir::Expr{
       .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
       .type = array_type};

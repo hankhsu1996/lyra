@@ -74,7 +74,7 @@ auto ConnectElementPorts(
     }
     auto type_id = module.InternType(port.getType(), span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
-    if (!module.Unit().GetType(*type_id).IsValueChangeObservable()) {
+    if (!module.Unit().types.Get(*type_id).IsValueChangeObservable()) {
       return PortConnectionUnsupported(
           span,
           "port connection of a handle / event type is not yet supported");

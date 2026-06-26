@@ -49,7 +49,7 @@ auto BuildObservablePtrExpr(
       frame.EnclosingClassAtHops(hops).members.Get(var).type;
   const mir::ExprId member_access_id =
       block.exprs.Add(BuildStructuralMemberAccessExpr(frame, unit, hops, var));
-  const auto& field_type_data = unit.GetType(field_type).data;
+  const auto& field_type_data = unit.types.Get(field_type).data;
 
   if (std::holds_alternative<mir::ExternalRefType>(field_type_data)) {
     return block.exprs.Add(
@@ -68,10 +68,8 @@ auto BuildObservablePtrExpr(
     return member_access_id;
   }
 
-  const mir::TypeId ptr_type = unit.AddType(
-      mir::PointerType{
-          .pointee = field_type,
-          .ownership = mir::PointerOwnership::kBorrowed});
+  const mir::TypeId ptr_type =
+      unit.types.PointerTo(field_type, mir::PointerOwnership::kBorrowed);
   return block.exprs.Add(mir::MakeAddressOfExpr(member_access_id, ptr_type));
 }
 

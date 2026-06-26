@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <utility>
 #include <vector>
 
 #include "lyra/mir/class.hpp"
@@ -9,15 +8,20 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_interner.hpp"
 
 namespace lyra::mir {
 
 struct DeferredCheckSite {};
 
-// Canonical TypeIds for primitives the lowering and rendering frequently
-// materialize (literal `int` type, 1-bit selector type, void result of system
-// tasks, etc.). Populated by `CompilationUnit`'s constructor; consumers read
-// them off the unit.
+// Named TypeIds the lowering and rendering reuse. Most are language or runtime
+// atomic types (the literal `int` type, the 1-bit selector type, the `void`
+// result of system tasks). `scope_ptr` and `coroutine_void` are not atomic:
+// they are convenience aliases for canonical instances of composite types
+// (`Pointer<Scope>`, `Coroutine<void>`) that nearly every scope and process
+// materializes -- the interner gives them their identity, these fields only
+// name them. Populated by `CompilationUnit`'s constructor; consumers read them
+// off the unit.
 struct BuiltinMirTypes {
   TypeId int32;
   TypeId integer;
@@ -37,92 +41,78 @@ struct BuiltinMirTypes {
   TypeId format_spec;
   TypeId time_format;
   TypeId hierarchy_segment;
-  TypeId coroutine;
+  TypeId coroutine_void;
   TypeId wildcard_index;
 };
 
 struct CompilationUnit {
-  std::vector<Type> types;
+  TypeInterner types;
   BuiltinMirTypes builtins;
   Class top_class;
   std::vector<DeferredCheckSite> deferred_check_sites;
 
   CompilationUnit()
       : builtins{
-            .int32 = AddType(
-                TypeData{PackedArrayType{
+            .int32 = types.Intern(
+                PackedArrayType{
                     .atom = BitAtom::kBit,
                     .signedness = Signedness::kSigned,
                     .dims = {PackedRange{.left = 31, .right = 0}},
-                    .form = PackedArrayForm::kInt}}),
-            .integer = AddType(
-                TypeData{PackedArrayType{
+                    .form = PackedArrayForm::kInt}),
+            .integer = types.Intern(
+                PackedArrayType{
                     .atom = BitAtom::kLogic,
                     .signedness = Signedness::kSigned,
                     .dims = {PackedRange{.left = 31, .right = 0}},
-                    .form = PackedArrayForm::kInteger}}),
-            .bit1 = AddType(
-                TypeData{PackedArrayType{
+                    .form = PackedArrayForm::kInteger}),
+            .bit1 = types.Intern(
+                PackedArrayType{
                     .atom = BitAtom::kBit,
                     .signedness = Signedness::kUnsigned,
                     .dims = {PackedRange{.left = 0, .right = 0}},
-                    .form = PackedArrayForm::kExplicit}}),
-            .string = AddType(TypeData{StringType{}}),
-            .void_type = AddType(TypeData{VoidType{}}),
-            .realtime = AddType(TypeData{RealTimeType{}}),
-            .time = AddType(
-                TypeData{PackedArrayType{
+                    .form = PackedArrayForm::kExplicit}),
+            .string = types.Intern(StringType{}),
+            .void_type = types.Intern(VoidType{}),
+            .realtime = types.Intern(RealTimeType{}),
+            .time = types.Intern(
+                PackedArrayType{
                     .atom = BitAtom::kLogic,
                     .signedness = Signedness::kUnsigned,
                     .dims = {PackedRange{.left = 63, .right = 0}},
-                    .form = PackedArrayForm::kTime}}),
-            .services = AddType(TypeData{ServicesType{}}),
-            .scope_ptr = AddType(
-                TypeData{PointerType{
-                    .pointee = AddType(TypeData{ScopeType{}}),
-                    .ownership = PointerOwnership::kBorrowed}}),
-            .files = AddType(TypeData{FilesType{}}),
-            .diagnostic = AddType(TypeData{DiagnosticType{}}),
-            .channel_cancellation = AddType(
-                TypeData{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kChannelCancellation}}),
-            .print_item = AddType(
-                TypeData{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPrintItem}}),
-            .print_literal_item = AddType(
-                TypeData{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPrintLiteralItem}}),
-            .print_value_item = AddType(
-                TypeData{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPrintValueItem}}),
-            .format_spec = AddType(
-                TypeData{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kFormatSpec}}),
-            .time_format = AddType(
-                TypeData{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kTimeFormat}}),
-            .hierarchy_segment = AddType(
-                TypeData{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kHierarchySegment}}),
-            .coroutine = TypeId{},
-            .wildcard_index = AddType(TypeData{WildcardIndexType{}}),
+                    .form = PackedArrayForm::kTime}),
+            .services = types.Intern(ServicesType{}),
+            .scope_ptr = types.PointerTo(
+                types.Intern(ScopeType{}), PointerOwnership::kBorrowed),
+            .files = types.Intern(FilesType{}),
+            .diagnostic = types.Intern(DiagnosticType{}),
+            .channel_cancellation = types.Intern(
+                RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kChannelCancellation}),
+            .print_item = types.Intern(
+                RuntimeLibraryType{.kind = RuntimeLibraryKind::kPrintItem}),
+            .print_literal_item = types.Intern(
+                RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPrintLiteralItem}),
+            .print_value_item = types.Intern(
+                RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPrintValueItem}),
+            .format_spec = types.Intern(
+                RuntimeLibraryType{.kind = RuntimeLibraryKind::kFormatSpec}),
+            .time_format = types.Intern(
+                RuntimeLibraryType{.kind = RuntimeLibraryKind::kTimeFormat}),
+            .hierarchy_segment = types.Intern(
+                RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kHierarchySegment}),
+            .coroutine_void = TypeId{},
+            .wildcard_index = types.Intern(WildcardIndexType{}),
         } {
-    // A bare coroutine yields nothing, so its completion payload is `Void`. It
-    // is interned in the body rather than the member list because it reads back
-    // the already-interned `void_type`; the member-list value above is an
-    // unused placeholder overwritten here.
-    builtins.coroutine =
-        AddType(TypeData{CoroutineType{.payload = builtins.void_type}});
-  }
-
-  [[nodiscard]] auto GetType(TypeId id) const -> const Type& {
-    return types.at(id.value);
-  }
-
-  auto AddType(TypeData data) -> TypeId {
-    const TypeId id{static_cast<std::uint32_t>(types.size())};
-    types.push_back(Type{.data = std::move(data)});
-    return id;
+    // `Coroutine<void>` is the completion type of a process or void task. It is
+    // built in the constructor body because it reads back the already-interned
+    // `void_type`; the member-list entry above is an unused placeholder
+    // overwritten here. The field is a convenience alias for the canonical
+    // instance, not a deduplication mechanism -- interning `Coroutine<void>`
+    // anywhere returns this same id.
+    builtins.coroutine_void = types.CoroutineOf(builtins.void_type);
   }
 
   // Backing-vector position is the id, matching TypeId / LocalId.

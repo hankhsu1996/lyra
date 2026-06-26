@@ -17,9 +17,10 @@ auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
 
   for (std::size_t i = 0; i < hir_->types.size(); ++i) {
     const hir::TypeId hir_id{static_cast<std::uint32_t>(i)};
-    auto mir_data = TranslateTypeData(hir_->types[i].data, hir_->types[i].span);
+    const hir::Type& hir_type = hir_->types.Get(hir_id);
+    auto mir_data = TranslateTypeData(hir_type.data, hir_type.span);
     if (!mir_data) return std::unexpected(std::move(mir_data.error()));
-    const mir::TypeId mir_id = unit_.AddType(*std::move(mir_data));
+    const mir::TypeId mir_id = unit_.types.Intern(*std::move(mir_data));
     MapType(hir_id, mir_id);
   }
 

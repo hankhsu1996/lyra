@@ -37,13 +37,13 @@ namespace {
 auto LiftStringSource(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId source_type,
     mir::ExprId source_id) -> mir::ExprId {
-  const mir::TypeKind kind = module.Unit().GetType(source_type).Kind();
+  const mir::TypeKind kind = module.Unit().types.Get(source_type).Kind();
   if (kind == mir::TypeKind::kString) return source_id;
 
   if (kind == mir::TypeKind::kUnpackedArray) {
     const auto& ua = std::get<mir::UnpackedArrayType>(
-        module.Unit().GetType(source_type).data);
-    const auto& elem = module.Unit().GetType(ua.element_type);
+        module.Unit().types.Get(source_type).data);
+    const auto& elem = module.Unit().types.Get(ua.element_type);
     if (!elem.IsIntegralPacked() || elem.AsIntegralPacked().BitWidth() != 8U) {
       throw InternalError(
           "LiftStringSource: $sscanf unpacked-array source must have an "
@@ -65,7 +65,7 @@ auto LiftStringSource(
 auto LiftStringFormat(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId format_type,
     mir::ExprId format_id) -> mir::ExprId {
-  const auto& t = module.Unit().GetType(format_type);
+  const auto& t = module.Unit().types.Get(format_type);
   if (t.Kind() == mir::TypeKind::kString) return format_id;
   if (!t.IsIntegralPacked()) {
     throw InternalError(
@@ -106,7 +106,7 @@ auto ValidateTargetType(
     const mir::CompilationUnit& unit, mir::TypeId mir_type,
     support::ScanSourceKind source_kind, diag::SourceSpan span)
     -> diag::Result<void> {
-  const auto& target = unit.GetType(mir_type);
+  const auto& target = unit.types.Get(mir_type);
   if (target.Kind() == mir::TypeKind::kString) return {};
   if (target.IsIntegralPacked()) return {};
   return diag::Fail(
@@ -176,7 +176,7 @@ auto LowerScanSystemSubroutineCall(
   mir::ExprId source_id{};
   mir::ExprId fd_id{};
   if (is_file) {
-    if (unit.GetType(raw_source_type).Kind() != mir::TypeKind::kPackedArray) {
+    if (unit.types.Get(raw_source_type).Kind() != mir::TypeKind::kPackedArray) {
       throw InternalError(
           "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
     }

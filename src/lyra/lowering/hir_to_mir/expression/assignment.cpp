@@ -319,7 +319,8 @@ auto LowerStringElementAssign(
           mir::ExprId services) -> mir::Expr {
         mir::ExprId recv = target;
         const mir::ExprId root = FindLhsRootId(blk, target);
-        if (mir::IsObservableCellType(unit.GetType(blk.exprs.Get(root).type))) {
+        if (mir::IsObservableCellType(
+                unit.types.Get(blk.exprs.Get(root).type))) {
           recv = RewriteLhsRootWithMutate(unit, blk, target, services);
         }
         return MakeStringMethodCallExpr(
@@ -345,7 +346,7 @@ auto LowerHirAssignExprProc(
   const auto& hir_process = process.HirBody();
   const hir::Expr& hir_lhs = hir_process.exprs.Get(a.lhs);
   if (const auto* sel = std::get_if<hir::ElementSelectExpr>(&hir_lhs.data)) {
-    const hir::Type& base_ty = process.Module().Hir().GetType(
+    const hir::Type& base_ty = process.Module().Hir().types.Get(
         hir_process.exprs.Get(sel->base_value).type);
     if (base_ty.Kind() == hir::TypeKind::kString) {
       return LowerStringElementAssign(

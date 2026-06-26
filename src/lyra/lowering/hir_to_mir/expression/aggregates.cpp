@@ -113,7 +113,7 @@ auto LowerHirAssignmentPatternExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  if (IsArrayContainerType(lowerer.Module().Unit().GetType(result_type))) {
+  if (IsArrayContainerType(lowerer.Module().Unit().types.Get(result_type))) {
     return BuildArrayConstructionCall(
         lowerer.Module(), frame, result_type, std::move(element_ids));
   }
@@ -135,7 +135,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  if (IsArrayContainerType(lowerer.Module().Unit().GetType(result_type))) {
+  if (IsArrayContainerType(lowerer.Module().Unit().types.Get(result_type))) {
     const std::uint64_t count =
         ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
     return BuildArrayReplicationFlatList(
@@ -171,7 +171,7 @@ auto LowerHirDynamicArrayNewExprProc(
   if (!size_or) return std::unexpected(std::move(size_or.error()));
   const mir::ExprId size_id = block.exprs.Add(*std::move(size_or));
 
-  const auto& result_ty = process.Module().Unit().GetType(result_type);
+  const auto& result_ty = process.Module().Unit().types.Get(result_type);
   const auto* da = std::get_if<mir::DynamicArrayType>(&result_ty.data);
   if (da == nullptr) {
     throw InternalError(
