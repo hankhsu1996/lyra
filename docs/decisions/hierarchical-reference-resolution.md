@@ -20,10 +20,9 @@ reference reaches its target, once, and where that resolution runs.
 
 A cross-unit reference resolves **once** into a stored direct pointer to the leaf cell, read
 directly on the simulation hot path with no per-access lookup (`reference_resolution.md`). It
-reaches the leaf **by name** through the runtime scope SDK (`GetChild` / `GetSignal`), because the
-referrer knows the target's name but not its layout (`emission_model.md`,
-`compilation_unit_model.md`). The two directions differ in where the navigation is composed and when
-it runs, by necessity:
+reaches the leaf **by name** through the runtime scope SDK, because the referrer knows the target's
+name but not its layout (`emission_model.md`, `compilation_unit_model.md`). The two directions
+differ in where the navigation is composed and when it runs, by necessity:
 
 - **Downward** (`c.x`): the referrer owns the head child, so the path from `self` is known at the
   referrer's compile time. The navigation is emitted as MIR by-name calls and runs in the referrer's
@@ -32,9 +31,12 @@ it runs, by necessity:
   ancestor, and the same artifact sits at many depths, so the path needs the whole tree -- which
   does not exist when the referrer constructs. The reference is carried as a member whose **type**
   is a runtime wrapper, and the climb-and-fetch runs as library behavior at the **bind step**, after
-  the whole tree exists (`runtime_model.md`). The climb matches the ancestor by its module
-  **definition** name (a module-instance head) or by the scope's **own** name (a named generate
-  block, or the root).
+  the whole tree exists (`runtime_model.md`). The frontend has already resolved the head to a
+  specific scope and canonicalized its identity (LRM 23.8 / 23.9 instance-name precedence is a
+  frontend responsibility); the runtime climb walks the enclosing chain by that canonical identity
+  and never re-implements name-resolution semantics. Wrapper-construction arguments reach the
+  backend through MIR's value-expression primitives, not through the wrapper type's payload
+  (`backend_contract.md`).
 
 This asymmetry -- emitted constructor navigation downward, library climb at bind upward -- is
 `emission_model.md`'s "storage and fill by direction." Both share the single by-name SDK and the
@@ -55,12 +57,13 @@ call a getter on in any case.
 
 ## Why an upward reference is a self-climb
 
-The referrer resolves alone, by climbing its own parent chain; the ancestor is never involved. The
-depth is not a compile-time constant -- one artifact sits at many depths -- so it cannot be baked
-in. The reference cannot be threaded down from the ancestor, because a unit does not know which
-descendants reference it (a referrer list is forbidden, `compilation_unit_model.md`). And the climb
-matches by name, never by a typed cast to the ancestor's class, which would name a unit the referrer
-does not depend on. So the referrer holds a wrapper-typed member and the runtime climbs at bind.
+The referrer resolves alone, by climbing its own enclosing chain; the ancestor is never involved.
+The depth is not a compile-time constant -- one artifact sits at many depths -- so it cannot be
+baked in. The reference cannot be threaded down from the ancestor, because a unit does not know
+which descendants reference it (a referrer list is forbidden, `compilation_unit_model.md`). And the
+climb matches by name, never by a typed cast to the ancestor's class, which would name a unit the
+referrer does not depend on. So the referrer holds a wrapper-typed member and the runtime climbs at
+bind.
 
 ## Rejected alternatives
 

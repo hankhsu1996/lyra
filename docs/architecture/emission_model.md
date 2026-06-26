@@ -86,6 +86,9 @@ non-conforming code, not as a relaxation of the contract.
   stored direct reference; this doc defines how a backend realizes that without breaking unit
   independence (downward link-binding into a slot vs upward runtime navigation through an extern
   member).
+- `backend_contract.md` defines the per-node within-an-artifact realization rules: how a MIR node
+  becomes target-language source. This doc draws the artifact boundary; `backend_contract.md`
+  governs what happens inside.
 - `runtime_distribution.md` owns where the SDK/runtime lives; this doc owns the SDK's role as the
   resolution substrate.
 - `runtime_model.md` places the fill in the constructor context and the read in the simulation
@@ -116,10 +119,14 @@ emits a by-name access; the link resolves it; the parent's own output carries no
 `always_comb x = Top.g;` (upward): `Top` is an ancestor the referrer does not instantiate, so the
 referrer knows nothing about `Top` at compile time. It cannot name `Top` or include its artifact.
 The referrer holds the reference as an ordinary member whose type marks it external; at Bind that
-member climbs the parent chain to the ancestor whose instance or module name matches, obtains the
-`g` signal from that node through the SDK, and stores the direct reference. The simulation-time read
-and change observation then read that member directly (`reference_resolution.md` inv 5); no
-cross-unit slot or side table records the reference.
+member climbs the enclosing chain to the scope denoted by the head's canonical structural identity
+(the frontend resolves and canonicalizes the head; runtime does not re-implement name-resolution
+semantics), obtains the `g` signal from that scope through the SDK, and stores the direct reference.
+The simulation-time read and change observation then read that member directly
+(`reference_resolution.md` inv 5); no cross-unit slot or side table records the reference.
+Construction state for the extern member (the canonical head identity, the descent suffix, the leaf
+signal name) arrives as ordinary MIR primitives in the constructor body, not as type payload --
+`backend_contract.md` keeps render mechanical.
 
 The current C++ backend collapses all units into a single translation unit (one `main.cpp` that
 transitively includes every unit header, with bodies inline). That is a transitional convenience of

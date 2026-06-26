@@ -33,6 +33,8 @@ Read top to bottom on first pass:
     construction-time resolution
 16. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
     cross-unit resolution through the SDK
+16. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
+    emission; what a backend may and may not name in render
 17. `identity_and_ownership.md` -- identity rules and forbidden shapes
 18. `lowering_boundaries.md` -- what each lowering may and may not do
 19. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
@@ -56,6 +58,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Instance array as a data type; multiplicity vs generate axes              | `hierarchy_and_generate.md` |
 | Intra-unit vs cross-unit references; compile-time vs construction resolve | `reference_resolution.md`   |
 | Per-unit artifact emission; cross-unit realization via the SDK; no wiring | `emission_model.md`         |
+| Per-node within-artifact render; type mapping vs value emission           | `backend_contract.md`       |
 | Parameter values, specialization keys, per-specialization artifacts       | `specialization_model.md`   |
 | Identity rules; ownership; forbidden identity shapes                      | `identity_and_ownership.md` |
 | Lowering permissions (what each lowering may and may not do)              | `lowering_boundaries.md`    |
@@ -83,14 +86,14 @@ the decision's subject, top to bottom, and **check the design against every rele
 "Forbidden Shapes" before proposing it**. A design that matches a Forbidden Shape is wrong even if
 it compiles and passes tests.
 
-| Decision touches...                                          | Binding docs (read all, top-down)                                                                         |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Cross-unit access / hierarchical refs / ports / connectivity | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `elaboration_lifecycle` |
-| Backend emit / artifact structure / SDK boundary             | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `runtime_distribution`  |
-| Compilation boundaries / unit dependencies / incrementality  | `north_star`, `compilation_unit_model`, `incremental_build`                                               |
-| Hierarchy / generate / object graph / construction           | `north_star`, `hierarchy_and_generate`, `runtime_model`, `elaboration_lifecycle`                          |
-| Identity / ownership / id kinds                              | `north_star`, `identity_and_ownership`                                                                    |
-| Object model / classes / inheritance / dispatch / handles    | `north_star`, `object_model`, `mir`, `callable`, `runtime_model`                                          |
+| Decision touches...                                          | Binding docs (read all, top-down)                                                                                            |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Cross-unit access / hierarchical refs / ports / connectivity | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `elaboration_lifecycle`                    |
+| Backend emit / artifact structure / SDK boundary             | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `backend_contract`, `runtime_distribution` |
+| Compilation boundaries / unit dependencies / incrementality  | `north_star`, `compilation_unit_model`, `incremental_build`                                                                  |
+| Hierarchy / generate / object graph / construction           | `north_star`, `hierarchy_and_generate`, `runtime_model`, `elaboration_lifecycle`                                             |
+| Identity / ownership / id kinds                              | `north_star`, `identity_and_ownership`                                                                                       |
+| Object model / classes / inheritance / dispatch / handles    | `north_star`, `object_model`, `mir`, `callable`, `runtime_model`                                                             |
 
 The failure mode this guards against: anchoring on current code -- which may be a transitional
 shortcut -- instead of the contract. Current code that contradicts a contract is wrong; read the

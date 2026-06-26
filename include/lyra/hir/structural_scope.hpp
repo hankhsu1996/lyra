@@ -57,14 +57,10 @@ using PathStep = std::variant<MemberHop, IndexHop>;
 // Where a cross-unit reference starts its navigation. A downward reference
 // reaches into an owned child the referrer's own scope declares -- an
 // instance/instance-array member, or a generate block (LRM 27) identified by
-// its position in the scope. Both resolve to one owned-child companion var at
-// construction, so the navigation past the head is identical. An upward
-// reference (LRM 23.6) climbs the parent chain at construction to the nearest
-// matching ancestor named `ancestor_name`; from there both directions share
-// `path` to reach the leaf, by name across the unit boundary -- the referrer
-// never names the ancestor's unit type, which it does not depend on. The child
-// cannot know its depth at compile time, so it locates the ancestor by name
-// rather than a baked-in offset.
+// its position in the scope. An upward reference (LRM 23.6) locates its
+// starting scope at construction by climbing the enclosing chain. The child
+// cannot know its depth at compile time, so it locates the scope by name (or
+// as the `$root` anchor) rather than a baked-in offset.
 struct GenerateChildRef {
   GenerateId generate;
   StructuralScopeId scope;
@@ -73,21 +69,25 @@ struct DownwardHead {
   std::variant<InstanceMemberId, GenerateChildRef> child;
 };
 
-// How an upward reference's head identifies its ancestor on the parent chain.
-// A module-instance head matches the ancestor's module definition name (LRM
-// 23.8): the key is class-level, so one artifact serves every depth, and an
-// ancestor whose instance name merely equals it does not match. A named
-// generate block or a `$root`-anchored path instead matches the ancestor
-// scope's own name -- the generate-block label or `$root` -- because that name
-// is itself the lookup key (LRM 23.6, 23.8). The two keys compare against
-// different scopes at runtime, so the axis rides the head.
-enum class UpwardMatch : std::uint8_t { kDefName, kScopeName };
-
-struct UpwardHead {
-  std::string ancestor_name;
-  UpwardMatch match;
+// Where an upward cross-unit reference's navigation starts (LRM 23.8 / 23.9).
+// `UpwardRootHead` denotes the parent-less topmost scope -- the `$root`
+// source token identifies the climb target itself, so the descent suffix
+// starts past it. `UpwardNamedHead` carries the canonical structural identity
+// of the head -- its instance / generate-block name plus any per-dimension
+// index. In both cases the descent suffix is strictly below the anchor.
+struct UpwardRootHead {
+  auto operator==(const UpwardRootHead&) const -> bool = default;
 };
-using CrossUnitRefHead = std::variant<DownwardHead, UpwardHead>;
+
+struct UpwardNamedHead {
+  std::string head_name;
+  std::vector<std::uint32_t> head_indices;
+
+  auto operator==(const UpwardNamedHead&) const -> bool = default;
+};
+
+using CrossUnitRefHead =
+    std::variant<DownwardHead, UpwardRootHead, UpwardNamedHead>;
 
 // A cross-unit reference resolved once at construction. `head` is where
 // navigation starts; `path` carries the shared navigation from the head down to

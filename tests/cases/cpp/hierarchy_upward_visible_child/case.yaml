@@ -1,0 +1,11 @@
+id: cpp.hierarchy_upward_visible_child
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "shallow=7 deep=22 a=11 b_inst=99\n"

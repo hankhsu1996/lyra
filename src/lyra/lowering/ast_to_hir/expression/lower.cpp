@@ -173,7 +173,7 @@ auto LowerExprImpl(
       }
 
     case slang::ast::ExpressionKind::HierarchicalValue:
-      return LowerHierarchicalValueProc(
+      return LowerHierarchicalValue(
           module, frame, expr.as<slang::ast::HierarchicalValueExpression>());
 
     case slang::ast::ExpressionKind::LValueReference:

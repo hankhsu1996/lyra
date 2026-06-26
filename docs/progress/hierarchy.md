@@ -141,12 +141,17 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       by-name walk. A top-level block now adopts `$root` as its parent so an upward climb from
       inside a top reaches the root. Covered for a scalar named generate block; an indexed
       loop-generate head (`blk[i].x`) is rejected with a clean diagnostic and remains.
-- [ ] D2d -- LRM 23.9 instance-name precedence: when the first component is written as an instance
-      name and several instances of the same module nest on the chain, the reference must bind the
-      named instance. Today the climb keys on the module name, so it can silently bind the nearer
-      same-module ancestor instead -- the one form that resolves wrong without an error. The common
-      module-name form is correct at any depth; this gap needs the source-written first identifier,
-      which the elaborated AST does not retain.
+- [x] D2d -- LRM 23.8 step b / 23.9: the climb visits each enclosing scope's children rather than
+      the ancestor itself, so the head can be a sibling of any enclosing scope rather than the
+      closest enclosing scope. Two generate blocks at the same level reading each other's state
+      through `<sibling_label>.<member>` resolves through this path; sibling-of-grandparent at any
+      depth resolves through the same path. The frontend canonicalizes the head's identity (LRM 23.9
+      instance-name precedence applies at slang's resolution step), so the runtime walks to the
+      canonical scope by name. The per-reference plan (which climb shape, the canonical head name
+      plus any indices, the descent suffix, the leaf signal) emits as ordinary `CallExpr` statements
+      against the wrapper member in the constructor body (`BindVisibleChild` / `BindRoot` followed
+      by zero or more `AddSuffixStep`), carrying only flat MIR primitives -- the wrapper type itself
+      carries only the element type.
 - [ ] D2e -- An upward reference whose head is a named procedural block (a named `begin`/`end` or
       `fork`/`join`, LRM 23.9). Unlike a module or generate scope, a named procedural block is not a
       constructed object today: its static-lifetime locals live as members on the enclosing unit

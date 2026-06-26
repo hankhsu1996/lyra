@@ -33,14 +33,17 @@ set of allowed transformations.
 6. Lowering does not introduce new semantic identity. The target layer's identity kinds are defined
    by the target layer's contract; a lowering may only use identity kinds that belong to the input
    or output layer.
-7. The pipeline branches at MIR into two backends: the C++ emitter (MIR-to-C++, the path used today)
-   and the LIR-then-LLVM path. A backend emit makes no semantic decisions -- every semantic fact is
-   fixed in MIR -- and chooses only how to represent each MIR node in its target, a representation
-   fixed by the node's kind. The two backends represent the same node differently (a coroutine
-   method versus an LLVM coroutine frame) yet realize the same behaviour, which holds only because
-   neither adds, infers, or re-derives a semantic fact. MIR-to-C++ is not as mechanical as
-   LIR-to-LLVM -- it still chooses C++ forms for higher-level MIR nodes -- but the choice is a fixed
-   function of the node, never a judgement about what the program means.
+7. The pipeline branches at MIR into two backends: the LIR-then-LLVM path (the architectural target)
+   and the C++ emitter (a transitional realization that consumes the same MIR while LIR is being
+   built). A backend emit makes no semantic decisions -- every semantic fact is fixed in MIR -- and
+   chooses only how to represent each MIR node in its target, a representation fixed by the node's
+   kind. The two backends represent the same node differently (a coroutine method versus an LLVM
+   coroutine frame) yet realize the same behaviour, which holds only because neither adds, infers,
+   or re-derives a semantic fact. **Both backends are mechanical at the same discipline.** The C++
+   backend's transitional status does not loosen this -- if its render needs decision logic in value
+   emission (an `if` whose arms produce different syntactic shapes), the MIR is wrong, and the
+   LIR/LLVM path would face the same obstruction. The C++ backend's render is therefore the
+   cross-check on MIR shape today (`backend_contract.md`).
 
 ## Boundary to Adjacent Layers
 
@@ -63,3 +66,10 @@ set of allowed transformations.
 
 If HIR-to-MIR needs to emit a CFG node, the boundary has been violated. Either the node belongs in
 MIR in a non-CFG form, or the lowering is doing MIR-to-LIR's work.
+
+When extending HIR-to-MIR, the lowering's output is also validated against `backend_contract.md`'s
+mechanical-translation invariant: the produced MIR must be translatable by a mechanical LLVM IR
+backend without payload-driven branches in value emission. The C++ backend's transitional status as
+the current observation surface for MIR makes this check operational today -- if the C++ render
+would need decision logic to consume a proposed MIR shape, the MIR is wrong, and the lowering is
+what produced it.

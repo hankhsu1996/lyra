@@ -206,6 +206,18 @@ enum class BuiltinFn : std::uint16_t {
   // lowering so the wait expression carries an explicit observable handle
   // rather than letting the backend derive one from the member's type.
   kAsObservable,
+  // Per-reference initialization of an `ExternUp<T>` member. `kBindRoot`
+  // installs the `$root` anchor and the leaf signal name; `kBindVisibleChild`
+  // installs the canonical-name climb start (head name + head indices) and
+  // the leaf signal. `kAddSuffixStep` appends one descent step
+  // (`name, indices`) below the anchor; emitted once per intermediate hop in
+  // the descent path, in left-to-right order. All three are instance methods
+  // on the member; their arguments are flat MIR primitives (string literals,
+  // integer-array literals, self ref) so MIR carries the per-reference
+  // symbol without learning the wrapper's internal anchor shape.
+  kBindVisibleChild,
+  kBindRoot,
+  kAddSuffixStep,
   // By-name scope navigation: a constructor walks a sibling unit's
   // interface, looks up an owned child by name (and per-dimension index),
   // looks up a signal by name, or attaches a freshly-built child into its
