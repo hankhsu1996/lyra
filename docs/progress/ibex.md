@@ -43,9 +43,11 @@ full support.
       stop in roughly a dozen modules and present throughout the design. A generate loop unrolls
       into elaborated structure at compile time; this is structural elaboration, distinct from a
       procedural `for`.
-- [ ] **`parameter` / `localparam` referenced inside a continuous-assign expression** (e.g. a
+- [x] **`parameter` / `localparam` referenced inside a continuous-assign expression** (e.g. a
       part-select bound `x[Aw-1:0]` where `Aw` is a `localparam`). Parameters appear in expressions
-      pervasively, so this reaches far past the leaf modules where it is the first blocker.
+      pervasively, so this reaches far past the leaf modules where it is the first blocker. Scalar
+      parameters fold in any expression context; an unpacked-array `localparam` referenced and
+      element-selected (the ibex_alu shuffle-mask form) now materializes too.
 
 ### Common forms
 
@@ -65,8 +67,10 @@ full support.
 
 - [ ] **Hierarchical / cross-unit reference to a parameter** (reaching a sub-instance's parameter
       through a dotted path, e.g. the `mhpmcounter` accessor in the DPI block).
-- [ ] **Constant of aggregate type** (an elaboration-time constant whose type is an array/struct
-      rather than a scalar).
+- [x] **Constant of an unpacked array type** -- an elaboration-time `localparam` array referenced
+      (and element-selected) in an expression. An unpacked struct or union constant is still
+      blocked, but on unpacked-struct / union _type_ support rather than on constant
+      materialization.
 - [ ] Remaining structural-expression forms surfaced as later passes get deeper (recorded here as
       discovery continues).
 
