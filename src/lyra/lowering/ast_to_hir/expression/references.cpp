@@ -138,13 +138,12 @@ auto LowerNamedValueProc(
       binding->type, span);
 }
 
-// LRM 23.6 hierarchical reference. The head of the navigation differs by
-// direction: a downward path (`c.x`, `c[1].x`, `g[1].u.x`) starts at a local
-// owned child -- an instance member or a generate block; an upward path
-// (`Top.g`, `Top.sib.y`) starts by climbing the parent chain to the named
-// ancestor -- a module instance, a named generate block, or the root. The
-// shared tail (`path.subspan(1)`) reaches the leaf in both directions.
-auto LowerHierarchicalValueProc(
+// LRM 23.6 hierarchical reference. A downward path is rooted in a local
+// owned child identified by binding; an upward path carries an anchor (a
+// `$root` token or a canonical named head with any per-dimension index) and
+// a descent suffix that walks by name from the anchor down to the leaf
+// signal.
+auto LowerHierarchicalValue(
     ModuleLowerer& module, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
     -> diag::Result<hir::Expr> {
@@ -168,77 +167,89 @@ auto LowerHierarchicalValueProc(
   auto type_id = module.InternType(*hve.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
-  // ref.path is slang's resolved top-down navigation: path.front() is the head
-  // (a local member downward, the named ancestor upward); the rest navigate
-  // down to the leaf (path.back() is `target`), each step a named member or an
-  // instance-array index. The tail is shared by both directions.
-  std::vector<hir::PathStep> path;
-  path.reserve(ref.path.size() - 1);
-  for (const auto& step : ref.path.subspan(1)) {
-    if (std::holds_alternative<std::string_view>(step.selector)) {
-      path.emplace_back(
-          hir::MemberHop{
-              std::string{std::get<std::string_view>(step.selector)}});
-    } else if (std::holds_alternative<std::int32_t>(step.selector)) {
-      path.emplace_back(
-          hir::IndexHop{static_cast<std::uint32_t>(
-              std::get<std::int32_t>(step.selector))});
-    } else {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "instance-array range select in a hierarchical path is not yet "
-          "supported");
-    }
-  }
-
   const auto& var = target.as<slang::ast::VariableSymbol>();
   const slang::ast::Symbol& head_sym = *ref.path.front().symbol;
 
+  // ref.path is slang's resolved top-down navigation: path.front() is the
+  // head, path.back() is `target`, and each name selector is the resolved
+  // symbol's canonical name. Carrying those selectors verbatim into the HIR
+  // descent makes the runtime by-name navigation hit each scope by the same
+  // key the parent registered under.
+  const auto build_path =
+      [&](std::span<const slang::ast::HierarchicalReference::Element> steps)
+      -> diag::Result<std::vector<hir::PathStep>> {
+    std::vector<hir::PathStep> path;
+    path.reserve(steps.size());
+    for (const auto& step : steps) {
+      if (std::holds_alternative<std::string_view>(step.selector)) {
+        path.emplace_back(
+            hir::MemberHop{
+                std::string{std::get<std::string_view>(step.selector)}});
+      } else if (std::holds_alternative<std::int32_t>(step.selector)) {
+        path.emplace_back(
+            hir::IndexHop{static_cast<std::uint32_t>(
+                std::get<std::int32_t>(step.selector))});
+      } else {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "instance-array range select in a hierarchical path is not yet "
+            "supported");
+      }
+    }
+    return path;
+  };
+
   if (ref.isUpward()) {
-    // An upward reference (LRM 23.8) climbs the parent chain to the matching
-    // ancestor, then shares `path` with the downward direction to reach the
-    // leaf. The head selects how the climb matches. A module instance keys on
-    // the ancestor's module definition name -- class-level, so one artifact
-    // serves every depth and a wrapped sub-expression like `Top.g[3]` needs no
-    // syntax. A named generate block or a `$root`-anchored absolute path keys
-    // on the ancestor scope's own name (LRM 23.6): the generate-block label, or
-    // the root's reserved name. The extern member is synthesized on the
-    // referrer's own structural scope (`frame.Current()`), whether the unit
-    // root or a generate block, so a reference written inside a generate block
-    // resolves the same way (its member rides the generate-scope class).
-    std::optional<hir::UpwardHead> head;
+    // The named arm carries the canonical head name plus any per-dimension
+    // index that immediately follows it in `ref.path` (e.g. `bank[2].x`); the
+    // root arm carries no key. The suffix is `ref.path` strictly past the
+    // head element(s). Synthesizing the extern member on the referrer's own
+    // structural scope keeps the lexical lookup origin coincident with the
+    // structural class that owns this member, including for references
+    // written inside a generate block.
+    hir::CrossUnitRefHead anchor;
+    std::span<const slang::ast::HierarchicalReference::Element> suffix_steps;
     switch (head_sym.kind) {
       case slang::ast::SymbolKind::Instance:
-        head = hir::UpwardHead{
-            .ancestor_name =
-                std::string{head_sym.as<slang::ast::InstanceSymbol>()
-                                .getDefinition()
-                                .name},
-            .match = hir::UpwardMatch::kDefName};
+      case slang::ast::SymbolKind::GenerateBlock: {
+        // Gather the head's per-dimension indices from the index selectors
+        // immediately following `path[0]`; the next name selector marks the
+        // start of the descent suffix.
+        hir::UpwardNamedHead named{
+            .head_name = std::string{head_sym.name}, .head_indices = {}};
+        std::size_t suffix_start = 1;
+        while (suffix_start < ref.path.size() &&
+               std::holds_alternative<std::int32_t>(
+                   ref.path[suffix_start].selector)) {
+          named.head_indices.push_back(
+              static_cast<std::uint32_t>(
+                  std::get<std::int32_t>(ref.path[suffix_start].selector)));
+          ++suffix_start;
+        }
+        anchor = std::move(named);
+        suffix_steps = ref.path.subspan(suffix_start);
         break;
-      case slang::ast::SymbolKind::GenerateBlock:
-        head = hir::UpwardHead{
-            .ancestor_name = std::string{head_sym.name},
-            .match = hir::UpwardMatch::kScopeName};
-        break;
+      }
       case slang::ast::SymbolKind::Root:
-        head = hir::UpwardHead{
-            .ancestor_name = "$root", .match = hir::UpwardMatch::kScopeName};
+        anchor = hir::UpwardRootHead{};
+        suffix_steps = ref.path.subspan(1);
         break;
       default:
-        // Any other head -- an indexed loop-generate block, or a named
-        // procedural block whose locals live on the enclosing unit rather than
-        // in a constructed scope -- does not resolve to a climb target yet.
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedExpressionForm,
             "upward hierarchical reference whose head is not a module "
             "instance, "
             "a named generate block, or $root is not yet supported");
     }
+    auto path = build_path(suffix_steps);
+    if (!path) return std::unexpected(std::move(path.error()));
     return module.MakeCrossUnitMemberRef(
-        var, frame.Current(), *std::move(head), std::move(path), *type_id,
+        var, frame.Current(), std::move(anchor), std::move(*path), *type_id,
         span);
   }
+
+  auto path = build_path(ref.path.subspan(1));
+  if (!path) return std::unexpected(std::move(path.error()));
 
   // Downward: the head is an owned child this unit's scope declares -- an
   // instance / instance-array member, or a generate block (LRM 27). Both are
@@ -257,7 +268,7 @@ auto LowerHierarchicalValueProc(
   const auto binding = module.LookupOwnedChildBinding(head_sym);
   if (!binding.has_value()) {
     throw InternalError(
-        "LowerHierarchicalValueProc: downward owned-child head has no binding");
+        "LowerHierarchicalValue: downward owned-child head has no binding");
   }
 
   // The owner navigates its own storage, so the head must live on the
@@ -271,7 +282,8 @@ auto LowerHierarchicalValueProc(
         "scope is not yet supported");
   }
   return module.MakeCrossUnitMemberRef(
-      var, binding->home_frame, binding->head, std::move(path), *type_id, span);
+      var, binding->home_frame, binding->head, std::move(*path), *type_id,
+      span);
 }
 
 auto LowerNamedValueStructural(

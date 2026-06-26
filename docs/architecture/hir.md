@@ -77,6 +77,12 @@ that identity is the suspect, not the analysis.
   generic programming-language vocabulary. Every SV-specific concept that does not appear in MIR is
   translated at this boundary or rejected as unsupported. HIR-to-MIR holds the SV knowledge; MIR
   does not.
+- HIR-to-MIR's output is consumed by backends through `backend_contract.md`. If a backend would need
+  decision logic to render the produced MIR, HIR-to-MIR is failing to emit the right combination of
+  MIR primitives. The lowering's correctness is validated against the mechanical-translation
+  invariant: the MIR it produces must be translatable by a mechanical LLVM IR backend without
+  payload-driven branches. When extending HIR-to-MIR, read `backend_contract.md` before adding a
+  lowering rule that produces a MIR node a backend cannot realize mechanically.
 
 ## Forbidden Shapes
 

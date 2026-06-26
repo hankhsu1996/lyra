@@ -23,7 +23,11 @@ auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr>;
 
-auto LowerHierarchicalValueProc(
+// A hierarchical reference has the same shape across procedural and
+// structural contexts (it always resolves into a cross-unit member binding on
+// the referrer's structural scope), so this entry is generic over the calling
+// context rather than split into Proc / Structural variants.
+auto LowerHierarchicalValue(
     ModuleLowerer& module, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
     -> diag::Result<hir::Expr>;

@@ -450,56 +450,37 @@ auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
   return instance_member_vars;
 }
 
-// An upward cross-unit reference materializes as an ExternalRef member: the
-// symbol -- ancestor name, by-name tail through its owned children, and leaf
-// signal -- lives on its type, and the runtime ExternUp member self-relocates
-// in the resolve phase by climbing the parent chain then walking the tail. A
-// downward reference gets a borrowed-pointer slot member, null until the
-// constructor resolves it. Both run before processes so reads resolve to the
-// slot; both record their MIR read target as a StructuralVarRef to that member,
-// in HIR slot order. The returned vector carries the downward slot var per ref
-// (nullopt for upward), consumed by InstallCrossUnitRefs once the children
-// exist.
+// Allocates one MIR member per cross-unit reference. Upward references take
+// the wrapper-typed ExternUp form whose per-reference state lands as ordinary
+// `CallExpr` statements in the constructor body. Downward references take a
+// borrowed-pointer slot the constructor fills by navigating from `self` once
+// the children are built. Both run before processes so reads resolve to the
+// member; both record their MIR read target as a StructuralVarRef to that
+// member, in HIR slot order. The returned vector carries the allocated member
+// per ref in HIR order.
 auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
-    -> std::vector<std::optional<mir::MemberId>> {
+    -> std::vector<mir::MemberId> {
   ModuleLowerer& module = lowerer.Module();
   mir::Class& mir_class = *frame.current_class;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  std::vector<std::optional<mir::MemberId>> slot_vars;
+  std::vector<mir::MemberId> slot_vars;
   std::uint32_t slot_index = 0;
   for (const auto& cu : hir_scope.cross_unit_refs) {
     std::string member_name = "xref" + std::to_string(slot_index++);
-    if (const auto* up = std::get_if<hir::UpwardHead>(&cu.head)) {
-      // `cu.path` runs from the ancestor down to the leaf, shared with the
-      // downward direction. Fold it into by-name child hops (each member opens
-      // a hop, following array indices attach to it) and the final leaf signal.
-      std::vector<mir::ChildStep> tail;
-      for (const auto& step : cu.path) {
-        if (const auto* member = std::get_if<hir::MemberHop>(&step)) {
-          tail.push_back(mir::ChildStep{.name = member->name, .indices = {}});
-        } else {
-          tail.back().indices.push_back(std::get<hir::IndexHop>(step).index);
-        }
-      }
-      std::string signal = std::move(tail.back().name);
-      tail.pop_back();
-
-      const mir::ExternalRefMatch match =
-          up->match == hir::UpwardMatch::kDefName
-              ? mir::ExternalRefMatch::kDefName
-              : mir::ExternalRefMatch::kScopeName;
+    const bool is_upward =
+        std::holds_alternative<hir::UpwardRootHead>(cu.head) ||
+        std::holds_alternative<hir::UpwardNamedHead>(cu.head);
+    if (is_upward) {
+      // The member's type carries only the wrapped element; the per-reference
+      // navigation plan is emitted as ordinary `CallExpr` statements in the
+      // constructor body (see `InstallCrossUnitRefs`).
       const mir::TypeId leaf = module.TranslateType(cu.type);
-      const mir::TypeId ext_type = module.Unit().AddType(
-          mir::ExternalRefType{
-              .element = leaf,
-              .ancestor = up->ancestor_name,
-              .match = match,
-              .tail = std::move(tail),
-              .signal = std::move(signal)});
+      const mir::TypeId ext_type =
+          module.Unit().AddType(mir::ExternalRefType{.element = leaf});
       const mir::MemberId var = mir_class.members.Add(
           mir::MemberDecl{.name = std::move(member_name), .type = ext_type});
       lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = var}, ext_type);
-      slot_vars.emplace_back(std::nullopt);
+      slot_vars.push_back(var);
     } else {
       // The pointee matches the producer's storage cell. A producer-side
       // value-storage signal is wrapped in `ObservableType` at its declaration
@@ -513,7 +494,7 @@ auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
       const mir::MemberId slot = mir_class.members.Add(
           mir::MemberDecl{.name = std::move(member_name), .type = slot_type});
       lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = slot}, slot_type);
-      slot_vars.emplace_back(slot);
+      slot_vars.push_back(slot);
     }
   }
   return slot_vars;
@@ -597,31 +578,173 @@ auto BuildDownwardNavValue(
       .data = mir::CastExpr{.operand = get_signal_id}, .type = slot_type};
 }
 
+// Builds an `UnpackedArray<int32, N>` literal expression holding one element
+// per supplied index. Used as the per-step indices argument to the runtime
+// bind / suffix-step methods; an empty index list still produces a typed
+// zero-element array so the call's signature is uniform.
+auto BuildIndicesArrayExpr(
+    ModuleLowerer& module, mir::Block& block,
+    std::span<const std::uint32_t> indices) -> mir::ExprId {
+  const auto& builtins = module.Unit().builtins;
+  std::vector<mir::ExprId> index_exprs;
+  index_exprs.reserve(indices.size());
+  for (const std::uint32_t idx : indices) {
+    index_exprs.push_back(block.exprs.Add(
+        mir::MakeInt32Literal(builtins.int32, static_cast<std::int64_t>(idx))));
+  }
+  const mir::TypeId indices_type = module.Unit().AddType(
+      mir::UnpackedArrayType{
+          .element_type = builtins.int32, .size = indices.size()});
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(index_exprs)},
+          .type = indices_type});
+}
+
+// Emits one `CallExpr` statement against the ExternUp member: the receiver
+// is `self->member`, the callee is the named builtin method, the arguments
+// run through the ordinary primitive forms (string literal, indices array
+// literal, self ref). Used for the bind and per-suffix-step calls.
+void AppendExternUpMethodCall(
+    ModuleLowerer& module, WalkFrame frame, mir::MemberId extern_member,
+    support::BuiltinFn method, std::vector<mir::ExprId> arguments) {
+  mir::Block& block = *frame.current_block;
+  mir::Class& mir_class = *frame.current_class;
+  const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
+  const mir::TypeId void_type = module.Unit().builtins.void_type;
+
+  const mir::ExprId self_ref =
+      block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
+  const mir::TypeId receiver_type = mir_class.members.Get(extern_member).type;
+  std::vector<mir::ExprId> args;
+  args.reserve(arguments.size() + 1);
+  args.push_back(block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::MemberAccessExpr{
+                  .receiver = self_ref,
+                  .member = mir::MemberRef{.var = extern_member}},
+          .type = receiver_type}));
+  for (const mir::ExprId arg : arguments) {
+    args.push_back(arg);
+  }
+  const mir::ExprId call = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = method},
+                  .arguments = std::move(args)},
+          .type = void_type});
+  block.AppendStmt(
+      mir::Stmt{.label = std::nullopt, .data = mir::ExprStmt{.expr = call}});
+}
+
+// `path_after_anchor` excludes the anchor (the `$root` token for a root
+// anchor; the named head and any per-dimension indices attached to it for a
+// named anchor) and ends with the leaf signal. The leaf step must carry no
+// indices -- array selection on a cross-unit-ref leaf is an expression-level
+// access, not part of the descent -- enforced as a compiler invariant.
+void AppendExternUpBinding(
+    ModuleLowerer& module, WalkFrame frame, mir::MemberId member,
+    std::span<const hir::PathStep> path_after_anchor,
+    support::BuiltinFn bind_callee,
+    std::vector<mir::ExprId> bind_args_before_signal) {
+  mir::Block& block = *frame.current_block;
+  const auto& builtins = module.Unit().builtins;
+  const auto string_literal = [&](std::string s) -> mir::ExprId {
+    return block.exprs.Add(
+        mir::Expr{
+            .data = mir::StringLiteral{.value = std::move(s)},
+            .type = builtins.string});
+  };
+
+  struct DescentStep {
+    std::string name;
+    std::vector<std::uint32_t> indices;
+  };
+  std::vector<DescentStep> steps;
+  for (const auto& step : path_after_anchor) {
+    if (const auto* m = std::get_if<hir::MemberHop>(&step)) {
+      steps.push_back(DescentStep{.name = m->name, .indices = {}});
+    } else {
+      steps.back().indices.push_back(std::get<hir::IndexHop>(step).index);
+    }
+  }
+  if (!steps.back().indices.empty()) {
+    throw InternalError(
+        "AppendExternUpBinding: leaf signal step carries indices; "
+        "array selection on a cross-unit-ref leaf belongs to an "
+        "expression-level access, not the descent");
+  }
+  std::string signal = std::move(steps.back().name);
+  steps.pop_back();
+
+  bind_args_before_signal.push_back(string_literal(std::move(signal)));
+  AppendExternUpMethodCall(
+      module, frame, member, bind_callee, std::move(bind_args_before_signal));
+
+  for (const auto& step : steps) {
+    AppendExternUpMethodCall(
+        module, frame, member, support::BuiltinFn::kAddSuffixStep,
+        {string_literal(step.name),
+         BuildIndicesArrayExpr(module, block, step.indices)});
+  }
+}
+
 // A downward slot resolves in the constructor by navigating from the enclosing
 // scope after the children are built: an ordinary assignment of the navigation
-// value into the borrowed-pointer slot. Upward slots are materialized as
-// ExternalRef members upstream and skipped here.
+// value into the borrowed-pointer slot. An upward ExternUp member's
+// per-reference plan emits as a `BindVisibleChild` or `BindRoot` call against
+// the member, followed by one `AddSuffixStep` call per descent step -- ordinary
+// `CallExpr` carrying flat MIR primitives, so the backend renders them
+// uniformly with every other call.
 void InstallCrossUnitRefs(
     ClassLowerer& lowerer, WalkFrame frame,
     const std::vector<mir::MemberId>& instance_member_vars,
     const std::vector<GenerateBindings>& gen_bindings,
-    const std::vector<std::optional<mir::MemberId>>& slot_vars) {
+    const std::vector<mir::MemberId>& slot_vars) {
   mir::Class& mir_class = *frame.current_class;
   mir::Block& ctor_block = *frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   ModuleLowerer& module = lowerer.Module();
+  const auto& builtins = module.Unit().builtins;
   const mir::TypeId scope_ptr_type = module.Unit().AddType(
       mir::PointerType{
           .pointee = module.Unit().AddType(mir::ScopeType{}),
           .ownership = mir::PointerOwnership::kBorrowed});
+  const auto string_literal = [&](const std::string& s) -> mir::ExprId {
+    return ctor_block.exprs.Add(
+        mir::Expr{
+            .data = mir::StringLiteral{.value = s}, .type = builtins.string});
+  };
   for (std::size_t ci = 0; ci < hir_scope.cross_unit_refs.size(); ++ci) {
     const auto& cu = hir_scope.cross_unit_refs.Get(
         hir::CrossUnitRefId{static_cast<std::uint32_t>(ci)});
+    const mir::MemberId member = slot_vars.at(ci);
+    if (std::holds_alternative<hir::UpwardRootHead>(cu.head)) {
+      const mir::ExprId origin_self = ctor_block.exprs.Add(
+          MakeSelfRefExpr(frame, mir_class.self_pointer_type));
+      AppendExternUpBinding(
+          module, frame, member, cu.path, support::BuiltinFn::kBindRoot,
+          {origin_self});
+      continue;
+    }
+    if (const auto* up_named = std::get_if<hir::UpwardNamedHead>(&cu.head)) {
+      const mir::ExprId origin_self = ctor_block.exprs.Add(
+          MakeSelfRefExpr(frame, mir_class.self_pointer_type));
+      const mir::ExprId head_name = string_literal(up_named->head_name);
+      const mir::ExprId head_indices =
+          BuildIndicesArrayExpr(module, ctor_block, up_named->head_indices);
+      AppendExternUpBinding(
+          module, frame, member, cu.path, support::BuiltinFn::kBindVisibleChild,
+          {origin_self, head_name, head_indices});
+      continue;
+    }
     const auto* down = std::get_if<hir::DownwardHead>(&cu.head);
     if (down == nullptr) {
       continue;
     }
-    const mir::MemberId slot = *slot_vars.at(ci);
+    const mir::MemberId slot = member;
     mir::MemberId head_var{};
     if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
       head_var = instance_member_vars.at(im->value);

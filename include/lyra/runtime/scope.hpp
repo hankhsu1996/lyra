@@ -25,12 +25,6 @@ class ExternBase;
 // purely structural node does not pull the simulation tick finer.
 inline constexpr std::int8_t kUnspecifiedTimePrecisionPower = 127;
 
-// How an upward hierarchical reference matches its ancestor while climbing the
-// parent chain (LRM 23.8): against the ancestor's module definition name
-// (`DefName()`, a module-instance head) or against the scope's own segment
-// base name (`Segment().BaseName()`, a named generate block or `$root`).
-enum class UpwardMatch : std::uint8_t { kDefName, kScopeName };
-
 // A node in the one canonical object tree. Every constructed SystemVerilog
 // scope -- a module instance, a generate block, the implicit `$root` -- is a
 // Scope. It carries the scope's structural identity (parent plus
@@ -60,8 +54,8 @@ class Scope {
   [[nodiscard]] auto DisplaySegment() const -> std::string;
 
   // The base label of `Segment()`. Carries the source-level identifier
-  // without any per-dimension index decoration; used by cross-unit by-name
-  // lookup keys and by upward `kScopeName` resolution.
+  // without any per-dimension index decoration; the canonical key both
+  // `GetChild` and the upward visible-child climb use to match a child.
   [[nodiscard]] auto Name() const -> std::string_view;
 
   // Joins each ancestor's display segment with `.`, ordered from the
@@ -71,11 +65,11 @@ class Scope {
   // the object tree is sealed by Activate.
   [[nodiscard]] auto HierarchicalPath() const -> lyra::value::String;
 
-  // The scope's module definition name. An upward hierarchical reference climbs
-  // the parent chain matching against this (LRM 23.8): the referrer's emitted
-  // code keys the climb on the target's definition name, so an ancestor matches
-  // by its definition name, never by its instance name. The base never matches;
-  // a generated unit class overrides it.
+  // The scope's module definition name -- carried by every module instance,
+  // empty for a generate block or `$root`. Used by dump output and debug
+  // surfaces; the upward by-name climb consults `Name()` only, since slang
+  // canonicalizes every head identity to a resolved symbol's name before the
+  // lowering encodes the anchor.
   [[nodiscard]] virtual auto DefName() const -> std::string_view {
     return {};
   }
@@ -105,19 +99,25 @@ class Scope {
       std::string_view name, std::span<const lyra::value::PackedArray> indices)
       -> Scope*;
 
-  // Climbs the parent chain to the nearest ancestor named `key` and returns it
-  // (LRM 23.8). `match` selects the name compared: `kDefName` matches an
-  // ancestor's module definition name (`DefName()`, a module-instance head), so
-  // an ancestor whose instance name merely equals it does not match;
-  // `kScopeName` matches the scope's own name (`Name()`, a named generate block
-  // or `$root`), whose name is itself the lookup key. The shared start of an
-  // upward reference's runtime navigation; from there an `ExternUp` member
-  // walks any by-name tail and fetches the leaf, once in the resolve phase.
-  [[nodiscard]] auto ResolveUpwardScope(std::string_view key, UpwardMatch match)
-      -> Scope*;
+  // Walks the enclosing chain (starting at `this`) and at each level scans
+  // the level's children for one whose canonical instance name plus indices
+  // match. Returns the matched child itself, so the caller's descent suffix
+  // is strictly below it. Matching by instance name only -- not by module
+  // definition name -- is correct because the frontend has already
+  // canonicalized the head per LRM 23.9 instance-name precedence; the
+  // runtime does not re-implement that resolution.
+  [[nodiscard]] auto ResolveVisibleChild(
+      std::string_view head_name,
+      std::span<const lyra::value::PackedArray> head_indices) -> Scope*;
 
-  // An `ExternUp` member registers itself here from its constructor; the
-  // resolve phase relocates all registered members once the whole tree exists.
+  // Walks the enclosing chain to the topmost scope -- the parent-less `$root`
+  // (LRM 23.6 absolute-path anchor) -- and returns it. The caller's descent
+  // suffix is strictly below `$root`.
+  [[nodiscard]] auto ResolveRoot() -> Scope*;
+
+  // A wrapper-typed cross-unit member registers itself here at its bind call;
+  // the resolve phase relocates all registered members once the whole tree
+  // exists.
   void RegisterExtern(ExternBase* member);
 
   // The scope's declared time precision as a power of ten (LRM Table 20-2).

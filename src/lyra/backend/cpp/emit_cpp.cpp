@@ -29,30 +29,7 @@ auto RenderField(
     const ScopeView& ctor_view, const mir::MemberDecl& var, std::size_t indent)
     -> std::string {
   const auto& unit = ctor_view.Unit();
-  std::string type = RenderTypeAsCpp(unit, ctor_view.Class(), var.type);
-  // An upward reference is an ExternUp member: its constructor takes the
-  // symbol payload (ancestor, by-name tail, leaf signal) rather than a value
-  // initializer; it registers itself and relocates in the resolve phase.
-  if (const auto* er =
-          std::get_if<mir::ExternalRefType>(&unit.GetType(var.type).data)) {
-    std::string tail = "{";
-    for (std::size_t i = 0; i < er->tail.size(); ++i) {
-      if (i != 0) tail += ", ";
-      tail += std::format("{{\"{}\", {{", er->tail[i].name);
-      for (std::size_t j = 0; j < er->tail[i].indices.size(); ++j) {
-        if (j != 0) tail += ", ";
-        tail += std::to_string(er->tail[i].indices[j]);
-      }
-      tail += "}}";
-    }
-    tail += "}";
-    const std::string match = er->match == mir::ExternalRefMatch::kDefName
-                                  ? "lyra::runtime::UpwardMatch::kDefName"
-                                  : "lyra::runtime::UpwardMatch::kScopeName";
-    return std::format(
-        "{}{} {}{{this, \"{}\", {}, {}, \"{}\"}};\n", Indent(indent), type,
-        var.name, er->ancestor, match, tail, er->signal);
-  }
+  const std::string type = RenderTypeAsCpp(unit, ctor_view.Class(), var.type);
   return std::format("{}{} {}{{}};\n", Indent(indent), type, var.name);
 }
 
