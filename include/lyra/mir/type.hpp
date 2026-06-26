@@ -96,9 +96,9 @@ struct EnumType {
 // distinct shape: HIR -> MIR translates `hir::PackedStructType` and
 // `hir::PackedUnionType` to their "single vector" projection
 // (`PackedArrayType`). Field accesses lower to constant-bounds RangeSelect
-// against that vector. A future MIR node for *unpacked* struct / union is
-// a genuinely different shape and will get its own variant when that work
-// lands.
+// against that vector. An unpacked struct is a value product and maps to the
+// existing `TupleType`, not a distinct variant; an unpacked union (overlapping
+// member storage) is a separate representation problem.
 
 // MIR tracks unpacked arrays as plain C++ vectors: element type plus a
 // non-zero element count. The SV declared range (`[left:right]`, descending

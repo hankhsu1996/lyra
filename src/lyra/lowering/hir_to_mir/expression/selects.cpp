@@ -744,6 +744,17 @@ auto LowerHirMemberAccessExpr(
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
+  // LRM 7.2: an unpacked struct lowers to a generic product (`TupleType`);
+  // member access is a positional projection by declaration-order index.
+  if (module.Hir().GetType(base_hir_expr.type).Kind() ==
+      hir::TypeKind::kUnpackedStruct) {
+    auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
+    if (!base_or) return std::unexpected(std::move(base_or.error()));
+    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+    return mir::Expr{
+        .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
+        .type = result_type};
+  }
   const auto& fields =
       GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
@@ -813,6 +824,18 @@ auto LowerHirMemberAccessExprLhs(
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
+  // LRM 7.2: an unpacked-struct member write is a positional projection by
+  // index over the base place. The observable root's write routes through the
+  // cell's mutate path later, so the place is just the projection here.
+  if (module.Hir().GetType(base_hir_expr.type).Kind() ==
+      hir::TypeKind::kUnpackedStruct) {
+    auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
+    if (!base_or) return std::unexpected(std::move(base_or.error()));
+    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+    return mir::Expr{
+        .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
+        .type = result_type};
+  }
   const auto& fields =
       GetAggregateFields(module.Hir().GetType(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
