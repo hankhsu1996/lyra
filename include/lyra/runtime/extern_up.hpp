@@ -1,17 +1,18 @@
 #pragma once
 
-#include <cstddef>
-#include <initializer_list>
+#include <span>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
-// A registered upward-reference member. Scope::Bind walks every ExternUp on a
-// scope and relocates it once the whole object tree exists.
+// A registered upward-reference member. Scope walks every ExternUp on a scope
+// and relocates it once the whole object tree exists.
 struct ExternBase {
   ExternBase() = default;
   ExternBase(const ExternBase&) = delete;
@@ -23,49 +24,72 @@ struct ExternBase {
   virtual void Relocate() = 0;
 };
 
-// One by-name step of an extern reference's tail: an owned child of the
-// resolved ancestor, named and indexed once per array dimension. Names point at
-// emitted string literals; the indices it owns so the ExternUp outlives its
-// constructor arguments.
-struct ChildStep {
-  std::string_view name;
-  std::vector<std::size_t> indices;
-};
-
-// An upward hierarchical reference modeled as an extern member: it holds the
-// symbol -- the ancestor name, how that name is matched on the parent chain,
-// the by-name tail down through the ancestor's owned children, and the leaf
-// signal name -- and in the resolve phase climbs to the ancestor, walks the
-// tail, and binds a direct pointer to the leaf. Reads, writes, and sensitivity
-// forward to that resolved cell, so the member behaves like the referenced
-// `Var<T>` while naming no ancestor type. Non-movable: it registers `this`, and
-// is owned by the stable scope node that declares it.
+// An upward hierarchical reference modeled as an extern member. Default-
+// constructed in the field declaration like any other wrapper-typed member;
+// the per-reference state arrives through ordinary method calls in the
+// owning scope's constructor body. At the resolve phase the wrapper climbs
+// and descends, fetching a typed pointer to the leaf cell; reads, writes,
+// and sensitivity then forward to that cell while the member names no
+// ancestor type.
+//
+// `lookup_origin` is passed explicitly to every bind method rather than
+// taken as `this`: the navigation starts from the scope where the SV
+// hierarchical reference is lexically evaluated, which a caller may need to
+// pass independently of where the wrapper is stored.
+//
+// String arguments (`head_name`, `signal`, suffix step `name`) are
+// `string_view`s the wrapper stores by reference; their storage must outlive
+// the wrapper. The emitted code supplies static string literals, which
+// satisfies the requirement. PackedArray index spans are copied into
+// wrapper-owned vectors at the call.
 template <value::LyraValue T>
 class ExternUp : public ExternBase {
  public:
-  ExternUp(
-      Scope* owner, std::string_view ancestor, UpwardMatch match,
-      std::initializer_list<ChildStep> tail, std::string_view signal)
-      : owner_(owner),
-        ancestor_(ancestor),
-        match_(match),
-        tail_(tail),
-        signal_(signal) {
-    owner_->RegisterExtern(this);
+  ExternUp() = default;
+
+  // Install the by-name climb start: at bind, walk the lookup origin's
+  // enclosing chain and find the child whose canonical instance name (and
+  // per-dimension index) matches `head_name` + `head_indices`. `signal` is
+  // the leaf cell's registered name on the matched scope.
+  void BindVisibleChild(
+      Scope* lookup_origin, std::string_view head_name,
+      std::span<const value::PackedArray> head_indices,
+      std::string_view signal) {
+    lookup_origin_ = lookup_origin;
+    is_root_ = false;
+    head_name_ = head_name;
+    head_indices_.assign(head_indices.begin(), head_indices.end());
+    signal_ = signal;
+    lookup_origin_->RegisterExtern(this);
+  }
+
+  // Install the `$root` anchor: at bind, walk to the parent-less topmost
+  // scope. `signal` is the leaf cell's registered name on the scope reached
+  // after the suffix walks down.
+  void BindRoot(Scope* lookup_origin, std::string_view signal) {
+    lookup_origin_ = lookup_origin;
+    is_root_ = true;
+    signal_ = signal;
+    lookup_origin_->RegisterExtern(this);
+  }
+
+  // Append one descent step below the anchor, applied in call order. Each
+  // step is a named child of the previous scope, optionally per-dimension
+  // indexed.
+  void AddSuffixStep(
+      std::string_view name, std::span<const value::PackedArray> indices) {
+    SuffixStep step;
+    step.name = name;
+    step.indices.assign(indices.begin(), indices.end());
+    suffix_.push_back(std::move(step));
   }
 
   void Relocate() override {
-    Scope* scope = owner_->ResolveUpwardScope(ancestor_, match_);
-    std::vector<value::PackedArray> packed_indices;
-    for (const ChildStep& hop : tail_) {
-      packed_indices.clear();
-      packed_indices.reserve(hop.indices.size());
-      for (const std::size_t idx : hop.indices) {
-        packed_indices.push_back(
-            value::PackedArray::FromInt(
-                static_cast<std::int64_t>(idx), 32, true, false));
-      }
-      scope = scope->GetChild(hop.name, packed_indices);
+    Scope* scope = is_root_ ? lookup_origin_->ResolveRoot()
+                            : lookup_origin_->ResolveVisibleChild(
+                                  head_name_, head_indices_);
+    for (const SuffixStep& step : suffix_) {
+      scope = scope->GetChild(step.name, step.indices);
     }
     cell_ = static_cast<Var<T>*>(scope->GetSignal(signal_));
   }
@@ -87,11 +111,17 @@ class ExternUp : public ExternBase {
   }
 
  private:
-  Scope* owner_;
-  std::string_view ancestor_;
-  UpwardMatch match_;
-  std::vector<ChildStep> tail_;
+  struct SuffixStep {
+    std::string_view name;
+    std::vector<value::PackedArray> indices;
+  };
+
+  Scope* lookup_origin_ = nullptr;
+  bool is_root_ = false;
+  std::string_view head_name_;
+  std::vector<value::PackedArray> head_indices_;
   std::string_view signal_;
+  std::vector<SuffixStep> suffix_;
   Var<T>* cell_ = nullptr;
 };
 

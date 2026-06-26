@@ -236,20 +236,7 @@ class MirDumper {
               return std::format("Tuple(elems=[{}])", elements);
             },
             [](const ExternalRefType& e) -> std::string {
-              std::string tail;
-              for (const auto& hop : e.tail) {
-                tail += "." + hop.name;
-                for (const std::uint32_t index : hop.indices) {
-                  tail += std::format("[{}]", index);
-                }
-              }
-              const std::string_view match =
-                  e.match == ExternalRefMatch::kDefName ? "DefName"
-                                                        : "ScopeName";
-              return std::format(
-                  "ExternalRef(elem=Type[{}], ancestor={}, match={}, tail={}, "
-                  "signal={})",
-                  e.element.value, e.ancestor, match, tail, e.signal);
+              return std::format("ExternalRef(elem=Type[{}])", e.element.value);
             },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);

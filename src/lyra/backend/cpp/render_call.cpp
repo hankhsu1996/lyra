@@ -216,6 +216,12 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "FatalFinish";
     case support::BuiltinFn::kAsObservable:
       return "AsObservable";
+    case support::BuiltinFn::kBindVisibleChild:
+      return "BindVisibleChild";
+    case support::BuiltinFn::kBindRoot:
+      return "BindRoot";
+    case support::BuiltinFn::kAddSuffixStep:
+      return "AddSuffixStep";
     case support::BuiltinFn::kRegisterSignal:
       return "RegisterSignal";
     case support::BuiltinFn::kAttachChild:

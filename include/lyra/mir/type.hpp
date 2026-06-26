@@ -297,39 +297,17 @@ struct ObservableType {
   auto operator==(const ObservableType&) const -> bool = default;
 };
 
-// One by-name step from a resolved scope into an owned child it answers for:
-// the child member's name plus one index per array dimension (empty for a
-// scalar child). The ancestor answers by name from the children it registered,
-// so a multi-dimensional instance array is just more indices, never a flattened
-// offset. (Distinct from EnclosingHops, which is a count of lexical frames
-// climbed, not a path step.)
-struct ChildStep {
-  std::string name;
-  std::vector<std::uint32_t> indices;
-
-  auto operator==(const ChildStep&) const -> bool = default;
-};
-
-// How the climb matches the ancestor named `ancestor` (LRM 23.8): against the
-// ancestor's module definition name (a module-instance head) or against the
-// scope's own name (a named generate block, or the `$root` absolute-path
-// anchor). The two keys compare against different runtime accessors, so the
-// axis rides the type.
-enum class ExternalRefMatch : std::uint8_t { kDefName, kScopeName };
-
-// An upward hierarchical reference's storage: a resolved pointer to a leaf of
-// `element`, reached by climbing to the ancestor named `ancestor` (matched by
-// `match`), walking `tail` down through its owned children by name, then
-// fetching `signal` (LRM 23.8). `tail` is empty when the leaf sits directly on
-// the ancestor. Like ExternalUnitObjectType it carries the cross-unit symbol on
-// the type; the address binds at construction, never the layout. Emitted as the
-// runtime `ExternUp<element>` member.
+// An upward cross-unit reference's storage type: a wrapper around `element`
+// that the runtime relocates at the bind step. The wrapper exposes its
+// per-reference state (the climb shape, the descent path, the leaf signal
+// name) through method calls (`BindRoot`, `BindVisibleChild`); MIR carries
+// no per-reference data in the type itself. The construction state is
+// emitted in the constructor body as ordinary `CallExpr` against one of
+// those methods, with `StringLiteral` / `ArrayLiteralExpr` primitives for
+// the arguments. The type carries only the classification (this member is an
+// upward extern reference of `element`).
 struct ExternalRefType {
   TypeId element;
-  std::string ancestor;
-  ExternalRefMatch match;
-  std::vector<ChildStep> tail;
-  std::string signal;
 
   auto operator==(const ExternalRefType&) const -> bool = default;
 };

@@ -118,8 +118,14 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     source-language sugar -- a fact of that kind is already expressible by combining existing
     primitives, so if it is missing, HIR-to-MIR is incomplete and should emit that combination
     instead. The primitive set does grow, but only for a genuinely new generic-language concept,
-    never to model a backend / library / sugar shape (see Owns). _Programming-language consequence:
-    the program text is the program; consumers do not invent vocabulary the language does not have._
+    never to model a backend / library / sugar shape (see Owns). The backend-side consequence is
+    owned by `backend_contract.md`: render is mechanical (a fixed function of one MIR node, no
+    decision logic in value emission), and the canonical falsifier for a MIR shape is "could a
+    mechanical LLVM IR backend translate this without decisions?" When designing or extending a MIR
+    primitive, every binding `mir.md` invariant cross-checks against `backend_contract.md`'s
+    mechanical-translation invariant; the two are halves of the same contract. _Programming-
+    language consequence: the program text is the program; consumers do not invent vocabulary the
+    language does not have._
 11. Every instance-method callable body's first binding is `self`, a pointer to its enclosing class
     -- `body.vars[0]` is a local declaration of that pointer type, named `self`. Access to any class
     member -- a member variable, a service call, a child instance -- flows through `MemberAccess`
@@ -147,6 +153,17 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 - Produces input to LIR. MIR-to-LIR is the layer where the programming language gets translated into
   a machine-execution model. CFG structure, storage placement, and execution-oriented details are
   introduced at this boundary; MIR does not predict them.
+- Consumed by backends. `backend_contract.md` owns the rules under which a MIR-consuming backend
+  realizes per-unit MIR as target-language source: type mapping (one dispatch per MIR type variant
+  returning a target-language type representation) and value emission (mechanical translation of MIR
+  primitives, with no runtime library names appearing outside the type-mapping dispatch, and no
+  decision logic anywhere). A render that needs anything beyond the node's structural fields is
+  reading something MIR has not stated; the fix is upstream of render, never inside it. **Any MIR
+  design decision is validated against the backend contract**: if the proposed shape forces a
+  backend to branch in value emission (an `if` in render whose arms produce different syntactic
+  shapes, a payload-driven decision, a fabricated expression), the MIR design is wrong even if the
+  C++ backend can express it. The canonical check is "could a mechanical LLVM IR backend translate
+  this without decisions?".
 
 ## Forbidden Shapes
 
@@ -246,11 +263,14 @@ type is the call protocol, and a bound field is a snapshot or an alias by its ty
 the canonical contract.
 
 An access through a runtime library wrapper type illustrates the boundary between MIR's vocabulary
-and a backend's storage realization. The C++ backend wraps an observable signal's storage in
-`Var<T>`, exposing `Get` / `Set` / `Mutate` on the wrapper. MIR does not have a "cell access" node:
-a read of an observable signal is a `CallExpr` whose callee is the wrapper type's `Get` method and
-whose receiver is the `MemberAccess` reaching the signal; a write is a `CallExpr` to `Set`. The
-decision that an observable read is a method call -- not an implicit value-read -- is made at
-HIR-to-MIR, which sees that the signal's MIR type is the wrapper type and emits the corresponding
-call. By the time MIR is read by any backend, the program already says `wrapper.Get(...)` or
-`wrapper.Set(...)`; the backend reads the call and emits it the same way it emits any other call.
+and a backend's storage realization. A backend may choose to wrap observable storage in a
+target-side wrapper type that exposes read / write / mutate methods through its runtime library; MIR
+has no "cell access" node. A read of an observable signal is a `CallExpr` whose callee is the
+wrapper type's read method and whose receiver is the `MemberAccess` reaching the signal; a write is
+a `CallExpr` to the wrapper's write method. The decision that an observable read is a method call --
+not an implicit value-read -- is made at HIR-to-MIR, which sees that the signal's MIR type is the
+wrapper type and emits the corresponding call. By the time MIR is read by any backend, the program
+already says `wrapper.<read>(...)` or `wrapper.<write>(...)`; the backend reads the call and emits
+it the same way it emits any other call. The wrapper type's target-language spelling and the method
+spellings are backend-internal -- `backend_contract.md` owns the rules that keep those out of
+value-emission sites.

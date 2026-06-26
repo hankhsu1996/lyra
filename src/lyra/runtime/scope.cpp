@@ -137,18 +137,25 @@ void Scope::RegisterExtern(ExternBase* member) {
   externs_.push_back(member);
 }
 
-auto Scope::ResolveUpwardScope(std::string_view key, UpwardMatch match)
-    -> Scope* {
-  for (Scope* s = parent_; s != nullptr; s = s->Parent()) {
-    const std::string_view name =
-        match == UpwardMatch::kDefName ? s->DefName() : s->Name();
-    if (name == key) {
-      return s;
+auto Scope::ResolveVisibleChild(
+    std::string_view head_name,
+    std::span<const lyra::value::PackedArray> head_indices) -> Scope* {
+  for (Scope* level = this; level != nullptr; level = level->Parent()) {
+    if (Scope* child = level->GetChild(head_name, head_indices)) {
+      return child;
     }
   }
   throw InternalError(
-      "Scope::ResolveUpwardScope: no ancestor named " + std::string(key) +
-      " on the parent chain");
+      "Scope::ResolveVisibleChild: no child named " + std::string(head_name) +
+      " visible from this scope's enclosing chain");
+}
+
+auto Scope::ResolveRoot() -> Scope* {
+  Scope* level = this;
+  while (level->parent_ != nullptr) {
+    level = level->parent_;
+  }
+  return level;
 }
 
 auto Scope::Services() -> RuntimeServices& {
