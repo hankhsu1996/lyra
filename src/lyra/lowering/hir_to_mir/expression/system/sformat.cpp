@@ -112,7 +112,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
   if (!out_or) return std::unexpected(std::move(out_or.error()));
   const mir::TypeId out_type = process.Module().TranslateType(
       hir_proc.exprs.Get(*call.arguments[0]).type);
-  if (process.Module().Unit().GetType(out_type).Kind() !=
+  if (process.Module().Unit().types.Get(out_type).Kind() !=
       mir::TypeKind::kString) {
     return RejectNonStringOutput(name, span);
   }

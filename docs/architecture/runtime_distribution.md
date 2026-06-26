@@ -25,13 +25,13 @@ compile, or run paths.
 
 Resolution strategies:
 
-- **Runfiles (current).** When `lyra` is built and run by Bazel -- the development binary and the
-  test suite -- the runtime is staged in the binary's runfiles tree and resolved from there.
-- **Install-relative (release; not yet built).** A released `lyra` is a plain binary with no
-  runfiles. It locates its runtime relative to its own executable path -- the convention clang, gcc,
-  and rustc use for their resource and sysroot directories. A distribution ships the binary
-  alongside its runtime, and the binary finds it from `argv0` / the executable path. This strategy
-  drops into the same resolver; the emit, compile, and run paths are unaffected.
+- **Runfiles (development).** When `lyra` is built and run by Bazel -- the development binary and
+  the test suite -- the runtime is staged in the binary's runfiles tree and resolved from there.
+- **Install-relative (release).** A released `lyra` is a plain binary with no runfiles. It locates
+  its runtime relative to its own executable path -- the convention clang, gcc, and rustc use for
+  their resource and sysroot directories. A distribution ships the binary alongside its runtime, and
+  the binary finds it from `argv0` / the executable path. This strategy drops into the same
+  resolver; the emit, compile, and run paths are unaffected.
 
 Until the install-relative strategy exists, `run`, `emit cpp`, and `compile` work only where
 runfiles are present (the Bazel build tree and the tests). This is a property of how `lyra` locates
@@ -45,7 +45,7 @@ diagnostics do not bleed into them -- warnings are not shown during `run` (use `
 or `compile` to see them), and compile errors are reported and abort before any simulation begins.
 This keeps `run` faithfully pipeable and testable as "the simulation's output".
 
-## Out of scope (for now)
+## Out of scope
 
 - The install layout and packaging of a `lyra` distribution: where the runtime sits relative to the
   installed binary and how the two are packaged together. The resolver above is the single seam

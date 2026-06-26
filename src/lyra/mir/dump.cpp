@@ -38,7 +38,11 @@ class MirDumper {
     Line("Types:");
     Indent();
     for (std::size_t i = 0; i < unit.types.size(); ++i) {
-      Line(std::format("[{}] {}", i, FormatType(unit.types[i])));
+      Line(
+          std::format(
+              "[{}] {}", i,
+              FormatType(
+                  unit.types.Get(TypeId{static_cast<std::uint32_t>(i)}))));
     }
     Dedent();
     Line("Class:");

@@ -286,7 +286,7 @@ auto BuildRealOrStringLogicalLift(
 auto BuildMirUnaryExpr(
     const mir::CompilationUnit& unit, mir::Block& block, mir::UnaryOp op,
     mir::ExprId operand_id, mir::TypeId result_type) -> mir::Expr {
-  const auto& operand_ty = unit.GetType(block.exprs.Get(operand_id).type);
+  const auto& operand_ty = unit.types.Get(block.exprs.Get(operand_id).type);
 
   // LRM 11.4.9 reduction operators: render as `PackedArray::ReductionX()`,
   // routed through a `Direct` builtin call so the backend's render path
@@ -319,8 +319,8 @@ auto BuildMirBinaryExpr(
     const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
     -> mir::Expr {
-  const auto& lhs_ty = unit.GetType(block.exprs.Get(lhs_id).type);
-  const auto& rhs_ty = unit.GetType(block.exprs.Get(rhs_id).type);
+  const auto& lhs_ty = unit.types.Get(block.exprs.Get(lhs_id).type);
+  const auto& rhs_ty = unit.types.Get(block.exprs.Get(rhs_id).type);
   const bool real_lhs = IsRealFamilyType(lhs_ty);
   const bool real_rhs = IsRealFamilyType(rhs_ty);
   const bool string_lhs = lhs_ty.Kind() == mir::TypeKind::kString;
@@ -464,7 +464,7 @@ auto LowerHirIncDecExprProc(
   // a `ScopedMutation` snapshot so subscribers fire once on destructor commit.
   const mir::ExprId root_id = FindLhsRootId(block, target_id);
   if (mir::IsObservableCellType(
-          process.Module().Unit().GetType(block.exprs.Get(root_id).type))) {
+          process.Module().Unit().types.Get(block.exprs.Get(root_id).type))) {
     const mir::ExprId services_id =
         block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
     target_id = RewriteLhsRootWithMutate(

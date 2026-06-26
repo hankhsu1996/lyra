@@ -134,7 +134,7 @@ namespace {
 
 auto AsUniquePointee(const CompilationUnit& unit, TypeId type)
     -> std::optional<TypeId> {
-  const auto* ptr = std::get_if<PointerType>(&unit.GetType(type).data);
+  const auto* ptr = std::get_if<PointerType>(&unit.types.Get(type).data);
   if (ptr == nullptr || ptr->ownership != PointerOwnership::kUnique) {
     return std::nullopt;
   }
@@ -166,14 +166,15 @@ auto ObservableInnerValueType(const Type& ty) -> TypeId {
 auto GetChildScope(const CompilationUnit& unit, TypeId type)
     -> std::optional<ChildScope> {
   TypeId leaf = type;
-  while (const auto* vec = std::get_if<VectorType>(&unit.GetType(leaf).data)) {
+  while (const auto* vec =
+             std::get_if<VectorType>(&unit.types.Get(leaf).data)) {
     leaf = vec->element;
   }
   const auto pointee = AsUniquePointee(unit, leaf);
   if (!pointee.has_value()) {
     return std::nullopt;
   }
-  const auto& data = unit.GetType(*pointee).data;
+  const auto& data = unit.types.Get(*pointee).data;
   if (const auto* obj = std::get_if<ObjectType>(&data)) {
     return ChildScope{GenerateScopeChild{.name = obj->name}};
   }

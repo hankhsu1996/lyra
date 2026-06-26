@@ -1,10 +1,9 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
 #include <utility>
-#include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -26,47 +25,42 @@ struct BuiltinHirTypes {
 
 struct ModuleUnit {
   std::string name;
-  std::vector<Type> types;
+  base::Arena<Type, TypeId> types;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
 
   explicit ModuleUnit(std::string name)
       : name(std::move(name)),
         builtins{
-            .void_type = AddType(TypeData{VoidType{}}),
-            .int32 = AddType(
-                TypeData{PackedArrayType{
-                    .atom = BitAtom::kBit,
-                    .signedness = Signedness::kSigned,
-                    .dims = {PackedRange{.left = 31, .right = 0}},
-                    .form = PackedArrayForm::kInt}}),
-            .integer = AddType(
-                TypeData{PackedArrayType{
-                    .atom = BitAtom::kLogic,
-                    .signedness = Signedness::kSigned,
-                    .dims = {PackedRange{.left = 31, .right = 0}},
-                    .form = PackedArrayForm::kInteger}}),
-            .string = AddType(TypeData{StringType{}}),
-            .time = AddType(
-                TypeData{PackedArrayType{
-                    .atom = BitAtom::kLogic,
-                    .signedness = Signedness::kUnsigned,
-                    .dims = {PackedRange{.left = 63, .right = 0}},
-                    .form = PackedArrayForm::kTime}}),
-            .realtime = AddType(TypeData{RealTimeType{}}),
-            .wildcard_index = AddType(TypeData{WildcardIndexType{}}),
+            .void_type = types.Add(Type{.data = VoidType{}}),
+            .int32 = types.Add(
+                Type{
+                    .data =
+                        PackedArrayType{
+                            .atom = BitAtom::kBit,
+                            .signedness = Signedness::kSigned,
+                            .dims = {PackedRange{.left = 31, .right = 0}},
+                            .form = PackedArrayForm::kInt}}),
+            .integer = types.Add(
+                Type{
+                    .data =
+                        PackedArrayType{
+                            .atom = BitAtom::kLogic,
+                            .signedness = Signedness::kSigned,
+                            .dims = {PackedRange{.left = 31, .right = 0}},
+                            .form = PackedArrayForm::kInteger}}),
+            .string = types.Add(Type{.data = StringType{}}),
+            .time = types.Add(
+                Type{
+                    .data =
+                        PackedArrayType{
+                            .atom = BitAtom::kLogic,
+                            .signedness = Signedness::kUnsigned,
+                            .dims = {PackedRange{.left = 63, .right = 0}},
+                            .form = PackedArrayForm::kTime}}),
+            .realtime = types.Add(Type{.data = RealTimeType{}}),
+            .wildcard_index = types.Add(Type{.data = WildcardIndexType{}}),
         } {
-  }
-
-  [[nodiscard]] auto GetType(TypeId id) const -> const Type& {
-    return types.at(id.value);
-  }
-
-  auto AddType(TypeData data, diag::DiagSpan span = diag::UnknownSpan{})
-      -> TypeId {
-    const TypeId id{static_cast<std::uint32_t>(types.size())};
-    types.push_back(Type{.data = std::move(data), .span = span});
-    return id;
   }
 };
 

@@ -381,7 +381,7 @@ auto RenderDirectMethodCall(
   }
   const mir::Expr& receiver = view.Expr(call.arguments[0]);
   const mir::TypeId object_type =
-      std::get<mir::PointerType>(view.Unit().GetType(receiver.type).data)
+      std::get<mir::PointerType>(view.Unit().types.Get(receiver.type).data)
           .pointee;
   const auto& cls = view.ClassByObjectType(object_type);
   return {
@@ -420,7 +420,7 @@ auto RenderDirectBuiltinCall(
   }
   const mir::Expr& receiver = view.Expr(call.arguments[0]);
   const std::string_view sep =
-      view.Unit().GetType(receiver.type).Kind() == mir::TypeKind::kPointer
+      view.Unit().types.Get(receiver.type).Kind() == mir::TypeKind::kPointer
           ? "->"
           : ".";
   return {
@@ -459,7 +459,7 @@ auto RenderCalleePart(
             // `unique_ptr<T>` constructor is `std::make_unique<T>` -- it
             // forwards the arguments to T's constructor and heap-allocates --
             // so which C++ syntax to spell is read off the result type.
-            const auto& result_ty = view.Unit().GetType(result_type);
+            const auto& result_ty = view.Unit().types.Get(result_type);
             if (const auto* ptr =
                     std::get_if<mir::PointerType>(&result_ty.data);
                 ptr != nullptr &&

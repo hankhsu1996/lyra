@@ -95,7 +95,7 @@ auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
 auto ClosureBuilder::BuildCoroutine() -> mir::Expr {
   body_.AppendStmt(
       mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
-  return Finish(unit_->builtins.coroutine);
+  return Finish(unit_->builtins.coroutine_void);
 }
 
 auto ClosureBuilder::BuildVoid() -> mir::Expr {

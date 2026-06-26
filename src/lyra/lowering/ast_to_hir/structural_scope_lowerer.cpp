@@ -281,7 +281,7 @@ auto StructuralScopeLowerer::PopulateVariableMember(
   // elaboration, so a void-typed VariableSymbol can only reach this path
   // via a slang/Lyra integration bug.
   if (std::holds_alternative<hir::VoidType>(
-          module_->Unit().GetType(*type_id_or).data)) {
+          module_->Unit().types.Get(*type_id_or).data)) {
     throw InternalError(
         "StructuralScopeLowerer::PopulateVariableMember: variable declaration "
         "produced "

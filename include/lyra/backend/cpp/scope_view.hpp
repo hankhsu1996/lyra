@@ -111,7 +111,7 @@ class ScopeView {
   // The object type a class instance has -- the pointee of its self pointer.
   [[nodiscard]] auto ObjectTypeOf(const mir::Class& cls) const -> mir::TypeId {
     return std::get<mir::PointerType>(
-               unit_->GetType(cls.self_pointer_type).data)
+               unit_->types.Get(cls.self_pointer_type).data)
         .pointee;
   }
 

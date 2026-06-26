@@ -21,7 +21,7 @@ auto MakeUnpackedConstantExpr(
     const hir::ModuleUnit& unit, WalkFrame frame,
     const slang::ConstantValue& cv, hir::TypeId type, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  const auto& ty = unit.GetType(type);
+  const auto& ty = unit.types.Get(type);
   const auto* arr = std::get_if<hir::UnpackedArrayType>(&ty.data);
   if (arr == nullptr) {
     return diag::Fail(

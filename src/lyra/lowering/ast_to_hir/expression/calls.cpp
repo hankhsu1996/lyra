@@ -98,7 +98,7 @@ auto LowerCallExpr(
     const std::string_view name = info.subroutine->name;
 
     if (receiver_type.has_value() &&
-        module.Unit().GetType(*receiver_type).IsEnum()) {
+        module.Unit().types.Get(*receiver_type).IsEnum()) {
       if (auto kind = LowerEnumMethodName(name); kind.has_value()) {
         // `next` / `prev` have an optional `int unsigned step = 1` (LRM
         // 6.19.5.3/4). When the user omits the step, the lowering hands the
@@ -120,7 +120,7 @@ auto LowerCallExpr(
     }
 
     if (receiver_type.has_value() &&
-        module.Unit().GetType(*receiver_type).Kind() ==
+        module.Unit().types.Get(*receiver_type).Kind() ==
             hir::TypeKind::kString) {
       if (auto kind = LowerStringMethodName(name); kind.has_value()) {
         // LRM 6.16.1 through 6.16.15 -- string intrinsic methods. The
@@ -142,7 +142,7 @@ auto LowerCallExpr(
 
     if (receiver_type.has_value() &&
         std::holds_alternative<hir::EventType>(
-            module.Unit().GetType(*receiver_type).data) &&
+            module.Unit().types.Get(*receiver_type).data) &&
         name == "triggered") {
       // LRM 15.5.3: `e.triggered` returns true for the duration of the time
       // slot in which the event was last triggered. Result type is bit (1'b0
@@ -166,7 +166,7 @@ auto LowerCallExpr(
 
     if (receiver_type.has_value() &&
         std::holds_alternative<hir::QueueType>(
-            module.Unit().GetType(*receiver_type).data)) {
+            module.Unit().types.Get(*receiver_type).data)) {
       // LRM 7.10.2 queue-native methods. The receiver is arguments[0]; any
       // method parameters (insert's index and item, push's item) follow as the
       // remaining arguments. These methods take no `with` clause and are tried
@@ -201,13 +201,13 @@ auto LowerCallExpr(
     // `WithClause`, which HIR -> MIR turns into a closure argument.
     if (receiver_type.has_value() &&
         (std::holds_alternative<hir::UnpackedArrayType>(
-             module.Unit().GetType(*receiver_type).data) ||
+             module.Unit().types.Get(*receiver_type).data) ||
          std::holds_alternative<hir::DynamicArrayType>(
-             module.Unit().GetType(*receiver_type).data) ||
+             module.Unit().types.Get(*receiver_type).data) ||
          std::holds_alternative<hir::QueueType>(
-             module.Unit().GetType(*receiver_type).data) ||
+             module.Unit().types.Get(*receiver_type).data) ||
          std::holds_alternative<hir::AssociativeArrayType>(
-             module.Unit().GetType(*receiver_type).data))) {
+             module.Unit().types.Get(*receiver_type).data))) {
       if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
         auto type_id = module.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
@@ -250,7 +250,7 @@ auto LowerCallExpr(
 
     if (receiver_type.has_value() &&
         std::holds_alternative<hir::AssociativeArrayType>(
-            module.Unit().GetType(*receiver_type).data)) {
+            module.Unit().types.Get(*receiver_type).data)) {
       if (auto kind = LowerAssociativeMethodName(name); kind.has_value()) {
         // LRM 7.9 associative-array methods. The receiver is arguments[0]; the
         // key (exists / delete-by-index) follows as the next argument. The

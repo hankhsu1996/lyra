@@ -86,7 +86,7 @@ auto LowerContinuousAssign(
       .code =
           mir::CallableCode{
               .params = {self_id},
-              .result_type = lowerer.Module().Unit().builtins.coroutine,
+              .result_type = lowerer.Module().Unit().builtins.coroutine_void,
               .body = std::move(process_block)},
       .overrides = std::nullopt};
 }

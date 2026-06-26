@@ -92,9 +92,9 @@ earlier, defeating the intent.
 
 ## `$finish`
 
-`$finish` reaches the engine's stop verb, which sets a `finished_` flag; the time-slot loop then
-exits without running further regions in the in-progress slot. Pending NBA writes for that slot do
-not commit; queued active processes do not resume.
+`$finish` reaches the engine's stop verb, which sets a stop flag; the time-slot loop then exits
+without running further regions in the in-progress slot. Pending NBA writes for that slot do not
+commit; queued active processes do not resume.
 
 Registered `final` actions then run in registration order. A `$finish` raised from inside a `final`
 aborts the remaining finals. This three-cornered behavior (active shutdown, NBA discard, final

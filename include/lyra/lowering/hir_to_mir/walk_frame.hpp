@@ -48,11 +48,10 @@ enum class LoopVarLoweringMode : std::uint8_t {
 // not here. WalkFrame holds only state that genuinely changes from one
 // recursion to the next.
 //
-// Handlers reach nested write targets through `frame.current_class->Add...` /
-// `frame.current_block->Add...`;
-// writes to the root output go through the unit's own append-only API reached
-// via `module.Unit().AddType(...)` for synthesized types,
-// `module.Unit().AllocateDeferredCheckSiteId()` for deferred-check site ids.
+// A handler writes nested IR through the frame's current targets; output that
+// belongs to the compilation unit as a whole -- a synthesized type, a
+// deferred-check site -- is appended to the unit directly, since it has no
+// place on a per-recursion frame.
 struct WalkFrame {
   // The current class write target. Set when a class-constructing task builds
   // its class and entered via `WithClass`. Null outside class handlers.
