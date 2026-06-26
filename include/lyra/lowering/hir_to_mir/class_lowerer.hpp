@@ -16,7 +16,6 @@
 #include "lyra/hir/structural_var.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
@@ -61,14 +60,14 @@ class ClassLowerer {
         hir_scope_(&hir_scope) {
   }
 
-  // Constructs the `mir::Class` on the stack, walks the HIR scope
-  // body, and returns the result. Handlers reached through dispatch write to
-  // `frame.current_class`. `entry_bindings` are the structural
-  // params injected by an enclosing for-generate iteration.
+  // Registers this object in the unit, walks the HIR scope body to build its
+  // declaration, and returns its identity. Handlers reached through dispatch
+  // write to `frame.current_class`. `entry_bindings` are the structural params
+  // injected by an enclosing for-generate iteration.
   auto Run(
       WalkFrame parent_frame,
       std::span<const ScopeEntryStructuralParamBinding> entry_bindings = {})
-      -> diag::Result<mir::Class>;
+      -> diag::Result<mir::ClassId>;
 
   // Central scope-level expression dispatcher. One switch over `hir::Expr::
   // data` routing each kind to the per-family handler in `expression/*.cpp`.

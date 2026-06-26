@@ -384,9 +384,9 @@ auto main(int argc, char** argv) -> int {
                          const std::vector<std::string>& top_names) {
       std::vector<lyra::backend::cpp::TopInstance> tops;
       for (const auto& unit : units) {
-        if (std::ranges::find(top_names, unit.top_class.name) !=
-            top_names.end()) {
-          tops.push_back({.name = unit.top_class.name, .unit = &unit});
+        const auto& top_class = unit.GetClass(unit.root);
+        if (std::ranges::find(top_names, top_class.name) != top_names.end()) {
+          tops.push_back({.name = top_class.name, .unit = &unit});
         }
       }
       return tops;

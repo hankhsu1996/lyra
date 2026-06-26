@@ -17,11 +17,11 @@ each stage establishes, not how.
 - [ ] An object's base is one generic nominal-object reference -- a runtime-library, intra-unit, or
       cross-unit base -- rendered through one path, not a closed runtime-base classification. A
       runtime-library base is an imported library declaration; a cross-unit base stays a by-name
-      reference. Behavior-neutral: the emitted module shape is unchanged. (A local object type
-      already carries a stable unit-local identity today, so a separate intra-unit id is not this
-      step; that identity becomes the registry's canonical id below. Runtime-tree membership is read
-      adequately from how a member is owned today; a base-lineage read is a later purity refinement,
-      not done as a standalone non-neutral change.)
+      reference. Behavior-neutral: the emitted module shape is unchanged. (The intra-unit and
+      cross-unit base arms are not this step; an intra-unit base names the registry's canonical
+      local identity, established below. Runtime-tree membership is read adequately from how a
+      member is owned today; a base-lineage read is a later purity refinement, not done as a
+      standalone non-neutral change.)
 
 - [x] Each post-construction lifecycle body (the scope's resolve / initialize / activate work) is an
       ordinary method that records, as a first-class fact, which runtime-base method it overrides --
@@ -29,20 +29,24 @@ each stage establishes, not how.
       object declaration are gone. The full dynamic-dispatch slot machinery is not introduced here;
       only the override relation. Behavior-neutral.
 
-- [ ] Object construction -- including a module's owned children -- is one generic construction form
-      that allocates the object and runs its constructor, with optional base-constructor chaining.
-      Construction is a concept distinct from an ordinary callable, carrying allocation and
-      initialization ordering. The existing module-child construction is expressed through it.
+- [x] Object construction is already one generic, type-directed form -- what it builds (a value, an
+      owned child, a managed handle) follows the result type, and a module's owned children
+      construct through it today -- so no separate construction node is needed. The gap this stage
+      closes is the foundation every object-naming site depends on once classes arrive: a unit-level
+      identity for each local nominal object, and one nominal-object reference used wherever a
+      member's pointee, a constructed type, or a receiver names an object, so one relation is never
+      encoded two ways. The base naming role is unified separately when an object extends a local or
+      cross-unit base. A user-written constructor body lands with the class; base-constructor
+      chaining lands with inheritance.
 
-- [ ] A compilation unit owns one canonical registry of its local nominal object declarations: every
+- [x] A compilation unit owns one canonical registry of its local nominal object declarations: every
       object type -- module, generate scope, class -- is one record with one canonical local
-      identity a reference names; a lexical scope resolves a name to an identity; structural
-      containment and backend emission nesting are separate relations over identities. A forward
-      (incomplete) declaration is a record that exists before its body, so mutually-referential and
-      forward-declared types resolve. The current lexical-tree object storage becomes
-      registry-backed, with structural containment retained for construction and for nested
-      emission. This lands before SystemVerilog classes; it is not a standalone flatten of the
-      existing storage.
+      identity a reference names; structural containment and backend emission nesting are separate
+      relations over identities. A forward (incomplete) declaration is a record that exists before
+      its body, so mutually-referential and forward-declared types resolve. The lexical-tree object
+      storage is now registry-backed, with structural containment retained for construction and for
+      nested emission. Resolving a source name to an identity by lexical scope lands with
+      SystemVerilog classes, the first references resolved by name.
 
 - [ ] A SystemVerilog class is the same generic object type, reached through a managed object
       reference: nullable as a value, identity-comparable, shallow-copied, participating in managed
@@ -73,11 +77,9 @@ each stage establishes, not how.
 - Renaming the object declaration to a name that reads as generic (it will hold both modules and
   SystemVerilog classes) is a separate mechanical change, deferred until it holds both. The registry
   slice is its natural home.
-- The registry's canonical local identity is either the object type's existing type-system id
-  reused, or a dedicated object id the object type carries. The principle (one identity, no second
-  inter-convertible id) is settled; the mechanism is pending whether an object declaration has a
-  single canonical type-system id today (type interning does not deduplicate, so it may have several
-  content-equal ones). The lean is the dedicated id.
+- The registry's canonical local identity is a dedicated object id, separate from the type-system id
+  (resolved). The type pool interns by content, but a class declaration's identity must be
+  independent of any one type node, so it carries its own id; an object type names that id.
 
 ## Cross-references
 

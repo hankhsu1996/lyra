@@ -241,10 +241,11 @@ auto RenderScopeAsClass(
            "; }\n\n";
   }
 
-  for (const auto& child : s.nested_classes) {
-    out += RenderScopeAsClass(unit, child, indent + 1, &this_anchor);
+  for (const mir::ClassId child_id : s.contained) {
+    out += RenderScopeAsClass(
+        unit, unit.GetClass(child_id), indent + 1, &this_anchor);
   }
-  if (!s.nested_classes.empty()) {
+  if (!s.contained.empty()) {
     out += "\n";
   }
 
@@ -414,7 +415,8 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
   for (const auto& top : tops) {
-    out += std::format("#include \"{}.hpp\"\n", top.unit->top_class.name);
+    out += std::format(
+        "#include \"{}.hpp\"\n", top.unit->GetClass(top.unit->root).name);
   }
   out += "\n";
   out += "auto main() -> int {\n";
@@ -427,11 +429,12 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
     // so this harness file does not repeat a type literal already owned
     // by MIR's builtin TypeId table.
     const auto& unit = *tops[i].unit;
+    const auto& top_class = unit.GetClass(unit.root);
     const std::string segment_cpp =
-        RenderTypeAsCpp(unit, unit.top_class, unit.builtins.hierarchy_segment);
+        RenderTypeAsCpp(unit, top_class, unit.builtins.hierarchy_segment);
     out += std::format(
         "  {0} top{1}{{nullptr, {2}{{\"{3}\", {{}}}}, engine.Services()}};\n",
-        tops[i].unit->top_class.name, i, segment_cpp, tops[i].name);
+        top_class.name, i, segment_cpp, tops[i].name);
   }
   out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
@@ -447,7 +450,7 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
 }  // namespace
 
 auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact {
-  const auto& root = unit.top_class;
+  const auto& root = unit.GetClass(unit.root);
   return {
       .relpath = std::format("{}.hpp", root.name),
       .content = RenderScopeHeaderFile(unit, root)};

@@ -14,10 +14,14 @@ anywhere through a handle, with no lexical parent. This decision settles the sto
 model so one model serves every object type, and records why a single registry -- not two storage
 systems, not a second identity -- is the answer.
 
-A related factual correction sharpened the problem: a local object type already has a stable
-unit-local identity today (its type-system id; name resolution compares ids, not strings, and the
-name on an object type is an emission / dump convenience). So the gap is not "string identity"; it
-is that the **declaration storage and lookup model** is lexical-tree-only.
+A code-level check sharpened the problem: a local object type has no canonical per-declaration
+identity today. Object types are synthesized by name, and the type arena does not deduplicate, so
+one declaration is reached through several content-equal type entries tied together only by a name
+string -- there is no id that resolves to the declaration on its own. This suffices for modules and
+generate scopes, which are reached by hierarchical navigation and backend name nesting and never by
+resolving an object-type identity; it cannot carry classes, which are named by identity from
+arbitrary positions. So the gap is twofold: there is no canonical identity, and the **declaration
+storage and lookup model** is lexical-tree-only.
 
 ## Decision
 

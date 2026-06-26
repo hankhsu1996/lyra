@@ -176,7 +176,8 @@ auto GetChildScope(const CompilationUnit& unit, TypeId type)
   }
   const auto& data = unit.types.Get(*pointee).data;
   if (const auto* obj = std::get_if<ObjectType>(&data)) {
-    return ChildScope{GenerateScopeChild{.name = obj->name}};
+    return ChildScope{
+        GenerateScopeChild{.name = unit.GetClass(obj->class_id).name}};
   }
   if (std::holds_alternative<ExternalUnitObjectType>(data)) {
     return ChildScope{ModuleInstanceChild{}};

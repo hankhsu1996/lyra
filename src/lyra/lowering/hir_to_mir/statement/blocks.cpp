@@ -52,7 +52,8 @@ void OpenActivationScope(
 
   // Build the box fully, then append it (the class arena is append-only).
   const std::string box_name = std::string(process.CallableName()) + "__act" +
-                               std::to_string(owner.nested_classes.size());
+                               std::to_string(owner.contained.size());
+  const mir::ClassId box_id = unit.DeclareClass();
   mir::Class box;
   box.name = box_name;
   box.base = std::nullopt;
@@ -66,10 +67,11 @@ void OpenActivationScope(
             .name = decl.name, .type = module.TranslateType(decl.type)}));
   }
   const mir::TypeId box_object =
-      unit.types.Intern(mir::ObjectType{.name = box_name});
+      unit.types.Intern(mir::ObjectType{.class_id = box_id});
   box.self_pointer_type =
       unit.types.PointerTo(box_object, mir::PointerOwnership::kBorrowed);
-  owner.nested_classes.Add(std::move(box));
+  unit.DefineClass(box_id, std::move(box));
+  owner.contained.push_back(box_id);
 
   // The handle: a shared pointer to the box, allocated by make_shared. Declared
   // first in the scope, before the promoted locals it stands in for.

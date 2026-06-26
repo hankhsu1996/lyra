@@ -100,7 +100,9 @@ auto RenderTypeAsCpp(
           [](const mir::WildcardIndexType&) -> std::string {
             return "lyra::value::WildcardKey";
           },
-          [](const mir::ObjectType& o) -> std::string { return o.name; },
+          [&unit](const mir::ObjectType& o) -> std::string {
+            return unit.GetClass(o.class_id).name;
+          },
           [](const mir::ExternalUnitObjectType& e) -> std::string {
             return e.unit_name;
           },

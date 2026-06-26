@@ -72,7 +72,7 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           HashId(seed, t.element_type);
           HashId(seed, t.key_type);
         } else if constexpr (std::is_same_v<T, ObjectType>) {
-          HashField(seed, t.name);
+          HashField(seed, t.class_id.value);
         } else if constexpr (std::is_same_v<T, ExternalUnitObjectType>) {
           HashField(seed, t.unit_name);
         } else if constexpr (std::is_same_v<T, RuntimeLibraryType>) {

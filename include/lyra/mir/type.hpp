@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -167,8 +168,13 @@ struct VoidType {
   auto operator==(const VoidType&) const -> bool = default;
 };
 
+// The type of an instance of a class of this compilation unit -- a module
+// instance, a named generate scope, or a SystemVerilog class. It names the
+// class by its unit-wide identity; the unit's class registry resolves the id to
+// the declaration. The name is not here -- it is a property of the registered
+// declaration, read through the id.
 struct ObjectType {
-  std::string name;
+  ClassId class_id;
 
   auto operator==(const ObjectType&) const -> bool = default;
 };

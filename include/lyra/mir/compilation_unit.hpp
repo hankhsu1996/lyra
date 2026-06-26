@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/base/registry.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/deferred_check_site.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -48,7 +50,12 @@ struct BuiltinMirTypes {
 struct CompilationUnit {
   TypeInterner types;
   BuiltinMirTypes builtins;
-  Class top_class;
+  // Every class declaration of this unit, owned here exactly once and reached
+  // by its identity, with a declare-then-define lifecycle so a class can be
+  // named before its body is built. `root` identifies the unit's top class, the
+  // module declaration.
+  base::Registry<Class, ClassId> classes;
+  ClassId root{};
   std::vector<DeferredCheckSite> deferred_check_sites;
 
   CompilationUnit()
@@ -113,6 +120,18 @@ struct CompilationUnit {
     // instance, not a deduplication mechanism -- interning `Coroutine<void>`
     // anywhere returns this same id.
     builtins.coroutine_void = types.CoroutineOf(builtins.void_type);
+  }
+
+  [[nodiscard]] auto GetClass(ClassId id) const -> const Class& {
+    return classes.Get(id);
+  }
+
+  auto DeclareClass() -> ClassId {
+    return classes.Declare();
+  }
+
+  void DefineClass(ClassId id, Class value) {
+    classes.Define(id, std::move(value));
   }
 
   // Backing-vector position is the id, matching TypeId / LocalId.
