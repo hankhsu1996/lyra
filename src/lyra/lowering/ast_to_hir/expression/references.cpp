@@ -100,7 +100,8 @@ auto LowerNamedValueProc(
     auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return MakeConstantValueExpr(
-        sym.as<slang::ast::ParameterSymbol>().getValue(), *type_id, span);
+        module.Unit(), frame, sym.as<slang::ast::ParameterSymbol>().getValue(),
+        *type_id, span);
   }
 
   // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
@@ -307,7 +308,8 @@ auto LowerNamedValueStructural(
     auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return MakeConstantValueExpr(
-        sym.as<slang::ast::ParameterSymbol>().getValue(), *type_id, span);
+        module.Unit(), frame, sym.as<slang::ast::ParameterSymbol>().getValue(),
+        *type_id, span);
   }
   if (sym.kind != slang::ast::SymbolKind::Variable) {
     return diag::Fail(

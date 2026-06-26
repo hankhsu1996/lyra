@@ -11,7 +11,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
@@ -124,7 +123,8 @@ auto LowerRangeSelectExpr(
     if (const auto* constant = bound.getConstant(); constant != nullptr) {
       auto bound_type = lowerer.Module().InternType(*bound.type, span);
       if (!bound_type) return std::unexpected(std::move(bound_type.error()));
-      auto literal = MakeConstantValueExpr(*constant, *bound_type, span);
+      auto literal = MakeConstantValueExpr(
+          lowerer.Module().Unit(), frame, *constant, *bound_type, span);
       if (!literal) return std::unexpected(std::move(literal.error()));
       return frame.Exprs().Add(*std::move(literal));
     }
