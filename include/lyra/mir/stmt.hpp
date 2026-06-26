@@ -9,10 +9,8 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 #include "lyra/mir/value_ref.hpp"
 
 namespace lyra::mir {

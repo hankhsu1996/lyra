@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -72,8 +73,8 @@ auto CompanionVarNameFor(std::string_view child_scope_name) -> std::string {
 }
 
 void CheckNoNameCollision(
-    const mir::Class& owner_class, std::string_view child_scope_name,
-    std::string_view companion_var_name) {
+    const mir::CompilationUnit& unit, const mir::Class& owner_class,
+    std::string_view child_scope_name, std::string_view companion_var_name) {
   for (const auto& v : owner_class.members) {
     if (v.name == companion_var_name || v.name == child_scope_name) {
       throw InternalError(
@@ -81,8 +82,8 @@ void CheckNoNameCollision(
           "member declaration in the enclosing class");
     }
   }
-  for (const auto& c : owner_class.nested_classes) {
-    if (c.name == child_scope_name) {
+  for (const mir::ClassId child : owner_class.contained) {
+    if (unit.GetClass(child).name == child_scope_name) {
       throw InternalError(
           "child class name collides with an existing nested class "
           "declaration in the enclosing class");
@@ -170,10 +171,10 @@ auto EnumerateGenerateChildSpecs(
   return specs;
 }
 
-auto MakeUniqueObjectPointer(ModuleLowerer& module, std::string scope_name)
+auto MakeUniqueObjectPointer(ModuleLowerer& module, mir::ClassId class_id)
     -> mir::TypeId {
-  const mir::TypeId object_type = module.Unit().types.Intern(
-      mir::ObjectType{.name = std::move(scope_name)});
+  const mir::TypeId object_type =
+      module.Unit().types.Intern(mir::ObjectType{.class_id = class_id});
   return module.Unit().types.PointerTo(
       object_type, mir::PointerOwnership::kUnique);
 }
@@ -902,7 +903,8 @@ void ValidateOwnedChildConstruction(
     const mir::CompilationUnit& unit, const mir::Class& owner_class,
     const mir::Block& block, mir::MemberId target_var,
     mir::ClassId child_scope_id, std::span<const mir::ExprId> ctor_args) {
-  if (child_scope_id.value >= owner_class.nested_classes.size()) {
+  if (std::ranges::find(owner_class.contained, child_scope_id) ==
+      owner_class.contained.end()) {
     throw InternalError(
         "owned-child construction: child scope is not a direct child of the "
         "enclosing class");
@@ -916,7 +918,7 @@ void ValidateOwnedChildConstruction(
   const auto child = mir::GetChildScope(unit, var.type);
   const auto* generate =
       child ? std::get_if<mir::GenerateScopeChild>(&*child) : nullptr;
-  const auto& child_scope = owner_class.nested_classes.Get(child_scope_id);
+  const auto& child_scope = unit.GetClass(child_scope_id);
   if (generate == nullptr || generate->name != child_scope.name) {
     throw InternalError(
         "owned-child construction: target var does not own the requested "
@@ -1369,17 +1371,17 @@ auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
     auto specs = EnumerateGenerateChildSpecs(gen, gen_idx, hir_scope, module);
     for (auto& spec : specs) {
       const auto companion_name = CompanionVarNameFor(spec.scope_name);
-      CheckNoNameCollision(mir_class, spec.scope_name, companion_name);
+      CheckNoNameCollision(
+          module.Unit(), mir_class, spec.scope_name, companion_name);
 
       ClassLowerer child_scope(
           module, &lowerer, std::move(spec.scope_name), *spec.scope);
       auto child_r = child_scope.Run(frame, spec.entry_bindings);
       if (!child_r) return std::unexpected(std::move(child_r.error()));
 
-      const mir::ClassId child_id =
-          mir_class.nested_classes.Add(*std::move(child_r));
-      mir::TypeId var_type = MakeUniqueObjectPointer(
-          module, mir_class.nested_classes.Get(child_id).name);
+      const mir::ClassId child_id = *child_r;
+      mir_class.contained.push_back(child_id);
+      mir::TypeId var_type = MakeUniqueObjectPointer(module, child_id);
       if (spec.is_repeated) {
         var_type =
             module.Unit().types.Intern(mir::VectorType{.element = var_type});
@@ -1404,13 +1406,16 @@ auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
 auto ClassLowerer::Run(
     WalkFrame frame,
     std::span<const ScopeEntryStructuralParamBinding> entry_bindings)
-    -> diag::Result<mir::Class> {
+    -> diag::Result<mir::ClassId> {
   ModuleLowerer& module = *module_;
   const hir::StructuralScope& hir_scope = *hir_scope_;
   ClassLowerer& lowerer = *this;
 
+  // The identity is minted before the body so the object's own self type names
+  // it; the registry slot is filled from the finished declaration below.
+  const mir::ClassId own_id = module.Unit().DeclareClass();
   const mir::TypeId self_object_type =
-      module.Unit().types.Intern(mir::ObjectType{.name = name_});
+      module.Unit().types.Intern(mir::ObjectType{.class_id = own_id});
   const mir::TypeId self_pointer_type = module.Unit().types.PointerTo(
       self_object_type, mir::PointerOwnership::kBorrowed);
   mir::Class mir_class{
@@ -1424,7 +1429,7 @@ auto ClassLowerer::Run(
       .params = {},
       .members = {},
       .constructor_block = {},
-      .nested_classes = {},
+      .contained = {},
       .methods = {},
       .type_aliases = {}};
 
@@ -1731,7 +1736,8 @@ auto ClassLowerer::Run(
                 .method = mir::RuntimeMethod::kActivate}}});
   }
 
-  return mir_class;
+  module.Unit().DefineClass(own_id, std::move(mir_class));
+  return own_id;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

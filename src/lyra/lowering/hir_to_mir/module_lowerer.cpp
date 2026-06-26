@@ -28,7 +28,7 @@ auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
   auto top_r = root.Run(root_frame);
   if (!top_r) return std::unexpected(std::move(top_r.error()));
 
-  unit_.top_class = *std::move(top_r);
+  unit_.root = *top_r;
   return std::move(unit_);
 }
 

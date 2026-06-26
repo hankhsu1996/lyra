@@ -47,7 +47,11 @@ struct Class {
   // constructor is the allocation shell that kicks this off; an empty body
   // needs no kickoff.
   Block constructor_block;
-  base::Arena<Class, ClassId> nested_classes;
+  // The classes this one structurally owns -- the children it builds and, for a
+  // backend that nests, emits inside itself. Each names a registry identity, in
+  // construction order. Ownership of the declarations is the unit's registry;
+  // this is the containment relation over those identities.
+  std::vector<ClassId> contained;
   base::Arena<MethodDecl, MethodId> methods;
   std::vector<TypeAliasDecl> type_aliases;
 
