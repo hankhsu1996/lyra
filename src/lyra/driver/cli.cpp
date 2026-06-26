@@ -83,6 +83,11 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .help("compile all files as a single compilation unit")
       .default_value(false)
       .implicit_value(true);
+  cmd.add_argument("--disable-assertions")
+      .help(
+          "skip assertion constructs during lowering instead of rejecting them")
+      .default_value(false)
+      .implicit_value(true);
   cmd.add_argument("--format")
       .help("reformat the emitted C++ with clang-format (skipped if absent)")
       .default_value(false)
@@ -107,6 +112,7 @@ void BindCompilationFlags(
     out.input.param_overrides = std::move(*ovr);
   }
   out.input.single_unit = cmd.get<bool>("--single-unit");
+  out.input.disable_assertions = cmd.get<bool>("--disable-assertions");
   out.format = cmd.get<bool>("--format");
   if (auto files = cmd.present<std::vector<std::string>>("files")) {
     out.input.files = std::move(*files);

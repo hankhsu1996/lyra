@@ -49,13 +49,12 @@ full support.
 
 ### Common forms
 
-- [ ] **Expose `disable_assertions` on the current entry path.** Untouched, the design's first
+- [x] **Expose `disable_assertions` on the current entry path.** Untouched, the design's first
       blocker in many modules is a concurrent assertion (the `assert`/`assume`/`cover property`
       family and the macros wrapping them). The accepted handling is the `disable_assertions`
-      compilation option, but it is not reachable on this branch -- there is no CLI flag and no
-      project mode to set it. Wiring it through is the gap; implementing SVA proper (sampled-value
-      functions `$rose`/`$fell`/`$stable`/`$past`, the `Observed` region) is a separate, optional
-      feature off the critical path to running Ibex.
+      compilation option, which skips assertion constructs during lowering. Implementing SVA proper
+      (sampled-value functions `$rose`/`$fell`/`$stable`/`$past`, the `Observed` region) is a
+      separate, optional feature off the critical path to running Ibex.
 - [ ] **Packed array whose element is a struct or enum** (a packed array of a packed aggregate, not
       just of a scalar bit/logic).
 - [ ] **Net-typed port connections** -- connecting a net (`wire`) across a module port, as the

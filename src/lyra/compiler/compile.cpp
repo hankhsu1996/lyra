@@ -38,7 +38,8 @@ auto Compile(
   auto hir = lowering::ast_to_hir::LowerCompilation(
       lowering::ast_to_hir::LowerCompilationFacts(
           *result.artifacts.parse->compilation,
-          result.artifacts.parse->source_mapper, sensitivity_analyzer));
+          result.artifacts.parse->source_mapper, sensitivity_analyzer,
+          input.disable_assertions));
   if (!hir) {
     sink.Report(std::move(hir.error()));
     return result;

@@ -21,6 +21,7 @@ struct CompilationInput {
   std::vector<std::string> defines;
   std::vector<std::string> param_overrides;
   bool single_unit = false;
+  bool disable_assertions = false;
 };
 
 struct ParseResult {

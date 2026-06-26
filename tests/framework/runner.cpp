@@ -485,6 +485,9 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
     argv.emplace_back("--top");
     argv.push_back(*c.input.top);
   }
+  for (const auto& a : c.input.extra_args) {
+    argv.push_back(a);
+  }
   for (const auto& f : resolved_input_files) {
     argv.push_back(f.string());
   }
