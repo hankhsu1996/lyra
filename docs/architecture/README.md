@@ -33,14 +33,14 @@ Read top to bottom on first pass:
     construction-time resolution
 16. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
     cross-unit resolution through the SDK
-16. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
+17. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
     emission; what a backend may and may not name in render
-17. `identity_and_ownership.md` -- identity rules and forbidden shapes
-18. `lowering_boundaries.md` -- what each lowering may and may not do
-19. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+18. `identity_and_ownership.md` -- identity rules and forbidden shapes
+19. `lowering_boundaries.md` -- what each lowering may and may not do
+20. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-20. `incremental_build.md` -- query-based incremental compilation and caching
-21. `testing_strategy.md` -- test categories and structure
+21. `incremental_build.md` -- query-based incremental compilation and caching
+22. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
