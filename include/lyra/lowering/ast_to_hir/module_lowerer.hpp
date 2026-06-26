@@ -80,16 +80,18 @@ struct ScopeEntryLoopVarBinding {
 
 // Shared lowering-pass facts threaded into every ModuleLowerer. SourceMapper
 // translates slang source locations; SensitivityAnalyzer is shared across
-// every module's analysis (caches reads). Subset of `LowerCompilationFacts`
-// that excludes the slang Compilation handle (which only the driver-level
-// CompilationLowerer needs to walk top instances).
+// every module's analysis (caches reads); disable_assertions is the policy
+// that elides assertion constructs instead of rejecting them. Subset of
+// `LowerCompilationFacts` that excludes the slang Compilation handle (which
+// only the driver-level CompilationLowerer needs to walk top instances).
 class LoweringFacts {
  public:
   LoweringFacts(
       const frontend::SlangSourceMapper& source_mapper,
-      SensitivityAnalyzer& sensitivity_analyzer)
+      SensitivityAnalyzer& sensitivity_analyzer, bool disable_assertions)
       : source_mapper_(&source_mapper),
-        sensitivity_analyzer_(&sensitivity_analyzer) {
+        sensitivity_analyzer_(&sensitivity_analyzer),
+        disable_assertions_(disable_assertions) {
   }
 
   [[nodiscard]] auto SourceMapper() const
@@ -101,9 +103,14 @@ class LoweringFacts {
     return *sensitivity_analyzer_;
   }
 
+  [[nodiscard]] auto DisableAssertions() const -> bool {
+    return disable_assertions_;
+  }
+
  private:
   const frontend::SlangSourceMapper* source_mapper_;
   SensitivityAnalyzer* sensitivity_analyzer_;
+  bool disable_assertions_;
 };
 
 // Per-module lowerer.
@@ -145,6 +152,9 @@ class ModuleLowerer {
   }
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
     return facts_.Sensitivity();
+  }
+  [[nodiscard]] auto DisableAssertions() const -> bool {
+    return facts_.DisableAssertions();
   }
 
   // Binding registries. Each Map* asserts no double-mapping for the same
