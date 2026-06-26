@@ -33,6 +33,7 @@ namespace {
 class MirDumper {
  public:
   auto Dump(const CompilationUnit& unit) -> std::string {
+    unit_ = &unit;
     Line("CompilationUnit");
     Indent();
     Line("Types:");
@@ -47,7 +48,7 @@ class MirDumper {
     Dedent();
     Line("Class:");
     Indent();
-    DumpClass(unit.top_class);
+    DumpClass(unit.root, unit.GetClass(unit.root));
     Dedent();
     Dedent();
     return std::move(out_);
@@ -174,7 +175,7 @@ class MirDumper {
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
-              return std::format("Object(name=\"{}\")", o.name);
+              return std::format("Object(#{})", o.class_id.value);
             },
             [](const ExternalUnitObjectType& e) -> std::string {
               return std::format(
@@ -625,9 +626,9 @@ class MirDumper {
     return std::format("Type[{}]", type.value);
   }
 
-  void DumpClass(const Class& s) {
+  void DumpClass(ClassId id, const Class& s) {
     scope_stack_.push_back(&s);
-    Line(std::format("Class \"{}\"", s.name));
+    Line(std::format("Class \"{}\" (#{})", s.name, id.value));
     Indent();
 
     if (s.base.has_value()) {
@@ -639,12 +640,12 @@ class MirDumper {
                               : "GenScope"));
     }
 
-    Line("NestedClasses:");
+    Line("Contained:");
     Indent();
-    for (std::size_t i = 0; i < s.nested_classes.size(); ++i) {
-      Line(std::format("[{}]", i));
+    for (const ClassId child : s.contained) {
+      Line(std::format("[#{}]", child.value));
       Indent();
-      DumpClass(s.nested_classes.Get(ClassId{static_cast<std::uint32_t>(i)}));
+      DumpClass(child, unit_->GetClass(child));
       Dedent();
     }
     Dedent();
@@ -1099,6 +1100,7 @@ class MirDumper {
   std::string out_;
   int indent_ = 0;
   std::vector<const Class*> scope_stack_;
+  const CompilationUnit* unit_ = nullptr;
   std::vector<const Block*> block_stack_;
 };
 
