@@ -127,11 +127,14 @@ auto ModuleLowerer::TranslateTypeData(
                 .members = std::move(members),
             };
           },
-          [type_span](
-              const hir::UnpackedStructType&) -> diag::Result<mir::TypeData> {
-            return diag::Fail(
-                type_span, diag::DiagCode::kUnsupportedUnpackedStructType,
-                "unpacked struct types are not yet supported");
+          [&](const hir::UnpackedStructType& src)
+              -> diag::Result<mir::TypeData> {
+            std::vector<mir::TypeId> elements;
+            elements.reserve(src.fields.size());
+            for (const auto& field : src.fields) {
+              elements.push_back(TranslateType(field.type));
+            }
+            return mir::TupleType{.elements = std::move(elements)};
           },
           [type_span](
               const hir::UnpackedUnionType&) -> diag::Result<mir::TypeData> {

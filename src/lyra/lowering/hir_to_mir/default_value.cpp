@@ -105,6 +105,22 @@ auto BuildDefaultValueExpr(
             return BuildArrayConstructionCall(
                 module, frame, type, std::move(elements));
           },
+          // LRM Table 7-1: an unpacked struct defaults member-wise -- each
+          // component takes its own type's default, recursively. Synthesized as
+          // a TupleExpr at each use, never stored on the interned TupleType, so
+          // structs with the same component types but different member
+          // initializers share one type.
+          [&](const mir::TupleType& t) -> mir::Expr {
+            std::vector<mir::ExprId> components;
+            components.reserve(t.elements.size());
+            for (const mir::TypeId elem : t.elements) {
+              components.push_back(
+                  block.exprs.Add(BuildDefaultValueExpr(module, frame, elem)));
+            }
+            return mir::Expr{
+                .data = mir::TupleExpr{.components = std::move(components)},
+                .type = type};
+          },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
           // construction so OOB reads and resize-fills have a shape source.

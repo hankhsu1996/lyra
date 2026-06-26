@@ -32,6 +32,9 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 
 - [unpacked-array-representation](unpacked-array-representation.md) -- representation of a
   fixed-size unpacked array.
+- [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is the
+  generic product type (MIR `TupleType`), not a new variant and not the object model; member access
+  is positional, defaults are synthesized at lowering.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow / view.
 - [queue-operators](queue-operators.md) -- queue access operators (`$`, slice, concatenation,

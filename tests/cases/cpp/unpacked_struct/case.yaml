@@ -1,0 +1,18 @@
+id: cpp.unpacked_struct
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    def_a: 0
+    def_b: 0
+    r_a: 42
+    r_b: 0x7f
+    cp_a: 42
+    cp_b: 0x7f
+    eq_same: 1
+    eq_diff: 0

@@ -176,7 +176,7 @@ auto RenderTypeAsCpp(
               if (i != 0) inners += ", ";
               inners += RenderTypeAsCpp(unit, owner_class, t.elements[i]);
             }
-            return std::format("std::tuple<{}>", inners);
+            return std::format("lyra::value::Tuple<{}>", inners);
           },
           [&](const mir::ExternalRefType& e) -> std::string {
             return std::format(

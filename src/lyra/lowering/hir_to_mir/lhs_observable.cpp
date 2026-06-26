@@ -24,6 +24,13 @@ auto AsContainerAccessBase(const mir::Expr& expr) -> const mir::ExprId* {
 auto FindLhsRootId(const mir::Block& block, mir::ExprId lhs_id) -> mir::ExprId {
   while (true) {
     const auto& expr = block.exprs.Get(lhs_id);
+    // An unpacked-struct member write projects through a tuple component; the
+    // observable root is the tuple base, reached the same way a container
+    // access reaches its receiver.
+    if (const auto* g = std::get_if<mir::TupleGetExpr>(&expr.data)) {
+      lhs_id = g->tuple;
+      continue;
+    }
     if (const auto* base = AsContainerAccessBase(expr)) {
       lhs_id = *base;
       continue;
@@ -36,6 +43,13 @@ auto RewriteLhsRootWithMutate(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
     mir::ExprId services_id) -> mir::ExprId {
   const auto& expr = block.exprs.Get(lhs_id);
+  if (const auto* g = std::get_if<mir::TupleGetExpr>(&expr.data)) {
+    mir::TupleGetExpr rewritten = *g;
+    const mir::TypeId result_ty = expr.type;
+    rewritten.tuple =
+        RewriteLhsRootWithMutate(unit, block, rewritten.tuple, services_id);
+    return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
+  }
   if (AsContainerAccessBase(expr) != nullptr) {
     auto rewritten_call = std::get<mir::CallExpr>(expr.data);
     rewritten_call.arguments.front() = RewriteLhsRootWithMutate(

@@ -8,7 +8,6 @@
 #include <ranges>
 #include <span>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -19,6 +18,7 @@
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/tuple.hpp"
 
 namespace lyra::value {
 
@@ -159,11 +159,11 @@ class AssociativeArray {
   // LRM 7.9.11 associative literal `'{key: value, ...}`: seed the map from the
   // (key, value) entries. The default slots still carry the element-type
   // default for a read of an absent key.
-  AssociativeArray(V element_default, std::span<const std::tuple<K, V>> entries)
+  AssociativeArray(V element_default, std::span<const Tuple<K, V>> entries)
       : element_default_(element_default),
         discard_sink_(std::move(element_default)) {
-    for (const auto& [key, value] : entries) {
-      data_.insert_or_assign(key, value);
+    for (const auto& entry : entries) {
+      data_.insert_or_assign(entry.template Get<0>(), entry.template Get<1>());
     }
   }
 
@@ -171,13 +171,12 @@ class AssociativeArray {
   // of an absent key returns (LRM 7.8.6) and the seed for an entry allocated on
   // a later write (LRM 7.8.7).
   AssociativeArray(
-      V element_default, std::span<const std::tuple<K, V>> entries,
-      V user_default)
+      V element_default, std::span<const Tuple<K, V>> entries, V user_default)
       : element_default_(element_default),
         discard_sink_(std::move(element_default)),
         user_default_(std::move(user_default)) {
-    for (const auto& [key, value] : entries) {
-      data_.insert_or_assign(key, value);
+    for (const auto& entry : entries) {
+      data_.insert_or_assign(entry.template Get<0>(), entry.template Get<1>());
     }
   }
 
@@ -407,12 +406,12 @@ class AssociativeArray {
   // type's canonical default (producer-supplied).
   template <typename F, typename U>
   [[nodiscard]] auto Map(F closure, U proto) const -> AssociativeArray<K, U> {
-    std::vector<std::tuple<K, U>> pairs;
+    std::vector<Tuple<K, U>> pairs;
     for (const auto& [k, v] : data_) {
       pairs.emplace_back(k, closure(v, k));
     }
     return AssociativeArray<K, U>(
-        std::move(proto), std::span<const std::tuple<K, U>>{pairs});
+        std::move(proto), std::span<const Tuple<K, U>>{pairs});
   }
 
   // LRM 11.2.2 aggregate equality / 11.4.5: same key set and each paired value

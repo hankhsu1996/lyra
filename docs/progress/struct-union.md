@@ -93,3 +93,6 @@ Table 7-1).
 - Archive items: `datatypes/unpacked/{unpacked_struct, unpacked_union}`.
 - The value-semantic copy of a member whose type has non-trivial copy semantics (string, real)
   follows `../decisions/value-type-concepts.md`.
+- The MIR representation of an unpacked struct (the generic `TupleType`, positional member access,
+  defaults synthesized at lowering rather than stored on the type) follows
+  `../decisions/unpacked-struct-representation.md`.
