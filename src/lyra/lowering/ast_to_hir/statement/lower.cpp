@@ -10,7 +10,6 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/blocks.hpp"
@@ -184,6 +183,19 @@ auto LowerStatement(
     case slang::ast::StatementKind::Return:
       return LowerReturnStmt(
           proc, frame, stmt.as<slang::ast::ReturnStatement>(), span);
+
+    case slang::ast::StatementKind::ImmediateAssertion:
+    case slang::ast::StatementKind::ConcurrentAssertion:
+      // An assertion embedded in surrounding behavior contributes no statement
+      // when disabled; the rest of the process runs. Without the policy it is a
+      // rejected construct, not silently ignored.
+      if (proc.Module().DisableAssertions()) {
+        return LowerEmptyStmt(span);
+      }
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStatementForm,
+          "assertion statements are not supported; pass --disable-assertions "
+          "to skip them");
 
     default:
       return diag::Fail(

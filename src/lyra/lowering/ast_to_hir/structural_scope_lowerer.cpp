@@ -373,6 +373,14 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
 auto StructuralScopeLowerer::PopulateProceduralBlockMember(
     const slang::ast::ProceduralBlockSymbol& proc, WalkFrame frame)
     -> diag::Result<void> {
+  // A concurrent assertion declared as a module item becomes a process whose
+  // entire body is the assertion. When assertions are disabled the process
+  // contributes no behavior, so it is dropped at the source rather than emptied
+  // -- an always block with no body and no timing control would be a zero-delay
+  // infinite loop.
+  if (module_->DisableAssertions() && proc.isFromAssertion) {
+    return {};
+  }
   ProcessLowerer proc_lowerer(*module_, proc);
   auto p = proc_lowerer.Run(proc, frame);
   if (!p) return std::unexpected(std::move(p.error()));

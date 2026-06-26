@@ -46,7 +46,10 @@ struct UnitCollector
 class CompilationLowerer {
  public:
   explicit CompilationLowerer(const LowerCompilationFacts& facts)
-      : facts_(facts), unit_facts_(facts.SourceMapper(), facts.Sensitivity()) {
+      : facts_(facts),
+        unit_facts_(
+            facts.SourceMapper(), facts.Sensitivity(),
+            facts.DisableAssertions()) {
   }
 
   auto Run() -> diag::Result<std::vector<hir::ModuleUnit>> {

@@ -15,16 +15,18 @@ namespace lyra::lowering::ast_to_hir {
 // Driver-supplied facts threaded into AST-to-HIR lowering. `Compilation&` is
 // the slang elaboration root; `SourceMapper&` translates slang source
 // locations; `SensitivityAnalyzer&` is reused across modules so its read
-// cache survives.
+// cache survives. `disable_assertions` is the lowering policy that elides
+// assertion constructs instead of rejecting them.
 class LowerCompilationFacts {
  public:
   LowerCompilationFacts(
       slang::ast::Compilation& compilation,
       const frontend::SlangSourceMapper& source_mapper,
-      SensitivityAnalyzer& sensitivity_analyzer)
+      SensitivityAnalyzer& sensitivity_analyzer, bool disable_assertions)
       : compilation_(&compilation),
         source_mapper_(&source_mapper),
-        sensitivity_analyzer_(&sensitivity_analyzer) {
+        sensitivity_analyzer_(&sensitivity_analyzer),
+        disable_assertions_(disable_assertions) {
   }
 
   [[nodiscard]] auto Compilation() const -> slang::ast::Compilation& {
@@ -37,11 +39,15 @@ class LowerCompilationFacts {
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
     return *sensitivity_analyzer_;
   }
+  [[nodiscard]] auto DisableAssertions() const -> bool {
+    return disable_assertions_;
+  }
 
  private:
   slang::ast::Compilation* compilation_;
   const frontend::SlangSourceMapper* source_mapper_;
   SensitivityAnalyzer* sensitivity_analyzer_;
+  bool disable_assertions_;
 };
 
 // Lowers the top-level blocks and, transitively, every unit they instantiate.
