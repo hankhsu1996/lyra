@@ -27,8 +27,8 @@ auto LowerConcatExpr(
   auto type_id = module.InternType(*cc.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const auto kind = module.Unit().types.Get(*type_id).Kind();
-  if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kPackedArray &&
-      kind != hir::TypeKind::kQueue) {
+  if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kScalarBit &&
+      kind != hir::TypeKind::kPackedArray && kind != hir::TypeKind::kQueue) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "concatenation result type is not string, packed, or a queue (LRM "
@@ -66,7 +66,8 @@ auto LowerReplicationExpr(
   auto type_id = module.InternType(*rp.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const auto kind = module.Unit().types.Get(*type_id).Kind();
-  if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kPackedArray) {
+  if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kScalarBit &&
+      kind != hir::TypeKind::kPackedArray) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "replication result type is neither string nor packed "

@@ -120,26 +120,21 @@ class HirDumper {
     throw InternalError("HirDumper::FormatPackedForm: unknown PackedArrayForm");
   }
 
-  static auto FormatPackedDims(const std::vector<PackedRange>& dims)
-      -> std::string {
-    if (dims.empty()) {
-      return "[]";
-    }
-    std::string out;
-    for (const auto& d : dims) {
-      out += std::format("[{}:{}]", d.left, d.right);
-    }
-    return out;
+  static auto FormatPackedArray(const PackedArrayType& p) -> std::string {
+    return std::format(
+        "PackedArray(dim=[{}:{}], elem=Type[{}], signed={}, form={})",
+        p.dim.left, p.dim.right, p.element_type.value,
+        FormatSignedness(p.signedness), FormatPackedForm(p.form));
   }
 
   static auto FormatType(const Type& t) -> std::string {
     return std::visit(
         Overloaded{
+            [](const ScalarBitType& s) -> std::string {
+              return std::format("ScalarBit(atom={})", FormatBitAtom(s.atom));
+            },
             [](const PackedArrayType& p) -> std::string {
-              return std::format(
-                  "PackedArray(atom={}, signed={}, dims={}, form={})",
-                  FormatBitAtom(p.atom), FormatSignedness(p.signedness),
-                  FormatPackedDims(p.dims), FormatPackedForm(p.form));
+              return FormatPackedArray(p);
             },
             [](const PackedStructType& s) -> std::string {
               std::string fields;
@@ -151,10 +146,8 @@ class HirDumper {
                     s.fields[i].type.value);
               }
               return std::format(
-                  "PackedStruct(atom={}, signed={}, width={}, fields=[{}])",
-                  FormatBitAtom(s.base.atom),
-                  FormatSignedness(s.base.signedness), s.base.BitWidth(),
-                  fields);
+                  "PackedStruct(signed={}, four_state={}, fields=[{}])",
+                  FormatSignedness(s.signedness), s.four_state, fields);
             },
             [](const PackedUnionType& u) -> std::string {
               std::string fields;
@@ -166,10 +159,8 @@ class HirDumper {
                     u.fields[i].type.value);
               }
               return std::format(
-                  "PackedUnion(atom={}, signed={}, width={}, fields=[{}])",
-                  FormatBitAtom(u.base.atom),
-                  FormatSignedness(u.base.signedness), u.base.BitWidth(),
-                  fields);
+                  "PackedUnion(signed={}, four_state={}, fields=[{}])",
+                  FormatSignedness(u.signedness), u.four_state, fields);
             },
             [](const EnumType& e) -> std::string {
               std::string members;

@@ -47,77 +47,68 @@ auto LowerRange(const slang::ConstantRange& r) -> hir::PackedRange {
   };
 }
 
-auto LowerPredefinedInteger(slang::ast::PredefinedIntegerType::Kind k)
+// A predefined-width integer is a single-dimension packed array over a scalar
+// bit (LRM 7.4.1); `form` records the syntactic origin (`int` vs the equivalent
+// `bit signed [31:0]`).
+auto LowerPredefinedInteger(
+    const ModuleLowerer& module, slang::ast::PredefinedIntegerType::Kind k)
     -> hir::PackedArrayType {
   using SK = slang::ast::PredefinedIntegerType::Kind;
+  const auto& builtins = module.Unit().builtins;
+  const auto make = [&](hir::TypeId element, std::int64_t msb,
+                        hir::Signedness signedness,
+                        hir::PackedArrayForm form) -> hir::PackedArrayType {
+    return hir::PackedArrayType{
+        .dim = hir::PackedRange{.left = msb, .right = 0},
+        .element_type = element,
+        .signedness = signedness,
+        .form = form,
+    };
+  };
   switch (k) {
     case SK::Byte:
-      return hir::PackedArrayType{
-          .atom = hir::BitAtom::kBit,
-          .signedness = hir::Signedness::kSigned,
-          .dims = {hir::PackedRange{.left = 7, .right = 0}},
-          .form = hir::PackedArrayForm::kByte,
-      };
+      return make(
+          builtins.scalar_bit, 7, hir::Signedness::kSigned,
+          hir::PackedArrayForm::kByte);
     case SK::ShortInt:
-      return hir::PackedArrayType{
-          .atom = hir::BitAtom::kBit,
-          .signedness = hir::Signedness::kSigned,
-          .dims = {hir::PackedRange{.left = 15, .right = 0}},
-          .form = hir::PackedArrayForm::kShortInt,
-      };
+      return make(
+          builtins.scalar_bit, 15, hir::Signedness::kSigned,
+          hir::PackedArrayForm::kShortInt);
     case SK::Int:
-      return hir::PackedArrayType{
-          .atom = hir::BitAtom::kBit,
-          .signedness = hir::Signedness::kSigned,
-          .dims = {hir::PackedRange{.left = 31, .right = 0}},
-          .form = hir::PackedArrayForm::kInt,
-      };
+      return make(
+          builtins.scalar_bit, 31, hir::Signedness::kSigned,
+          hir::PackedArrayForm::kInt);
     case SK::LongInt:
-      return hir::PackedArrayType{
-          .atom = hir::BitAtom::kBit,
-          .signedness = hir::Signedness::kSigned,
-          .dims = {hir::PackedRange{.left = 63, .right = 0}},
-          .form = hir::PackedArrayForm::kLongInt,
-      };
+      return make(
+          builtins.scalar_bit, 63, hir::Signedness::kSigned,
+          hir::PackedArrayForm::kLongInt);
     case SK::Integer:
-      return hir::PackedArrayType{
-          .atom = hir::BitAtom::kLogic,
-          .signedness = hir::Signedness::kSigned,
-          .dims = {hir::PackedRange{.left = 31, .right = 0}},
-          .form = hir::PackedArrayForm::kInteger,
-      };
+      return make(
+          builtins.scalar_logic, 31, hir::Signedness::kSigned,
+          hir::PackedArrayForm::kInteger);
     case SK::Time:
-      return hir::PackedArrayType{
-          .atom = hir::BitAtom::kLogic,
-          .signedness = hir::Signedness::kUnsigned,
-          .dims = {hir::PackedRange{.left = 63, .right = 0}},
-          .form = hir::PackedArrayForm::kTime,
-      };
+      return make(
+          builtins.scalar_logic, 63, hir::Signedness::kUnsigned,
+          hir::PackedArrayForm::kTime);
   }
   throw InternalError("LowerPredefinedInteger: unknown integer kind");
 }
 
+// One HIR node per declared dimension (LRM 7.4.1: a packed array is recursively
+// other packed arrays / structures). The element is interned and named by its
+// `TypeId`, so the nest -- and an aggregate element's identity -- is carried by
+// recursion, not flattened here.
 auto LowerExplicitPackedArray(
-    const slang::ast::PackedArrayType& outer, bool outer_signed,
-    diag::SourceSpan decl_span) -> diag::Result<hir::PackedArrayType> {
-  std::vector<hir::PackedRange> dims;
-  const slang::ast::Type* cur = &outer;
-  while (cur->kind == slang::ast::SymbolKind::PackedArrayType) {
-    const auto& pa = cur->as<slang::ast::PackedArrayType>();
-    dims.push_back(LowerRange(pa.range));
-    cur = &pa.elementType.getCanonicalType();
-  }
-  if (cur->kind != slang::ast::SymbolKind::ScalarType) {
-    return diag::Fail(
-        decl_span, diag::DiagCode::kUnsupportedPackedArrayElementType,
-        "packed array element must be a bit, logic, or reg scalar");
-  }
-  const auto& scalar = cur->as<slang::ast::ScalarType>();
+    ModuleLowerer& module, const slang::ast::PackedArrayType& array,
+    bool outer_signed, diag::SourceSpan span)
+    -> diag::Result<hir::PackedArrayType> {
+  auto element = module.InternType(array.elementType, span);
+  if (!element) return std::unexpected(std::move(element.error()));
   return hir::PackedArrayType{
-      .atom = LowerScalarAtom(scalar.scalarKind),
+      .dim = LowerRange(array.range),
+      .element_type = *element,
       .signedness =
           outer_signed ? hir::Signedness::kSigned : hir::Signedness::kUnsigned,
-      .dims = std::move(dims),
       .form = hir::PackedArrayForm::kExplicit,
   };
 }
@@ -125,20 +116,6 @@ auto LowerExplicitPackedArray(
 auto LowerPackedStruct(
     const slang::ast::PackedStructType& struct_type, diag::SourceSpan decl_span,
     ModuleLowerer& module) -> diag::Result<hir::PackedStructType> {
-  const auto width = static_cast<std::int64_t>(struct_type.bitWidth);
-  if (width <= 0) {
-    throw InternalError("LowerPackedStruct: zero-width packed struct");
-  }
-  const auto atom =
-      struct_type.isFourState ? hir::BitAtom::kLogic : hir::BitAtom::kBit;
-  const auto signedness = struct_type.isSigned ? hir::Signedness::kSigned
-                                               : hir::Signedness::kUnsigned;
-  hir::PackedArrayType base{
-      .atom = atom,
-      .signedness = signedness,
-      .dims = {hir::PackedRange{.left = width - 1, .right = 0}},
-      .form = hir::PackedArrayForm::kExplicit,
-  };
   std::vector<hir::PackedAggregateField> fields;
   for (const auto& field :
        struct_type.membersOfType<slang::ast::FieldSymbol>()) {
@@ -157,8 +134,10 @@ auto LowerPackedStruct(
         });
   }
   return hir::PackedStructType{
-      .base = std::move(base),
       .fields = std::move(fields),
+      .signedness = struct_type.isSigned ? hir::Signedness::kSigned
+                                         : hir::Signedness::kUnsigned,
+      .four_state = struct_type.isFourState,
   };
 }
 
@@ -170,20 +149,6 @@ auto LowerPackedUnion(
         decl_span, diag::DiagCode::kUnsupportedTaggedPackedUnion,
         "tagged packed unions are not yet supported");
   }
-  const auto width = static_cast<std::int64_t>(union_type.bitWidth);
-  if (width <= 0) {
-    throw InternalError("LowerPackedUnion: zero-width packed union");
-  }
-  const auto atom =
-      union_type.isFourState ? hir::BitAtom::kLogic : hir::BitAtom::kBit;
-  const auto signedness = union_type.isSigned ? hir::Signedness::kSigned
-                                              : hir::Signedness::kUnsigned;
-  hir::PackedArrayType base{
-      .atom = atom,
-      .signedness = signedness,
-      .dims = {hir::PackedRange{.left = width - 1, .right = 0}},
-      .form = hir::PackedArrayForm::kExplicit,
-  };
   std::vector<hir::PackedAggregateField> fields;
   for (const auto& field :
        union_type.membersOfType<slang::ast::FieldSymbol>()) {
@@ -202,8 +167,10 @@ auto LowerPackedUnion(
         });
   }
   return hir::PackedUnionType{
-      .base = std::move(base),
       .fields = std::move(fields),
+      .signedness = union_type.isSigned ? hir::Signedness::kSigned
+                                        : hir::Signedness::kUnsigned,
+      .four_state = union_type.isFourState,
   };
 }
 
@@ -267,6 +234,15 @@ auto LowerUnpackedStruct(
 auto LowerUnpackedUnion(
     const slang::ast::UnpackedUnionType& union_type, diag::SourceSpan decl_span,
     ModuleLowerer& module) -> diag::Result<hir::UnpackedUnionType> {
+  // A tagged union (LRM 7.3.2) is a type-checked sum type, a separate concept
+  // from the untagged overlapping-storage form; reject it here where the
+  // declaration span is available, so MIR translation only ever sees untagged
+  // unions.
+  if (union_type.isTagged) {
+    return diag::Fail(
+        decl_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
+        "tagged unions are not yet supported");
+  }
   auto fields_or =
       LowerUnpackedAggregateFields(union_type.fields, decl_span, module);
   if (!fields_or) return std::unexpected(std::move(fields_or.error()));
@@ -307,25 +283,21 @@ auto TranslateTypeData(
   switch (canonical.kind) {
     case slang::ast::SymbolKind::ScalarType: {
       const auto& scalar = canonical.as<slang::ast::ScalarType>();
-      return hir::TypeData{hir::PackedArrayType{
-          .atom = LowerScalarAtom(scalar.scalarKind),
-          .signedness = hir::Signedness::kUnsigned,
-          .dims = {hir::PackedRange{.left = 0, .right = 0}},
-          .form = hir::PackedArrayForm::kExplicit,
-      }};
+      return hir::TypeData{
+          hir::ScalarBitType{.atom = LowerScalarAtom(scalar.scalarKind)}};
     }
     case slang::ast::SymbolKind::PredefinedIntegerType: {
       const auto& pi = canonical.as<slang::ast::PredefinedIntegerType>();
-      return hir::TypeData{LowerPredefinedInteger(pi.integerKind)};
+      return hir::TypeData{LowerPredefinedInteger(module, pi.integerKind)};
     }
     case slang::ast::SymbolKind::PackedArrayType: {
       auto pa = LowerExplicitPackedArray(
-          canonical.as<slang::ast::PackedArrayType>(), canonical.isSigned(),
-          decl_span);
+          module, canonical.as<slang::ast::PackedArrayType>(),
+          canonical.isSigned(), decl_span);
       if (!pa.has_value()) {
         return std::unexpected(std::move(pa.error()));
       }
-      return hir::TypeData{std::move(pa.value())};
+      return hir::TypeData{*std::move(pa)};
     }
     case slang::ast::SymbolKind::EnumType: {
       auto e =
@@ -472,7 +444,7 @@ auto ModuleLowerer::InternType(
   auto data_or = TranslateTypeData(*this, type, span);
   if (!data_or) return std::unexpected(std::move(data_or.error()));
   const hir::TypeId id =
-      unit_.types.Add(hir::Type{.data = *std::move(data_or), .span = span});
+      unit_.types.Add(hir::Type{.data = *std::move(data_or)});
   type_cache_.emplace(canonical, id);
   return id;
 }

@@ -6,7 +6,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -14,6 +13,7 @@
 namespace lyra::hir {
 
 enum class TypeKind {
+  kScalarBit,
   kPackedArray,
   kPackedStruct,
   kPackedUnion,
@@ -60,15 +60,25 @@ struct PackedRange {
   [[nodiscard]] auto LinearOffset(std::int64_t index) const -> std::uint64_t;
 };
 
-struct PackedArrayType {
+// A single bit, the terminal of every integral type. `logic`, `bit`, and `reg`
+// are this leaf; so is the element a packed array bottoms out at (LRM 7.4.1).
+// The atom carries the bit's 2-state (`bit`) versus 4-state (`logic` / `reg`)
+// nature.
+struct ScalarBitType {
   BitAtom atom;
-  Signedness signedness;
-  std::vector<PackedRange> dims;
-  PackedArrayForm form;
+};
 
-  [[nodiscard]] auto BitWidth() const -> std::uint64_t;
-  [[nodiscard]] auto IsFourState() const -> bool;
-  [[nodiscard]] auto DefaultInitialValue() const -> IntegralConstant;
+// LRM 7.4.1: a packed array is one declared dimension over an element type,
+// "recursively other packed arrays and packed structures." One node per
+// dimension; the element is named by its `TypeId`, so an array of a packed
+// aggregate carries that aggregate's identity. Multi-dim nests via
+// `element_type`. Signedness is the whole-vector property (the outermost node
+// is authoritative; elements are unsigned unless of a named signed type).
+struct PackedArrayType {
+  PackedRange dim;
+  TypeId element_type;
+  Signedness signedness;
+  PackedArrayForm form;
 };
 
 struct EnumMember {
@@ -93,25 +103,29 @@ struct PackedAggregateField {
   std::uint64_t bit_width;
 };
 
-// LRM 7.2.1: "When a packed structure appears as a primary, it shall be
-// treated as a single vector." `base` is that whole-vector projection (width
-// = sum of field widths; 4-state iff any field is 4-state); value-level uses
-// route through it. `fields` is the per-member offset/width table that
-// member-access expressions consult.
+// LRM 7.2.1: a packed struct is a heterogeneous set of bit-fields packed into
+// one vector. `fields` is the per-member offset/width table member-access
+// consults; `signedness` and `four_state` are the integral attributes the
+// struct carries as a whole (4-state iff any field is, LRM 7.2.1). The
+// single-vector projection -- total width is the sum of the field widths -- is
+// computed at HIR-to-MIR, not stored.
 struct PackedStructType {
-  PackedArrayType base;
   std::vector<PackedAggregateField> fields;
+  Signedness signedness;
+  bool four_state;
 };
 
-// LRM 7.3.1 untagged packed union. `base` is the "single vector" projection
-// (width = max member width; 4-state iff any member is 4-state). Members
-// overlap at the LSBs; for hard packed unions every member equals the union
-// width, for soft packed unions a narrower member's bits sit at the LSBs and
-// MSBs beyond the member are preserved across writes. Tagged unions are a
-// separate future feature (require runtime tag-bit logic, LRM 11.9).
+// LRM 7.3.1 untagged packed union. Members overlap at the LSBs (each field's
+// `bit_offset` is 0); for hard packed unions every member equals the union
+// width, for soft packed unions a narrower member's bits sit at the LSBs.
+// `signedness` and `four_state` are the union's integral attributes. The
+// single-vector projection -- total width is the widest member -- is computed
+// at HIR-to-MIR. Tagged unions are a separate future feature (runtime tag-bit
+// logic, LRM 11.9).
 struct PackedUnionType {
-  PackedArrayType base;
   std::vector<PackedAggregateField> fields;
+  Signedness signedness;
+  bool four_state;
 };
 
 // A named member of an unpacked aggregate (struct or union). Unlike a packed
@@ -187,7 +201,7 @@ struct ChandleType {};
 struct VoidType {};
 
 using TypeData = std::variant<
-    PackedArrayType, PackedStructType, PackedUnionType, EnumType,
+    ScalarBitType, PackedArrayType, PackedStructType, PackedUnionType, EnumType,
     UnpackedStructType, UnpackedUnionType, UnpackedArrayType, DynamicArrayType,
     QueueType, AssociativeArrayType, WildcardIndexType, StringType, EventType,
     RealType, ShortRealType, RealTimeType, ChandleType, VoidType>;
@@ -195,14 +209,15 @@ using TypeData = std::variant<
 struct Type {
   TypeData data;
 
-  // The declaration site that first interned this type. A downstream layer
-  // that cannot represent the type anchors its diagnostic here. Builtin types
-  // have no source and carry `UnknownSpan`.
-  diag::DiagSpan span;
-
   [[nodiscard]] auto Kind() const -> TypeKind;
+  [[nodiscard]] auto IsScalarBit() const -> bool;
+  [[nodiscard]] auto AsScalarBit() const -> const ScalarBitType&;
   [[nodiscard]] auto IsPackedArray() const -> bool;
   [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
+
+  // A single bit or a packed array of bits -- the integral operands an edge
+  // event, a bit / part select, and an unpacked-array element read accept.
+  [[nodiscard]] auto IsBitVector() const -> bool;
   [[nodiscard]] auto IsPackedStruct() const -> bool;
   [[nodiscard]] auto AsPackedStruct() const -> const PackedStructType&;
   [[nodiscard]] auto IsPackedUnion() const -> bool;
