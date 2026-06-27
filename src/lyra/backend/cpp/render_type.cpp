@@ -167,6 +167,11 @@ auto RenderTypeAsCpp(
             }
             throw InternalError("RenderTypeAsCpp: unknown PointerOwnership");
           },
+          [&](const mir::ManagedRefType& m) -> std::string {
+            return std::format(
+                "lyra::runtime::GcRef<{}>",
+                RenderTypeAsCpp(unit, owner_class, m.pointee));
+          },
           [&](const mir::VectorType& v) -> std::string {
             return std::format(
                 "std::vector<{}>",

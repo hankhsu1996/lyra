@@ -36,6 +36,7 @@ enum class TypeKind {
   kCoroutine,
   kReference,
   kPointer,
+  kManagedRef,
   kVector,
   kTuple,
   kUnion,
@@ -299,6 +300,18 @@ struct PointerType {
   auto operator==(const PointerType&) const -> bool = default;
 };
 
+// A managed reference (LRM 8.3 class handle): a traced edge to a
+// garbage-collected object on the managed heap. It is not a `PointerType` --
+// its target's lifetime is governed by reachability, not by RAII ownership, so
+// the tracing collector follows it as an edge. Null is a legal value, identity
+// is comparable, copies are shallow, and the target is retained while
+// reachable. The C++ backend renders it as `lyra::runtime::GcRef<T>`.
+struct ManagedRefType {
+  TypeId pointee;
+
+  auto operator==(const ManagedRefType&) const -> bool = default;
+};
+
 struct VectorType {
   TypeId element;
 
@@ -365,8 +378,8 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, EventType, RealType,
     ShortRealType, RealTimeType, ChandleType, VoidType, ObjectType,
     ExternalUnitObjectType, ScopeType, ServicesType, FilesType, DiagnosticType,
-    RuntimeLibraryType, CoroutineType, RefType, PointerType, VectorType,
-    TupleType, UnionType, ExternalRefType, ObservableType>;
+    RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
+    VectorType, TupleType, UnionType, ExternalRefType, ObservableType>;
 
 struct Type {
   TypeData data;

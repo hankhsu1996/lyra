@@ -85,6 +85,8 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
         } else if constexpr (std::is_same_v<T, PointerType>) {
           HashId(seed, t.pointee);
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.ownership)));
+        } else if constexpr (std::is_same_v<T, ManagedRefType>) {
+          HashId(seed, t.pointee);
         } else if constexpr (std::is_same_v<T, VectorType>) {
           HashId(seed, t.element);
         } else if constexpr (std::is_same_v<T, TupleType>) {

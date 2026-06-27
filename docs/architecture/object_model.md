@@ -55,9 +55,8 @@ direction. The governing thesis:
 - When and into what a cross-unit reference resolves, and the by-name mechanism. That is
   `reference_resolution.md` and `emission_model.md`. The object model states that a cross-unit
   object reference is by-name; those docs own the resolution.
-- Physical layout: object storage layout, dispatch-table layout, frame allocation, and the
-  realization of managed reachability (reference counting versus tracing collection). Those are LIR
-  and the runtime.
+- Physical layout: object storage layout, dispatch-table layout, frame allocation, and the collector
+  algorithm that realizes managed reachability. Those are LIR and the runtime.
 
 ## Core Invariants
 
@@ -87,13 +86,14 @@ direction. The governing thesis:
 4. **The reference reaching an instance carries its lifetime, orthogonal to the object's category.**
    The kinds are owning (one owner controls the lifetime), borrowed (refers, owns nothing), shared
    (a reference-counted, acyclic-by-construction owner), and managed (a language-managed object
-   handle: null is a legal value, identity is comparable, copies are shallow, the object is
-   reachable while any handle reaches it, it is created by construction, and it is never explicitly
-   freed). A SystemVerilog class handle is a managed reference, distinct from a shared one. Whether
-   an object is a node in the runtime tree is read from its base lineage, never from the reference
-   kind that reaches it. _Object-model consequence: topology, lifetime, and category are three axes;
-   collapsing any two -- "a unique reference means a tree child", "a class handle is a shared
-   pointer" -- loses a distinction a backend must read._
+   handle: null is a legal value, identity is comparable, copies are shallow, it is created by
+   construction, and it is never explicitly freed; its lifetime model -- retained while reachable,
+   reclaimed by precise tracing -- is owned by `object_lifetime.md`). A SystemVerilog class handle
+   is a managed reference, distinct from a shared one. Whether an object is a node in the runtime
+   tree is read from its base lineage, never from the reference kind that reaches it. _Object-model
+   consequence: topology, lifetime, and category are three axes; collapsing any two -- "a unique
+   reference means a tree child", "a class handle is a shared pointer" -- loses a distinction a
+   backend must read._
 
 5. **Construction is its own concept.** Allocating an object and running its constructor, with
    optional base-constructor chaining and a defined initialization ordering, is a construction form
@@ -123,12 +123,13 @@ direction. The governing thesis:
    category. _Object-model consequence: a static property is one cell owned by the type, never a
    field replicated into every instance._
 
-9. **Managed reachability is the contract; its realization is not.** The model commits to the
-   semantics that a managed object lives while any handle reaches it. Whether a backend realizes
-   that by reference counting or tracing collection, and whether cyclic garbage is reclaimed, are
-   realization choices outside the contract. _Object-model consequence: MIR states "managed
-   reachability" and a backend chooses the mechanism; MIR never states "reference counted" as the
-   meaning._
+9. **Managed reachability is realized by precise tracing.** A managed object is retained while
+   reachable and reclaimed by a precise tracing collector; an unreachable cycle is reclaimed by
+   reachability, not leaked. The collector algorithm and cadence are realization choices; the
+   reachability model and the storage discipline that makes tracing precise are the contract, owned
+   by `object_lifetime.md`. _Object-model consequence: the object model commits to
+   reachability-based reclamation, not to a reference-counted meaning; a class handle's lifetime
+   contract lives in `object_lifetime.md`._
 
 10. **A compilation unit owns one canonical registry of its local nominal object declarations, and
     identity, lexical name resolution, and emission nesting are three separate relations.** Every

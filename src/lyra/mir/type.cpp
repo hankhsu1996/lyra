@@ -83,6 +83,7 @@ auto Type::Kind() const -> TypeKind {
           [](const CoroutineType&) { return TypeKind::kCoroutine; },
           [](const RefType&) { return TypeKind::kReference; },
           [](const PointerType&) { return TypeKind::kPointer; },
+          [](const ManagedRefType&) { return TypeKind::kManagedRef; },
           [](const VectorType&) { return TypeKind::kVector; },
           [](const TupleType&) { return TypeKind::kTuple; },
           [](const UnionType&) { return TypeKind::kUnion; },

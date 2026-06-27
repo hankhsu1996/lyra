@@ -227,6 +227,10 @@ class MirDumper {
               }
               throw InternalError("MirDumper: unknown PointerOwnership");
             },
+            [](const ManagedRefType& m) -> std::string {
+              return std::format(
+                  "ManagedRef(pointee=Type[{}])", m.pointee.value);
+            },
             [](const VectorType& v) -> std::string {
               return std::format("Vector(elem=Type[{}])", v.element.value);
             },
