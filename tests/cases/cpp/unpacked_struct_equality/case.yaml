@@ -1,0 +1,24 @@
+id: cpp.unpacked_struct_equality
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    eq_same: 1
+    eq_diff: 0
+    ne_same: 0
+    ne_diff: 1
+    ceq_same: 1
+    ceq_diff: 0
+    cne_same: 0
+    cne_diff: 1
+    ceq_nest: 1
+    ceq_nest_diff: 0
+    ceq_x: 1
+    ceq_x_diff: 0
+    sum: 6
+    slc: 6
