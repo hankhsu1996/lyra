@@ -271,19 +271,39 @@ auto LowerHierarchicalValue(
         "LowerHierarchicalValue: downward owned-child head has no binding");
   }
 
-  // The owner navigates its own storage, so the head must live on the
-  // referencing frame. A reference reaching the owned child from a nested
-  // generate frame (`hops != 0`) is a separate, unsupported case.
   const auto hops = frame.HopsTo(binding->home_frame);
-  if (!hops.has_value() || hops->value != 0) {
+  if (!hops.has_value()) {
+    throw InternalError(
+        "LowerHierarchicalValue: downward owned-child head's home frame is not "
+        "on the current scope stack");
+  }
+  if (hops->value == 0) {
+    return module.MakeCrossUnitMemberRef(
+        var, binding->home_frame, binding->head, std::move(*path), *type_id,
+        span);
+  }
+
+  // Sibling-of-ancestor: the head sits in an enclosing scope of the referrer.
+  // For an intra-unit owned child (a generate block; its layout is part of
+  // this unit's emitted artifact) the install climbs the runtime parent edge
+  // and composes a typed downward MemberAccess chain on the enclosing class.
+  // A module-instance head with `hops > 0` would require a hybrid typed-climb
+  // / by-name-descent because the instance's body is in another unit;
+  // unsupported here.
+  const bool head_is_intra_unit =
+      head_sym.kind == slang::ast::SymbolKind::GenerateBlock ||
+      head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray;
+  if (!head_is_intra_unit) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "hierarchical reference reaching an owned child from a nested generate "
-        "scope is not yet supported");
+        "hierarchical reference reaching an owned module instance from a "
+        "nested generate scope is not yet supported");
   }
+  hir::DownwardHead enclosing_head = binding->head;
+  enclosing_head.hops = *hops;
   return module.MakeCrossUnitMemberRef(
-      var, binding->home_frame, binding->head, std::move(*path), *type_id,
-      span);
+      var, frame.Current(), std::move(enclosing_head), std::move(*path),
+      *type_id, span);
 }
 
 auto LowerNamedValueStructural(

@@ -1,13 +1,19 @@
-// One elaboration covers every shape of LRM 23.8 step b/c upward
-// visible-child resolution. The runtime climb walks each enclosing level
-// and matches a child by its canonical instance name; this case bites
-// every code path that walk exercises, with values chosen so a wrong
-// lookup observably fails:
+// One elaboration covers every shape of LRM 23.8 step b/c visible-child
+// resolution -- semantically symmetric across slang's `isUpward` flag, so
+// both directions of the same generate-sibling read appear here:
 //
-//   - Shallow sibling generate (block `a` reads `b.bx == 7`). `a` is
-//     declared before `b`, so slang classifies the reference as upward
-//     (the converse `b -> a` rides slang's downward path, an unrelated
-//     lowering limitation tracked separately).
+//   - Shallow sibling generate, slang-upward (block `a` reads `b.bx == 7`).
+//     `a` is declared before `b`, so slang's lexical resolution walks out
+//     to find `b`; the install rides the upward path (runtime climb-by-
+//     name through `ExternUp`).
+//
+//   - Shallow sibling generate, slang-downward (block `b` reads
+//     `a.ax == 33`). `a` is already visible at `b`'s lexical resolution,
+//     so slang flags it downward with the head in an enclosing scope; the
+//     install climbs the typed parent edge (`kParent` + `PointerCastExpr`)
+//     and composes a typed `MemberAccess` chain into the head's owned
+//     child. Same semantic target as the upward case, different install
+//     mechanism driven only by slang's source-order classification.
 //
 //   - Sibling-of-ancestor at depth (Leaf reads `my_foo.v == 22`). From
 //     inside `mid.leaf`, my_foo is neither on the chain nor in a closer
@@ -32,11 +38,14 @@ endmodule
 
 module Top;
   if (1) begin : a
+    int ax;
     int from_b;
     always_comb from_b = b.bx;
   end
   if (1) begin : b
     int bx;
+    int from_a;
+    always_comb from_a = a.ax;
   end
 
   if (1) begin : reader
@@ -53,12 +62,13 @@ module Top;
 
   initial begin
     b.bx = 7;
+    a.ax = 33;
     my_foo.v = 22;
     foo_a.v = 11;
     foo_b.v = 99;
     #1;
-    $display("shallow=%0d deep=%0d a=%0d b_inst=%0d",
-             a.from_b, mid.leaf.from_top_my_foo,
+    $display("up=%0d down=%0d deep=%0d a=%0d b_inst=%0d",
+             a.from_b, b.from_a, mid.leaf.from_top_my_foo,
              reader.from_a, reader.from_b);
   end
 endmodule
