@@ -14,6 +14,8 @@ namespace lyra::hir {
 // (literal int type, void result of system tasks, etc.). Populated by
 // `ModuleUnit`'s constructor; consumers read them off the unit.
 struct BuiltinHirTypes {
+  TypeId scalar_bit;
+  TypeId scalar_logic;
   TypeId void_type;
   TypeId int32;
   TypeId integer;
@@ -30,37 +32,47 @@ struct ModuleUnit {
   StructuralScope root_scope;
 
   explicit ModuleUnit(std::string name)
-      : name(std::move(name)),
-        builtins{
-            .void_type = types.Add(Type{.data = VoidType{}}),
-            .int32 = types.Add(
-                Type{
-                    .data =
-                        PackedArrayType{
-                            .atom = BitAtom::kBit,
-                            .signedness = Signedness::kSigned,
-                            .dims = {PackedRange{.left = 31, .right = 0}},
-                            .form = PackedArrayForm::kInt}}),
-            .integer = types.Add(
-                Type{
-                    .data =
-                        PackedArrayType{
-                            .atom = BitAtom::kLogic,
-                            .signedness = Signedness::kSigned,
-                            .dims = {PackedRange{.left = 31, .right = 0}},
-                            .form = PackedArrayForm::kInteger}}),
-            .string = types.Add(Type{.data = StringType{}}),
-            .time = types.Add(
-                Type{
-                    .data =
-                        PackedArrayType{
-                            .atom = BitAtom::kLogic,
-                            .signedness = Signedness::kUnsigned,
-                            .dims = {PackedRange{.left = 63, .right = 0}},
-                            .form = PackedArrayForm::kTime}}),
-            .realtime = types.Add(Type{.data = RealTimeType{}}),
-            .wildcard_index = types.Add(Type{.data = WildcardIndexType{}}),
-        } {
+      : name(std::move(name)), builtins(MakeBuiltins(types)) {
+  }
+
+ private:
+  // The single-bit leaves and the predefined-width integers are the primitive
+  // canonical types. The leaves are added first; the predefined integers are
+  // single-dimension packed arrays over them (LRM 7.4.1: an integer type with a
+  // predefined width matches a single-dimension packed array).
+  static auto MakeBuiltins(base::Arena<Type, TypeId>& types)
+      -> BuiltinHirTypes {
+    const auto add = [&](TypeData data) {
+      return types.Add(Type{.data = std::move(data)});
+    };
+    const TypeId scalar_bit = add(ScalarBitType{.atom = BitAtom::kBit});
+    const TypeId scalar_logic = add(ScalarBitType{.atom = BitAtom::kLogic});
+    return BuiltinHirTypes{
+        .scalar_bit = scalar_bit,
+        .scalar_logic = scalar_logic,
+        .void_type = add(VoidType{}),
+        .int32 =
+            add(PackedArrayType{
+                .dim = PackedRange{.left = 31, .right = 0},
+                .element_type = scalar_bit,
+                .signedness = Signedness::kSigned,
+                .form = PackedArrayForm::kInt}),
+        .integer =
+            add(PackedArrayType{
+                .dim = PackedRange{.left = 31, .right = 0},
+                .element_type = scalar_logic,
+                .signedness = Signedness::kSigned,
+                .form = PackedArrayForm::kInteger}),
+        .string = add(StringType{}),
+        .time =
+            add(PackedArrayType{
+                .dim = PackedRange{.left = 63, .right = 0},
+                .element_type = scalar_logic,
+                .signedness = Signedness::kUnsigned,
+                .form = PackedArrayForm::kTime}),
+        .realtime = add(RealTimeType{}),
+        .wildcard_index = add(WildcardIndexType{}),
+    };
   }
 };
 

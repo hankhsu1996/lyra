@@ -1,0 +1,20 @@
+id: cpp.packed_array_aggregate_element
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pas_full: "16'hAB12"
+    field_a: "4'h1"
+    elem1: "8'hAB"
+    pae_full: "8'h49"
+    pae0: "2'h1"
+    pau_full: "16'hABCD"
+    umem: "8'hCD"
+    pn_full: "32'h44332211"
+    pn_elem: "8'h33"
+    pn_field: "4'h4"

@@ -82,9 +82,8 @@ class ModuleLowerer {
       -> std::string;
 
  private:
-  [[nodiscard]] auto TranslateTypeData(
-      const hir::TypeData& data, diag::DiagSpan type_span) const
-      -> diag::Result<mir::TypeData>;
+  [[nodiscard]] auto TranslateTypeData(const hir::TypeData& data) const
+      -> mir::TypeData;
 
   const hir::ModuleUnit* hir_;
   const diag::SourceManager* source_manager_;

@@ -524,7 +524,12 @@ auto BuildElementAccessCallExpr(
   } else if (
       const auto* pa = std::get_if<hir::PackedArrayType>(&hir_base_ty.data)) {
     effective_idx =
-        WrapPackedIndex(module, block, pa->dims.front(), idx_id, hir_idx_type);
+        WrapPackedIndex(module, block, pa->dim, idx_id, hir_idx_type);
+  } else if (std::holds_alternative<hir::ScalarBitType>(hir_base_ty.data)) {
+    // A bit-select on a single-bit scalar: its declared range is `[0:0]`.
+    static constexpr hir::PackedRange kScalarDim{.left = 0, .right = 0};
+    effective_idx =
+        WrapPackedIndex(module, block, kScalarDim, idx_id, hir_idx_type);
   }
   return mir::Expr{
       .data =
@@ -561,11 +566,11 @@ auto BuildRangeSliceCallExpr(
   } else if (
       const auto* pa = std::get_if<hir::PackedArrayType>(&hir_base_ty.data)) {
     strategy.container = RangeContainer::kPacked;
-    strategy.packed_declared = &pa->dims.front();
+    strategy.packed_declared = &pa->dim;
   } else {
-    // Dynamic arrays and a packed struct / union projected as a `[width-1:0]`
-    // vector index by raw zero-based offset, so their bounds are already
-    // physical; an identity declared range leaves them untranslated.
+    // A scalar bit, a dynamic array, and a packed struct / union all index by
+    // raw zero-based offset -- their bounds are already physical -- so an
+    // identity declared range leaves them untranslated.
     static constexpr hir::PackedRange kRawOffset{.left = 0, .right = 0};
     strategy.container = RangeContainer::kPacked;
     strategy.packed_declared = &kRawOffset;

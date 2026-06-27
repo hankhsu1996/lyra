@@ -1,9 +1,9 @@
+#include <cstdint>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/mir/type.hpp"
@@ -49,56 +49,96 @@ auto TranslatePackedArrayForm(hir::PackedArrayForm f) -> mir::PackedArrayForm {
   throw InternalError("TranslatePackedArrayForm: unknown PackedArrayForm");
 }
 
-auto TranslatePackedRanges(const std::vector<hir::PackedRange>& src)
-    -> std::vector<mir::PackedRange> {
-  std::vector<mir::PackedRange> out;
-  out.reserve(src.size());
-  for (const auto& r : src) {
-    out.push_back(mir::PackedRange{.left = r.left, .right = r.right});
+// Projects a recursive HIR packed array onto MIR's flat single-vector shape
+// (LRM 7.4.1). A scalar-bit terminal contributes the atom and this one
+// dimension; any other element (a nested packed array, or a packed aggregate's
+// single-vector projection) contributes its own flat dimensions, onto which
+// this dimension prepends.
+auto FlattenPackedArray(
+    const ModuleLowerer& module, const hir::PackedArrayType& pa)
+    -> mir::PackedArrayType {
+  const mir::PackedRange dim{.left = pa.dim.left, .right = pa.dim.right};
+  const hir::Type& element = module.Hir().types.Get(pa.element_type);
+  if (const auto* scalar = std::get_if<hir::ScalarBitType>(&element.data)) {
+    return mir::PackedArrayType{
+        .atom = TranslateBitAtom(scalar->atom),
+        .signedness = TranslateSignedness(pa.signedness),
+        .dims = {dim},
+        .form = TranslatePackedArrayForm(pa.form),
+    };
   }
-  return out;
+  const mir::PackedArrayType& inner =
+      module.Unit()
+          .types.Get(module.TranslateType(pa.element_type))
+          .AsIntegralPacked();
+  std::vector<mir::PackedRange> dims;
+  dims.reserve(inner.dims.size() + 1U);
+  dims.push_back(dim);
+  dims.insert(dims.end(), inner.dims.begin(), inner.dims.end());
+  return mir::PackedArrayType{
+      .atom = inner.atom,
+      .signedness = TranslateSignedness(pa.signedness),
+      .dims = std::move(dims),
+      .form = TranslatePackedArrayForm(pa.form),
+  };
+}
+
+// A packed aggregate's single-vector projection (LRM 7.2.1 / 7.3.1): one flat
+// `width`-bit vector, `logic` iff the aggregate is 4-state. The width is the
+// caller's -- a struct sums its fields, a union takes its widest.
+auto FlattenPackedAggregate(
+    std::uint64_t width, hir::Signedness signedness, bool four_state)
+    -> mir::PackedArrayType {
+  return mir::PackedArrayType{
+      .atom = four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
+      .signedness = TranslateSignedness(signedness),
+      .dims = {mir::PackedRange{
+          .left = static_cast<std::int64_t>(width) - 1, .right = 0}},
+      .form = mir::PackedArrayForm::kExplicit,
+  };
 }
 
 }  // namespace
 
-auto ModuleLowerer::TranslateTypeData(
-    const hir::TypeData& data, diag::DiagSpan type_span) const
-    -> diag::Result<mir::TypeData> {
+auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
+    -> mir::TypeData {
   return std::visit(
       Overloaded{
-          [&](const hir::PackedArrayType& src) -> diag::Result<mir::TypeData> {
+          [&](const hir::ScalarBitType& src) -> mir::TypeData {
+            // A bare scalar is a one-bit unsigned vector in MIR's flat shape.
             return mir::PackedArrayType{
                 .atom = TranslateBitAtom(src.atom),
-                .signedness = TranslateSignedness(src.signedness),
-                .dims = TranslatePackedRanges(src.dims),
-                .form = TranslatePackedArrayForm(src.form),
+                .signedness = mir::Signedness::kUnsigned,
+                .dims = {mir::PackedRange{.left = 0, .right = 0}},
+                .form = mir::PackedArrayForm::kExplicit,
             };
           },
-          [&](const hir::PackedStructType& src) -> diag::Result<mir::TypeData> {
-            // LRM 7.2.1: "treated as a single vector". MIR keeps only that
-            // projection -- a PackedArrayType. Per-field offset / width get
-            // baked into constant-bounds RangeSelect at expression
-            // lowering, so MIR carries no struct-specific type.
-            return mir::PackedArrayType{
-                .atom = TranslateBitAtom(src.base.atom),
-                .signedness = TranslateSignedness(src.base.signedness),
-                .dims = TranslatePackedRanges(src.base.dims),
-                .form = TranslatePackedArrayForm(src.base.form),
-            };
+          [&](const hir::PackedArrayType& src) -> mir::TypeData {
+            return FlattenPackedArray(*this, src);
           },
-          [&](const hir::PackedUnionType& src) -> diag::Result<mir::TypeData> {
-            // LRM 7.3.1: untagged packed union "appears as a primary" is
-            // "treated as a single vector". Same MIR shape as packed
-            // struct -- the per-member (offset=0, width) table flows
-            // through to RangeSelect at expression lowering.
-            return mir::PackedArrayType{
-                .atom = TranslateBitAtom(src.base.atom),
-                .signedness = TranslateSignedness(src.base.signedness),
-                .dims = TranslatePackedRanges(src.base.dims),
-                .form = TranslatePackedArrayForm(src.base.form),
-            };
+          [&](const hir::PackedStructType& src) -> mir::TypeData {
+            // LRM 7.2.1: a packed struct projects to one vector summing its
+            // fields. Per-field offset / width bake into constant-bounds
+            // RangeSelect at expression lowering, so MIR keeps no struct type.
+            std::uint64_t width = 0;
+            for (const auto& field : src.fields) {
+              width += field.bit_width;
+            }
+            return FlattenPackedAggregate(
+                width, src.signedness, src.four_state);
           },
-          [&](const hir::EnumType& src) -> diag::Result<mir::TypeData> {
+          [&](const hir::PackedUnionType& src) -> mir::TypeData {
+            // LRM 7.3.1: an untagged packed union projects to one vector as
+            // wide as its widest member; members overlap at the LSBs and each
+            // flows to RangeSelect at expression lowering.
+            std::uint64_t width = 0;
+            for (const auto& field : src.fields) {
+              width = field.bit_width > width ? field.bit_width : width;
+            }
+            return FlattenPackedAggregate(
+                width, src.signedness, src.four_state);
+          },
+          [&](const hir::EnumType& src) -> mir::TypeData {
             // Enum is kept as a distinct mir::EnumType wrapping its base
             // PackedArray plus the member table. Value-level operations
             // unwrap via Type::AsIntegralPacked(); method dispatch reads the
@@ -127,8 +167,7 @@ auto ModuleLowerer::TranslateTypeData(
                 .members = std::move(members),
             };
           },
-          [&](const hir::UnpackedStructType& src)
-              -> diag::Result<mir::TypeData> {
+          [&](const hir::UnpackedStructType& src) -> mir::TypeData {
             std::vector<mir::TypeId> elements;
             elements.reserve(src.fields.size());
             for (const auto& field : src.fields) {
@@ -136,14 +175,14 @@ auto ModuleLowerer::TranslateTypeData(
             }
             return mir::TupleType{.elements = std::move(elements)};
           },
-          [&](const hir::UnpackedUnionType& src)
-              -> diag::Result<mir::TypeData> {
-            // A tagged union is a sum type, a separate concept; only the
-            // untagged overlapping-storage form maps to `UnionType` (LRM 7.3).
+          [&](const hir::UnpackedUnionType& src) -> mir::TypeData {
+            // Only the untagged overlapping-storage form maps to `UnionType`
+            // (LRM 7.3). A tagged union is a sum type rejected at ast_to_hir,
+            // so it never reaches MIR translation.
             if (src.tagged) {
-              return diag::Fail(
-                  type_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
-                  "tagged unions are not yet supported");
+              throw InternalError(
+                  "TranslateTypeData: tagged unpacked union reached MIR "
+                  "translation");
             }
             std::vector<mir::TypeId> elements;
             elements.reserve(src.fields.size());
@@ -152,8 +191,7 @@ auto ModuleLowerer::TranslateTypeData(
             }
             return mir::UnionType{.elements = std::move(elements)};
           },
-          [&](const hir::UnpackedArrayType& src)
-              -> diag::Result<mir::TypeData> {
+          [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
             const std::int64_t span = (src.dim.left >= src.dim.right)
                                           ? (src.dim.left - src.dim.right)
                                           : (src.dim.right - src.dim.left);
@@ -162,48 +200,43 @@ auto ModuleLowerer::TranslateTypeData(
                 .size = static_cast<std::uint64_t>(span) + 1U,
             };
           },
-          [&](const hir::DynamicArrayType& src) -> diag::Result<mir::TypeData> {
+          [&](const hir::DynamicArrayType& src) -> mir::TypeData {
             return mir::DynamicArrayType{
                 .element_type = TranslateType(src.element_type),
             };
           },
-          [&](const hir::QueueType& src) -> diag::Result<mir::TypeData> {
+          [&](const hir::QueueType& src) -> mir::TypeData {
             return mir::QueueType{
                 .element_type = TranslateType(src.element_type),
                 .max_bound = src.max_bound,
             };
           },
-          [&](const hir::AssociativeArrayType& src)
-              -> diag::Result<mir::TypeData> {
+          [&](const hir::AssociativeArrayType& src) -> mir::TypeData {
             return mir::AssociativeArrayType{
                 .element_type = TranslateType(src.element_type),
                 .key_type = TranslateType(src.key_type),
             };
           },
-          [](const hir::WildcardIndexType&) -> diag::Result<mir::TypeData> {
+          [](const hir::WildcardIndexType&) -> mir::TypeData {
             return mir::WildcardIndexType{};
           },
-          [](const hir::StringType&) -> diag::Result<mir::TypeData> {
+          [](const hir::StringType&) -> mir::TypeData {
             return mir::StringType{};
           },
-          [](const hir::EventType&) -> diag::Result<mir::TypeData> {
+          [](const hir::EventType&) -> mir::TypeData {
             return mir::EventType{};
           },
-          [](const hir::RealType&) -> diag::Result<mir::TypeData> {
-            return mir::RealType{};
-          },
-          [](const hir::ShortRealType&) -> diag::Result<mir::TypeData> {
+          [](const hir::RealType&) -> mir::TypeData { return mir::RealType{}; },
+          [](const hir::ShortRealType&) -> mir::TypeData {
             return mir::ShortRealType{};
           },
-          [](const hir::RealTimeType&) -> diag::Result<mir::TypeData> {
+          [](const hir::RealTimeType&) -> mir::TypeData {
             return mir::RealTimeType{};
           },
-          [](const hir::ChandleType&) -> diag::Result<mir::TypeData> {
+          [](const hir::ChandleType&) -> mir::TypeData {
             return mir::ChandleType{};
           },
-          [](const hir::VoidType&) -> diag::Result<mir::TypeData> {
-            return mir::VoidType{};
-          },
+          [](const hir::VoidType&) -> mir::TypeData { return mir::VoidType{}; },
       },
       data);
 }

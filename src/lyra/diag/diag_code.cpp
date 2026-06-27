@@ -12,11 +12,6 @@ namespace {
 
 constexpr std::array kEntries{
     std::pair{
-        DiagCode::kUnsupportedPackedArrayElementType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_packed_array_element_type"}},
-    std::pair{
         DiagCode::kUnsupportedTaggedPackedUnion,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

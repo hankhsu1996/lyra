@@ -12,3 +12,6 @@ expect:
     elem1: "8'hCD"
     high_nibble_1: "4'hC"
     bit_in_elem: "1'b1"
+    full3d: "32'h44332211"
+    elem3d: "8'h33"
+    nib3d: "4'h3"

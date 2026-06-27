@@ -50,7 +50,7 @@ auto LowerSignalEventTrigger(
   if (sig.edge != slang::ast::EdgeKind::None) {
     // The runtime classifies an edge only on a packed bit-vector cell (LRM
     // 9.4.2 Table 9-2); slang already restricts an edge to an integral operand.
-    if (!expr_type.IsPackedArray()) {
+    if (!expr_type.IsBitVector()) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedEventTriggerForm,
           "edge event control is only supported on a packed bit-vector "

@@ -212,9 +212,11 @@ Out of scope but unblocked by this design:
 **Flat dim list on a single unpacked type node.** Rejected. `LRM 7.4.4` explicitly defines multi-dim
 unpacked as "array of arrays". A flat list contradicts the LRM model HIR is required to preserve.
 C++ has no multi-dim vector type, so backend cpp would need to peel the dim list into nested
-`std::vector` at every render. The asymmetry vs PackedArray (flat-dims) is intentional and follows
-the substrate: bits are uniform and support flat storage; unpacked elements are heterogeneous and do
-not.
+`std::vector` at every render. The flat-dims shape this contrasts with is the MIR and value-layer
+representation of a packed array; at HIR a packed array is recursive like an unpacked one (see
+[packed-array-representation](packed-array-representation.md)). The surviving asymmetry is at the
+value layer and follows the substrate: a packed array's bits are uniform and support flat storage,
+while unpacked elements are heterogeneous and do not.
 
 **`std::array<T, N>` instead of `std::vector<T>`.** Rejected. Threading `N` into the cpp type string
 complicates rendering and breaks the symmetry with the variable-size container path

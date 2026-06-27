@@ -55,15 +55,19 @@ auto LowerDestructuringAssign(
   part_widths.reserve(lhs_concat.operands.size());
   bool any_four_state = false;
   std::uint64_t total_width = 0;
+  const auto& hir_types = process.Module().Hir().types;
+  const auto& mir_types = process.Module().Unit().types;
   for (const hir::ExprId op_id : lhs_concat.operands) {
     const hir::Expr& op = hir_proc.exprs.Get(op_id);
-    const hir::Type& op_ty = process.Module().Hir().types.Get(op.type);
-    if (!op_ty.IsPackedArray()) {
+    if (!hir_types.Get(op.type).IsBitVector()) {
       throw InternalError(
           "LowerDestructuringAssign: destructuring operand is not "
           "a packed integral type");
     }
-    const auto& packed = op_ty.AsPackedArray();
+    // Width and 4-state-ness are properties of the flat MIR vector; read them
+    // off it directly rather than recompute from the structural HIR type.
+    const auto& packed = mir_types.Get(process.Module().TranslateType(op.type))
+                             .AsIntegralPacked();
     const std::uint64_t w = packed.BitWidth();
     part_widths.push_back(w);
     total_width += w;

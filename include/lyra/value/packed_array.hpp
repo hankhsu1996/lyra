@@ -408,6 +408,14 @@ class PackedArray {
   // address space, dimension-agnostic. The element-level chain methods below
   // (`operator[]`, `Slice`) compose offsets in this address space and route
   // here at the chain leaf.
+  // Materializes the sub-region of shape `dims` whose least-significant bit is
+  // at `lsb_bit` into an owned value. Because the value is built with `dims`
+  // from the start, a chained select on the result sees the inner dimensions
+  // rather than a flattened bit run -- no post-construction reshaping. The
+  // width overload is the 1-D shorthand.
+  [[nodiscard]] auto ExtractBits(
+      const PackedArray& lsb_bit, std::span<const PackedRange> dims) const
+      -> PackedArray;
   [[nodiscard]] auto ExtractBits(
       const PackedArray& lsb_bit, std::uint32_t bit_width) const -> PackedArray;
   auto AssignSlice(
@@ -475,12 +483,24 @@ class PackedArray {
   [[nodiscard]] auto ReductionXnor() const -> PackedArray;
 
  private:
-  // Single source of truth for "construct a PackedArray with a known value".
-  // FromInt, FromWords, and any internal op that needs to materialize a
-  // result from word planes must delegate here. The helper guarantees both
-  // planes are fully written (value from `value_words`, unknown from
-  // `unknown_words` or zero when empty); no caller can leak the all-X
-  // residue left by LogicValue's default ctor.
+  // Constructs a value of the given runtime dim stack. Twin of the
+  // `initializer_list` dim constructor, for shapes computed at runtime (a
+  // selector's result dims). Bit width is the product of the dims.
+  PackedArray(
+      std::span<const PackedRange> dims, bool is_signed, bool is_four_state);
+
+  // Single source of truth for "construct a PackedArray with a known value and
+  // shape". FromInt, FromWords, and any internal op that materializes a result
+  // from word planes delegate here. The helper guarantees both planes are
+  // fully written (value from `value_words`, unknown from `unknown_words` or
+  // zero when empty); no caller can leak the all-X residue left by
+  // LogicValue's default ctor. The value is built with `dims` from the start,
+  // so its shape is never patched in afterward. `MakeFromWordPlanes` is the
+  // 1-D shorthand.
+  [[nodiscard]] static auto MakeFromWordPlanesShaped(
+      std::span<const PackedRange> dims, bool is_signed, bool is_four_state,
+      std::span<const std::uint64_t> value_words,
+      std::span<const std::uint64_t> unknown_words) -> PackedArray;
   [[nodiscard]] static auto MakeFromWordPlanes(
       std::uint64_t bit_width, bool is_signed, bool is_four_state,
       std::span<const std::uint64_t> value_words,
@@ -507,8 +527,10 @@ class PackedArray {
 // write (LRM "X/Z position is a no-op").
 class PackedArrayRef {
  public:
+  // Width is derived from `dims` (their product), so a ref's width can never
+  // drift from its shape.
   PackedArrayRef(
-      PackedArray& root, const PackedArray& bit_offset, std::uint32_t bit_width,
+      PackedArray& root, const PackedArray& bit_offset,
       std::vector<PackedRange> dims);
 
   // Move-only: a ref aliases its root by raw pointer, so duplicating the
