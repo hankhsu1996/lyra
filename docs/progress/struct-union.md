@@ -60,10 +60,12 @@ type-checked -- reading a member other than the one last written is a type looph
 result is undefined and is not relied upon here. Default value is the first member's default (LRM
 Table 7-1).
 
-- [ ] N1 -- Type infrastructure, declaration, member read and write for an untagged unpacked union
+- [x] N1 -- Type infrastructure, declaration, member read and write for an untagged unpacked union
       (LRM 7.3). Writing then reading the same member round-trips; writing one member then another
-      overwrites. Two- and three-member unions of integral / real / shortreal members.
-- [ ] N2 -- Default initialization to the first member's LRM Table 7-1 default.
+      overwrites. Two- and three-member unions of integral / real / shortreal members. A tagged
+      union is a distinct concept and is rejected for now.
+- [x] N2 -- Default initialization to the first member's LRM Table 7-1 default. A declared union
+      must default-initialize to be usable, so this lands with N1.
 - [ ] N3 -- Whole-union value-semantic copy (independent copies) and member use in arithmetic and
       other expression contexts.
 

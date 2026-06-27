@@ -38,6 +38,7 @@ enum class TypeKind {
   kPointer,
   kVector,
   kTuple,
+  kUnion,
   kExternalRef,
   kObservable,
 };
@@ -316,6 +317,19 @@ struct TupleType {
   auto operator==(const TupleType&) const -> bool = default;
 };
 
+// Overlapping member storage: one of an ordered list of component types is the
+// value at a time (the generic-language C `union`, distinct from the product
+// `TupleType` and from a tagged sum). The value-layer realization of an SV
+// untagged unpacked union (LRM 7.3); the member names are dropped to positions
+// at HIR-to-MIR, the index is the carrier. Built and read by `UnionExpr` /
+// `UnionGetExpr`. Carries component types only: a tagged union is a separate
+// concept rejected at the HIR-to-MIR gate, so no flag distinguishes one here.
+struct UnionType {
+  std::vector<TypeId> elements;
+
+  auto operator==(const UnionType&) const -> bool = default;
+};
+
 // Observable storage wrapper around a value type. Declares that a member's
 // storage is a module-scope cell that exposes Set / Get / Mutate
 // (LRM 9.4.2 update event) -- writes route through the engine so subscribers
@@ -352,7 +366,7 @@ using TypeData = std::variant<
     ShortRealType, RealTimeType, ChandleType, VoidType, ObjectType,
     ExternalUnitObjectType, ScopeType, ServicesType, FilesType, DiagnosticType,
     RuntimeLibraryType, CoroutineType, RefType, PointerType, VectorType,
-    TupleType, ExternalRefType, ObservableType>;
+    TupleType, UnionType, ExternalRefType, ObservableType>;
 
 struct Type {
   TypeData data;
