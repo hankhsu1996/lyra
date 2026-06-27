@@ -53,11 +53,12 @@ C  Non-local access substrate
 - [x] A1 -- More than one module definition compiles in a single run; the design is no longer
       assumed to be a single top module. Each module is its own independently compiled unit. The LRM
       permits multiple top-level blocks (LRM 3.11): every elaborated but uninstantiated module is
-      implicitly a top-level block, and all of them sit under one implicit root scope ($root). The
-      program constructs every top-level block as a child of $root and runs them all under a single
-      scheduler on one shared time axis -- there is no single "main" block. This is end-to-end
-      testable with no instantiation edge: two independent top modules each run their own processes
-      under the shared schedule.
+      implicitly a top-level block, and all of them sit under one implicit root scope
+      ($root). The
+      program constructs every top-level block as a child of $root and runs them
+      all under a single scheduler on one shared time axis -- there is no single "main" block. This
+      is end-to-end testable with no instantiation edge: two independent top modules each run their
+      own processes under the shared schedule.
 - [x] A2 -- A module instantiated with different parameter values yields distinct specializations
       that each behave according to their own values. Distinct parameter bindings produce distinct
       compiled artifacts with distinct identity (see `docs/decisions/specialization-identity.md`),
