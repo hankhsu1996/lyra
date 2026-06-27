@@ -291,6 +291,28 @@ auto LowerCallExpr(
       };
     }
 
+    // LRM 20.8.1 `$clog2`: ceil(log2) of the operand read as unsigned. A
+    // type-agnostic value query -- every value type exposes it -- so it lowers
+    // to the generic instance builtin call on its operand. A constant argument
+    // is folded by the downstream optimizer, never in lowering.
+    if (info.subroutine != nullptr &&
+        info.subroutine->knownNameId ==
+            slang::parsing::KnownSystemName::Clog2) {
+      auto type_id = module.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::CallExpr{
+                  .callee =
+                      hir::BuiltinMethodRef{
+                          .method = support::BuiltinFn::kClog2},
+                  .arguments = std::move(arg_ids),
+              },
+          .span = span,
+      };
+    }
+
     // LRM 7.12.4 `item.index`: slang dresses the iteration index as a method on
     // the iterator (a SystemSubroutine with `KnownSystemName::Index`) whose
     // receiver value is discarded. It is the index iteration parameter -- a

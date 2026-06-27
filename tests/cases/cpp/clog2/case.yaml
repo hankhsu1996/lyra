@@ -1,0 +1,15 @@
+id: cpp.clog2
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    c_const: 3
+    c_zero: 0
+    c_seven: 3
+    c_sixteen: 4
+    genvar_out: "32'h04030200"
