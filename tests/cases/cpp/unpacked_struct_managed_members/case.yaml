@@ -1,0 +1,17 @@
+id: cpp.unpacked_struct_managed_members
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a_first: "ann"
+    a_last: "lee"
+    b_first: "bob"
+    b_id: 3
+    eq_ab: 0
+    arr0_last: "dog"
+    arr1_first: "cat"

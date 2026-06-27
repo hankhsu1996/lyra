@@ -29,7 +29,7 @@ qualifier the struct is unpacked -- its members are stored independently rather 
 one vector -- so it is a composite value, not an integral one. Default value is member-wise (LRM
 Table 7-1).
 
-- [ ] S1 -- Type infrastructure, declaration, member read, and blocking member write (LRM 7.2).
+- [x] S1 -- Type infrastructure, declaration, member read, and blocking member write (LRM 7.2).
       Whole-struct assignment is value-semantic: a copy is independent of its source. Members may be
       any supported integral, packed, real, or string type; an unpacked struct nests as a member of
       another unpacked struct, and a struct is usable as an unpacked-array element and may itself
@@ -47,9 +47,11 @@ Table 7-1).
       (`s.f[3:0]`, `s.f + 1`). A struct field reads and writes correctly in arithmetic, conditional,
       and other expression contexts. Case equality on a struct with a real / shortreal leaf is
       rejected, per the LRM (Table 11-1).
-- [ ] S5 -- Members with managed lifecycle (string, and any future value type with non-trivial copy
+- [x] S5 -- Members with managed lifecycle (string, and any future value type with non-trivial copy
       semantics). Whole-struct copy gives each copy independent member storage; assignment releases
-      the destination's prior member value; multiple and nested managed members compose.
+      the destination's prior member value; multiple and nested managed members compose. A struct is
+      also usable as an unpacked-array element with the same value-independent copy on element
+      write.
 
 ## Unpacked Union
 
