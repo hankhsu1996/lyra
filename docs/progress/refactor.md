@@ -163,15 +163,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `(Lowerer&, WalkFrame, node)`; the `WalkFrame` value type carries `current_compilation_unit` /
       `current_class` / `current_block` / `static_frame_scope` / `block_depth` / `active_closure` /
       `active_index_binding` and every write goes through `frame.current_class->Add...` /
-      `frame.current_block->Add...` uniformly. `ModuleLowerer`, `ClassLowerer`, and `ProcessLowerer`
-      hold facts and registries only -- no borrowed pointer to in-flight IR, no delegate `Add` /
-      `Allocate` wrapper, no ambient `Set*` / `Enter*` / `Leave*`. `ProceduralDepthGuard` is gone.
-      The dead `facts.hpp` is deleted. `state.hpp` has been split into `module_lowerer.hpp` /
-      `class_lowerer.hpp` / `process_lowerer.hpp`. AST-to-HIR `StructuralScopeLowerer.scope_`,
-      `ModuleLowerer.hir_unit_`, and `ProcessLowerer.body_` are likewise off the lowerer. `~1400`
-      local-variable sites renamed (`unit_state` -> `module`, `scope_state` -> `scope`, `proc_state`
-      -> `process`, `proc_scope_state` -> `proc_scope`, etc.). The per-LRM-family subsystem split
-      ships as its own focused cut; see R13.
+      `frame.current_block->Add...` uniformly. `ModuleLowerer`, `StructuralScopeLowerer`, and
+      `ProcessLowerer` hold facts and registries only -- no borrowed pointer to in-flight IR, no
+      delegate `Add` / `Allocate` wrapper, no ambient `Set*` / `Enter*` / `Leave*`.
+      `ProceduralDepthGuard` is gone. The dead `facts.hpp` is deleted. `state.hpp` has been split
+      into `module_lowerer.hpp` / `structural_scope_lowerer.hpp` / `process_lowerer.hpp`. AST-to-HIR
+      `StructuralScopeLowerer.scope_`, `ModuleLowerer.hir_unit_`, and `ProcessLowerer.body_` are
+      likewise off the lowerer. `~1400` local-variable sites renamed (`unit_state` -> `module`,
+      `scope_state` -> `scope`, `proc_state` -> `process`, `proc_scope_state` -> `proc_scope`,
+      etc.). The per-LRM-family subsystem split ships as its own focused cut; see R13.
 
 - [x] R11 -- Remove the `mutable owned_temp_counter_` escape hatch on `RenderContext`. Today the C++
       backend's temp-name counter is a `mutable` field reached through a pointer from every
@@ -207,7 +207,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `expression/system/{print, scan, sformat,     file_io, diagnostic, timescale, control}.{hpp,cpp}`,
       and `statement/{blocks, branches, loops,     timing, fork_join, assignment, flow}.{hpp,cpp}`.
       The procedural and class-level expression dispatchers are class methods
-      (`ProcessLowerer::LowerExpr` / `LowerStmt`, `ClassLowerer::LowerExpr`); the
+      (`ProcessLowerer::LowerExpr` / `LowerStmt`, `StructuralScopeLowerer::LowerExpr`); the
       for-generate-header vs generate-control distinction lives on `WalkFrame::loop_var_mode`.
       Subsystem files include only the pass-class headers and their own family header, so adding a
       kind touches three files (subsystem header, subsystem implementation, dispatcher switch) and

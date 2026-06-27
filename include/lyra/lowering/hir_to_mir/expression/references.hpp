@@ -7,8 +7,8 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/primary.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -24,8 +24,8 @@ auto LowerHirPrimaryExprProc(
 // `LoopVarRef` arm to choose between procedural-induction and
 // structural-param resolution.
 auto LowerHirPrimaryExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::Primary& p,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::Primary& p, mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 // Translate a folded HIR integral constant to its MIR form. Shared by
 // primary-literal lowering and member-default materialization.

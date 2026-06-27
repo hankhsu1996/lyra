@@ -11,10 +11,10 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -258,39 +258,39 @@ auto LowerHirAssociativeAssignmentPatternExpr(
 
 // One concrete instantiation per pass class. The handler templates are defined
 // in this file rather than the header so the file-local helpers stay private,
-// so the dispatchers in process_lowerer.cpp / class_lowerer.cpp link against
-// the symbols emitted here.
+// so the dispatchers in process_lowerer.cpp / structural_scope_lowerer.cpp link
+// against the symbols emitted here.
 template auto LowerHirConcatExpr(
     ProcessLowerer&, WalkFrame, const hir::ConcatExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirConcatExpr(
-    const ClassLowerer&, WalkFrame, const hir::ConcatExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::ConcatExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternExpr(
     ProcessLowerer&, WalkFrame, const hir::AssignmentPatternExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternExpr(
-    const ClassLowerer&, WalkFrame, const hir::AssignmentPatternExpr&,
+    const StructuralScopeLowerer&, WalkFrame, const hir::AssignmentPatternExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternReplicationExpr(
     ProcessLowerer&, WalkFrame, const hir::AssignmentPatternReplicationExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternReplicationExpr(
-    const ClassLowerer&, WalkFrame,
+    const StructuralScopeLowerer&, WalkFrame,
     const hir::AssignmentPatternReplicationExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirAssociativeAssignmentPatternExpr(
     ProcessLowerer&, WalkFrame, const hir::AssociativeAssignmentPatternExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssociativeAssignmentPatternExpr(
-    const ClassLowerer&, WalkFrame,
+    const StructuralScopeLowerer&, WalkFrame,
     const hir::AssociativeAssignmentPatternExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirReplicationExpr(
     ProcessLowerer&, WalkFrame, const hir::ReplicationExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirReplicationExpr(
-    const ClassLowerer&, WalkFrame, const hir::ReplicationExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::ReplicationExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

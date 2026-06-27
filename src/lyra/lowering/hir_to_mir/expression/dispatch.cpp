@@ -5,7 +5,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
@@ -15,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -197,13 +197,13 @@ auto ProcessLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
   return LowerLhsExprImpl(*this, expr, frame);
 }
 
-auto ClassLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame) const
-    -> diag::Result<mir::Expr> {
+auto StructuralScopeLowerer::LowerExpr(
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
   return LowerExprImpl(*this, expr, frame);
 }
 
-auto ClassLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
-    -> diag::Result<mir::Expr> {
+auto StructuralScopeLowerer::LowerLhsExpr(
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
   return LowerLhsExprImpl(*this, expr, frame);
 }
 

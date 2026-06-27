@@ -16,7 +16,6 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
@@ -26,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -207,7 +207,7 @@ auto LowerDestructuringAssign(
 // its HIR declaration, or nullptr for a value-only call (system / builtin
 // callee, or an all-`input` user callee).
 auto SubroutineWithWritebacks(
-    const ClassLowerer& lowerer, const hir::CallExpr& call)
+    const StructuralScopeLowerer& lowerer, const hir::CallExpr& call)
     -> const hir::StructuralSubroutineDecl* {
   const auto* ref = std::get_if<hir::StructuralSubroutineRef>(&call.callee);
   if (ref == nullptr) {

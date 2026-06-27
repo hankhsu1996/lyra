@@ -130,8 +130,8 @@ share only the pattern shape.
 
 - `UnitLoweringState` is replaced by per-purpose objects: the HIR-to-MIR type-translation map
   becomes a `TypeMap` registry; canonical TypeIds remain as `BuiltinMirTypes` facts. Their
-  composition into the surrounding `ClassLowerer` / `ProcessLowerer` classes is per pass; no
-  `UnitLoweringState`-equivalent god class survives.
+  composition into the surrounding `StructuralScopeLowerer` / `ProcessLowerer` classes is per pass;
+  no `UnitLoweringState`-equivalent god class survives.
 
 - `StructuralScopeLoweringState` and `ProceduralScopeLoweringState` are dissolved into their
   corresponding IR scope types (`hir::StructuralScope`, `mir::Block`, etc.), which gain construction

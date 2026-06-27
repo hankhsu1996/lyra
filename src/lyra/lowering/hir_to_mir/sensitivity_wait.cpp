@@ -8,8 +8,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -77,7 +77,7 @@ auto BuildObservablePtrExpr(
 
 auto MakeSensitivityWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
-    const ClassLowerer& lowerer,
+    const StructuralScopeLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {
   auto& unit = lowerer.Module().Unit();
   std::vector<mir::SensitivityRead> reads;

@@ -552,7 +552,8 @@ template auto LowerHirCallExpr(
     ProcessLowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr>;
 template auto LowerHirCallExpr(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::CallExpr& c, diag::SourceSpan span, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

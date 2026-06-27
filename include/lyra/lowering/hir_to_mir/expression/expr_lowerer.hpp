@@ -13,9 +13,9 @@ namespace lyra::lowering::hir_to_mir {
 
 // The duck-typed contract a pass class fulfils for context-free expression
 // lowering: recurse into a sub-expression (read or lhs context), reach the
-// HIR expression arena, and reach the enclosing module. `ProcessLowerer`
-// (procedural bodies) and `ClassLowerer` (structural scopes) both satisfy
-// it; the shared per-expression handler templates are constrained on it so
+// HIR expression arena, and reach the enclosing module. The procedural-body
+// pass and the structural-scope pass both satisfy it; the shared per-expression
+// handler templates are constrained on it so
 // the surface they depend on is named and checked rather than surfacing as a
 // deep template error. It is deliberately not a base class -- the two pass
 // classes build different things and share no v-table.

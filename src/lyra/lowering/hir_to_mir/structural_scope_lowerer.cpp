@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -419,7 +419,7 @@ void AppendExternalUnitConstruction(
 // Returns the StructuralVarId of each instance member, indexed by
 // InstanceMemberId, so cross-unit reference resolution can reach the child
 // instance var by the same id the HIR recipe carries.
-auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
+auto InstallInstanceMembers(StructuralScopeLowerer& lowerer, WalkFrame frame)
     -> std::vector<mir::MemberId> {
   mir::Class& mir_class = *frame.current_class;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
@@ -457,7 +457,8 @@ auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
 // member; both record their MIR read target as a StructuralVarRef to that
 // member, in HIR slot order. The returned vector carries the allocated member
 // per ref in HIR order.
-auto MaterializeCrossUnitRefTargets(ClassLowerer& lowerer, WalkFrame frame)
+auto MaterializeCrossUnitRefTargets(
+    StructuralScopeLowerer& lowerer, WalkFrame frame)
     -> std::vector<mir::MemberId> {
   ModuleLowerer& module = lowerer.Module();
   mir::Class& mir_class = *frame.current_class;
@@ -607,9 +608,9 @@ auto FindMemberByName(const mir::Class& cls, std::string_view name)
 // enclosing access used for bare-name reads through `StructuralVarRef`;
 // this path extends it one `MemberAccess` further.
 auto BuildTypedEnclosingNavValue(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::DownwardHead& down,
-    const std::vector<hir::PathStep>& path, mir::TypeId slot_type)
-    -> mir::ExprId {
+    const StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::DownwardHead& down, const std::vector<hir::PathStep>& path,
+    mir::TypeId slot_type) -> mir::ExprId {
   ModuleLowerer& module = lowerer.Module();
   mir::Block& ctor_block = *frame.current_block;
   const mir::EnclosingHops mir_hops{.value = down.hops.value};
@@ -808,7 +809,7 @@ void AppendExternUpBinding(
 // `CallExpr` carrying flat MIR primitives, so the backend renders them
 // uniformly with every other call.
 void InstallCrossUnitRefs(
-    ClassLowerer& lowerer, WalkFrame frame,
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
     const std::vector<mir::MemberId>& instance_member_vars,
     const std::vector<GenerateBindings>& gen_bindings,
     const std::vector<mir::MemberId>& slot_vars) {
@@ -937,7 +938,7 @@ void AppendProcessRegistration(
 // resolve block: one assignment of a reference, with no second cell and no
 // continuous assignment.
 auto InstallPortConnections(
-    ClassLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
+    StructuralScopeLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
     WalkFrame activate_frame,
     const std::vector<mir::MemberId>& instance_member_vars,
     const std::vector<GenerateBindings>& gen_bindings) -> diag::Result<void> {
@@ -1289,7 +1290,7 @@ auto BuildGenerateArmBody(
 }
 
 auto LowerIfGenerate(
-    ClassLowerer& lowerer, WalkFrame frame,
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
     const GenerateBindings& gen_bindings, const hir::IfGenerate& if_gen)
     -> diag::Result<mir::Stmt> {
   const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
@@ -1318,7 +1319,7 @@ auto LowerIfGenerate(
 }
 
 auto LowerCaseGenerate(
-    ClassLowerer& lowerer, WalkFrame frame,
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
     const GenerateBindings& gen_bindings, const hir::CaseGenerate& case_gen)
     -> diag::Result<mir::Stmt> {
   const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
@@ -1383,7 +1384,7 @@ auto LowerCaseGenerate(
 }
 
 auto LowerLoopGenerate(
-    ClassLowerer& lowerer, WalkFrame frame,
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
     const GenerateBindings& gen_bindings, const hir::LoopGenerate& loop)
     -> diag::Result<mir::Stmt> {
   const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
@@ -1451,7 +1452,7 @@ auto LowerLoopGenerate(
 }
 
 auto LowerGenerateAsStmt(
-    ClassLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
+    StructuralScopeLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
     const GenerateBindings& gen_bindings) -> diag::Result<mir::Stmt> {
   return std::visit(
       Overloaded{
@@ -1468,7 +1469,8 @@ auto LowerGenerateAsStmt(
       gen.data);
 }
 
-auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
+auto InstallGenerateOwnedChildScopes(
+    StructuralScopeLowerer& lowerer, WalkFrame frame)
     -> diag::Result<std::vector<GenerateBindings>> {
   ModuleLowerer& module = lowerer.Module();
   mir::Class& mir_class = *frame.current_class;
@@ -1489,7 +1491,7 @@ auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
       CheckNoNameCollision(
           module.Unit(), mir_class, spec.scope_name, companion_name);
 
-      ClassLowerer child_scope(
+      StructuralScopeLowerer child_scope(
           module, &lowerer, std::move(spec.scope_name), *spec.scope);
       auto child_r = child_scope.Run(frame, spec.entry_bindings);
       if (!child_r) return std::unexpected(std::move(child_r.error()));
@@ -1520,13 +1522,13 @@ auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
 
 }  // namespace
 
-auto ClassLowerer::Run(
+auto StructuralScopeLowerer::Run(
     WalkFrame frame,
     std::span<const ScopeEntryStructuralParamBinding> entry_bindings)
     -> diag::Result<mir::ClassId> {
   ModuleLowerer& module = *module_;
   const hir::StructuralScope& hir_scope = *hir_scope_;
-  ClassLowerer& lowerer = *this;
+  StructuralScopeLowerer& lowerer = *this;
 
   // The identity is minted before the body so the object's own self type names
   // it; the registry slot is filled from the finished declaration below.
@@ -1762,7 +1764,7 @@ auto ClassLowerer::Run(
     const mir::MethodId added = mir_class.methods.Add(*std::move(decl_or));
     if (added.value != i) {
       throw InternalError(
-          "ClassLowerer::Run: subroutine added out of mapped "
+          "StructuralScopeLowerer::Run: subroutine added out of mapped "
           "id order");
     }
   }

@@ -9,7 +9,7 @@
 #include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
@@ -28,7 +28,7 @@ auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
     MapType(hir_id, mir_id);
   }
 
-  ClassLowerer root(*this, nullptr, hir_->name, hir_->root_scope);
+  StructuralScopeLowerer root(*this, nullptr, hir_->name, hir_->root_scope);
   auto top_r = root.Run(root_frame);
   if (!top_r) return std::unexpected(std::move(top_r.error()));
 

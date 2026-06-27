@@ -12,9 +12,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -903,43 +903,43 @@ auto LowerHirMemberAccessExprLhs(
 
 // One concrete instantiation per pass class. The handler templates are defined
 // in this file rather than the header so the file-local helpers stay private,
-// so the dispatchers in process_lowerer.cpp / class_lowerer.cpp link against
-// the symbols emitted here.
+// so the dispatchers in process_lowerer.cpp / structural_scope_lowerer.cpp link
+// against the symbols emitted here.
 template auto LowerHirElementSelectExpr(
     ProcessLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirElementSelectExpr(
-    const ClassLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::ElementSelectExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirRangeSelectExpr(
     ProcessLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirRangeSelectExpr(
-    const ClassLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::RangeSelectExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirMemberAccessExpr(
     ProcessLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirMemberAccessExpr(
-    const ClassLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::MemberAccessExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirElementSelectExprLhs(
     ProcessLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirElementSelectExprLhs(
-    const ClassLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::ElementSelectExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirRangeSelectExprLhs(
     ProcessLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirRangeSelectExprLhs(
-    const ClassLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::RangeSelectExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirMemberAccessExprLhs(
     ProcessLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirMemberAccessExprLhs(
-    const ClassLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::MemberAccessExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

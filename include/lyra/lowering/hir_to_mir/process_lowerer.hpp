@@ -17,8 +17,8 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/block_depth.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -77,7 +77,7 @@ class ProcessLowerer {
   // frame -- the static-local lowering reads it to place per-instance storage
   // and its init AssignExpr into the owner's constructor_block.
   ProcessLowerer(
-      ModuleLowerer& module, const ClassLowerer& lowerer,
+      ModuleLowerer& module, const StructuralScopeLowerer& lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
       std::string callable_name, WalkFrame owner_ctor_frame)
       : module_(&module),
@@ -127,9 +127,10 @@ class ProcessLowerer {
     return *hir_body_;
   }
 
-  // The expression arena of the body being lowered. The single uniform
-  // sub-expression accessor the context-free expression handler templates
-  // reach through, identical in shape to `ClassLowerer::HirExprs`.
+  // The expression arena of the body being lowered. The uniform sub-expression
+  // accessor the context-free expression handler templates reach through; both
+  // lowering pass classes expose it with the same shape so those templates bind
+  // to either.
   [[nodiscard]] auto HirExprs() const
       -> const base::Arena<hir::Expr, hir::ExprId>& {
     return hir_body_->exprs;
@@ -142,13 +143,13 @@ class ProcessLowerer {
     return *module_;
   }
 
-  [[nodiscard]] auto Owner() const -> const ClassLowerer& {
+  [[nodiscard]] auto Owner() const -> const StructuralScopeLowerer& {
     return *owner_;
   }
 
-  // The structural-subroutine tables live on the owning `ClassLowerer`; expose
-  // them here too so a templated call handler reaches a user subroutine through
-  // the same surface on either pass class (`ClassLowerer` has them directly).
+  // The structural-subroutine tables live on the owning structural-scope pass;
+  // this forwards to them so a templated call handler reaches a user subroutine
+  // through the same surface on either pass class.
   [[nodiscard]] auto LookupHirSubroutine(
       hir::StructuralHops hops, hir::StructuralSubroutineId id) const
       -> const hir::StructuralSubroutineDecl& {
@@ -241,7 +242,7 @@ class ProcessLowerer {
 
  private:
   ModuleLowerer* module_;
-  const ClassLowerer* owner_;
+  const StructuralScopeLowerer* owner_;
   TimeResolution time_resolution_;
   const hir::ProceduralBody* hir_body_;
   std::string callable_name_;
