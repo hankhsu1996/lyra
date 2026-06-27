@@ -42,10 +42,11 @@ Table 7-1).
       in which case that value is used. The 2-state / 4-state distinction propagates per member. A
       member's initial assignment may itself be an aggregate literal (a struct- or array-typed
       member default).
-- [ ] S4 -- Aggregate copy and equality (`==` / `!=` / `===` / `!==`), and member access composing
+- [x] S4 -- Aggregate copy and equality (`==` / `!=` / `===` / `!==`), and member access composing
       with element / range selects on packed members and on either side of an expression
       (`s.f[3:0]`, `s.f + 1`). A struct field reads and writes correctly in arithmetic, conditional,
-      and other expression contexts.
+      and other expression contexts. Case equality on a struct with a real / shortreal leaf is
+      rejected, per the LRM (Table 11-1).
 - [ ] S5 -- Members with managed lifecycle (string, and any future value type with non-trivial copy
       semantics). Whole-struct copy gives each copy independent member storage; assignment releases
       the destination's prior member value; multiple and nested managed members compose.
