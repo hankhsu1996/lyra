@@ -164,13 +164,12 @@ auto RenderRealLiteralExpr(
 
 auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
     -> std::string {
-  if (r.hops.value != 0) {
-    throw InternalError(
-        "cross-scope param access is not yet implemented in "
-        "cpp emit");
-  }
-  const std::string& name = view.Class().params.Get(r.param).name;
-  return std::format("self->{}", name);
+  const mir::Expr& receiver = view.Expr(r.receiver);
+  const auto& ptr =
+      std::get<mir::PointerType>(view.Unit().types.Get(receiver.type).data);
+  const std::string& name =
+      view.ClassByObjectType(ptr.pointee).params.Get(r.param).name;
+  return std::format("{}->{}", RenderExpr(view, receiver), name);
 }
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
