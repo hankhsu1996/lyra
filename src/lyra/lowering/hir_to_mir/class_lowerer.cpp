@@ -1561,7 +1561,7 @@ auto ClassLowerer::Run(
         value_id = initialize_block.exprs.Add(*std::move(value_or));
       } else {
         value_id = initialize_block.exprs.Add(
-            BuildDefaultValueExpr(module, init_frame, mir_value_type));
+            BuildDefaultValueFromHir(module, init_frame, d.type));
       }
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeMemberAccessExpr(

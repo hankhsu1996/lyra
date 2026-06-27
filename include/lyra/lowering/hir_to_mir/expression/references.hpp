@@ -27,4 +27,9 @@ auto LowerHirPrimaryExprStructural(
     const ClassLowerer& lowerer, WalkFrame frame, const hir::Primary& p,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
+// Translate a folded HIR integral constant to its MIR form. Shared by
+// primary-literal lowering and member-default materialization.
+auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
+    -> mir::IntegralConstant;
+
 }  // namespace lyra::lowering::hir_to_mir

@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -26,6 +27,17 @@ namespace lyra::lowering::hir_to_mir {
 // downstream layers see one shape (an Expr) instead of two.
 [[nodiscard]] auto BuildDefaultValueExpr(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId type)
+    -> mir::Expr;
+
+// Default-construct a value from its source (HIR) type, honoring
+// unpacked-struct member declaration initializers (LRM 7.2.2). Use this at
+// every site that materializes the SV default initial value of a declared
+// variable, member, or element. The MIR-type-keyed default builder above cannot
+// honor member initializers -- the canonicalized MIR type drops them -- so it
+// serves only placeholder and transient-product defaults, where the source
+// initializer does not apply.
+[[nodiscard]] auto BuildDefaultValueFromHir(
+    const ModuleLowerer& module, WalkFrame frame, hir::TypeId hir_type)
     -> mir::Expr;
 
 // Wraps a list of element ExprIds destined for an array container constructor

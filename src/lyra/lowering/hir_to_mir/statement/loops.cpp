@@ -55,8 +55,8 @@ auto LowerForStmt(
                 }
                 init_id = block.exprs.Add(*std::move(init_or));
               } else {
-                init_id = block.exprs.Add(
-                    BuildDefaultValueExpr(process.Module(), frame, type));
+                init_id = block.exprs.Add(BuildDefaultValueFromHir(
+                    process.Module(), frame, hir_local.type));
               }
               return mir::ForInit{mir::ForInitDecl{
                   .induction_var =

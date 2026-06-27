@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/EvalContext.h>
+#include <slang/ast/Expression.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -18,6 +20,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/integral_constant.hpp"
+#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 
@@ -204,6 +207,28 @@ auto LowerPackedUnion(
   };
 }
 
+// LRM 7.2.2: a member declaration may carry a constant default value, used in
+// place of the member type's Table 7-1 default when the enclosing struct is
+// default-constructed. Slang has bound and constant-checked it; evaluate it and
+// fold it into the member's value-form metadata, the same shape an enum member
+// carries its value -- the default is a value the type holds, not an
+// expression.
+auto LowerMemberDefault(
+    const slang::ast::FieldSymbol& field, diag::SourceSpan span)
+    -> diag::Result<std::optional<hir::ConstantValue>> {
+  const auto* init = field.getInitializer();
+  if (init == nullptr) {
+    return std::optional<hir::ConstantValue>{};
+  }
+  slang::ast::EvalContext eval_context(field);
+  const slang::ConstantValue constant = init->eval(eval_context);
+  auto value_or = MakeConstantValue(constant, span);
+  if (!value_or) {
+    return std::unexpected(std::move(value_or.error()));
+  }
+  return std::optional<hir::ConstantValue>{*std::move(value_or)};
+}
+
 auto LowerUnpackedAggregateFields(
     std::span<const slang::ast::FieldSymbol* const> fields,
     diag::SourceSpan decl_span, ModuleLowerer& module)
@@ -215,10 +240,15 @@ auto LowerUnpackedAggregateFields(
     if (!field_type_or) {
       return std::unexpected(std::move(field_type_or.error()));
     }
+    auto default_or = LowerMemberDefault(*field, decl_span);
+    if (!default_or) {
+      return std::unexpected(std::move(default_or.error()));
+    }
     out.push_back(
         hir::UnpackedAggregateField{
             .name = std::string(field->name),
             .type = *field_type_or,
+            .default_init = *std::move(default_or),
         });
   }
   return out;
