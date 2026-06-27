@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -117,10 +118,15 @@ struct PackedUnionType {
 // aggregate field, an unpacked member has its own independent storage of its
 // declared type -- there is no shared bit vector, so no offset or width. The
 // member is identified by its position in declaration order (LRM 7.2 / 7.3),
-// the same index a member-access expression carries.
+// the same index a member-access expression carries. `default_init` holds the
+// member's own declaration initializer (LRM 7.2.2) as a folded constant value
+// -- type metadata, like an enum member's value -- which takes precedence over
+// the member type's Table 7-1 default when the enclosing struct is
+// default-constructed; absent when the member has no initializer.
 struct UnpackedAggregateField {
   std::string name;
   TypeId type;
+  std::optional<ConstantValue> default_init;
 };
 
 // LRM 7.2 unpacked structure: a heterogeneous aggregate whose members each hold

@@ -65,17 +65,6 @@ auto LowerStateKind(hir::IntegralStateKind k) -> mir::IntegralStateKind {
   throw InternalError("LowerStateKind: unknown HIR IntegralStateKind");
 }
 
-auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
-    -> mir::IntegralConstant {
-  return mir::IntegralConstant{
-      .value_words = c.value_words,
-      .state_words = c.state_words,
-      .width = c.width,
-      .signedness = LowerSignedness(c.signedness),
-      .state_kind = LowerStateKind(c.state_kind),
-  };
-}
-
 auto LowerHirIntegerLiteral(const hir::IntegerLiteral& i, mir::TypeId type)
     -> mir::Expr {
   return mir::Expr{
@@ -268,6 +257,17 @@ auto LowerIterationBindingRefExpr(
 }
 
 }  // namespace
+
+auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
+    -> mir::IntegralConstant {
+  return mir::IntegralConstant{
+      .value_words = c.value_words,
+      .state_words = c.state_words,
+      .width = c.width,
+      .signedness = LowerSignedness(c.signedness),
+      .state_kind = LowerStateKind(c.state_kind),
+  };
+}
 
 auto LowerHirPrimaryExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::Primary& p,

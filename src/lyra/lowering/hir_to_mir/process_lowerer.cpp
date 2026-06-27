@@ -226,7 +226,7 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
 
     if (dir == hir::ParamDirection::kOutput) {
       const mir::ExprId default_init = body_block.exprs.Add(
-          BuildDefaultValueExpr(*module_, body_frame, value_type));
+          BuildDefaultValueFromHir(*module_, body_frame, hir_var.type));
       const mir::LocalRef local = body_block.AppendLocal(
           mir::LocalDecl{.name = hir_var.name, .type = value_type},
           default_init);
@@ -274,7 +274,7 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   if (src.result_var.has_value()) {
     const mir::TypeId ret_type = module_->TranslateType(src.result_type);
     const mir::ExprId default_init = body_block.exprs.Add(
-        BuildDefaultValueExpr(*module_, body_frame, ret_type));
+        BuildDefaultValueFromHir(*module_, body_frame, src.result_type));
     const mir::LocalRef result_ref = body_block.AppendLocal(
         mir::LocalDecl{.name = "_lyra_result", .type = ret_type}, default_init);
     MapProceduralVar(
