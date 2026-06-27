@@ -307,6 +307,12 @@ class PackedArray {
     return Bit(HasUnknown());
   }
 
+  // LRM 20.8.1 `$clog2` -- the SV-surface query. ceil(log2) of the operand
+  // read as unsigned (X/Z bits collapse to 0), with $clog2(0) == 0. Returns a
+  // 32-bit `integer` so the MIR call's result type matches the C++ return type
+  // with no backend lift.
+  [[nodiscard]] auto Clog2() const -> PackedArray;
+
   // Operands are assumed to share the same shape (slang's promotion
   // contract). Comparison / logical results are 1-bit, 4-state when any
   // operand is 4-state (so they can carry an X under LRM 11.4

@@ -481,6 +481,36 @@ auto PackedArray::HasUnknown() const -> bool {
       UnknownWords(), [](std::uint64_t w) { return w != 0U; });
 }
 
+auto PackedArray::Clog2() const -> PackedArray {
+  // ceil(log2(n)) is the index of n's highest set bit, plus one unless n is an
+  // exact power of two; n in {0, 1} yields 0. Read the operand as unsigned:
+  // X/Z bits collapse to 0 (value plane masked by ~unknown) and the declared
+  // width bounds the top word.
+  const auto value_words = ValueWords();
+  const auto unknown_words = UnknownWords();
+  std::int64_t high_bit = -1;
+  int set_bits = 0;
+  for (std::size_t i = 0; i < value_words.size(); ++i) {
+    const std::uint64_t unk =
+        i < unknown_words.size() ? unknown_words[i] : std::uint64_t{0};
+    std::uint64_t word = value_words[i] & ~unk;
+    if (i + 1U == value_words.size()) {
+      word &= MaskForWidth(bit_width_ - (64U * i));
+    }
+    if (word == 0U) {
+      continue;
+    }
+    set_bits += std::popcount(word);
+    high_bit =
+        static_cast<std::int64_t>((64U * i) + 63U - std::countl_zero(word));
+  }
+  const std::int32_t result =
+      high_bit < 0
+          ? 0
+          : static_cast<std::int32_t>(high_bit + (set_bits > 1 ? 1 : 0));
+  return Integer(result);
+}
+
 namespace {
 
 // Word-level shift-and-OR copy: writes `src_bit_width` bits from `src` into

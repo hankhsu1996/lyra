@@ -67,8 +67,11 @@ full support.
 - [ ] **Net-typed port connections** -- connecting a net (`wire`) across a module port, as the
       testbench does when wiring the DUT. The first wall the full top-level testbench hits.
 - [x] **`$signed` / `$unsigned`** system functions.
-- [ ] **`$clog2`** system function (appears in a bit-count select bound). The current ibex_alu
-      frontier once the generate / `genvar` forms above lower.
+- [x] **`$clog2`** system function (LRM 20.8.1). A type-agnostic value query: ceil(log2) of the
+      argument read as unsigned, with `$clog2(0)` defined as 0. It lowers to a runtime value query,
+      so a constant argument folds downstream and a `genvar`-dependent argument (the ibex_alu
+      butterfly bit-count bound) stays runtime. With this, `ibex_alu` lowers and emits C++
+      end-to-end.
 
 ### Localized / long tail
 
