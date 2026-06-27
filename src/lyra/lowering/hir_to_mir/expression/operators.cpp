@@ -12,10 +12,10 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -493,31 +493,31 @@ auto LowerHirConversionExpr(
 
 // One concrete instantiation per pass class. The handler templates are defined
 // in this file rather than the header so the file-local helpers stay private,
-// so the dispatchers in process_lowerer.cpp / class_lowerer.cpp link against
-// the symbols emitted here.
+// so the dispatchers in process_lowerer.cpp / structural_scope_lowerer.cpp link
+// against the symbols emitted here.
 template auto LowerHirUnaryExpr(
     ProcessLowerer&, WalkFrame, const hir::UnaryExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirUnaryExpr(
-    const ClassLowerer&, WalkFrame, const hir::UnaryExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::UnaryExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirBinaryExpr(
     ProcessLowerer&, WalkFrame, const hir::BinaryExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirBinaryExpr(
-    const ClassLowerer&, WalkFrame, const hir::BinaryExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::BinaryExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirConditionalExpr(
     ProcessLowerer&, WalkFrame, const hir::ConditionalExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirConditionalExpr(
-    const ClassLowerer&, WalkFrame, const hir::ConditionalExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::ConditionalExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirConversionExpr(
     ProcessLowerer&, WalkFrame, const hir::ConversionExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirConversionExpr(
-    const ClassLowerer&, WalkFrame, const hir::ConversionExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::ConversionExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

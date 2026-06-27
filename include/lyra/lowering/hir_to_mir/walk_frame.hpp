@@ -20,7 +20,7 @@ class IterationBindingRegistry;
 
 // Singly-linked node carrying a class's parent chain so a leaf reference
 // can read the declared type of a member at `hops > 0`. Each node lives on
-// the stack of the `ClassLowerer::Run` that pushed it; the chain extends
+// the stack frame of the construction walk that pushed it; the chain extends
 // one node per class opened during traversal. This is the construction-side
 // half of the shared walk position: the rendering fold's read-only
 // `ScopeView` resolves the same (hops, var) reference by climbing its own
@@ -46,8 +46,8 @@ struct WalkFrame {
   mir::Class* current_class = nullptr;
 
   // Outer classes reached by climbing `parent` links, in the same order as the
-  // lowerer `parent_` chain. Populated by `WithClass` when a
-  // `ClassLowerer::Run` opens a new class. Read via `EnclosingClassAtHops` to
+  // lowerer `parent_` chain. Populated by `WithClass` when the construction
+  // walk opens a new class. Read via `EnclosingClassAtHops` to
   // resolve a member reference at `hops > 0`.
   const ScopeChainNode* outer_classes = nullptr;
 

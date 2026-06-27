@@ -8,7 +8,7 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-class ClassLowerer;
+class StructuralScopeLowerer;
 
 // Materialises a mir::SensitivityWaitStmt from a HIR sensitivity entry list.
 // Lowering picks the observable-pointer expression per leaf so the backend
@@ -20,7 +20,7 @@ class ClassLowerer;
 // and `@*` (LRM 9.4.2.2).
 auto MakeSensitivityWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
-    const ClassLowerer& lowerer,
+    const StructuralScopeLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -12,11 +12,11 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/block_depth.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/iteration_binding_registry.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -140,7 +140,7 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 // value type otherwise. The dispatcher decides whether to wrap the result
 // in an `ObservableMethod{kGet}` call to unwrap to a value.
 auto LowerStructuralVarRefExpr(
-    const ClassLowerer& lowerer, const WalkFrame& frame,
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::StructuralVarRef& m) -> mir::Expr {
   const mir::MemberId var = lowerer.TranslateStructuralVar(m.hops, m.var);
   return BuildStructuralMemberAccessExpr(
@@ -197,7 +197,7 @@ auto LowerProceduralVarRefExpr(
 }
 
 auto LowerCrossUnitVarRefExpr(
-    const ClassLowerer& lowerer, const WalkFrame& frame,
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::CrossUnitVarRef& c) -> mir::Expr {
   const auto& meta = lowerer.CrossUnitRefTarget(c.id);
   const mir::MemberRef target = meta.target;
@@ -223,7 +223,7 @@ auto LowerCrossUnitVarRefExpr(
 // -- resolves to the structural param the constructed child binds the genvar to
 // (LRM 27.4). The hop count alone selects the path.
 auto LowerLoopVarRefExpr(
-    const ClassLowerer& lowerer, const WalkFrame& frame,
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::LoopVarRef& lv, mir::TypeId type) -> mir::Expr {
   if (lv.hops.value == 0) {
     return mir::Expr{
@@ -314,8 +314,8 @@ auto LowerHirPrimaryExprProc(
 }
 
 auto LowerHirPrimaryExprStructural(
-    const ClassLowerer& lowerer, WalkFrame frame, const hir::Primary& p,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    const StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::Primary& p, mir::TypeId result_type) -> diag::Result<mir::Expr> {
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
