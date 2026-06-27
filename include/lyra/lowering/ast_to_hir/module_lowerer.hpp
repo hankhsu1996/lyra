@@ -185,14 +185,17 @@ class ModuleLowerer {
   [[nodiscard]] auto LookupOwnedChildBinding(const slang::ast::Symbol& child)
       const -> std::optional<OwnedChildBinding>;
 
-  // Cross-unit reference dedup. The slot itself is accumulated keyed by its
-  // owning scope's frame; the owning StructuralScopeLowerer drains it via
-  // TakeCrossUnitRefsForFrame at scope finalization.
+  // Cross-unit reference dedup. `slot_owner_frame` is the frame whose
+  // `cross_unit_refs` arena holds the slot -- the scope whose MIR class
+  // receives the slot member and whose constructor body installs it. For an
+  // intra-unit sibling-of-ancestor reference (`DownwardHead.hops > 0`) the
+  // slot owner is the referrer's frame while the head lives in an enclosing
+  // frame; for every other shape the slot owner is also the head's owner.
   auto MapOrGetCrossUnitRef(
-      const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
+      const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
       hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
       hir::TypeId type) -> hir::CrossUnitRefId;
-  auto TakeCrossUnitRefsForFrame(ScopeFrameId frame)
+  auto TakeCrossUnitRefsForFrame(ScopeFrameId slot_owner_frame)
       -> std::vector<hir::CrossUnitRefDecl>;
 
   // Frame minting for scope entry.
@@ -205,9 +208,10 @@ class ModuleLowerer {
 
   // Builds a HIR Expr referring to a leaf reached by navigating `path` down
   // from `head`. `target` is the leaf value symbol (cross-unit dedup key);
-  // `home_frame` is the owning structural scope's frame.
+  // `slot_owner_frame` is the frame whose `cross_unit_refs` arena holds the
+  // slot (see `MapOrGetCrossUnitRef`).
   auto MakeCrossUnitMemberRef(
-      const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
+      const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
       hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
       hir::TypeId type, diag::SourceSpan span) -> hir::Expr;
 

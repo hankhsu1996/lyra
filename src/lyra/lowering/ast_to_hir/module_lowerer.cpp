@@ -144,14 +144,14 @@ auto ModuleLowerer::LookupOwnedChildBinding(
 }
 
 auto ModuleLowerer::MapOrGetCrossUnitRef(
-    const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
+    const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
     hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
     hir::TypeId type) -> hir::CrossUnitRefId {
-  auto& frame_dedup = cross_unit_ref_dedup_[home_frame];
+  auto& frame_dedup = cross_unit_ref_dedup_[slot_owner_frame];
   if (const auto it = frame_dedup.find(&target); it != frame_dedup.end()) {
     return it->second;
   }
-  auto& slots = cross_unit_refs_by_frame_[home_frame];
+  auto& slots = cross_unit_refs_by_frame_[slot_owner_frame];
   const hir::CrossUnitRefId id{static_cast<std::uint32_t>(slots.size())};
   slots.push_back(
       hir::CrossUnitRefDecl{
@@ -174,9 +174,9 @@ auto ModuleLowerer::LookupCrossUnitRef(
   return it->second;
 }
 
-auto ModuleLowerer::TakeCrossUnitRefsForFrame(ScopeFrameId frame)
+auto ModuleLowerer::TakeCrossUnitRefsForFrame(ScopeFrameId slot_owner_frame)
     -> std::vector<hir::CrossUnitRefDecl> {
-  const auto it = cross_unit_refs_by_frame_.find(frame);
+  const auto it = cross_unit_refs_by_frame_.find(slot_owner_frame);
   if (it == cross_unit_refs_by_frame_.end()) {
     return {};
   }
@@ -186,11 +186,11 @@ auto ModuleLowerer::TakeCrossUnitRefsForFrame(ScopeFrameId frame)
 }
 
 auto ModuleLowerer::MakeCrossUnitMemberRef(
-    const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
+    const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
     hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
     hir::TypeId type, diag::SourceSpan span) -> hir::Expr {
   const hir::CrossUnitRefId slot = MapOrGetCrossUnitRef(
-      target, home_frame, std::move(head), std::move(path), type);
+      target, slot_owner_frame, std::move(head), std::move(path), type);
   return hir::Expr{
       .type = type,
       .data = hir::PrimaryExpr{.data = hir::CrossUnitVarRef{.id = slot}},
