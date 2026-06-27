@@ -143,6 +143,20 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     source level still expose it explicitly in their IRs (LLVM IR's first parameter, Python's
     `__call__(self, ...)`); MIR does the same. A static method, like a free function, takes none._
 
+12. A nonlocal cross-instance reference is one MIR shape; lexical form does not split it into
+    species. A reference whose target lives across an instance boundary is the same MIR concept
+    whether the source spelling reached it as a bare name, a downward dotted name, an upward dotted
+    name, or an absolute path. _Programming-language consequence: a program has one kind of "name
+    that reaches another scope's value"; the syntax that named it is not a structural fact about the
+    reference._
+
+13. A nonlocal reference's runtime endpoint seals before any read observes it, and is read directly
+    thereafter. The act of reaching across an instance boundary -- traversing the object graph,
+    matching a name, running by-name lookup -- happens once during elaboration; the hot path reads
+    the sealed endpoint without traversing. _Programming-language consequence: in the same way a
+    Rust binding once initialized refers to its target by address rather than re-locating it on
+    every use, a MIR reference's runtime cost is paid at sealing, not at access._
+
 ## Boundary to Adjacent Layers
 
 - Consumes HIR. HIR-to-MIR is the layer where SV-specific concepts get translated into MIR's generic
@@ -223,6 +237,25 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   through `LocalRef`; member access reads the receiver from the containing `MemberAccess`'s receiver
   field, never from a node that means "look around and figure it out". (Programming languages do not
   have expressions whose meaning depends on syntactic context.)
+- A HIR or MIR shape that splits a nonlocal reference by lexical form into separate species. The
+  syntax that named the target is not a structural fact about the reference; one shape carries every
+  nonlocal reference, and the mechanism that realizes it follows where the target lives relative to
+  the emitting artifact, not the form that named it.
+- An IR-level vocabulary item modeling a particular runtime library's resolver shape -- a wrapper
+  type for "the cross-tree upward resolver", a named-method family for one runtime API's bind state.
+  Runtime library shapes belong to the runtime; IR vocabulary names only the reference, its route
+  segments, and its sealed endpoint, and runtime library calls appear through the existing call
+  vocabulary.
+- A reference whose mechanism is selected by a frontend-supplied lexical-form discriminator at MIR
+  consumption time. The form that produced a reference is consumed at AST-to-HIR; no MIR consumer
+  reads it.
+- An identity for a layout-visible route segment that is a textual name. A segment whose source and
+  target classes are both owned by the emitting artifact has a stable in-artifact identity; textual
+  names belong to segments crossing the unit boundary, where the by-name SDK consumes them.
+- A MIR shape that decides a sealed reference's storage placement at this layer. Whether a sealed
+  endpoint is materialized as a stored member, hoisted into a local, or rematerialized at each use
+  is a layout choice owned by LIR; MIR states the reference's identity, its route, and the protocol
+  the body uses to access it.
 
 ## Notes / Examples
 

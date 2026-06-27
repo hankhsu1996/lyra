@@ -57,17 +57,16 @@ At program entry the runtime constructs every top-level block under the implicit
 (see `hierarchy_and_generate.md`). A single scheduler then drives the processes of all of them on
 one time axis; multiple top-level modules are one simulation, not several.
 
-Between construction and simulation -- still at t = 0, before any process runs -- the runtime links
-the constructed objects into the one `$root`-rooted tree and binds it. Binding resolves the
-cross-tree references a per-object constructor could not, because they need the whole tree to exist:
-an upward reference to an ancestor, a `$root`-anchored path (see `reference_resolution.md`,
-`emission_model.md`).
+Between construction and simulation -- still at t = 0, before any process runs -- the runtime
+executes the binding graph and seals every reference: each route reaches its target through typed
+in-artifact navigation and the runtime SDK only across opaque unit boundaries; the sealing barrier
+commits each binding's final endpoint (see `reference_resolution.md`, `emission_model.md`).
 
 `elaboration_lifecycle.md` refines this construction-vs-simulation boundary into ordered phases
-(build / resolve / initialize / activate) and is the authority on _when_ each piece runs: all
-cross-instance references resolve in one resolve phase after the shell graph is built, and variable
-initializers run in the initialize phase after resolution, not inside the constructor. The
-constructor allocates the shell; it is not the executor of elaboration semantics.
+(build / resolve / seal / initialize / activate) and is the authority on _when_ each piece runs:
+every cross-instance reference resolves in the Resolve phase and commits in the Seal phase, and
+variable initializers run in Initialize after Seal, not inside the constructor. The constructor
+allocates the shell; it is not the executor of elaboration semantics.
 
 ## Generate is not compile-time expansion
 

@@ -25,16 +25,18 @@ upward reference, input/output initial-value visibility) is a symptom of that co
 
 ## Owns
 
-- The rule that elaboration is a staged protocol with four semantic phases: **Build -> Resolve ->
-  Initialize -> Activate**. These are a contract, not necessarily four separate entry points; an
-  implementation may collapse phases for a unit that needs no separation, but it may never reorder
-  them or let one phase observe a later phase's results.
+- The rule that elaboration is a staged protocol with five semantic phases: **Build -> Resolve ->
+  Seal -> Initialize -> Activate**. These are a contract, not necessarily five separate entry
+  points; an implementation may collapse phases for a unit that needs no separation, but it may
+  never reorder them or let one phase observe a later phase's results.
 - The rule that a generated constructor allocates the instance shell only -- storage cells, port
   endpoint placeholders, the child table -- and runs no SystemVerilog semantic logic.
 - The rule that cross-instance connections are recorded as **declarative facts** during Build and
-  realized during Resolve, with one resolution phase for all reference directions.
-- The rule that variable initialization runs in Initialize, **after** Resolve, so an initializer
-  observes connected and bound values.
+  realized into candidate endpoints during Resolve, then committed at Seal.
+- The rule that Seal is a global barrier on the elaborated design: every required reference is
+  canonicalized, validated, and committed as a final endpoint atomically with respect to Initialize.
+- The rule that variable initialization runs in Initialize, **after** Seal, so an initializer
+  observes only sealed canonical endpoints and bound values.
 - The phase each port-connection realization belongs to, by port semantics.
 - The "observable only after sealing" contract: no SystemVerilog-visible behavior occurs, and no
   instance's incoming bindings are observed, before the phases that establish them complete.
@@ -51,15 +53,15 @@ upward reference, input/output initial-value visibility) is a symptom of that co
 - IR shapes (see `hir.md`, `mir.md`).
 - Event scheduling within simulation after Activate (see `scheduling.md`).
 
-## The four phases
+## The five phases
 
 ### Build
 
 Construct the instance shell and the structural object graph. This phase runs the unit's
 **structural** elaboration: it applies the parameter environment, evaluates generate (`if` / `for` /
 `case`) to decide which children exist, creates child shells (recursively), and **records** the
-unit's connection facts -- port connections, cross-unit reference declarations, hierarchical paths
--- as declarative records. It does **not** execute any value-level SystemVerilog body: no variable
+unit's connection facts -- port connections, hierarchical references, alias bindings -- as
+declarative records. Build does **not** execute any value-level SystemVerilog body: no variable
 initializer, no process body, no port read, no reference dereference.
 
 Generate is Build-phase logic: its conditions are constant expressions (LRM 27.5), available from
@@ -67,22 +69,37 @@ the parameter environment, so generate never depends on Resolve.
 
 ### Resolve
 
-With the full shell graph in existence, realize every cross-instance connection. One phase resolves
-all reference directions -- downward (into an owned child), upward (climb to a named ancestor), and
-`ref` alias bindings -- into stored direct references, and materializes the persistent endpoints
-that reactive edges will read. Because every shell already exists, resolution sees the whole graph
-and is free of the ordering hazards that arise when resolution is interleaved with construction.
+With the full shell graph in existence and every connection fact recorded, execute each reference's
+route. Each route uses typed navigation through layout-visible segments and the runtime SDK across
+unit boundaries; each route produces a **candidate endpoint**. A route whose execution requires
+another reference's sealed endpoint waits for that reference's resolution first; the order respects
+those dependencies, however they are realized.
 
-A `ref` alias is resolved here to a **direct final cell**, flattening any chain: a pass-through
-`Top.z -> Mid.r -> Leaf.r` ends with both `Mid.r` and `Leaf.r` denoting `Top.z`'s cell, never a
-reference that points at another reference. Resolution may require dependency ordering among aliases
-(an alias whose actual is itself a not-yet-resolved reference resolves after it).
+Resolve produces candidates, not committed final endpoints. A candidate may still be a forwarding
+link, and a candidate may yet fail validation. Sealing those is the next phase.
+
+### Seal
+
+Commit every reference's resolved endpoint. Seal is a global barrier on the elaborated design: it
+validates each candidate endpoint against the reference's declared access protocol; collapses every
+forwarding link to the final canonical endpoint; rejects every reference whose route traverses a
+non-constructed runtime object (a non-selected conditional-generate arm, an out-of-range
+instance-array element); and commits each reference's endpoint atomically.
+
+A reference visible to Initialize is sealed; an unsealed reference is invisible. Seal is a property
+of the elaborated design as a whole, not of any single scope -- forwarding chains cross scope
+boundaries and CU boundaries, and a per-scope walk cannot model that.
+
+A forwarding chain ends at a **direct final cell** after Seal, flattening any number of intermediate
+forwarding links: a pass-through `Top.z -> Mid.r -> Leaf.r` ends with both `Mid.r` and `Leaf.r`
+denoting `Top.z`'s cell, never a reference that points at another reference.
 
 ### Initialize
 
-Execute SystemVerilog variable initializers (LRM 6.8 / 10.5). This runs after Resolve, so an
-initializer may read a port, an upward reference, or a `ref` -- all are bound. This is simulation
-time-zero activity, not construction.
+Execute SystemVerilog variable initializers (LRM 6.8 / 10.5). This runs after Seal, so an
+initializer reads only sealed canonical endpoints: a port read returns its bound source's value, an
+upward reference reads its committed target cell, a `ref` read denotes the final aliased storage.
+This is simulation time-zero activity, not construction.
 
 ### Activate
 
@@ -92,43 +109,49 @@ this phase.
 
 ## Core Invariants
 
-1. **Elaboration is staged; the constructor only allocates.** The four phases run in order. A
+1. **Elaboration is staged; the constructor only allocates.** The five phases run in order. A
    generated constructor produces an inert shell; it executes no variable initializer, no process
    body, and no port/reference read.
 2. **Build before Resolve, system-wide.** Every shell and every connection fact exists before any
    cross-instance reference is resolved. Resolution is never interleaved with shell construction.
 3. **Connections are declarative until Resolve.** A port connection or cross-unit reference is a
-   recorded fact after Build; it becomes a stored direct reference only in Resolve. Recording a
+   recorded fact after Build; it becomes a candidate endpoint only in Resolve. Recording a
    connection never requires the other endpoint to be resolved yet.
-4. **Initialize after Resolve.** A variable initializer observes connected and bound values, never
-   an unbound reference or an unconnected port. (This is the invariant our recursive-constructor
-   model violated: an initializer ran during construction, before the relevant binding existed.)
-5. **Reference sealing.** At the end of Resolve, every required reference points directly at a final
-   observable cell. No reference remains a chain to another reference, and none is unresolved.
-6. **Parent-edge ownership.** A connection whose behavior evaluates a parent-side actual expression
+4. **Resolve respects dependency order.** A reference's route may depend on another reference's
+   sealed endpoint to execute. The order in which routes resolve respects those dependencies; a
+   reference whose route requires another's sealed endpoint resolves after that reference seals. The
+   mechanism that realizes this order is unspecified at this layer.
+5. **Seal is a global barrier.** Seal commits each reference's validated, canonical final endpoint
+   atomically with respect to Initialize. No reference observable at or after Initialize is a chain
+   to another reference, an unresolved route, or a candidate that has not validated. Seal collapses
+   every forwarding chain to its final direct cell.
+6. **Initialize after Seal.** A variable initializer observes only sealed canonical endpoints, never
+   an unbound reference, an unsealed forwarding link, or an unconnected port.
+7. **Parent-edge ownership.** A connection whose behavior evaluates a parent-side actual expression
    or depends on parent-side sensitivity is realized as a **parent-owned reactive process**,
    registered in Activate. It is never relocated into the child, which cannot know the parent's
    expression, read-set, or scheduling.
-7. **Observable only after sealing.** No SystemVerilog-visible behavior occurs before Activate, and
-   no instance's incoming bindings are observed before Resolve completes for it.
-   SystemVerilog-visible time-zero ordering is a property of these phases, never an accident of when
-   a C++ constructor returns.
+8. **Observable only after sealing.** No SystemVerilog-visible behavior occurs before Activate, and
+   no instance's incoming bindings are observed before Seal commits them. SystemVerilog-visible
+   time-zero ordering is a property of these phases, never an accident of when a C++ constructor
+   returns.
+9. **The hot path consumes only sealed endpoints.** Simulation-time reads, writes, and observations
+   reach sealed endpoints; no hot-path access performs route traversal, name matching, or resolution
+   lookup. Whatever mechanism orders Resolve and Seal exists only at elaboration; it does not
+   persist into simulation.
 
 ## Boundary to Adjacent Layers
 
 - **The language (LRM 3.12, LRM 4).** Elaboration -- expanding instantiations, computing parameters,
   resolving hierarchical names, establishing connectivity -- happens after parsing and before
-  simulation; this is **Build + Resolve**. Variable initialization and process execution are
+  simulation; this is **Build + Resolve + Seal**. Variable initialization and process execution are
   simulation-time-zero; this is **Initialize + Activate**. The phase split mirrors the elaboration /
   simulation boundary the language already draws.
 - **`runtime_model.md`** defines the constructor / simulation execution-context split. This doc
-  refines that split into the four phases. Where `runtime_model.md` previously placed variable
-  initialization and downward-reference resolution "in the constructor," this doc relocates them to
-  Initialize and Resolve respectively; `runtime_model.md` is updated to point here.
-- **`reference_resolution.md`** owns what a cross-unit reference resolves into and the by-name
-  mechanism. This doc owns _when_: a single Resolve phase, after Build, for all directions. Where
-  `reference_resolution.md` previously split "downward in the constructor, upward at bind," this doc
-  unifies both into Resolve; that doc is updated to point here.
+  refines that split into the five phases.
+- **`reference_resolution.md`** owns _what_ a route segment classifies as and what its endpoint
+  becomes. This doc owns _when_: every reference resolves in Resolve, seals in Seal, and is read on
+  the hot path after Activate.
 - **`hierarchy_and_generate.md`** owns the object tree this lifecycle builds; generate is
   Build-phase constructor-time logic.
 - **`specialization_model.md`** owns parameter strategy, orthogonal to the lifecycle.
@@ -137,30 +160,37 @@ this phase.
 
 - A generated constructor that executes SystemVerilog semantic logic -- a variable initializer, a
   process body, a port read, a reference dereference -- rather than only allocating the shell.
-- Resolving a cross-instance reference inside the constructor that builds the subtree. It forces a
-  child to be fully constructed before its parent can bind it, which is the pass-through `ref`
-  hazard and the construction-time-read hazard.
-- Running a variable initializer before Resolve completes. It observes an unbound reference or an
-  unconnected port.
+- Resolving or sealing a cross-instance reference inside the constructor that builds the subtree. It
+  forces a child to be fully constructed before its parent can bind it, which is the pass-through
+  `ref` hazard and the construction-time-read hazard.
+- Running a variable initializer before Seal completes. It observes an unbound reference, an
+  unsealed candidate, or an unconnected port.
 - A reference that remains a chain (a reference pointing at another reference) or unresolved after
-  Resolve.
+  Seal.
+- A per-scope walk that pretends to seal. Seal is a global property of the elaborated design;
+  per-scope sealing cannot model cross-scope forwarding.
+- Resolution dispatched on the frontend's lexical-form classification or on source order. The
+  mechanism follows the route's segment layout visibility, not the form that named the target.
 - Realizing an input or output port as anything other than a parent-owned reactive process, or
   relocating that process into the child.
 - Realizing a `ref` port as a persistent cross-unit slot or a value-cell access path. A `ref` port
-  is a one-time alias binding performed in Resolve; it owns no child-side cell and needs no
+  is a forwarding link resolved away during Seal; it owns no child-side cell and needs no
   simulation-time reach from the parent.
 - Letting "when the C++ constructor returns" determine any SystemVerilog-observable ordering.
+- Reading a route's endpoint on the simulation hot path via hierarchy traversal or by-name lookup.
+  Every nonlocal hot-path read consumes a sealed endpoint; whatever resolution mechanism produced it
+  exists only across elaboration.
 
 ## Notes / Examples
 
 **The three port semantics land in different phases.** They share only the connection _fact_
 recorded in Build; their realization differs.
 
-| Port               | Realization                                                                                                                                               | Phase                 |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| `input` / `output` | parent-owned directional reactive edge (an implied continuous assignment); persistent endpoint resolved in Resolve, process registered/seeded in Activate | Resolve + Activate    |
-| `ref`              | one-time alias binding of the child's reference member to the actual's final cell; no child cell, no persistent slot                                      | Resolve               |
-| `inout`            | attachment of both terminals to one net connectivity / resolution domain (a separate net model)                                                           | deferred (net domain) |
+| Port               | Realization                                                                                                                                                   | Phase                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `input` / `output` | parent-owned directional reactive edge (an implied continuous assignment); persistent endpoint resolved in Resolve, sealed in Seal, process armed in Activate | Resolve + Seal + Activate |
+| `ref`              | forwarding link; the child's reference member sealed to the actual's final cell                                                                               | Resolve + Seal            |
+| `inout`            | attachment of both terminals to one net connectivity / resolution domain (a separate net model)                                                               | deferred (net domain)     |
 
 **Pass-through `ref`.**
 
@@ -170,11 +200,11 @@ module Mid(ref int r);
 endmodule
 ```
 
-Build records the alias fact `Mid.c.r <- Mid.r` declaratively, without resolving it -- `Mid.r` may
-be unbound at that point, which is fine because no value-level code runs in Build. Resolve, with the
-whole graph present, resolves `Mid.r` first and then `Leaf.r`, flattening both to the final cell.
-The hazard that exists when `Mid`'s constructor builds `Leaf` before `Mid.r` is bound simply does
-not arise, because binding is not a constructor step.
+Build records two reference facts: `Mid.r` (alias of the parent's connected cell) and `Mid.c.r`
+(alias of `Mid.r`). `Mid.c.r` resolves after `Mid.r` because it requires `Mid.r`'s sealed endpoint;
+Seal collapses both to the final cell `Mid.r` ultimately aliases. The hazard that existed when
+`Mid`'s constructor built `Leaf` before `Mid.r` was bound does not arise: binding is not a
+constructor step.
 
 **An initializer that reads a port.**
 
@@ -184,9 +214,24 @@ module Child(ref int r);
 endmodule
 ```
 
-`x = r` runs in Initialize, after `r` is bound in Resolve, so it reads the aliased cell's value. In
-a recursive-constructor model this read would execute during `Child`'s construction, before the
-parent bound `r` -- the bug this lifecycle removes.
+`x = r` runs in Initialize, after `r` is sealed in Seal, so it reads the aliased cell's value. In a
+recursive-constructor model this read would execute during `Child`'s construction, before the parent
+bound `r` -- the bug this lifecycle removes.
+
+**A sibling-of-sibling hierarchical reference.**
+
+```
+module Top;
+  if (1) begin : a int ax; always_comb from_b = b.bx; end
+  if (1) begin : b int bx; always_comb from_a = a.ax; end
+endmodule
+```
+
+Both `a.bx` and `b.ax` are references recorded in Top's elaborated design. Build constructs `a` and
+`b` in either order; both produce reference records. Resolve walks each route through the typed
+parent edge into Top and the typed member access into the sibling's class; neither route depends on
+the other's resolution. Seal commits each reference's endpoint. `always_comb` bodies read sealed
+endpoints; the source order of `a` and `b` does not affect mechanism.
 
 **Baked parameters are orthogonal.** When a parameter is baked into a specialization, "apply the
 parameter environment" in Build is trivial (the value is a compile-time constant in that
