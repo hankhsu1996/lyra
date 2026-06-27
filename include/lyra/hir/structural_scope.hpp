@@ -13,6 +13,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_alias.hpp"
@@ -65,7 +66,15 @@ struct GenerateChildRef {
   GenerateId generate;
   StructuralScopeId scope;
 };
+// A downward head can sit in the current scope (`hops == 0`) or in an
+// enclosing scope (`hops > 0`). The enclosing case covers references that
+// reach an owned child of an ancestor scope without leaving the compilation
+// unit -- e.g. one generate block reading a signal in a sibling generate
+// block of their common ancestor. `child` identifies the head as one of
+// the owning scope's HIR-level identities; the install resolves it through
+// the enclosing class's owned-child binding table.
 struct DownwardHead {
+  StructuralHops hops = {};
   std::variant<InstanceMemberId, GenerateChildRef> child;
 };
 

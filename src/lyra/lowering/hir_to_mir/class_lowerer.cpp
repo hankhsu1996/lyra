@@ -443,6 +443,10 @@ auto InstallInstanceMembers(ClassLowerer& lowerer, WalkFrame frame)
     const mir::MemberId var_id = mir_class.members.Add(
         mir::MemberDecl{.name = im.instance_name, .type = var_type});
     instance_member_vars.push_back(var_id);
+    lowerer.MapInstanceMember(
+        hir::InstanceMemberId{
+            static_cast<std::uint32_t>(instance_member_vars.size() - 1)},
+        var_id);
 
     AppendExternalUnitConstruction(
         lowerer.Module(), frame, var_id, im.instance_name, im.array_dims);
@@ -573,6 +577,119 @@ auto BuildDownwardNavValue(
   // the call site expects -- the one true MIR cast (`static_cast<T>(...)`).
   return mir::Expr{
       .data = mir::CastExpr{.operand = get_signal_id}, .type = slot_type};
+}
+
+// Linear search for a member by its source name (or by the synthesized name
+// if no source name was recorded). Per-class member arenas are small enough
+// that O(N) at construction time is irrelevant. The within-class name is
+// unique by the structural-scope lowering's allocation rule, so this is a
+// deterministic lookup despite the linear scan.
+auto FindMemberByName(const mir::Class& cls, std::string_view name)
+    -> std::optional<mir::MemberId> {
+  for (std::size_t i = 0; i < cls.members.size(); ++i) {
+    const mir::MemberId id{static_cast<std::uint32_t>(i)};
+    const auto& m = cls.members.Get(id);
+    const std::string_view key = m.source_name.empty() ? m.name : m.source_name;
+    if (key == name) {
+      return id;
+    }
+  }
+  return std::nullopt;
+}
+
+// Builds the resolve value for an intra-unit sibling-of-ancestor reference.
+// The install climbs `down.hops` parent edges (`kParent` calls cast to the
+// enclosing class's typed pointer) and then composes a chain of typed
+// `MemberAccess` through the head and each descent step. Every receiver in
+// the chain is a pointer (`Top*` -> `Pointer<unique, gen_a>` -> ...), so
+// the C++ render emits `->` for every hop and the chain never needs an
+// explicit `DerefExpr` between steps; the leaf `MemberAccess` yields the
+// observable cell field whose address goes into the slot.
+//
+// The parent cast is sound because the structural-containment relation
+// built at HIR-to-MIR proves the receiver's N-th runtime parent is exactly
+// that enclosing specialization. The same invariant grounds the typed
+// enclosing access used for bare-name reads through `StructuralVarRef`;
+// this path extends it one `MemberAccess` further.
+auto BuildTypedEnclosingNavValue(
+    const ClassLowerer& lowerer, WalkFrame frame, const hir::DownwardHead& down,
+    const std::vector<hir::PathStep>& path, mir::TypeId slot_type)
+    -> mir::ExprId {
+  ModuleLowerer& module = lowerer.Module();
+  mir::Block& ctor_block = *frame.current_block;
+  const mir::EnclosingHops mir_hops{.value = down.hops.value};
+  const mir::ExprId typed_enclosing =
+      BuildEnclosingScopeReceiver(frame, module.Unit(), mir_hops);
+  const mir::Class& enclosing_cls = frame.EnclosingClassAtHops(mir_hops);
+  const mir::MemberId head_member =
+      lowerer.TranslateOwnedChild(down.hops, down.child);
+  const mir::TypeId head_field_type =
+      enclosing_cls.members.Get(head_member).type;
+  mir::ExprId receiver = ctor_block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::MemberAccessExpr{
+                  .receiver = typed_enclosing,
+                  .member = mir::MemberRef{.var = head_member}},
+          .type = head_field_type});
+  const auto* head_ptr_ty = std::get_if<mir::PointerType>(
+      &module.Unit().types.Get(head_field_type).data);
+  if (head_ptr_ty == nullptr) {
+    throw InternalError(
+        "BuildTypedEnclosingNavValue: head member is not a pointer type");
+  }
+  const auto* head_obj_ty = std::get_if<mir::ObjectType>(
+      &module.Unit().types.Get(head_ptr_ty->pointee).data);
+  if (head_obj_ty == nullptr) {
+    throw InternalError(
+        "BuildTypedEnclosingNavValue: head pointee is not an intra-unit "
+        "object type");
+  }
+  const mir::Class* current_class =
+      &module.Unit().GetClass(head_obj_ty->class_id);
+  for (std::size_t i = 0; i < path.size(); ++i) {
+    const auto& step = path[i];
+    const auto* mh = std::get_if<hir::MemberHop>(&step);
+    if (mh == nullptr) {
+      throw InternalError(
+          "BuildTypedEnclosingNavValue: index hop in typed intra-unit descent "
+          "is not yet supported");
+    }
+    const auto step_member = FindMemberByName(*current_class, mh->name);
+    if (!step_member.has_value()) {
+      throw InternalError(
+          "BuildTypedEnclosingNavValue: descent step member not found");
+    }
+    const mir::TypeId step_type = current_class->members.Get(*step_member).type;
+    receiver = ctor_block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::MemberAccessExpr{
+                    .receiver = receiver,
+                    .member = mir::MemberRef{.var = *step_member}},
+            .type = step_type});
+    if (i + 1 == path.size()) {
+      break;
+    }
+    const auto* step_ptr_ty =
+        std::get_if<mir::PointerType>(&module.Unit().types.Get(step_type).data);
+    if (step_ptr_ty == nullptr) {
+      throw InternalError(
+          "BuildTypedEnclosingNavValue: intermediate descent step is not a "
+          "pointer to an instance");
+    }
+    const auto* step_obj_ty = std::get_if<mir::ObjectType>(
+        &module.Unit().types.Get(step_ptr_ty->pointee).data);
+    if (step_obj_ty == nullptr) {
+      throw InternalError(
+          "BuildTypedEnclosingNavValue: intermediate descent into a non-"
+          "object type");
+    }
+    current_class = &module.Unit().GetClass(step_obj_ty->class_id);
+  }
+  return ctor_block.exprs.Add(
+      mir::Expr{
+          .data = mir::AddressOfExpr{.operand = receiver}, .type = slot_type});
 }
 
 // Builds an `UnpackedArray<int32, N>` literal expression holding one element
@@ -739,21 +856,27 @@ void InstallCrossUnitRefs(
       continue;
     }
     const mir::MemberId slot = member;
-    mir::MemberId head_var{};
-    if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
-      head_var = instance_member_vars.at(im->value);
-    } else {
-      const auto& g = std::get<hir::GenerateChildRef>(down->child);
-      head_var = gen_bindings.at(g.generate.value)
-                     .by_scope_id.at(g.scope.value)
-                     .var_id;
-    }
-    const auto& head = mir_class.members.Get(head_var);
-    const std::string head_name =
-        head.source_name.empty() ? head.name : head.source_name;
     const mir::TypeId slot_type = mir_class.members.Get(slot).type;
-    const mir::ExprId nav = ctor_block.exprs.Add(BuildDownwardNavValue(
-        module, frame, head_name, cu.path, slot_type, scope_ptr_type));
+    mir::ExprId nav{};
+    if (down->hops.value != 0) {
+      nav = BuildTypedEnclosingNavValue(
+          lowerer, frame, *down, cu.path, slot_type);
+    } else {
+      mir::MemberId head_var{};
+      if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
+        head_var = instance_member_vars.at(im->value);
+      } else {
+        const auto& g = std::get<hir::GenerateChildRef>(down->child);
+        head_var = gen_bindings.at(g.generate.value)
+                       .by_scope_id.at(g.scope.value)
+                       .var_id;
+      }
+      const auto& head = mir_class.members.Get(head_var);
+      const std::string head_name =
+          head.source_name.empty() ? head.name : head.source_name;
+      nav = ctor_block.exprs.Add(BuildDownwardNavValue(
+          module, frame, head_name, cu.path, slot_type, scope_ptr_type));
+    }
     const mir::ExprId self_for_target = ctor_block.exprs.Add(
         MakeSelfRefExpr(frame, mir_class.self_pointer_type));
     const mir::ExprId target = ctor_block.exprs.Add(
@@ -1396,6 +1519,8 @@ auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
           ChildStructuralScopeBinding{.scope_id = child_id, .var_id = var_id};
     }
 
+    lowerer.MapGenerate(
+        hir::GenerateId{static_cast<std::uint32_t>(gen_idx)}, gen_bindings);
     bindings_by_generate.push_back(std::move(gen_bindings));
   }
   return bindings_by_generate;

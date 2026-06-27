@@ -5,9 +5,11 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
@@ -223,6 +225,42 @@ class ClassLowerer {
         .hops = mir::EnclosingHops{.value = mir_hops}, .param = mir_id};
   }
 
+  // Records the MIR slot a HIR owned-child reference resolves to. An instance
+  // member maps to one `mir::MemberId`; a generate maps to a per-arm table
+  // (`GenerateBindings`) so that a `GenerateChildRef` picks the arm's member.
+  // Callers register in HIR-id order during scope materialization; a nested
+  // scope reads them back through the parent chain when it needs to resolve
+  // a head that lives in an enclosing scope.
+  void MapInstanceMember(hir::InstanceMemberId hir_id, mir::MemberId mir_id) {
+    if (hir_id.value != instance_member_map_.size()) {
+      throw InternalError(
+          "ClassLowerer::MapInstanceMember: HIR instance members must be "
+          "mapped in HIR id order");
+    }
+    instance_member_map_.push_back(mir_id);
+  }
+
+  void MapGenerate(hir::GenerateId hir_id, GenerateBindings bindings) {
+    if (hir_id.value != generate_map_.size()) {
+      throw InternalError(
+          "ClassLowerer::MapGenerate: HIR generates must be mapped in HIR id "
+          "order");
+    }
+    generate_map_.push_back(std::move(bindings));
+  }
+
+  // Resolves an owned-child reference (the `child` field of a
+  // `hir::DownwardHead`) to the MIR member that owns the child. `hops == 0`
+  // reads this scope's own table; `hops > 0` walks the parent chain to an
+  // enclosing scope, used by the sibling-of-ancestor install when the head
+  // lives outside the referrer's frame.
+  [[nodiscard]] auto TranslateOwnedChild(
+      hir::StructuralHops hops,
+      const std::variant<hir::InstanceMemberId, hir::GenerateChildRef>& child)
+      const -> mir::MemberId {
+    return LookupOwnedChildAtHops(hops, child);
+  }
+
   void MapStructuralSubroutine(
       hir::StructuralSubroutineId hir_id, mir::MethodId mir_id) {
     if (hir_id.value != structural_subroutine_map_.size()) {
@@ -241,6 +279,42 @@ class ClassLowerer {
   }
 
  private:
+  [[nodiscard]] auto LookupOwnedChildAtHops(
+      hir::StructuralHops hops,
+      const std::variant<hir::InstanceMemberId, hir::GenerateChildRef>& child)
+      const -> mir::MemberId {
+    if (hops.value == 0) {
+      return std::visit(
+          Overloaded{
+              [&](const hir::InstanceMemberId& id) -> mir::MemberId {
+                if (id.value >= instance_member_map_.size()) {
+                  throw InternalError(
+                      "ClassLowerer::TranslateOwnedChild: unmapped HIR "
+                      "instance member");
+                }
+                return instance_member_map_[id.value];
+              },
+              [&](const hir::GenerateChildRef& g) -> mir::MemberId {
+                if (g.generate.value >= generate_map_.size()) {
+                  throw InternalError(
+                      "ClassLowerer::TranslateOwnedChild: unmapped HIR "
+                      "generate");
+                }
+                return generate_map_[g.generate.value]
+                    .by_scope_id.at(g.scope.value)
+                    .var_id;
+              },
+          },
+          child);
+    }
+    if (parent_ == nullptr) {
+      throw InternalError(
+          "ClassLowerer::TranslateOwnedChild: hops exceed scope chain depth");
+    }
+    return parent_->LookupOwnedChildAtHops(
+        hir::StructuralHops{hops.value - 1}, child);
+  }
+
   [[nodiscard]] auto LookupStructuralVarAtHops(
       hir::StructuralHops hops, hir::StructuralVarId hir_id) const
       -> mir::MemberId {
@@ -311,6 +385,8 @@ class ClassLowerer {
   std::vector<mir::MethodId> structural_subroutine_map_;
   std::vector<CrossUnitRefMeta> cross_unit_ref_targets_;
   std::vector<std::optional<mir::LocalRef>> loop_var_procedural_map_;
+  std::vector<mir::MemberId> instance_member_map_;
+  std::vector<GenerateBindings> generate_map_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

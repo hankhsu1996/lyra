@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: "shallow=7 deep=22 a=11 b_inst=99\n"
+    exact: "up=7 down=33 deep=22 a=11 b_inst=99\n"
