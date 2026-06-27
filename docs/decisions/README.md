@@ -30,6 +30,9 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 
 ### Aggregate types and access
 
+- [packed-array-representation](packed-array-representation.md) -- HIR represents a packed array
+  recursively (one dim per node, element by `TypeId`, scalar bit as an interned leaf), aligning it
+  with the other array families and the interned type graph; MIR stays flat and HIR-to-MIR flattens.
 - [unpacked-array-representation](unpacked-array-representation.md) -- representation of a
   fixed-size unpacked array.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is the

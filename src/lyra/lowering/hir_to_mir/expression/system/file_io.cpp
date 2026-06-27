@@ -237,7 +237,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
         // scope; struct / union / multi-dim / dynamic-array element types
         // are deferred.
         const auto& elem_ty = module.Hir().types.Get(unpacked->element_type);
-        if (!std::holds_alternative<hir::PackedArrayType>(elem_ty.data)) {
+        if (!elem_ty.IsBitVector()) {
           return diag::Fail(
               diag::DiagCode::kUnsupportedSubroutineArgument,
               "$fread memory form: only 1D unpacked arrays of integral "

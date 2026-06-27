@@ -62,7 +62,7 @@ full support.
       compilation option, which skips assertion constructs during lowering. Implementing SVA proper
       (sampled-value functions `$rose`/`$fell`/`$stable`/`$past`, the `Observed` region) is a
       separate, optional feature off the critical path to running Ibex.
-- [ ] **Packed array whose element is a struct or enum** (a packed array of a packed aggregate, not
+- [x] **Packed array whose element is a struct or enum** (a packed array of a packed aggregate, not
       just of a scalar bit/logic).
 - [ ] **Net-typed port connections** -- connecting a net (`wire`) across a module port, as the
       testbench does when wiring the DUT. The first wall the full top-level testbench hits.

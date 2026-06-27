@@ -1,7 +1,6 @@
 #include "lyra/hir/type.hpp"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <variant>
 
@@ -35,53 +34,10 @@ auto PackedRange::LinearOffset(std::int64_t index) const -> std::uint64_t {
   return static_cast<std::uint64_t>(index - left);
 }
 
-auto PackedArrayType::BitWidth() const -> std::uint64_t {
-  if (dims.empty()) {
-    return 1U;
-  }
-  std::uint64_t width = 1U;
-  for (const auto& dim : dims) {
-    width *= dim.ElementCount();
-  }
-  return width;
-}
-
-auto PackedArrayType::IsFourState() const -> bool {
-  return atom == BitAtom::kLogic || atom == BitAtom::kReg;
-}
-
-auto PackedArrayType::DefaultInitialValue() const -> IntegralConstant {
-  const auto width = static_cast<std::uint32_t>(BitWidth());
-  const std::size_t words = (static_cast<std::size_t>(width) + 63U) / 64U;
-  if (!IsFourState()) {
-    return IntegralConstant{
-        .value_words = std::vector<std::uint64_t>(words, 0U),
-        .state_words = {},
-        .width = width,
-        .signedness = signedness,
-        .state_kind = IntegralStateKind::kTwoState,
-    };
-  }
-  std::vector<std::uint64_t> v(words, ~std::uint64_t{0});
-  std::vector<std::uint64_t> s(words, ~std::uint64_t{0});
-  const std::uint32_t tail = width % 64U;
-  if (tail != 0U && !v.empty()) {
-    const std::uint64_t mask = (std::uint64_t{1} << tail) - 1U;
-    v.back() &= mask;
-    s.back() &= mask;
-  }
-  return IntegralConstant{
-      .value_words = std::move(v),
-      .state_words = std::move(s),
-      .width = width,
-      .signedness = signedness,
-      .state_kind = IntegralStateKind::kFourState,
-  };
-}
-
 auto Type::Kind() const -> TypeKind {
   return std::visit(
       Overloaded{
+          [](const ScalarBitType&) { return TypeKind::kScalarBit; },
           [](const PackedArrayType&) { return TypeKind::kPackedArray; },
           [](const PackedStructType&) { return TypeKind::kPackedStruct; },
           [](const PackedUnionType&) { return TypeKind::kPackedUnion; },
@@ -106,6 +62,17 @@ auto Type::Kind() const -> TypeKind {
       data);
 }
 
+auto Type::IsScalarBit() const -> bool {
+  return std::holds_alternative<ScalarBitType>(data);
+}
+
+auto Type::AsScalarBit() const -> const ScalarBitType& {
+  if (const auto* s = std::get_if<ScalarBitType>(&data)) {
+    return *s;
+  }
+  throw InternalError("Type::AsScalarBit called on non-scalar-bit type");
+}
+
 auto Type::IsPackedArray() const -> bool {
   return std::holds_alternative<PackedArrayType>(data);
 }
@@ -115,6 +82,10 @@ auto Type::AsPackedArray() const -> const PackedArrayType& {
     return *p;
   }
   throw InternalError("Type::AsPackedArray called on non-packed-array type");
+}
+
+auto Type::IsBitVector() const -> bool {
+  return IsScalarBit() || IsPackedArray();
 }
 
 auto Type::IsPackedStruct() const -> bool {
@@ -141,6 +112,7 @@ auto Type::AsPackedUnion() const -> const PackedUnionType& {
 
 auto Type::IsValueChangeObservable() const -> bool {
   switch (Kind()) {
+    case TypeKind::kScalarBit:
     case TypeKind::kPackedArray:
     case TypeKind::kPackedStruct:
     case TypeKind::kPackedUnion:
