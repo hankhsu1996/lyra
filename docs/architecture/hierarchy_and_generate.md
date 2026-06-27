@@ -65,6 +65,13 @@ shared by all consumers: external references, child routing, and construction.
     consumer reconstructs the bracketed name by reverse-searching a parent registry, and the parent
     never re-states an identity the child already carries. `%m`, hierarchical paths, debug output,
     and by-name lookup all read from this single source.
+11. A reference targeting a non-constructed runtime object is a sealing failure with a user
+    diagnostic, never a runtime fallback. A conditional-generate arm not selected at Build has a
+    class declaration but no runtime scope; a hierarchical reference whose route traverses such an
+    arm cannot seal. The same rule covers an out-of-range instance-array element and any other
+    object whose declaration exists at compile time but whose runtime object is absent in the
+    elaborated design. The reference is rejected at the sealing barrier; route execution does not
+    silently substitute a null, a default, or an alternate target.
 
 ## Boundary to Adjacent Layers
 
@@ -107,6 +114,10 @@ shared by all consumers: external references, child routing, and construction.
 - A scope's base constructor side-effecting its own attachment into the parent. Attachment is one
   explicit operation the parent performs once the child is fully constructed and its typed owner has
   committed, so a partially-built child is never visible in the parent's adjacency relation.
+- A runtime fallback for a reference whose route traverses a non-constructed object (a non-selected
+  conditional-generate arm, an out-of-range instance-array element). Such references are rejected at
+  the sealing barrier as user-diagnosable elaboration errors; substituting a null, a default value,
+  or an alternate object hides a SystemVerilog semantic violation.
 
 ## Notes / Examples
 

@@ -99,10 +99,16 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 
 ### References and construction
 
-- [hierarchical-reference-resolution](hierarchical-reference-resolution.md) -- how a cross-unit
-  hierarchical reference resolves once into a stored pointer: downward by emitted constructor
-  navigation, upward by a runtime self-climb at bind, both by name; and why the cross-unit hop is by
-  name, not a typed accessor.
+- [hierarchical-reference-routing](hierarchical-reference-routing.md) -- one semantic shape per
+  hierarchical reference; per-segment classification by layout visibility (typed for layout-owned
+  segments, runtime SDK across unit boundaries); sealed endpoint consumed on the hot path; lexical
+  form and source order are not mechanism dispatch keys.
+- [binding-graph-resolution](binding-graph-resolution.md) -- resolution and sealing respect
+  dependencies between references (a route requiring another's sealed endpoint resolves after it;
+  forwarding chains collapse end-to-end); the resolution mechanism itself is not fixed by the
+  architecture.
+- [hierarchical-reference-resolution](hierarchical-reference-resolution.md) (superseded) -- the
+  prior decision, replaced by the two entries above.
 - [specialization-identity](specialization-identity.md) -- a specialization's identity is a
   deterministic name (module name + content hash of a canonical, structural serialization of its
   parameter bindings), computed independently by producer and consumer and matched by name;

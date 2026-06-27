@@ -439,19 +439,38 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       and the value realization (getc for a string base, element access for an array) was already a
       property of the node at HIR-to-MIR, applied regardless of origin.
 
-- [ ] R35 -- Resolve the intra-unit part of a hierarchical reference at compile time as typed member
-      access, not by name at construction. `reference_resolution.md` invariant 2 says an intra-unit
-      reference -- including one into a same-unit named generate scope -- resolves at compile time
-      as a constructed-object reference plus a compile-time offset. Today such a reference is
-      lowered like a cross-unit one: a borrowed-pointer slot filled by a runtime by-name navigation
-      (`GetChild` / `GetSignal`) from `self`, even though the whole path stays inside the unit and
-      its layout is known at compile time. Only the genuine cross-unit hop (into another unit's
-      internal) must stay by name. Target shape: the intra-unit prefix is typed member access, and a
-      fully intra-unit reference is a plain member access with no runtime slot. **Blocker**: this
-      needs a MIR member-access form that descends into an owned child object's member, resolving
-      the member against the receiver's type. Member access today is hops-relative to the enclosing
-      class and cannot descend, so this rests on a new member-access capability that touches the
-      member-access model.
+- [ ] R35 -- Realize hierarchical references through the routing the architecture docs prescribe:
+      one semantic shape per reference, per-segment classification by layout visibility, route
+      execution in Resolve, endpoint committed in Seal, hot path reads only sealed endpoints. Today
+      the lowering uses three parallel mechanisms keyed off the frontend's lexical-form
+      classification and on source order: a downward by-name SDK install at construction, an upward
+      wrapper registered at construction and resolved later, and the typed enclosing access used for
+      bare names. These collapse to one route in the target shape. See
+      `../decisions/hierarchical-reference-routing.md` and
+      `../decisions/binding-graph-resolution.md`. The work bundles into one PR landing as five
+      checkpoints:
+  - [ ] Structural-first lowering pipeline. Every class's structural shape -- its members, its owned
+        children, the signal registrations it contributes to the runtime tree -- is complete in MIR
+        before any body lowers. A body, a process, an initializer, or an install statement may reach
+        a peer class's structural members through the artifact's identity model; the lowering order
+        guarantees the peer's shape is visible when the referring body translates.
+  - [ ] Reference install runs in Resolve. Every cross-instance reference's install code emits into
+        the resolve body, not the constructor body. The constructor allocates the instance shell and
+        constructs its children; resolution runs after the runtime tree is built. Forward and
+        backward reference directions stop differing in when they install.
+  - [ ] The upward-reference runtime wrapper retires from IR vocabulary. The wrapper used today to
+        defer upward references' resolution is no longer carried as an MIR type, an HIR variant, or
+        a vocabulary item the lowering names. Every reference's slot becomes a uniform borrowed
+        pointer to its target's cell, filled by ordinary resolve-time install code.
+  - [ ] Layout-visible route segments install typed. A route segment whose source and target classes
+        are both owned by this artifact emits as a typed member-access chain; the runtime SDK is
+        reached only for segments that cross the unit boundary. A reference whose entire route is
+        layout-visible installs with no SDK call; a mixed-route reference installs a typed prefix
+        composed with an SDK suffix.
+  - [ ] Reference mechanism unified; lexical-form dispatch retired. The lowering produces one route
+        shape per reference regardless of the form that named the target. The frontend's
+        lexical-form classification is consumed only at AST-to-HIR for route synthesis and does not
+        reach the route's mechanism dispatch.
 
 - [x] R36 -- The container default-value slot fused the read-miss value with the discarded-write
       target, forcing the const read to scrub the slot a prior write may have dirtied before
