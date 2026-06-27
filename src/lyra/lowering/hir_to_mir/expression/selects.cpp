@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <expected>
 #include <utility>
@@ -62,15 +61,6 @@ auto GetAggregateFields(const hir::Type& t)
   if (t.IsPackedUnion()) return t.AsPackedUnion().fields;
   throw InternalError(
       "GetAggregateFields: base type is not a packed struct or union");
-}
-
-// Compile-time map of a declared packed index to its LSB-relative offset.
-// Packed bit numbering counts from the LSB, which is the declared `right`
-// bound; a descending zero-based range is the identity.
-auto PackedPhysOffset(const hir::PackedRange& declared, std::int64_t index)
-    -> std::int64_t {
-  return declared.left >= declared.right ? index - declared.right
-                                         : declared.right - index;
 }
 
 // Read-side wrap that materialises a borrowed `PackedArrayRef` result into
@@ -340,12 +330,43 @@ auto BuildQueueRangeLoHi(
 // then `[min, max]` gives the physical range the runtime Slice consumes. A
 // descending zero-based range is the identity, so this is transparent for the
 // common case.
+// Orders two already-rebased endpoint offsets into `(lo, hi)` at runtime: `lo`
+// is the lower offset, the physical start the Slice protocol consumes. Picked
+// with a conditional rather than a compile-time min / max so a constant slice
+// folds downstream (the optimizer's job) and a genvar slice stays runtime,
+// without assuming a static ordering -- a packed descending range, a
+// dynamic-array ascending range, and a raw `[width-1:0]` projection each order
+// their endpoints differently.
+auto OrderRebasedEndpoints(
+    const ModuleLowerer& module, mir::Block& block, mir::ExprId a,
+    mir::ExprId b) -> RangeLoHi {
+  const mir::TypeId off_type = block.exprs.Get(a).type;
+  const mir::ExprId le = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kLessEqual, .lhs = a, .rhs = b},
+          .type = module.Unit().builtins.bit1});
+  return RangeLoHi{
+      .lo = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::ConditionalExpr{
+                      .condition = le, .then_value = a, .else_value = b},
+              .type = off_type}),
+      .hi = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::ConditionalExpr{
+                      .condition = le, .then_value = b, .else_value = a},
+              .type = off_type})};
+}
+
 template <typename LowerOne>
 auto BuildPackedRangeLoHi(
     const ModuleLowerer& module, mir::Block& block,
     const hir::RangeBounds& bounds, const hir::PackedRange& declared,
     LowerOne lower_one) -> diag::Result<RangeLoHi> {
-  const mir::TypeId int32_type = module.Unit().builtins.int32;
   return std::visit(
       Overloaded{
           [&](const hir::RangeConstantBounds& b) -> diag::Result<RangeLoHi> {
@@ -353,17 +374,16 @@ auto BuildPackedRangeLoHi(
             if (!msb) return std::unexpected(std::move(msb.error()));
             auto lsb = lower_one(b.lsb_expr);
             if (!lsb) return std::unexpected(std::move(lsb.error()));
-            const auto msb_off = PackedPhysOffset(
-                declared, IntConstFromMirExpr(block.exprs.Get(*msb)));
-            const auto lsb_off = PackedPhysOffset(
-                declared, IntConstFromMirExpr(block.exprs.Get(*lsb)));
-            return RangeLoHi{
-                .lo = block.exprs.Add(
-                    mir::MakeInt32Literal(
-                        int32_type, std::min(msb_off, lsb_off))),
-                .hi = block.exprs.Add(
-                    mir::MakeInt32Literal(
-                        int32_type, std::max(msb_off, lsb_off)))};
+            // Rebase each declared endpoint to its LSB-relative offset at
+            // runtime (the same mapping `WrapPackedIndex` applies to an element
+            // index), then order them, so a constant bound folds downstream and
+            // a genvar-dependent bound stays a runtime read.
+            return OrderRebasedEndpoints(
+                module, block,
+                WrapPackedIndex(
+                    module, block, declared, *msb, block.exprs.Get(*msb).type),
+                WrapPackedIndex(
+                    module, block, declared, *lsb, block.exprs.Get(*lsb).type));
           },
           [&](const hir::RangeIndexedUpBounds& b) -> diag::Result<RangeLoHi> {
             auto base = lower_one(b.base_index);

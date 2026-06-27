@@ -48,6 +48,11 @@ full support.
       pervasively, so this reaches far past the leaf modules where it is the first blocker. Scalar
       parameters fold in any expression context; an unpacked-array `localparam` referenced and
       element-selected (the ibex_alu shuffle-mask form) now materializes too.
+- [x] **Enclosing-`genvar` references in nested generate** -- an inner generate whose loop bound or
+      body reads an outer generate's `genvar`, and `genvar`-dependent part-select bounds (the
+      ibex_alu butterfly form, e.g. `mask[stg][N*(2*seg+1)-1 : N*2*seg]`). A generate scope's
+      `genvar` is a runtime induction value reached across scopes, so a `genvar`-dependent bound
+      stays runtime rather than folding to a single elaboration constant.
 
 ### Common forms
 
@@ -62,6 +67,8 @@ full support.
 - [ ] **Net-typed port connections** -- connecting a net (`wire`) across a module port, as the
       testbench does when wiring the DUT. The first wall the full top-level testbench hits.
 - [x] **`$signed` / `$unsigned`** system functions.
+- [ ] **`$clog2`** system function (appears in a bit-count select bound). The current ibex_alu
+      frontier once the generate / `genvar` forms above lower.
 
 ### Localized / long tail
 

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -69,6 +72,15 @@ class ModuleLowerer {
     type_map_.emplace_back(mir_id);
   }
 
+  // Mints a collision-free class name for one generate scope, tagged by its
+  // arm kind (`loop` / `then` / `else` / ...). The name is only an
+  // implementation handle for the emitted type -- a generate scope's runtime
+  // identity is its HierarchySegment -- so it need only be unit-unique and
+  // deterministic, which a monotonic count over the deterministic lowering walk
+  // provides.
+  [[nodiscard]] auto NextGenerateScopeName(std::string_view arm_tag)
+      -> std::string;
+
  private:
   [[nodiscard]] auto TranslateTypeData(
       const hir::TypeData& data, diag::DiagSpan type_span) const
@@ -78,6 +90,7 @@ class ModuleLowerer {
   const diag::SourceManager* source_manager_;
   mir::CompilationUnit unit_;
   std::vector<mir::TypeId> type_map_;
+  std::uint32_t next_generate_scope_name_ = 0;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

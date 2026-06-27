@@ -30,18 +30,6 @@ struct ScopeChainNode {
   const ScopeChainNode* parent;
 };
 
-// How a HIR `LoopVarRef` resolves in the `ClassLowerer` dispatcher. The two
-// values correspond to the two structural contexts a constructor expression
-// can sit in: a for-generate header (where the loop variable lowers to the
-// constructor's induction local) and a generate-control / continuous assign
-// (where the loop variable lowers to a structural param on the constructed
-// child object). Meaningful only in `ClassLowerer::LowerExpr`; ignored by the
-// `ProcessLowerer` dispatcher.
-enum class LoopVarLoweringMode : std::uint8_t {
-  kProceduralInduction,
-  kStructuralParam,
-};
-
 // Per-recursion traversal context for HIR-to-MIR. Carried by value through
 // every dispatcher method and per-kind handler. Walk-invariant facts (the
 // compilation unit being constructed, builtins) live on the Lowerer class,
@@ -103,13 +91,6 @@ struct WalkFrame {
   // The `ReturnStmt` lowering reads this to fill the stmt's
   // `is_coroutine_return` attribute (a C++ render hint, ignored by LIR / LLVM).
   bool is_coroutine_body = false;
-
-  // How a `LoopVarRef` resolves in `ClassLowerer::LowerExpr`. Set
-  // by the caller before dispatching a constructor expression. The default
-  // (`kStructuralParam`) matches the common generate-control / continuous
-  // assign context; for-generate header lowering switches to
-  // `kProceduralInduction`. Ignored by `ProcessLowerer::LowerExpr`.
-  LoopVarLoweringMode loop_var_mode = LoopVarLoweringMode::kStructuralParam;
 
   // True while lowering an assignment's left-hand side. A queue
   // element-select dispatches to its write-side callee (LRM 7.10.1
@@ -188,13 +169,6 @@ struct WalkFrame {
       IterationBindingRegistry* registry) const -> WalkFrame {
     WalkFrame next = *this;
     next.iteration_bindings = registry;
-    return next;
-  }
-
-  [[nodiscard]] auto WithLoopVarMode(LoopVarLoweringMode mode) const
-      -> WalkFrame {
-    WalkFrame next = *this;
-    next.loop_var_mode = mode;
     return next;
   }
 

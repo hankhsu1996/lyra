@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -47,6 +46,14 @@ struct ScopeEntryStructuralParamBinding {
   hir::LoopVarDeclId source_loop_var = {};
 };
 
+// A located structural param: the enclosing-scope distance to the scope that
+// owns it and the param's id on that scope. The reading site turns it into a
+// receiver-addressed `mir::ParamRef` via `BuildStructuralParamAccessExpr`.
+struct StructuralParamLocation {
+  mir::EnclosingHops hops = {};
+  mir::ParamId param = {};
+};
+
 // Per-scope lowering registries for one `mir::Class`. Carries
 // scope-local HIR-to-MIR translation maps and the cross-unit-ref slot table.
 // Holds no pointer to the IR scope being built: handlers reach it through
@@ -73,11 +80,6 @@ class ClassLowerer {
 
   // Central scope-level expression dispatcher. One switch over `hir::Expr::
   // data` routing each kind to the per-family handler in `expression/*.cpp`.
-  // `LoopVarRef` resolution is selected by `frame.loop_var_mode` so the same
-  // recursion path serves both generate-header (procedural induction) and
-  // generate-control (structural-param) contexts. Per-kind handlers reach
-  // recursion back through this method, so the mode persists across
-  // sub-expressions until the caller resets it.
   [[nodiscard]] auto LowerExpr(const hir::Expr& expr, WalkFrame frame) const
       -> diag::Result<mir::Expr>;
 
@@ -208,9 +210,11 @@ class ClassLowerer {
 
   // HIR places `LoopVarDecl` in the for-generate's parent scope; MIR re-homes
   // the same value into the constructed child scope. MIR hops = HIR hops - 1.
+  // The caller turns the located (hops, param) into a receiver-addressed read
+  // via `BuildStructuralParamAccessExpr`.
   [[nodiscard]] auto TranslateLoopVarAsStructuralParam(
       hir::StructuralHops hir_hops, hir::LoopVarDeclId hir_id) const
-      -> mir::ParamRef {
+      -> StructuralParamLocation {
     if (hir_hops.value == 0) {
       throw InternalError(
           "ClassLowerer::TranslateLoopVarAsStructuralParam: "
@@ -218,11 +222,10 @@ class ClassLowerer {
           "child-owned in MIR; header expressions must use the procedural "
           "induction var path)");
     }
-    const std::uint32_t mir_hops = hir_hops.value - 1;
-    const mir::ParamId mir_id = LookupStructuralParamAtMirHops(
-        mir::EnclosingHops{.value = mir_hops}, hir_id);
-    return mir::ParamRef{
-        .hops = mir::EnclosingHops{.value = mir_hops}, .param = mir_id};
+    const mir::EnclosingHops mir_hops{.value = hir_hops.value - 1};
+    return StructuralParamLocation{
+        .hops = mir_hops,
+        .param = LookupStructuralParamAtMirHops(mir_hops, hir_id)};
   }
 
   // Records the MIR slot a HIR owned-child reference resolves to. An instance

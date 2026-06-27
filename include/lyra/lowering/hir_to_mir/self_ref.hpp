@@ -46,6 +46,14 @@ auto BuildStructuralMemberAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops, mir::MemberId var) -> mir::Expr;
 
+// Builds a read of a constructor-bound structural param (a generate `genvar`,
+// LRM 27.4) at `hops` enclosing-class levels up: the same enclosing-scope
+// receiver as a member access, with the param named as a field on it. The
+// result type is the param's declared type, read from the scope at `hops`.
+auto BuildStructuralParamAccessExpr(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    mir::EnclosingHops hops, mir::ParamId param) -> mir::Expr;
+
 // Constructs a reference to the cell `cell` denotes (LRM 13.5.2): adds a
 // reference-construction `CallExpr` to `block` whose result type is a
 // `RefType` over `pointee`, and returns its id. The body that holds the

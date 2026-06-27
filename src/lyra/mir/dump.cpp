@@ -489,12 +489,10 @@ class MirDumper {
             [](const CastExpr& c) -> std::string {
               return std::format("CastExpr operand=Expr[{}]", c.operand.value);
             },
-            [this](const ParamRef& r) -> std::string {
-              const auto& owner = ResolveScopeAtHops(r.hops.value);
-              const auto& param = owner.params.Get(r.param);
+            [](const ParamRef& r) -> std::string {
               return std::format(
-                  "ParamRef[hops={}, param={}] \"{}\"", r.hops.value,
-                  r.param.value, param.name);
+                  "ParamRef receiver=Expr[{}] param=Param[{}]",
+                  r.receiver.value, r.param.value);
             },
             [this](const LocalRef& r) -> std::string {
               const auto& owner = ResolveBlockAtHops(r.hops.value);

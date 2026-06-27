@@ -63,11 +63,6 @@ auto MaybeWrapObservable(ModuleLowerer& module, mir::TypeId t) -> mir::TypeId {
   return module.Unit().types.Intern(mir::ObservableType{.value = t});
 }
 
-auto ChildScopeNameFor(std::size_t gen_index, std::string_view arm_tag)
-    -> std::string {
-  return std::format("gen{}_{}", gen_index, arm_tag);
-}
-
 auto CompanionVarNameFor(std::string_view child_scope_name) -> std::string {
   return std::string(child_scope_name) + "_obj";
 }
@@ -100,9 +95,8 @@ struct GenerateChildSpec {
 };
 
 auto EnumerateGenerateChildSpecs(
-    const hir::Generate& gen, std::size_t gen_index,
-    const hir::StructuralScope& enclosing_scope, ModuleLowerer& module)
-    -> std::vector<GenerateChildSpec> {
+    const hir::Generate& gen, const hir::StructuralScope& enclosing_scope,
+    ModuleLowerer& module) -> std::vector<GenerateChildSpec> {
   std::vector<GenerateChildSpec> specs;
   std::visit(
       Overloaded{
@@ -111,7 +105,7 @@ auto EnumerateGenerateChildSpecs(
             specs.push_back(
                 {.scope_id = if_gen.then_scope,
                  .scope = &then_scope,
-                 .scope_name = ChildScopeNameFor(gen_index, "then"),
+                 .scope_name = module.NextGenerateScopeName("then"),
                  .is_repeated = false,
                  .entry_bindings = {}});
             if (if_gen.else_scope.has_value()) {
@@ -119,7 +113,7 @@ auto EnumerateGenerateChildSpecs(
               specs.push_back(
                   {.scope_id = *if_gen.else_scope,
                    .scope = &else_scope,
-                   .scope_name = ChildScopeNameFor(gen_index, "else"),
+                   .scope_name = module.NextGenerateScopeName("else"),
                    .is_repeated = false,
                    .entry_bindings = {}});
             }
@@ -132,7 +126,7 @@ auto EnumerateGenerateChildSpecs(
                   {.scope_id = case_gen.items[k].scope,
                    .scope = &item_scope,
                    .scope_name =
-                       ChildScopeNameFor(gen_index, std::format("case{}", k)),
+                       module.NextGenerateScopeName(std::format("case{}", k)),
                    .is_repeated = false,
                    .entry_bindings = {}});
             }
@@ -142,7 +136,7 @@ auto EnumerateGenerateChildSpecs(
               specs.push_back(
                   {.scope_id = *case_gen.default_scope,
                    .scope = &default_scope,
-                   .scope_name = ChildScopeNameFor(gen_index, "default"),
+                   .scope_name = module.NextGenerateScopeName("default"),
                    .is_repeated = false,
                    .entry_bindings = {}});
             }
@@ -162,7 +156,7 @@ auto EnumerateGenerateChildSpecs(
             specs.push_back(
                 {.scope_id = loop_gen.scope,
                  .scope = &loop_scope,
-                 .scope_name = ChildScopeNameFor(gen_index, "loop"),
+                 .scope_name = module.NextGenerateScopeName("loop"),
                  .is_repeated = true,
                  .entry_bindings = std::move(bindings)});
           },
@@ -1404,22 +1398,19 @@ auto LowerLoopGenerate(
 
   lowerer.MapLoopVarAsProcedural(loop.loop_var, loop_local);
 
-  const WalkFrame proc_frame =
-      frame.WithLoopVarMode(LoopVarLoweringMode::kProceduralInduction);
   auto init_or =
-      lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.initial), proc_frame);
+      lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.initial), frame);
   if (!init_or) return std::unexpected(std::move(init_or.error()));
   const mir::ExprId init_id = block.exprs.Add(*std::move(init_or));
 
-  auto cond_or =
-      lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.stop), proc_frame);
+  auto cond_or = lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.stop), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
 
   // HIR carries the iter as the next-value expression for the loop variable;
   // the loop semantic (this lowering) owns the actual write back.
   auto step_value_or =
-      lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.iter), proc_frame);
+      lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.iter), frame);
   if (!step_value_or) {
     return std::unexpected(std::move(step_value_or.error()));
   }
@@ -1491,7 +1482,7 @@ auto InstallGenerateOwnedChildScopes(ClassLowerer& lowerer, WalkFrame frame)
     GenerateBindings gen_bindings;
     gen_bindings.by_scope_id.resize(gen.child_scopes.size());
 
-    auto specs = EnumerateGenerateChildSpecs(gen, gen_idx, hir_scope, module);
+    auto specs = EnumerateGenerateChildSpecs(gen, hir_scope, module);
     for (auto& spec : specs) {
       const auto companion_name = CompanionVarNameFor(spec.scope_name);
       CheckNoNameCollision(
@@ -1648,6 +1639,7 @@ auto ClassLowerer::Run(
     const mir::TypeKind var_kind =
         module.Unit().types.Get(mir_value_type).Kind();
     const bool is_reference = d.reference.has_value();
+
     // A `ref` / `const ref` port member aliases the connected variable, filled
     // by the parent at construction (LRM 23.3.3.2): its type is a reference,
     // not its own cell, so it owns no storage and takes no value initializer.

@@ -215,19 +215,25 @@ auto LowerCrossUnitVarRefExpr(
   return mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type);
 }
 
-auto LowerLoopVarRefExprAsProcedural(
-    const ClassLowerer& lowerer, const hir::LoopVarRef& lv, mir::TypeId type)
-    -> mir::Expr {
-  return mir::Expr{
-      .data = lowerer.TranslateLoopVarAsProcedural(lv.loop_var), .type = type};
-}
-
-auto LowerLoopVarRefExprAsStructuralParam(
-    const ClassLowerer& lowerer, const hir::LoopVarRef& lv, mir::TypeId type)
-    -> mir::Expr {
-  return mir::Expr{
-      .data = lowerer.TranslateLoopVarAsStructuralParam(lv.hops, lv.loop_var),
-      .type = type};
+// A loop variable referenced at `hops == 0` is the induction variable of the
+// for-generate whose header is being lowered: its declaration sits in the same
+// scope as the reference, so the constructor reads it as the procedural
+// induction local. Every reference at `hops > 0` -- an enclosing genvar named
+// in a nested header, a body continuous assign, or a generate-control condition
+// -- resolves to the structural param the constructed child binds the genvar to
+// (LRM 27.4). The hop count alone selects the path.
+auto LowerLoopVarRefExpr(
+    const ClassLowerer& lowerer, const WalkFrame& frame,
+    const hir::LoopVarRef& lv, mir::TypeId type) -> mir::Expr {
+  if (lv.hops.value == 0) {
+    return mir::Expr{
+        .data = lowerer.TranslateLoopVarAsProcedural(lv.loop_var),
+        .type = type};
+  }
+  const auto loc =
+      lowerer.TranslateLoopVarAsStructuralParam(lv.hops, lv.loop_var);
+  return BuildStructuralParamAccessExpr(
+      frame, lowerer.Module().Unit(), loc.hops, loc.param);
 }
 
 // LRM 7.12.4: a with-clause iteration reference reads the named clause's
@@ -295,8 +301,7 @@ auto LowerHirPrimaryExprProc(
             return LowerProceduralVarRefExpr(process, frame, l, result_type);
           },
           [&](const hir::LoopVarRef& lv) -> mir::Expr {
-            return LowerLoopVarRefExprAsStructuralParam(
-                lowerer, lv, result_type);
+            return LowerLoopVarRefExpr(lowerer, frame, lv, result_type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
             return LowerCrossUnitVarRefExpr(lowerer, frame, c);
@@ -335,12 +340,7 @@ auto LowerHirPrimaryExprStructural(
                 "appear in structural expressions");
           },
           [&](const hir::LoopVarRef& lv) -> mir::Expr {
-            if (frame.loop_var_mode ==
-                LoopVarLoweringMode::kProceduralInduction) {
-              return LowerLoopVarRefExprAsProcedural(lowerer, lv, result_type);
-            }
-            return LowerLoopVarRefExprAsStructuralParam(
-                lowerer, lv, result_type);
+            return LowerLoopVarRefExpr(lowerer, frame, lv, result_type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
             return LowerCrossUnitVarRefExpr(lowerer, frame, c);

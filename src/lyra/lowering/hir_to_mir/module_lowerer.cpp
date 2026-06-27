@@ -3,6 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <format>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -30,6 +33,11 @@ auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
 
   unit_.root = *top_r;
   return std::move(unit_);
+}
+
+auto ModuleLowerer::NextGenerateScopeName(std::string_view arm_tag)
+    -> std::string {
+  return std::format("gen{}_{}", next_generate_scope_name_++, arm_tag);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

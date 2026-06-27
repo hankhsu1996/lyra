@@ -1,0 +1,11 @@
+id: cpp.range_select_genvar_bound
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    packed_out: "32'hABCDABCD"
