@@ -24,23 +24,25 @@ Read top to bottom on first pass:
    references as a field type
 10. `object_model.md` -- the one nominal object model; module / scope / class as one object type;
     inheritance, dispatch, construction, references and handles
-11. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
-12. `activation.md` -- the runtime execution instance; completion slot; ownership / continuation /
+11. `object_lifetime.md` -- managed object lifetime; reachability and precise tracing; activation
+    frames; safepoints and roots
+12. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
+13. `activation.md` -- the runtime execution instance; completion slot; ownership / continuation /
     cancellation relations
-13. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
-14. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-15. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
+14. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
+15. `hierarchy_and_generate.md` -- hierarchy and generate ownership
+16. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
     construction-time resolution
-16. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
+17. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
     cross-unit resolution through the SDK
-17. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
+18. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
     emission; what a backend may and may not name in render
-18. `identity_and_ownership.md` -- identity rules and forbidden shapes
-19. `lowering_boundaries.md` -- what each lowering may and may not do
-20. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+19. `identity_and_ownership.md` -- identity rules and forbidden shapes
+20. `lowering_boundaries.md` -- what each lowering may and may not do
+21. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-21. `incremental_build.md` -- query-based incremental compilation and caching
-22. `testing_strategy.md` -- test categories and structure
+22. `incremental_build.md` -- query-based incremental compilation and caching
+23. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -68,6 +70,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Member and type model; object types; owning pointer; vector wrapper       | `mir.md`                    |
 | Callable model; code vs value; captures; references as a field type       | `callable.md`               |
 | Object model; nominal object types; inheritance; dispatch; handles        | `object_model.md`           |
+| Object lifetime; managed reclamation; tracing GC; activation frames       | `object_lifetime.md`        |
 | LIR shape (CFG, basic blocks, storage)                                    | `lir.md`                    |
 | Activation; execution instance; completion slot; cancellation domain      | `activation.md`             |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit  | `scheduling.md`             |
@@ -86,14 +89,15 @@ the decision's subject, top to bottom, and **check the design against every rele
 "Forbidden Shapes" before proposing it**. A design that matches a Forbidden Shape is wrong even if
 it compiles and passes tests.
 
-| Decision touches...                                          | Binding docs (read all, top-down)                                                                                            |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Cross-unit access / hierarchical refs / ports / connectivity | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `elaboration_lifecycle`                    |
-| Backend emit / artifact structure / SDK boundary             | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `backend_contract`, `runtime_distribution` |
-| Compilation boundaries / unit dependencies / incrementality  | `north_star`, `compilation_unit_model`, `incremental_build`                                                                  |
-| Hierarchy / generate / object graph / construction           | `north_star`, `hierarchy_and_generate`, `runtime_model`, `elaboration_lifecycle`                                             |
-| Identity / ownership / id kinds                              | `north_star`, `identity_and_ownership`                                                                                       |
-| Object model / classes / inheritance / dispatch / handles    | `north_star`, `object_model`, `mir`, `callable`, `runtime_model`                                                             |
+| Decision touches...                                            | Binding docs (read all, top-down)                                                                                            |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Cross-unit access / hierarchical refs / ports / connectivity   | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `elaboration_lifecycle`                    |
+| Backend emit / artifact structure / SDK boundary               | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `backend_contract`, `runtime_distribution` |
+| Compilation boundaries / unit dependencies / incrementality    | `north_star`, `compilation_unit_model`, `incremental_build`                                                                  |
+| Hierarchy / generate / object graph / construction             | `north_star`, `hierarchy_and_generate`, `runtime_model`, `elaboration_lifecycle`                                             |
+| Identity / ownership / id kinds                                | `north_star`, `identity_and_ownership`                                                                                       |
+| Object model / classes / inheritance / dispatch / handles      | `north_star`, `object_model`, `object_lifetime`, `mir`, `callable`, `runtime_model`                                          |
+| Object lifetime / managed reclamation / GC / activation frames | `north_star`, `object_lifetime`, `object_model`, `mir`, `runtime_model`, `scheduling`                                        |
 
 The failure mode this guards against: anchoring on current code -- which may be a transitional
 shortcut -- instead of the contract. Current code that contradicts a contract is wrong; read the
