@@ -26,7 +26,7 @@ namespace lyra::lowering::hir_to_mir {
 // eternal loop) before the first wait, matching LRM 9.2.2.2's "evaluate at
 // time 0" requirement for inferred sensitivity.
 auto LowerContinuousAssign(
-    const ClassLowerer& lowerer, WalkFrame frame, std::string name,
+    const StructuralScopeLowerer& lowerer, WalkFrame frame, std::string name,
     const hir::ContinuousAssign& src) -> diag::Result<mir::MethodDecl> {
   mir::Block process_block;
   const mir::LocalId self_id = process_block.vars.Add(

@@ -30,9 +30,9 @@ struct ChildStructuralScopeBinding {
   mir::MemberId var_id;
 };
 
-// Bindings produced by `InstallGenerateOwnedChildScopes` for a single
-// `hir::Generate`. Indexed by `hir::StructuralScopeId.value`. Phase-local to
-// constructor lowering and not part of `ClassLowerer`.
+// The owned-child-scope bindings for a single `hir::Generate`, indexed by
+// `hir::StructuralScopeId.value`. A transient table threaded through generate
+// installation during constructor lowering, not stored on the pass object.
 struct GenerateBindings {
   std::vector<ChildStructuralScopeBinding> by_scope_id;
 };
@@ -58,11 +58,11 @@ struct StructuralParamLocation {
 // scope-local HIR-to-MIR translation maps and the cross-unit-ref slot table.
 // Holds no pointer to the IR scope being built: handlers reach it through
 // `frame.current_class`.
-class ClassLowerer {
+class StructuralScopeLowerer {
  public:
-  ClassLowerer(
-      ModuleLowerer& module, const ClassLowerer* parent, std::string name,
-      const hir::StructuralScope& hir_scope)
+  StructuralScopeLowerer(
+      ModuleLowerer& module, const StructuralScopeLowerer* parent,
+      std::string name, const hir::StructuralScope& hir_scope)
       : module_(&module),
         parent_(parent),
         name_(std::move(name)),
@@ -84,7 +84,7 @@ class ClassLowerer {
       -> diag::Result<mir::Expr>;
 
   // LHS-context expression dispatcher: addressable kinds only, no auto-Get
-  // wrap. Mirrors `ProcessLowerer::LowerLhsExpr`.
+  // wrap.
   [[nodiscard]] auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
       -> diag::Result<mir::Expr>;
 
@@ -92,7 +92,7 @@ class ClassLowerer {
     return *module_;
   }
 
-  [[nodiscard]] auto Parent() const -> const ClassLowerer* {
+  [[nodiscard]] auto Parent() const -> const StructuralScopeLowerer* {
     return parent_;
   }
 
@@ -104,9 +104,10 @@ class ClassLowerer {
     return *hir_scope_;
   }
 
-  // The expression arena of the scope being lowered. The single uniform
-  // sub-expression accessor the context-free expression handler templates
-  // reach through, identical in shape to `ProcessLowerer::HirExprs`.
+  // The expression arena of the scope being lowered. The uniform sub-expression
+  // accessor the context-free expression handler templates reach through; both
+  // lowering pass classes expose it with the same shape so those templates bind
+  // to either.
   [[nodiscard]] auto HirExprs() const
       -> const base::Arena<hir::Expr, hir::ExprId>& {
     return hir_scope_->exprs;
@@ -125,7 +126,7 @@ class ClassLowerer {
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLowerer::LookupHirSubroutine: hops walk ran "
+          "StructuralScopeLowerer::LookupHirSubroutine: hops walk ran "
           "past the root scope");
     }
     return parent_->LookupHirSubroutine(
@@ -155,7 +156,7 @@ class ClassLowerer {
   void MapStructuralVar(hir::StructuralVarId hir_id, mir::MemberId mir_id) {
     if (hir_id.value != structural_var_map_.size()) {
       throw InternalError(
-          "ClassLowerer::MapStructuralVar: HIR structural "
+          "StructuralScopeLowerer::MapStructuralVar: HIR structural "
           "vars must be mapped in HIR id order");
     }
     structural_var_map_.push_back(mir_id);
@@ -174,7 +175,7 @@ class ClassLowerer {
     }
     if (structural_param_map_[hir_id.value].has_value()) {
       throw InternalError(
-          "ClassLowerer::MapLoopVarAsStructuralParam: HIR "
+          "StructuralScopeLowerer::MapLoopVarAsStructuralParam: HIR "
           "loop var already mapped");
     }
     structural_param_map_[hir_id.value] = mir_id;
@@ -192,7 +193,7 @@ class ClassLowerer {
     }
     if (loop_var_procedural_map_[hir_id.value].has_value()) {
       throw InternalError(
-          "ClassLowerer::MapLoopVarAsProcedural: HIR loop var "
+          "StructuralScopeLowerer::MapLoopVarAsProcedural: HIR loop var "
           "already mapped");
     }
     loop_var_procedural_map_[hir_id.value] = ref;
@@ -202,7 +203,7 @@ class ClassLowerer {
     if (hir_id.value >= loop_var_procedural_map_.size() ||
         !loop_var_procedural_map_[hir_id.value].has_value()) {
       throw InternalError(
-          "ClassLowerer::TranslateLoopVarAsProcedural: unmapped "
+          "StructuralScopeLowerer::TranslateLoopVarAsProcedural: unmapped "
           "HIR loop var");
     }
     return *loop_var_procedural_map_[hir_id.value];
@@ -217,7 +218,7 @@ class ClassLowerer {
       -> StructuralParamLocation {
     if (hir_hops.value == 0) {
       throw InternalError(
-          "ClassLowerer::TranslateLoopVarAsStructuralParam: "
+          "StructuralScopeLowerer::TranslateLoopVarAsStructuralParam: "
           "HIR hops=0 cannot resolve to a structural param (the param is "
           "child-owned in MIR; header expressions must use the procedural "
           "induction var path)");
@@ -237,7 +238,8 @@ class ClassLowerer {
   void MapInstanceMember(hir::InstanceMemberId hir_id, mir::MemberId mir_id) {
     if (hir_id.value != instance_member_map_.size()) {
       throw InternalError(
-          "ClassLowerer::MapInstanceMember: HIR instance members must be "
+          "StructuralScopeLowerer::MapInstanceMember: HIR instance members "
+          "must be "
           "mapped in HIR id order");
     }
     instance_member_map_.push_back(mir_id);
@@ -246,7 +248,8 @@ class ClassLowerer {
   void MapGenerate(hir::GenerateId hir_id, GenerateBindings bindings) {
     if (hir_id.value != generate_map_.size()) {
       throw InternalError(
-          "ClassLowerer::MapGenerate: HIR generates must be mapped in HIR id "
+          "StructuralScopeLowerer::MapGenerate: HIR generates must be mapped "
+          "in HIR id "
           "order");
     }
     generate_map_.push_back(std::move(bindings));
@@ -268,7 +271,7 @@ class ClassLowerer {
       hir::StructuralSubroutineId hir_id, mir::MethodId mir_id) {
     if (hir_id.value != structural_subroutine_map_.size()) {
       throw InternalError(
-          "ClassLowerer::MapStructuralSubroutine: HIR "
+          "StructuralScopeLowerer::MapStructuralSubroutine: HIR "
           "structural subroutines must be mapped in HIR id order");
     }
     structural_subroutine_map_.push_back(mir_id);
@@ -292,7 +295,8 @@ class ClassLowerer {
               [&](const hir::InstanceMemberId& id) -> mir::MemberId {
                 if (id.value >= instance_member_map_.size()) {
                   throw InternalError(
-                      "ClassLowerer::TranslateOwnedChild: unmapped HIR "
+                      "StructuralScopeLowerer::TranslateOwnedChild: unmapped "
+                      "HIR "
                       "instance member");
                 }
                 return instance_member_map_[id.value];
@@ -300,7 +304,8 @@ class ClassLowerer {
               [&](const hir::GenerateChildRef& g) -> mir::MemberId {
                 if (g.generate.value >= generate_map_.size()) {
                   throw InternalError(
-                      "ClassLowerer::TranslateOwnedChild: unmapped HIR "
+                      "StructuralScopeLowerer::TranslateOwnedChild: unmapped "
+                      "HIR "
                       "generate");
                 }
                 return generate_map_[g.generate.value]
@@ -312,7 +317,8 @@ class ClassLowerer {
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLowerer::TranslateOwnedChild: hops exceed scope chain depth");
+          "StructuralScopeLowerer::TranslateOwnedChild: hops exceed scope "
+          "chain depth");
     }
     return parent_->LookupOwnedChildAtHops(
         hir::StructuralHops{hops.value - 1}, child);
@@ -324,14 +330,14 @@ class ClassLowerer {
     if (hops.value == 0) {
       if (hir_id.value >= structural_var_map_.size()) {
         throw InternalError(
-            "ClassLowerer::TranslateStructuralVar: unmapped "
+            "StructuralScopeLowerer::TranslateStructuralVar: unmapped "
             "HIR structural var");
       }
       return structural_var_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLowerer::TranslateStructuralVar: hops out "
+          "StructuralScopeLowerer::TranslateStructuralVar: hops out "
           "of scope chain");
     }
     return parent_->LookupStructuralVarAtHops(
@@ -345,14 +351,14 @@ class ClassLowerer {
       if (hir_id.value >= structural_param_map_.size() ||
           !structural_param_map_[hir_id.value].has_value()) {
         throw InternalError(
-            "ClassLowerer::TranslateLoopVarAsStructuralParam: "
+            "StructuralScopeLowerer::TranslateLoopVarAsStructuralParam: "
             "unmapped HIR loop var");
       }
       return *structural_param_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLowerer::TranslateLoopVarAsStructuralParam: "
+          "StructuralScopeLowerer::TranslateLoopVarAsStructuralParam: "
           "hops exceed scope chain depth");
     }
     return parent_->LookupStructuralParamAtMirHops(
@@ -365,14 +371,14 @@ class ClassLowerer {
     if (hops.value == 0) {
       if (hir_id.value >= structural_subroutine_map_.size()) {
         throw InternalError(
-            "ClassLowerer::TranslateStructuralSubroutine: "
+            "StructuralScopeLowerer::TranslateStructuralSubroutine: "
             "unmapped HIR subroutine");
       }
       return structural_subroutine_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLowerer::TranslateStructuralSubroutine: hops "
+          "StructuralScopeLowerer::TranslateStructuralSubroutine: hops "
           "exceed scope chain depth");
     }
     return parent_->LookupStructuralSubroutineAtHops(
@@ -380,7 +386,7 @@ class ClassLowerer {
   }
 
   ModuleLowerer* module_;
-  const ClassLowerer* parent_;
+  const StructuralScopeLowerer* parent_;
   std::string name_;
   const hir::StructuralScope* hir_scope_;
   std::vector<mir::MemberId> structural_var_map_;

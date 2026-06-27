@@ -77,9 +77,9 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
 ## Core Invariants
 
 1. Every construction pass is implemented as a class named for the unit of work it processes and the
-   action it performs (`ProcessLowerer`, `ClassLowerer`). The class is constructed once per task
-   instance and destroyed when that task completes; one class instance does not span multiple task
-   instances. A rendering fold is not a class (see "Rendering Folds").
+   action it performs (`ProcessLowerer`, `StructuralScopeLowerer`). The class is constructed once
+   per task instance and destroyed when that task completes; one class instance does not span
+   multiple task instances. A rendering fold is not a class (see "Rendering Folds").
 
 2. The class constructor receives the read-only facts the pass depends on. After construction those
    facts are not mutated. Registries the pass accumulates and the root output the pass is
@@ -383,9 +383,10 @@ When a layer's expression / statement dispatch grows past a single readable file
 into the pass class itself and one subsystem file per expression / statement family. The shape is
 fixed:
 
-- The pass class header (`process_lowerer.hpp`, `class_lowerer.hpp`, `module_lowerer.hpp`) declares
-  the dispatcher methods (`LowerExpr`, `LowerStmt`, `InternType`, etc.), the registry operations,
-  and the fact accessors. Per-kind handler declarations are not on the class.
+- The pass class header (`process_lowerer.hpp`, `structural_scope_lowerer.hpp`,
+  `module_lowerer.hpp`) declares the dispatcher methods (`LowerExpr`, `LowerStmt`, `InternType`,
+  etc.), the registry operations, and the fact accessors. Per-kind handler declarations are not on
+  the class.
 - The pass class implementation (`process_lowerer.cpp`, etc.) defines the dispatcher methods. Each
   dispatcher method body is a single switch over node kind, with each case routing to a per-kind
   handler in a subsystem file.

@@ -6,9 +6,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -54,7 +54,7 @@ template auto LowerHirInsideExpr(
     ProcessLowerer&, WalkFrame, const hir::InsideExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirInsideExpr(
-    const ClassLowerer&, WalkFrame, const hir::InsideExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::InsideExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir
