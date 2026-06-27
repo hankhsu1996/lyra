@@ -81,11 +81,22 @@ class Tuple {
     }(std::index_sequence_for<Ts...>{});
   }
 
+  // LRM Table 7-1 unpacked-struct default: member-wise reset, each component to
+  // its own Table 6-7 default. In-place rather than reconstruct, so a container
+  // can scrub a reused discard slot to canonical before handing out a
+  // reference.
+  auto ResetToDefault() -> void {
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      (std::get<I>(data_).ResetToDefault(), ...);
+    }(std::index_sequence_for<Ts...>{});
+  }
+
  private:
   std::tuple<Ts...> data_;
 };
 
 static_assert(LyraValue<Tuple<PackedArray, PackedArray>>);
 static_assert(CaseEqualComparable<Tuple<PackedArray, PackedArray>>);
+static_assert(Defaultable<Tuple<PackedArray, PackedArray>>);
 
 }  // namespace lyra::value
