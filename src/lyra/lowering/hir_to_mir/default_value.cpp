@@ -214,6 +214,17 @@ auto BuildDefaultValueExpr(
                 .data = mir::TupleExpr{.components = std::move(components)},
                 .type = type};
           },
+          // LRM Table 7-1: an unpacked union defaults to its first member's
+          // default. Synthesized as a UnionExpr over component 0 at each use,
+          // never stored on the interned UnionType (same rationale as the
+          // struct's member-wise default).
+          [&](const mir::UnionType& u) -> mir::Expr {
+            const mir::ExprId member_default = block.exprs.Add(
+                BuildDefaultValueExpr(module, frame, u.elements.front()));
+            return mir::Expr{
+                .data = mir::UnionExpr{.index = 0, .value = member_default},
+                .type = type};
+          },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
           // construction so OOB reads and resize-fills have a shape source.

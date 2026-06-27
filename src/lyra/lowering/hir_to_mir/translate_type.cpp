@@ -136,11 +136,21 @@ auto ModuleLowerer::TranslateTypeData(
             }
             return mir::TupleType{.elements = std::move(elements)};
           },
-          [type_span](
-              const hir::UnpackedUnionType&) -> diag::Result<mir::TypeData> {
-            return diag::Fail(
-                type_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
-                "unpacked union types are not yet supported");
+          [&](const hir::UnpackedUnionType& src)
+              -> diag::Result<mir::TypeData> {
+            // A tagged union is a sum type, a separate concept; only the
+            // untagged overlapping-storage form maps to `UnionType` (LRM 7.3).
+            if (src.tagged) {
+              return diag::Fail(
+                  type_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
+                  "tagged unions are not yet supported");
+            }
+            std::vector<mir::TypeId> elements;
+            elements.reserve(src.fields.size());
+            for (const auto& field : src.fields) {
+              elements.push_back(TranslateType(field.type));
+            }
+            return mir::UnionType{.elements = std::move(elements)};
           },
           [&](const hir::UnpackedArrayType& src)
               -> diag::Result<mir::TypeData> {

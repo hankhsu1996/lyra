@@ -240,6 +240,16 @@ class MirDumper {
               }
               return std::format("Tuple(elems=[{}])", elements);
             },
+            [](const UnionType& u) -> std::string {
+              std::string elements;
+              for (std::size_t i = 0; i < u.elements.size(); ++i) {
+                if (i != 0) {
+                  elements += ", ";
+                }
+                elements += std::format("Type[{}]", u.elements[i].value);
+              }
+              return std::format("Union(elems=[{}])", elements);
+            },
             [](const ExternalRefType& e) -> std::string {
               return std::format("ExternalRef(elem=Type[{}])", e.element.value);
             },
@@ -613,6 +623,15 @@ class MirDumper {
             [](const TupleGetExpr& g) -> std::string {
               return std::format(
                   "TupleGetExpr tuple=Expr[{}] index={}", g.tuple.value,
+                  g.index);
+            },
+            [](const UnionExpr& u) -> std::string {
+              return std::format(
+                  "UnionExpr index={} value=Expr[{}]", u.index, u.value.value);
+            },
+            [](const UnionGetExpr& g) -> std::string {
+              return std::format(
+                  "UnionGetExpr union=Expr[{}] index={}", g.union_value.value,
                   g.index);
             },
         },

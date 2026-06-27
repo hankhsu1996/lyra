@@ -353,6 +353,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/string_op.hpp\"\n";
   out += "#include \"lyra/value/unpacked_array.hpp\"\n";
   out += "#include \"lyra/value/dynamic_array.hpp\"\n";
+  out += "#include \"lyra/value/union.hpp\"\n";
   for (const auto& name : CollectExternalUnitNames(unit)) {
     out += std::format("#include \"{}.hpp\"\n", name);
   }

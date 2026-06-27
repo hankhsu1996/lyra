@@ -14,7 +14,8 @@ Done when:
 
 ## Actionable
 
-All items closed; operator surface in scope is complete.
+The operator surface in scope is complete except W13: compound assignment to a no-element-lvalue
+target evaluates the left-hand index more than once (LRM 11.4.1).
 
 ## Sub-Steps
 
@@ -83,6 +84,13 @@ merged node.
       selector chains (`array[i]++`, `++a[15:8]`) and observable structural roots are covered. NBA
       contexts (`b <= a++`, `var[i++] <= rhs`) evaluate the inc / dec exactly once at submit time.
       Replication / concatenation operands are rejected as targets per LRM 11.4.12.1.
+- [ ] W13 -- Compound assignment to a target that has no element lvalue and so must
+      read-modify-write the whole value -- a string element (`s[i] op= v`), and a union member once
+      a union is usable in that position -- currently evaluates the left-hand index expression more
+      than once, contrary to LRM 11.4.1 (the left-hand index shall be evaluated exactly once). A
+      side-effecting index (e.g. a function call) therefore runs twice. Targets that lower to a
+      native read-modify-write (whole-var, selector) are correct (W11); only the no-element-lvalue
+      targets are affected.
 
 ## Cross-references
 

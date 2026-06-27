@@ -91,6 +91,10 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           for (TypeId element : t.elements) {
             HashId(seed, element);
           }
+        } else if constexpr (std::is_same_v<T, UnionType>) {
+          for (TypeId element : t.elements) {
+            HashId(seed, element);
+          }
         } else if constexpr (std::is_same_v<T, ObservableType>) {
           HashId(seed, t.value);
         } else if constexpr (std::is_same_v<T, ExternalRefType>) {

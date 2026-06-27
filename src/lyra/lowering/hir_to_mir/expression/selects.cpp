@@ -8,6 +8,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
@@ -776,6 +778,19 @@ auto LowerHirMemberAccessExpr(
         .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
         .type = result_type};
   }
+  // LRM 7.3: an unpacked union member read projects the active member by index
+  // out of the overlapping-storage value (`UnionGetExpr`); reading an inactive
+  // member is undefined and the backend returns that member's default.
+  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
+      hir::TypeKind::kUnpackedUnion) {
+    auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
+    if (!base_or) return std::unexpected(std::move(base_or.error()));
+    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+    return mir::Expr{
+        .data =
+            mir::UnionGetExpr{.union_value = base_id, .index = sel.field_index},
+        .type = result_type};
+  }
   const auto& fields =
       GetAggregateFields(module.Hir().types.Get(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
@@ -856,6 +871,16 @@ auto LowerHirMemberAccessExprLhs(
     return mir::Expr{
         .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
         .type = result_type};
+  }
+  // A union member write is a whole-union replacement, intercepted at
+  // assignment lowering before any place is built; a union member never yields
+  // a writable place. Reaching here means a ref / output binding to a union
+  // member (LRM 7.3), which is not yet supported.
+  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
+      hir::TypeKind::kUnpackedUnion) {
+    return diag::Fail(
+        base_hir_expr.span, diag::DiagCode::kUnsupportedAssignmentTarget,
+        "a reference or output binding to a union member is not yet supported");
   }
   const auto& fields =
       GetAggregateFields(module.Hir().types.Get(base_hir_expr.type));

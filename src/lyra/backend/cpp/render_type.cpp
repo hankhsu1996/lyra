@@ -180,6 +180,14 @@ auto RenderTypeAsCpp(
             }
             return std::format("lyra::value::Tuple<{}>", inners);
           },
+          [&](const mir::UnionType& u) -> std::string {
+            std::string inners;
+            for (std::size_t i = 0; i < u.elements.size(); ++i) {
+              if (i != 0) inners += ", ";
+              inners += RenderTypeAsCpp(unit, owner_class, u.elements[i]);
+            }
+            return std::format("lyra::value::Union<{}>", inners);
+          },
           [&](const mir::ExternalRefType& e) -> std::string {
             return std::format(
                 "lyra::runtime::ExternUp<{}>",
