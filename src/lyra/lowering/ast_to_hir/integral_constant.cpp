@@ -72,8 +72,8 @@ auto LowerSVIntToIntegralConstant(const slang::SVInt& sv)
   return out;
 }
 
-auto MakeIntegralLiteralExpr(
-    const slang::SVInt& sv, hir::TypeId type, diag::SourceSpan span)
+auto MakeIntegerLiteralFromConstant(
+    hir::IntegralConstant value, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr {
   return hir::Expr{
       .type = type,
@@ -81,12 +81,19 @@ auto MakeIntegralLiteralExpr(
           hir::PrimaryExpr{
               .data =
                   hir::IntegerLiteral{
-                      .value = LowerSVIntToIntegralConstant(sv),
+                      .value = std::move(value),
                       .base = hir::IntegerLiteralBase::kDecimal,
                       .declared_unsized = false,
                   }},
       .span = span,
   };
+}
+
+auto MakeIntegralLiteralExpr(
+    const slang::SVInt& sv, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr {
+  return MakeIntegerLiteralFromConstant(
+      LowerSVIntToIntegralConstant(sv), type, span);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

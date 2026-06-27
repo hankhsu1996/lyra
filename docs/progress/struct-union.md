@@ -34,12 +34,14 @@ Table 7-1).
       any supported integral, packed, real, or string type; an unpacked struct nests as a member of
       another unpacked struct, and a struct is usable as an unpacked-array element and may itself
       hold an unpacked-array member.
-- [ ] S2 -- Assignment-pattern literals (LRM 10.9): positional `'{a, b, c}`, named `'{field: v}` in
+- [x] S2 -- Assignment-pattern literals (LRM 10.9): positional `'{a, b, c}`, named `'{field: v}` in
       any order, type-key and `default:` fill (including mixed field widths), and the type-prefixed
       self-determined form `T'{...}`.
-- [ ] S3 -- Default initialization (LRM Table 7-1, 7.2.2). Each member defaults to its own type's
+- [x] S3 -- Default initialization (LRM Table 7-1, 7.2.2). Each member defaults to its own type's
       Table 6-7 value, recursively, unless the member's declaration carries an initial assignment,
-      in which case that value is used. The 2-state / 4-state distinction propagates per member.
+      in which case that value is used. The 2-state / 4-state distinction propagates per member. A
+      member's initial assignment may itself be an aggregate literal (a struct- or array-typed
+      member default).
 - [ ] S4 -- Aggregate copy and equality (`==` / `!=` / `===` / `!==`), and member access composing
       with element / range selects on packed members and on either side of an expression
       (`s.f[3:0]`, `s.f + 1`). A struct field reads and writes correctly in arithmetic, conditional,

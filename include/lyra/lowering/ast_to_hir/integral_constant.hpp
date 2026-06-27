@@ -16,6 +16,14 @@ namespace lyra::lowering::ast_to_hir {
 auto LowerSVIntToIntegralConstant(const slang::SVInt& sv)
     -> hir::IntegralConstant;
 
+// Wrap a folded HIR integral constant as an integer-literal expression of
+// `type`. The single place the integer-literal expression shape is built,
+// reached from a slang `SVInt` (after folding) or from an already-folded
+// `IntegralConstant`.
+auto MakeIntegerLiteralFromConstant(
+    hir::IntegralConstant value, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr;
+
 // Materialize an already-evaluated slang integral constant as an HIR
 // integer-literal expression of `type`. Shared by every site that splices a
 // constant slang has folded into the HIR: parameter and enum-value references,

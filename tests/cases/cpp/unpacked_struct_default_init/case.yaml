@@ -1,0 +1,25 @@
+id: cpp.unpacked_struct_default_init
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    d_a: 42
+    d_b: 0
+    d_g: 12
+    d_nx: 0
+    d_ny: 5
+    e_a: 1
+    e_ny: 8
+    arr_a: 42
+    arr_ny: 5
+    loc_a: 42
+    loc_ny: 5
+    ad_nx: 11
+    ad_ny: 12
+    ad_a0: 20
+    ad_a1: 21

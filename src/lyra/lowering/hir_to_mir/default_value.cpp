@@ -2,12 +2,15 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -46,6 +49,96 @@ auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
     c.state_words.back() &= mask;
   }
   return c;
+}
+
+// Wrap element exprs into an unpacked-array construction: the element type's
+// default prototype (honoring its own member inits) plus the element list.
+// Shared by the type-default array path and the explicit-constant array path.
+auto BuildUnpackedArrayValue(
+    const ModuleLowerer& module, WalkFrame frame, mir::TypeId array_type,
+    hir::TypeId element_type, std::vector<mir::ExprId> element_ids)
+    -> mir::Expr {
+  auto& block = *frame.current_block;
+  const mir::ExprId element_default =
+      block.exprs.Add(BuildDefaultValueFromHir(module, frame, element_type));
+  const mir::ExprId list_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
+          .type = array_type});
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Construct{},
+              .arguments = {element_default, list_id}},
+      .type = array_type};
+}
+
+// Materialize a folded member-default constant (LRM 7.2.2) as a MIR value of
+// its type. A scalar leaf becomes a literal (a string constructs the runtime
+// String); an unpacked aggregate becomes a TupleExpr (struct) or an array
+// construction (array) over the recursively materialized components, with the
+// type disambiguating a component list as struct members or array elements.
+auto MaterializeConstant(
+    const ModuleLowerer& module, WalkFrame frame, hir::TypeId hir_type,
+    const hir::ConstantValue& value) -> mir::Expr {
+  auto& block = *frame.current_block;
+  const mir::TypeId mir_type = module.TranslateType(hir_type);
+  return std::visit(
+      Overloaded{
+          [&](const hir::IntegralConstant& c) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::IntegerLiteral{.value = LowerHirIntegralConstant(c)},
+                .type = mir_type};
+          },
+          [&](double real) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::RealLiteral{.value = real}, .type = mir_type};
+          },
+          [&](const std::string& text) -> mir::Expr {
+            const mir::ExprId literal = block.exprs.Add(
+                mir::Expr{
+                    .data = mir::StringLiteral{.value = text},
+                    .type = mir_type});
+            return mir::Expr{
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::Construct{}, .arguments = {literal}},
+                .type = mir_type};
+          },
+          [&](const std::vector<hir::ConstantValue>& components) -> mir::Expr {
+            const auto& hir_ty = module.Hir().types.Get(hir_type);
+            if (const auto* st =
+                    std::get_if<hir::UnpackedStructType>(&hir_ty.data)) {
+              std::vector<mir::ExprId> component_ids;
+              component_ids.reserve(components.size());
+              for (std::size_t i = 0; i < components.size(); ++i) {
+                component_ids.push_back(block.exprs.Add(MaterializeConstant(
+                    module, frame, st->fields[i].type, components[i])));
+              }
+              return mir::Expr{
+                  .data =
+                      mir::TupleExpr{.components = std::move(component_ids)},
+                  .type = mir_type};
+            }
+            if (const auto* ua =
+                    std::get_if<hir::UnpackedArrayType>(&hir_ty.data)) {
+              std::vector<mir::ExprId> element_ids;
+              element_ids.reserve(components.size());
+              for (const auto& component : components) {
+                element_ids.push_back(block.exprs.Add(MaterializeConstant(
+                    module, frame, ua->element_type, component)));
+              }
+              return BuildUnpackedArrayValue(
+                  module, frame, mir_type, ua->element_type,
+                  std::move(element_ids));
+            }
+            throw InternalError(
+                "MaterializeConstant: aggregate value for a non-aggregate "
+                "type");
+          },
+      },
+      value.data);
 }
 
 }  // namespace
@@ -206,6 +299,54 @@ auto BuildDefaultValueExpr(
           },
       },
       ty.data);
+}
+
+// LRM 7.2.2 / Table 7-1: default-construct a value from its source (HIR) type
+// so member declaration initializers are honored. An unpacked struct takes each
+// member's own default (its declaration initializer, else the member type's
+// recursive default); a fixed unpacked array fills every element with the
+// element type's source default. Every other type carries no source-level
+// initializer, so its default is the canonical type default.
+auto BuildDefaultValueFromHir(
+    const ModuleLowerer& module, WalkFrame frame, hir::TypeId hir_type)
+    -> mir::Expr {
+  auto& block = *frame.current_block;
+  const auto& hir_ty = module.Hir().types.Get(hir_type);
+  const mir::TypeId mir_type = module.TranslateType(hir_type);
+
+  if (const auto* st = std::get_if<hir::UnpackedStructType>(&hir_ty.data)) {
+    std::vector<mir::ExprId> components;
+    components.reserve(st->fields.size());
+    for (const auto& field : st->fields) {
+      const mir::ExprId component =
+          field.default_init.has_value()
+              ? block.exprs.Add(MaterializeConstant(
+                    module, frame, field.type, *field.default_init))
+              : block.exprs.Add(
+                    BuildDefaultValueFromHir(module, frame, field.type));
+      components.push_back(component);
+    }
+    return mir::Expr{
+        .data = mir::TupleExpr{.components = std::move(components)},
+        .type = mir_type};
+  }
+
+  if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_ty.data)) {
+    const std::int64_t span = (ua->dim.left >= ua->dim.right)
+                                  ? (ua->dim.left - ua->dim.right)
+                                  : (ua->dim.right - ua->dim.left);
+    const auto size = static_cast<std::uint64_t>(span) + 1U;
+    std::vector<mir::ExprId> elements;
+    elements.reserve(size);
+    for (std::uint64_t i = 0; i < size; ++i) {
+      elements.push_back(block.exprs.Add(
+          BuildDefaultValueFromHir(module, frame, ua->element_type)));
+    }
+    return BuildUnpackedArrayValue(
+        module, frame, mir_type, ua->element_type, std::move(elements));
+  }
+
+  return BuildDefaultValueExpr(module, frame, mir_type);
 }
 
 auto BuildArrayConstructionCall(

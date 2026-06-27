@@ -1,0 +1,15 @@
+id: cpp.unpacked_struct_param
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p_a: 5
+    p_b: 6
+    q_ia: 7
+    q_ib: 8
+    q_tag: 9

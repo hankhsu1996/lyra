@@ -1,0 +1,32 @@
+id: cpp.unpacked_struct_pattern
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pos_a: 1
+    pos_b: 2
+    pos_c: 3
+    nm_a: 10
+    nm_b: 20
+    nm_c: 30
+    tk_a: 7
+    tk_b: 8
+    tk_c: 7
+    df_a: 5
+    df_b: 5
+    df_c: 5
+    ns_ia: 100
+    ns_ib: 101
+    ns_ic: 102
+    ns_tag: 9
+    rp_a: 7
+    rp_b: 7
+    pw_ia: 55
+    pw_tag: 1
+    eq_same: 1
+    eq_diff: 0

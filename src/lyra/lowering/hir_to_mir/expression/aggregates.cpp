@@ -10,6 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/class_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
@@ -96,11 +97,15 @@ auto LowerHirReplicationExpr(
       .type = result_type};
 }
 
-// Lowers an HIR AssignmentPatternExpr by dispatching on the destination
-// type's runtime shape: packed targets fold into MIR `ConcatExpr` (bit
-// concatenation matches the packed bit plane), array containers (unpacked,
-// dynamic, queue) land as `ArrayLiteralExpr` over distinct element slots
-// wrapped by a construction call against the container ctor.
+// Lowers an HIR AssignmentPatternExpr by dispatching on the destination type's
+// runtime shape. Slang has already resolved any named / type-key / `default`
+// keys into a member-ordered positional element list (LRM 10.9.2), so the
+// shapes differ only in how they package those positional elements: a packed
+// target folds into a MIR `ConcatExpr` because its members share one bit plane,
+// an array container (unpacked, dynamic, queue) lands as `ArrayLiteralExpr`
+// slots wrapped by a construction call, and an unpacked struct -- whose members
+// are independent value slots, not a shared bit plane -- folds into a
+// positional `TupleExpr`.
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
@@ -113,9 +118,15 @@ auto LowerHirAssignmentPatternExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  if (IsArrayContainerType(lowerer.Module().Unit().types.Get(result_type))) {
+  const auto& result_ty = lowerer.Module().Unit().types.Get(result_type);
+  if (IsArrayContainerType(result_ty)) {
     return BuildArrayConstructionCall(
         lowerer.Module(), frame, result_type, std::move(element_ids));
+  }
+  if (std::holds_alternative<mir::TupleType>(result_ty.data)) {
+    return mir::Expr{
+        .data = mir::TupleExpr{.components = std::move(element_ids)},
+        .type = result_type};
   }
   return mir::Expr{
       .data = mir::ConcatExpr{.operands = std::move(element_ids)},
@@ -135,11 +146,24 @@ auto LowerHirAssignmentPatternReplicationExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  if (IsArrayContainerType(lowerer.Module().Unit().types.Get(result_type))) {
+  const auto& result_ty = lowerer.Module().Unit().types.Get(result_type);
+  if (IsArrayContainerType(result_ty)) {
     const std::uint64_t count =
         ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
     return BuildArrayReplicationFlatList(
         lowerer.Module(), frame, item_ids, count, result_type);
+  }
+  if (std::holds_alternative<mir::TupleType>(result_ty.data)) {
+    const std::uint64_t count =
+        ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
+    std::vector<mir::ExprId> components;
+    components.reserve(item_ids.size() * count);
+    for (std::uint64_t i = 0; i < count; ++i) {
+      components.insert(components.end(), item_ids.begin(), item_ids.end());
+    }
+    return mir::Expr{
+        .data = mir::TupleExpr{.components = std::move(components)},
+        .type = result_type};
   }
   const mir::ExprId inner_concat_id = block.exprs.Add(
       mir::Expr{
@@ -159,26 +183,28 @@ auto LowerHirAssignmentPatternReplicationExpr(
 
 // LRM 7.5.1 `new[N]` / `new[N](other)`. The argument list on the lowered
 // construction call is `[size, element-default prototype, optional copy
-// source]`: the prototype carries the element type's LRM Table 6-7 default
-// so the runtime ctor populates new slots without re-querying the type, and
-// the optional copy source feeds the LRM 7.5.1 truncate / pad behaviour on
+// source]`: the prototype carries the element type's default value -- a
+// struct element's own member initializers included (LRM 7.2.2) -- so the
+// runtime ctor populates new slots without re-querying the type, and the
+// optional copy source feeds the LRM 7.5.1 truncate / pad behaviour on
 // `new[N](other)`.
 auto LowerHirDynamicArrayNewExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    hir::TypeId hir_result_type, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   auto size_or = process.LowerExpr(process.HirExprs().Get(n.size), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
   const mir::ExprId size_id = block.exprs.Add(*std::move(size_or));
 
-  const auto& result_ty = process.Module().Unit().types.Get(result_type);
-  const auto* da = std::get_if<mir::DynamicArrayType>(&result_ty.data);
-  if (da == nullptr) {
+  const auto& hir_result_ty = process.Module().Hir().types.Get(hir_result_type);
+  const auto* hir_da = std::get_if<hir::DynamicArrayType>(&hir_result_ty.data);
+  if (hir_da == nullptr) {
     throw InternalError(
         "LowerHirDynamicArrayNewExprProc: result type is not DynamicArrayType");
   }
   const mir::ExprId prototype_id = block.exprs.Add(
-      BuildDefaultValueExpr(process.Module(), frame, da->element_type));
+      BuildDefaultValueFromHir(process.Module(), frame, hir_da->element_type));
 
   std::vector<mir::ExprId> args;
   args.reserve(n.initializer.has_value() ? 3U : 2U);

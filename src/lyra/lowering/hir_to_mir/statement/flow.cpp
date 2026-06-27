@@ -57,7 +57,7 @@ auto LowerStaticVarDeclStmt(
     init_value = ctor_block.exprs.Add(*std::move(init_or));
   } else {
     init_value = ctor_block.exprs.Add(
-        BuildDefaultValueExpr(process.Module(), ctor_frame, type));
+        BuildDefaultValueFromHir(process.Module(), ctor_frame, hir_local.type));
   }
 
   const mir::ExprId ctor_self_read =
@@ -100,8 +100,8 @@ auto LowerAutomaticVarDeclStmt(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = block.exprs.Add(*std::move(init_or));
   } else {
-    init_value =
-        block.exprs.Add(BuildDefaultValueExpr(process.Module(), frame, type));
+    init_value = block.exprs.Add(
+        BuildDefaultValueFromHir(process.Module(), frame, hir_local.type));
   }
 
   return mir::Stmt{
@@ -120,7 +120,8 @@ auto LowerAutomaticVarDeclStmt(
 // HIR id order, to register the binding its references resolve through.
 auto LowerPromotedVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::VarDeclStmt& v, mir::TypeId type) -> diag::Result<mir::Stmt> {
+    const hir::VarDeclStmt& v, hir::TypeId hir_type, mir::TypeId type)
+    -> diag::Result<mir::Stmt> {
   const PromotedVarBinding pb = process.TakePendingActivation(v.var);
   process.MapProceduralVar(v.var, pb);
   auto& block = *frame.current_block;
@@ -137,8 +138,8 @@ auto LowerPromotedVarDeclStmt(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = block.exprs.Add(*std::move(init_or));
   } else {
-    init_value =
-        block.exprs.Add(BuildDefaultValueExpr(process.Module(), frame, type));
+    init_value = block.exprs.Add(
+        BuildDefaultValueFromHir(process.Module(), frame, hir_type));
   }
   const mir::ExprId assign =
       block.exprs.Add(mir::MakeAssignExpr(target, init_value, type));
@@ -154,7 +155,8 @@ auto LowerVarDeclStmt(
   const auto& hir_local = process.HirBody().procedural_vars.Get(v.var);
   const mir::TypeId type = process.Module().TranslateType(hir_local.type);
   if (hir_local.lifetime_extended) {
-    return LowerPromotedVarDeclStmt(process, frame, std::move(label), v, type);
+    return LowerPromotedVarDeclStmt(
+        process, frame, std::move(label), v, hir_local.type, type);
   }
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
     return LowerStaticVarDeclStmt(

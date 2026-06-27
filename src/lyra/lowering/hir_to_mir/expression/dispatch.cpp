@@ -116,7 +116,7 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::DynamicArrayNewExpr& n) -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
               return LowerHirDynamicArrayNewExprProc(
-                  lowerer, frame, n, result_type);
+                  lowerer, frame, n, expr.type, result_type);
             } else {
               throw InternalError(
                   "structural expression lowering: HIR DynamicArrayNewExpr is "
