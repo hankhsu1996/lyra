@@ -48,13 +48,21 @@ each stage establishes, not how.
       nested emission. Resolving a source name to an identity by lexical scope lands with
       SystemVerilog classes, the first references resolved by name.
 
+- [ ] Managed-object lifetime: a class object's liveness is reachability, and it is reclaimed by a
+      precise tracing collector at runtime safepoints, with cyclic object graphs reclaimed by
+      reachability. Every language-visible value that can survive a safepoint lives in a
+      compiler-described, runtime-traceable activation frame reached through Lyra-visible runtime
+      records, never in opaque backend execution state. The storage discipline (managed references,
+      activation frames, traceable scheduler payloads, root registration, receiver rooting) may land
+      before the collector algorithm, but class support is not complete until reclamation works -- a
+      never-reclaiming intermediate is not a terminal state.
+
 - [ ] A SystemVerilog class is the same generic object type, reached through a managed object
       reference: nullable as a value, identity-comparable, shallow-copied, participating in managed
       reachability, allocated by `new`, never explicitly freed -- distinct from an owning, a
-      borrowed, and a shared reference. The reachability semantics are the contract; a
-      reference-counted realization is not part of it, and cyclic garbage is not yet reclaimed.
-      Minimal surface: fields, `new`, direct instance-method call, handle equality against another
-      handle and against null.
+      borrowed, and a shared reference. Its lifetime and reclamation are the managed-object-lifetime
+      item above. Minimal surface: fields, `new`, direct instance-method call, handle equality
+      against another handle and against null.
 
 - [ ] Class inheritance: a single concrete base, `super` and the base-constructor call, and dynamic
       dispatch through logical method slots -- a method introduces, overrides, or finalizes a slot,
@@ -86,6 +94,8 @@ each stage establishes, not how.
 - `../architecture/object_model.md` -- the object-model contract: the one nominal-object reference,
   the override relation, the construction model, the reference kinds, and the registry (invariant
   10).
+- `../architecture/object_lifetime.md` -- the managed-object lifetime contract: reachability,
+  precise tracing, activation frames, safepoints, and roots.
 - `../architecture/mir.md`, `../architecture/callable.md`, `../architecture/runtime_model.md`,
   `../architecture/elaboration_lifecycle.md` -- the contracts this work satisfies and that the
   object model doc is a peer to.

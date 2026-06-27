@@ -108,8 +108,9 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   data type at MIR; one reference type serves both `ref` formals (body local) and `ref` ports (unit
   member), distinct from a borrowed pointer because it preserves the observable-cell protocol.
 - [object-model](object-model.md) -- a module / scope and an SV class are one generic nominal object
-  type; an SV class handle is a managed reference, not the acyclic shared one; the receiver is an
-  instance-method property, not every callable's.
+  type; an SV class handle is a managed reference, not the acyclic shared one, realized by precise
+  tracing GC (arena and reference counting rejected); the receiver is an instance-method property,
+  not every callable's.
 - [object-model-storage](object-model-storage.md) -- a compilation unit owns one canonical registry
   of local nominal object declarations; identity, lexical name resolution, and backend emission
   nesting are separate relations; the lexical-tree-only storage and a second identity are rejected.
