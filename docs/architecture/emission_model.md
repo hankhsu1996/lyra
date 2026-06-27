@@ -51,48 +51,44 @@ non-conforming code, not as a relaxation of the contract.
    cannot resolve from its own inputs are expressed as SDK operations. In the C++ backend the SDK is
    the runtime library; under LLVM its operations become intrinsics the linker resolves. A backend
    never invents a second cross-unit mechanism outside the SDK.
-4. **A cross-unit reference resolves once into a stored direct reference.** It resolves once -- in
-   the constructor for downward, at Bind for upward -- after which the simulation-time read and
-   change observation read it directly with no per-access lookup (`reference_resolution.md` inv 3,
-   5). How the reference is stored and filled differs by direction.
-5. **Storage and fill by direction:**
-   - **Downward** -- the target lives inside a unit the referrer instantiates, a declared
-     dependency. The referrer holds a slot it fills in its constructor by navigating its owned child
-     to the referenced member. Because the sub-module is a declared dependency, the navigation is
-     bound when the artifacts are linked; the referrer emits the access by name and the link
-     resolves it, carrying no offset.
-   - **Upward** -- the ancestor is one the referrer does **not** instantiate, so it is not a
-     dependency and is unknown to the referrer at compile time. The referrer holds the reference as
-     an ordinary member whose type marks it external; at Bind that member navigates the runtime
-     object graph (the parent chain) to the ancestor named by the reference, matching its instance
-     name or module definition name (LRM 23.8), then steps down any remaining path through the
-     ancestor's owned children by name, and obtains the leaf signal through the SDK. The referrer's
-     artifact carries zero knowledge of the ancestor's or those children's units -- it never names
-     their types and never includes their artifacts, and no cross-unit slot or side table records
-     the upward reference.
+4. **A reference's route resolves once and seals into a sealed endpoint.** Routes execute in
+   Resolve; each route produces a candidate endpoint that the sealing barrier commits as the
+   reference's final access point. The simulation-time read and change observation read the sealed
+   endpoint directly with no per-access lookup (`reference_resolution.md` inv 3, 5).
+5. **Storage and fill by segment layout visibility.** A route is a sequence of segments; each
+   segment's realization is determined by whether the emitting artifact owns the segment's source
+   and target classes:
+   - **Layout-visible segment** -- both classes live in the emitting artifact. Realization is typed
+     navigation through stable MIR member identities. The emitted code reaches the next pointer /
+     class member via a typed access expression; no string lookup, no SDK call.
+   - **Opaque segment** -- the segment crosses into another compilation unit's body. Realization is
+     one runtime-SDK by-name lookup, executed once at Resolve. The opaque segment carries the
+     canonical name (interface or registered signal name) and any indices it needs; it never names
+     the other unit's internal members, fields, or child types. A single route may alternate; an
+     artifact emits typed prefix code for the layout-visible segments and SDK calls for the opaque
+     ones, composed in route order. The sealed endpoint is one access point regardless of how many
+     segments of each kind the route contained.
 6. **A unit exposes its hierarchically reachable signals and owned children through the SDK.** So
-   that an upward referrer (which cannot name the ancestor's or an intervening child's type) can
-   reach a signal in an ancestor found only at runtime, each unit registers its reachable signals
-   and its owned children by name into the object graph node during construction, and the base SDK
-   answers a by-name query from those registrations -- the unit never inspects who asks, and the
-   dispatch is one generic scan, not a per-unit synthesized branch. The referrer walks that surface
-   once at construction and stores the direct reference; it never embeds another unit's layout.
+   that any artifact's opaque segments can reach into a unit whose body it does not know, each unit
+   registers its reachable signals and its owned children by name into the object graph node during
+   construction, and the base SDK answers a by-name query from those registrations -- the unit never
+   inspects who asks, and the dispatch is one generic scan, not a per-unit synthesized branch. The
+   referrer's emission consumes those registrations through one route execution and stores the
+   sealed endpoint; it never embeds another unit's layout.
 
 ## Boundary to Adjacent Layers
 
 - `compilation_unit_model.md` defines the unit and its interface; this doc defines what a unit's
   _emitted artifact_ may depend on, which is exactly that interface plus the SDK.
-- `reference_resolution.md` defines that a cross-unit reference resolves once at construction into a
-  stored direct reference; this doc defines how a backend realizes that without breaking unit
-  independence (downward link-binding into a slot vs upward runtime navigation through an extern
-  member).
+- `reference_resolution.md` defines route segment classification and the sealing contract; this doc
+  defines how a backend realizes each segment kind without breaking unit independence.
 - `backend_contract.md` defines the per-node within-an-artifact realization rules: how a MIR node
   becomes target-language source. This doc draws the artifact boundary; `backend_contract.md`
   governs what happens inside.
 - `runtime_distribution.md` owns where the SDK/runtime lives; this doc owns the SDK's role as the
-  resolution substrate.
-- `runtime_model.md` places the fill in the constructor context and the read in the simulation
-  context.
+  opaque-segment resolution substrate.
+- `runtime_model.md` places route execution in the constructor context and the read in the
+  simulation context.
 
 ## Forbidden Shapes
 
@@ -100,34 +96,51 @@ non-conforming code, not as a relaxation of the contract.
   global "wiring" file). This is the canonical violation: it serializes otherwise-independent
   compilation and reintroduces an undeclared whole-design dependency.
 - A referrer's artifact that names, includes, or casts to the type of a unit it does not instantiate
-  -- in particular, an upward reference naming its ancestor's unit type.
-- Embedding another unit's storage offset in the referrer's own emitted output to resolve a
-  cross-unit reference (as opposed to emitting a by-name access the link resolves).
-- A design-global signal or path table that mirrors the object graph. Cross-unit resolution is local
-  object-graph navigation (an owned child, or the parent chain), resolved once at construction; a
-  per-object by-name signal lookup at construction is local and permitted, a global flat table is
-  not.
-- A per-access cross-unit lookup on the simulation path; the hot path reads the stored reference.
-- A second cross-unit access mechanism that bypasses the SDK and the resolved stored reference.
+  -- in particular, an opaque-segment realization naming the target unit's internal type, member, or
+  field.
+- Embedding another unit's storage offset in the referrer's own emitted output. An opaque segment is
+  by-name through the SDK; a layout-visible segment uses a stable in-artifact member identity, not
+  an offset.
+- A route mechanism dispatched on the frontend's lexical-form classification or on source order.
+  Mechanism follows segment layout visibility.
+- A reference shape that splits cross-unit and intra-unit references into separate IR species,
+  separate install paths, separate vocabulary items. One reference, one route, one sealing.
+- A design-global signal or path table that mirrors the object graph. Opaque segments resolve
+  through local object-graph navigation (the parent chain, an owned child); a per-object by-name
+  registration is local and permitted, a global flat table is not.
+- A per-access cross-instance lookup on the simulation path; the hot path reads a sealed endpoint.
+- A second cross-instance access mechanism that bypasses the SDK and the sealed endpoint.
+- An IR vocabulary item modeling a particular SDK opaque-segment resolver shape (a named-method
+  family carrying bind state, a wrapper-typed member kind). The SDK chooses how an opaque segment
+  resolves; the IR vocabulary names only segments, route, and endpoint.
+- A binding installed in the constructor block. Routes execute in Resolve and seal in Seal; ctor
+  allocates the shell only.
 
 ## Notes / Examples
 
-`always_comb r = c.x;` (downward): `c` is a unit the parent instantiates, so `c`'s interface is a
-declared input to the parent's emission and `x` is bound when the artifacts are linked. The parent
-emits a by-name access; the link resolves it; the parent's own output carries no offset.
+**Same-unit sibling reference.** `always_comb from_b = b.bx;` inside generate block `a` of `Top`.
+The route has two segments: `a -> Top` (typed; the parent edge whose target class lives in Top's
+artifact) and `Top -> b -> bx` (typed; sibling member access plus variable access, both in Top's
+artifact). Top's emission produces a typed pointer chain; no SDK call. Resolve produces the
+candidate endpoint; Seal commits the variable's cell.
 
-`always_comb x = Top.g;` (upward): `Top` is an ancestor the referrer does not instantiate, so the
-referrer knows nothing about `Top` at compile time. It cannot name `Top` or include its artifact.
-The referrer holds the reference as an ordinary member whose type marks it external; at Bind that
-member climbs the enclosing chain to the scope denoted by the head's canonical structural identity
-(the frontend resolves and canonicalizes the head; runtime does not re-implement name-resolution
-semantics), obtains the `g` signal from that scope through the SDK, and stores the direct reference.
-The simulation-time read and change observation then read that member directly
-(`reference_resolution.md` inv 5); no cross-unit slot or side table records the reference.
-Construction state for the extern member (the canonical head identity, the descent suffix, the leaf
-signal name) arrives as ordinary MIR primitives in the constructor body, not as type payload --
-`backend_contract.md` keeps render mechanical.
+**Cross-unit downward reference.** `always_comb r = c.x;`. The route has two segments: `parent -> c`
+(typed; the parent's artifact owns the `c` member's pointer type) and `c -> x` (opaque; `x` lives
+inside `c`'s unit). The parent's artifact emits the typed access for the first segment, then an SDK
+by-name lookup for the second; the SDK answers from `c`'s registered signals.
+
+**Cross-unit upward reference.** `always_comb x = Top.g;`. The referrer does not instantiate `Top`.
+The entire route is opaque: the SDK climbs the runtime tree by canonical instance name to the scope
+identified by the head, then performs a by-name signal lookup. The referrer's artifact carries zero
+knowledge of Top's body; the route's segments arrive as ordinary MIR primitives in the emitted
+resolve code, not as type payload -- `backend_contract.md` keeps render mechanical.
+
+**Mixed route.** `top.gen.child.x` from outside `top`: the first two segments (`top -> gen`,
+`gen -> child`) are typed because `top`, `gen`, and `gen.child` (a member of `gen`'s class) all live
+in `top`'s artifact. The final segment (`child -> x`) is opaque because `x` lives in `child`'s unit.
+The route alternates typed and opaque segments cleanly; the sealed endpoint is one access point
+regardless.
 
 Any artifact that aggregates multiple units' bodies into one is forbidden, however a build step
-packages the emitted sources: the per-unit artifact boundary and the resolution rules above are the
-contract every backend must satisfy.
+packages the emitted sources: the per-unit artifact boundary and the segment-classification rules
+above are the contract every backend must satisfy.

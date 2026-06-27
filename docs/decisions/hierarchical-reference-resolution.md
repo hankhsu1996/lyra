@@ -6,7 +6,13 @@
 
 ## Status
 
-Accepted
+Superseded by `hierarchical-reference-routing.md` (2026-06-27) and `binding-graph-resolution.md`
+(2026-06-27).
+
+The two superseding entries replace this one's per-reference intra-unit / cross-unit classification
+with per-segment classification by layout visibility, introduce the binding graph as the resolution
+mechanism for all cross-instance bindings, and remove `ExternUp` from IR vocabulary. This entry is
+retained for history; it is not the current contract.
 
 ## Why this decision matters
 
