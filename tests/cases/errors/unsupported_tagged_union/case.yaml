@@ -1,4 +1,4 @@
-id: errors.unsupported_unpacked_union
+id: errors.unsupported_tagged_union
 tags: [errors, diag]
 input:
   command: [emit, cpp]
@@ -12,8 +12,8 @@ expect:
     contains:
       - "main.sv:2:"
       - "unsupported:"
-      - "unpacked union types are not yet supported"
-      - "union { int a; int b; } u;"
+      - "tagged unions are not yet supported"
+      - "union tagged { int a; int b; } u;"
     not_contains:
       - "internal error"
       - "\x1b["

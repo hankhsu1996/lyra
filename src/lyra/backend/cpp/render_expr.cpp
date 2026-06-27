@@ -830,6 +830,17 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
                 "({}).template Get<{}>()", RenderExpr(view, view.Expr(g.tuple)),
                 g.index);
           },
+          [&](const mir::UnionExpr& u) -> std::string {
+            return std::format(
+                "{}::Make<{}>({})",
+                RenderTypeAsCpp(view.Unit(), view.Class(), expr.type), u.index,
+                RenderExpr(view, view.Expr(u.value)));
+          },
+          [&](const mir::UnionGetExpr& g) -> std::string {
+            return std::format(
+                "({}).template Get<{}>()",
+                RenderExpr(view, view.Expr(g.union_value)), g.index);
+          },
       },
       expr.data);
 }

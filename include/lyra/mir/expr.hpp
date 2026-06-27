@@ -269,12 +269,34 @@ struct TupleGetExpr {
   std::size_t index;
 };
 
+// Builds a union value whose active member is component `index`, carrying
+// `value`. The value-build primitive for `UnionType`, the active-member
+// analogue of `TupleExpr`: a tuple literal lists every component, a union
+// literal names the one live member. A union member write `u.f = v` lowers to
+// assigning the union place a fresh `UnionExpr{index, value}` -- the member
+// access never survives as a writable place. `Expr::type` is the `UnionType`.
+struct UnionExpr {
+  std::size_t index;
+  ExprId value;
+};
+
+// Reads component `index` out of a union value (`union.index`), the read-only
+// active-member analogue of `TupleGetExpr`. `Expr::type` is the component's
+// type. Never appears as an lvalue: a write is a whole-union replacement via
+// `UnionExpr`, not a projection. Reading a member other than the live one is
+// undefined in SV (LRM 7.3); the backend returns that member's default.
+struct UnionGetExpr {
+  ExprId union_value;
+  std::size_t index;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     HostIntLiteral, ParamRef, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
     PointerCastExpr, CastExpr, MemberAccessExpr, ClosureExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr>;
+    ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr,
+    UnionExpr, UnionGetExpr>;
 
 struct Expr {
   ExprData data;

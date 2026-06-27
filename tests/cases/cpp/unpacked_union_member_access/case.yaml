@@ -1,0 +1,15 @@
+id: cpp.unpacked_union_member_access
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    def_i: 0
+    a_rt: 42
+    t_rt: 0x0AABBCCD
+    t_ovr: 0x7f
+    t_h: 0xBEEF
