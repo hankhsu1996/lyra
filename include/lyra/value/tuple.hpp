@@ -51,6 +51,20 @@ class Tuple {
     return !(*this == other);
   }
 
+  // LRM 11.4.5 `===` / `!==` (case equality): member-wise bit-for-bit identity,
+  // AND-reduced to a 1-bit PackedArray that is always a known 0 or 1. A real /
+  // shortreal leaf has no case-equality meaning and is rejected before
+  // lowering, so every component itself supplies case equality.
+  [[nodiscard]] auto CaseEqual(const Tuple& other) const -> PackedArray {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      PackedArray result = PackedArray::Bit(true);
+      ((result =
+            result && std::get<I>(data_).CaseEqual(std::get<I>(other.data_))),
+       ...);
+      return result;
+    }(std::index_sequence_for<Ts...>{});
+  }
+
   // LRM 9.4.2 update-event predicate (engine change-detection hook): are the
   // two values member-wise bit-identical.
   [[nodiscard]] auto IsBitIdentical(const Tuple& other) const -> bool {
@@ -72,5 +86,6 @@ class Tuple {
 };
 
 static_assert(LyraValue<Tuple<PackedArray, PackedArray>>);
+static_assert(CaseEqualComparable<Tuple<PackedArray, PackedArray>>);
 
 }  // namespace lyra::value
