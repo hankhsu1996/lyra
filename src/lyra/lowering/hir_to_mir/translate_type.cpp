@@ -236,6 +236,19 @@ auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
           [](const hir::ChandleType&) -> mir::TypeData {
             return mir::ChandleType{};
           },
+          [&](const hir::ClassHandleType& src) -> mir::TypeData {
+            // A class handle is a managed reference to the class object: the
+            // pointee is the object type naming the class's registry identity,
+            // pre-interned when the class id was minted.
+            return mir::ManagedRefType{
+                .pointee = ClassObjectType(src.class_id)};
+          },
+          [](const hir::NullType&) -> mir::TypeData {
+            // The `null` literal carries no class identity; it renders as a
+            // null pointer that any handle absorbs, so MIR types it as the
+            // opaque handle. Its value, not its type, drives the comparison.
+            return mir::ChandleType{};
+          },
           [](const hir::VoidType&) -> mir::TypeData { return mir::VoidType{}; },
       },
       data);

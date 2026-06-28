@@ -338,9 +338,22 @@ auto RenderCastExpr(
 auto MemberFieldName(const ScopeView& view, const mir::MemberAccessExpr& m)
     -> const std::string& {
   const mir::TypeId recv_type = view.Expr(m.receiver).type;
-  const auto& ptr =
-      std::get<mir::PointerType>(view.Unit().types.Get(recv_type).data);
-  return view.ClassByObjectType(ptr.pointee).members.Get(m.member.var).name;
+  const auto& recv_data = view.Unit().types.Get(recv_type).data;
+  // The receiver reaches the object either through a borrowed pointer (a scope
+  // `self`) or a managed reference (a class handle); both name the object type
+  // as their pointee.
+  mir::TypeId pointee{};
+  if (const auto* ptr = std::get_if<mir::PointerType>(&recv_data)) {
+    pointee = ptr->pointee;
+  } else if (
+      const auto* managed = std::get_if<mir::ManagedRefType>(&recv_data)) {
+    pointee = managed->pointee;
+  } else {
+    throw InternalError(
+        "MemberFieldName: member-access receiver is neither a pointer nor a "
+        "managed reference");
+  }
+  return view.ClassByObjectType(pointee).members.Get(m.member.var).name;
 }
 
 auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)

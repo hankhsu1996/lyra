@@ -4,6 +4,9 @@
 #include <utility>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/registry.hpp"
+#include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -30,6 +33,9 @@ struct ModuleUnit {
   base::Arena<Type, TypeId> types;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
+  // A class can be referenced -- as a handle type or a `new` target -- before
+  // its body is built, so its identity must exist before its definition.
+  base::Registry<ClassDecl, ClassId> classes;
 
   explicit ModuleUnit(std::string name)
       : name(std::move(name)), builtins(MakeBuiltins(types)) {

@@ -224,6 +224,11 @@ class HirDumper {
             [](const ShortRealType&) -> std::string { return "ShortRealType"; },
             [](const RealTimeType&) -> std::string { return "RealTimeType"; },
             [](const ChandleType&) -> std::string { return "ChandleType"; },
+            [](const ClassHandleType& c) -> std::string {
+              return std::format(
+                  "ClassHandleType(class=Class[{}])", c.class_id.value);
+            },
+            [](const NullType&) -> std::string { return "NullType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
         },
         t.data);
@@ -393,6 +398,7 @@ class HirDumper {
             [](const RealLiteral& lit) -> std::string {
               return std::format("RealLiteral({})", lit.value);
             },
+            [](const NullLiteral&) -> std::string { return "NullLiteral"; },
             [](const StructuralVarRef& r) -> std::string {
               return std::format(
                   "StructuralVar[{}](hops={})", r.var.value, r.hops.value);
@@ -737,6 +743,10 @@ class HirDumper {
               return std::format(
                   "DynamicArrayNewExpr size=Expr[{}]", n.size.value);
             },
+            [](const ClassNewExpr& n) -> std::string {
+              return std::format(
+                  "ClassNewExpr class=Class[{}]", n.class_id.value);
+            },
             [](const AssociativeAssignmentPatternExpr& a) -> std::string {
               std::string entries;
               for (std::size_t i = 0; i < a.entries.size(); ++i) {
@@ -786,11 +796,41 @@ class HirDumper {
     }
     Dedent();
 
+    if (u.classes.size() > 0) {
+      Line("Classes:");
+      Indent();
+      for (std::size_t i = 0; i < u.classes.size(); ++i) {
+        const ClassId id{static_cast<std::uint32_t>(i)};
+        if (!u.classes.IsDefined(id)) {
+          Line(std::format("[{}] <declared>", i));
+          continue;
+        }
+        DumpClass(i, u.classes.Get(id));
+      }
+      Dedent();
+    }
+
     Line("Root:");
     Indent();
     DumpScope(u.root_scope);
     Dedent();
 
+    Dedent();
+  }
+
+  void DumpClass(std::size_t index, const ClassDecl& c) {
+    Line(std::format("[{}] class \"{}\"", index, c.name));
+    Indent();
+    for (const auto& field : c.fields) {
+      if (field.initializer.has_value()) {
+        Line(
+            std::format(
+                "{}:Type[{}] = Expr[{}]", field.name, field.type.value,
+                field.initializer->value));
+      } else {
+        Line(std::format("{}:Type[{}]", field.name, field.type.value));
+      }
+    }
     Dedent();
   }
 
