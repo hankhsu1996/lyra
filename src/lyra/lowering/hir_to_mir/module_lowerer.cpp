@@ -9,14 +9,27 @@
 #include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
   WalkFrame root_frame;
+
+  // Every class identity is minted before any type is translated, so a class
+  // handle type resolves to the managed-reference pointee that names it while
+  // the class bodies are still being built.
+  for (std::size_t i = 0; i < hir_->classes.size(); ++i) {
+    const hir::ClassId hir_id{static_cast<std::uint32_t>(i)};
+    const mir::ClassId mir_id = unit_.DeclareClass();
+    const mir::TypeId object_type =
+        unit_.types.Intern(mir::ObjectType{.class_id = mir_id});
+    MapClass(hir_id, mir_id, object_type);
+  }
 
   // Every HIR type is MIR-representable: AST-to-HIR rejects the forms MIR has
   // no shape for, so this projection never fails.
@@ -26,6 +39,15 @@ auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
     const mir::TypeId mir_id =
         unit_.types.Intern(TranslateTypeData(hir_type.data));
     MapType(hir_id, mir_id);
+  }
+
+  for (std::size_t i = 0; i < hir_->classes.size(); ++i) {
+    const hir::ClassId hir_id{static_cast<std::uint32_t>(i)};
+    ClassDeclLowerer class_lowerer(
+        *this, ClassObjectType(hir_id), hir_->classes.Get(hir_id));
+    auto class_or = class_lowerer.Run();
+    if (!class_or) return std::unexpected(std::move(class_or.error()));
+    unit_.DefineClass(TranslateClass(hir_id), *std::move(class_or));
   }
 
   StructuralScopeLowerer root(*this, nullptr, hir_->name, hir_->root_scope);

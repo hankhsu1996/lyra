@@ -57,6 +57,8 @@ auto Type::Kind() const -> TypeKind {
           [](const ShortRealType&) { return TypeKind::kShortReal; },
           [](const RealTimeType&) { return TypeKind::kRealTime; },
           [](const ChandleType&) { return TypeKind::kChandle; },
+          [](const ClassHandleType&) { return TypeKind::kClassHandle; },
+          [](const NullType&) { return TypeKind::kNull; },
           [](const VoidType&) { return TypeKind::kVoid; },
       },
       data);
@@ -131,6 +133,8 @@ auto Type::IsValueChangeObservable() const -> bool {
     case TypeKind::kWildcardIndex:
     case TypeKind::kEvent:
     case TypeKind::kChandle:
+    case TypeKind::kClassHandle:
+    case TypeKind::kNull:
     case TypeKind::kVoid:
       return false;
   }

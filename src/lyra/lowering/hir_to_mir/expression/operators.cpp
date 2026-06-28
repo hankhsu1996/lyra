@@ -326,6 +326,23 @@ auto BuildMirBinaryExpr(
   const bool string_lhs = lhs_ty.Kind() == mir::TypeKind::kString;
   const bool string_rhs = rhs_ty.Kind() == mir::TypeKind::kString;
 
+  // LRM 8.4: handle equality compares object identity and yields a 1-bit
+  // value. A handle's `==` / `!=` produces a host bool, reshaped to the SV
+  // 1-bit integral by `FromBool` so the result carries the value type a 1-bit
+  // signal assignment expects.
+  const auto is_handle = [](const mir::Type& ty) {
+    return ty.Kind() == mir::TypeKind::kManagedRef ||
+           ty.Kind() == mir::TypeKind::kChandle;
+  };
+  if ((is_handle(lhs_ty) || is_handle(rhs_ty)) &&
+      (op == mir::BinaryOp::kEquality || op == mir::BinaryOp::kInequality)) {
+    const mir::ExprId cmp = block.exprs.Add(
+        mir::Expr{
+            .data = mir::BinaryExpr{.op = op, .lhs = lhs_id, .rhs = rhs_id},
+            .type = result_type});
+    return MakeFromBoolCall(cmp, result_type);
+  }
+
   // LRM 11.3.1 / LRM 6.16 logical operator on real / string operands needs
   // `bool(...)` coercion on each operand before the host-native `&&` / `||`
   // / `==` composes them; `kFromBool` re-shapes the host bool back to a

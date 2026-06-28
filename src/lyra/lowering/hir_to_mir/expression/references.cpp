@@ -129,6 +129,10 @@ auto LowerHirTimeLiteral(const ModuleLowerer& module, const hir::TimeLiteral& t)
       .type = module.Unit().builtins.realtime};
 }
 
+auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
+  return mir::Expr{.data = mir::NullLiteral{}, .type = type};
+}
+
 auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
     -> mir::Expr {
   return mir::Expr{.data = mir::RealLiteral{.value = r.value}, .type = type};
@@ -294,6 +298,9 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(r, result_type);
           },
+          [&](const hir::NullLiteral&) -> mir::Expr {
+            return LowerHirNullLiteral(result_type);
+          },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
             return LowerStructuralVarRefExpr(lowerer, frame, m);
           },
@@ -330,6 +337,9 @@ auto LowerHirPrimaryExprStructural(
           },
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(r, result_type);
+          },
+          [&](const hir::NullLiteral&) -> mir::Expr {
+            return LowerHirNullLiteral(result_type);
           },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
             return LowerStructuralVarRefExpr(lowerer, frame, m);
