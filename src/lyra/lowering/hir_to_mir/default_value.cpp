@@ -297,6 +297,11 @@ auto BuildDefaultValueExpr(
           [&](const mir::PointerType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
+          // LRM 8.4 / Table 7-1: an uninitialized class handle defaults to
+          // null.
+          [&](const mir::ManagedRefType&) -> mir::Expr {
+            return mir::Expr{.data = mir::NullLiteral{}, .type = type};
+          },
           [&](const mir::VectorType&) -> mir::Expr {
             return mir::Expr{
                 .data =

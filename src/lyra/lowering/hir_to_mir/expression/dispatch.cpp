@@ -129,6 +129,15 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirAssociativeAssignmentPatternExpr(
                 lowerer, frame, a, result_type);
           },
+          [&](const hir::ClassNewExpr&) -> diag::Result<mir::Expr> {
+            // `new` allocates a managed object and runs its constructor: a
+            // construction whose result type (a managed reference) names what
+            // to build, with no constructor arguments.
+            return mir::Expr{
+                .data =
+                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
+                .type = result_type};
+          },
       },
       expr.data);
   if (!raw_or) return raw_or;

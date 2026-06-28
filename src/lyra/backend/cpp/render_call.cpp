@@ -482,6 +482,18 @@ auto RenderCalleePart(
                       RenderTypeAsCpp(view.Unit(), view.Class(), ptr->pointee)),
                   .leading_arg_count = 0};
             }
+            // A managed reference result is a class `new`: allocate on the
+            // managed heap and run the object's constructor.
+            if (const auto* managed =
+                    std::get_if<mir::ManagedRefType>(&result_ty.data);
+                managed != nullptr) {
+              return {
+                  .expr = std::format(
+                      "lyra::runtime::GcNew<{}>",
+                      RenderTypeAsCpp(
+                          view.Unit(), view.Class(), managed->pointee)),
+                  .leading_arg_count = 0};
+            }
             return {
                 .expr = RenderTypeAsCpp(view.Unit(), view.Class(), result_type),
                 .leading_arg_count = 0};

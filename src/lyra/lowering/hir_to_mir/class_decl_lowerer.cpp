@@ -1,0 +1,69 @@
+#include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
+
+#include <utility>
+
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/class.hpp"
+#include "lyra/mir/expr.hpp"
+#include "lyra/mir/local.hpp"
+#include "lyra/mir/member.hpp"
+#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
+
+namespace lyra::lowering::hir_to_mir {
+
+auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
+  ModuleLowerer& module = *module_;
+  const hir::ClassDecl& hir_class = *hir_class_;
+
+  const mir::TypeId self_pointer_type = module.Unit().types.PointerTo(
+      object_type_, mir::PointerOwnership::kBorrowed);
+
+  mir::Class mir_class{
+      .name = hir_class.name,
+      .base = std::nullopt,
+      .self_pointer_type = self_pointer_type,
+      .time_resolution = {},
+      .ctor_prefix_params = {},
+      .params = {},
+      .members = {},
+      .constructor_block = {},
+      .contained = {},
+      .methods = {},
+      .type_aliases = {}};
+
+  mir::Block ctor_block;
+  const mir::LocalId self_id = ctor_block.vars.Add(
+      mir::LocalDecl{.name = "self", .type = self_pointer_type});
+  ScopeChainNode scope_link{};
+  const WalkFrame frame = WalkFrame{}
+                              .WithClass(&mir_class, scope_link)
+                              .WithBlock(&ctor_block)
+                              .WithSelfBinding(self_id, {});
+
+  // A class property owns its storage directly -- it is not an observable cell,
+  // so it is a plain value-typed member and its construction-time default is a
+  // plain assignment through `self`, not an observable `Set`.
+  for (const auto& field : hir_class.fields) {
+    const mir::TypeId field_type = module.TranslateType(field.type);
+    const mir::MemberId member_id = mir_class.members.Add(
+        mir::MemberDecl{.name = field.name, .type = field_type});
+    const mir::ExprId default_id = ctor_block.exprs.Add(
+        BuildDefaultValueFromHir(module, frame, field.type));
+    const mir::ExprId self_ref =
+        ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_pointer_type));
+    const mir::ExprId target = ctor_block.exprs.Add(
+        mir::MakeMemberAccessExpr(
+            self_ref, mir::MemberRef{.var = member_id}, field_type));
+    const mir::ExprId assign = ctor_block.exprs.Add(
+        mir::MakeAssignExpr(target, default_id, field_type));
+    ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
+  }
+
+  mir_class.constructor_block = std::move(ctor_block);
+  return mir_class;
+}
+
+}  // namespace lyra::lowering::hir_to_mir

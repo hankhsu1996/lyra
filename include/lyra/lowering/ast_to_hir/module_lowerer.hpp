@@ -25,6 +25,7 @@
 
 namespace slang::ast {
 class Expression;
+class ClassType;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -145,6 +146,13 @@ class ModuleLowerer {
   auto InternType(const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
 
+  // Registers a class declaration on first encounter and returns its id,
+  // memoizing by slang class pointer. The id is declared before the body is
+  // built so a property whose type names the same class (a self-reference)
+  // resolves against a stable identity.
+  auto InternClass(const slang::ast::ClassType& cls, diag::SourceSpan span)
+      -> diag::Result<hir::ClassId>;
+
   // Facts.
   [[nodiscard]] auto SourceMapper() const
       -> const frontend::SlangSourceMapper& {
@@ -237,6 +245,7 @@ class ModuleLowerer {
 
   // Registries.
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
+  std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
   StructuralVarBindings structural_var_bindings_;
   SubroutineBindings subroutine_bindings_;
   LoopVarBindings loop_var_bindings_;

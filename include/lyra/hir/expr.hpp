@@ -8,6 +8,7 @@
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
@@ -172,6 +173,14 @@ struct DynamicArrayNewExpr {
   std::optional<ExprId> initializer;
 };
 
+// LRM 8.5 class object construction `new`. Allocates a new object of the named
+// class and runs its constructor, yielding a handle. The class is named by its
+// declaration id; `Expr::type` is the class handle type. Carries no constructor
+// arguments (the default `new`).
+struct ClassNewExpr {
+  ClassId class_id;
+};
+
 // LRM 7.9.11 associative-array literal `'{index: value, ..., default: d}`. Each
 // entry pairs a key expression with a value expression; the optional default is
 // the persistent fallback a read of an absent key returns (LRM 7.8.6). Slang
@@ -191,7 +200,7 @@ using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr,
     MemberAccessExpr, ConcatExpr, ReplicationExpr, AssignmentPatternExpr,
-    AssignmentPatternReplicationExpr, DynamicArrayNewExpr,
+    AssignmentPatternReplicationExpr, DynamicArrayNewExpr, ClassNewExpr,
     AssociativeAssignmentPatternExpr>;
 
 struct Expr {

@@ -10,6 +10,7 @@
 #include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
@@ -325,6 +326,16 @@ auto TranslateTypeData(
       return hir::TypeData{hir::EventType{}};
     case slang::ast::SymbolKind::CHandleType:
       return hir::TypeData{hir::ChandleType{}};
+    case slang::ast::SymbolKind::NullType:
+      return hir::TypeData{hir::NullType{}};
+    case slang::ast::SymbolKind::ClassType: {
+      auto class_id_or =
+          module.InternClass(canonical.as<slang::ast::ClassType>(), decl_span);
+      if (!class_id_or) {
+        return std::unexpected(std::move(class_id_or.error()));
+      }
+      return hir::TypeData{hir::ClassHandleType{.class_id = *class_id_or}};
+    }
     case slang::ast::SymbolKind::VoidType:
       return hir::TypeData{hir::VoidType{}};
     case slang::ast::SymbolKind::PackedStructType: {
@@ -433,6 +444,41 @@ auto TranslateTypeData(
 }
 
 }  // namespace
+
+auto ModuleLowerer::InternClass(
+    const slang::ast::ClassType& cls, diag::SourceSpan span)
+    -> diag::Result<hir::ClassId> {
+  if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
+    return it->second;
+  }
+  const hir::ClassId id = unit_.classes.Declare();
+  class_cache_.emplace(&cls, id);
+
+  hir::ClassDecl decl;
+  decl.name = std::string(cls.name);
+  for (const auto& prop :
+       cls.membersOfType<slang::ast::ClassPropertySymbol>()) {
+    if (prop.lifetime == slang::ast::VariableLifetime::Static) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "static class properties are not yet supported");
+    }
+    if (prop.getInitializer() != nullptr) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "class property initializers are not yet supported");
+    }
+    auto field_type = InternType(prop.getType(), span);
+    if (!field_type) return std::unexpected(std::move(field_type.error()));
+    decl.fields.push_back(
+        hir::ClassField{
+            .name = std::string(prop.name),
+            .type = *field_type,
+            .initializer = std::nullopt});
+  }
+  unit_.classes.Define(id, std::move(decl));
+  return id;
+}
 
 auto ModuleLowerer::InternType(
     const slang::ast::Type& type, diag::SourceSpan span)

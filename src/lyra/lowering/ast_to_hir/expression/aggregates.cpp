@@ -7,7 +7,10 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/diag/diag_code.hpp"
@@ -200,6 +203,35 @@ auto LowerNewArrayExprProc(
   };
 }
 
+template <ExprLowerer Lowerer>
+auto LowerNewClassExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::NewClassExpression& nc,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto& module = lowerer.Module();
+  if (nc.isSuperClass) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedClassFeature,
+        "super.new is not yet supported");
+  }
+  if (const auto* call = nc.constructorCall();
+      call != nullptr &&
+      !call->as<slang::ast::CallExpression>().arguments().empty()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedClassFeature,
+        "class constructor arguments are not yet supported");
+  }
+  const auto& cls = nc.type->getCanonicalType().as<slang::ast::ClassType>();
+  auto class_id = module.InternClass(cls, span);
+  if (!class_id) return std::unexpected(std::move(class_id.error()));
+  auto type_id = module.InternType(*nc.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data = hir::ClassNewExpr{.class_id = *class_id},
+      .span = span,
+  };
+}
+
 // One concrete instantiation per pass class; the templates are defined here so
 // the dispatchers in lower.cpp link against the symbols emitted in this file.
 template auto LowerConcatExpr(
@@ -240,5 +272,11 @@ template auto LowerReplicationExpr(
     StructuralScopeLowerer&, WalkFrame,
     const slang::ast::ReplicationExpression&, diag::SourceSpan)
     -> diag::Result<hir::Expr>;
+template auto LowerNewClassExpr(
+    ProcessLowerer&, WalkFrame, const slang::ast::NewClassExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerNewClassExpr(
+    StructuralScopeLowerer&, WalkFrame, const slang::ast::NewClassExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

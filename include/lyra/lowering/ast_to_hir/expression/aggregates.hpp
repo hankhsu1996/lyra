@@ -16,6 +16,7 @@ namespace slang::ast {
 class AssignmentPatternExpressionBase;
 class ConcatenationExpression;
 class NewArrayExpression;
+class NewClassExpression;
 class ReplicatedAssignmentPatternExpression;
 class ReplicationExpression;
 class StructuredAssignmentPatternExpression;
@@ -65,5 +66,13 @@ auto LowerNewArrayExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NewArrayExpression& na, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
+
+// The class constructor `new` (LRM 8.5) yields a handle; the construction is
+// independent of the enclosing scope, so one template over the pass class
+// serves both contexts.
+template <ExprLowerer Lowerer>
+auto LowerNewClassExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::NewClassExpression& nc,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

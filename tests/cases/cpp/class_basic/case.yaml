@@ -1,0 +1,15 @@
+id: cpp.class_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    x_val: 5
+    y_val: 12
+    eq_null: 0
+    eq_copy: 1
+    eq_distinct: 0

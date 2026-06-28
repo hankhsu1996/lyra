@@ -5,6 +5,7 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/types/Type.h>
 
@@ -162,17 +163,39 @@ auto LowerRangeSelectExpr(
   };
 }
 
+// A class property's index is its position among the class's properties in
+// slang's member order -- the same order `InternClass` registers the HIR
+// ClassDecl fields, so the two indices align.
+auto ClassPropertyIndex(const slang::ast::ClassPropertySymbol& prop)
+    -> std::uint32_t {
+  const auto* scope = prop.getParentScope();
+  std::uint32_t index = 0;
+  for (const auto& member :
+       scope->membersOfType<slang::ast::ClassPropertySymbol>()) {
+    if (&member == &prop) {
+      return index;
+    }
+    ++index;
+  }
+  throw InternalError("ClassPropertyIndex: property not found in its class");
+}
+
 template <ExprLowerer Lowerer>
 auto LowerMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  if (sel.member.kind != slang::ast::SymbolKind::Field) {
+  std::uint32_t field_index = 0;
+  if (sel.member.kind == slang::ast::SymbolKind::Field) {
+    field_index = sel.member.as<slang::ast::FieldSymbol>().fieldIndex;
+  } else if (sel.member.kind == slang::ast::SymbolKind::ClassProperty) {
+    field_index =
+        ClassPropertyIndex(sel.member.as<slang::ast::ClassPropertySymbol>());
+  } else {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "member access target is not a struct field");
+        "member access target is not a struct field or class property");
   }
-  const auto* field = &sel.member.as<slang::ast::FieldSymbol>();
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id = frame.Exprs().Add(*std::move(base_or));
@@ -183,7 +206,7 @@ auto LowerMemberAccessExpr(
       .data =
           hir::MemberAccessExpr{
               .base_value = base_id,
-              .field_index = field->fieldIndex,
+              .field_index = field_index,
           },
       .span = span,
   };

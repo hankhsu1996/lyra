@@ -17,7 +17,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -157,8 +156,11 @@ auto ValidateAssignableImpl(
           expr.as<slang::ast::RangeSelectExpression>().value());
     case EK::MemberAccess: {
       const auto& ma = expr.as<slang::ast::MemberAccessExpression>();
-      if (ma.member.kind != slang::ast::SymbolKind::Field) {
-        return reject("member access target is not a struct field");
+      if (ma.member.kind != slang::ast::SymbolKind::Field &&
+          ma.member.kind != slang::ast::SymbolKind::ClassProperty) {
+        return reject(
+            "member access target is not a struct field or class "
+            "property");
       }
       return ValidateAssignableImpl(module, procedural_context, ma.value());
     }

@@ -37,6 +37,10 @@ class Registry {
     return slots_.at(id.value).has_value();
   }
 
+  [[nodiscard]] auto size() const -> std::size_t {
+    return slots_.size();
+  }
+
   [[nodiscard]] auto Get(Id id) const -> const T& {
     const auto& slot = slots_.at(id.value);
     if (!slot.has_value()) {

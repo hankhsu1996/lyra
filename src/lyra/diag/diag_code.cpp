@@ -121,6 +121,11 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_fork_join_form"}},
+    std::pair{
+        DiagCode::kUnsupportedClassFeature,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .name = "unsupported_class_feature"}},
 
     std::pair{
         DiagCode::kErrorDelayValueOutOfRange,

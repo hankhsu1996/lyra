@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -31,6 +32,8 @@ enum class TypeKind {
   kShortReal,
   kRealTime,
   kChandle,
+  kClassHandle,
+  kNull,
   kVoid,
 };
 
@@ -200,11 +203,25 @@ struct RealTimeType {};
 struct ChandleType {};
 struct VoidType {};
 
+// LRM 8.3 class handle: the type of a variable that refers to a class object.
+// Null is a legal value, the object is reached through the handle, and the
+// referenced class is named by its declaration id (resolved through the unit's
+// class registry).
+struct ClassHandleType {
+  ClassId class_id;
+};
+
+// LRM 8.4: the type slang gives the `null` literal. It is assignment- and
+// comparison-compatible with any class handle; the contextual handle determines
+// the operation, so this type carries no class identity of its own.
+struct NullType {};
+
 using TypeData = std::variant<
     ScalarBitType, PackedArrayType, PackedStructType, PackedUnionType, EnumType,
     UnpackedStructType, UnpackedUnionType, UnpackedArrayType, DynamicArrayType,
     QueueType, AssociativeArrayType, WildcardIndexType, StringType, EventType,
-    RealType, ShortRealType, RealTimeType, ChandleType, VoidType>;
+    RealType, ShortRealType, RealTimeType, ChandleType, ClassHandleType,
+    NullType, VoidType>;
 
 struct Type {
   TypeData data;

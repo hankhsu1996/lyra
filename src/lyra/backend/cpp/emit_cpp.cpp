@@ -249,11 +249,15 @@ auto RenderScopeAsClass(
     out += "\n";
   }
 
-  // A plain object (no runtime base) is not a tree node: it needs no
-  // registering constructor, only the implicit default one.
+  // A tree node forwards to its runtime base; a plain object (a class) has no
+  // base but still runs its constructor body to initialize its members. Either
+  // way the constructor is emitted when there is a base to forward to or a body
+  // to run; a baseless object with an empty body keeps the implicit default.
   if (s.base.has_value()) {
     out +=
         RenderConstructor(this_anchor, s, RenderBaseClass(*s.base), indent + 1);
+  } else if (!s.constructor_block.root_stmts.empty()) {
+    out += RenderConstructor(this_anchor, s, "", indent + 1);
   }
 
   // A unit-root scope is a module instance; its name is the def-name an upward
@@ -334,6 +338,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/file_table.hpp\"\n";
   out += "#include \"lyra/runtime/finish.hpp\"\n";
   out += "#include \"lyra/runtime/fork.hpp\"\n";
+  out += "#include \"lyra/runtime/gc_ref.hpp\"\n";
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "#include \"lyra/runtime/scope.hpp\"\n";
@@ -405,6 +410,22 @@ auto RenderScopeHeaderFile(
   if (any_alias) {
     out += "\n";
   }
+
+  // A SystemVerilog class is a free-standing registry object with no runtime
+  // base and no structural parent, so it is not reached by the scope tree's
+  // `contained` walk. Emit every baseless class before the scope tree that may
+  // reference it through a handle or `new`. (The scope objects -- the module
+  // and its generate scopes -- carry a runtime base and are emitted by the
+  // tree walk below.)
+  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
+    const mir::ClassId id{static_cast<std::uint32_t>(i)};
+    if (!unit.classes.IsDefined(id)) continue;
+    const mir::Class& cls = unit.GetClass(id);
+    if (cls.base.has_value()) continue;
+    out += RenderScopeAsClass(unit, cls, 0, nullptr);
+    out += "\n";
+  }
+
   out += RenderScopeAsClass(unit, s, 0, nullptr);
   return out;
 }

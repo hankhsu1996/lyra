@@ -72,6 +72,35 @@ class ModuleLowerer {
     type_map_.emplace_back(mir_id);
   }
 
+  // A HIR class declaration's MIR identity and the interned `ObjectType` that
+  // names it. Both are minted before any type is translated, so a class handle
+  // type can resolve to its managed-reference pointee while the class body is
+  // still being built.
+  void MapClass(
+      hir::ClassId hir_id, mir::ClassId mir_id, mir::TypeId object_type) {
+    if (hir_id.value != class_map_.size()) {
+      throw InternalError(
+          "ModuleLowerer::MapClass: HIR classes must be mapped in HIR id "
+          "order");
+    }
+    class_map_.emplace_back(mir_id);
+    class_object_type_map_.emplace_back(object_type);
+  }
+
+  [[nodiscard]] auto TranslateClass(hir::ClassId hir_id) const -> mir::ClassId {
+    if (hir_id.value >= class_map_.size()) {
+      throw InternalError("ModuleLowerer::TranslateClass: unmapped HIR class");
+    }
+    return class_map_[hir_id.value];
+  }
+
+  [[nodiscard]] auto ClassObjectType(hir::ClassId hir_id) const -> mir::TypeId {
+    if (hir_id.value >= class_object_type_map_.size()) {
+      throw InternalError("ModuleLowerer::ClassObjectType: unmapped HIR class");
+    }
+    return class_object_type_map_[hir_id.value];
+  }
+
   // Mints a collision-free class name for one generate scope, tagged by its
   // arm kind (`loop` / `then` / `else` / ...). The name is only an
   // implementation handle for the emitted type -- a generate scope's runtime
@@ -89,6 +118,8 @@ class ModuleLowerer {
   const diag::SourceManager* source_manager_;
   mir::CompilationUnit unit_;
   std::vector<mir::TypeId> type_map_;
+  std::vector<mir::ClassId> class_map_;
+  std::vector<mir::TypeId> class_object_type_map_;
   std::uint32_t next_generate_scope_name_ = 0;
 };
 

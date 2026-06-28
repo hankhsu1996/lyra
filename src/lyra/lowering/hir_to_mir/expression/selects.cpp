@@ -772,6 +772,18 @@ auto LowerHirMemberAccessExpr(
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
+  // LRM 8.4: a class property access reaches the object through the handle. The
+  // handle is read (the receiver), and the property is named by its class-local
+  // member id, which is its declaration-order field index.
+  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
+      hir::TypeKind::kClassHandle) {
+    auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
+    if (!base_or) return std::unexpected(std::move(base_or.error()));
+    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+    return mir::MakeMemberAccessExpr(
+        base_id, mir::MemberRef{.var = mir::MemberId{sel.field_index}},
+        result_type);
+  }
   // LRM 7.2: an unpacked struct lowers to a generic product (`TupleType`);
   // member access is a positional projection by declaration-order index.
   if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
@@ -865,6 +877,18 @@ auto LowerHirMemberAccessExprLhs(
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
+  // LRM 8.4: a class property write reaches the object through the handle. The
+  // handle is read to reach the shared object, and the property place is the
+  // member access through it; the write itself targets the object's storage.
+  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
+      hir::TypeKind::kClassHandle) {
+    auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
+    if (!base_or) return std::unexpected(std::move(base_or.error()));
+    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+    return mir::MakeMemberAccessExpr(
+        base_id, mir::MemberRef{.var = mir::MemberId{sel.field_index}},
+        result_type);
+  }
   // LRM 7.2: an unpacked-struct member write is a positional projection by
   // index over the base place. The observable root's write routes through the
   // cell's mutate path later, so the place is just the projection here.

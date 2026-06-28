@@ -106,6 +106,14 @@ auto MakeRealLiteralExpr(double value, hir::TypeId type, diag::SourceSpan span)
   };
 }
 
+auto MakeNullLiteralExpr(hir::TypeId type, diag::SourceSpan span) -> hir::Expr {
+  return hir::Expr{
+      .type = type,
+      .data = hir::PrimaryExpr{.data = hir::NullLiteral{}},
+      .span = span,
+  };
+}
+
 // The one expression dispatcher, shared by both pass classes. An expression's
 // meaning does not depend on whether a process body or a structural scope
 // encloses it, so every context-free kind routes to one template handler listed
@@ -161,6 +169,12 @@ auto LowerExprImpl(
       auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeRealLiteralExpr(rl.getValue(), *type_id, span);
+    }
+
+    case slang::ast::ExpressionKind::NullLiteral: {
+      auto type_id = module.InternType(*expr.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeNullLiteralExpr(*type_id, span);
     }
 
     case slang::ast::ExpressionKind::NamedValue:
@@ -308,6 +322,10 @@ auto LowerExprImpl(
             "dynamic-array new[] is not legal in a structural expression; "
             "LRM 7.5.1 restricts it to blocking assignments");
       }
+
+    case slang::ast::ExpressionKind::NewClass:
+      return LowerNewClassExpr(
+          lowerer, frame, expr.as<slang::ast::NewClassExpression>(), span);
 
     default:
       if constexpr (kProcedural) {
