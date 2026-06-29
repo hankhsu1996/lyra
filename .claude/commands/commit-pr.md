@@ -26,6 +26,7 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 - **Commits on this branch:** !`git log --oneline main..HEAD 2>/dev/null || echo "(new branch)"`
 - **Full diff from main:** !`git diff --merge-base origin/main HEAD --stat`
 - **Commits behind main:** !`git fetch origin main --quiet 2>/dev/null && git rev-list --count HEAD..origin/main 2>/dev/null || echo "0"`
+- **Prettier (must match package-lock; run `npm ci` if it drifts):** !`npx prettier --version`
 
 ## Branch Rules
 
@@ -71,7 +72,7 @@ Each tool runs **once**. Formatters run in write mode; rerunning them in check m
    - Do not narrow `//...`. Fix failures before continuing.
 3. **Format (write mode, once each):**
    - `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
-   - `npx prettier --write "**/*.md"`
+   - `npm run format` (markdown; lock-pinned Prettier, not a bare `npx prettier`)
    - `buildifier -r .`
 4. **Lint and policy:**
    - `buildifier -mode=check -lint=warn -r .`

@@ -41,7 +41,7 @@ Same target set CI runs. Do not narrow `//...`. Fix failures before staging.
 
 ```bash
 find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i
-npx prettier --write "**/*.md"
+npm run format  # markdown; lock-pinned Prettier, not a bare npx prettier
 buildifier -r .
 ```
 
