@@ -48,7 +48,7 @@ auto IsExprRootedAtStructuralVar(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::TupleGetExpr& g) {
             return IsExprRootedAtStructuralVar(block, g.tuple);
           },
-          [&](const mir::UnionMemberRefExpr& g) {
+          [&](const mir::UnionGetRefExpr& g) {
             return IsExprRootedAtStructuralVar(block, g.union_value);
           },
           [&](const mir::CallExpr& c) {
@@ -136,11 +136,11 @@ auto CloneLhsExprForNbaBody(
                             .index = g.index},
                     .type = outer_expr.type});
           },
-          [&](const mir::UnionMemberRefExpr& g) -> mir::ExprId {
+          [&](const mir::UnionGetRefExpr& g) -> mir::ExprId {
             return body.exprs.Add(
                 mir::Expr{
                     .data =
-                        mir::UnionMemberRefExpr{
+                        mir::UnionGetRefExpr{
                             .union_value = CloneLhsExprForNbaBody(
                                 closure, outer_block, self_ptr_type,
                                 snapshot_counter, g.union_value),

@@ -633,14 +633,14 @@ class MirDumper {
               return std::format(
                   "UnionExpr index={} value=Expr[{}]", u.index, u.value.value);
             },
-            [](const UnionMemberExpr& g) -> std::string {
+            [](const UnionGetExpr& g) -> std::string {
               return std::format(
-                  "UnionMemberExpr union=Expr[{}] index={}",
-                  g.union_value.value, g.index);
+                  "UnionGetExpr union=Expr[{}] index={}", g.union_value.value,
+                  g.index);
             },
-            [](const UnionMemberRefExpr& g) -> std::string {
+            [](const UnionGetRefExpr& g) -> std::string {
               return std::format(
-                  "UnionMemberRefExpr union=Expr[{}] index={}",
+                  "UnionGetRefExpr union=Expr[{}] index={}",
                   g.union_value.value, g.index);
             },
         },

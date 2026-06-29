@@ -281,26 +281,27 @@ struct UnionExpr {
 };
 
 // Reads component `index` of a union value (`union.index`), the read side of
-// union member access and the active-member analogue of `TupleGetExpr`.
-// `Expr::type` is the component's type. Reading an inactive member is undefined
-// in SV (LRM 7.3) and the backend returns that member's default. The write side
-// is `UnionMemberRefExpr`; the read and write are separate access forms because
-// a union member's read realization (a value) differs from its write
-// realization (a reference that activates the member), exactly as a packed
-// array element splits into element-value and element-reference forms.
-struct UnionMemberExpr {
+// union member access and the active-member analogue of `TupleGetExpr` (both
+// `std::get<I>`-style positional access). `Expr::type` is the component's type.
+// Reading an inactive member is undefined in SV (LRM 7.3) and the backend
+// returns that member's default. The write side is `UnionGetRefExpr`; the read
+// and write are separate access forms because a union member's read realization
+// (a value) differs from its write realization (a reference that activates the
+// member), exactly as a packed array element splits into element-value and
+// element-reference forms.
+struct UnionGetExpr {
   ExprId union_value;
   std::size_t index;
 };
 
 // The writable location of union member `index` (`u.f` as an assignment
-// target), the write side and by-reference counterpart of `UnionMemberExpr`.
+// target), the write side and by-reference counterpart of `UnionGetExpr`.
 // `Expr::type` is the component's type. As an `AssignExpr` target it carries
 // `u.f = v`, `u.f op= v`, and a nested `u.f.g = v` uniformly with every other
 // lvalue; the backend renders it as a reference to the active member (making
 // the member active first if needed), so further member or element projection
 // composes on it as on a struct member.
-struct UnionMemberRefExpr {
+struct UnionGetRefExpr {
   ExprId union_value;
   std::size_t index;
 };
@@ -311,7 +312,7 @@ using ExprData = std::variant<
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
     PointerCastExpr, CastExpr, MemberAccessExpr, ClosureExpr, ConcatExpr,
     ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr,
-    UnionExpr, UnionMemberExpr, UnionMemberRefExpr>;
+    UnionExpr, UnionGetExpr, UnionGetRefExpr>;
 
 struct Expr {
   ExprData data;

@@ -89,8 +89,8 @@ merged node.
       write-back location, so compound lowers uniformly to `AssignExpr{target, op, value}` and the
       backend evaluates the single target once (C++ `op=`; a future LIR computes the address once).
       A string character write is a write-back proxy (`String::ElementRef`) and a union member write
-      a member-reference proxy (`UnionMemberRefExpr`); neither is a read-modify-write desugar at the
-      lowering.
+      a reference to the active member (`Union::GetRef`); neither is a read-modify-write desugar at
+      the lowering.
 
 ## Cross-references
 

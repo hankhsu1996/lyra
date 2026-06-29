@@ -32,7 +32,7 @@ auto FindLhsRootId(const mir::Block& block, mir::ExprId lhs_id) -> mir::ExprId {
       lhs_id = g->tuple;
       continue;
     }
-    if (const auto* m = std::get_if<mir::UnionMemberRefExpr>(&expr.data)) {
+    if (const auto* m = std::get_if<mir::UnionGetRefExpr>(&expr.data)) {
       lhs_id = m->union_value;
       continue;
     }
@@ -55,8 +55,8 @@ auto RewriteLhsRootWithMutate(
         RewriteLhsRootWithMutate(unit, block, rewritten.tuple, services_id);
     return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
   }
-  if (const auto* m = std::get_if<mir::UnionMemberRefExpr>(&expr.data)) {
-    mir::UnionMemberRefExpr rewritten = *m;
+  if (const auto* m = std::get_if<mir::UnionGetRefExpr>(&expr.data)) {
+    mir::UnionGetRefExpr rewritten = *m;
     const mir::TypeId result_ty = expr.type;
     rewritten.union_value = RewriteLhsRootWithMutate(
         unit, block, rewritten.union_value, services_id);

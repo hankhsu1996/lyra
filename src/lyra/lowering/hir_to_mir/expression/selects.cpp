@@ -797,7 +797,7 @@ auto LowerHirMemberAccessExpr(
         .type = result_type};
   }
   // LRM 7.3: an unpacked union member read projects the active member by index
-  // out of the overlapping-storage value (`UnionMemberExpr`); reading an
+  // out of the overlapping-storage value (`UnionGetExpr`); reading an
   // inactive member is undefined and the backend returns that member's default.
   if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedUnion) {
@@ -806,8 +806,7 @@ auto LowerHirMemberAccessExpr(
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
     return mir::Expr{
         .data =
-            mir::UnionMemberExpr{
-                .union_value = base_id, .index = sel.field_index},
+            mir::UnionGetExpr{.union_value = base_id, .index = sel.field_index},
         .type = result_type};
   }
   const auto& fields =
@@ -916,8 +915,8 @@ auto LowerHirMemberAccessExprLhs(
         .type = result_type};
   }
   // LRM 7.3: an unpacked union member write is the write-side access form
-  // `UnionMemberRefExpr` over the union place (the by-reference counterpart of
-  // the `UnionMemberExpr` read). The observable root routes through the cell's
+  // `UnionGetRefExpr` over the union place (the by-reference counterpart of
+  // the `UnionGetExpr` read). The observable root routes through the cell's
   // mutate path later; the place is just the projection here.
   if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedUnion) {
@@ -926,7 +925,7 @@ auto LowerHirMemberAccessExprLhs(
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
     return mir::Expr{
         .data =
-            mir::UnionMemberRefExpr{
+            mir::UnionGetRefExpr{
                 .union_value = base_id, .index = sel.field_index},
         .type = result_type};
   }

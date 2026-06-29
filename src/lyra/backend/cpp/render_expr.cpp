@@ -370,7 +370,7 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           },
           // HIR-to-MIR lowers an LHS selector chain to write-form nodes -- a
           // container-access `CallExpr` with a write callee (per
-          // `mir::IsContainerAccessCall`), a `UnionMemberRefExpr`, a
+          // `mir::IsContainerAccessCall`), a `UnionGetRefExpr`, a
           // `TupleGetExpr` on a mutable base -- whose value-side render is
           // already a writable place. So the lvalue rendering of a container
           // access is just its value-side render, with no extra fix-up here.
@@ -393,9 +393,9 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           // through the addressable union (the Mutate snapshot). The reference
           // makes the member active, so the projection is itself the assignment
           // target and composes for a nested `u.f.g`.
-          [&](const mir::UnionMemberRefExpr& g) -> std::string {
+          [&](const mir::UnionGetRefExpr& g) -> std::string {
             return std::format(
-                "({}).template MemberRef<{}>()",
+                "({}).template GetRef<{}>()",
                 RenderLhsExpr(view, view.Expr(g.union_value)), g.index);
           },
           [&](const auto&) -> std::string {
@@ -858,17 +858,17 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
                 RenderTypeAsCpp(view.Unit(), view.Class(), expr.type), u.index,
                 RenderExpr(view, view.Expr(u.value)));
           },
-          [&](const mir::UnionMemberExpr& g) -> std::string {
+          [&](const mir::UnionGetExpr& g) -> std::string {
             return std::format(
-                "({}).template Member<{}>()",
+                "({}).template Get<{}>()",
                 RenderExpr(view, view.Expr(g.union_value)), g.index);
           },
           // The write node reaches rvalue render only as the receiver of a
           // container-access write (`u.h[i] = v`), where it is still the active
           // member reference; it renders the same as in lvalue position.
-          [&](const mir::UnionMemberRefExpr& g) -> std::string {
+          [&](const mir::UnionGetRefExpr& g) -> std::string {
             return std::format(
-                "({}).template MemberRef<{}>()",
+                "({}).template GetRef<{}>()",
                 RenderExpr(view, view.Expr(g.union_value)), g.index);
           },
       },

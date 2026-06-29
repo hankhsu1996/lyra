@@ -55,23 +55,23 @@ write-side locations.
    6.16.2), so the write side is a proxy. The explicit `s.getc(i)` / `s.putc(i, c)` methods (LRM
    6.16.3 / 6.16.2) stay for the method-call forms; `Element` / `ElementRef` are the indexing forms.
 
-3. **A union member access is a matched value / reference pair, like a packed array element.** The
-   read `u.f` is `UnionMemberExpr` rendering `Union::Member<I>()` (the active-member value, the
-   inactive-member default if `I` is not active); the write is `UnionMemberRefExpr` rendering
-   `Union::MemberRef<I>()`, a reference to the active member's storage that makes `I` active first
-   if it is not. The two are separate access forms because a union member's read realization (a
-   value) differs from its write realization (an activating reference) -- the same reason a packed
-   array element splits into `Element` / `ElementRef`. The write reference is a real reference, not
-   a proxy, so `u.f = v`, `u.f op= v`, and a nested `u.f.g = v` or `u.h[i] = v` all compose on it
-   exactly as a struct member's reference does. The only difference from a struct member is the
-   activation step; the active-member representation (not a byte overlay, see
-   `unpacked-union-representation.md`) is why a write activates the member rather than reinterprets
-   shared bytes. There is no union-specific reference concept -- this is the `Element` /
-   `ElementRef` access split, by compile-time index.
+3. **A union member access is a matched value / reference pair, like a struct member.** The read
+   `u.f` is `UnionGetExpr` rendering `Union::Get<I>()` (the active-member value, the inactive-member
+   default if `I` is not active); the write is `UnionGetRefExpr` rendering `Union::GetRef<I>()`, a
+   reference to the active member's storage that makes `I` active first if it is not. `Get` /
+   `GetRef` is the same verb a struct member uses (`std::get<I>` is the standard accessor for both a
+   `std::tuple` and a `std::variant`, the runtime realizations of struct and union). The two are
+   separate access forms because a union member's read realization (a value) differs from its write
+   realization (an activating reference) -- whereas a struct member's read and write are one `T&`,
+   so a struct collapses to a single `Get`. The write reference is a real reference, not a proxy, so
+   `u.f = v`, `u.f op= v`, and a nested `u.f.g = v` or `u.h[i] = v` all compose on it exactly as a
+   struct member's reference does. The only difference from a struct member is the activation step;
+   the active-member representation (not a byte overlay, see `unpacked-union-representation.md`) is
+   why a write activates the member rather than reinterprets shared bytes.
 
 4. **MIR carries one compound shape.** `AssignExpr{target, compound_op, value}` is the single
    representation; `target` is the lvalue expression (a container-access chain ending in
-   `kElementRef` for a string character, a `UnionMemberRefExpr` for a union member, a `TupleGetExpr`
+   `kElementRef` for a string character, a `UnionGetRefExpr` for a union member, a `TupleGetExpr`
    for a struct member, an `ElementRef` chain for an array element). There is no read-op-write
    desugar in MIR, and no per-target compound lowering. The HIR-to-MIR string-element and
    union-member assignment special cases, and the subscript-hoisting machinery that supported them,
@@ -103,23 +103,24 @@ write-side locations.
 
 - One runtime write-back proxy, `StringCharRef`: a string character has no in-place reference
   (`putc` enforces the out-of-range / NUL-byte rules, LRM 6.16.2), so its write side follows the
-  `PackedArrayRef` proxy shape. A union member needs no proxy -- `Union::MemberRef<I>()` returns a
-  real reference to the active member's storage.
-- Every component access is a matched value / reference pair distinguished by access form, named `X`
-  / `XRef`: array element `Element` / `ElementRef`, slice `Slice` / `SliceRef`, union member
-  `Member` / `MemberRef`, string character `Element` / `ElementRef`. A struct member is the one
-  collapse: its value and reference realizations are the same `T&`, so a single `TupleGetExpr`
-  (rendering `Get<i>`) serves both, the receiver's const-ness picking read from write.
-- A union member read is `UnionMemberExpr` (renders `Member<I>`); the write is `UnionMemberRefExpr`
-  (renders `MemberRef<I>`) -- two access forms, by compile-time index, the active-member analogue of
-  `kElement` / `kElementRef`.
+  `PackedArrayRef` proxy shape. A union member needs no proxy -- `Union::GetRef<I>()` returns a real
+  reference to the active member's storage.
+- Two access families, each a value / reference pair named `X` / `XRef`. Subscript access by a
+  runtime index: array / string element `Element` / `ElementRef`, slice `Slice` / `SliceRef`.
+  Positional member access by a compile-time index: struct and union member `Get` / `GetRef`
+  (`std::get<I>` is the standard accessor for both the `std::tuple` and the `std::variant` that back
+  them). A struct member collapses to a single `Get` (its value and reference realizations are the
+  same `T&`, the receiver's const-ness picking read from write); a union member keeps both forms
+  because its read (a value) and write (an activating reference) differ.
+- A union member read is `UnionGetExpr` (renders `Get<I>`); the write is `UnionGetRefExpr` (renders
+  `GetRef<I>`) -- two access forms, by compile-time index, parallel to `kElement` / `kElementRef`.
 - `value-type-concepts.md` is updated: `String` now participates in the `Indexable` concept --
   `Element` is the indexed character read, `ElementRef` (-> `StringCharRef`) the write; `getc` /
   `putc` stay for the explicit method calls.
 - `unpacked-union-representation.md` decision points 4 / 5 are revised: union member access is a
-  read form (`UnionMemberExpr`) and a write form (`UnionMemberRefExpr`), not a target that "never
-  survives as a writable place"; the write renders to a reference to the active member. The union
-  value model (active-member variant) is unchanged; only the member-write realization changes.
+  read form (`UnionGetExpr`) and a write form (`UnionGetRefExpr`), not a target that "never survives
+  as a writable place"; the write renders to a reference to the active member. The union value model
+  (active-member variant) is unchanged; only the member-write realization changes.
 - `operators.md` W13 closes structurally: the left-hand index is evaluated once because the target
   is a single lvalue the backend renders once, for every target kind, with no lowering desugar.
 
