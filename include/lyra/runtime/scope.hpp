@@ -131,14 +131,18 @@ class Scope {
   // The post-construction elaboration phases, each a top-down walk over the
   // whole subtree. Services and structure are already wired in the constructor;
   // these install behavior that needs the whole tree to exist. They run in
-  // order across the design: every scope resolves, then every scope
-  // initializes, then every scope activates.
+  // order across the design: every scope resolves, then every scope seals, then
+  // every scope initializes, then every scope activates.
   //
-  // Resolve relocates registered `ExternUp` members (cross-tree references).
-  // Initialize runs variable initializers, after resolution, so an initializer
-  // observes connected and bound values. Activate creates this scope's
-  // processes, after initialization.
+  // Resolve relocates registered `ExternUp` members (cross-tree references) and
+  // attaches cross-instance drivers. Seal freezes the resolved topology and
+  // validates it (a net's single-driver constraint, an unresolved endpoint),
+  // after every attachment across the design exists. Initialize runs variable
+  // initializers and seeds driver contributions, after sealing, so an
+  // initializer observes connected and bound values. Activate creates this
+  // scope's processes, after initialization.
   void Resolve();
+  void Seal();
   void Initialize();
   void Activate();
 
@@ -178,6 +182,13 @@ class Scope {
   // child's reference (a `ref` port) override this. Called in the resolve
   // phase, once the whole tree is constructed.
   virtual void ResolveState() {
+  }
+
+  // A scope with no topology to validate validates none; only scopes that must
+  // check their sealed topology (a net's single-driver constraint) override
+  // this. Called in the seal phase, after every cross-instance attachment in
+  // the design exists and before any initializer runs.
+  virtual void SealState() {
   }
 
   // A scope with no variable initializers runs none; only scopes with

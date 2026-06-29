@@ -37,8 +37,8 @@ namespace {
 // Walks the LHS expression to determine whether its addressable root is a
 // structural var (vs procedural local). NBA assignment requires a structural
 // target; procedural-local NBA is a known gap.
-auto IsExprRootedAtStructuralVar(const mir::Block& block, mir::ExprId expr_id)
-    -> bool {
+auto IsExprRootedAtStructuralDataObject(
+    const mir::Block& block, mir::ExprId expr_id) -> bool {
   const auto& expr = block.exprs.Get(expr_id);
   return std::visit(
       Overloaded{
@@ -46,21 +46,22 @@ auto IsExprRootedAtStructuralVar(const mir::Block& block, mir::ExprId expr_id)
           [](const mir::MemberAccessExpr&) { return true; },
           [](const mir::LocalRef&) { return false; },
           [&](const mir::TupleGetExpr& g) {
-            return IsExprRootedAtStructuralVar(block, g.tuple);
+            return IsExprRootedAtStructuralDataObject(block, g.tuple);
           },
           [&](const mir::UnionGetRefExpr& g) {
-            return IsExprRootedAtStructuralVar(block, g.union_value);
+            return IsExprRootedAtStructuralDataObject(block, g.union_value);
           },
           [&](const mir::CallExpr& c) {
             if (!mir::IsContainerAccessCallee(c.callee) ||
                 c.arguments.empty()) {
               return false;
             }
-            return IsExprRootedAtStructuralVar(block, c.arguments.front());
+            return IsExprRootedAtStructuralDataObject(
+                block, c.arguments.front());
           },
           [&](const mir::ConcatExpr& c) {
             return std::ranges::all_of(c.operands, [&](mir::ExprId op) {
-              return IsExprRootedAtStructuralVar(block, op);
+              return IsExprRootedAtStructuralDataObject(block, op);
             });
           },
           [](const auto&) { return false; },
@@ -236,7 +237,7 @@ auto ApplyAssignEffect(
         block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
     return effect_fn(block, target_in_outer, operands_in_outer, services_id);
   }
-  if (!IsExprRootedAtStructuralVar(block, target_in_outer)) {
+  if (!IsExprRootedAtStructuralDataObject(block, target_in_outer)) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
         "non-blocking assignment to procedural local is not supported yet");

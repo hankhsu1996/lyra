@@ -454,8 +454,8 @@ void EmitInstanceMemberConstruction(
 // `CallExpr` statements in the constructor body. Downward references take a
 // borrowed-pointer slot the constructor fills by navigating from `self` once
 // the children are built. Both run before bodies so reads resolve to the
-// member; both record their MIR read target as a StructuralVarRef to that
-// member, in HIR slot order.
+// member; both record their MIR read target as a StructuralDataObjectRef to
+// that member, in HIR slot order.
 void DeclareCrossUnitRefSlots(
     StructuralScopeLowerer& lowerer, mir::ClassShape& shape) {
   ModuleLowerer& module = lowerer.Module();
@@ -598,7 +598,7 @@ auto FindMemberByName(const mir::ClassShape& shape, std::string_view name)
 // The parent cast is sound because the structural-containment relation
 // built at HIR-to-MIR proves the receiver's N-th runtime parent is exactly
 // that enclosing specialization. The same invariant grounds the typed
-// enclosing access used for bare-name reads through `StructuralVarRef`;
+// enclosing access used for bare-name reads through `StructuralDataObjectRef`;
 // this path extends it one `MemberAccess` further.
 auto BuildTypedEnclosingNavValue(
     const StructuralScopeLowerer& lowerer, WalkFrame frame,
@@ -1014,6 +1014,96 @@ auto AsOwnedGenerateChildClassId(
     return obj->class_id;
   }
   return std::nullopt;
+}
+
+// The net member a continuous assignment drives -- the resolved-net cell its
+// left-hand side names -- or nullopt when the target is a variable (a direct
+// write, not a driver).
+auto ContinuousAssignNetTarget(
+    const StructuralScopeLowerer& lowerer, const mir::Class& mir_class,
+    const hir::ContinuousAssign& ca) -> std::optional<mir::MemberId> {
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  const auto* prim =
+      std::get_if<hir::PrimaryExpr>(&hir_scope.exprs.Get(ca.lhs).data);
+  if (prim == nullptr) return std::nullopt;
+  const auto* ref = std::get_if<hir::StructuralDataObjectRef>(&prim->data);
+  if (ref == nullptr) return std::nullopt;
+  const mir::MemberId target =
+      lowerer.TranslateStructuralDataObject(ref->hops, ref->var);
+  const mir::TypeId target_type = mir_class.members.Get(target).type;
+  if (!std::holds_alternative<mir::ResolvedType>(
+          lowerer.Module().Unit().types.Get(target_type).data)) {
+    return std::nullopt;
+  }
+  return target;
+}
+
+// Installs a driver for a net-targeted continuous assignment: a driver-handle
+// member bound at Resolve (`self->driver = (self->net).AttachDriver()`) and
+// seeded at Initialize (`self->driver.Update(services, rhs)`). Returns the
+// driver handle the activation process updates whenever the right-hand side
+// changes.
+auto AttachNetDriver(
+    const StructuralScopeLowerer& lowerer, mir::Class& mir_class,
+    mir::MemberId net_member, const hir::ContinuousAssign& ca,
+    const WalkFrame& resolve_frame, const WalkFrame& init_frame,
+    mir::TypeId self_ptr_type) -> diag::Result<NetDriver> {
+  ModuleLowerer& module = lowerer.Module();
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  mir::Block& resolve_block = *resolve_frame.current_block;
+  mir::Block& init_block = *init_frame.current_block;
+
+  const mir::TypeId net_type = mir_class.members.Get(net_member).type;
+  const mir::TypeId value_type =
+      std::get<mir::ResolvedType>(module.Unit().types.Get(net_type).data).value;
+  const mir::TypeId driver_type =
+      module.Unit().types.Intern(mir::DriverType{.value = value_type});
+  const mir::MemberId driver_member = mir_class.members.Add(
+      mir::MemberDecl{
+          .name =
+              std::format("{}__driver", mir_class.members.Get(net_member).name),
+          .type = driver_type});
+
+  const auto resolve_self = [&] {
+    return resolve_block.exprs.Add(
+        MakeSelfRefExpr(resolve_frame, self_ptr_type));
+  };
+  const mir::ExprId net_access = resolve_block.exprs.Add(
+      mir::MakeMemberAccessExpr(
+          resolve_self(), mir::MemberRef{.var = net_member}, net_type));
+  const mir::ExprId attach = resolve_block.exprs.Add(
+      mir::MakeNetAttachDriverCallExpr(net_access, driver_type));
+  const mir::ExprId driver_lhs = resolve_block.exprs.Add(
+      mir::MakeMemberAccessExpr(
+          resolve_self(), mir::MemberRef{.var = driver_member}, driver_type));
+  const mir::ExprId attach_assign = resolve_block.exprs.Add(
+      mir::Expr{
+          .data = mir::AssignExpr{.target = driver_lhs, .value = attach},
+          .type = driver_type});
+  resolve_block.AppendStmt(
+      mir::Stmt{
+          .label = std::nullopt, .data = mir::ExprStmt{.expr = attach_assign}});
+
+  auto rhs_or = lowerer.LowerExpr(hir_scope.exprs.Get(ca.rhs), init_frame);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const mir::ExprId seed_rhs = init_block.exprs.Add(*std::move(rhs_or));
+  const auto init_self = [&] {
+    return init_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type));
+  };
+  const mir::ExprId seed_services = init_block.exprs.Add(
+      mir::MakeServicesCallExpr(init_self(), module.Unit().builtins.services));
+  const mir::ExprId seed_driver = init_block.exprs.Add(
+      mir::MakeMemberAccessExpr(
+          init_self(), mir::MemberRef{.var = driver_member}, driver_type));
+  const mir::ExprId seed_update = init_block.exprs.Add(
+      mir::MakeNetDriverUpdateCallExpr(
+          seed_driver, seed_services, seed_rhs,
+          module.Unit().builtins.void_type));
+  init_block.AppendStmt(
+      mir::Stmt{
+          .label = std::nullopt, .data = mir::ExprStmt{.expr = seed_update}});
+
+  return NetDriver{.driver_member = driver_member, .driver_type = driver_type};
 }
 
 void ValidateOwnedChildConstruction(
@@ -1513,29 +1603,36 @@ auto StructuralScopeLowerer::DeclareShape(
     lowerer.MapLoopVarAsStructuralParam(binding.source_loop_var, mir_id);
   }
 
-  for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
-    const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
-    const auto& d = hir_scope.structural_vars.Get(hir_id);
+  for (std::size_t i = 0; i < hir_scope.structural_data_objects.size(); ++i) {
+    const hir::StructuralDataObjectId hir_id{static_cast<std::uint32_t>(i)};
+    const auto& d = hir_scope.structural_data_objects.Get(hir_id);
     const mir::TypeId mir_value_type = module.TranslateType(d.type);
-    const bool is_reference = d.reference.has_value();
-    // A `ref` / `const ref` port member aliases the connected variable, filled
-    // by the parent at construction (LRM 23.3.3.2): its type is a reference,
-    // not its own cell, so it owns no storage and takes no value initializer.
-    // Any other module-scope value-storage signal becomes an observable cell so
-    // writes route through `Var<T>::Set` and subscribers fire.
-    const mir::TypeId mir_field_type =
-        is_reference
-            ? module.Unit().types.Intern(
-                  mir::RefType{
-                      .pointee = mir_value_type,
-                      .mutability =
-                          *d.reference == hir::ReferenceBinding::kConstRef
-                              ? mir::Mutability::kReadOnly
-                              : mir::Mutability::kMutable})
-            : MaybeWrapObservable(module, mir_value_type);
+    // A net (LRM 6.5) and a variable are peer kinds: a `ref` / `const ref`
+    // port (LRM 23.3.3.2) member aliases the connected variable (a reference);
+    // a net owns a resolved cell whose value is the resolution of its drivers;
+    // any other variable is an observable cell so writes route through
+    // `Var<T>::Set` and subscribers fire.
+    const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
+    const bool is_reference = var != nullptr && var->reference.has_value();
+    const mir::TypeId mir_field_type = [&] {
+      if (is_reference) {
+        return module.Unit().types.Intern(
+            mir::RefType{
+                .pointee = mir_value_type,
+                .mutability =
+                    *var->reference == hir::ReferenceBinding::kConstRef
+                        ? mir::Mutability::kReadOnly
+                        : mir::Mutability::kMutable});
+      }
+      if (var == nullptr) {
+        return module.Unit().types.Intern(
+            mir::ResolvedType{.value = mir_value_type});
+      }
+      return MaybeWrapObservable(module, mir_value_type);
+    }();
     const mir::MemberId mir_id = shape.members.Add(
         mir::MemberDecl{.name = d.name, .type = mir_field_type});
-    lowerer.MapStructuralVar(hir_id, mir_id);
+    lowerer.MapStructuralDataObject(hir_id, mir_id);
   }
 
   DeclareCrossUnitRefSlots(lowerer, shape);
@@ -1660,24 +1757,28 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         MakeSelfRefExpr(init_frame, self_ptr_type));
   };
 
-  for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
-    const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
-    const auto& d = hir_scope.structural_vars.Get(hir_id);
+  for (std::size_t i = 0; i < hir_scope.structural_data_objects.size(); ++i) {
+    const hir::StructuralDataObjectId hir_id{static_cast<std::uint32_t>(i)};
+    const auto& d = hir_scope.structural_data_objects.Get(hir_id);
     const mir::MemberId mir_id =
-        lowerer.TranslateStructuralVar(hir::StructuralHops{0}, hir_id);
+        lowerer.TranslateStructuralDataObject(hir::StructuralHops{0}, hir_id);
     const mir::TypeId mir_field_type = mir_class.members.Get(mir_id).type;
     const mir::TypeId mir_value_type = module.TranslateType(d.type);
-    const bool is_reference = d.reference.has_value();
+    const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
+    const bool is_net = var == nullptr;
+    const bool is_reference = var != nullptr && var->reference.has_value();
     const mir::TypeKind var_kind =
         module.Unit().types.Get(mir_value_type).Kind();
     // Owned children (pointer / vector / object), resolution slots, upward
     // refs, and named events have no "value assignment" -- their declaration
-    // shape itself fixes the field at construction. Value-typed signals
-    // (integral, string, real, unpacked / dynamic array) receive an LRM 10.5
-    // initialization statement, run in the initialize phase after the tree's
-    // references resolve, not in the constructor.
+    // shape itself fixes the field at construction. A net takes none either:
+    // its value is produced by its drivers, seeded when each driver updates in
+    // the initialize phase. Value-typed variables (integral, string, real,
+    // unpacked / dynamic array) receive an LRM 10.5 initialization statement,
+    // run in the initialize phase after the tree's references resolve, not in
+    // the constructor.
     const bool is_assignable_value =
-        !is_reference && var_kind != mir::TypeKind::kPointer &&
+        !is_reference && !is_net && var_kind != mir::TypeKind::kPointer &&
         var_kind != mir::TypeKind::kVector &&
         var_kind != mir::TypeKind::kExternalRef &&
         var_kind != mir::TypeKind::kObject &&
@@ -1685,9 +1786,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         var_kind != mir::TypeKind::kEvent;
     if (is_assignable_value) {
       mir::ExprId value_id{};
-      if (d.initializer.has_value()) {
-        auto value_or =
-            lowerer.LowerExpr(hir_scope.exprs.Get(*d.initializer), init_frame);
+      if (var->initializer.has_value()) {
+        auto value_or = lowerer.LowerExpr(
+            hir_scope.exprs.Get(*var->initializer), init_frame);
         if (!value_or) return std::unexpected(std::move(value_or.error()));
         value_id = initialize_block.exprs.Add(*std::move(value_or));
       } else {
@@ -1776,10 +1877,36 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         module, activate_frame, body, p.kind == hir::ProcessKind::kFinal);
   }
 
+  std::vector<mir::MemberId> driven_nets;
   for (const auto& ca : hir_scope.continuous_assigns) {
+    // A continuous assignment to a net is a driver (LRM 6.5): it attaches a
+    // driver slot at Resolve, seeds it at Initialize, and the activation
+    // process updates it. A variable target keeps the direct continuous-assign
+    // write.
+    std::optional<NetDriver> net_driver;
+    if (const auto net_member =
+            ContinuousAssignNetTarget(lowerer, mir_class, ca)) {
+      // A net carries one driver; a second driver on the same net is rejected
+      // at lowering rather than left to fail at runtime.
+      const bool already_driven = std::ranges::any_of(
+          driven_nets,
+          [&](mir::MemberId m) { return m.value == net_member->value; });
+      if (already_driven) {
+        return diag::Fail(
+            ca.span, diag::DiagCode::kUnsupportedContinuousAssignForm,
+            "a net with more than one driver is not yet supported");
+      }
+      driven_nets.push_back(*net_member);
+      auto driver_or = AttachNetDriver(
+          lowerer, mir_class, *net_member, ca, resolve_frame, init_frame,
+          self_ptr_type);
+      if (!driver_or) return std::unexpected(std::move(driver_or.error()));
+      net_driver = *driver_or;
+    }
+
     std::string name = std::format("process_{}", mir_class.methods.size());
-    auto decl_or =
-        LowerContinuousAssign(lowerer, ctor_frame, std::move(name), ca);
+    auto decl_or = LowerContinuousAssign(
+        lowerer, ctor_frame, std::move(name), ca, net_driver);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
     AppendProcessRegistration(module, activate_frame, body, false);

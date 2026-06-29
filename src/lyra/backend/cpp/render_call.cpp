@@ -34,6 +34,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Set";
     case support::BuiltinFn::kMutate:
       return "Mutate";
+    case support::BuiltinFn::kAttachDriver:
+      return "AttachDriver";
+    case support::BuiltinFn::kUpdateDriver:
+      return "Update";
     case support::BuiltinFn::kSubmitNba:
       return "SubmitNba";
     case support::BuiltinFn::kSubmitPostponed:

@@ -398,6 +398,30 @@ struct Expr {
       .type = value_type};
 }
 
+// `net.AttachDriver()` -- attaches a driver to a net's resolution node and
+// yields the driver handle (the result type is the driver type).
+[[nodiscard]] inline auto MakeNetAttachDriverCallExpr(
+    ExprId net, TypeId driver_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = support::BuiltinFn::kAttachDriver},
+              .arguments = {net}},
+      .type = driver_type};
+}
+
+// `driver.Update(services, value)` -- updates one driver's contribution; the
+// net re-resolves and publishes on a real change.
+[[nodiscard]] inline auto MakeNetDriverUpdateCallExpr(
+    ExprId driver, ExprId services, ExprId value, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = support::BuiltinFn::kUpdateDriver},
+              .arguments = {driver, services, value}},
+      .type = void_type};
+}
+
 // `&place` -- the address-of dual of `DerefExpr`. `pointer_type` must be
 // `PointerType{ kBorrowed, pointee = <operand expr's type> }`; the caller
 // supplies it so this helper need not look up the operand's type.

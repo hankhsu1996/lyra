@@ -21,14 +21,16 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
+#include <slang/ast/types/NetType.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/loop_var.hpp"
+#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -202,6 +204,8 @@ auto StructuralScopeLowerer::PopulateMember(
     case slang::ast::SymbolKind::Variable:
       return PopulateVariableMember(
           member.as<slang::ast::VariableSymbol>(), frame);
+    case slang::ast::SymbolKind::Net:
+      return PopulateNetMember(member.as<slang::ast::NetSymbol>(), frame);
     case slang::ast::SymbolKind::Subroutine:
       return PopulateSubroutineMember(
           member.as<slang::ast::SubroutineSymbol>(), frame);
@@ -264,14 +268,69 @@ auto StructuralScopeLowerer::PopulateVariableMember(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     initializer_id = frame.Exprs().Add(*std::move(init_or));
   }
-  const hir::StructuralVarId local =
-      frame.current_structural_scope->structural_vars.Add(
-          hir::StructuralVarDecl{
+  const hir::StructuralDataObjectId local =
+      frame.current_structural_scope->structural_data_objects.Add(
+          hir::StructuralDataObjectDecl{
               .name = std::string{var.name},
               .type = *type_id_or,
-              .initializer = initializer_id,
-              .reference = ReferenceBindingFor(var)});
-  module_->MapStructuralVarBinding(var, frame_, local, *type_id_or);
+              .kind = hir::StructuralVariableDecl{
+                  .initializer = initializer_id,
+                  .reference = ReferenceBindingFor(var)}});
+  module_->MapStructuralDataObjectBinding(var, frame_, local, *type_id_or);
+  return {};
+}
+
+auto StructuralScopeLowerer::PopulateNetMember(
+    const slang::ast::NetSymbol& net, WalkFrame frame) -> diag::Result<void> {
+  const auto& mapper = module_->SourceMapper();
+  const auto span = mapper.PointSpanOf(net.location);
+  auto type_id_or = module_->InternType(net.getType(), span);
+  if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
+  hir::NetType net_type{};
+  switch (net.netType.netKind) {
+    case slang::ast::NetType::Wire:
+      net_type = hir::NetType::kWire;
+      break;
+    case slang::ast::NetType::Tri:
+      net_type = hir::NetType::kTri;
+      break;
+    default:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedTypeKind,
+          "this net type is not yet supported");
+  }
+  const hir::StructuralDataObjectId local =
+      frame.current_structural_scope->structural_data_objects.Add(
+          hir::StructuralDataObjectDecl{
+              .name = std::string{net.name},
+              .type = *type_id_or,
+              .kind = hir::StructuralNetDecl{.net_type = net_type}});
+  module_->MapStructuralDataObjectBinding(net, frame_, local, *type_id_or);
+
+  // A net-declaration assignment (`wire w = expr;`, LRM 6.5) is a single
+  // continuous driver of the net. slang carries it as the net's initializer
+  // rather than a separate continuous-assignment item, so synthesize the
+  // equivalent continuous assignment here; it lands on the same driver path an
+  // explicit `assign` does. The sensitivity is the read set of the driving
+  // expression, analyzed with the net as the containing symbol.
+  if (const auto* init = net.getInitializer(); init != nullptr) {
+    auto rhs_or = LowerExpr(*init, frame);
+    if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+    const hir::ExprId lhs_id = frame.Exprs().Add(
+        hir::MakeRefExpr(
+            hir::StructuralDataObjectRef{
+                .hops = hir::StructuralHops{0}, .var = local},
+            *type_id_or, span));
+    const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
+    const auto& reads = module_->Sensitivity().AnalyzeReads(*init, net);
+    frame.current_structural_scope->continuous_assigns.Add(
+        hir::ContinuousAssign{
+            .span = span,
+            .lhs = lhs_id,
+            .rhs = rhs_id,
+            .sensitivity_list =
+                module_->TranslateSensitivityReads(reads, frame)});
+  }
   return {};
 }
 

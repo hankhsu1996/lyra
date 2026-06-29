@@ -122,25 +122,29 @@ auto LowerNamedValueProc(
   // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
   // VariableSymbol subclasses and route through the same procedural-var
   // binding as ordinary body locals.
-  if (sym.kind != slang::ast::SymbolKind::Variable &&
-      sym.kind != slang::ast::SymbolKind::FormalArgument &&
-      sym.kind != slang::ast::SymbolKind::Iterator) {
+  // A net (LRM 6.5) is always a structural signal; the variable family may
+  // also be a procedural body local, so try that binding for them first. A net
+  // never has a procedural binding.
+  if (sym.kind == slang::ast::SymbolKind::Variable ||
+      sym.kind == slang::ast::SymbolKind::FormalArgument ||
+      sym.kind == slang::ast::SymbolKind::Iterator) {
+    const auto& var = sym.as<slang::ast::VariableSymbol>();
+    if (auto local = proc.LookupProceduralVar(var)) {
+      const hir::TypeId type =
+          frame.current_procedural_body->procedural_vars.Get(*local).type;
+      return hir::MakeRefExpr(hir::ProceduralVarRef{.var = *local}, type, span);
+    }
+  } else if (sym.kind != slang::ast::SymbolKind::Net) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
         "reference to non-variable declaration is not supported");
   }
-  const auto& var = sym.as<slang::ast::VariableSymbol>();
 
-  if (auto local = proc.LookupProceduralVar(var)) {
-    const hir::TypeId type =
-        frame.current_procedural_body->procedural_vars.Get(*local).type;
-    return hir::MakeRefExpr(hir::ProceduralVarRef{.var = *local}, type, span);
-  }
-
-  const auto binding = module.LookupStructuralVarBinding(var);
+  const auto binding = module.LookupStructuralDataObjectBinding(
+      sym.as<slang::ast::ValueSymbol>());
   if (!binding.has_value()) {
     throw InternalError(
-        "LowerNamedValueProc: variable was not bound during scope lowering");
+        "LowerNamedValueProc: value was not bound during scope lowering");
   }
   const auto hops = frame.HopsTo(binding->home_frame);
   if (!hops.has_value()) {
@@ -149,7 +153,7 @@ auto LowerNamedValueProc(
         "stack");
   }
   return hir::MakeRefExpr(
-      hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
+      hir::StructuralDataObjectRef{.hops = *hops, .var = binding->var_id},
       binding->type, span);
 }
 
@@ -358,16 +362,17 @@ auto LowerNamedValueStructural(
         module.Unit(), frame, sym.as<slang::ast::ParameterSymbol>().getValue(),
         *type_id, span);
   }
-  if (sym.kind != slang::ast::SymbolKind::Variable) {
+  if (sym.kind != slang::ast::SymbolKind::Variable &&
+      sym.kind != slang::ast::SymbolKind::Net) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
         "reference to non-variable declaration is not supported");
   }
-  const auto& var = sym.as<slang::ast::VariableSymbol>();
-  const auto binding = module.LookupStructuralVarBinding(var);
+  const auto binding = module.LookupStructuralDataObjectBinding(
+      sym.as<slang::ast::ValueSymbol>());
   if (!binding.has_value()) {
     throw InternalError(
-        "LowerNamedValueStructural: variable was not bound during scope "
+        "LowerNamedValueStructural: value was not bound during scope "
         "lowering");
   }
   const auto hops = frame.HopsTo(binding->home_frame);
@@ -377,7 +382,7 @@ auto LowerNamedValueStructural(
         "scope stack");
   }
   return hir::MakeRefExpr(
-      hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
+      hir::StructuralDataObjectRef{.hops = *hops, .var = binding->var_id},
       binding->type, span);
 }
 

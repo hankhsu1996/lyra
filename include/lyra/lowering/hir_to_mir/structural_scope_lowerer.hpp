@@ -13,9 +13,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
+#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/hir/structural_var.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -162,19 +162,20 @@ class StructuralScopeLowerer {
     return cross_unit_ref_targets_.at(hir_id.value);
   }
 
-  void MapStructuralVar(hir::StructuralVarId hir_id, mir::MemberId mir_id) {
-    if (hir_id.value != structural_var_map_.size()) {
+  void MapStructuralDataObject(
+      hir::StructuralDataObjectId hir_id, mir::MemberId mir_id) {
+    if (hir_id.value != structural_data_object_map_.size()) {
       throw InternalError(
-          "StructuralScopeLowerer::MapStructuralVar: HIR structural "
-          "vars must be mapped in HIR id order");
+          "StructuralScopeLowerer::MapStructuralDataObject: HIR structural "
+          "data objects must be mapped in HIR id order");
     }
-    structural_var_map_.push_back(mir_id);
+    structural_data_object_map_.push_back(mir_id);
   }
 
-  [[nodiscard]] auto TranslateStructuralVar(
-      hir::StructuralHops hops, hir::StructuralVarId hir_id) const
+  [[nodiscard]] auto TranslateStructuralDataObject(
+      hir::StructuralHops hops, hir::StructuralDataObjectId hir_id) const
       -> mir::MemberId {
-    return LookupStructuralVarAtHops(hops, hir_id);
+    return LookupStructuralDataObjectAtHops(hops, hir_id);
   }
 
   void MapLoopVarAsStructuralParam(
@@ -353,23 +354,24 @@ class StructuralScopeLowerer {
         hir::StructuralHops{hops.value - 1}, child);
   }
 
-  [[nodiscard]] auto LookupStructuralVarAtHops(
-      hir::StructuralHops hops, hir::StructuralVarId hir_id) const
+  [[nodiscard]] auto LookupStructuralDataObjectAtHops(
+      hir::StructuralHops hops, hir::StructuralDataObjectId hir_id) const
       -> mir::MemberId {
     if (hops.value == 0) {
-      if (hir_id.value >= structural_var_map_.size()) {
+      if (hir_id.value >= structural_data_object_map_.size()) {
         throw InternalError(
-            "StructuralScopeLowerer::TranslateStructuralVar: unmapped "
-            "HIR structural var");
+            "StructuralScopeLowerer::LookupStructuralDataObjectAtHops: "
+            "unmapped "
+            "HIR structural data object");
       }
-      return structural_var_map_[hir_id.value];
+      return structural_data_object_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "StructuralScopeLowerer::TranslateStructuralVar: hops out "
+          "StructuralScopeLowerer::TranslateStructuralDataObject: hops out "
           "of scope chain");
     }
-    return parent_->LookupStructuralVarAtHops(
+    return parent_->LookupStructuralDataObjectAtHops(
         hir::StructuralHops{hops.value - 1}, hir_id);
   }
 
@@ -418,7 +420,7 @@ class StructuralScopeLowerer {
   const StructuralScopeLowerer* parent_;
   std::string name_;
   const hir::StructuralScope* hir_scope_;
-  std::vector<mir::MemberId> structural_var_map_;
+  std::vector<mir::MemberId> structural_data_object_map_;
   std::vector<std::optional<mir::ParamId>> structural_param_map_;
   std::vector<mir::MethodId> structural_subroutine_map_;
   std::vector<CrossUnitRefMeta> cross_unit_ref_targets_;
