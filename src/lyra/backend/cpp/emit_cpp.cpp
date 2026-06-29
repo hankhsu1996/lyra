@@ -26,6 +26,12 @@ namespace lyra::backend::cpp {
 
 namespace {
 
+// A member declaration is (name, type): the type carries the target storage
+// form, the name the source identifier. Per-member construction state -- a
+// cell's declared representation, its initial value -- arrives as ordinary MIR
+// statements in the constructor body; render never composes it here from type
+// payload. The field value-initializes; an integral cell's declared
+// representation is established by its first store.
 auto RenderField(
     const ScopeView& ctor_view, const mir::MemberDecl& var, std::size_t indent)
     -> std::string {
@@ -380,19 +386,13 @@ auto RenderScopeHeaderFile(
     any_enum = true;
     const auto class_name = RenderEnumClassName(s, type_id);
     const auto& base = enum_type->base;
-    const char* signed_lit =
-        base.signedness == mir::Signedness::kSigned ? "true" : "false";
-    const char* four_state_lit =
-        base.atom != mir::BitAtom::kBit ? "true" : "false";
     out += std::format(
         "class {} final : public lyra::value::Enum<{}> {{\n", class_name,
         class_name);
     out += " public:\n";
     out += "  using Enum::Enum;\n";
     out += std::format(
-        "  static constexpr lyra::value::PackedType kBase{{.width = {}, "
-        ".is_signed = {}, .is_four_state = {}}};\n",
-        base.BitWidth(), signed_lit, four_state_lit);
+        "  static inline const auto kBase = {};\n", RenderPackedType(base));
     out += "  static constexpr lyra::value::EnumMember kMembers[] = {\n";
     for (const auto& member : enum_type->members) {
       out += std::format(

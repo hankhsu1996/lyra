@@ -78,26 +78,28 @@ auto TotalBitWidthOf(std::span<const PackedRange> dims) -> std::uint64_t {
 
 }  // namespace
 
-PackedArray::PackedArray()
-    : type_{.dims = {}, .is_signed = false, .is_four_state = false, .bit_width = 0},
-      storage_(BitValue{0}) {
+PackedArray::PackedArray() : type_({}, false, false), storage_(BitValue{0}) {
 }
 
-PackedArray::PackedArray(
-    std::initializer_list<PackedRange> dims, bool is_signed, bool is_four_state)
-    : type_{.dims = dims, .is_signed = is_signed, .is_four_state = is_four_state, .bit_width = TotalBitWidthOf(std::span<const PackedRange>{dims.begin(), dims.size()})},
-      storage_(MakeStorage(type_.bit_width, is_four_state)) {
+PackedArray::PackedArray(PackedType type)
+    : type_(std::move(type)),
+      storage_(MakeStorage(type_.bit_width, type_.is_four_state)) {
 }
 
 PackedArray::PackedArray(
     std::uint64_t bit_width, bool is_signed, bool is_four_state)
-    : type_{.dims = {PackedRange{.left = static_cast<std::int64_t>(bit_width) - 1, .right = 0}}, .is_signed = is_signed, .is_four_state = is_four_state, .bit_width = bit_width},
+    : type_(
+          {PackedRange{
+              .left = static_cast<std::int64_t>(bit_width) - 1, .right = 0}},
+          is_signed, is_four_state),
       storage_(MakeStorage(bit_width, is_four_state)) {
 }
 
 PackedArray::PackedArray(
     std::span<const PackedRange> dims, bool is_signed, bool is_four_state)
-    : type_{.dims = std::vector<PackedRange>(dims.begin(), dims.end()), .is_signed = is_signed, .is_four_state = is_four_state, .bit_width = TotalBitWidthOf(dims)},
+    : type_(
+          std::vector<PackedRange>(dims.begin(), dims.end()), is_signed,
+          is_four_state),
       storage_(MakeStorage(type_.bit_width, is_four_state)) {
 }
 
@@ -181,12 +183,11 @@ auto PackedArray::MakeFromWordPlanes(
       unknown_words);
 }
 
-auto PackedArray::FromInt(
-    std::int64_t value, std::uint64_t bit_width, bool is_signed,
-    bool is_four_state) -> PackedArray {
-  const std::size_t n = (bit_width + 63U) / 64U;
+auto PackedArray::FromInt(std::int64_t value, const PackedType& type)
+    -> PackedArray {
+  const std::size_t n = (type.bit_width + 63U) / 64U;
   PackedWordVector words(n);
-  if (bit_width <= 64U) {
+  if (type.bit_width <= 64U) {
     words[0] = static_cast<std::uint64_t>(value);
   } else {
     const std::uint64_t fill = (value < 0) ? ~std::uint64_t{0} : 0U;
@@ -195,20 +196,36 @@ auto PackedArray::FromInt(
       words[i] = fill;
     }
   }
-  return MakeFromWordPlanes(
-      bit_width, is_signed, is_four_state,
+  return MakeFromWordPlanesShaped(
+      std::span<const PackedRange>{type.dims}, type.is_signed,
+      type.is_four_state,
       std::span<const std::uint64_t>{words.data(), words.size()}, {});
 }
 
+auto PackedArray::FromInt(
+    std::int64_t value, std::uint64_t bit_width, bool is_signed,
+    bool is_four_state) -> PackedArray {
+  return FromInt(
+      value,
+      PackedType{
+          {PackedRange{
+              .left = static_cast<std::int64_t>(bit_width) - 1, .right = 0}},
+          is_signed,
+          is_four_state});
+}
+
+auto PackedArray::FromInt(std::int64_t value, const PackedArray& prototype)
+    -> PackedArray {
+  return FromInt(value, prototype.type_);
+}
+
 auto PackedArray::FromWords(
-    std::initializer_list<std::uint64_t> value_words,
-    std::initializer_list<std::uint64_t> unknown_words, std::uint64_t bit_width,
-    bool is_signed, bool is_four_state) -> PackedArray {
-  return MakeFromWordPlanes(
-      bit_width, is_signed, is_four_state,
-      std::span<const std::uint64_t>{value_words.begin(), value_words.size()},
-      std::span<const std::uint64_t>{
-          unknown_words.begin(), unknown_words.size()});
+    std::span<const std::uint64_t> value_words,
+    std::span<const std::uint64_t> unknown_words, const PackedType& type)
+    -> PackedArray {
+  return MakeFromWordPlanesShaped(
+      std::span<const PackedRange>{type.dims}, type.is_signed,
+      type.is_four_state, value_words, unknown_words);
 }
 
 auto PackedArray::FromWords(
@@ -398,64 +415,14 @@ auto PackedArray::AsLogicView() const -> ConstLogicView {
   return lv->View();
 }
 
-// A moved-from PackedArray must stay a fully formed value of the same shape,
-// not an empty husk: STL relocation (deque / vector insert / erase)
-// move-constructs an element and then assigns into the vacated slot, and
-// AssignFrom requires valid storage and dims on its destination. So the source
-// keeps its dims (copied, not moved) and its storage is rebuilt to the
-// canonical zero of its width. ResetToDefault can allocate for wide values; on
-// allocation failure the noexcept move terminates, which is the codebase's
-// treatment of OOM anyway.
-PackedArray::PackedArray(PackedArray&& other) noexcept
-    : type_(other.type_), storage_(std::move(other.storage_)) {
-  other.ResetToDefault();
+auto PackedArray::IsUninitialized() const -> bool {
+  return type_.bit_width == 0;
 }
 
-auto PackedArray::operator=(const PackedArray& other) -> PackedArray& {
-  if (this != &other) {
-    AssignFrom(other);
-  }
-  return *this;
-}
-
-auto PackedArray::operator=(PackedArray&& other) noexcept(false)
-    -> PackedArray& {
-  if (this != &other) {
-    AssignFrom(other);
-  }
-  return *this;
-}
-
-auto PackedArray::AssignFrom(const PackedArray& other) -> void {
-  // A 0-bit destination is the default-constructed "uninitialized" sentinel
-  // state (e.g., an `Var<PackedArray>` field that has not yet received its
-  // first MIR-level assignment). Adopt the source's shape entirely so the
-  // first store into a freshly declared variable succeeds; subsequent stores
-  // run through the normal LRM 10.6.1 shape-preserving path.
-  if (type_.bit_width == 0) {
-    type_.bit_width = other.type_.bit_width;
-    type_.is_signed = other.type_.is_signed;
-    type_.is_four_state = other.type_.is_four_state;
-    storage_ = MakeStorage(type_.bit_width, type_.is_four_state);
-    type_.dims = other.type_.dims;
-  }
-  RequireSameStorageDomain(*this, other, "PackedArray::AssignFrom");
-  auto dst = std::visit(
-      [](auto& v) { return detail::PackedAccess::ValueWords(v.View()); },
-      storage_);
-  const auto src = other.ValueWords();
-  for (std::size_t i = 0; i < dst.size(); ++i) {
-    dst[i] = src[i];
-  }
-  if (type_.is_four_state) {
-    auto& dst_logic = std::get<LogicValue>(storage_);
-    const auto& src_logic = std::get<LogicValue>(other.storage_);
-    auto dst_unk = detail::PackedAccess::UnknownWords(dst_logic.View());
-    const auto src_unk = detail::PackedAccess::UnknownWords(src_logic.View());
-    for (std::size_t i = 0; i < dst_unk.size(); ++i) {
-      dst_unk[i] = src_unk[i];
-    }
-  }
+auto PackedArray::SameRepresentation(const PackedArray& other) const -> bool {
+  return type_.dims == other.type_.dims &&
+         type_.is_signed == other.type_.is_signed &&
+         type_.is_four_state == other.type_.is_four_state;
 }
 
 auto PackedArray::ToInt64() const -> std::int64_t {
@@ -626,20 +593,11 @@ auto PackedArray::Replicate(const PackedArray& operand, std::uint64_t count)
   return result;
 }
 
-auto PackedArray::ConvertFrom(
-    const PackedArrayRef& src, std::uint64_t dst_bit_width, bool dst_is_signed,
-    bool dst_is_four_state) -> PackedArray {
-  return ConvertFrom(
-      src.ToOwned(), dst_bit_width, dst_is_signed, dst_is_four_state);
-}
-
-auto PackedArray::ConvertFrom(
-    const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
-    bool dst_is_four_state) -> PackedArray {
-  PackedArray dst{dst_bit_width, dst_is_signed, dst_is_four_state};
+auto PackedArray::ConvertBitsInto(PackedArray dst, const PackedArray& src)
+    -> PackedArray {
   const Signedness src_signedness =
       src.IsSigned() ? Signedness::kSigned : Signedness::kUnsigned;
-  if (dst_is_four_state) {
+  if (dst.type_.is_four_state) {
     auto& dst_lv = std::get<LogicValue>(dst.storage_);
     LogicView dst_view = dst_lv.View();
     if (src.IsFourState()) {
@@ -661,6 +619,18 @@ auto PackedArray::ConvertFrom(
     }
   }
   return dst;
+}
+
+auto PackedArray::ConvertFrom(
+    const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
+    bool dst_is_four_state) -> PackedArray {
+  return ConvertBitsInto(
+      PackedArray{dst_bit_width, dst_is_signed, dst_is_four_state}, src);
+}
+
+auto PackedArray::ConvertFrom(const PackedArray& src, PackedArray prototype)
+    -> PackedArray {
+  return ConvertBitsInto(std::move(prototype), src);
 }
 
 namespace {
@@ -1413,17 +1383,21 @@ auto OuterElementBitWidth(
 }
 
 // Pops the outer dim from `dim_stack` and returns the remainder as a fresh
-// vector. For 1-element results (single-bit / element-select on innermost
-// dim) the result is empty -- subsequent chain ops on it are illegal and
-// the frontend rejects them, so this stays well-defined as long as we never
-// recurse into an empty dim stack.
+// vector. The element of a one-dimensional vector is a scalar, carried as the
+// canonical one-element dimension `[0:0]` -- the same shape a declared scalar
+// bit / logic holds -- rather than the empty (0-bit) stack, so a materialized
+// element matches its declared element type when stored.
 auto PopOuterDim(std::span<const PackedRange> dim_stack)
     -> std::vector<PackedRange> {
   if (dim_stack.empty()) {
     throw InternalError(
         "PopOuterDim: empty dim stack (selector applied to a scalar)");
   }
-  return std::vector<PackedRange>{dim_stack.begin() + 1, dim_stack.end()};
+  std::vector<PackedRange> inner{dim_stack.begin() + 1, dim_stack.end()};
+  if (inner.empty()) {
+    inner.push_back(PackedRange{.left = 0, .right = 0});
+  }
+  return inner;
 }
 
 // Replaces the outer dim's count with `new_count`, preserving inner dims.

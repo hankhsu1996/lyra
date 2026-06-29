@@ -104,8 +104,12 @@ enum class BuiltinFn : std::uint16_t {
   // A constant argument is folded downstream, never in lowering.
   kClog2,
   // Observable storage cell operations. `Set` / `Mutate` thread services
-  // as the second argument.
+  // as the second argument. `Initialize` installs the cell's declared
+  // representation once at construction (no services -- no subscribers yet);
+  // every later `Set` then requires the right-hand side to already be at that
+  // representation.
   kGet,
+  kInitialize,
   kSet,
   kMutate,
   // Net driver operations (LRM 6.5). `AttachDriver` is a `ResolvedNet` method

@@ -30,6 +30,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Services";
     case support::BuiltinFn::kGet:
       return "Get";
+    case support::BuiltinFn::kInitialize:
+      return "Initialize";
     case support::BuiltinFn::kSet:
       return "Set";
     case support::BuiltinFn::kMutate:

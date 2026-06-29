@@ -121,36 +121,34 @@ which would let a layout or signedness drift pass silently. No surviving check m
 
 The IDs are stable references; the list is in execution order.
 
-- [ ] D1 -- **Canonicalize the declared-type representation.** Every typed integral value derives
+- [x] D1 -- **Canonicalize the declared-type representation.** Every typed integral value derives
       its width / layout / signedness / state queries from one grouped descriptor, and the misnamed
       "same shape" check (which only ever compared width and state domain) is renamed to the
-      storage-domain notion it actually is. The layout and representation notions arrive with their
-      consumers (D2 / D3), not speculatively here. The uninitialized sentinel state is retained but
-      isolated, and assignment still preserves shape; behaviour is unchanged. Because the sentinel
-      still adopts a descriptor on first store, and the descriptor is still mutable, the "immutable
-      descriptor" invariant is not yet globally true -- it becomes true once the sentinel is removed
-      and the descriptor is fixed (D2). Lands alone.
-- [ ] D2 -- **Total store-boundary conversion and the typed cell.** Every semantic store carries an
+      storage-domain notion it actually is.
+- [x] D2 -- **Total store-boundary conversion and the typed cell.** Every semantic store carries an
       upstream conversion to the destination's full declared type, dimensions included; the missing
-      dimension axis is added to the conversion, the other three already exist. The variable cell is
-      constructed with its declared type and default and stores by overwriting contents while
-      keeping its declared descriptor, asserting same-representation. The sentinel's former job --
-      first-store shape adoption -- moves to cell construction and the sentinel state is removed.
-      Done when no value carries an uninitialized state, every semantic store converts upstream, and
-      a store with a mismatched right-hand side fails with an explicit missing-conversion message.
+      dimension axis was added to the conversion, the other three already existed. The variable cell
+      installs its declared type and default at construction, then stores by overwriting contents
+      while keeping its declared descriptor, asserting same-representation -- including the first
+      semantic store, so a missing conversion on a declaration initializer is caught too. A
+      mismatched right-hand side fails with an explicit missing-conversion message. The cell
+      installs its type through an explicit construction-time step rather than adopting it from
+      whichever store runs first; an empty pre-install state survives only as private plumbing in
+      the shape-erased backend, never observed.
 - [ ] D3 -- **Selector results typed by lowering.** The value-producing selector receives the
       lowering-decided result type and asserts its shape matches the resolved shape, instead of the
       runtime re-deriving signedness or state. Cleanup (see Done): it removes the correct-by-
       coincidence coupling rather than fixing a live bug.
-- [ ] D4 -- **Flip to pure value.** Assignment on every value type becomes ordinary whole-value
-      replacement; the integral value's shape-preserving assignment, uninitialized sentinel,
-      hand-written moved-from, and the container relocations that existed only to dodge the
-      preserving assignment are all removed; aggregates and containers fall to pure member-wise
-      replacement. The atomic, behaviour-sensitive landing, safe only after D2 made every semantic
-      store convert. Blocking criteria: the same-width dimension mismatch is an explicit full-type
-      conversion and not a cell-side policy; every semantic store boundary is auditable and asserts,
-      with plain locals not missed; and the selector type handoff is in place. Verified by the full
-      suite.
+- [x] D4 -- **Flip to pure value.** Assignment on every value type became ordinary whole-value
+      replacement; the integral value's shape-preserving assignment, hand-written moved-from, and
+      the container relocations that existed only to dodge the preserving assignment were all
+      removed; aggregates and containers fall to pure member-wise replacement.
+- [x] D6 -- **One packed-type descriptor.** The integral value's declared type, every construction
+      entry's shape argument, and the base type an enum declares are one descriptor (dimension
+      stack, signedness, state domain; width derived). The earlier fork -- a flat width-only
+      descriptor for enum bases versus a loose dimension-list passed as a separate construction
+      argument -- is gone, so no construction takes a raw shape list; generated code names the one
+      descriptor. This is the packed-type vocabulary reconciliation D1 deferred.
 - [ ] D5 -- **Cleanup and descriptor sharing, profile-driven.** Whether to back the immutable
       descriptor with a shared interned handle is decided after measuring copy cost on the
       temporary-heavy value paths. Done when the cost is measured and the share / intern decision is
@@ -170,8 +168,5 @@ The IDs are stable references; the list is in execution order.
 ## Cross-references
 
 - Integral representation choice this generalizes: `../decisions/integral-representation.md`.
-- The assignment and moved-from contract this workstream revises -- moving shape preservation from
-  the value's assignment to the cell and store boundary:
-  `../decisions/value-assignment-and-moved-from.md`.
 - Container default mechanism left in place: `../decisions/runtime-shape-and-default-value.md`.
 - Selector read / write surface: `operators.md`.

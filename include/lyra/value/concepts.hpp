@@ -35,11 +35,12 @@ class PackedArray;
 // actually bites: a value type whose move leaves an unusable husk crashes
 // inside container relocation.
 //
-// This is a C++-mechanics contract, NOT a statement about assignment
-// meaning. For shape-bearing types like `PackedArray`, assignment preserves
-// the destination's declared shape and copies the source's bits in (it is
-// not a pure value adopt). The concept only guarantees the operations exist
-// and relocation is safe.
+// This is a C++-mechanics contract, NOT a statement about SystemVerilog
+// assignment meaning. Every value type's assignment is an ordinary whole-value
+// replacement; the SystemVerilog rule that a store keeps the destination's
+// declared type lives at the variable cell and the store boundary, not in the
+// value's assignment operator. The concept only guarantees the operations
+// exist and relocation is safe.
 template <typename T>
 concept Storable = std::copyable<T>;
 

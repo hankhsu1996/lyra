@@ -96,22 +96,6 @@ class DynamicArray {
   auto operator=(DynamicArray&&) noexcept -> DynamicArray& = default;
   ~DynamicArray() = default;
 
-  // ADL swap so STL element-relocation primitives can shuffle nested
-  // DynamicArrays inside an outer container (e.g. `matrix.reverse()` on
-  // `int matrix[][]` swaps two row arrays). The default move-assign on
-  // DynamicArray<PackedArray> trips PackedArray::AssignFrom's
-  // shape-preservation rule because storage moves out without the
-  // shape scalars being reset; swapping member-wise avoids the path.
-  // Mirrors PackedArray's friend swap; same NOLINT rationale (ADL name
-  // is mandated lowercase).
-  // NOLINTNEXTLINE(readability-identifier-naming)
-  friend auto swap(DynamicArray& a, DynamicArray& b) noexcept -> void {
-    using std::swap;
-    swap(a.element_default_, b.element_default_);
-    swap(a.discard_sink_, b.discard_sink_);
-    swap(a.data_, b.data_);
-  }
-
   // LRM 7.5.1: size() yields an SV int.
   [[nodiscard]] auto Size() const -> PackedArray {
     return PackedArray::Int(static_cast<std::int32_t>(RawSize()));

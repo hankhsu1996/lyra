@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -18,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -54,6 +56,25 @@ auto BuildArrayReplicationFlatList(
   }
   return BuildArrayConstructionCall(
       module, frame, result_type, std::move(flat));
+}
+
+// A packed assignment pattern folds its members into one flat bit plane (LRM
+// 11.4.12), so the ConcatExpr / ReplicationExpr that materialize it carry that
+// flat unsigned shape, not the destination's. This is that flat type: a single
+// dimension of the destination's total width. A multi-dimensional destination
+// then reshapes the flat value through the ordinary store conversion, so the
+// value lands carrying its declared dimensions rather than a flat run -- the
+// "materialization builds shape" rule applied to a value-build primitive.
+auto InternFlatPacked(
+    mir::CompilationUnit& unit, std::uint64_t width, mir::BitAtom atom)
+    -> mir::TypeId {
+  return unit.types.Intern(
+      mir::PackedArrayType{
+          .atom = atom,
+          .signedness = mir::Signedness::kUnsigned,
+          .dims = {mir::PackedRange{
+              .left = static_cast<std::int64_t>(width) - 1, .right = 0}},
+          .form = mir::PackedArrayForm::kExplicit});
 }
 
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
@@ -128,9 +149,14 @@ auto LowerHirAssignmentPatternExpr(
         .data = mir::TupleExpr{.components = std::move(element_ids)},
         .type = result_type};
   }
-  return mir::Expr{
-      .data = mir::ConcatExpr{.operands = std::move(element_ids)},
-      .type = result_type};
+  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  const auto& result_pa = result_ty.AsIntegralPacked();
+  const mir::ExprId concat_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::ConcatExpr{.operands = std::move(element_ids)},
+          .type =
+              InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)});
+  return BuildValueConversion(unit, block, concat_id, result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -165,20 +191,27 @@ auto LowerHirAssignmentPatternReplicationExpr(
         .data = mir::TupleExpr{.components = std::move(components)},
         .type = result_type};
   }
+  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  const auto& result_pa = result_ty.AsIntegralPacked();
+  const std::uint64_t count =
+      ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
+  const std::uint64_t inner_width =
+      count == 0 ? 0 : result_pa.BitWidth() / count;
   const mir::ExprId inner_concat_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ConcatExpr{.operands = std::move(item_ids)},
-          .type = result_type});
+          .type = InternFlatPacked(unit, inner_width, result_pa.atom)});
   auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
-  return mir::Expr{
-      .data =
-          mir::ReplicationExpr{
-              .count = count_id,
-              .concat = inner_concat_id,
-          },
-      .type = result_type};
+  const mir::ExprId repl_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ReplicationExpr{
+                  .count = count_id, .concat = inner_concat_id},
+          .type =
+              InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)});
+  return BuildValueConversion(unit, block, repl_id, result_type);
 }
 
 // LRM 7.5.1 `new[N]` / `new[N](other)`. The argument list on the lowered

@@ -247,6 +247,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "clog2";
     case BuiltinFn::kGet:
       return "get";
+    case BuiltinFn::kInitialize:
+      return "initialize";
     case BuiltinFn::kSet:
       return "set";
     case BuiltinFn::kMutate:

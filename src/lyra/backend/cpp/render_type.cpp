@@ -13,21 +13,15 @@
 
 namespace lyra::backend::cpp {
 
-auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
+auto RenderPackedType(const mir::PackedArrayType& pa) -> std::string {
   const char* signed_lit =
       pa.signedness == mir::Signedness::kSigned ? "true" : "false";
   const char* four_state_lit = pa.atom != mir::BitAtom::kBit ? "true" : "false";
 
-  // 1D shorthand: emit `bit_width, signed, four_state` -- uses the
-  // PackedArray 3-arg constructor. The dim list ctor would produce the same
-  // shape but is less readable for the common case.
-  if (pa.dims.size() == 1) {
-    return std::format("{}, {}, {}", pa.BitWidth(), signed_lit, four_state_lit);
-  }
-
-  // Multi-dim: emit `{{l0, r0}, {l1, r1}, ...}, signed, four_state` for the
-  // PackedArray initializer-list constructor. The runtime keeps the dim stack
-  // so operator[] / Slice dispatch on outer-element bit width.
+  // The shape is one `PackedType` descriptor: the dimension stack plus
+  // signedness and state domain. A one-dimensional type is a one-element stack,
+  // not a scalar special case; the runtime keeps the stack so operator[] /
+  // Slice dispatch on outer-element bit width at any rank.
   std::string dim_list = "{";
   for (std::size_t i = 0; i < pa.dims.size(); ++i) {
     if (i != 0) dim_list += ", ";
@@ -35,7 +29,9 @@ auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
         std::format("{{ {}LL, {}LL }}", pa.dims[i].left, pa.dims[i].right);
   }
   dim_list += "}";
-  return std::format("{}, {}, {}", dim_list, signed_lit, four_state_lit);
+  return std::format(
+      "lyra::value::PackedType{{{}, {}, {}}}", dim_list, signed_lit,
+      four_state_lit);
 }
 
 auto RenderEnumClassName(const mir::Class& owner_class, mir::TypeId id)

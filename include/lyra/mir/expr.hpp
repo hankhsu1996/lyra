@@ -377,6 +377,20 @@ struct Expr {
       .type = value_type};
 }
 
+// `cell.Initialize(prototype)` -- installs the cell's declared representation
+// (and default contents) once at construction. `prototype` is a value of the
+// cell's declared type; only its representation is used. No services: it runs
+// before any process, so there are no subscribers to fire.
+[[nodiscard]] inline auto MakeObservableInitializeCallExpr(
+    ExprId cell, ExprId prototype, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = support::BuiltinFn::kInitialize},
+              .arguments = {cell, prototype}},
+      .type = void_type};
+}
+
 // `cell.Set(services, value)` -- whole-cell write that fires subscribers
 // on change.
 [[nodiscard]] inline auto MakeObservableSetCallExpr(

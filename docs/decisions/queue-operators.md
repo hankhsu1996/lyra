@@ -51,16 +51,13 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
    realization applies.
 
 4. **A queue's element shape and bound are declared-type properties, preserved across assignment.**
-   `value-assignment-and-moved-from.md` established that a shape-bearing value keeps the
-   destination's declared type across assignment and copies only the value in. A queue's element
-   shape (its out-of-bounds shield slot, see `runtime-shape-and-default-value.md`) and its LRM
-   7.10.5 bound are that kind of property: `q = rhs` keeps `q`'s shape and bound and copies the
-   elements, rather than adopting the source's. Because a declared queue is default-constructed and
-   then initialized by assignment, the value type adopts the source's shape (and bound) on that
-   first store and preserves thereafter -- so assigning the empty `{}` or an unbounded concatenation
-   result keeps the variable's shape, and the concatenation value therefore carries no element
-   default. This is what removed an earlier element-default field that had been compensating for an
-   assignment that wrongly adopted the source's shape.
+   A queue's element shape (its out-of-bounds shield slot, see `runtime-shape-and-default-value.md`)
+   and its LRM 7.10.5 bound are fixed by its declared type, while its length is value state:
+   `q = rhs` keeps `q`'s element shape and bound and takes the source's elements and length, rather
+   than adopting the source's shape. So assigning the empty `{}` or an unbounded concatenation
+   result keeps the variable's element shape and bound, and the concatenation value therefore
+   carries no element default. This is what removed an earlier element-default field that had been
+   compensating for an assignment that wrongly adopted the source's shape.
 
 5. **`$` resolves to `size - 1` at the indexing site.** Slang models `$` as an unbounded literal
    with no value of its own; it means "the last index" of the queue being indexed. The AST-to-HIR
@@ -87,8 +84,6 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
 - LRM 7.10 (queues), 7.10.1 (operators / invalid index / `q[$+1]`), 7.10.4 (push / pop / insert via
   assignment and concatenation), 7.10.5 (bounded queues), 10.10 (unpacked array concatenation),
   11.2.2 / 11.4.5 (aggregate equality).
-- `value-assignment-and-moved-from.md` -- the type-vs-value distinction the queue's shape and bound
-  follow.
 - `runtime-shape-and-default-value.md` -- the element-shape shield slot a queue carries.
 - `builtin-call-identity.md` -- the built-in method-call mechanism these operators reuse rather than
   adding select nodes beside.

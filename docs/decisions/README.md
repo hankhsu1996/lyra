@@ -16,9 +16,6 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 
 - [integral-representation](integral-representation.md) -- one fat `PackedArray` carries integral
   shape (width / signedness / 4-state / dims) as runtime fields, not C++ template parameters.
-- [value-assignment-and-moved-from](value-assignment-and-moved-from.md) -- assignment preserves the
-  destination's declared shape and copies bits in; a moved-from value stays valid for STL
-  relocation.
 - [value-type-concepts](value-type-concepts.md) -- the `lyra::value` operator surface is a lattice
   of composable C++ concepts, one per LRM operator family.
 - [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- runtime shape lives on
