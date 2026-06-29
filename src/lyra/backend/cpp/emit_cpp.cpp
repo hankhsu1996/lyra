@@ -14,6 +14,7 @@
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/mir/base_contract.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -55,10 +56,10 @@ auto RenderMethodParam(
   return std::format("{} {}", RenderTypeAsCpp(unit, s, param.type), param.name);
 }
 
-// The C++ name of a runtime-base virtual hook. The mapping from the resolved
+// The C++ name of a runtime-base virtual. The mapping from the resolved
 // override reference to the emitted token lives only here, so the override
 // relation stays a declaration reference everywhere else.
-auto RenderRuntimeMethodName(mir::RuntimeMethod method) -> std::string_view {
+auto RuntimeVirtualName(mir::RuntimeMethod method) -> std::string_view {
   switch (method) {
     case mir::RuntimeMethod::kResolve:
       return "ResolveState";
@@ -66,8 +67,26 @@ auto RenderRuntimeMethodName(mir::RuntimeMethod method) -> std::string_view {
       return "InitializeState";
     case mir::RuntimeMethod::kActivate:
       return "CreateProcesses";
+    case mir::RuntimeMethod::kTimePrecisionPower:
+      return "TimePrecisionPower";
+    case mir::RuntimeMethod::kDefName:
+      return "DefName";
   }
-  throw InternalError("RenderRuntimeMethodName: unknown RuntimeMethod");
+  throw InternalError("RuntimeVirtualName: unknown RuntimeMethod");
+}
+
+// Whether a method's receiver is a read-only borrow (an immutable `&self`),
+// read off `self`'s own parameter type. The C++ override shim is `const`
+// exactly when its receiver is read-only.
+auto ReceiverIsReadOnly(
+    const mir::CompilationUnit& unit, const mir::MethodDecl& m) -> bool {
+  if (m.code.params.empty()) {
+    return false;
+  }
+  const auto& self_type =
+      unit.types.Get(m.code.body.vars.Get(m.code.params[0]).type).data;
+  const auto* ptr = std::get_if<mir::PointerType>(&self_type);
+  return ptr != nullptr && ptr->mutability == mir::Mutability::kReadOnly;
 }
 
 // The one renderer for every callable body. A body renders uniformly as a
@@ -103,11 +122,15 @@ auto RenderMethod(
   if (m.overrides.has_value()) {
     const std::string_view hook = std::visit(
         [](const mir::RuntimeLibraryMethodRef& ref) {
-          return RenderRuntimeMethodName(ref.method);
+          return RuntimeVirtualName(ref.method);
         },
         *m.overrides);
+    // A void hook discards; a value hook returns. `return <void-expr>;` is
+    // legal in a void function, so the same forward serves both with no branch.
+    // The shim is `const` exactly when its receiver is a read-only borrow.
     out += std::format(
-        "{}void {}() override {{ {}(this); }}\n", Indent(indent), hook, m.name);
+        "{}{} {}(){} override {{ return {}(this); }}\n", Indent(indent), ret,
+        hook, ReceiverIsReadOnly(unit, m) ? " const" : "", m.name);
   }
   return out;
 }
@@ -197,20 +220,6 @@ auto RenderConstructor(
       RenderBlockStatements(scope_view, indent + 1));
 }
 
-auto RenderBaseClass(const mir::ClassRef& base) -> std::string {
-  return std::visit(
-      [](const mir::RuntimeLibraryClassRef& ref) -> std::string {
-        switch (ref.kind) {
-          case mir::RuntimeClassKind::kInstance:
-            return "lyra::runtime::Instance";
-          case mir::RuntimeClassKind::kGenScope:
-            return "lyra::runtime::GenScope";
-        }
-        throw InternalError("RenderBaseClass: unknown RuntimeClassKind");
-      },
-      base);
-}
-
 auto VisibilityKeyword(mir::MethodVisibility visibility) -> std::string_view {
   switch (visibility) {
     case mir::MethodVisibility::kPublic:
@@ -232,24 +241,18 @@ auto RenderScopeAsClass(
           ? ScopeView::ForRoot(unit, s, s.constructor_block)
           : parent_struct_view->WithClass(s, s.constructor_block);
 
+  const std::optional<mir::BaseContract> base =
+      s.base.has_value()
+          ? std::optional{mir::ResolveBaseContract(unit, *s.base)}
+          : std::nullopt;
+
   std::string out;
   out += Indent(indent) + "class " + s.name + " final";
-  if (s.base.has_value()) {
-    out += " : public " + RenderBaseClass(*s.base);
+  if (base.has_value()) {
+    out += " : public " + RenderTypeAsCpp(unit, s, base->renderable);
   }
   out += " {\n";
   out += Indent(indent) + " public:\n";
-
-  // The scope's own time precision (LRM 3.14.2). The engine takes the minimum
-  // across the tree as the design-global tick (LRM 3.14.3); the runtime scales
-  // a local-precision delay from this value to that tick. Only a tree node --
-  // a class with a runtime base -- overrides it.
-  if (s.base.has_value()) {
-    out += Indent(indent + 1) +
-           "auto TimePrecisionPower() const -> std::int8_t override { return " +
-           std::to_string(static_cast<int>(s.time_resolution.precision_power)) +
-           "; }\n\n";
-  }
 
   for (const mir::ClassId child_id : s.contained) {
     out += RenderScopeAsClass(
@@ -263,23 +266,11 @@ auto RenderScopeAsClass(
   // base but still runs its constructor body to initialize its members. Either
   // way the constructor is emitted when there is a base to forward to or a body
   // to run; a baseless object with an empty body keeps the implicit default.
-  if (s.base.has_value()) {
-    out +=
-        RenderConstructor(this_anchor, s, RenderBaseClass(*s.base), indent + 1);
+  if (base.has_value()) {
+    out += RenderConstructor(
+        this_anchor, s, RenderTypeAsCpp(unit, s, base->renderable), indent + 1);
   } else if (!s.constructor_block.root_stmts.empty()) {
     out += RenderConstructor(this_anchor, s, "", indent + 1);
-  }
-
-  // A unit-root scope is a module instance; its name is the def-name an upward
-  // reference matches when climbing the parent chain (LRM 23.8).
-  const auto* base_instance =
-      s.base.has_value() ? std::get_if<mir::RuntimeLibraryClassRef>(&*s.base)
-                         : nullptr;
-  if (base_instance != nullptr &&
-      base_instance->kind == mir::RuntimeClassKind::kInstance) {
-    out += Indent(indent + 1) +
-           "auto DefName() const -> std::string_view override { return \"" +
-           s.name + "\"; }\n";
   }
 
   // Members follow the constructor and methods. They are public so cross-unit
@@ -428,17 +419,19 @@ auto RenderScopeHeaderFile(
     out += "\n";
   }
 
-  // A SystemVerilog class is a free-standing registry object with no runtime
-  // base and no structural parent, so it is not reached by the scope tree's
-  // `contained` walk. Emit every baseless class before the scope tree that may
-  // reference it through a handle or `new`. (The scope objects -- the module
-  // and its generate scopes -- carry a runtime base and are emitted by the
-  // tree walk below.)
+  // A SystemVerilog class is a free-standing registry object with no structural
+  // parent, so it is not reached by the scope tree's `contained` walk. Emit
+  // every non-tree-node class before the scope tree that may reference it
+  // through a handle or `new`. (The scope objects -- the module and its
+  // generate scopes -- are runtime tree nodes emitted by the tree walk below.)
   for (std::size_t i = 0; i < unit.classes.size(); ++i) {
     const mir::ClassId id{static_cast<std::uint32_t>(i)};
     if (!unit.classes.IsDefined(id)) continue;
     const mir::Class& cls = unit.GetClass(id);
-    if (cls.base.has_value()) continue;
+    if (cls.base.has_value() &&
+        mir::ResolveBaseContract(unit, *cls.base).is_runtime_tree_node) {
+      continue;
+    }
     out += RenderScopeAsClass(unit, cls, 0, nullptr);
     out += "\n";
   }

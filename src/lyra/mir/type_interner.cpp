@@ -75,16 +75,20 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           HashField(seed, t.class_id.value);
         } else if constexpr (std::is_same_v<T, ExternalUnitObjectType>) {
           HashField(seed, t.unit_name);
+        } else if constexpr (std::is_same_v<T, MachineIntType>) {
+          HashField(seed, t.bit_width);
+          HashCombine(seed, std::hash<int>{}(static_cast<int>(t.signedness)));
         } else if constexpr (std::is_same_v<T, RuntimeLibraryType>) {
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.kind)));
         } else if constexpr (std::is_same_v<T, CoroutineType>) {
           HashId(seed, t.payload);
         } else if constexpr (std::is_same_v<T, RefType>) {
           HashId(seed, t.pointee);
-          HashField(seed, t.is_const);
+          HashCombine(seed, std::hash<int>{}(static_cast<int>(t.mutability)));
         } else if constexpr (std::is_same_v<T, PointerType>) {
           HashId(seed, t.pointee);
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.ownership)));
+          HashCombine(seed, std::hash<int>{}(static_cast<int>(t.mutability)));
         } else if constexpr (std::is_same_v<T, ManagedRefType>) {
           HashId(seed, t.pointee);
         } else if constexpr (std::is_same_v<T, VectorType>) {

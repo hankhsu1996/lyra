@@ -20,6 +20,8 @@ enum class TypeKind {
   kAssociativeArray,
   kWildcardIndex,
   kString,
+  kStringView,
+  kMachineInt,
   kEvent,
   kReal,
   kShortReal,
@@ -29,6 +31,8 @@ enum class TypeKind {
   kObject,
   kExternalUnitObject,
   kScope,
+  kInstance,
+  kGenScope,
   kServices,
   kFiles,
   kDiagnostic,
@@ -151,6 +155,28 @@ struct WildcardIndexType {
 struct StringType {
   auto operator==(const StringType&) const -> bool = default;
 };
+
+// A borrowed view of string bytes the value does not own (the generic-language
+// borrowed string -- Rust `&str`, C++ `std::string_view`), distinct from the
+// owning `StringType`. A constant exposed through it borrows static storage and
+// copies nothing; the owning-versus-borrowing distinction survives
+// optimization, so it is its own type rather than a use of `StringType`.
+struct StringViewType {
+  auto operator==(const StringViewType&) const -> bool = default;
+};
+
+// A primitive machine integer (the generic-language `iN` / `uN`, C `intN_t`):
+// a fixed-width 2-state scalar, distinct from the 4-state SV `PackedArrayType`.
+// It carries runtime-contract scalar metadata -- a scope's time precision power
+// (LRM 3.14.2) -- which is plain machine data, not a simulation value, and
+// lowers to a raw target integer rather than a value wrapper. The owning string
+// metadata's `StringViewType` is its string counterpart.
+struct MachineIntType {
+  std::uint32_t bit_width;
+  Signedness signedness;
+
+  auto operator==(const MachineIntType&) const -> bool = default;
+};
 struct EventType {
   auto operator==(const EventType&) const -> bool = default;
 };
@@ -196,6 +222,22 @@ struct ExternalUnitObjectType {
 // across the unit boundary, so only the runtime base is named.
 struct ScopeType {
   auto operator==(const ScopeType&) const -> bool = default;
+};
+
+// The runtime object-tree base class `lyra::runtime::Instance`, the concrete
+// base a module / interface / program instance scope extends. Distinct from
+// the type-erased `ScopeType`: this is the named base in an object's lineage,
+// never a navigation handle. An object whose base lineage is this one is a
+// runtime tree node and exposes its def-name for upward navigation (LRM 23.8).
+struct InstanceType {
+  auto operator==(const InstanceType&) const -> bool = default;
+};
+
+// The runtime object-tree base class `lyra::runtime::GenScope`, the concrete
+// base a named generate scope extends. A tree node like InstanceType, but a
+// generate scope is matched by its block name, not a def-name.
+struct GenScopeType {
+  auto operator==(const GenScopeType&) const -> bool = default;
 };
 
 // The engine facade `lyra::runtime::RuntimeServices`. A callable body reaches
@@ -269,17 +311,27 @@ struct CoroutineType {
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
+// The write capability a reference or borrow grants its holder (the
+// generic-language `&T` vs `&mut T`, a method's `const` vs non-const receiver).
+// Mutability lives on references and borrows, never as a qualifier on an
+// ordinary value type; a place's or binding's mutability is a separate axis
+// carried where that place or binding lives.
+enum class Mutability : std::uint8_t {
+  kMutable,
+  kReadOnly,
+};
+
 // A reference value aliasing a storage cell of `pointee` type (LRM 13.5.2
 // pass-by-reference; a fork branch / `$sscanf` / with-clause body sharing
 // enclosing storage). The runtime wrapper `lyra::runtime::Ref<T>` routes reads
 // through `Get` and writes through the cell's `Set` (its update-event path), so
-// a value of this type is read and written like an observable cell. `is_const`
-// marks a `const ref` formal (read-only). A library wrapper, like
+// a value of this type is read and written like an observable cell. A read-only
+// `mutability` marks a `const ref` formal (LRM 13.5.2). A library wrapper, like
 // ObservableType; constructing one from a cell is an explicit MIR operation,
 // not a backend-synthesized wrap.
 struct RefType {
   TypeId pointee;
-  bool is_const = false;
+  Mutability mutability = Mutability::kMutable;
 
   auto operator==(const RefType&) const -> bool = default;
 };
@@ -290,12 +342,16 @@ enum class PointerOwnership {
   kBorrowed,
 };
 
-// One level of indirection, classified by its lifetime axis: `kUnique` and
-// `kShared` own the pointee (`unique_ptr<T>` / `shared_ptr<T>`); `kBorrowed`
-// owns nothing and only refers (`T*`).
+// One level of indirection on two orthogonal axes: `ownership` is the lifetime
+// discipline (`kUnique` / `kShared` own the pointee as `unique_ptr<T>` /
+// `shared_ptr<T>`; `kBorrowed` owns nothing and only refers as `T*`), and
+// `mutability` is the write capability the handle grants -- a read-only borrow
+// renders `const T*`, the immutable-receiver (`&self`) case. The two axes are
+// independent: ownership says who frees, mutability says who may write.
 struct PointerType {
   TypeId pointee;
   PointerOwnership ownership;
+  Mutability mutability = Mutability::kMutable;
 
   auto operator==(const PointerType&) const -> bool = default;
 };
@@ -376,9 +432,10 @@ struct ExternalRefType {
 
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-    AssociativeArrayType, WildcardIndexType, StringType, EventType, RealType,
-    ShortRealType, RealTimeType, ChandleType, VoidType, ObjectType,
-    ExternalUnitObjectType, ScopeType, ServicesType, FilesType, DiagnosticType,
+    AssociativeArrayType, WildcardIndexType, StringType, StringViewType,
+    MachineIntType, EventType, RealType, ShortRealType, RealTimeType,
+    ChandleType, VoidType, ObjectType, ExternalUnitObjectType, ScopeType,
+    InstanceType, GenScopeType, ServicesType, FilesType, DiagnosticType,
     RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
     VectorType, TupleType, UnionType, ExternalRefType, ObservableType>;
 

@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/base_contract.hpp"
 #include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -948,7 +949,8 @@ auto InstallPortConnections(
 
       const mir::TypeId value_type = module.TranslateType(alias.type);
       const mir::TypeId ref_type = module.Unit().types.Intern(
-          mir::RefType{.pointee = value_type, .is_const = false});
+          mir::RefType{
+              .pointee = value_type, .mutability = mir::Mutability::kMutable});
       const mir::TypeId slot_type = module.Unit().types.PointerTo(
           ref_type, mir::PointerOwnership::kBorrowed);
       const mir::ExprId nav = resolve_block.exprs.Add(BuildDownwardNavValue(
@@ -1484,24 +1486,21 @@ auto StructuralScopeLowerer::DeclareShape(
   mir::ClassShape shape;
   shape.name = name_;
   shape.base = mir::ClassRef{mir::RuntimeLibraryClassRef{
-      .kind = parent_ == nullptr ? mir::RuntimeClassKind::kInstance
-                                 : mir::RuntimeClassKind::kGenScope}};
+      .base_type = parent_ == nullptr
+                       ? module.Unit().types.Intern(mir::InstanceType{})
+                       : module.Unit().types.Intern(mir::GenScopeType{})}};
   shape.self_pointer_type = self_pointer_type;
   shape.time_resolution = hir_scope.time_resolution;
 
-  // The runtime Scope-base contract: every Scope-derived class takes the
-  // parent pointer, its own HierarchySegment, and the engine services
-  // handle as the first three ctor params, forwarded straight to the
-  // base. The order and types are the SDK convention; the lowering states
-  // them once here so the render reads them like any other params.
+  // An object forwards its base's construction contract straight to the base
+  // constructor; the prefix params come from that contract, not restated here,
+  // and the render walks them like any other params.
   if (shape.base.has_value()) {
-    const auto& builtins = module.Unit().builtins;
-    shape.ctor_prefix_params.Add(
-        mir::ParamDecl{.name = "parent", .type = builtins.scope_ptr});
-    shape.ctor_prefix_params.Add(
-        mir::ParamDecl{.name = "segment", .type = builtins.hierarchy_segment});
-    shape.ctor_prefix_params.Add(
-        mir::ParamDecl{.name = "services", .type = builtins.services});
+    const mir::BaseContract contract =
+        mir::ResolveBaseContract(module.Unit(), *shape.base);
+    for (const auto& param : contract.ctor_prefix) {
+      shape.ctor_prefix_params.Add(param);
+    }
   }
   for (const auto& alias : hir_scope.type_aliases) {
     shape.type_aliases.push_back(
@@ -1525,12 +1524,15 @@ auto StructuralScopeLowerer::DeclareShape(
     // Any other module-scope value-storage signal becomes an observable cell so
     // writes route through `Var<T>::Set` and subscribers fire.
     const mir::TypeId mir_field_type =
-        is_reference ? module.Unit().types.Intern(
-                           mir::RefType{
-                               .pointee = mir_value_type,
-                               .is_const = *d.reference ==
-                                           hir::ReferenceBinding::kConstRef})
-                     : MaybeWrapObservable(module, mir_value_type);
+        is_reference
+            ? module.Unit().types.Intern(
+                  mir::RefType{
+                      .pointee = mir_value_type,
+                      .mutability =
+                          *d.reference == hir::ReferenceBinding::kConstRef
+                              ? mir::Mutability::kReadOnly
+                              : mir::Mutability::kMutable})
+            : MaybeWrapObservable(module, mir_value_type);
     const mir::MemberId mir_id = shape.members.Add(
         mir::MemberDecl{.name = d.name, .type = mir_field_type});
     lowerer.MapStructuralVar(hir_id, mir_id);
@@ -1852,6 +1854,90 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
                 .method = mir::RuntimeMethod::kActivate}},
             .visibility = mir::MethodVisibility::kInternal});
+  }
+
+  // A runtime tree node overrides the runtime virtuals that report its constant
+  // properties -- its time precision (LRM 3.14.2), and a module instance its
+  // def-name (LRM 23.8) -- as ordinary methods whose body returns the constant.
+  // Added after the subroutines, whose method ids are pre-mapped.
+  if (mir_class.base.has_value()) {
+    const mir::BaseContract contract =
+        mir::ResolveBaseContract(module.Unit(), *mir_class.base);
+    const mir::TypeId self_object_type =
+        module.Unit().types.Intern(mir::ObjectType{.class_id = class_id_});
+    // These accessors only read the object, so their receiver is a read-only
+    // borrow (an immutable `&self`); the render derives the `const` shim from
+    // it.
+    const mir::TypeId self_readonly_pointer_type =
+        module.Unit().types.PointerTo(
+            self_object_type, mir::PointerOwnership::kBorrowed,
+            mir::Mutability::kReadOnly);
+    if (contract.is_runtime_tree_node) {
+      // The precision power is plain machine metadata (LRM 3.14.2), so its type
+      // is a machine integer rather than a 4-state SV value -- it stays a raw
+      // `int8` end to end, with no value-wrapper round-trip at the engine.
+      const mir::TypeId precision_type = module.Unit().types.Intern(
+          mir::MachineIntType{
+              .bit_width = 8, .signedness = mir::Signedness::kSigned});
+      mir::Block precision_block;
+      const mir::LocalId precision_self = precision_block.vars.Add(
+          mir::LocalDecl{.name = "self", .type = self_readonly_pointer_type});
+      const mir::ExprId precision_value = precision_block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::IntegerLiteral{
+                      .value =
+                          mir::IntegralConstant{
+                              .value_words = {static_cast<
+                                  std::uint64_t>(static_cast<std::int64_t>(
+                                  mir_class.time_resolution.precision_power))},
+                              .state_words = {},
+                              .width = 8,
+                              .signedness = mir::Signedness::kSigned,
+                              .state_kind = mir::IntegralStateKind::kTwoState}},
+              .type = precision_type});
+      precision_block.AppendStmt(
+          mir::ReturnStmt{
+              .value = precision_value, .is_coroutine_return = false});
+      mir_class.methods.Add(
+          mir::MethodDecl{
+              .name = "TimePrecisionPower",
+              .code =
+                  mir::CallableCode{
+                      .params = {precision_self},
+                      .result_type = precision_type,
+                      .body = std::move(precision_block)},
+              .overrides =
+                  mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
+                      .method = mir::RuntimeMethod::kTimePrecisionPower}},
+              .visibility = mir::MethodVisibility::kInternal});
+    }
+    if (contract.exposes_def_name) {
+      const mir::TypeId string_view_type =
+          module.Unit().types.Intern(mir::StringViewType{});
+      mir::Block def_name_block;
+      const mir::LocalId def_name_self = def_name_block.vars.Add(
+          mir::LocalDecl{.name = "self", .type = self_readonly_pointer_type});
+      const mir::ExprId def_name_value = def_name_block.exprs.Add(
+          mir::Expr{
+              .data = mir::StringLiteral{.value = mir_class.name},
+              .type = string_view_type});
+      def_name_block.AppendStmt(
+          mir::ReturnStmt{
+              .value = def_name_value, .is_coroutine_return = false});
+      mir_class.methods.Add(
+          mir::MethodDecl{
+              .name = "DefName",
+              .code =
+                  mir::CallableCode{
+                      .params = {def_name_self},
+                      .result_type = string_view_type,
+                      .body = std::move(def_name_block)},
+              .overrides =
+                  mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
+                      .method = mir::RuntimeMethod::kDefName}},
+              .visibility = mir::MethodVisibility::kInternal});
+    }
   }
 
   module.Unit().DefineClass(class_id_, std::move(mir_class));

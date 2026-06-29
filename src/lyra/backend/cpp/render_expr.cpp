@@ -121,10 +121,15 @@ auto RenderIntegerLiteralExpr(
     const ScopeView& view, const mir::Expr& expr,
     const mir::IntegerLiteral& lit) -> std::string {
   const auto& ty = view.Unit().types.Get(expr.type);
+  if (std::holds_alternative<mir::MachineIntType>(ty.data)) {
+    // A machine integer is a raw target scalar, so its literal is the bare
+    // numeric value -- no `PackedArray` wrapper.
+    return std::to_string(IntegralConstantToInt64(lit.value));
+  }
   if (!ty.IsIntegralPacked()) {
     throw InternalError(
         "RenderIntegerLiteralExpr: IntegerLiteral not typed as "
-        "PackedArrayType or EnumType");
+        "PackedArrayType, EnumType, or MachineIntType");
   }
   auto body = RenderPackedArrayIntegerLiteral(ty.AsIntegralPacked(), lit.value);
   if (ty.IsEnum()) {

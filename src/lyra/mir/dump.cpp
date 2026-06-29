@@ -11,6 +11,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/base_contract.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -50,14 +51,16 @@ class MirDumper {
     Indent();
     DumpClass(unit.root, unit.GetClass(unit.root));
     // A class reached by a handle is not a child of the runtime tree, so it is
-    // not dumped under the root; every such class carries no runtime base.
+    // not dumped under the root; a runtime tree node is reached by the root
+    // walk's Contained recursion instead.
     for (std::size_t i = 0; i < unit.classes.size(); ++i) {
       const ClassId id{static_cast<std::uint32_t>(i)};
       if (id == unit.root || !unit.classes.IsDefined(id)) {
         continue;
       }
       const Class& cls = unit.GetClass(id);
-      if (cls.base.has_value()) {
+      if (cls.base.has_value() &&
+          ResolveBaseContract(unit, *cls.base).is_runtime_tree_node) {
         continue;
       }
       DumpClass(id, cls);
@@ -181,6 +184,14 @@ class MirDumper {
               return "WildcardIndexType";
             },
             [](const StringType&) -> std::string { return "StringType"; },
+            [](const StringViewType&) -> std::string {
+              return "StringViewType";
+            },
+            [](const MachineIntType& m) -> std::string {
+              return std::format(
+                  "MachineInt(width={}, signed={})", m.bit_width,
+                  m.signedness == Signedness::kSigned ? "true" : "false");
+            },
             [](const EventType&) -> std::string { return "EventType"; },
             [](const RealType&) -> std::string { return "RealType"; },
             [](const ShortRealType&) -> std::string { return "ShortRealType"; },
@@ -195,6 +206,8 @@ class MirDumper {
                   "ExternalUnitObject(unit=\"{}\")", e.unit_name);
             },
             [](const ScopeType&) -> std::string { return "Scope"; },
+            [](const InstanceType&) -> std::string { return "Instance"; },
+            [](const GenScopeType&) -> std::string { return "GenScope"; },
             [](const ServicesType&) -> std::string { return "Services"; },
             [](const FilesType&) -> std::string { return "Files"; },
             [](const DiagnosticType&) -> std::string { return "Diagnostic"; },
@@ -223,20 +236,26 @@ class MirDumper {
             },
             [](const RefType& r) -> std::string {
               return std::format(
-                  "Ref({}pointee=Type[{}])", r.is_const ? "const, " : "",
+                  "Ref({}pointee=Type[{}])",
+                  r.mutability == Mutability::kReadOnly ? "readonly, " : "",
                   r.pointee.value);
             },
             [](const PointerType& p) -> std::string {
+              const std::string_view ro =
+                  p.mutability == Mutability::kReadOnly ? ", readonly" : "";
               switch (p.ownership) {
                 case PointerOwnership::kUnique:
                   return std::format(
-                      "Pointer(unique, pointee=Type[{}])", p.pointee.value);
+                      "Pointer(unique{}, pointee=Type[{}])", ro,
+                      p.pointee.value);
                 case PointerOwnership::kShared:
                   return std::format(
-                      "Pointer(shared, pointee=Type[{}])", p.pointee.value);
+                      "Pointer(shared{}, pointee=Type[{}])", ro,
+                      p.pointee.value);
                 case PointerOwnership::kBorrowed:
                   return std::format(
-                      "Pointer(borrowed, pointee=Type[{}])", p.pointee.value);
+                      "Pointer(borrowed{}, pointee=Type[{}])", ro,
+                      p.pointee.value);
               }
               throw InternalError("MirDumper: unknown PointerOwnership");
             },
@@ -671,12 +690,8 @@ class MirDumper {
     Indent();
 
     if (s.base.has_value()) {
-      const auto& ref = std::get<RuntimeLibraryClassRef>(*s.base);
-      Line(
-          std::format(
-              "Base: {}", ref.kind == RuntimeClassKind::kInstance
-                              ? "Instance"
-                              : "GenScope"));
+      const TypeId renderable = ResolveBaseContract(*unit_, *s.base).renderable;
+      Line(std::format("Base: {}", FormatType(unit_->types.Get(renderable))));
     }
 
     Line("Contained:");
@@ -739,10 +754,22 @@ class MirDumper {
     if (d.overrides.has_value()) {
       const auto& ref = std::get<RuntimeLibraryMethodRef>(*d.overrides);
       std::string_view target = "Resolve";
-      if (ref.method == RuntimeMethod::kInitialize) {
-        target = "Initialize";
-      } else if (ref.method == RuntimeMethod::kActivate) {
-        target = "Activate";
+      switch (ref.method) {
+        case RuntimeMethod::kResolve:
+          target = "Resolve";
+          break;
+        case RuntimeMethod::kInitialize:
+          target = "Initialize";
+          break;
+        case RuntimeMethod::kActivate:
+          target = "Activate";
+          break;
+        case RuntimeMethod::kTimePrecisionPower:
+          target = "TimePrecisionPower";
+          break;
+        case RuntimeMethod::kDefName:
+          target = "DefName";
+          break;
       }
       Line(std::format("Overrides: {}", target));
     }

@@ -35,10 +35,12 @@ struct ClassShape {
 
 struct Class {
   std::string name;
-  // The base this object extends, or absent for a plain object that is not a
-  // tree node. A backend realizes the base, the registering constructor, and
-  // the tree-node overrides only when a base is present; a baseless object is a
-  // plain struct.
+  // The base this object extends, or absent if it extends nothing. A consumer
+  // resolves it to the base contract -- the base type that renders the
+  // inheritance, whether the object is a runtime tree node, the constructor
+  // prefix it forwards. A runtime tree node realizes the registering
+  // constructor and the lifecycle overrides; an object that extends nothing is
+  // a plain struct.
   std::optional<ClassRef> base;
   TypeId self_pointer_type;
   // The class's resolved time unit and precision (LRM 3.14.2). The emitted

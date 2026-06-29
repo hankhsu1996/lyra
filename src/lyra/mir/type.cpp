@@ -65,6 +65,8 @@ auto Type::Kind() const -> TypeKind {
           },
           [](const WildcardIndexType&) { return TypeKind::kWildcardIndex; },
           [](const StringType&) { return TypeKind::kString; },
+          [](const StringViewType&) { return TypeKind::kStringView; },
+          [](const MachineIntType&) { return TypeKind::kMachineInt; },
           [](const EventType&) { return TypeKind::kEvent; },
           [](const RealType&) { return TypeKind::kReal; },
           [](const ShortRealType&) { return TypeKind::kShortReal; },
@@ -76,6 +78,8 @@ auto Type::Kind() const -> TypeKind {
             return TypeKind::kExternalUnitObject;
           },
           [](const ScopeType&) { return TypeKind::kScope; },
+          [](const InstanceType&) { return TypeKind::kInstance; },
+          [](const GenScopeType&) { return TypeKind::kGenScope; },
           [](const ServicesType&) { return TypeKind::kServices; },
           [](const FilesType&) { return TypeKind::kFiles; },
           [](const DiagnosticType&) { return TypeKind::kDiagnostic; },

@@ -67,8 +67,14 @@ class TypeInterner {
     return Intern(CoroutineType{.payload = payload});
   }
 
-  auto PointerTo(TypeId pointee, PointerOwnership ownership) -> TypeId {
-    return Intern(PointerType{.pointee = pointee, .ownership = ownership});
+  auto PointerTo(
+      TypeId pointee, PointerOwnership ownership,
+      Mutability mutability = Mutability::kMutable) -> TypeId {
+    return Intern(
+        PointerType{
+            .pointee = pointee,
+            .ownership = ownership,
+            .mutability = mutability});
   }
 
  private:
