@@ -3,37 +3,40 @@
 #include <cstdint>
 #include <variant>
 
+#include "lyra/mir/type_id.hpp"
+
 namespace lyra::mir {
 
-// A fixed runtime-library base class. These are object types the runtime
-// library provides, not classes of any compilation unit: `kInstance` is a
-// module / interface / program instance and `kGenScope` a named generate scope,
-// both nodes in the runtime object tree.
-enum class RuntimeClassKind : std::uint8_t {
-  kInstance,
-  kGenScope,
-};
-
-// A reference to a runtime-library base class.
+// A reference to a runtime-library base class, named by the type that renders
+// it (`InstanceType` / `GenScopeType`). The type is the identity of the
+// imported library declaration: a consumer renders the base through the one
+// type-mapping dispatch and reads the base's contract from this type, never
+// from a closed classification it switches on.
 struct RuntimeLibraryClassRef {
-  RuntimeClassKind kind;
+  TypeId base_type;
 
   auto operator==(const RuntimeLibraryClassRef&) const -> bool = default;
 };
 
-// A reference to the object type an object extends. A consumer resolves it
-// through one path rather than switching a closed classification; a base is a
-// runtime-library class.
+// A reference to the object type an object extends, identity following the
+// compilation-unit boundary. A consumer resolves it through one entry point;
+// the boundary split lives in the resolver, not in each consumer. Today the
+// only producer is a runtime-library base.
 using ClassRef = std::variant<RuntimeLibraryClassRef>;
 
-// A virtual hook the runtime base declares and the engine invokes after
-// construction: `kResolve` binds cross-instance references, `kInitialize` runs
-// variable initializers, and `kActivate` registers processes (the Resolve /
-// Initialize / Activate phases of the elaboration lifecycle).
+// A virtual the runtime base declares and a derived object may override.
+// `kResolve` / `kInitialize` / `kActivate` are the post-construction lifecycle
+// phases the engine invokes (binding cross-instance references, running
+// variable initializers, registering processes). `kTimePrecisionPower` and
+// `kDefName` are constant-property accessors a tree node overrides to report
+// its time precision (LRM 3.14.2) and, for a module instance, its def-name
+// (LRM 23.8).
 enum class RuntimeMethod : std::uint8_t {
   kResolve,
   kInitialize,
   kActivate,
+  kTimePrecisionPower,
+  kDefName,
 };
 
 // A reference to a runtime-library method.
@@ -45,7 +48,7 @@ struct RuntimeLibraryMethodRef {
 
 // A reference to the base method an instance method overrides, resolved to a
 // declaration rather than a textual name. A consumer reads the override target
-// through one path; the only base method is a runtime-library lifecycle hook.
+// through one path; the only base method is a runtime-library virtual.
 using OverriddenMethodRef = std::variant<RuntimeLibraryMethodRef>;
 
 }  // namespace lyra::mir

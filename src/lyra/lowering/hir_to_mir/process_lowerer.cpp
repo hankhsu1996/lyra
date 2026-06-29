@@ -252,7 +252,9 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
             ? module_->Unit().types.Intern(
                   mir::RefType{
                       .pointee = value_type,
-                      .is_const = dir == hir::ParamDirection::kConstRef})
+                      .mutability = dir == hir::ParamDirection::kConstRef
+                                        ? mir::Mutability::kReadOnly
+                                        : mir::Mutability::kMutable})
             : value_type;
     const mir::LocalId mir_var =
         body_block.vars.Add(mir::LocalDecl{.name = hir_var.name, .type = type});

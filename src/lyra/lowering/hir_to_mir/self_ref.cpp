@@ -86,8 +86,9 @@ auto BuildReferenceArg(
   if (std::holds_alternative<mir::ObservableType>(pointee_ty.data)) {
     pointee = std::get<mir::ObservableType>(pointee_ty.data).value;
   }
-  const mir::TypeId ref_type =
-      unit.types.Intern(mir::RefType{.pointee = pointee, .is_const = false});
+  const mir::TypeId ref_type = unit.types.Intern(
+      mir::RefType{
+          .pointee = pointee, .mutability = mir::Mutability::kMutable});
   return block.exprs.Add(
       mir::Expr{
           .data =
