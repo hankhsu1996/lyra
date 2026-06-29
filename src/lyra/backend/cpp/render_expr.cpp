@@ -368,11 +368,12 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::LocalRef& l) -> std::string {
             return LookupLocalName(view, l);
           },
-          // HIR-to-MIR lowers an LHS selector chain to a container-access
-          // `CallExpr` (per `mir::IsContainerAccessCall`). The C++ surface
-          // returns a write-through reference, so the natural value-side
-          // rendering is itself the assignment
-          // target; LHS context needs no extra fix-up.
+          // HIR-to-MIR lowers an LHS selector chain to write-form nodes -- a
+          // container-access `CallExpr` with a write callee (per
+          // `mir::IsContainerAccessCall`), a `UnionGetRefExpr`, a
+          // `TupleGetExpr` on a mutable base -- whose value-side render is
+          // already a writable place. So the lvalue rendering of a container
+          // access is just its value-side render, with no extra fix-up here.
           [&](const mir::CallExpr&) -> std::string {
             return RenderExpr(view, expr);
           },
@@ -387,6 +388,15 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
             return std::format(
                 "({}).template Get<{}>()",
                 RenderLhsExpr(view, view.Expr(g.tuple)), g.index);
+          },
+          // A union member write: a reference to the active member reached
+          // through the addressable union (the Mutate snapshot). The reference
+          // makes the member active, so the projection is itself the assignment
+          // target and composes for a nested `u.f.g`.
+          [&](const mir::UnionGetRefExpr& g) -> std::string {
+            return std::format(
+                "({}).template GetRef<{}>()",
+                RenderLhsExpr(view, view.Expr(g.union_value)), g.index);
           },
           [&](const auto&) -> std::string {
             throw InternalError(
@@ -851,6 +861,14 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::UnionGetExpr& g) -> std::string {
             return std::format(
                 "({}).template Get<{}>()",
+                RenderExpr(view, view.Expr(g.union_value)), g.index);
+          },
+          // The write node reaches rvalue render only as the receiver of a
+          // container-access write (`u.h[i] = v`), where it is still the active
+          // member reference; it renders the same as in lvalue position.
+          [&](const mir::UnionGetRefExpr& g) -> std::string {
+            return std::format(
+                "({}).template GetRef<{}>()",
                 RenderExpr(view, view.Expr(g.union_value)), g.index);
           },
       },

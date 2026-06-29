@@ -15,6 +15,8 @@
 
 namespace lyra::value {
 
+class StringCharRef;
+
 // Runtime representation of the SystemVerilog `string` type (LRM 6.16). The
 // SV semantics -- equality on contents, lexicographic compare, and the method
 // family in LRM 6.16.1 through 6.16.15 -- are exposed as member operators and
@@ -139,6 +141,22 @@ class String {
     return PackedArray::Byte(
         static_cast<std::int8_t>(impl_[static_cast<std::size_t>(i)]));
   }
+
+  // The read side of indexed character access `s[i]`: the character value, with
+  // the same out-of-range default as `getc`. Distinct from `Getc` only in role
+  // (the indexing form versus the LRM 6.16.3 method), so it shares the query.
+  [[nodiscard]] auto Element(const PackedArray& i_arg) const -> PackedArray {
+    return Getc(i_arg);
+  }
+
+  // The write side of indexed character access `s[i]`: a write-back reference
+  // to the character. A string exposes no in-place character reference --
+  // writes go through `putc` (LRM 6.16.2) with its out-of-range / NUL rules --
+  // so the reference is a proxy that captures the index once, routes
+  // `operator=` through `putc`, and reads-modifies-writes for each compound
+  // operator. The read/write pair `Element` / `ElementRef` mirrors a packed
+  // array element. Defined after `StringCharRef` below.
+  [[nodiscard]] auto ElementRef(const PackedArray& i_arg) -> StringCharRef;
 
   // LRM 6.16.4. Receiver unchanged.
   [[nodiscard]] auto Toupper() const -> String {
@@ -268,7 +286,77 @@ class String {
   std::string impl_;
 };
 
+// The write-back location for a string character (the write side of `s[i]`). A
+// string exposes no in-place character reference -- writes go through `putc`
+// (LRM 6.16.2) -- so the proxy captures the receiver and index once and routes
+// every write through it: `operator=` is `putc`, and each compound operator
+// reads the current character (`getc`), combines with `rhs`, and writes back.
+// The captured index is the eval-once mechanism: the lvalue is built once by
+// the caller, and both the read and the write here use the same captured index.
+class StringCharRef {
+ public:
+  StringCharRef(String& target, PackedArray index)
+      : target_(&target), index_(std::move(index)) {
+  }
+
+  StringCharRef(const StringCharRef&) = delete;
+  auto operator=(const StringCharRef&) -> StringCharRef& = delete;
+  StringCharRef(StringCharRef&&) noexcept = default;
+  auto operator=(StringCharRef&&) noexcept -> StringCharRef& = default;
+  ~StringCharRef() = default;
+
+  [[nodiscard]] auto ToOwned() const -> PackedArray {
+    return target_->Getc(index_);
+  }
+  auto operator=(const PackedArray& value) -> StringCharRef& {
+    target_->Putc(index_, value);
+    return *this;
+  }
+  auto operator+=(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned() + rhs;
+  }
+  auto operator-=(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned() - rhs;
+  }
+  auto operator*=(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned() * rhs;
+  }
+  auto operator/=(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned() / rhs;
+  }
+  auto operator%=(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned() % rhs;
+  }
+  auto operator&=(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned() & rhs;
+  }
+  auto operator|=(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned() | rhs;
+  }
+  auto operator^=(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned() ^ rhs;
+  }
+  auto ShiftLeftAssign(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned().ShiftLeft(rhs);
+  }
+  auto LogicalShiftRightAssign(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned().LogicalShiftRight(rhs);
+  }
+  auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> StringCharRef& {
+    return *this = ToOwned().ArithmeticShiftRight(rhs);
+  }
+
+ private:
+  String* target_;
+  PackedArray index_;
+};
+
+inline auto String::ElementRef(const PackedArray& i_arg) -> StringCharRef {
+  return StringCharRef{*this, i_arg};
+}
+
 static_assert(LyraValue<String>);
 static_assert(Lengthable<String>);
+static_assert(Indexable<String>);
 
 }  // namespace lyra::value

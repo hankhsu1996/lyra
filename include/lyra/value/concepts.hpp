@@ -116,8 +116,9 @@ concept Lengthable = requires(const T& t) {
 // a reference-form (`ElementRef`) returning a write-through reference. The
 // pair models the bare-vs-`Ref`-suffix naming convention: the bare method
 // hands you the element, the `Ref` method hands you a handle to it. String
-// uses LRM-mandated `Getc` / `Putc` (LRM 6.16.2 / 6.16.3) instead and does
-// not claim Indexable directly.
+// participates through character access -- `Element` is the indexed read and
+// `ElementRef` a write-through proxy (a `StringCharRef`) -- while the LRM-named
+// `Getc` / `Putc` methods (LRM 6.16) stay for the explicit method calls.
 template <typename T>
 concept Indexable = requires(T& t, const PackedArray& pos) {
   { t.Element(pos) };

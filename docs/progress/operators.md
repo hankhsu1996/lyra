@@ -14,8 +14,7 @@ Done when:
 
 ## Actionable
 
-The operator surface in scope is complete except W13: compound assignment to a no-element-lvalue
-target evaluates the left-hand index more than once (LRM 11.4.1).
+All items closed; operator surface in scope is complete.
 
 ## Sub-Steps
 
@@ -84,13 +83,14 @@ merged node.
       selector chains (`array[i]++`, `++a[15:8]`) and observable structural roots are covered. NBA
       contexts (`b <= a++`, `var[i++] <= rhs`) evaluate the inc / dec exactly once at submit time.
       Replication / concatenation operands are rejected as targets per LRM 11.4.12.1.
-- [ ] W13 -- Compound assignment to a target that has no element lvalue and so must
-      read-modify-write the whole value -- a string element (`s[i] op= v`), and a union member once
-      a union is usable in that position -- currently evaluates the left-hand index expression more
-      than once, contrary to LRM 11.4.1 (the left-hand index shall be evaluated exactly once). A
-      side-effecting index (e.g. a function call) therefore runs twice. Targets that lower to a
-      native read-modify-write (whole-var, selector) are correct (W11); only the no-element-lvalue
-      targets are affected.
+- [x] W13 -- Compound assignment evaluates the left-hand side exactly once (LRM 11.4.1) for every
+      target, including a side-effecting subscript (`a[f()] op= b`) at any nesting. Every write
+      target -- whole var, array / string element, struct / union member -- is an op=-able
+      write-back location, so compound lowers uniformly to `AssignExpr{target, op, value}` and the
+      backend evaluates the single target once (C++ `op=`; a future LIR computes the address once).
+      A string character write is a write-back proxy (`String::ElementRef`) and a union member write
+      a reference to the active member (`Union::GetRef`); neither is a read-modify-write desugar at
+      the lowering.
 
 ## Cross-references
 

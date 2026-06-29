@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 
+#include <utility>
 #include <variant>
 
 #include "lyra/mir/expr.hpp"
@@ -24,11 +25,15 @@ auto AsContainerAccessBase(const mir::Expr& expr) -> const mir::ExprId* {
 auto FindLhsRootId(const mir::Block& block, mir::ExprId lhs_id) -> mir::ExprId {
   while (true) {
     const auto& expr = block.exprs.Get(lhs_id);
-    // An unpacked-struct member write projects through a tuple component; the
-    // observable root is the tuple base, reached the same way a container
-    // access reaches its receiver.
+    // A struct member projects through a tuple component and a union member
+    // through its union access; the observable root is the base, reached the
+    // same way a container access reaches its receiver.
     if (const auto* g = std::get_if<mir::TupleGetExpr>(&expr.data)) {
       lhs_id = g->tuple;
+      continue;
+    }
+    if (const auto* m = std::get_if<mir::UnionGetRefExpr>(&expr.data)) {
+      lhs_id = m->union_value;
       continue;
     }
     if (const auto* base = AsContainerAccessBase(expr)) {
@@ -48,6 +53,13 @@ auto RewriteLhsRootWithMutate(
     const mir::TypeId result_ty = expr.type;
     rewritten.tuple =
         RewriteLhsRootWithMutate(unit, block, rewritten.tuple, services_id);
+    return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
+  }
+  if (const auto* m = std::get_if<mir::UnionGetRefExpr>(&expr.data)) {
+    mir::UnionGetRefExpr rewritten = *m;
+    const mir::TypeId result_ty = expr.type;
+    rewritten.union_value = RewriteLhsRootWithMutate(
+        unit, block, rewritten.union_value, services_id);
     return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
   }
   if (AsContainerAccessBase(expr) != nullptr) {

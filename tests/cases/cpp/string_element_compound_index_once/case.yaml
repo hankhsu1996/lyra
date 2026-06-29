@@ -1,0 +1,14 @@
+id: cpp.string_element_compound_index_once
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    elem_calls: 1
+    base_calls: 1
+    s: "hfllo"
+    sarr0_after: "wprld"
