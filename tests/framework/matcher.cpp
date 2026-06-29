@@ -133,13 +133,15 @@ auto CheckOutput(
   for (const auto& needle : expected.contains) {
     if (cleaned.find(needle) == std::string::npos) {
       return std::format(
-          "{}: expected substring not found: \"{}\"", context, needle);
+          "{}: expected substring not found: \"{}\"\n--- actual ---\n{}",
+          context, needle, cleaned);
     }
   }
   for (const auto& needle : expected.not_contains) {
     if (cleaned.find(needle) != std::string::npos) {
       return std::format(
-          "{}: forbidden substring present: \"{}\"", context, needle);
+          "{}: forbidden substring present: \"{}\"\n--- actual ---\n{}",
+          context, needle, cleaned);
     }
   }
   return std::nullopt;
