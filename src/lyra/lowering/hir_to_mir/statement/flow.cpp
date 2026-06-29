@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/statement/flow.hpp"
 
 #include <expected>
-#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -28,13 +27,13 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // LRM 13.3.1: a static-lifetime body local has per-instance storage that
-// outlives every activation of the body. Realize it as a member on the
-// callable's owner class; the init AssignExpr lands in that owner's
-// constructor body (LRM Table 6-7 variable-initialization). The body
-// declaration itself emits nothing. The mangled name carries
-// `<callable>__<source>_<hir_var_id>` so sibling callables sharing a source
-// name (`static int x;` in two processes of the same module) and nested
-// blocks repeating an identifier do not collide on the owner's member arena.
+// outlives every activation of the body. Its member on the owner class is
+// pre-declared by the enclosing scope during shape declaration (one per
+// static local in source order); the body's declaration statement looks the
+// member up by HIR id, places the init AssignExpr into the owner's
+// constructor body (LRM Table 6-7 variable-initialization), and emits no
+// executable text. The class's member arena stays settled while peer bodies
+// lower against it.
 auto LowerStaticVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
@@ -44,10 +43,7 @@ auto LowerStaticVarDeclStmt(
   auto& ctor_block = *ctor_frame.current_block;
   const mir::TypeId self_ptr_type = owner_class->self_pointer_type;
 
-  const std::string mangled = std::format(
-      "{}__{}_{}", process.CallableName(), hir_local.name, v.var.value);
-  const mir::MemberId static_var =
-      owner_class->members.Add(mir::MemberDecl{.name = mangled, .type = type});
+  const mir::MemberId static_var = process.LookupPreDeclaredStaticMember(v.var);
   process.MapProceduralVar(v.var, StaticVarBinding{.var = static_var});
 
   mir::ExprId init_value{};

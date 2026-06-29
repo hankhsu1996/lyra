@@ -1,8 +1,16 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <format>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
+#include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -74,17 +82,48 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   ctor_code.result_type = module.Unit().builtins.void_type;
   mir_class.constructor = std::move(ctor_code);
 
+  // Pre-declare each method's static-lifetime body locals as members on this
+  // class before any method body lowers. A static local has per-instance
+  // storage that outlives every activation of its body (LRM 13.3.1), so it
+  // lives on the enclosing class; declaring it here keeps the class's member
+  // arena settled before any body looks a peer up against it. The mangled
+  // name (`<method>__<source>_<hir_id>`) keeps sibling methods sharing a
+  // source identifier from colliding on the member arena, and the
+  // `hir_id` suffix keeps nested-block reuses of the same identifier
+  // distinct.
+  std::vector<std::vector<std::optional<mir::MemberId>>> method_static_members;
+  method_static_members.reserve(hir_class.methods.size());
+  for (const auto& method : hir_class.methods) {
+    std::vector<std::optional<mir::MemberId>> by_hir_id(
+        method.body.procedural_vars.size());
+    for (std::size_t j = 0; j < method.body.procedural_vars.size(); ++j) {
+      const hir::ProceduralVarId var_id{static_cast<std::uint32_t>(j)};
+      const auto& v = method.body.procedural_vars.Get(var_id);
+      if (v.lifetime != hir::VariableLifetime::kStatic) {
+        continue;
+      }
+      const std::string mangled =
+          std::format("{}__{}_{}", method.name, v.name, j);
+      const mir::TypeId type = module.TranslateType(v.type);
+      by_hir_id[j] =
+          mir_class.members.Add(mir::MemberDecl{.name = mangled, .type = type});
+    }
+    method_static_members.push_back(std::move(by_hir_id));
+  }
+
   // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
   // resolves the body's `self` to the managed handle, and the method's
   // declaration-order position becomes its `MethodId`, so a call site naming
   // the index reaches the same method.
-  for (const auto& method : hir_class.methods) {
+  for (std::size_t i = 0; i < hir_class.methods.size(); ++i) {
+    const auto& method = hir_class.methods[i];
     ScopeChainNode method_link{};
     const WalkFrame method_owner_frame =
         WalkFrame{}.WithClass(&mir_class, method_link);
     ProcessLowerer method_lowerer(
         module, nullptr, mir_class.time_resolution, method.body, method.name,
-        mir::MethodVisibility::kPublic, method_owner_frame);
+        mir::MethodVisibility::kPublic, method_owner_frame,
+        method_static_members[i]);
     auto method_or = method_lowerer.Run(method);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     mir_class.methods.Add(*std::move(method_or));

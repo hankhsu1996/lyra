@@ -77,23 +77,29 @@ class ProcessLowerer {
   // enclosing scope chose for this callable (LRM processes are anonymous, so
   // the caller passes `"process_N"`; methods pass `src.name`). The
   // `owner_ctor_frame` is the enclosing class's constructor-time
-  // frame -- the static-local lowering reads it to place per-instance storage
-  // and its init AssignExpr into the owner's constructor body. `visibility` is
-  // the access the produced method declares: a class instance method is public,
-  // a scope's processes and subroutines are internal.
+  // frame -- the static-local lowering reads it to place the init AssignExpr
+  // into the owner's constructor block. `visibility` is the access the produced
+  // method declares: a class instance method is public, a scope's processes
+  // and subroutines are internal. `static_members` is the per-instance storage
+  // the enclosing scope already declared for this body's static-lifetime
+  // locals, indexed by `hir::ProceduralVarId.value` (nullopt for an automatic
+  // local); the body lowering reads it instead of minting members, so the
+  // class's member arena stays settled while peer bodies lower against it.
   ProcessLowerer(
       ModuleLowerer& module,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
       std::string callable_name, mir::MethodVisibility visibility,
-      WalkFrame owner_ctor_frame)
+      WalkFrame owner_ctor_frame,
+      const std::vector<std::optional<mir::MemberId>>& static_members)
       : module_(&module),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
         time_resolution_(time_resolution),
         hir_body_(&hir_body),
         callable_name_(std::move(callable_name)),
         visibility_(visibility),
-        owner_ctor_frame_(std::move(owner_ctor_frame)) {
+        owner_ctor_frame_(std::move(owner_ctor_frame)),
+        static_members_(&static_members) {
   }
 
   // Lowers an entire HIR process (initial / final / always / always_ff /
@@ -227,10 +233,9 @@ class ProcessLowerer {
   }
 
   // The synthesized identifier for the callable being lowered (e.g.
-  // `"process_3"`, or a method's user-given name). Consumed by the
-  // static-local lowering to mangle the member name on the owner
-  // class so that sibling callables sharing a source name (`static int x;` in
-  // two processes of the same module) do not collide.
+  // `"process_3"`, or a method's user-given name). Used as the produced
+  // method's name and as a prefix for any per-callable artifact the body
+  // emits (e.g. a lifetime-extended activation box).
   [[nodiscard]] auto CallableName() const -> std::string_view {
     return callable_name_;
   }
@@ -249,6 +254,23 @@ class ProcessLowerer {
   // construction-time vantage.
   [[nodiscard]] auto OwnerCtorFrame() const -> const WalkFrame& {
     return owner_ctor_frame_;
+  }
+
+  // Resolves a HIR static-lifetime body local to the MIR member the
+  // enclosing scope pre-declared for it during shape declaration. The body's
+  // static-local lowering reads this instead of minting a member on the owner
+  // class, so the class's member arena stays settled while peer bodies lower
+  // against it.
+  [[nodiscard]] auto LookupPreDeclaredStaticMember(
+      hir::ProceduralVarId hir_id) const -> mir::MemberId {
+    if (hir_id.value >= static_members_->size() ||
+        !(*static_members_)[hir_id.value].has_value()) {
+      throw InternalError(
+          "ProcessLowerer::LookupPreDeclaredStaticMember: HIR procedural "
+          "var was not pre-declared as a static member by the enclosing "
+          "scope");
+    }
+    return *(*static_members_)[hir_id.value];
   }
 
   // Assembles the completion-payload value a `return` should carry in the
@@ -272,6 +294,10 @@ class ProcessLowerer {
   std::string callable_name_;
   mir::MethodVisibility visibility_;
   WalkFrame owner_ctor_frame_;
+  // Pre-declared MIR member for each static-lifetime body local, indexed by
+  // HIR `ProceduralVarId.value` (nullopt for an automatic local). Owned by the
+  // enclosing scope's lowerer; borrowed here for the body lowering's lifetime.
+  const std::vector<std::optional<mir::MemberId>>* static_members_;
   std::vector<ProceduralVarBinding> bindings_;
 
   // Completion-payload shape of the subroutine being lowered, set by

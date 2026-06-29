@@ -427,6 +427,15 @@ class StructuralScopeLowerer {
   std::vector<std::optional<mir::LocalRef>> loop_var_procedural_map_;
   std::vector<mir::MemberId> instance_member_map_;
   std::vector<GenerateBindings> generate_map_;
+  // Pre-declared MIR members for each callable's static-lifetime body locals.
+  // Outer vector parallels the HIR scope's subroutines / processes
+  // respectively; inner vector is indexed by HIR `ProceduralVarId.value`,
+  // nullopt for an automatic local. Populated during shape declaration so the
+  // class's member arena is settled before any body lowers against it.
+  std::vector<std::vector<std::optional<mir::MemberId>>>
+      subroutine_static_members_;
+  std::vector<std::vector<std::optional<mir::MemberId>>>
+      process_static_members_;
   mir::ClassId class_id_{};
   std::vector<std::unique_ptr<StructuralScopeLowerer>> children_;
 };

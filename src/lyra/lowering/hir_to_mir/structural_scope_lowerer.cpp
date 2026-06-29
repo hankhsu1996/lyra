@@ -16,6 +16,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -1724,6 +1725,51 @@ auto StructuralScopeLowerer::DeclareShape(
   // Instance members shape: one MIR slot per child instance.
   DeclareInstanceMemberShapes(lowerer, shape);
 
+  // A static-lifetime body local has per-instance storage that outlives every
+  // activation of its body (LRM 13.3.1), so it lives as a member on the
+  // enclosing class. Declaring it here, in shape phase, keeps the published
+  // shape immutable while peer bodies lower against it; the body lowering
+  // looks the member up by HIR id instead of minting one. The mangled name
+  // (`<callable>__<source>_<hir_id>`) keeps sibling callables sharing a
+  // source identifier from colliding on the member arena, and the
+  // `hir_id` suffix keeps nested-block reuses of the same identifier
+  // distinct.
+  const auto declare_callable_statics = [&](const hir::ProceduralBody& body,
+                                            std::string_view callable_name)
+      -> std::vector<std::optional<mir::MemberId>> {
+    std::vector<std::optional<mir::MemberId>> by_hir_id(
+        body.procedural_vars.size());
+    for (std::size_t j = 0; j < body.procedural_vars.size(); ++j) {
+      const hir::ProceduralVarId var_id{static_cast<std::uint32_t>(j)};
+      const auto& v = body.procedural_vars.Get(var_id);
+      if (v.lifetime != hir::VariableLifetime::kStatic) {
+        continue;
+      }
+      const std::string mangled =
+          std::format("{}__{}_{}", callable_name, v.name, j);
+      const mir::TypeId type = module.TranslateType(v.type);
+      by_hir_id[j] =
+          shape.members.Add(mir::MemberDecl{.name = mangled, .type = type});
+    }
+    return by_hir_id;
+  };
+  subroutine_static_members_.reserve(hir_scope.structural_subroutines.size());
+  for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
+    const auto& s = hir_scope.structural_subroutines.Get(
+        hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
+    subroutine_static_members_.push_back(
+        declare_callable_statics(s.body, s.name));
+  }
+  process_static_members_.reserve(hir_scope.processes.size());
+  for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {
+    const std::string callable_name =
+        std::format("process_{}", hir_scope.structural_subroutines.size() + i);
+    const auto& p =
+        hir_scope.processes.Get(hir::ProcessId{static_cast<std::uint32_t>(i)});
+    process_static_members_.push_back(
+        declare_callable_statics(p.body, callable_name));
+  }
+
   module.DefineClassShape(class_id_, std::move(shape));
   return class_id_;
 }
@@ -1944,7 +1990,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
     ProcessLowerer subroutine_lowerer(
         module, &lowerer, hir_scope.time_resolution, src.body, src.name,
-        mir::MethodVisibility::kInternal, ctor_frame);
+        mir::MethodVisibility::kInternal, ctor_frame,
+        subroutine_static_members_[i]);
     auto decl_or = subroutine_lowerer.Run(src);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId added = mir_class.methods.Add(*std::move(decl_or));
@@ -1955,11 +2002,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
   }
 
-  for (const auto& p : hir_scope.processes) {
+  for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {
+    const auto& p =
+        hir_scope.processes.Get(hir::ProcessId{static_cast<std::uint32_t>(i)});
     std::string name = std::format("process_{}", mir_class.methods.size());
     ProcessLowerer process_lowerer(
         module, &lowerer, hir_scope.time_resolution, p.body, std::move(name),
-        mir::MethodVisibility::kInternal, ctor_frame);
+        mir::MethodVisibility::kInternal, ctor_frame,
+        process_static_members_[i]);
     auto decl_or = process_lowerer.Run(p);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
