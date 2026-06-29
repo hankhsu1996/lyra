@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -7,6 +8,14 @@
 #include "lyra/mir/class_ref.hpp"
 
 namespace lyra::mir {
+
+// Whether a method is part of the object's externally callable surface or an
+// internal mechanism. A class instance method (LRM 8.6) is callable through a
+// handle, so it is public; a scope's processes, lifecycle hooks, and helper
+// subroutines are reached only by the owning runtime or by the scope's own
+// bodies, so they are internal. A backend reads which access a method has from
+// here rather than inferring it from the object's base or the method's role.
+enum class MethodVisibility : std::uint8_t { kPublic, kInternal };
 
 // A named, class-level callable: callable code plus a name. Every SystemVerilog
 // function and task, every process body, and the synthesized lifecycle bodies
@@ -29,6 +38,7 @@ struct MethodDecl {
   // body overrides the runtime base's matching hook; a backend reads the
   // override target here rather than re-deriving it from the method name.
   std::optional<OverriddenMethodRef> overrides;
+  MethodVisibility visibility;
 };
 
 }  // namespace lyra::mir

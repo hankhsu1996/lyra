@@ -202,8 +202,7 @@ struct StructuralScope {
   base::Arena<InstanceMemberDecl, InstanceMemberId> instance_members;
   std::vector<PortConnection> port_connections;
   base::Arena<CrossUnitRefDecl, CrossUnitRefId> cross_unit_refs;
-  base::Arena<StructuralSubroutineDecl, StructuralSubroutineId>
-      structural_subroutines;
+  base::Arena<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
   std::vector<TypeAliasDecl> type_aliases;
 
   [[nodiscard]] auto NextGenerateId() const -> GenerateId {

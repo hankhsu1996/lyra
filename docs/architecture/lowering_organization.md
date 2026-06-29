@@ -170,7 +170,13 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
    nothing) takes the fold shape instead (see "Rendering Folds"). The earlier formulation claimed
    the class pattern was identical across lowering and rendering; that conflated a structured
    backend (which does accumulate, so is a construction pass) with a text fold (which does not).
-   Concrete types are per pass; no base type spans pass boundaries.
+   Concrete types are per pass: a construction pass's registries and `WalkFrame` write-targets are
+   meaningless in a fold, so one shared type would drag dead state into whichever pass does not use
+   it. What is shared is the shape itself -- the class-plus-dispatcher convention, the fold
+   convention -- held by following it, not by a base type that owns cross-pass state. The harm to
+   avoid is a base that couples one pass's state or machinery onto another, not any type two passes
+   both name; a stateless boundary one pass declares and another consumes owns nothing and is not
+   this shape.
 
 10. Per-kind dispatch is centralised in exactly one location, and that location is decoupled from
     the pass class header so the header does not grow per kind. Per-kind handlers form a layer the
@@ -356,7 +362,14 @@ structured-IR emit is a construction pass.
   `Build*` factory and interned by the caller; `mir::ExprId`-returning helpers are reserved for
   transforms keyed on an input `mir::ExprId` (which read or pass through an existing arena node).
   See "Expression-Builder Helpers".
-- A shared base class spanning construction-pass classes. The pattern is shared; types are per pass.
+- A base class that spans construction-pass classes to share their state or machinery -- registries,
+  a dispatcher, `WalkFrame` fields, the root output. The construction-pass shape is followed, not
+  inherited; a base that owns cross-pass state forces every derived pass to carry state it may not
+  use. This forbids a state-coupling base, not every type two passes both name: a stateless boundary
+  one pass declares and another consumes owns no shared state and is a different thing. Even then,
+  prefer a fact that models the relationship as it is -- a body that has no enclosing structural
+  scope holds a null scope, it does not implement a scope interface that throws -- over an interface
+  that makes a pass answer for a capability it does not have.
 - A dispatcher method or per-kind handler that mutates the class's fact members. Facts are mutated
   only by the constructor.
 - A bundle of multiple kinds (facts + registry + builder) into one type. Each member of a class is a

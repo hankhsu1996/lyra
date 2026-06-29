@@ -1,8 +1,10 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 
+#include <expected>
 #include <utility>
 
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class.hpp"
@@ -63,6 +65,23 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   }
 
   mir_class.constructor_block = std::move(ctor_block);
+
+  // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
+  // resolves the body's `self` to the managed handle, and the method's
+  // declaration-order position becomes its `MethodId`, so a call site naming
+  // the index reaches the same method.
+  for (const auto& method : hir_class.methods) {
+    ScopeChainNode method_link{};
+    const WalkFrame method_owner_frame =
+        WalkFrame{}.WithClass(&mir_class, method_link);
+    ProcessLowerer method_lowerer(
+        module, nullptr, mir_class.time_resolution, method.body, method.name,
+        mir::MethodVisibility::kPublic, method_owner_frame);
+    auto method_or = method_lowerer.Run(method);
+    if (!method_or) return std::unexpected(std::move(method_or.error()));
+    mir_class.methods.Add(*std::move(method_or));
+  }
+
   return mir_class;
 }
 

@@ -49,6 +49,19 @@ class MirDumper {
     Line("Class:");
     Indent();
     DumpClass(unit.root, unit.GetClass(unit.root));
+    // A class reached by a handle is not a child of the runtime tree, so it is
+    // not dumped under the root; every such class carries no runtime base.
+    for (std::size_t i = 0; i < unit.classes.size(); ++i) {
+      const ClassId id{static_cast<std::uint32_t>(i)};
+      if (id == unit.root || !unit.classes.IsDefined(id)) {
+        continue;
+      }
+      const Class& cls = unit.GetClass(id);
+      if (cls.base.has_value()) {
+        continue;
+      }
+      DumpClass(id, cls);
+    }
     Dedent();
     Dedent();
     return std::move(out_);
@@ -719,6 +732,10 @@ class MirDumper {
         std::format(
             "[{}] \"{}\" : Type[{}]", index, d.name, d.code.result_type.value));
     Indent();
+    Line(
+        std::format(
+            "Visibility: {}",
+            d.visibility == MethodVisibility::kPublic ? "public" : "internal"));
     if (d.overrides.has_value()) {
       const auto& ref = std::get<RuntimeLibraryMethodRef>(*d.overrides);
       std::string_view target = "Resolve";

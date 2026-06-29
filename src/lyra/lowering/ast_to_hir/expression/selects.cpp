@@ -163,9 +163,6 @@ auto LowerRangeSelectExpr(
   };
 }
 
-// A class property's index is its position among the class's properties in
-// slang's member order -- the same order `InternClass` registers the HIR
-// ClassDecl fields, so the two indices align.
 auto ClassPropertyIndex(const slang::ast::ClassPropertySymbol& prop)
     -> std::uint32_t {
   const auto* scope = prop.getParentScope();

@@ -406,6 +406,9 @@ class HirDumper {
             [](const ProceduralVarRef& r) -> std::string {
               return std::format("ProceduralVar[{}]", r.var.value);
             },
+            [](const ClassPropertyRef& r) -> std::string {
+              return std::format("ClassProperty[{}]", r.field_index);
+            },
             [](const LoopVarRef& r) -> std::string {
               return std::format(
                   "LoopVar[{}](hops={})", r.loop_var.value, r.hops.value);
@@ -536,6 +539,11 @@ class HirDumper {
               return std::format(
                   "StructuralSubroutine[{}](hops={}) \"{}\"",
                   u.subroutine.value, u.hops.value, decl.name);
+            },
+            [](const MethodCallRef& m) -> std::string {
+              return std::format(
+                  "Method class=Class[{}] index={} recv=Expr[{}]",
+                  m.class_id.value, m.method_index, m.receiver.value);
             },
             [](const SystemSubroutineRef& s) -> std::string {
               const auto& desc = support::LookupSystemSubroutine(s.id);
@@ -831,6 +839,9 @@ class HirDumper {
         Line(std::format("{}:Type[{}]", field.name, field.type.value));
       }
     }
+    for (std::size_t i = 0; i < c.methods.size(); ++i) {
+      DumpSubroutine("Method", i, c.methods[i]);
+    }
     Dedent();
   }
 
@@ -863,9 +874,10 @@ class HirDumper {
               "LoopVarDecl[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
     }
     for (std::size_t i = 0; i < s.structural_subroutines.size(); ++i) {
-      DumpStructuralSubroutine(
-          i, s.structural_subroutines.Get(
-                 StructuralSubroutineId{static_cast<std::uint32_t>(i)}));
+      DumpSubroutine(
+          "StructuralSubroutine", i,
+          s.structural_subroutines.Get(
+              StructuralSubroutineId{static_cast<std::uint32_t>(i)}));
     }
     if (!s.exprs.empty()) {
       Line("Exprs:");
@@ -931,11 +943,11 @@ class HirDumper {
     scope_stack_.pop_back();
   }
 
-  void DumpStructuralSubroutine(
-      std::size_t index, const StructuralSubroutineDecl& d) {
+  void DumpSubroutine(
+      std::string_view label, std::size_t index, const SubroutineDecl& d) {
     Line(
         std::format(
-            "StructuralSubroutine[{}] {} \"{}\" : Type[{}]", index,
+            "{}[{}] {} \"{}\" : Type[{}]", label, index,
             d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
             d.result_type.value));
     Indent();

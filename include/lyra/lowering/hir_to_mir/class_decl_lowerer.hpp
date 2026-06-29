@@ -13,8 +13,14 @@ namespace lyra::lowering::hir_to_mir {
 // extends no runtime base (it is not a tree node), is reached through a managed
 // reference, and is built by `new`. Its properties become plain value-typed
 // members -- not observable cells -- and their construction-time defaults are
-// the body of its constructor. `object_type` is the interned object type that
-// names the class, minted with its registry identity before type translation.
+// the body of its constructor. Its instance methods (LRM 8.6) are lowered as
+// callables receiving the object handle as `self`. `object_type` is the
+// interned object type that names the class, minted with its registry identity
+// before type translation.
+//
+// A class method body names only its receiver and its own locals, so it is
+// lowered inside no structural scope -- its body lowerer carries a null
+// enclosing scope, never an owner that stands in for one.
 class ClassDeclLowerer {
  public:
   ClassDeclLowerer(

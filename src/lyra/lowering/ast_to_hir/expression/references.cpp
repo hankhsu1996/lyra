@@ -13,6 +13,7 @@
 #include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
@@ -26,6 +27,7 @@
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/expression/selects.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -78,6 +80,19 @@ auto LowerNamedValueProc(
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return MakeEnumValueExpr(
         sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+  }
+
+  // Inside an instance method, a class property named without an explicit
+  // handle (LRM 8.4) reaches the invoking object through the method's receiver,
+  // so it lowers to a receiver-relative property reference, not a body local.
+  if (sym.kind == slang::ast::SymbolKind::ClassProperty) {
+    auto type_id = module.InternType(*named.type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return hir::MakeRefExpr(
+        hir::ClassPropertyRef{
+            .field_index =
+                ClassPropertyIndex(sym.as<slang::ast::ClassPropertySymbol>())},
+        *type_id, span);
   }
 
   if (sym.kind == slang::ast::SymbolKind::Variable ||

@@ -739,13 +739,19 @@ auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
 }
 
 // `&place` emitted as the C++ address-of operator. Backend-side
-// canonicalization: `&(*p)` collapses to `p` directly, avoiding a no-op
-// round-trip through the address-of/dereference pair.
+// canonicalization: `&(*p)` collapses to `p` directly when `p` is a borrowed
+// pointer, avoiding a no-op round-trip; dereferencing a managed handle yields
+// the object, whose address is a distinct borrowed pointer, so that case does
+// not collapse.
 auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
     -> std::string {
   const mir::Expr& operand_expr = view.Expr(a.operand);
   if (const auto* deref = std::get_if<mir::DerefExpr>(&operand_expr.data)) {
-    return RenderExpr(view, view.Expr(deref->pointer));
+    const mir::Expr& inner = view.Expr(deref->pointer);
+    if (std::holds_alternative<mir::PointerType>(
+            view.Unit().types.Get(inner.type).data)) {
+      return RenderExpr(view, inner);
+    }
   }
   return std::format("&{}", RenderLhsExpr(view, operand_expr));
 }

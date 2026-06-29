@@ -170,7 +170,8 @@ auto LowerEventTimedStmt(
           }
         }
         return MakeSensitivityWaitStmt(
-            child_block, child_frame, process.Owner(), union_reads);
+            child_block, child_frame, process.EnclosingScopeLowerer(),
+            union_reads);
       });
 }
 
@@ -184,7 +185,8 @@ auto LowerImplicitEventTimedStmt(
       [&](mir::Block& child_block,
           WalkFrame child_frame) -> diag::Result<mir::Stmt> {
         return MakeSensitivityWaitStmt(
-            child_block, child_frame, process.Owner(), ie.sensitivity_list);
+            child_block, child_frame, process.EnclosingScopeLowerer(),
+            ie.sensitivity_list);
       });
 }
 
@@ -306,7 +308,7 @@ auto LowerWaitStmt(
   mir::Block inner_block;
   const WalkFrame inner_frame = wrapper_frame.WithBlock(&inner_block).Deeper();
   inner_block.AppendStmt(MakeSensitivityWaitStmt(
-      inner_block, inner_frame, process.Owner(), reads));
+      inner_block, inner_frame, process.EnclosingScopeLowerer(), reads));
 
   const mir::BlockId inner_scope_id =
       wrapper.child_scopes.Add(std::move(inner_block));

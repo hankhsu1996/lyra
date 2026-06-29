@@ -69,7 +69,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   // assembled here once and the runtime only sees the same sink write that
   // $display lands on.
   const std::string message = std::format(
-      "Time scale of ({}) is {} / {}", process.Owner().Name(),
+      "Time scale of ({}) is {} / {}", process.EnclosingScopeLowerer().Name(),
       value::TimeUnitText(resolution.unit_power),
       value::TimeUnitText(resolution.precision_power));
   const mir::ExprId text_lit = body.exprs.Add(

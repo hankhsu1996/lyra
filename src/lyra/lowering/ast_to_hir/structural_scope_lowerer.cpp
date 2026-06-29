@@ -33,22 +33,13 @@
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
+#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-auto ToHirSubroutineKind(slang::ast::SubroutineKind k) -> hir::SubroutineKind {
-  switch (k) {
-    case slang::ast::SubroutineKind::Function:
-      return hir::SubroutineKind::kFunction;
-    case slang::ast::SubroutineKind::Task:
-      return hir::SubroutineKind::kTask;
-  }
-  throw InternalError("ToHirSubroutineKind: unknown SubroutineKind");
-}
 
 auto IsCaseConstruct(
     const std::vector<const slang::ast::GenerateBlockSymbol*>& siblings)
@@ -63,26 +54,6 @@ auto IsCaseConstruct(
     }
   }
   return false;
-}
-
-// slang has no ConstRef direction (LRM 13.5.2): a `const ref` formal carries
-// direction Ref with the Const variable flag, so the const-ness must be read
-// off the formal rather than the direction enum alone.
-auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
-    -> hir::ParamDirection {
-  switch (formal.direction) {
-    case slang::ast::ArgumentDirection::In:
-      return hir::ParamDirection::kInput;
-    case slang::ast::ArgumentDirection::Out:
-      return hir::ParamDirection::kOutput;
-    case slang::ast::ArgumentDirection::InOut:
-      return hir::ParamDirection::kInOut;
-    case slang::ast::ArgumentDirection::Ref:
-      return formal.flags.has(slang::ast::VariableFlags::Const)
-                 ? hir::ParamDirection::kConstRef
-                 : hir::ParamDirection::kRef;
-  }
-  throw InternalError("ParamDirectionOf: unknown ArgumentDirection");
 }
 
 }  // namespace
@@ -307,46 +278,8 @@ auto StructuralScopeLowerer::PopulateVariableMember(
 auto StructuralScopeLowerer::PopulateSubroutineMember(
     const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
     -> diag::Result<void> {
-  const auto& mapper = module_->SourceMapper();
-  auto return_type_id_or = module_->InternType(
-      sym.getReturnType(), mapper.PointSpanOf(sym.location));
-  if (!return_type_id_or) {
-    return std::unexpected(std::move(return_type_id_or.error()));
-  }
-
-  hir::ProceduralBody sub_body;
-  ProcessLowerer sub_lowerer(*module_, sym);
-  sub_lowerer.AnalyzeLifetimeExtended(sym.getBody());
-  const WalkFrame sub_frame =
-      frame.WithProceduralBody(&sub_body, &sub_body.exprs);
-
-  std::vector<hir::SubroutineParam> params;
-  params.reserve(sym.getArguments().size());
-  for (const auto* formal : sym.getArguments()) {
-    auto formal_type_or = module_->InternType(
-        formal->getType(), mapper.PointSpanOf(formal->location));
-    if (!formal_type_or) {
-      return std::unexpected(std::move(formal_type_or.error()));
-    }
-    const hir::ProceduralVarId var =
-        sub_lowerer.AddProceduralVar(sub_body, *formal, *formal_type_or);
-    params.push_back(
-        hir::SubroutineParam{
-            .var = var, .direction = ParamDirectionOf(*formal)});
-  }
-
-  // LRM 13.4.1: a non-void function implicitly declares a body-local
-  // variable of the return type, named after the function, that the body
-  // reads and writes to produce the return value.
-  std::optional<hir::ProceduralVarId> result_var;
-  if (sym.returnValVar != nullptr) {
-    result_var = sub_lowerer.AddProceduralVar(
-        sub_body, *sym.returnValVar, *return_type_id_or);
-  }
-
-  auto body_stmt_or = sub_lowerer.LowerStmt(sym.getBody(), sub_frame);
-  if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
-  sub_body.root_stmt = sub_body.stmts.Add(*std::move(body_stmt_or));
+  auto decl_or = LowerSubroutineDecl(*module_, sym, frame);
+  if (!decl_or) return std::unexpected(std::move(decl_or.error()));
 
   const auto binding = module_->LookupSubroutineBinding(sym);
   if (!binding.has_value() ||
@@ -360,13 +293,7 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
         "order");
   }
   frame.current_structural_scope->structural_subroutines.Add(
-      hir::StructuralSubroutineDecl{
-          .name = std::string{sym.name},
-          .kind = ToHirSubroutineKind(sym.subroutineKind),
-          .result_type = *return_type_id_or,
-          .params = std::move(params),
-          .result_var = result_var,
-          .body = std::move(sub_body)});
+      *std::move(decl_or));
   return {};
 }
 

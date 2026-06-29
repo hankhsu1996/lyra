@@ -328,7 +328,7 @@ auto LowerStructuralSubroutineCall(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
-  const hir::StructuralSubroutineDecl& decl =
+  const hir::SubroutineDecl& decl =
       lowerer.LookupHirSubroutine(usr.hops, usr.subroutine);
   for (const auto& param : decl.params) {
     if (hir::RequiresWriteback(param.direction)) {
@@ -512,6 +512,58 @@ auto LowerBuiltinMethodCall(
       .type = result_type};
 }
 
+// An instance-method call (LRM 8.6): the receiver handle is the first argument,
+// followed by the method's value arguments. The callee names the class method
+// directly; the receiver's class layout, not the call site, decides how the
+// backend dispatches.
+template <ExprLowerer Lowerer>
+auto LowerMethodCall(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const hir::MethodCallRef& m, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto& block = *frame.current_block;
+  std::vector<mir::ExprId> args;
+  args.reserve(c.arguments.size() + 1);
+
+  // The receiver evaluates to the managed handle; the method body operates on
+  // a borrowed pointer to the object (LRM 8.6). Reaching the object from the
+  // handle and taking its address yields that borrowed receiver -- the body
+  // does not own or root the object, the caller's handle does.
+  auto receiver_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(m.receiver), frame);
+  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+  auto& types = lowerer.Module().Unit().types;
+  const mir::TypeId object_type =
+      std::get<mir::ManagedRefType>(types.Get(receiver_or->type).data).pointee;
+  const mir::ExprId handle_id = block.exprs.Add(*std::move(receiver_or));
+  const mir::ExprId object_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::DerefExpr{.pointer = handle_id}, .type = object_type});
+  const mir::TypeId self_pointer_type =
+      types.PointerTo(object_type, mir::PointerOwnership::kBorrowed);
+  args.push_back(
+      block.exprs.Add(mir::MakeAddressOfExpr(object_id, self_pointer_type)));
+
+  for (const auto& arg : c.arguments) {
+    if (!arg.has_value()) {
+      throw InternalError("LowerMethodCall: method-call argument elided");
+    }
+    auto arg_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*arg), frame);
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    args.push_back(block.exprs.Add(*std::move(arg_or)));
+  }
+
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = mir::MethodId{.value = m.method_index},
+                      .qualification = std::nullopt},
+              .arguments = std::move(args)},
+      .type = result_type};
+}
+
 }  // namespace
 
 template <ExprLowerer Lowerer>
@@ -540,6 +592,9 @@ auto LowerHirCallExpr(
               -> diag::Result<mir::Expr> {
             return LowerStructuralSubroutineCall(
                 lowerer, frame, c, usr, span, result_type);
+          },
+          [&](const hir::MethodCallRef& m) -> diag::Result<mir::Expr> {
+            return LowerMethodCall(lowerer, frame, c, m, result_type);
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);

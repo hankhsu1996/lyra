@@ -1,6 +1,7 @@
 #include "lyra/lowering/ast_to_hir/expression/calls.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -14,10 +15,13 @@
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
@@ -51,6 +55,23 @@ auto MakeReturnConventionType(
       return builtins.realtime;
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
+}
+
+// An instance method's declaration-order index among its class's methods,
+// matching the order the HIR ClassDecl registers them, so the index names the
+// same method when the call is lowered (LRM 8.6).
+auto ClassMethodIndex(const slang::ast::SubroutineSymbol& method)
+    -> std::uint32_t {
+  const auto* scope = method.getParentScope();
+  std::uint32_t index = 0;
+  for (const auto& member :
+       scope->membersOfType<slang::ast::SubroutineSymbol>()) {
+    if (&member == &method) {
+      return index;
+    }
+    ++index;
+  }
+  throw InternalError("ClassMethodIndex: method not found in its class");
 }
 
 }  // namespace
@@ -408,6 +429,45 @@ auto LowerCallExpr(
     throw InternalError(
         "AST->HIR call: user call missing resolved SubroutineSymbol");
   }
+
+  // An instance-method call (LRM 8.6) carries the receiver handle in
+  // `thisClass`; the call dispatches through that handle's class rather than
+  // through an enclosing-scope subroutine.
+  if (const slang::ast::Expression* this_class = call.thisClass();
+      this_class != nullptr) {
+    for (const auto* formal : sym->getArguments()) {
+      if (formal->direction != slang::ast::ArgumentDirection::In) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedClassFeature,
+            "instance methods with output / inout / ref arguments are not yet "
+            "supported");
+      }
+    }
+    auto receiver_or = lowerer.LowerExpr(*this_class, frame);
+    if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+    const hir::ExprId receiver = frame.Exprs().Add(*std::move(receiver_or));
+    auto class_id = module.InternClass(
+        this_class->type->getCanonicalType().as<slang::ast::ClassType>(), span);
+    if (!class_id) return std::unexpected(std::move(class_id.error()));
+    auto method_result_type = module.InternType(*call.type, span);
+    if (!method_result_type) {
+      return std::unexpected(std::move(method_result_type.error()));
+    }
+    return hir::Expr{
+        .type = *method_result_type,
+        .data =
+            hir::CallExpr{
+                .callee =
+                    hir::MethodCallRef{
+                        .receiver = receiver,
+                        .class_id = *class_id,
+                        .method_index = ClassMethodIndex(*sym)},
+                .arguments = std::move(arg_ids),
+            },
+        .span = span,
+    };
+  }
+
   const auto binding = module.LookupSubroutineBinding(*sym);
   if (!binding.has_value()) {
     throw InternalError(

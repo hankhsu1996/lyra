@@ -211,6 +211,16 @@ auto RenderBaseClass(const mir::ClassRef& base) -> std::string {
       base);
 }
 
+auto VisibilityKeyword(mir::MethodVisibility visibility) -> std::string_view {
+  switch (visibility) {
+    case mir::MethodVisibility::kPublic:
+      return "public";
+    case mir::MethodVisibility::kInternal:
+      return "private";
+  }
+  throw InternalError("VisibilityKeyword: unknown MethodVisibility");
+}
+
 auto RenderScopeAsClass(
     const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
     const ScopeView* parent_struct_view) -> std::string {
@@ -292,10 +302,17 @@ auto RenderScopeAsClass(
     return out;
   }
 
-  out += "\n";
-  out += std::format("{} private:\n", Indent(indent));
-
+  // Each method declares its access -- a class instance method is the object's
+  // public callable surface, a scope's processes and lifecycle hooks are
+  // internal -- and the access specifier follows that stated visibility,
+  // coalescing a run of methods that share one.
+  std::optional<mir::MethodVisibility> open_section;
   for (const auto& sub : s.methods) {
+    if (open_section != sub.visibility) {
+      open_section = sub.visibility;
+      out += std::format(
+          "\n{} {}:\n", Indent(indent), VisibilityKeyword(sub.visibility));
+    }
     out += "\n";
     out += RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
   }

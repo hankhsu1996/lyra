@@ -11,6 +11,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
@@ -24,6 +25,7 @@
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -475,6 +477,37 @@ auto ModuleLowerer::InternClass(
             .name = std::string(prop.name),
             .type = *field_type,
             .initializer = std::nullopt});
+  }
+  for (const auto& method : cls.membersOfType<slang::ast::SubroutineSymbol>()) {
+    // Every class carries compiler-generated built-ins (the randomize family,
+    // LRM 18.6); they are provided by the runtime, not lowered from source.
+    if (method.flags.has(slang::ast::MethodFlags::BuiltIn)) {
+      continue;
+    }
+    if (method.flags.has(slang::ast::MethodFlags::Constructor)) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "user-defined class constructors are not yet supported");
+    }
+    if (method.flags.has(slang::ast::MethodFlags::Static)) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "static class methods are not yet supported");
+    }
+    if (method.flags.has(
+            slang::ast::MethodFlags::Virtual | slang::ast::MethodFlags::Pure)) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "virtual class methods are not yet supported");
+    }
+    if (method.subroutineKind == slang::ast::SubroutineKind::Task) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "class task methods are not yet supported");
+    }
+    auto method_decl = LowerSubroutineDecl(*this, method, WalkFrame{});
+    if (!method_decl) return std::unexpected(std::move(method_decl.error()));
+    decl.methods.push_back(*std::move(method_decl));
   }
   unit_.classes.Define(id, std::move(decl));
   return id;

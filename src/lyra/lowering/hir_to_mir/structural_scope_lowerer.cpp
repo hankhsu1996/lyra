@@ -1757,8 +1757,8 @@ auto StructuralScopeLowerer::Run(
     const auto& src = hir_scope.structural_subroutines.Get(
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
     ProcessLowerer subroutine_lowerer(
-        module, lowerer, hir_scope.time_resolution, src.body, src.name,
-        scope_frame);
+        module, &lowerer, hir_scope.time_resolution, src.body, src.name,
+        mir::MethodVisibility::kInternal, scope_frame);
     auto decl_or = subroutine_lowerer.Run(src);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId added = mir_class.methods.Add(*std::move(decl_or));
@@ -1772,8 +1772,8 @@ auto StructuralScopeLowerer::Run(
   for (const auto& p : hir_scope.processes) {
     std::string name = std::format("process_{}", mir_class.methods.size());
     ProcessLowerer process_lowerer(
-        module, lowerer, hir_scope.time_resolution, p.body, std::move(name),
-        scope_frame);
+        module, &lowerer, hir_scope.time_resolution, p.body, std::move(name),
+        mir::MethodVisibility::kInternal, scope_frame);
     auto decl_or = process_lowerer.Run(p);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
@@ -1829,7 +1829,8 @@ auto StructuralScopeLowerer::Run(
                     .result_type = void_type,
                     .body = std::move(resolve_block)},
             .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
-                .method = mir::RuntimeMethod::kResolve}}});
+                .method = mir::RuntimeMethod::kResolve}},
+            .visibility = mir::MethodVisibility::kInternal});
   }
   if (!initialize_block.root_stmts.empty()) {
     mir_class.methods.Add(
@@ -1841,7 +1842,8 @@ auto StructuralScopeLowerer::Run(
                     .result_type = void_type,
                     .body = std::move(initialize_block)},
             .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
-                .method = mir::RuntimeMethod::kInitialize}}});
+                .method = mir::RuntimeMethod::kInitialize}},
+            .visibility = mir::MethodVisibility::kInternal});
   }
   if (!activate_block.root_stmts.empty()) {
     mir_class.methods.Add(
@@ -1853,7 +1855,8 @@ auto StructuralScopeLowerer::Run(
                     .result_type = void_type,
                     .body = std::move(activate_block)},
             .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
-                .method = mir::RuntimeMethod::kActivate}}});
+                .method = mir::RuntimeMethod::kActivate}},
+            .visibility = mir::MethodVisibility::kInternal});
   }
 
   module.Unit().DefineClass(own_id, std::move(mir_class));

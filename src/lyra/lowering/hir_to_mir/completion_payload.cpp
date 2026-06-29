@@ -8,7 +8,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto CompletionComponentTypes(
-    const ModuleLowerer& module, const hir::StructuralSubroutineDecl& decl)
+    const ModuleLowerer& module, const hir::SubroutineDecl& decl)
     -> std::vector<mir::TypeId> {
   std::vector<mir::TypeId> components;
   if (decl.result_var.has_value()) {
