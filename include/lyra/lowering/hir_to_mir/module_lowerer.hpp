@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -10,6 +12,8 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -110,6 +114,31 @@ class ModuleLowerer {
   [[nodiscard]] auto NextGenerateScopeName(std::string_view arm_tag)
       -> std::string;
 
+  // Posts a class's structural shape; the shape is committed once and is
+  // read back during peer-body lowering.
+  void DefineClassShape(mir::ClassId id, mir::ClassShape shape) {
+    if (id.value >= class_shapes_.size()) {
+      class_shapes_.resize(id.value + 1);
+    }
+    auto& slot = class_shapes_[id.value];
+    if (slot.has_value()) {
+      throw InternalError(
+          "ModuleLowerer::DefineClassShape: shape for this id is already "
+          "defined");
+    }
+    slot = std::move(shape);
+  }
+
+  [[nodiscard]] auto GetClassShape(mir::ClassId id) const
+      -> const mir::ClassShape& {
+    if (id.value >= class_shapes_.size() ||
+        !class_shapes_[id.value].has_value()) {
+      throw InternalError(
+          "ModuleLowerer::GetClassShape: shape for this id is not defined");
+    }
+    return *class_shapes_[id.value];
+  }
+
  private:
   [[nodiscard]] auto TranslateTypeData(const hir::TypeData& data) const
       -> mir::TypeData;
@@ -121,6 +150,10 @@ class ModuleLowerer {
   std::vector<mir::ClassId> class_map_;
   std::vector<mir::TypeId> class_object_type_map_;
   std::uint32_t next_generate_scope_name_ = 0;
+  // Class shapes published during the declare pass and read during peer-body
+  // lowering. Lives only on the lowerer; the finished compilation unit holds
+  // the only authoritative class representation.
+  std::vector<std::optional<mir::ClassShape>> class_shapes_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

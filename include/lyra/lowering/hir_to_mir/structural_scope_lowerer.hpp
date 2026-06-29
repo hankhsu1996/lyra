@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -62,9 +63,13 @@ struct CrossUnitRefMeta {
   mir::TypeId slot_type = {};
 };
 
-// Per-scope lowering registries for one `mir::Class`. Carries
-// scope-local HIR-to-MIR translation maps and the cross-unit-ref slot table.
-// Holds no pointer to the IR scope being built: handlers reach it through
+// Lowers one HIR structural scope into one MIR class across two ordered
+// phases. Carries the scope-local HIR-to-MIR identity mappings populated in
+// `DeclareShape` and consulted in `PopulateBodies`; borrows the enclosing
+// scope's lowerer through `parent_` for hops-walked cross-scope lookups; and
+// owns descendant scope lowerers in `children_` so the structural-scope tree
+// stays alive across the phase boundary. The lowerer itself holds no
+// pointer to the in-progress `mir::Class`: body handlers reach it through
 // `frame.current_class`.
 class StructuralScopeLowerer {
  public:
@@ -77,14 +82,20 @@ class StructuralScopeLowerer {
         hir_scope_(&hir_scope) {
   }
 
-  // Registers this object in the unit, walks the HIR scope body to build its
-  // declaration, and returns its identity. Handlers reached through dispatch
-  // write to `frame.current_class`. `entry_bindings` are the structural params
+  // Mints this class's identity, builds its structural shape, publishes the
+  // shape so peer body lowering can query it, and recurses to declare every
+  // descendant scope's shape. `entry_bindings` are the structural params
   // injected by an enclosing for-generate iteration.
-  auto Run(
-      WalkFrame parent_frame,
+  auto DeclareShape(
       std::span<const ScopeEntryStructuralParamBinding> entry_bindings = {})
       -> diag::Result<mir::ClassId>;
+
+  // Lowers every body and every install statement against the already-
+  // published shape, recurses into descendants, and commits the composed
+  // class to the compilation unit. `parent_frame` carries the
+  // enclosing-class chain this scope's bodies thread through; the root call
+  // receives a default `WalkFrame`.
+  auto PopulateBodies(WalkFrame parent_frame) -> diag::Result<void>;
 
   // Central scope-level expression dispatcher. One switch over `hir::Expr::
   // data` routing each kind to the per-family handler in `expression/*.cpp`.
@@ -243,6 +254,16 @@ class StructuralScopeLowerer {
     instance_member_map_.push_back(mir_id);
   }
 
+  [[nodiscard]] auto TranslateInstanceMember(hir::InstanceMemberId hir_id) const
+      -> mir::MemberId {
+    if (hir_id.value >= instance_member_map_.size()) {
+      throw InternalError(
+          "StructuralScopeLowerer::TranslateInstanceMember: unmapped HIR "
+          "instance member");
+    }
+    return instance_member_map_[hir_id.value];
+  }
+
   void MapGenerate(hir::GenerateId hir_id, GenerateBindings bindings) {
     if (hir_id.value != generate_map_.size()) {
       throw InternalError(
@@ -251,6 +272,16 @@ class StructuralScopeLowerer {
           "order");
     }
     generate_map_.push_back(std::move(bindings));
+  }
+
+  [[nodiscard]] auto LookupGenerateBindings(hir::GenerateId hir_id) const
+      -> const GenerateBindings& {
+    if (hir_id.value >= generate_map_.size()) {
+      throw InternalError(
+          "StructuralScopeLowerer::LookupGenerateBindings: unmapped HIR "
+          "generate");
+    }
+    return generate_map_[hir_id.value];
   }
 
   // Resolves an owned-child reference (the `child` field of a
@@ -394,6 +425,8 @@ class StructuralScopeLowerer {
   std::vector<std::optional<mir::LocalRef>> loop_var_procedural_map_;
   std::vector<mir::MemberId> instance_member_map_;
   std::vector<GenerateBindings> generate_map_;
+  mir::ClassId class_id_{};
+  std::vector<std::unique_ptr<StructuralScopeLowerer>> children_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

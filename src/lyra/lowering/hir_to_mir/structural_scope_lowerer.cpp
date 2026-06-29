@@ -69,20 +69,13 @@ auto CompanionVarNameFor(std::string_view child_scope_name) -> std::string {
 }
 
 void CheckNoNameCollision(
-    const mir::CompilationUnit& unit, const mir::Class& owner_class,
-    std::string_view child_scope_name, std::string_view companion_var_name) {
-  for (const auto& v : owner_class.members) {
+    const mir::ClassShape& owner_shape, std::string_view child_scope_name,
+    std::string_view companion_var_name) {
+  for (const auto& v : owner_shape.members) {
     if (v.name == companion_var_name || v.name == child_scope_name) {
       throw InternalError(
           "child class or companion var name collides with an existing "
           "member declaration in the enclosing class");
-    }
-  }
-  for (const mir::ClassId child : owner_class.contained) {
-    if (unit.GetClass(child).name == child_scope_name) {
-      throw InternalError(
-          "child class name collides with an existing nested class "
-          "declaration in the enclosing class");
     }
   }
 }
@@ -416,17 +409,16 @@ void AppendExternalUnitConstruction(
       var.type, dims, indices);
 }
 
-// Returns the StructuralVarId of each instance member, indexed by
-// InstanceMemberId, so cross-unit reference resolution can reach the child
-// instance var by the same id the HIR recipe carries.
-auto InstallInstanceMembers(StructuralScopeLowerer& lowerer, WalkFrame frame)
-    -> std::vector<mir::MemberId> {
-  mir::Class& mir_class = *frame.current_class;
+// Declares one MIR member per instance member of the HIR scope and registers
+// each in the lowerer's HIR-to-MIR map. Pure shape: no construction code is
+// emitted; the construction call is appended in a later sweep that consults
+// the same map by HIR instance-member id.
+void DeclareInstanceMemberShapes(
+    StructuralScopeLowerer& lowerer, mir::ClassShape& shape) {
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  std::vector<mir::MemberId> instance_member_vars;
-  instance_member_vars.reserve(hir_scope.instance_members.size());
+  std::uint32_t next_index = 0;
   for (const auto& im : hir_scope.instance_members) {
-    for (const auto& v : mir_class.members) {
+    for (const auto& v : shape.members) {
       if (v.name == im.instance_name) {
         throw InternalError(
             "instance member name collides with an existing member "
@@ -435,35 +427,38 @@ auto InstallInstanceMembers(StructuralScopeLowerer& lowerer, WalkFrame frame)
     }
     const mir::TypeId var_type = MakeExternalUnitMemberType(
         lowerer.Module(), im.target_unit, im.array_dims.size());
-    const mir::MemberId var_id = mir_class.members.Add(
+    const mir::MemberId var_id = shape.members.Add(
         mir::MemberDecl{.name = im.instance_name, .type = var_type});
-    instance_member_vars.push_back(var_id);
-    lowerer.MapInstanceMember(
-        hir::InstanceMemberId{
-            static_cast<std::uint32_t>(instance_member_vars.size() - 1)},
-        var_id);
+    lowerer.MapInstanceMember(hir::InstanceMemberId{next_index++}, var_id);
+  }
+}
 
+// Emits the constructor-body construction call for each instance member,
+// reading the MemberId through the HIR-to-MIR map populated when the shape
+// was declared.
+void EmitInstanceMemberConstruction(
+    StructuralScopeLowerer& lowerer, WalkFrame frame) {
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  std::uint32_t next_index = 0;
+  for (const auto& im : hir_scope.instance_members) {
+    const mir::MemberId var_id =
+        lowerer.TranslateInstanceMember(hir::InstanceMemberId{next_index++});
     AppendExternalUnitConstruction(
         lowerer.Module(), frame, var_id, im.instance_name, im.array_dims);
   }
-  return instance_member_vars;
 }
 
 // Allocates one MIR member per cross-unit reference. Upward references take
 // the wrapper-typed ExternUp form whose per-reference state lands as ordinary
 // `CallExpr` statements in the constructor body. Downward references take a
 // borrowed-pointer slot the constructor fills by navigating from `self` once
-// the children are built. Both run before processes so reads resolve to the
+// the children are built. Both run before bodies so reads resolve to the
 // member; both record their MIR read target as a StructuralVarRef to that
-// member, in HIR slot order. The returned vector carries the allocated member
-// per ref in HIR order.
-auto MaterializeCrossUnitRefTargets(
-    StructuralScopeLowerer& lowerer, WalkFrame frame)
-    -> std::vector<mir::MemberId> {
+// member, in HIR slot order.
+void DeclareCrossUnitRefSlots(
+    StructuralScopeLowerer& lowerer, mir::ClassShape& shape) {
   ModuleLowerer& module = lowerer.Module();
-  mir::Class& mir_class = *frame.current_class;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  std::vector<mir::MemberId> slot_vars;
   std::uint32_t slot_index = 0;
   for (const auto& cu : hir_scope.cross_unit_refs) {
     std::string member_name = "xref" + std::to_string(slot_index++);
@@ -471,16 +466,15 @@ auto MaterializeCrossUnitRefTargets(
         std::holds_alternative<hir::UpwardRootHead>(cu.head) ||
         std::holds_alternative<hir::UpwardNamedHead>(cu.head);
     if (is_upward) {
-      // The member's type carries only the wrapped element; the per-reference
-      // navigation plan is emitted as ordinary `CallExpr` statements in the
-      // constructor body (see `InstallCrossUnitRefs`).
+      // The member's type carries only the wrapped element; the
+      // per-reference navigation plan is emitted as ordinary `CallExpr`
+      // statements in the constructor body when the bind sweep runs.
       const mir::TypeId leaf = module.TranslateType(cu.type);
       const mir::TypeId ext_type =
           module.Unit().types.Intern(mir::ExternalRefType{.element = leaf});
-      const mir::MemberId var = mir_class.members.Add(
+      const mir::MemberId var = shape.members.Add(
           mir::MemberDecl{.name = std::move(member_name), .type = ext_type});
       lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = var}, ext_type);
-      slot_vars.push_back(var);
     } else {
       // The pointee matches the producer's storage cell. A producer-side
       // value-storage signal is wrapped in `ObservableType` at its declaration
@@ -490,13 +484,11 @@ auto MaterializeCrossUnitRefTargets(
           MaybeWrapObservable(module, module.TranslateType(cu.type));
       const mir::TypeId slot_type =
           module.Unit().types.PointerTo(leaf, mir::PointerOwnership::kBorrowed);
-      const mir::MemberId slot = mir_class.members.Add(
+      const mir::MemberId slot = shape.members.Add(
           mir::MemberDecl{.name = std::move(member_name), .type = slot_type});
       lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = slot}, slot_type);
-      slot_vars.push_back(slot);
     }
   }
-  return slot_vars;
 }
 
 // Builds the resolve value for a downward reference: a chain of generic
@@ -580,11 +572,11 @@ auto BuildDownwardNavValue(
 // that O(N) at construction time is irrelevant. The within-class name is
 // unique by the structural-scope lowering's allocation rule, so this is a
 // deterministic lookup despite the linear scan.
-auto FindMemberByName(const mir::Class& cls, std::string_view name)
+auto FindMemberByName(const mir::ClassShape& shape, std::string_view name)
     -> std::optional<mir::MemberId> {
-  for (std::size_t i = 0; i < cls.members.size(); ++i) {
+  for (std::size_t i = 0; i < shape.members.size(); ++i) {
     const mir::MemberId id{static_cast<std::uint32_t>(i)};
-    const auto& m = cls.members.Get(id);
+    const auto& m = shape.members.Get(id);
     const std::string_view key = m.source_name.empty() ? m.name : m.source_name;
     if (key == name) {
       return id;
@@ -641,8 +633,10 @@ auto BuildTypedEnclosingNavValue(
         "BuildTypedEnclosingNavValue: head pointee is not an intra-unit "
         "object type");
   }
-  const mir::Class* current_class =
-      &module.Unit().GetClass(head_obj_ty->class_id);
+  // Peer shape queries read the published shape store, not the unit's class
+  // registry, which is not yet fully populated during body lowering.
+  const mir::ClassShape* current_shape =
+      &module.GetClassShape(head_obj_ty->class_id);
   for (std::size_t i = 0; i < path.size(); ++i) {
     const auto& step = path[i];
     const auto* mh = std::get_if<hir::MemberHop>(&step);
@@ -651,12 +645,12 @@ auto BuildTypedEnclosingNavValue(
           "BuildTypedEnclosingNavValue: index hop in typed intra-unit descent "
           "is not yet supported");
     }
-    const auto step_member = FindMemberByName(*current_class, mh->name);
+    const auto step_member = FindMemberByName(*current_shape, mh->name);
     if (!step_member.has_value()) {
       throw InternalError(
           "BuildTypedEnclosingNavValue: descent step member not found");
     }
-    const mir::TypeId step_type = current_class->members.Get(*step_member).type;
+    const mir::TypeId step_type = current_shape->members.Get(*step_member).type;
     receiver = ctor_block.exprs.Add(
         mir::Expr{
             .data =
@@ -681,7 +675,7 @@ auto BuildTypedEnclosingNavValue(
           "BuildTypedEnclosingNavValue: intermediate descent into a non-"
           "object type");
     }
-    current_class = &module.Unit().GetClass(step_obj_ty->class_id);
+    current_shape = &module.GetClassShape(step_obj_ty->class_id);
   }
   return ctor_block.exprs.Add(
       mir::Expr{
@@ -808,11 +802,7 @@ void AppendExternUpBinding(
 // the member, followed by one `AddSuffixStep` call per descent step -- ordinary
 // `CallExpr` carrying flat MIR primitives, so the backend renders them
 // uniformly with every other call.
-void InstallCrossUnitRefs(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const std::vector<mir::MemberId>& instance_member_vars,
-    const std::vector<GenerateBindings>& gen_bindings,
-    const std::vector<mir::MemberId>& slot_vars) {
+void InstallCrossUnitRefs(StructuralScopeLowerer& lowerer, WalkFrame frame) {
   mir::Class& mir_class = *frame.current_class;
   mir::Block& ctor_block = *frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
@@ -825,9 +815,9 @@ void InstallCrossUnitRefs(
             .data = mir::StringLiteral{.value = s}, .type = builtins.string});
   };
   for (std::size_t ci = 0; ci < hir_scope.cross_unit_refs.size(); ++ci) {
-    const auto& cu = hir_scope.cross_unit_refs.Get(
-        hir::CrossUnitRefId{static_cast<std::uint32_t>(ci)});
-    const mir::MemberId member = slot_vars.at(ci);
+    const hir::CrossUnitRefId hir_id{static_cast<std::uint32_t>(ci)};
+    const auto& cu = hir_scope.cross_unit_refs.Get(hir_id);
+    const mir::MemberId member = lowerer.CrossUnitRefTarget(hir_id).target.var;
     if (std::holds_alternative<hir::UpwardRootHead>(cu.head)) {
       const mir::ExprId origin_self = ctor_block.exprs.Add(
           MakeSelfRefExpr(frame, mir_class.self_pointer_type));
@@ -858,15 +848,8 @@ void InstallCrossUnitRefs(
       nav = BuildTypedEnclosingNavValue(
           lowerer, frame, *down, cu.path, slot_type);
     } else {
-      mir::MemberId head_var{};
-      if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
-        head_var = instance_member_vars.at(im->value);
-      } else {
-        const auto& g = std::get<hir::GenerateChildRef>(down->child);
-        head_var = gen_bindings.at(g.generate.value)
-                       .by_scope_id.at(g.scope.value)
-                       .var_id;
-      }
+      const mir::MemberId head_var =
+          lowerer.TranslateOwnedChild(hir::StructuralHops{0}, down->child);
       const auto& head = mir_class.members.Get(head_var);
       const std::string head_name =
           head.source_name.empty() ? head.name : head.source_name;
@@ -939,9 +922,7 @@ void AppendProcessRegistration(
 // continuous assignment.
 auto InstallPortConnections(
     StructuralScopeLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
-    WalkFrame activate_frame,
-    const std::vector<mir::MemberId>& instance_member_vars,
-    const std::vector<GenerateBindings>& gen_bindings) -> diag::Result<void> {
+    WalkFrame activate_frame) -> diag::Result<void> {
   mir::Class& mir_class = *frame.current_class;
   mir::Block& resolve_block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
@@ -958,15 +939,8 @@ auto InstallPortConnections(
         throw InternalError(
             "InstallPortConnections: a ref port reaches its child downward");
       }
-      mir::MemberId head_var{};
-      if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
-        head_var = instance_member_vars.at(im->value);
-      } else {
-        const auto& g = std::get<hir::GenerateChildRef>(down->child);
-        head_var = gen_bindings.at(g.generate.value)
-                       .by_scope_id.at(g.scope.value)
-                       .var_id;
-      }
+      const mir::MemberId head_var =
+          lowerer.TranslateOwnedChild(hir::StructuralHops{0}, down->child);
       const auto& head_member = mir_class.members.Get(head_var);
       const std::string head_name = head_member.source_name.empty()
                                         ? head_member.name
@@ -1018,8 +992,30 @@ auto InstallPortConnections(
   return {};
 }
 
+// Walks a member's type through any vector wrappers and a unique-pointer
+// layer to return the intra-unit `ClassId` it owns, or nullopt for any other
+// shape (external-unit object, ref, non-class type).
+auto AsOwnedGenerateChildClassId(
+    const mir::CompilationUnit& unit, mir::TypeId type)
+    -> std::optional<mir::ClassId> {
+  mir::TypeId leaf = type;
+  while (const auto* vec =
+             std::get_if<mir::VectorType>(&unit.types.Get(leaf).data)) {
+    leaf = vec->element;
+  }
+  const auto* ptr = std::get_if<mir::PointerType>(&unit.types.Get(leaf).data);
+  if (ptr == nullptr || ptr->ownership != mir::PointerOwnership::kUnique) {
+    return std::nullopt;
+  }
+  const auto& data = unit.types.Get(ptr->pointee).data;
+  if (const auto* obj = std::get_if<mir::ObjectType>(&data)) {
+    return obj->class_id;
+  }
+  return std::nullopt;
+}
+
 void ValidateOwnedChildConstruction(
-    const mir::CompilationUnit& unit, const mir::Class& owner_class,
+    ModuleLowerer& module, const mir::Class& owner_class,
     const mir::Block& block, mir::MemberId target_var,
     mir::ClassId child_scope_id, std::span<const mir::ExprId> ctor_args) {
   if (std::ranges::find(owner_class.contained, child_scope_id) ==
@@ -1034,24 +1030,24 @@ void ValidateOwnedChildConstruction(
         "class");
   }
   const auto& var = owner_class.members.Get(target_var);
-  const auto child = mir::GetChildScope(unit, var.type);
-  const auto* generate =
-      child ? std::get_if<mir::GenerateScopeChild>(&*child) : nullptr;
-  const auto& child_scope = unit.GetClass(child_scope_id);
-  if (generate == nullptr || generate->name != child_scope.name) {
+  const auto target_class_id =
+      AsOwnedGenerateChildClassId(module.Unit(), var.type);
+  const auto& child_scope_shape = module.GetClassShape(child_scope_id);
+  if (!target_class_id.has_value() ||
+      module.GetClassShape(*target_class_id).name != child_scope_shape.name) {
     throw InternalError(
         "owned-child construction: target var does not own the requested "
         "class");
   }
-  if (ctor_args.size() != child_scope.params.size()) {
+  if (ctor_args.size() != child_scope_shape.params.size()) {
     throw InternalError(
         "owned-child construction: args count does not match child class "
         "param count");
   }
   for (std::size_t i = 0; i < ctor_args.size(); ++i) {
     const auto& arg = block.exprs.Get(ctor_args[i]);
-    const auto& param =
-        child_scope.params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
+    const auto& param = child_scope_shape.params.Get(
+        mir::ParamId{static_cast<std::uint32_t>(i)});
     if (arg.type != param.type) {
       throw InternalError(
           "owned-child construction: arg type does not match structural "
@@ -1077,8 +1073,7 @@ void AppendOwnedChildConstruction(
   mir::Block& arm_block = *arm_frame.current_block;
   const mir::Class& owner_class = *arm_frame.current_class;
   ValidateOwnedChildConstruction(
-      module.Unit(), owner_class, arm_block, target_var, child_scope_id,
-      ctor_args);
+      module, owner_class, arm_block, target_var, child_scope_id, ctor_args);
 
   const mir::MemberDecl& var = owner_class.members.Get(target_var);
   const std::string& runtime_label =
@@ -1469,180 +1464,61 @@ auto LowerGenerateAsStmt(
       gen.data);
 }
 
-auto InstallGenerateOwnedChildScopes(
-    StructuralScopeLowerer& lowerer, WalkFrame frame)
-    -> diag::Result<std::vector<GenerateBindings>> {
-  ModuleLowerer& module = lowerer.Module();
-  mir::Class& mir_class = *frame.current_class;
-  const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  std::vector<GenerateBindings> bindings_by_generate;
-  bindings_by_generate.reserve(hir_scope.generates.size());
-
-  for (std::size_t gen_idx = 0; gen_idx < hir_scope.generates.size();
-       ++gen_idx) {
-    const auto& gen = hir_scope.generates.Get(
-        hir::GenerateId{static_cast<std::uint32_t>(gen_idx)});
-    GenerateBindings gen_bindings;
-    gen_bindings.by_scope_id.resize(gen.child_scopes.size());
-
-    auto specs = EnumerateGenerateChildSpecs(gen, hir_scope, module);
-    for (auto& spec : specs) {
-      const auto companion_name = CompanionVarNameFor(spec.scope_name);
-      CheckNoNameCollision(
-          module.Unit(), mir_class, spec.scope_name, companion_name);
-
-      StructuralScopeLowerer child_scope(
-          module, &lowerer, std::move(spec.scope_name), *spec.scope);
-      auto child_r = child_scope.Run(frame, spec.entry_bindings);
-      if (!child_r) return std::unexpected(std::move(child_r.error()));
-
-      const mir::ClassId child_id = *child_r;
-      mir_class.contained.push_back(child_id);
-      mir::TypeId var_type = MakeUniqueObjectPointer(module, child_id);
-      if (spec.is_repeated) {
-        var_type =
-            module.Unit().types.Intern(mir::VectorType{.element = var_type});
-      }
-      const mir::MemberId var_id = mir_class.members.Add(
-          mir::MemberDecl{
-              .name = companion_name,
-              .source_name = spec.scope->source_name,
-              .type = var_type});
-
-      gen_bindings.by_scope_id.at(spec.scope_id.value) =
-          ChildStructuralScopeBinding{.scope_id = child_id, .var_id = var_id};
-    }
-
-    lowerer.MapGenerate(
-        hir::GenerateId{static_cast<std::uint32_t>(gen_idx)}, gen_bindings);
-    bindings_by_generate.push_back(std::move(gen_bindings));
-  }
-  return bindings_by_generate;
-}
-
 }  // namespace
 
-auto StructuralScopeLowerer::Run(
-    WalkFrame frame,
+auto StructuralScopeLowerer::DeclareShape(
     std::span<const ScopeEntryStructuralParamBinding> entry_bindings)
     -> diag::Result<mir::ClassId> {
   ModuleLowerer& module = *module_;
   const hir::StructuralScope& hir_scope = *hir_scope_;
   StructuralScopeLowerer& lowerer = *this;
 
-  // The identity is minted before the body so the object's own self type names
-  // it; the registry slot is filled from the finished declaration below.
-  const mir::ClassId own_id = module.Unit().DeclareClass();
+  // The identity is minted before the shape is populated so the class's own
+  // `self_pointer_type` can name it.
+  class_id_ = module.Unit().DeclareClass();
   const mir::TypeId self_object_type =
-      module.Unit().types.Intern(mir::ObjectType{.class_id = own_id});
+      module.Unit().types.Intern(mir::ObjectType{.class_id = class_id_});
   const mir::TypeId self_pointer_type = module.Unit().types.PointerTo(
       self_object_type, mir::PointerOwnership::kBorrowed);
-  mir::Class mir_class{
-      .name = name_,
-      .base = mir::ClassRef{mir::RuntimeLibraryClassRef{
-          .kind = parent_ == nullptr ? mir::RuntimeClassKind::kInstance
-                                     : mir::RuntimeClassKind::kGenScope}},
-      .self_pointer_type = self_pointer_type,
-      .time_resolution = hir_scope.time_resolution,
-      .ctor_prefix_params = {},
-      .params = {},
-      .members = {},
-      .constructor_block = {},
-      .contained = {},
-      .methods = {},
-      .type_aliases = {}};
+
+  mir::ClassShape shape;
+  shape.name = name_;
+  shape.base = mir::ClassRef{mir::RuntimeLibraryClassRef{
+      .kind = parent_ == nullptr ? mir::RuntimeClassKind::kInstance
+                                 : mir::RuntimeClassKind::kGenScope}};
+  shape.self_pointer_type = self_pointer_type;
+  shape.time_resolution = hir_scope.time_resolution;
 
   // The runtime Scope-base contract: every Scope-derived class takes the
   // parent pointer, its own HierarchySegment, and the engine services
   // handle as the first three ctor params, forwarded straight to the
   // base. The order and types are the SDK convention; the lowering states
   // them once here so the render reads them like any other params.
-  if (mir_class.base.has_value()) {
+  if (shape.base.has_value()) {
     const auto& builtins = module.Unit().builtins;
-    mir_class.ctor_prefix_params.Add(
+    shape.ctor_prefix_params.Add(
         mir::ParamDecl{.name = "parent", .type = builtins.scope_ptr});
-    mir_class.ctor_prefix_params.Add(
+    shape.ctor_prefix_params.Add(
         mir::ParamDecl{.name = "segment", .type = builtins.hierarchy_segment});
-    mir_class.ctor_prefix_params.Add(
+    shape.ctor_prefix_params.Add(
         mir::ParamDecl{.name = "services", .type = builtins.services});
   }
   for (const auto& alias : hir_scope.type_aliases) {
-    mir_class.type_aliases.push_back(
+    shape.type_aliases.push_back(
         mir::TypeAliasDecl{
             .name = alias.name, .target = module.TranslateType(alias.target)});
   }
 
   for (const auto& binding : entry_bindings) {
-    const mir::ParamId mir_id = mir_class.params.Add(binding.param);
+    const mir::ParamId mir_id = shape.params.Add(binding.param);
     lowerer.MapLoopVarAsStructuralParam(binding.source_loop_var, mir_id);
   }
-
-  mir::Block ctor_block;
-  const mir::LocalId self_id = ctor_block.vars.Add(
-      mir::LocalDecl{.name = "self", .type = mir_class.self_pointer_type});
-  ScopeChainNode outer_scope_link{};
-  const WalkFrame scope_frame =
-      frame.WithClass(&mir_class, outer_scope_link)
-          .WithBlock(&ctor_block)
-          .WithSelfBinding(self_id, frame.block_depth);
-  const mir::TypeId void_type = module.Unit().builtins.void_type;
-  const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
-  const auto self_read = [&]() -> mir::ExprId {
-    return ctor_block.exprs.Add(MakeSelfRefExpr(scope_frame, self_ptr_type));
-  };
-
-  // Variable initialization is a distinct phase from construction: the
-  // constructor only allocates and registers the shell, while initializers run
-  // after the whole tree's references are resolved, so an initializer observes
-  // connected and bound values. The init body is its own block with its own
-  // `self`; the constructor records signal addresses, the init body assigns
-  // values.
-  mir::Block initialize_block;
-  const mir::LocalId init_self_id = initialize_block.vars.Add(
-      mir::LocalDecl{.name = "self", .type = mir_class.self_pointer_type});
-  const WalkFrame init_frame =
-      frame.WithClass(&mir_class, outer_scope_link)
-          .WithBlock(&initialize_block)
-          .WithSelfBinding(init_self_id, frame.block_depth);
-  const auto init_self_read = [&]() -> mir::ExprId {
-    return initialize_block.exprs.Add(
-        MakeSelfRefExpr(init_frame, self_ptr_type));
-  };
-
-  // Cross-instance binding (a `ref` port binding its child's reference member)
-  // runs in the resolve phase, after the whole tree is constructed and before
-  // initialization. Like the init body it is its own block with its own `self`.
-  mir::Block resolve_block;
-  const mir::LocalId resolve_self_id = resolve_block.vars.Add(
-      mir::LocalDecl{.name = "self", .type = mir_class.self_pointer_type});
-  const WalkFrame resolve_frame =
-      frame.WithClass(&mir_class, outer_scope_link)
-          .WithBlock(&resolve_block)
-          .WithSelfBinding(resolve_self_id, frame.block_depth);
-
-  // Process activation runs after initialization (LRM 9.2). Like the resolve
-  // and init bodies it is its own block with its own `self`; it holds the
-  // lifecycle registration for every process this scope owns.
-  mir::Block activate_block;
-  const mir::LocalId activate_self_id = activate_block.vars.Add(
-      mir::LocalDecl{.name = "self", .type = mir_class.self_pointer_type});
-  const WalkFrame activate_frame =
-      frame.WithClass(&mir_class, outer_scope_link)
-          .WithBlock(&activate_block)
-          .WithSelfBinding(activate_self_id, frame.block_depth);
 
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
     const auto& d = hir_scope.structural_vars.Get(hir_id);
     const mir::TypeId mir_value_type = module.TranslateType(d.type);
-
-    // The value type's kind classifies the member in the checks below: a plain
-    // value is an assignable signal; a pointer / vector / object / ref slot is
-    // not.
-    const mir::TypeKind var_kind =
-        module.Unit().types.Get(mir_value_type).Kind();
     const bool is_reference = d.reference.has_value();
-
     // A `ref` / `const ref` port member aliases the connected variable, filled
     // by the parent at construction (LRM 23.3.3.2): its type is a reference,
     // not its own cell, so it owns no storage and takes no value initializer.
@@ -1655,10 +1531,143 @@ auto StructuralScopeLowerer::Run(
                                .is_const = *d.reference ==
                                            hir::ReferenceBinding::kConstRef})
                      : MaybeWrapObservable(module, mir_value_type);
-    const mir::MemberId mir_id = mir_class.members.Add(
+    const mir::MemberId mir_id = shape.members.Add(
         mir::MemberDecl{.name = d.name, .type = mir_field_type});
     lowerer.MapStructuralVar(hir_id, mir_id);
+  }
 
+  DeclareCrossUnitRefSlots(lowerer, shape);
+
+  // Reserve each subroutine's MIR id before any body lowers, so a call in
+  // one body resolves a forward or mutual reference to a peer (LRM 13.7).
+  // The id reserved here is the index the decl will occupy when it is later
+  // added to the class's methods arena.
+  for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
+    lowerer.MapStructuralSubroutine(
+        hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)},
+        mir::MethodId{static_cast<std::uint32_t>(i)});
+  }
+
+  // Recursively declare every owned generate child's class shape; each child
+  // lowerer is retained for the body sweep.
+  for (std::size_t gen_idx = 0; gen_idx < hir_scope.generates.size();
+       ++gen_idx) {
+    const auto& gen = hir_scope.generates.Get(
+        hir::GenerateId{static_cast<std::uint32_t>(gen_idx)});
+    GenerateBindings gen_bindings;
+    gen_bindings.by_scope_id.resize(gen.child_scopes.size());
+
+    auto specs = EnumerateGenerateChildSpecs(gen, hir_scope, module);
+    for (auto& spec : specs) {
+      const auto companion_name = CompanionVarNameFor(spec.scope_name);
+      CheckNoNameCollision(shape, spec.scope_name, companion_name);
+
+      auto child = std::make_unique<StructuralScopeLowerer>(
+          module, &lowerer, std::move(spec.scope_name), *spec.scope);
+      auto child_r = child->DeclareShape(spec.entry_bindings);
+      if (!child_r) return std::unexpected(std::move(child_r.error()));
+
+      const mir::ClassId child_id = *child_r;
+      shape.contained.push_back(child_id);
+      mir::TypeId var_type = MakeUniqueObjectPointer(module, child_id);
+      if (spec.is_repeated) {
+        var_type =
+            module.Unit().types.Intern(mir::VectorType{.element = var_type});
+      }
+      const mir::MemberId var_id = shape.members.Add(
+          mir::MemberDecl{
+              .name = companion_name,
+              .source_name = spec.scope->source_name,
+              .type = var_type});
+
+      gen_bindings.by_scope_id.at(spec.scope_id.value) =
+          ChildStructuralScopeBinding{.scope_id = child_id, .var_id = var_id};
+      children_.push_back(std::move(child));
+    }
+
+    lowerer.MapGenerate(
+        hir::GenerateId{static_cast<std::uint32_t>(gen_idx)},
+        std::move(gen_bindings));
+  }
+
+  // Instance members shape: one MIR slot per child instance.
+  DeclareInstanceMemberShapes(lowerer, shape);
+
+  module.DefineClassShape(class_id_, std::move(shape));
+  return class_id_;
+}
+
+auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
+    -> diag::Result<void> {
+  ModuleLowerer& module = *module_;
+  const hir::StructuralScope& hir_scope = *hir_scope_;
+  StructuralScopeLowerer& lowerer = *this;
+
+  const mir::ClassShape& shape = module.GetClassShape(class_id_);
+  mir::Class mir_class;
+  mir_class.name = shape.name;
+  mir_class.base = shape.base;
+  mir_class.self_pointer_type = shape.self_pointer_type;
+  mir_class.time_resolution = shape.time_resolution;
+  mir_class.ctor_prefix_params = shape.ctor_prefix_params;
+  mir_class.params = shape.params;
+  mir_class.members = shape.members;
+  mir_class.contained = shape.contained;
+  mir_class.type_aliases = shape.type_aliases;
+
+  const mir::TypeId void_type = module.Unit().builtins.void_type;
+  const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
+
+  // The four bodies the scope emits to, with their own `self` locals and
+  // walk frames. Stack-local; live only for this call.
+  mir::Block ctor_block;
+  const mir::LocalId ctor_self_id = ctor_block.vars.Add(
+      mir::LocalDecl{.name = "self", .type = self_ptr_type});
+  mir::Block initialize_block;
+  const mir::LocalId init_self_id = initialize_block.vars.Add(
+      mir::LocalDecl{.name = "self", .type = self_ptr_type});
+  mir::Block resolve_block;
+  const mir::LocalId resolve_self_id = resolve_block.vars.Add(
+      mir::LocalDecl{.name = "self", .type = self_ptr_type});
+  mir::Block activate_block;
+  const mir::LocalId activate_self_id = activate_block.vars.Add(
+      mir::LocalDecl{.name = "self", .type = self_ptr_type});
+
+  ScopeChainNode outer_scope_link{};
+  const WalkFrame ctor_frame =
+      parent_frame.WithClass(&mir_class, outer_scope_link)
+          .WithBlock(&ctor_block)
+          .WithSelfBinding(ctor_self_id, parent_frame.block_depth);
+  const WalkFrame init_frame =
+      parent_frame.WithClass(&mir_class, outer_scope_link)
+          .WithBlock(&initialize_block)
+          .WithSelfBinding(init_self_id, parent_frame.block_depth);
+  const WalkFrame resolve_frame =
+      parent_frame.WithClass(&mir_class, outer_scope_link)
+          .WithBlock(&resolve_block)
+          .WithSelfBinding(resolve_self_id, parent_frame.block_depth);
+  const WalkFrame activate_frame =
+      parent_frame.WithClass(&mir_class, outer_scope_link)
+          .WithBlock(&activate_block)
+          .WithSelfBinding(activate_self_id, parent_frame.block_depth);
+  const auto self_read = [&]() -> mir::ExprId {
+    return ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type));
+  };
+  const auto init_self_read = [&]() -> mir::ExprId {
+    return initialize_block.exprs.Add(
+        MakeSelfRefExpr(init_frame, self_ptr_type));
+  };
+
+  for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
+    const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
+    const auto& d = hir_scope.structural_vars.Get(hir_id);
+    const mir::MemberId mir_id =
+        lowerer.TranslateStructuralVar(hir::StructuralHops{0}, hir_id);
+    const mir::TypeId mir_field_type = mir_class.members.Get(mir_id).type;
+    const mir::TypeId mir_value_type = module.TranslateType(d.type);
+    const bool is_reference = d.reference.has_value();
+    const mir::TypeKind var_kind =
+        module.Unit().types.Get(mir_value_type).Kind();
     // Owned children (pointer / vector / object), resolution slots, upward
     // refs, and named events have no "value assignment" -- their declaration
     // shape itself fixes the field at construction. Value-typed signals
@@ -1737,35 +1746,19 @@ auto StructuralScopeLowerer::Run(
     }
   }
 
-  // Upward refs become ExternalRef members and every cross-unit slot's MIR
-  // target is recorded before any body is lowered, so reads and sensitivity in
-  // subroutines and processes resolve each slot.
-  const auto cross_unit_slot_vars =
-      MaterializeCrossUnitRefTargets(lowerer, scope_frame);
-
-  // Map every subroutine's identity before lowering any body, so a call in one
-  // body resolves a forward or mutual reference to a peer (LRM 13.7). Only the
-  // HIR -> MIR id mapping has to precede the bodies; the MIR id is the index
-  // each decl will occupy, and the loop below adds the lowered decls in that
-  // same order.
-  for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
-    lowerer.MapStructuralSubroutine(
-        hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)},
-        mir::MethodId{static_cast<std::uint32_t>(i)});
-  }
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
     const auto& src = hir_scope.structural_subroutines.Get(
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
     ProcessLowerer subroutine_lowerer(
         module, &lowerer, hir_scope.time_resolution, src.body, src.name,
-        mir::MethodVisibility::kInternal, scope_frame);
+        mir::MethodVisibility::kInternal, ctor_frame);
     auto decl_or = subroutine_lowerer.Run(src);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId added = mir_class.methods.Add(*std::move(decl_or));
     if (added.value != i) {
       throw InternalError(
-          "StructuralScopeLowerer::Run: subroutine added out of mapped "
-          "id order");
+          "StructuralScopeLowerer::PopulateBodies: subroutine added out of "
+          "mapped id order");
     }
   }
 
@@ -1773,7 +1766,7 @@ auto StructuralScopeLowerer::Run(
     std::string name = std::format("process_{}", mir_class.methods.size());
     ProcessLowerer process_lowerer(
         module, &lowerer, hir_scope.time_resolution, p.body, std::move(name),
-        mir::MethodVisibility::kInternal, scope_frame);
+        mir::MethodVisibility::kInternal, ctor_frame);
     auto decl_or = process_lowerer.Run(p);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
@@ -1784,32 +1777,34 @@ auto StructuralScopeLowerer::Run(
   for (const auto& ca : hir_scope.continuous_assigns) {
     std::string name = std::format("process_{}", mir_class.methods.size());
     auto decl_or =
-        LowerContinuousAssign(lowerer, scope_frame, std::move(name), ca);
+        LowerContinuousAssign(lowerer, ctor_frame, std::move(name), ca);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
     AppendProcessRegistration(module, activate_frame, body, false);
   }
 
-  auto bindings_r = InstallGenerateOwnedChildScopes(lowerer, scope_frame);
-  if (!bindings_r) return std::unexpected(std::move(bindings_r.error()));
+  // Recurse into descendants. Every class's shape is already published, so a
+  // body that names a peer's member resolves through the existing identity
+  // model regardless of which sibling lowers next.
+  for (auto& child : children_) {
+    auto child_r = child->PopulateBodies(ctor_frame);
+    if (!child_r) return std::unexpected(std::move(child_r.error()));
+  }
 
   for (std::size_t i = 0; i < hir_scope.generates.size(); ++i) {
     auto stmt = LowerGenerateAsStmt(
-        lowerer, scope_frame,
+        lowerer, ctor_frame,
         hir_scope.generates.Get(hir::GenerateId{static_cast<std::uint32_t>(i)}),
-        bindings_r->at(i));
+        lowerer.LookupGenerateBindings(
+            hir::GenerateId{static_cast<std::uint32_t>(i)}));
     if (!stmt) return std::unexpected(std::move(stmt.error()));
     ctor_block.AppendStmt(*std::move(stmt));
   }
 
-  const auto instance_member_vars =
-      InstallInstanceMembers(lowerer, scope_frame);
-  InstallCrossUnitRefs(
-      lowerer, scope_frame, instance_member_vars, *bindings_r,
-      cross_unit_slot_vars);
+  EmitInstanceMemberConstruction(lowerer, ctor_frame);
+  InstallCrossUnitRefs(lowerer, ctor_frame);
   auto port_conn_r = InstallPortConnections(
-      lowerer, scope_frame, resolve_frame, activate_frame, instance_member_vars,
-      *bindings_r);
+      lowerer, ctor_frame, resolve_frame, activate_frame);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
 
   mir_class.constructor_block = std::move(ctor_block);
@@ -1859,8 +1854,8 @@ auto StructuralScopeLowerer::Run(
             .visibility = mir::MethodVisibility::kInternal});
   }
 
-  module.Unit().DefineClass(own_id, std::move(mir_class));
-  return own_id;
+  module.Unit().DefineClass(class_id_, std::move(mir_class));
+  return {};
 }
 
 }  // namespace lyra::lowering::hir_to_mir
