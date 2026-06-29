@@ -134,6 +134,21 @@ auto ValidateAssignableImpl(
       if (sym.kind == slang::ast::SymbolKind::ClassProperty) {
         return {};
       }
+      if (sym.kind == slang::ast::SymbolKind::Net) {
+        // A net is driven only by a continuous assignment (LRM 6.5); a
+        // procedural write to a net is illegal.
+        if (procedural_context) {
+          return reject("a net is not a legal procedural assignment target");
+        }
+        if (!module
+                 .LookupStructuralDataObjectBinding(
+                     sym.as<slang::ast::ValueSymbol>())
+                 .has_value()) {
+          return reject(
+              "continuous-assignment target must be a structural signal");
+        }
+        return {};
+      }
       if (sym.kind != slang::ast::SymbolKind::Variable &&
           sym.kind != slang::ast::SymbolKind::FormalArgument) {
         return reject("assignment target must be a variable reference");
@@ -145,7 +160,7 @@ auto ValidateAssignableImpl(
       }
       if (!procedural_context) {
         // LRM 10.3: continuous-assign target must resolve to a structural var.
-        if (!module.LookupStructuralVarBinding(var).has_value()) {
+        if (!module.LookupStructuralDataObjectBinding(var).has_value()) {
           return reject(
               "continuous-assignment target must be a structural variable");
         }

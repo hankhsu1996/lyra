@@ -200,8 +200,9 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
 - [x] E3 -- An output port propagates a child write so the parent-side target observes it.
 - [x] E4 -- Expression-driven and constant-valued port connections. A constant connection drives the
       port once at construction and then holds.
-- [ ] E5 -- Single-driver net-typed ports alongside variable-typed ports; both behave as continuous
-      assignments between the two objects' own storage.
+- [ ] E5 -- Net-typed ports alongside variable-typed ports: a net driven across a module port in
+      either direction. The net side resolves its drivers per the net model; that model and the
+      port-driver facet are tracked in `nets.md` (N3).
 - [x] E6 -- Pass-through ports (a port forwarded into a deeper child while the module keeps its own
       local state) and sibling-to-sibling connections through a shared parent signal. Landed for
       variable-typed ports; both endpoints keep their own storage.

@@ -108,6 +108,11 @@ enum class BuiltinFn : std::uint16_t {
   kGet,
   kSet,
   kMutate,
+  // Net driver operations (LRM 6.5). `AttachDriver` is a `ResolvedNet` method
+  // returning a driver handle; `UpdateDriver` is a `Driver` method that
+  // threads services and the new contribution value.
+  kAttachDriver,
+  kUpdateDriver,
   kServices,
   // Engine submit operations. `SubmitNba` and `SubmitPostponed` are
   // `RuntimeServices` methods taking a closure -- the NBA region commit

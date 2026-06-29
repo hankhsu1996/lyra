@@ -54,24 +54,24 @@ auto ModuleLowerer::NextWithClauseId() -> hir::WithClauseId {
   return hir::WithClauseId{.value = next_with_clause_++};
 }
 
-void ModuleLowerer::MapStructuralVarBinding(
-    const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
-    hir::StructuralVarId local, hir::TypeId type) {
-  const auto [_, inserted] = structural_var_bindings_.emplace(
-      &var, StructuralVarBinding{
+void ModuleLowerer::MapStructuralDataObjectBinding(
+    const slang::ast::ValueSymbol& var, ScopeFrameId home_frame,
+    hir::StructuralDataObjectId local, hir::TypeId type) {
+  const auto [_, inserted] = structural_data_object_bindings_.emplace(
+      &var, StructuralDataObjectBinding{
                 .home_frame = home_frame, .var_id = local, .type = type});
   if (!inserted) {
     throw InternalError(
-        "ModuleLowerer::MapStructuralVarBinding: structural variable symbol "
+        "ModuleLowerer::MapStructuralDataObjectBinding: structural data object "
         "already mapped");
   }
 }
 
-auto ModuleLowerer::LookupStructuralVarBinding(
-    const slang::ast::VariableSymbol& var) const
-    -> std::optional<StructuralVarBinding> {
-  const auto it = structural_var_bindings_.find(&var);
-  if (it == structural_var_bindings_.end()) {
+auto ModuleLowerer::LookupStructuralDataObjectBinding(
+    const slang::ast::ValueSymbol& var) const
+    -> std::optional<StructuralDataObjectBinding> {
+  const auto it = structural_data_object_bindings_.find(&var);
+  if (it == structural_data_object_bindings_.end()) {
     return std::nullopt;
   }
   return it->second;
@@ -216,13 +216,14 @@ auto ModuleLowerer::TranslateSensitivityReads(
     const std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint =
         read_type.isIntegral() && !read_type.isEnum() ? read.footprint
                                                       : std::nullopt;
-    if (const auto binding = LookupStructuralVarBinding(*var)) {
+    if (const auto binding = LookupStructuralDataObjectBinding(*var)) {
       const auto hops = frame.HopsTo(binding->home_frame);
       if (!hops.has_value()) continue;
       out.push_back(
           hir::SensitivityEntry{
               .ref =
-                  hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
+                  hir::StructuralDataObjectRef{
+                      .hops = *hops, .var = binding->var_id},
               .footprint = footprint});
       continue;
     }

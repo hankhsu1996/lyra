@@ -46,6 +46,8 @@ enum class TypeKind {
   kUnion,
   kExternalRef,
   kObservable,
+  kResolved,
+  kDriver,
 };
 
 enum class BitAtom {
@@ -415,6 +417,27 @@ struct ObservableType {
   auto operator==(const ObservableType&) const -> bool = default;
 };
 
+// A net's resolved storage: an observable value produced by resolving the
+// contributions of the net's drivers (LRM 6.5, 6.6). Readable and observable
+// like an `ObservableType` cell, but never written directly -- a value reaches
+// it only through a driver. The C++ backend renders it as
+// `lyra::runtime::ResolvedNet<T, Resolver>`, where T is the inner value type
+// and Resolver is the net type's resolution policy.
+struct ResolvedType {
+  TypeId value;
+
+  auto operator==(const ResolvedType&) const -> bool = default;
+};
+
+// The write capability for a net: a handle to one of a `ResolvedType` node's
+// driver slots. A driver updates only its own contribution; the net resolves.
+// The C++ backend renders it as `lyra::runtime::Driver<T, Resolver>`.
+struct DriverType {
+  TypeId value;
+
+  auto operator==(const DriverType&) const -> bool = default;
+};
+
 // An upward cross-unit reference's storage type: a wrapper around `element`
 // that the runtime relocates at the bind step. The wrapper exposes its
 // per-reference state (the climb shape, the descent path, the leaf signal
@@ -437,7 +460,8 @@ using TypeData = std::variant<
     ChandleType, VoidType, ObjectType, ExternalUnitObjectType, ScopeType,
     InstanceType, GenScopeType, ServicesType, FilesType, DiagnosticType,
     RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
-    VectorType, TupleType, UnionType, ExternalRefType, ObservableType>;
+    VectorType, TupleType, UnionType, ExternalRefType, ObservableType,
+    ResolvedType, DriverType>;
 
 struct Type {
   TypeData data;

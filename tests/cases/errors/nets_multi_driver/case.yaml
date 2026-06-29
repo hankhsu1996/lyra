@@ -1,0 +1,16 @@
+id: errors.nets_multi_driver
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "error:"
+      - "more than one driver"
+    not_contains:
+      - "internal error"

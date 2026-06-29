@@ -27,10 +27,12 @@ The whole Ibex RTL already parses, type-checks, and elaborates through the front
 ## Two walls
 
 1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below.
-2. **No execution backend** -- even with every feature supported, there is no way to run the result:
-   only `dump hir` / `dump mir` / `emit cpp` are wired, and there is no LIR / LLVM / JIT / AOT and
-   no project mode. This wall is owned by `architecture-reset.md`; Ibex cannot run until it falls,
-   independently of the feature work here.
+2. **Execution backend** -- the C++ path is wired and runs end to end: `lyra run` emits, builds, and
+   executes a supported design. The blanket "no way to run anything" wall is down, so a
+   fully-lowered Ibex can in principle run. What remains here is not the ability to run at all but
+   the reach to run Ibex specifically: project mode (`lyra.toml` lookup) is still not wired, so
+   sources, includes, and defines must be passed explicitly on the command line. The LLVM / JIT path
+   is a separate backend tracked in `architecture-reset.md`; it is not required for the C++ run.
 
 ## Feature gaps
 
@@ -65,7 +67,8 @@ full support.
 - [x] **Packed array whose element is a struct or enum** (a packed array of a packed aggregate, not
       just of a scalar bit/logic).
 - [ ] **Net-typed port connections** -- connecting a net (`wire`) across a module port, as the
-      testbench does when wiring the DUT. The first wall the full top-level testbench hits.
+      testbench does when wiring the DUT. The first wall the full top-level testbench hits. Tracked
+      under `nets.md` (N3).
 - [x] **`$signed` / `$unsigned`** system functions.
 - [x] **`$clog2`** system function (LRM 20.8.1). A type-agnostic value query: ceil(log2) of the
       argument read as unsigned, with `$clog2(0)` defined as 0. It lowers to a runtime value query,
@@ -81,7 +84,12 @@ full support.
       (and element-selected) in an expression. An unpacked struct or union constant is still
       blocked, but on unpacked-struct / union _type_ support rather than on constant
       materialization.
-- [ ] Remaining structural-expression forms surfaced as later passes get deeper (recorded here as
+- [ ] **Reduction operator over a `$bits`-derived part-select in a continuous assign** -- a
+      structural (continuous-assign) right-hand side that applies a reduction operator to a
+      part-select whose width comes from `$bits` (the `ibex_top` parity check,
+      `assign unused = ^busy_q[$bits(mubi_t)-1:1]`). This is `ibex_top`'s first stop once its
+      children lower.
+- [ ] Further structural-expression forms surfaced as later passes get deeper (recorded here as
       discovery continues).
 
 ## Robustness (crashes, not missing features)

@@ -123,6 +123,14 @@ void Scope::Resolve() {
   ForEachChild([](Scope& child) { child.Resolve(); });
 }
 
+void Scope::Seal() {
+  // The whole design has resolved before sealing runs, so every cross-instance
+  // attachment (a net's drivers, a bound reference) exists; a scope can now
+  // validate its sealed topology against constraints that span the design.
+  SealState();
+  ForEachChild([](Scope& child) { child.Seal(); });
+}
+
 void Scope::Initialize() {
   InitializeState();
   ForEachChild([](Scope& child) { child.Initialize(); });
