@@ -4,12 +4,15 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
@@ -53,8 +56,20 @@ auto LowerForkStmt(
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block fork_block;
-  const WalkFrame fork_frame = frame.WithBlock(&fork_block).Deeper();
-  const BlockDepth fork_depth = fork_frame.block_depth;
+  const WalkFrame fork_frame = frame.WithBlock(&fork_block);
+
+  // A branch snapshots the fork's own block-item declarations by value and
+  // aliases any deeper-enclosing variable it reads (LRM 6.21 / 9.3.2). The
+  // policy names those block-item origins as the snapshot set; every other
+  // forwarded origin aliases.
+  CapturePolicy branch_policy;
+  for (const hir::StmtId local_hir_id : f.locals) {
+    const auto* vd =
+        std::get_if<hir::VarDeclStmt>(&hir_proc.stmts.Get(local_hir_id).data);
+    if (vd != nullptr) {
+      branch_policy.snapshot_set.insert(BindingOriginId::Procedural(vd->var));
+    }
+  }
 
   for (const hir::StmtId local_hir_id : f.locals) {
     auto lowered =
@@ -76,11 +91,11 @@ auto LowerForkStmt(
     const hir::Stmt& branch = hir_proc.stmts.Get(branch_hir_id);
     // LRM 9.3.2: a branch is a concurrent thread whose body may suspend on
     // timing controls / event waits, so it lowers as a coroutine closure --
-    // returns inside it become `co_return`. A fork-scope local is snapshotted
-    // by value (the `fork_depth` boundary); a deeper enclosing variable aliases
-    // the live cell through a reference capture (LRM 6.21).
+    // returns inside it become `co_return`. The branch policy snapshots the
+    // fork's own block-item declarations and aliases deeper enclosing
+    // variables (LRM 6.21).
     ClosureBuilder closure(
-        process.Module().Unit(), fork_frame, true, fork_depth);
+        process.Module().Unit(), fork_frame, true, branch_policy);
     auto lowered = process.LowerStmt(branch, closure.Frame());
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
@@ -109,9 +124,7 @@ auto LowerForkStmt(
                 mir::Expr{
                     .data = mir::AwaitExpr{.awaitable = call_id},
                     .type = builtins.void_type});
-  fork_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = stmt_expr_id}});
+  fork_block.AppendStmt(mir::ExprStmt{.expr = stmt_expr_id});
 
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(fork_block));

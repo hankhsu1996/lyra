@@ -51,7 +51,7 @@ class RuntimeServices {
     return *files_;
   }
 
-  void SubmitNba(std::function<void()> closure);
+  void SubmitNba(std::function<void(RuntimeServices&)> closure);
   void SubmitPostponed(std::function<void()> closure);
 
   void TriggerValueChange(

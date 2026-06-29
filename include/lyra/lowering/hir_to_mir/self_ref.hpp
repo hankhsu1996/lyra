@@ -36,7 +36,7 @@ auto BuildEnclosingScopeReceiver(
 
 // Builds a read of a structural var through the current body's `self`:
 // `MemberAccess(self, member)`. The result type is the var's declared MIR
-// storage type, read from the constructed scope at `member.hops` (a wrapper
+// storage type, read from the enclosing scope reached by `hops` (a wrapper
 // type for observable storage, the value type otherwise) -- a fact that lives
 // only in the MIR scope, not in HIR, so it is read here rather than passed
 // down. Serves both a structural-var reference and a static-lifetime local

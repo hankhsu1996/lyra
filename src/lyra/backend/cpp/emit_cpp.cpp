@@ -84,7 +84,7 @@ auto ReceiverIsReadOnly(
     return false;
   }
   const auto& self_type =
-      unit.types.Get(m.code.body.vars.Get(m.code.params[0]).type).data;
+      unit.types.Get(m.code.locals.Get(m.code.params[0]).type).data;
   const auto* ptr = std::get_if<mir::PointerType>(&self_type);
   return ptr != nullptr && ptr->mutability == mir::Mutability::kReadOnly;
 }
@@ -101,17 +101,16 @@ auto RenderMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::MethodDecl& m, std::size_t indent)
     -> std::string {
-  const ScopeView body_view =
-      (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, m.code.body)
-          : parent_struct_view->WithClass(s, m.code.body);
+  const ScopeView body_view = (parent_struct_view == nullptr)
+                                  ? ScopeView::ForRoot(unit, s, m.code)
+                                  : parent_struct_view->WithClass(s, m.code);
 
   std::string ret = RenderTypeAsCpp(unit, s, m.code.result_type);
 
   std::string sig = std::format("static auto {}(", m.name);
   for (std::size_t i = 0; i < m.code.params.size(); ++i) {
     if (i != 0) sig += ", ";
-    sig += RenderMethodParam(unit, s, m.code.body.vars.Get(m.code.params[i]));
+    sig += RenderMethodParam(unit, s, m.code.locals.Get(m.code.params[i]));
   }
   sig += std::format(") -> {}", ret);
 
@@ -208,7 +207,7 @@ auto RenderConstructor(
   // allocation shell that forwards to the base and the field members, then
   // kicks off the body -- a static worker over `self`, the same shape
   // every method uses. An empty body needs no kickoff.
-  if (s.constructor_block.root_stmts.empty()) {
+  if (s.constructor.body.root_stmts.empty()) {
     return std::format("{}{} {{}}\n", Indent(indent), sig);
   }
   return std::format(
@@ -233,13 +232,13 @@ auto VisibilityKeyword(mir::MethodVisibility visibility) -> std::string_view {
 auto RenderScopeAsClass(
     const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
     const ScopeView* parent_struct_view) -> std::string {
-  // `this_anchor` is bound to `s.constructor_block` so it doubles as the
-  // view for rendering the constructor body. Children's bodies use it as
-  // their enclosing class (one hop above the child).
+  // `this_anchor` is bound to `s.constructor` so it doubles as the view for
+  // rendering the constructor body. Children's bodies use it as their enclosing
+  // class (one hop above the child).
   const ScopeView this_anchor =
       (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, s.constructor_block)
-          : parent_struct_view->WithClass(s, s.constructor_block);
+          ? ScopeView::ForRoot(unit, s, s.constructor)
+          : parent_struct_view->WithClass(s, s.constructor);
 
   const std::optional<mir::BaseContract> base =
       s.base.has_value()
@@ -269,7 +268,7 @@ auto RenderScopeAsClass(
   if (base.has_value()) {
     out += RenderConstructor(
         this_anchor, s, RenderTypeAsCpp(unit, s, base->renderable), indent + 1);
-  } else if (!s.constructor_block.root_stmts.empty()) {
+  } else if (!s.constructor.body.root_stmts.empty()) {
     out += RenderConstructor(this_anchor, s, "", indent + 1);
   }
 

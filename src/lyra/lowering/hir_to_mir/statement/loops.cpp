@@ -10,13 +10,13 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -39,13 +39,11 @@ auto LowerForStmt(
               const auto& hir_local = hir_proc.procedural_vars.Get(d.var);
               const mir::TypeId type =
                   process.Module().TranslateType(hir_local.type);
-              const mir::LocalId local_id = block.vars.Add(
+              const mir::LocalId local_id = frame.bindings->Declare(
+                  BindingOriginId::Procedural(d.var),
                   mir::LocalDecl{.name = hir_local.name, .type = type});
               process.MapProceduralVar(
-                  d.var, AutomaticVarBinding{
-                             .declaration_procedural_depth = frame.block_depth,
-                             .var = local_id,
-                             .type = type});
+                  d.var, AutomaticVarBinding{.type = type});
               mir::ExprId init_id{};
               if (d.init.has_value()) {
                 auto init_or =
@@ -58,11 +56,8 @@ auto LowerForStmt(
                 init_id = block.exprs.Add(BuildDefaultValueFromHir(
                     process.Module(), frame, hir_local.type));
               }
-              return mir::ForInit{mir::ForInitDecl{
-                  .induction_var =
-                      mir::LocalRef{
-                          .hops = mir::BlockHops{.value = 0}, .var = local_id},
-                  .init = init_id}};
+              return mir::ForInit{
+                  mir::ForInitDecl{.induction_var = local_id, .init = init_id}};
             },
             [&](const hir::ForInitExpr& e) -> diag::Result<mir::ForInit> {
               auto expr_or =
@@ -174,7 +169,7 @@ auto LowerRepeatStmt(
   const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
 
   mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   auto count_or =
       process.LowerExpr(process.HirBody().exprs.Get(r.count), wrapper_frame);
@@ -187,19 +182,12 @@ auto LowerRepeatStmt(
         process.Module().Unit(), wrapper, count_expr_id, int_type));
   }
 
-  const mir::LocalId count_var = wrapper.vars.Add(
+  const mir::LocalId count_var = frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_repeat_count", .type = int_type});
-
   wrapper.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::LocalDeclStmt{
-              .target =
-                  mir::LocalRef{
-                      .hops = mir::BlockHops{.value = 0}, .var = count_var},
-              .init = count_expr_id}});
+      mir::LocalDeclStmt{.target = count_var, .init = count_expr_id});
 
-  const mir::LocalId idx_var = wrapper.vars.Add(
+  const mir::LocalId idx_var = frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_repeat_index", .type = int_type});
 
   const mir::ExprId zero_id = wrapper.exprs.Add(
@@ -207,17 +195,10 @@ auto LowerRepeatStmt(
   const mir::ExprId one_id = wrapper.exprs.Add(
       mir::MakeInt32Literal(process.Module().Unit().builtins.int32, 1));
 
-  const mir::ExprId idx_ref_cond = wrapper.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = idx_var},
-          .type = int_type});
-  const mir::ExprId count_ref_cond = wrapper.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::LocalRef{
-                  .hops = mir::BlockHops{.value = 0}, .var = count_var},
-          .type = int_type});
+  const mir::ExprId idx_ref_cond =
+      wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));
+  const mir::ExprId count_ref_cond =
+      wrapper.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
   const mir::ExprId cond_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
@@ -227,11 +208,8 @@ auto LowerRepeatStmt(
                   .rhs = count_ref_cond},
           .type = bit_type});
 
-  const mir::ExprId idx_ref_step = wrapper.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = idx_var},
-          .type = int_type});
+  const mir::ExprId idx_ref_step =
+      wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));
   const mir::ExprId add_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
@@ -240,11 +218,8 @@ auto LowerRepeatStmt(
                   .lhs = idx_ref_step,
                   .rhs = one_id},
           .type = int_type});
-  const mir::ExprId step_target_id = wrapper.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = idx_var},
-          .type = int_type});
+  const mir::ExprId step_target_id =
+      wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));
   const mir::ExprId step_id = wrapper.exprs.Add(
       mir::Expr{
           .data = mir::AssignExpr{.target = step_target_id, .value = add_id},
@@ -260,19 +235,14 @@ auto LowerRepeatStmt(
 
   std::vector<mir::ForInit> for_init;
   for_init.emplace_back(
-      mir::ForInitDecl{
-          .induction_var =
-              mir::LocalRef{.hops = mir::BlockHops{.value = 0}, .var = idx_var},
-          .init = zero_id});
+      mir::ForInitDecl{.induction_var = idx_var, .init = zero_id});
 
   wrapper.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::ForStmt{
-              .init = std::move(for_init),
-              .condition = cond_id,
-              .step = {step_id},
-              .scope = body_scope_id}});
+      mir::ForStmt{
+          .init = std::move(for_init),
+          .condition = cond_id,
+          .step = {step_id},
+          .scope = body_scope_id});
 
   const mir::BlockId wrapper_scope_id =
       frame.current_block->child_scopes.Add(std::move(wrapper));

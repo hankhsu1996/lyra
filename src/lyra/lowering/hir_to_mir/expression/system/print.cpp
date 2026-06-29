@@ -110,7 +110,7 @@ auto LowerStrobeCall(
 
   ClosureBuilder closure(unit, frame);
   mir::Block& body = closure.Body();
-  const WalkFrame body_frame = closure.Frame();
+  const WalkFrame& body_frame = closure.Frame();
 
   std::optional<mir::ExprId> body_user_descriptor;
   if (outer_user_descriptor.has_value()) {

@@ -10,7 +10,7 @@ expect:
   exit: 1
   stderr:
     contains:
-      - "error:"
+      - "unsupported:"
       - "more than one driver"
     not_contains:
       - "internal error"
