@@ -70,21 +70,30 @@ using ProceduralVarBinding =
 class ProcessLowerer {
  public:
   // Facts: every parameter is set once at construction and never mutated for
-  // the lowerer's lifetime. `callable_name` is the synthesized identifier the
+  // the lowerer's lifetime. `enclosing_scope_lowerer` is the lowering pass for
+  // the structural scope this body sits inside; its registries resolve every
+  // reference to an enclosing-scope declaration. It is null for a class method
+  // body, which sits inside no structural scope. `callable_name` is the
+  // synthesized identifier the
   // enclosing scope chose for this callable (LRM processes are anonymous, so
   // the caller passes `"process_N"`; methods pass `src.name`). The
   // `owner_ctor_frame` is the enclosing class's constructor-time
   // frame -- the static-local lowering reads it to place per-instance storage
-  // and its init AssignExpr into the owner's constructor_block.
+  // and its init AssignExpr into the owner's constructor_block. `visibility` is
+  // the access the produced method declares: a class instance method is public,
+  // a scope's processes and subroutines are internal.
   ProcessLowerer(
-      ModuleLowerer& module, const StructuralScopeLowerer& lowerer,
+      ModuleLowerer& module,
+      const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
-      std::string callable_name, WalkFrame owner_ctor_frame)
+      std::string callable_name, mir::MethodVisibility visibility,
+      WalkFrame owner_ctor_frame)
       : module_(&module),
-        owner_(&lowerer),
+        enclosing_scope_lowerer_(enclosing_scope_lowerer),
         time_resolution_(time_resolution),
         hir_body_(&hir_body),
         callable_name_(std::move(callable_name)),
+        visibility_(visibility),
         owner_ctor_frame_(std::move(owner_ctor_frame)) {
   }
 
@@ -99,8 +108,7 @@ class ProcessLowerer {
   // Pre-registers the formal params as body locals so call references resolve,
   // then walks the body. Functions with a non-void result close with a
   // trailing `return` of the implicit result variable.
-  auto Run(const hir::StructuralSubroutineDecl& src)
-      -> diag::Result<mir::MethodDecl>;
+  auto Run(const hir::SubroutineDecl& src) -> diag::Result<mir::MethodDecl>;
 
   // Central expression dispatcher. One switch over `hir::Expr::data` routing
   // each kind to the per-family handler in `expression/{operators, calls,
@@ -143,8 +151,19 @@ class ProcessLowerer {
     return *module_;
   }
 
-  [[nodiscard]] auto Owner() const -> const StructuralScopeLowerer& {
-    return *owner_;
+  // The lowering pass for the structural scope this body sits inside; its
+  // registries resolve every reference to an enclosing-scope declaration (a
+  // structural variable, a generate loop variable, a cross-unit reference, a
+  // peer subroutine). A class method body resolves no such reference and sits
+  // inside no structural scope; reaching this from one is a compiler bug.
+  [[nodiscard]] auto EnclosingScopeLowerer() const
+      -> const StructuralScopeLowerer& {
+    if (enclosing_scope_lowerer_ == nullptr) {
+      throw InternalError(
+          "ProcessLowerer::EnclosingScopeLowerer: a class method body sits "
+          "inside no structural scope");
+    }
+    return *enclosing_scope_lowerer_;
   }
 
   // The structural-subroutine tables live on the owning structural-scope pass;
@@ -152,13 +171,13 @@ class ProcessLowerer {
   // through the same surface on either pass class.
   [[nodiscard]] auto LookupHirSubroutine(
       hir::StructuralHops hops, hir::StructuralSubroutineId id) const
-      -> const hir::StructuralSubroutineDecl& {
-    return owner_->LookupHirSubroutine(hops, id);
+      -> const hir::SubroutineDecl& {
+    return EnclosingScopeLowerer().LookupHirSubroutine(hops, id);
   }
   [[nodiscard]] auto TranslateStructuralSubroutine(
       hir::StructuralHops hops, hir::StructuralSubroutineId id) const
       -> mir::Direct {
-    return owner_->TranslateStructuralSubroutine(hops, id);
+    return EnclosingScopeLowerer().TranslateStructuralSubroutine(hops, id);
   }
 
   [[nodiscard]] auto Resolution() const -> TimeResolution {
@@ -217,6 +236,12 @@ class ProcessLowerer {
     return callable_name_;
   }
 
+  // The access the produced method declares, carried onto every `MethodDecl`
+  // this lowerer returns.
+  [[nodiscard]] auto Visibility() const -> mir::MethodVisibility {
+    return visibility_;
+  }
+
   // The owner class's constructor-time frame. The static-local
   // lowering reads it to place the per-instance storage's init AssignExpr
   // into the owner's constructor block using the owner's own `self` binding,
@@ -242,10 +267,11 @@ class ProcessLowerer {
 
  private:
   ModuleLowerer* module_;
-  const StructuralScopeLowerer* owner_;
+  const StructuralScopeLowerer* enclosing_scope_lowerer_;
   TimeResolution time_resolution_;
   const hir::ProceduralBody* hir_body_;
   std::string callable_name_;
+  mir::MethodVisibility visibility_;
   WalkFrame owner_ctor_frame_;
   std::vector<ProceduralVarBinding> bindings_;
 

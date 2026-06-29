@@ -15,7 +15,7 @@ namespace lyra::lowering::hir_to_mir {
 // the callee body and every call site share, so neither re-derives the layout
 // independently (LRM 13.5).
 auto CompletionComponentTypes(
-    const ModuleLowerer& module, const hir::StructuralSubroutineDecl& decl)
+    const ModuleLowerer& module, const hir::SubroutineDecl& decl)
     -> std::vector<mir::TypeId>;
 
 // Normalizes a completion payload by component count: no component is `Void`,

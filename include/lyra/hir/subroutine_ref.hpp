@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <variant>
 
+#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -14,6 +17,15 @@ namespace lyra::hir {
 struct StructuralSubroutineRef {
   StructuralHops hops;
   StructuralSubroutineId subroutine;
+};
+
+// Calls an instance method (LRM 8.6) on `receiver`, an expression yielding the
+// class handle the call dispatches through. `class_id` names the declaring
+// class and `method_index` is the method's declaration-order position in it.
+struct MethodCallRef {
+  ExprId receiver;
+  ClassId class_id;
+  std::uint32_t method_index;
 };
 
 // Calls a `$xxx` system subroutine. The id resolves through
@@ -31,6 +43,7 @@ struct BuiltinMethodRef {
 };
 
 using SubroutineRef = std::variant<
-    StructuralSubroutineRef, SystemSubroutineRef, BuiltinMethodRef>;
+    StructuralSubroutineRef, MethodCallRef, SystemSubroutineRef,
+    BuiltinMethodRef>;
 
 }  // namespace lyra::hir

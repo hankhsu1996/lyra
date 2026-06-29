@@ -173,9 +173,11 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-// Dereferences a borrowed pointer to reach the cell it refers to. An
-// lvalue-producing navigation like ElementSelectExpr; `Expr::type` is the
-// pointee value type.
+// Dereferences a reference -- a borrowed pointer or a managed handle -- to
+// reach the object or cell it refers to. An lvalue-producing navigation like
+// ElementSelectExpr; `Expr::type` is the referent's value type. Taking the
+// address of a dereferenced managed handle is how a borrowed pointer to a
+// managed object is obtained.
 struct DerefExpr {
   ExprId pointer;
 };
@@ -185,7 +187,9 @@ struct DerefExpr {
 // place (a primary value reference, a member access, a dereference, or a
 // place-producing access primitive); a value expression is not addressable.
 // `Expr::type` is `PointerType{ ownership = kBorrowed, pointee = operand.type
-// }`. `AddressOf(Deref(p))` collapses to `p` at backend lowering.
+// }`. `AddressOf(Deref(p))` collapses to `p` at backend lowering when `p` is a
+// borrowed pointer (the round-trip is a no-op); over a managed handle it does
+// not collapse, since the address of the handle's object is not the handle.
 struct AddressOfExpr {
   ExprId operand;
 };

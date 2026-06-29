@@ -128,6 +128,12 @@ auto ValidateAssignableImpl(
     case EK::NamedValue: {
       const auto& nv = expr.as<slang::ast::NamedValueExpression>();
       const auto& sym = nv.symbol;
+      // A class property named without a handle (LRM 8.4) is written through
+      // the enclosing method's receiver; it appears only in a method body, so
+      // it is always a legal procedural assignment target.
+      if (sym.kind == slang::ast::SymbolKind::ClassProperty) {
+        return {};
+      }
       if (sym.kind != slang::ast::SymbolKind::Variable &&
           sym.kind != slang::ast::SymbolKind::FormalArgument) {
         return reject("assignment target must be a variable reference");

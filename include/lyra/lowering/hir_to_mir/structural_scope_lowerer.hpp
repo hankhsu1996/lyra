@@ -48,10 +48,18 @@ struct ScopeEntryStructuralParamBinding {
 
 // A located structural param: the enclosing-scope distance to the scope that
 // owns it and the param's id on that scope. The reading site turns it into a
-// receiver-addressed `mir::ParamRef` via `BuildStructuralParamAccessExpr`.
+// receiver-addressed `mir::ParamRef`.
 struct StructuralParamLocation {
   mir::EnclosingHops hops = {};
   mir::ParamId param = {};
+};
+
+// The MIR slot a HIR cross-unit ref resolves to: a member ref to the slot
+// bundled with the slot's MIR type, so a body reader decides whether the read
+// dereferences without re-touching the owning scope.
+struct CrossUnitRefMeta {
+  mir::MemberRef target = {};
+  mir::TypeId slot_type = {};
 };
 
 // Per-scope lowering registries for one `mir::Class`. Carries
@@ -120,7 +128,7 @@ class StructuralScopeLowerer {
   // formals' directions and types from here.
   [[nodiscard]] auto LookupHirSubroutine(
       hir::StructuralHops hops, hir::StructuralSubroutineId id) const
-      -> const hir::StructuralSubroutineDecl& {
+      -> const hir::SubroutineDecl& {
     if (hops.value == 0) {
       return hir_scope_->structural_subroutines.Get(id);
     }
@@ -132,16 +140,6 @@ class StructuralScopeLowerer {
     return parent_->LookupHirSubroutine(
         hir::StructuralHops{.value = hops.value - 1}, id);
   }
-
-  // The MIR target each HIR cross-unit ref slot lowers to, in HIR slot order: a
-  // `StructuralVarRef` to the slot member -- a synthesized ExternalRef member
-  // for an upward ref, a borrowed-pointer slot for a downward ref -- bundled
-  // with the slot's MIR type so a body reader can decide whether the read
-  // dereferences without re-touching the structural scope.
-  struct CrossUnitRefMeta {
-    mir::MemberRef target;
-    mir::TypeId slot_type;
-  };
 
   void AddCrossUnitRefTarget(mir::MemberRef target, mir::TypeId slot_type) {
     cross_unit_ref_targets_.push_back(

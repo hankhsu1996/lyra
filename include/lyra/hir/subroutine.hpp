@@ -48,7 +48,7 @@ struct SubroutineParam {
 // through the function name. `result_var` indexes the body's procedural-var
 // arena for that variable; it is absent for void functions and tasks, which
 // yield no value.
-struct StructuralSubroutineDecl {
+struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
   TypeId result_type;

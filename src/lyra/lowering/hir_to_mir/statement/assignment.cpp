@@ -208,12 +208,12 @@ auto LowerDestructuringAssign(
 // callee, or an all-`input` user callee).
 auto SubroutineWithWritebacks(
     const StructuralScopeLowerer& lowerer, const hir::CallExpr& call)
-    -> const hir::StructuralSubroutineDecl* {
+    -> const hir::SubroutineDecl* {
   const auto* ref = std::get_if<hir::StructuralSubroutineRef>(&call.callee);
   if (ref == nullptr) {
     return nullptr;
   }
-  const hir::StructuralSubroutineDecl& decl =
+  const hir::SubroutineDecl& decl =
       lowerer.LookupHirSubroutine(ref->hops, ref->subroutine);
   for (const auto& param : decl.params) {
     if (hir::RequiresWriteback(param.direction)) {
@@ -243,8 +243,8 @@ struct CompletionWriteback {
 auto LowerSubroutineCallWithWritebacks(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::CallExpr& call, const hir::StructuralSubroutineRef& callee_ref,
-    const hir::StructuralSubroutineDecl& decl,
-    std::optional<hir::ExprId> assign_target) -> diag::Result<mir::Stmt> {
+    const hir::SubroutineDecl& decl, std::optional<hir::ExprId> assign_target)
+    -> diag::Result<mir::Stmt> {
   if (call.arguments.size() != decl.params.size()) {
     throw InternalError(
         "LowerSubroutineCallWithWritebacks: argument / formal count mismatch");
@@ -349,8 +349,9 @@ auto LowerSubroutineCallWithWritebacks(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = process.Owner().TranslateStructuralSubroutine(
-                      callee_ref.hops, callee_ref.subroutine),
+                  .callee = process.EnclosingScopeLowerer()
+                                .TranslateStructuralSubroutine(
+                                    callee_ref.hops, callee_ref.subroutine),
                   .arguments = std::move(call_args)},
           .type = call_result_type});
 
@@ -430,7 +431,8 @@ auto LowerExprStmt(
   // outputs), so the await result is void and the enclosing statement discards
   // it.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
-    if (const auto* decl = SubroutineWithWritebacks(process.Owner(), *call)) {
+    if (const auto* decl =
+            SubroutineWithWritebacks(process.EnclosingScopeLowerer(), *call)) {
       return LowerSubroutineCallWithWritebacks(
           process, frame, std::move(label), *call,
           std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
@@ -457,7 +459,7 @@ auto LowerExprStmt(
         const auto* struct_ref =
             std::get_if<hir::StructuralSubroutineRef>(&call->callee)) {
       suspends =
-          process.Owner()
+          process.EnclosingScopeLowerer()
               .LookupHirSubroutine(struct_ref->hops, struct_ref->subroutine)
               .kind == hir::SubroutineKind::kTask;
     }
@@ -490,8 +492,8 @@ auto LowerExprStmt(
         conv_target_type = rhs->type;
       }
       if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
-        if (const auto* decl =
-                SubroutineWithWritebacks(process.Owner(), *call)) {
+        if (const auto* decl = SubroutineWithWritebacks(
+                process.EnclosingScopeLowerer(), *call)) {
           if (!conv_target_type.has_value()) {
             return LowerSubroutineCallWithWritebacks(
                 process, frame, std::move(label), *call,
