@@ -597,42 +597,10 @@ auto RenderClosureExpr(
       "[{}]({}){}{}", captures_text, params_text, return_clause, body);
 }
 
-// LRM 10.10 unpacked array concatenation into a queue. Each operand is spliced
-// (an unpacked container of the element type) or appended as a single element
-// (anything else); the empty `{}` is the empty queue. The result is unseeded --
-// the assignment destination keeps its own element shape (LRM 10.6.1) -- so no
-// element default is threaded.
-auto RenderQueueConcat(
-    const ScopeView& view, const mir::Type& result_ty, const mir::ConcatExpr& c)
-    -> std::string {
-  const mir::TypeId elem_type_id =
-      std::get<mir::QueueType>(result_ty.data).element_type;
-  std::string out = std::format(
-      "lyra::value::MakeQueueConcat<{}>(",
-      RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id));
-  for (std::size_t i = 0; i < c.operands.size(); ++i) {
-    const auto& op_expr = view.Expr(c.operands[i]);
-    const auto& op_ty = view.Unit().types.Get(op_expr.type);
-    const bool spread =
-        std::holds_alternative<mir::QueueType>(op_ty.data) ||
-        std::holds_alternative<mir::DynamicArrayType>(op_ty.data) ||
-        std::holds_alternative<mir::UnpackedArrayType>(op_ty.data);
-    std::string rendered = RenderExpr(view, op_expr);
-    if (i != 0) out += ", ";
-    out += spread ? std::format("lyra::value::QSpread({})", rendered)
-                  : std::format("lyra::value::QElem({})", rendered);
-  }
-  out += ")";
-  return out;
-}
-
 auto RenderConcatExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
     -> std::string {
   const auto& result_ty = view.Unit().types.Get(expr.type);
-  if (std::holds_alternative<mir::QueueType>(result_ty.data)) {
-    return RenderQueueConcat(view, result_ty, c);
-  }
   if (c.operands.empty()) {
     throw InternalError("RenderConcatExpr: hir lowering produced empty concat");
   }

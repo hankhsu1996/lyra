@@ -206,9 +206,41 @@ auto BuildValueConversion(
         unit, operand_id, support::BuiltinFn::kFromPackedArray);
   }
 
+  // Queue -> queue: assignment requires equivalent element types (LRM 7.10), so
+  // the element representation already matches and only the LRM 7.10.5 bound
+  // can differ. Conform the source's contents to the destination's bound, which
+  // a pure whole-value adopt would otherwise drop -- the bound is a declared
+  // property of the destination variable.
+  if (const auto* dst_q = std::get_if<mir::QueueType>(&dst_ty.data);
+      dst_q != nullptr && std::holds_alternative<mir::QueueType>(src_ty.data)) {
+    const std::int64_t bound =
+        dst_q->max_bound.has_value()
+            ? static_cast<std::int64_t>(*dst_q->max_bound)
+            : -1;
+    const mir::ExprId bound_id =
+        block.exprs.Add(mir::MakeInt32Literal(unit.builtins.int32, bound));
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{.target = support::BuiltinFn::kConformBound},
+                .arguments = {operand_id, bound_id}},
+        .type = dst_type};
+  }
+
   // Identity fallback: the lowering inserted a conversion the type system
   // already satisfies (e.g. string -> string lift).
   return operand_expr;
+}
+
+auto ConvertToType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId dst_type) -> mir::ExprId {
+  if (block.exprs.Get(operand_id).type == dst_type) {
+    return operand_id;
+  }
+  return block.exprs.Add(
+      BuildValueConversion(unit, block, operand_id, dst_type));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

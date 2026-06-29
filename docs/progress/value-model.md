@@ -125,16 +125,17 @@ The IDs are stable references; the list is in execution order.
       its width / layout / signedness / state queries from one grouped descriptor, and the misnamed
       "same shape" check (which only ever compared width and state domain) is renamed to the
       storage-domain notion it actually is.
-- [x] D2 -- **Total store-boundary conversion and the typed cell.** Every semantic store carries an
-      upstream conversion to the destination's full declared type, dimensions included; the missing
-      dimension axis was added to the conversion, the other three already existed. The variable cell
-      installs its declared type and default at construction, then stores by overwriting contents
-      while keeping its declared descriptor, asserting same-representation -- including the first
-      semantic store, so a missing conversion on a declaration initializer is caught too. A
-      mismatched right-hand side fails with an explicit missing-conversion message. The cell
-      installs its type through an explicit construction-time step rather than adopting it from
-      whichever store runs first; an empty pre-install state survives only as private plumbing in
-      the shape-erased backend, never observed.
+- [x] D2 -- **Total store-boundary conversion and the typed cell** (the integral value; D7
+      generalizes the mechanism to every family). Every semantic store carries an upstream
+      conversion to the destination's full declared type, dimensions included; the missing dimension
+      axis was added to the conversion, the other three already existed. The variable cell installs
+      its declared type and default at construction, then stores by overwriting contents while
+      keeping its declared descriptor, asserting same-representation -- including the first semantic
+      store, so a missing conversion on a declaration initializer is caught too. A mismatched
+      right-hand side fails with an explicit missing-conversion message. The cell installs its type
+      through an explicit construction-time step rather than adopting it from whichever store runs
+      first; an empty pre-install state survives only as private plumbing in the shape-erased
+      backend, never observed.
 - [ ] D3 -- **Selector results typed by lowering.** The value-producing selector receives the
       lowering-decided result type and asserts its shape matches the resolved shape, instead of the
       runtime re-deriving signedness or state. Cleanup (see Done): it removes the correct-by-
@@ -149,6 +150,18 @@ The IDs are stable references; the list is in execution order.
       descriptor for enum bases versus a loose dimension-list passed as a separate construction
       argument -- is gone, so no construction takes a raw shape list; generated code names the one
       descriptor. This is the packed-type vocabulary reconciliation D1 deferred.
+- [x] D7 -- **Generalize the typed-store discipline to every value family.** The construction-time
+      type install and the store-boundary conversion, first realized for the integral value alone,
+      now cover every observable value cell and every value family: each declared cell installs its
+      representation at construction, and every semantic store converts its right-hand side to the
+      destination's declared representation regardless of family, including the local-declaration
+      stores that previously bypassed the conversion. The queue -- the one container that still kept
+      its declared element shape and bound through a value-side preserving assignment -- became an
+      ordinary value: its element shape and bound are carried by its construction, so an empty
+      concatenation matches its declared type, and a differently-bounded source is conformed to the
+      destination's bound at the store boundary, so no sentinel and no shape-keeping assignment
+      remain. This removed the last place the discipline was forked on whether a value was the
+      integral one.
 - [ ] D5 -- **Cleanup and descriptor sharing, profile-driven.** Whether to back the immutable
       descriptor with a shared interned handle is decided after measuring copy cost on the
       temporary-heavy value paths. Done when the cost is measured and the share / intern decision is

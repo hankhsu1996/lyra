@@ -89,22 +89,20 @@ auto BuildObservableAssignExpr(
     std::optional<mir::BinaryOp> compound_op, mir::TypeId result_type,
     mir::TypeId void_type) -> mir::Expr {
   // A plain store carries the right-hand side to the destination's full
-  // declared representation before it reaches the cell (LRM 10.6.1). The front
-  // end already converts width, signedness, and state domain; the dimension
-  // stack is the one axis it leaves to assignment, so the value coerces here
-  // to the destination's declared dims. A compound store computes its stored
-  // value through the operator, which already yields the destination shape.
+  // declared representation before it reaches the cell (LRM 10.6.1), for every
+  // value family. The front end already converts width, signedness, and state
+  // domain; the dimension stack (and, for containers, the element
+  // representation and bound) is the axis it leaves to assignment, so the value
+  // coerces here to the destination's declared type. A compound store computes
+  // its stored value through the operator, which already yields the destination
+  // shape.
   if (!compound_op.has_value()) {
     const mir::Type& lhs_ty = unit.types.Get(block.exprs.Get(lhs_id).type);
     const mir::TypeId dst_value_type =
         mir::IsObservableCellType(lhs_ty)
             ? mir::ObservableInnerValueType(lhs_ty)
             : block.exprs.Get(lhs_id).type;
-    if (unit.types.Get(dst_value_type).IsIntegralPacked() &&
-        block.exprs.Get(rhs_id).type != dst_value_type) {
-      rhs_id = block.exprs.Add(
-          BuildValueConversion(unit, block, rhs_id, dst_value_type));
-    }
+    rhs_id = ConvertToType(unit, block, rhs_id, dst_value_type);
   }
   const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
   const bool root_is_cell =

@@ -379,6 +379,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "from_packed_array";
     case BuiltinFn::kFromByteArray:
       return "from_byte_array";
+    case BuiltinFn::kConformBound:
+      return "conform_bound";
+    case BuiltinFn::kMakeQueueConcat:
+      return "make_queue_concat";
     case BuiltinFn::kPow:
       return "pow";
     case BuiltinFn::kShiftLeft:

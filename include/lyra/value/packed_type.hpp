@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,19 @@ struct PackedType {
         bit_width(WidthOf(this->dims)) {
   }
 
+  // Total bit count of a dimension stack: the product of every dimension's
+  // element count, 0 for the empty stack. The single source for width-from-dims
+  // -- the constructor derives `bit_width` through it, and every runtime caller
+  // that needs the width of a freshly computed dim stack routes here.
+  [[nodiscard]] static auto WidthOf(std::span<const PackedRange> dims)
+      -> std::uint64_t {
+    std::uint64_t width = 1;
+    for (const auto& range : dims) {
+      width *= range.ElementCount();
+    }
+    return dims.empty() ? 0U : width;
+  }
+
   // Type equality across every axis a stored value must match: the dimension
   // stack, signedness, and state domain. Bit width is derived from the
   // dimensions, so it never needs comparing independently.
@@ -62,18 +76,6 @@ struct PackedType {
   bool is_signed;
   bool is_four_state;
   std::uint64_t bit_width;
-
- private:
-  static auto WidthOf(const std::vector<PackedRange>& dims) -> std::uint64_t {
-    if (dims.empty()) {
-      return 0;
-    }
-    std::uint64_t width = 1;
-    for (const auto& range : dims) {
-      width *= range.ElementCount();
-    }
-    return width;
-  }
 };
 
 }  // namespace lyra::value

@@ -68,14 +68,6 @@ auto RequireSameStorageDomain(
   }
 }
 
-auto TotalBitWidthOf(std::span<const PackedRange> dims) -> std::uint64_t {
-  std::uint64_t total = 1;
-  for (const auto& d : dims) {
-    total *= d.ElementCount();
-  }
-  return total;
-}
-
 }  // namespace
 
 PackedArray::PackedArray() : type_({}, false, false), storage_(BitValue{0}) {
@@ -88,19 +80,21 @@ PackedArray::PackedArray(PackedType type)
 
 PackedArray::PackedArray(
     std::uint64_t bit_width, bool is_signed, bool is_four_state)
-    : type_(
-          {PackedRange{
-              .left = static_cast<std::int64_t>(bit_width) - 1, .right = 0}},
-          is_signed, is_four_state),
-      storage_(MakeStorage(bit_width, is_four_state)) {
+    : PackedArray(
+          PackedType{
+              {PackedRange{
+                  .left = static_cast<std::int64_t>(bit_width) - 1,
+                  .right = 0}},
+              is_signed,
+              is_four_state}) {
 }
 
 PackedArray::PackedArray(
     std::span<const PackedRange> dims, bool is_signed, bool is_four_state)
-    : type_(
-          std::vector<PackedRange>(dims.begin(), dims.end()), is_signed,
-          is_four_state),
-      storage_(MakeStorage(type_.bit_width, is_four_state)) {
+    : PackedArray(
+          PackedType{
+              std::vector<PackedRange>(dims.begin(), dims.end()), is_signed,
+              is_four_state}) {
 }
 
 auto PackedArray::Int(std::int32_t value) -> PackedArray {
@@ -127,7 +121,7 @@ auto PackedArray::MakeFromWordPlanesShaped(
     std::span<const PackedRange> dims, bool is_signed, bool is_four_state,
     std::span<const std::uint64_t> value_words,
     std::span<const std::uint64_t> unknown_words) -> PackedArray {
-  const auto bit_width = TotalBitWidthOf(dims);
+  const auto bit_width = PackedType::WidthOf(dims);
   if (bit_width == 0U) {
     throw InternalError(
         "PackedArray::MakeFromWordPlanesShaped: bit_width must be >= 1");
@@ -1238,7 +1232,7 @@ auto PackedArray::CasexEquals(const PackedArray& other) const -> PackedArray {
 auto PackedArray::ExtractBits(
     const PackedArray& lsb_bit, std::span<const PackedRange> dims) const
     -> PackedArray {
-  const auto bit_width = static_cast<std::uint32_t>(TotalBitWidthOf(dims));
+  const auto bit_width = static_cast<std::uint32_t>(PackedType::WidthOf(dims));
   if (bit_width == 0U) {
     throw InternalError("PackedArray::ExtractBits: bit_width must be >= 1");
   }
@@ -1502,7 +1496,7 @@ PackedArrayRef::PackedArrayRef(
     std::vector<PackedRange> dims)
     : root_(&root),
       bit_offset_(Canonicalize(bit_offset)),
-      bit_width_(static_cast<std::uint32_t>(TotalBitWidthOf(dims))),
+      bit_width_(static_cast<std::uint32_t>(PackedType::WidthOf(dims))),
       dims_(std::move(dims)) {
 }
 

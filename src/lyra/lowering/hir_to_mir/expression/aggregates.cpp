@@ -20,6 +20,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -96,6 +97,34 @@ auto LowerHirConcatExpr(
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     operand_ids.push_back(block.exprs.Add(*std::move(lowered)));
+  }
+  // An unpacked-queue concatenation is a runtime builder call: it carries a
+  // default value of its declared element type (an empty `{}` part list cannot
+  // supply one) and its LRM 7.10.5 bound, built here as ordinary arguments
+  // ahead of the parts. A packed or string concatenation joins its operands
+  // directly and stays a value-build primitive.
+  const auto& result_ty = lowerer.Module().Unit().types.Get(result_type);
+  if (const auto* q = std::get_if<mir::QueueType>(&result_ty.data)) {
+    const mir::TypeId element_type = q->element_type;
+    const std::int64_t bound = q->max_bound.has_value()
+                                   ? static_cast<std::int64_t>(*q->max_bound)
+                                   : -1;
+    const mir::TypeId int32_type = lowerer.Module().Unit().builtins.int32;
+    std::vector<mir::ExprId> args;
+    args.reserve(operand_ids.size() + 2);
+    args.push_back(block.exprs.Add(
+        BuildDefaultValueExpr(lowerer.Module(), frame, element_type)));
+    args.push_back(block.exprs.Add(
+        mir::Expr{
+            .data = mir::HostIntLiteral{.value = bound}, .type = int32_type}));
+    args.insert(args.end(), operand_ids.begin(), operand_ids.end());
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{.target = support::BuiltinFn::kMakeQueueConcat},
+                .arguments = std::move(args)},
+        .type = result_type};
   }
   return mir::Expr{
       .data = mir::ConcatExpr{.operands = std::move(operand_ids)},

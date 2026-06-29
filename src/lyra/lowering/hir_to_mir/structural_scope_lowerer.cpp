@@ -1777,16 +1777,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             std::nullopt, mir_value_type, module.Unit().builtins.void_type));
       };
 
-      // A `Var<PackedArray>` cell installs its declared representation through
-      // `Initialize` (LRM 10.5 default value), so its type is fixed by
-      // construction and every later store -- including a user initializer --
-      // is verified against it rather than adopted. Other value cells carry no
-      // separate representation, so their initialization is the ordinary store.
-      const auto& value_ty = module.Unit().types.Get(mir_value_type);
-      const bool is_packed_cell =
-          mir::IsObservableCellType(module.Unit().types.Get(mir_field_type)) &&
-          value_ty.IsIntegralPacked() && !value_ty.IsEnum();
-      if (is_packed_cell) {
+      // Every observable value cell installs its declared representation and
+      // default at construction (LRM 10.5), so its type is fixed by
+      // construction and a later store -- including a user initializer -- is
+      // verified against it rather than discovered from whichever store runs
+      // first. A non-observable value member carries no cell wrapper, so it
+      // installs its representation through an ordinary store of the default.
+      if (mir::IsObservableCellType(module.Unit().types.Get(mir_field_type))) {
         const mir::ExprId prototype = initialize_block.exprs.Add(
             BuildDefaultValueFromHir(module, init_frame, d.type));
         append_stmt(

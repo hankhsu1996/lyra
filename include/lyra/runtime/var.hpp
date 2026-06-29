@@ -142,24 +142,6 @@ class Var : public Observable {
   auto operator=(Var&&) -> Var& = delete;
   ~Var() = default;
 
-  // Records the new value and reports whether it differs from the old (LRM
-  // 9.4.2 `===` semantics for @() detection -- the engine fires subscribers
-  // only on a real change). The store always happens so a freshly-defaulted
-  // cell adopts implementation-side seeds (e.g. an associative array's
-  // default-element value) from the source on the first write, even when the
-  // SV-visible content compares identical (both empty).
-  auto AssignIfChanged(const T& v) -> bool {
-    const bool changed = !value_.IsBitIdentical(v);
-    value_ = v;
-    return changed;
-  }
-
-  auto AssignIfChanged(T&& v) -> bool {
-    const bool changed = !value_.IsBitIdentical(v);
-    value_ = std::move(v);
-    return changed;
-  }
-
   [[nodiscard]] auto Get() const noexcept -> const T& {
     return value_;
   }
@@ -197,6 +179,23 @@ class Var : public Observable {
   auto Mutate(RuntimeServices& services) -> ScopedMutation<T>;
 
  private:
+  // Records the value and reports whether it differs from the old per LRM 9.4.2
+  // `===` (the engine fires @() subscribers only on a real change). Private: it
+  // writes the cell directly, with none of the representation checks a semantic
+  // store performs, so it must never become a public path around that
+  // discipline.
+  auto AssignIfChanged(const T& v) -> bool {
+    const bool changed = !value_.IsBitIdentical(v);
+    value_ = v;
+    return changed;
+  }
+
+  auto AssignIfChanged(T&& v) -> bool {
+    const bool changed = !value_.IsBitIdentical(v);
+    value_ = std::move(v);
+    return changed;
+  }
+
   T value_{};
 };
 

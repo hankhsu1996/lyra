@@ -212,6 +212,12 @@ struct MemberAccessExpr {
   MemberRef member;
 };
 
+// LRM 11.4.12 concatenation of packed or string operands, joined directly into
+// the result value (the result shape is fully carried by `Expr::type`). An
+// unpacked-queue concatenation is not this primitive: it carries an element
+// shape and spread semantics and is a runtime builder call against the queue
+// API, so it lowers to a `CallExpr` whose default-element and bound arguments
+// come from lowering, not a payload on this node.
 struct ConcatExpr {
   std::vector<ExprId> operands;
 };

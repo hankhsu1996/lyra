@@ -40,10 +40,11 @@ class Queue {
  public:
   using ElementType = T;
 
-  // Sentinel "uninitialized" form -- empty queue with default-constructed
-  // default / sink slots. Used as the declared default state of a queue field;
-  // the first MIR-level assignment overwrites the whole queue (LRM 10.5
-  // variable initialization).
+  // Empty queue carrying no element shape, the unestablished state of a
+  // freshly value-initialized cell before its declared representation is
+  // installed. A declared queue is constructed through one of the seeding forms
+  // below, or installed via the cell's initialization; the empty form exists
+  // only for the default-constructed slots STL containers require.
   Queue() = default;
 
   // Empty queue with the default / sink slots seeded. Used for declarations
@@ -51,8 +52,7 @@ class Queue {
   // known at lowering time.
   explicit Queue(T element_default)
       : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
-        default_seeded_(true) {
+        discard_sink_(std::move(element_default)) {
   }
 
   // LRM 10.9.1 assignment-pattern construction: default / sink slots seeded,
@@ -61,8 +61,7 @@ class Queue {
   Queue(T element_default, std::span<const T> init)
       : element_default_(element_default),
         discard_sink_(std::move(element_default)),
-        data_(init.begin(), init.end()),
-        default_seeded_(true) {
+        data_(init.begin(), init.end()) {
   }
 
   // LRM 7.10.5 bounded queue `int q[$:N]`: the empty start is unchanged, but
@@ -71,8 +70,7 @@ class Queue {
   Queue(T element_default, const PackedArray& max_bound)
       : element_default_(element_default),
         discard_sink_(std::move(element_default)),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())),
-        default_seeded_(true) {
+        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
   }
 
   // LRM 7.10.5 bounded queue initialized by an assignment pattern: take the
@@ -82,52 +80,32 @@ class Queue {
       : element_default_(element_default),
         discard_sink_(std::move(element_default)),
         data_(init.begin(), init.end()),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())),
-        default_seeded_(true) {
+        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
     EnforceBound();
   }
 
   Queue(const Queue&) = default;
   Queue(Queue&&) noexcept = default;
-  // LRM 10.6.1: the element shape and the LRM 7.10.5 bound are declared-type
-  // properties of the variable, not value content. A declared queue is
-  // default-constructed and then initialized by assignment, so an as-yet-
-  // unseeded target adopts the source's element
-  // shape (and an unbounded target the source's bound) on that first store;
-  // once seeded it keeps its own shape and bound on every later assignment and
-  // copies only the elements in -- so assigning the empty `{}` or an unbounded
-  // concat result preserves the variable's shape rather than overwriting it.
-  auto operator=(const Queue& other) -> Queue& {
-    if (this != &other) {
-      if (!default_seeded_ && other.default_seeded_) {
-        element_default_ = other.element_default_;
-        discard_sink_ = other.element_default_;
-        default_seeded_ = true;
-      }
-      data_ = other.data_;
-      if (!max_bound_.has_value()) {
-        max_bound_ = other.max_bound_;
-      }
-      EnforceBound();
-    }
-    return *this;
-  }
-  auto operator=(Queue&& other) noexcept -> Queue& {
-    if (this != &other) {
-      if (!default_seeded_ && other.default_seeded_) {
-        element_default_ = other.element_default_;
-        discard_sink_ = std::move(other.element_default_);
-        default_seeded_ = true;
-      }
-      data_ = std::move(other.data_);
-      if (!max_bound_.has_value()) {
-        max_bound_ = other.max_bound_;
-      }
-      EnforceBound();
-    }
-    return *this;
-  }
+  auto operator=(const Queue&) -> Queue& = default;
+  auto operator=(Queue&&) noexcept -> Queue& = default;
   ~Queue() = default;
+
+  // The element shape and the LRM 7.10.5 bound are declared-type properties of
+  // the destination variable, not value content. The store boundary brings the
+  // right-hand side to the destination representation before a semantic store,
+  // so a cross-representation source is conformed here rather than preserved by
+  // a shape-keeping assignment. Returns a copy carrying `bound` (a negative
+  // value means unbounded) and this queue's element shape and contents, trimmed
+  // to the bound.
+  [[nodiscard]] auto ConformBound(const PackedArray& bound) const -> Queue {
+    const std::int64_t b = bound.ToInt64();
+    Queue result = *this;
+    result.max_bound_ =
+        b < 0 ? std::nullopt
+              : std::optional<std::uint64_t>(static_cast<std::uint64_t>(b));
+    result.EnforceBound();
+    return result;
+  }
 
   // LRM 7.10.2.1: size() yields an SV int.
   [[nodiscard]] auto Size() const -> PackedArray {
@@ -488,13 +466,14 @@ class Queue {
   T discard_sink_;
   std::deque<T> data_;
   std::optional<std::uint64_t> max_bound_ = std::nullopt;
-  bool default_seeded_ = false;
 };
 
 // LRM 10.10 unpacked array concatenation builder. The backend wraps each part
 // as a single element (`QElem`) or an array to splice in element order
 // (`QSpread`); `MakeQueueConcat` folds the parts onto a queue seeded with the
-// element default, so even the empty `{}` carries the element shape.
+// element shape and bound of its result type, so even the empty `{}` carries
+// the declared representation -- the concatenation value matches its type with
+// no destination-side shape preservation.
 template <typename T>
 struct ConcatElemArg {
   T value;
@@ -524,13 +503,23 @@ auto AppendConcatPart(Queue<T>& out, const ConcatSpreadArg<C>& part) -> void {
   }
 }
 
-// The result is default-constructed (unseeded): the destination of the
-// enclosing assignment keeps its own element shape (LRM 10.6.1), so the concat
-// value need not carry one. The element type is supplied explicitly because it
-// cannot be deduced from an empty `{}` part list.
+// The result carries its element shape and LRM 7.10.5 bound (a negative bound
+// means unbounded) so the concatenation value matches its declared type, even
+// for the empty `{}`. `element_default` cannot be deduced from an empty part
+// list, so it is supplied explicitly; the parts are folded on and the bound
+// enforced.
 template <typename T, typename... Parts>
-auto MakeQueueConcat(const Parts&... parts) -> Queue<T> {
-  Queue<T> out;
+auto MakeQueueConcat(
+    const T& element_default, std::int64_t max_bound, const Parts&... parts)
+    -> Queue<T> {
+  Queue<T> out =
+      max_bound < 0
+          ? Queue<T>(element_default)
+          : Queue<T>(
+                element_default,
+                PackedArray::Int(static_cast<std::int32_t>(max_bound)));
+  // Each PushBack enforces the bound, so an over-long concatenation trims as it
+  // folds (LRM 7.10.5).
   (AppendConcatPart(out, parts), ...);
   return out;
 }
