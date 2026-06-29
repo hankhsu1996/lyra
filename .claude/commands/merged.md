@@ -11,15 +11,22 @@ Clean up local branch after PR is merged.
 ## Context
 
 - **Current branch:** !`git branch --show-current`
+- **PR state:** !`gh pr view --json state --jq '.state' 2>/dev/null || echo "(no PR for this branch)"`
+- **PR url:** !`gh pr view --json url --jq '.url' 2>/dev/null || echo "-"`
 - **All local branches:** !`git branch`
 
 ## Instructions
 
-1. Check if the PR for the current branch is merged: `gh pr view --json state --jq '.state'`
-   - If **not merged**: tell the user it's not merged yet, provide the PR link (`gh pr view --json url --jq '.url'`), and stop.
-   - If **merged**: continue with cleanup below.
-2. Switch to main: `git switch main`
-3. Pull latest: `git pull`
-4. Delete local branch with `-D` (squash merge requires force): `git branch -D <branch>`
+Read **PR state** above -- it is already resolved, no need to query again.
 
-The remote branch is auto-deleted by GitHub on merge.
+- Not `MERGED`: tell the user it is not merged yet, give the **PR url**, and stop.
+- `MERGED`: clean up in one command (each `&&` gates the next, so a failed step stops before the
+  delete):
+
+  ```bash
+  git switch main && git pull && git branch -D <branch>
+  ```
+
+  Fill `<branch>` with the merged branch (the **Current branch** above) -- named explicitly, not
+  auto-detected, so a stray run on the wrong branch cannot silently delete it. `-D` because a squash
+  merge requires force; GitHub auto-deletes the remote branch.
