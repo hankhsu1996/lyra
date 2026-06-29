@@ -17,6 +17,22 @@
 
 namespace lyra::mir {
 
+// The structural portion of a class declaration: the fields a peer needs to
+// read about a class while its own body is being lowered. Each field has the
+// same semantics as the same-named field on `Class`; the executable parts
+// (`constructor_block`, `methods`) are not represented here.
+struct ClassShape {
+  std::string name;
+  std::optional<ClassRef> base;
+  TypeId self_pointer_type;
+  TimeResolution time_resolution;
+  base::Arena<ParamDecl, ParamId> ctor_prefix_params;
+  base::Arena<ParamDecl, ParamId> params;
+  base::Arena<MemberDecl, MemberId> members;
+  std::vector<ClassId> contained;
+  std::vector<TypeAliasDecl> type_aliases;
+};
+
 struct Class {
   std::string name;
   // The base this object extends, or absent for a plain object that is not a
