@@ -64,6 +64,23 @@ auto RenderTypeAsCpp(
           [](const mir::StringType&) -> std::string {
             return std::string{"lyra::value::String"};
           },
+          [](const mir::StringViewType&) -> std::string {
+            return std::string{"std::string_view"};
+          },
+          [](const mir::MachineIntType& m) -> std::string {
+            const std::string_view sign =
+                m.signedness == mir::Signedness::kSigned ? "" : "u";
+            switch (m.bit_width) {
+              case 8:
+              case 16:
+              case 32:
+              case 64:
+                return std::format("std::{}int{}_t", sign, m.bit_width);
+              default:
+                throw InternalError(
+                    "RenderTypeAsCpp: unsupported MachineIntType width");
+            }
+          },
           [](const mir::EventType&) -> std::string {
             return std::string{"lyra::runtime::NamedEvent"};
           },
@@ -109,6 +126,12 @@ auto RenderTypeAsCpp(
           [](const mir::ScopeType&) -> std::string {
             return std::string{"lyra::runtime::Scope"};
           },
+          [](const mir::InstanceType&) -> std::string {
+            return std::string{"lyra::runtime::Instance"};
+          },
+          [](const mir::GenScopeType&) -> std::string {
+            return std::string{"lyra::runtime::GenScope"};
+          },
           [](const mir::ServicesType&) -> std::string {
             return std::string{"lyra::runtime::RuntimeServices&"};
           },
@@ -146,7 +169,9 @@ auto RenderTypeAsCpp(
             std::string ref = std::format(
                 "lyra::runtime::Ref<{}>",
                 RenderTypeAsCpp(unit, owner_class, r.pointee));
-            return r.is_const ? std::format("const {}", ref) : ref;
+            return r.mutability == mir::Mutability::kReadOnly
+                       ? std::format("const {}", ref)
+                       : ref;
           },
           [](const mir::VoidType&) -> std::string {
             return std::string{"void"};
@@ -162,8 +187,12 @@ auto RenderTypeAsCpp(
                 // A borrowed pointer refers to the pointee's storage cell --
                 // a `Var<T>` if the pointee is an observable wrapper, the
                 // bare type otherwise -- so the slot mirrors what it points
-                // at by recursing.
-                return std::format("{}*", inner);
+                // at by recursing. A read-only borrow grants no write
+                // capability (`const T*`), the immutable-receiver case.
+                return std::format(
+                    "{}{}*",
+                    p.mutability == mir::Mutability::kReadOnly ? "const " : "",
+                    inner);
             }
             throw InternalError("RenderTypeAsCpp: unknown PointerOwnership");
           },
