@@ -22,7 +22,7 @@ Before this decision, MIR carried the variable initializer two ways:
 
 1. `mir::MemberDecl.initializer: ExprId` -- the init expression as a field on the declaration
    itself.
-2. `constructor_block.root_stmts` -- the constructor-time statement sequence (`AttachChild`,
+2. `constructor.body.root_stmts` -- the constructor-time statement sequence (`AttachChild`,
    `RegisterSignal`, `CreateProcesses`, generate construction, ...).
 
 The C++ backend plucked path (1) into an inline class-body NSDMI (`Var<int> a{1};`) and rendered
@@ -36,8 +36,8 @@ to a C++-specific syntactic mode dependency that a LIR / LLVM-IR backend would h
 
 ## Decision
 
-**MIR has exactly one shape for construction-time work: statements in
-`constructor_block.root_stmts`. For every value-assignable member, HIR-to-MIR inserts an
+**MIR has exactly one shape for construction-time work: statements in `constructor.body.root_stmts`.
+For every value-assignable member, HIR-to-MIR inserts an
 `AssignExpr(MemberAccess(self, var), value)` statement at the position the variable is declared in
 source order, before any `RegisterSignal` / `AttachChild` / `CreateProcesses` for the same scope.
 The value is the user-supplied expression when present, otherwise the LRM Table 6-7 type default;
@@ -168,7 +168,7 @@ pointers). The filter is structural: any var whose MIR type is in the set
 ## Consequences
 
 - `mir::MemberDecl.initializer` is removed; a declaration carries name and type only.
-- HIR-to-MIR's class lowerer appends an `AssignExpr` statement to `constructor_block.root_stmts` for
+- HIR-to-MIR's class lowerer appends an `AssignExpr` statement to `constructor.body.root_stmts` for
   every value-assignable member, using the user-supplied expression or the LRM Table 6-7 default.
 - The C++ backend's `RenderField` emits a pure value-init declaration (`Var<T> name{};` or
   `T name{};`), with no inline initializer. Upward references retain their symbol-arg construction.
@@ -181,7 +181,7 @@ pointers). The filter is structural: any var whose MIR type is in the set
   `PackedArray::AssignFrom` adopts the source shape when the destination is the 0-bit sentinel;
   `WordCountForBits` and `PackedWords::PackedWords` accept 0-bit input.
 - LIR / LLVM-IR lowering reads the construction-time state straight from
-  `constructor_block.root_stmts`. No backend re-derives type defaults or syntactic position from a
+  `constructor.body.root_stmts`. No backend re-derives type defaults or syntactic position from a
   side field.
 - Forbidden Shape: two MIR mechanisms for "code that runs at construction time", or a render that
   adds body statements not present in MIR.

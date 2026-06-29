@@ -55,6 +55,20 @@ full support.
       ibex_alu butterfly form, e.g. `mask[stg][N*(2*seg+1)-1 : N*2*seg]`). A generate scope's
       `genvar` is a runtime induction value reached across scopes, so a `genvar`-dependent bound
       stays runtime rather than folding to a single elaboration constant.
+- [x] **Nonblocking assignment to an enclosing-scope variable from inside a generate block** -- a
+      `<=` write, in an `always_ff` within a conditional or loop generate block, whose target is a
+      variable declared in the surrounding scope (the canonical `always_ff @(posedge clk) q <= d;`
+      flop where `q` lives in the enclosing module). A deferred write now captures a reference to
+      the target cell, so the navigation to an enclosing cell is evaluated once at submit time
+      rather than reconstructed in the deferred body. Pervasive in banked, width-parameterized RTL:
+      with this, the counter, prefetch-buffer, fetch-FIFO, decoder, and compressed-decoder families
+      lower and emit C++ end-to-end.
+- [ ] **Variable-width part-select inside a conditional generate** -- a part-select whose _width_
+      depends on a `genvar` (e.g. `x[i-1:0]`, which widens with `i`) appearing in a
+      `generate     if`/`else` branch. Distinct from the genvar-dependent select _bounds_ of
+      constant width above (the ibex_alu butterfly form), which already lower; here the selected
+      width itself is non-constant, and only the combination with a conditional generate scope
+      fails.
 
 ### Common forms
 
@@ -80,6 +94,12 @@ full support.
 
 - [ ] **Hierarchical / cross-unit reference to a parameter** (reaching a sub-instance's parameter
       through a dotted path, e.g. the `mhpmcounter` accessor in the DPI block).
+- [ ] **Cross-unit reference resolved through a generate-instantiated child scope** -- a reference
+      that descends into or out of a module instance created inside a generate block (ibex_ex_block
+      instantiates its multiplier and divider this way). Today it aborts during lowering.
+- [ ] **`$value$plusargs`** -- runtime plusarg query (ibex_tracer reads the trace-enable plusarg).
+- [ ] **A procedural statement form in ibex_cs_registers** -- one unsupported statement shape,
+      recorded for follow-up once isolated.
 - [x] **Constant of an unpacked array type** -- an elaboration-time `localparam` array referenced
       (and element-selected) in an expression. An unpacked struct or union constant is still
       blocked, but on unpacked-struct / union _type_ support rather than on constant
@@ -97,8 +117,6 @@ full support.
 Some unsupported inputs abort with an internal error instead of a located, graceful diagnostic.
 Independent of whether the feature is supported, each of these should fail cleanly:
 
-- [ ] An out-of-range arena/index access aborts on a few modules instead of reporting the
-      unsupported construct.
 - [x] `$signed` / `$unsigned` aborts as an "unresolved system subroutine" rather than a clean
       unsupported diagnostic (subsumed once the feature above lands).
 - [x] A non-literal where an integer constant is expected aborts instead of diagnosing.

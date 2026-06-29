@@ -6,12 +6,12 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/param.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_alias.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -61,10 +61,11 @@ struct Class {
   // param after the prefix list and as a `field(param)` mem-init entry.
   base::Arena<ParamDecl, ParamId> params;
   base::Arena<MemberDecl, MemberId> members;
-  // Construction logic, run when the object is allocated. The backend's C++
-  // constructor is the allocation shell that kicks this off; an empty body
-  // needs no kickoff.
-  Block constructor_block;
+  // Construction logic, run when the object is allocated. A callable like any
+  // other: `params[0]` is the receiver `self`, body locals live in its `locals`
+  // arena. The backend's C++ constructor is the allocation shell that kicks
+  // this off; an empty body needs no kickoff.
+  CallableCode constructor;
   // The classes this one structurally owns -- the children it builds and, for a
   // backend that nests, emits inside itself. Each names a registry identity, in
   // construction order. Ownership of the declarations is the unit's registry;

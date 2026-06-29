@@ -87,7 +87,7 @@ auto LowerTimedWaitWrapper(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     hir::StmtId inner_stmt, auto build_wait) -> diag::Result<mir::Stmt> {
   mir::Block child_block;
-  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
+  const WalkFrame child_frame = frame.WithBlock(&child_block);
   auto wait_or = build_wait(child_block, child_frame);
   if (!wait_or) return std::unexpected(std::move(wait_or.error()));
   child_block.AppendStmt(*std::move(wait_or));
@@ -286,7 +286,7 @@ auto LowerWaitStmt(
     const hir::WaitStmt& w) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   const hir::Expr& hir_cond = hir_proc.exprs.Get(w.cond);
   auto cond_or = process.LowerExpr(hir_cond, wrapper_frame);
@@ -306,7 +306,7 @@ auto LowerWaitStmt(
   const auto& reads = w.sensitivity_list;
 
   mir::Block inner_block;
-  const WalkFrame inner_frame = wrapper_frame.WithBlock(&inner_block).Deeper();
+  const WalkFrame inner_frame = wrapper_frame.WithBlock(&inner_block);
   inner_block.AppendStmt(MakeSensitivityWaitStmt(
       inner_block, inner_frame, process.EnclosingScopeLowerer(), reads));
 
@@ -314,10 +314,7 @@ auto LowerWaitStmt(
       wrapper.child_scopes.Add(std::move(inner_block));
 
   wrapper.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::WhileStmt{
-              .condition = not_cond_id, .scope = inner_scope_id}});
+      mir::WhileStmt{.condition = not_cond_id, .scope = inner_scope_id});
 
   const hir::Stmt& body_hir = hir_proc.stmts.Get(w.body);
   auto body_or = process.LowerStmt(body_hir, wrapper_frame);

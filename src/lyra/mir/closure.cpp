@@ -15,14 +15,14 @@ ClosureExpr::ClosureExpr(const ClosureExpr& other)
     : code(
           other.code == nullptr ? nullptr
                                 : std::make_unique<CallableCode>(*other.code)),
-      environment(other.environment) {
+      capture_inits(other.capture_inits) {
 }
 
 auto ClosureExpr::operator=(const ClosureExpr& other) -> ClosureExpr& {
   if (this != &other) {
     code = other.code == nullptr ? nullptr
                                  : std::make_unique<CallableCode>(*other.code);
-    environment = other.environment;
+    capture_inits = other.capture_inits;
   }
   return *this;
 }

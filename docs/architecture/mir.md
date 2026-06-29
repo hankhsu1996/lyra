@@ -127,16 +127,16 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     language consequence: the program text is the program; consumers do not invent vocabulary the
     language does not have._
 11. Every instance-method callable body's first binding is `self`, a pointer to its enclosing class
-    -- `body.vars[0]` is a local declaration of that pointer type, named `self`. Access to any class
-    member -- a member variable, a service call, a child instance -- flows through `MemberAccess`
-    whose receiver expression reaches the class by traversing from `self`. An instance method has no
-    implicit access to its enclosing state; the receiver is reached through an explicit binding,
-    never through an expression that means "look around and figure it out". `self` is uniform across
-    every instance method: it is the code's first parameter, read as `vars[0]` the same way in every
-    body, and a callable value binds it like any other environment field. A type-associated (static)
-    function has no receiver and no `self` binding; the receiver is a property of an instance
-    method, not of every callable. `object_model.md` owns the receiver rule; `callable.md` is the
-    canonical callable contract.
+    -- `locals[0]` is a local declaration of that pointer type, named `self` (the callable's binding
+    arena is owned by `binding_and_capture.md`). Access to any class member -- a member variable, a
+    service call, a child instance -- flows through `MemberAccess` whose receiver expression reaches
+    the class by traversing from `self`. An instance method has no implicit access to its enclosing
+    state; the receiver is reached through an explicit binding, never through an expression that
+    means "look around and figure it out". `self` is uniform across every instance method: it is the
+    code's first parameter, read as `locals[0]` the same way in every body, and a callable value
+    binds it like any other environment field. A type-associated (static) function has no receiver
+    and no `self` binding; the receiver is a property of an instance method, not of every callable.
+    `object_model.md` owns the receiver rule; `callable.md` is the canonical callable contract.
 
     _Programming-language consequence: instance methods take `self` explicitly. This is the C++
     `this`, the Python `self`, the Rust `&self`. Languages that hide it behind keyword sugar at
@@ -164,6 +164,10 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   either translated at this boundary (an event-control delay becomes a coroutine suspension; a
   non-blocking assignment becomes a deferred closure submission) or rejected as unsupported.
   HIR-to-MIR has the SV knowledge; MIR does not.
+- `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
+  reference names a binding materialized in its own callable body, and a binding crosses a closure
+  boundary only as a captured environment field. MIR carries no navigation distance to a
+  declaration, and no reference resolves into another callable body.
 - Produces input to LIR. MIR-to-LIR is the layer where the programming language gets translated into
   a machine-execution model. CFG structure, storage placement, and execution-oriented details are
   introduced at this boundary; MIR does not predict them.
@@ -233,10 +237,10 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   structure does not?
 - An expression node whose meaning depends on which callable encloses it. A node that resolves to
   "the current receiver, whatever that is" carries an implicit context the consumer must walk
-  surroundings to discover. Receiver semantics live on `body.vars[0]` as the `self` binding, reached
-  through `LocalRef`; member access reads the receiver from the containing `MemberAccess`'s receiver
-  field, never from a node that means "look around and figure it out". (Programming languages do not
-  have expressions whose meaning depends on syntactic context.)
+  surroundings to discover. Receiver semantics live on `locals[0]` as the `self` binding, reached as
+  an ordinary body-local binding; member access reads the receiver from the containing
+  `MemberAccess`'s receiver field, never from a node that means "look around and figure it out".
+  (Programming languages do not have expressions whose meaning depends on syntactic context.)
 - A HIR or MIR shape that splits a nonlocal reference by lexical form into separate species. The
   syntax that named the target is not a structural fact about the reference; one shape carries every
   nonlocal reference, and the mechanism that realizes it follows where the target lives relative to

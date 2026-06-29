@@ -9,12 +9,12 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -29,7 +29,7 @@ namespace {
 // LRM 13.3.1: a static-lifetime body local has per-instance storage that
 // outlives every activation of the body. Realize it as a member on the
 // callable's owner class; the init AssignExpr lands in that owner's
-// constructor_block (LRM Table 6-7 variable-initialization). The body
+// constructor body (LRM Table 6-7 variable-initialization). The body
 // declaration itself emits nothing. The mangled name carries
 // `<callable>__<source>_<hir_var_id>` so sibling callables sharing a source
 // name (`static int x;` in two processes of the same module) and nested
@@ -75,8 +75,7 @@ auto LowerStaticVarDeclStmt(
       process.Module().Unit(), ctor_block, services_id, target, init_value,
       std::nullopt, type, process.Module().Unit().builtins.void_type);
   const mir::ExprId assign = ctor_block.exprs.Add(assign_expr);
-  ctor_block.AppendStmt(
-      mir::Stmt{.label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
+  ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
   return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
 }
 
@@ -85,13 +84,10 @@ auto LowerAutomaticVarDeclStmt(
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
     mir::TypeId type) -> diag::Result<mir::Stmt> {
   auto& block = *frame.current_block;
-  const mir::LocalId local_id =
-      block.vars.Add(mir::LocalDecl{.name = hir_local.name, .type = type});
-  process.MapProceduralVar(
-      v.var, AutomaticVarBinding{
-                 .declaration_procedural_depth = frame.block_depth,
-                 .var = local_id,
-                 .type = type});
+  const mir::LocalId local_id = frame.bindings->Declare(
+      BindingOriginId::Procedural(v.var),
+      mir::LocalDecl{.name = hir_local.name, .type = type});
+  process.MapProceduralVar(v.var, AutomaticVarBinding{.type = type});
 
   mir::ExprId init_value{};
   if (v.init.has_value()) {
@@ -106,11 +102,7 @@ auto LowerAutomaticVarDeclStmt(
 
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::LocalDeclStmt{
-          .target =
-              mir::LocalRef{
-                  .hops = mir::BlockHops{.value = 0}, .var = local_id},
-          .init = init_value}};
+      .data = mir::LocalDeclStmt{.target = local_id, .init = init_value}};
 }
 
 // A lifetime-extended automatic (LRM 6.21) is a member of the scope's shared
@@ -125,9 +117,8 @@ auto LowerPromotedVarDeclStmt(
   const PromotedVarBinding pb = process.TakePendingActivation(v.var);
   process.MapProceduralVar(v.var, pb);
   auto& block = *frame.current_block;
-  const mir::ExprId handle_ref = block.exprs.Add(
-      mir::MakeLocalRefExpr(
-          frame.block_depth - pb.handle_depth, pb.handle, pb.handle_type));
+  const mir::ExprId handle_ref = block.exprs.Add(frame.bindings->MakeReadExpr(
+      frame.bindings->EnsureCarrier(pb.handle_origin)));
   const mir::ExprId target = block.exprs.Add(
       mir::MakeMemberAccessExpr(
           handle_ref, mir::MemberRef{.var = pb.member}, type));
@@ -181,7 +172,7 @@ auto LowerReturnStmt(
   // (or the implicit result variable) plus each output / inout local, assembled
   // by the subroutine's lowering so the copy-out rides the result (LRM 13.5).
   const std::optional<mir::ExprId> payload =
-      process.BuildReturnPayload(block, frame, explicit_value);
+      process.BuildReturnPayload(block, explicit_value);
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::ReturnStmt{

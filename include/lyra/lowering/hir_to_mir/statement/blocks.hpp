@@ -23,12 +23,11 @@ auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::BlockStmt& b) -> diag::Result<mir::Stmt>;
 
-// Lowers a single HIR stmt into its own fresh `mir::Block`: opens
-// a child block, descends through
-// `frame.WithBlock(...).Deeper()` so local refs see the correct
-// hop count, and packages the result as the new block's sole root stmt.
-// Used wherever a control-flow node needs a body or branch scope (for,
-// while, repeat, do-while, forever, if branches, case items).
+// Lowers a single HIR stmt into its own fresh `mir::Block`: opens a child
+// block, descends through `frame.WithBlock(...)`, and packages the result as
+// the new block's sole root stmt. Used wherever a control-flow node needs a
+// body or branch scope (for, while, repeat, do-while, forever, if branches,
+// case items).
 auto LowerStmtIntoChildScope(
     ProcessLowerer& process, WalkFrame frame, hir::StmtId hir_stmt_id)
     -> diag::Result<mir::Block>;

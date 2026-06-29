@@ -22,10 +22,10 @@
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -69,18 +69,22 @@ auto IsExprRootedAtStructuralDataObject(
       expr.data);
 }
 
-// Recursively clone an LHS-shaped expression into the closure body. The LHS
-// structure (PrimaryExpr, container-access CallExpr, ConcatExpr) is
-// reproduced as-is; per-layer subexpressions that are NOT part of the LHS
-// structure (selector indices, range offsets and count literals) are
-// snapshotted by value through the builder so the closure body sees the values
-// that were live at submit time.
-auto CloneLhsExprForNbaBody(
+// Rebuilds the selector layers above an NBA target's root cell onto a body-side
+// reference to that cell. The navigation that reaches the cell is evaluated
+// once at submit time and captured as `captured_root`; only the selector layers
+// above it (element / range / struct-member access) are reproduced here, with
+// their index subexpressions snapshotted by value so the body writes the place
+// the statement named at submit time (LRM 10.4.2). The recursion bottoms out at
+// the cell, which is the captured reference rather than a re-navigation from a
+// receiver.
+auto CloneLhsSelectorChainOntoRef(
     ClosureBuilder& closure, const mir::Block& outer_block,
-    mir::TypeId self_ptr_type, std::uint32_t& snapshot_counter,
-    mir::ExprId outer_id) -> mir::ExprId {
+    std::uint32_t& snapshot_counter, mir::ExprId outer_id, mir::ExprId root_id,
+    mir::ExprId captured_root) -> mir::ExprId {
+  if (outer_id == root_id) {
+    return captured_root;
+  }
   mir::Block& body = closure.Body();
-  const mir::LocalId body_self_id = closure.SelfBinding();
   const auto& outer_expr = outer_block.exprs.Get(outer_id);
   return std::visit(
       Overloaded{
@@ -88,14 +92,14 @@ auto CloneLhsExprForNbaBody(
             if (!mir::IsContainerAccessCallee(c.callee) ||
                 c.arguments.empty()) {
               throw InternalError(
-                  "CloneLhsExprForNbaBody: CallExpr is not a container-access "
-                  "form in NBA LHS clone walk");
+                  "CloneLhsSelectorChainOntoRef: CallExpr above the NBA target "
+                  "root is not a container access");
             }
             std::vector<mir::ExprId> body_args;
             body_args.reserve(c.arguments.size());
-            body_args.push_back(CloneLhsExprForNbaBody(
-                closure, outer_block, self_ptr_type, snapshot_counter,
-                c.arguments.front()));
+            body_args.push_back(CloneLhsSelectorChainOntoRef(
+                closure, outer_block, snapshot_counter, c.arguments.front(),
+                root_id, captured_root));
             for (std::size_t i = 1; i < c.arguments.size(); ++i) {
               body_args.push_back(closure.CaptureByValue(
                   c.arguments[i],
@@ -109,67 +113,30 @@ auto CloneLhsExprForNbaBody(
                             .arguments = std::move(body_args)},
                     .type = outer_expr.type});
           },
-          [&](const mir::ConcatExpr& c) -> mir::ExprId {
-            std::vector<mir::ExprId> body_operands;
-            body_operands.reserve(c.operands.size());
-            for (const mir::ExprId op_id : c.operands) {
-              body_operands.push_back(CloneLhsExprForNbaBody(
-                  closure, outer_block, self_ptr_type, snapshot_counter,
-                  op_id));
-            }
-            return body.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::ConcatExpr{.operands = std::move(body_operands)},
-                    .type = outer_expr.type});
-          },
-          [&](const mir::MemberRef&) -> mir::ExprId {
-            return body.exprs.Add(outer_expr);
-          },
           [&](const mir::TupleGetExpr& g) -> mir::ExprId {
+            const mir::ExprId base = CloneLhsSelectorChainOntoRef(
+                closure, outer_block, snapshot_counter, g.tuple, root_id,
+                captured_root);
             return body.exprs.Add(
                 mir::Expr{
-                    .data =
-                        mir::TupleGetExpr{
-                            .tuple = CloneLhsExprForNbaBody(
-                                closure, outer_block, self_ptr_type,
-                                snapshot_counter, g.tuple),
-                            .index = g.index},
+                    .data = mir::TupleGetExpr{.tuple = base, .index = g.index},
                     .type = outer_expr.type});
           },
           [&](const mir::UnionGetRefExpr& g) -> mir::ExprId {
+            const mir::ExprId base = CloneLhsSelectorChainOntoRef(
+                closure, outer_block, snapshot_counter, g.union_value, root_id,
+                captured_root);
             return body.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::UnionGetRefExpr{
-                            .union_value = CloneLhsExprForNbaBody(
-                                closure, outer_block, self_ptr_type,
-                                snapshot_counter, g.union_value),
-                            .index = g.index},
+                            .union_value = base, .index = g.index},
                     .type = outer_expr.type});
-          },
-          [&](const mir::MemberAccessExpr& m) -> mir::ExprId {
-            const mir::ExprId body_receiver = body.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::LocalRef{
-                            .hops = mir::BlockHops{.value = 0},
-                            .var = body_self_id},
-                    .type = self_ptr_type});
-            return body.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::MemberAccessExpr{
-                            .receiver = body_receiver, .member = m.member},
-                    .type = outer_expr.type});
-          },
-          [&](const mir::LocalRef&) -> mir::ExprId {
-            return body.exprs.Add(outer_expr);
           },
           [&](const auto&) -> mir::ExprId {
             throw InternalError(
-                "CloneLhsExprForNbaBody: non-addressable expression form in "
-                "NBA LHS clone walk");
+                "CloneLhsSelectorChainOntoRef: unexpected node above the NBA "
+                "target root");
           },
       },
       outer_expr.data);
@@ -177,24 +144,41 @@ auto CloneLhsExprForNbaBody(
 
 // Axis B (timing), deferred half: build the closure the NBA region invokes.
 // `effect_fn` is the target's write effect (axis A); this envelope is the only
-// part that knows about deferral. The target is cloned through captured `self`
-// (so it reaches the cell at NBA time) and the operands are snapshotted by
-// value (the active-region values, LRM 10.4.2); `effect_fn` then builds the
-// write against those body-side nodes -- the same call it would build for a
-// blocking write, only in the closure body.
+// part that knows about deferral. The closure is receiver-less: it captures a
+// reference to the target cell -- the navigation to the cell is evaluated now,
+// in the active region, and frozen into that reference -- plus the operand
+// snapshots (the active-region values, LRM 10.4.2), and takes its execution
+// context as a `services` parameter the NBA region supplies on invocation.
+// `effect_fn` then builds the write against those body-side nodes -- the same
+// call it would build for a blocking write, only in the closure body.
 template <typename EffectFn>
 auto BuildDeferredAssignClosure(
     ModuleLowerer& module, WalkFrame frame, mir::ExprId target_in_outer,
     std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
     -> mir::Expr {
-  const auto& outer_block = *frame.current_block;
-  ClosureBuilder closure(module.Unit(), frame);
+  mir::CompilationUnit& unit = module.Unit();
+  mir::Block& outer_block = *frame.current_block;
+
+  ClosureBuilder closure(unit, frame);
   mir::Block& body = closure.Body();
-  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
+
+  const mir::LocalId services_binding =
+      closure.AddParamAnonymous("services", unit.builtins.services);
+  const mir::ExprId services_param = body.exprs.Add(
+      mir::MakeLocalRefExpr(services_binding, unit.builtins.services));
+
+  const mir::ExprId root_in_outer = FindLhsRootId(outer_block, target_in_outer);
+  const mir::ExprId captured_root = closure.CaptureByValue(
+      BuildReferenceArg(
+          unit, outer_block, root_in_outer,
+          outer_block.exprs.Get(root_in_outer).type),
+      "_lyra_nba_place");
 
   std::uint32_t snapshot_counter = 0;
-  const mir::ExprId body_target = CloneLhsExprForNbaBody(
-      closure, outer_block, self_ptr_type, snapshot_counter, target_in_outer);
+  const mir::ExprId body_target = CloneLhsSelectorChainOntoRef(
+      closure, outer_block, snapshot_counter, target_in_outer, root_in_outer,
+      captured_root);
+
   std::vector<mir::ExprId> body_operands;
   body_operands.reserve(operands_in_outer.size());
   for (const mir::ExprId op : operands_in_outer) {
@@ -202,22 +186,10 @@ auto BuildDeferredAssignClosure(
         op, std::format("_lyra_nba_arg{}", snapshot_counter++)));
   }
 
-  const mir::ExprId body_self_ref = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::LocalRef{
-                  .hops = mir::BlockHops{.value = 0},
-                  .var = closure.SelfBinding()},
-          .type = self_ptr_type});
-  const mir::ExprId body_services = body.exprs.Add(
-      mir::MakeServicesCallExpr(
-          body_self_ref, module.Unit().builtins.services));
   const mir::ExprId effect_id = body.exprs.Add(effect_fn(
       body, body_target, std::span<const mir::ExprId>(body_operands),
-      body_services));
-  body.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = effect_id}});
+      services_param));
+  body.AppendStmt(mir::ExprStmt{.expr = effect_id});
   return closure.BuildVoid();
 }
 

@@ -197,11 +197,11 @@ void Engine::ExecuteNbaRegion() {
   auto pending = std::move(queues_.nba);
   queues_.nba.clear();
   for (auto& closure : pending) {
-    closure();
+    closure(Services());
   }
 }
 
-void Engine::SubmitNba(std::function<void()> closure) {
+void Engine::SubmitNba(std::function<void(RuntimeServices&)> closure) {
   if (phase_ == SchedulerPhase::kCommitNba) {
     throw InternalError(
         "Engine::SubmitNba: re-entrant NBA submission during NBA region "

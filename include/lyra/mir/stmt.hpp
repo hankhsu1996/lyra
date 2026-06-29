@@ -11,7 +11,6 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::mir {
 
@@ -43,7 +42,7 @@ struct BlockId {
 struct EmptyStmt {};
 
 struct LocalDeclStmt {
-  LocalRef target;
+  LocalId target;
   ExprId init;
 };
 
@@ -62,7 +61,7 @@ struct IfStmt {
 };
 
 struct ForInitDecl {
-  LocalRef induction_var = {};
+  LocalId induction_var = {};
   ExprId init = {};
 };
 
@@ -150,15 +149,14 @@ struct Stmt {
   StmtData data;
 };
 
-// `{...}` in MIR: arenas for the four kinds of locally-owned IR nodes (vars,
-// exprs, stmts, child scopes) plus the ordered execution sequence at this
-// brace level (`root_stmts`). All four IDs are scope-local: `ExprId`, `StmtId`,
-// `LocalId`, and `BlockId` resolve against the same
-// Block that introduces them. Cross-scope variable references carry
-// hops; cross-scope statement / expression / scope references do not exist --
-// each Block is a self-contained subtree.
+// `{...}` in MIR: arenas for the locally-owned IR nodes (exprs, stmts, child
+// scopes) plus the ordered execution sequence at this brace level
+// (`root_stmts`). `ExprId`, `StmtId`, and `BlockId` are scope-local: they
+// resolve against the Block that introduces them. Bindings are not block-local:
+// a `LocalRef` / `CaptureRef` names a binding in the enclosing callable's
+// arena, so a declaration statement placed in a nested block registers its
+// binding in the callable, not in the block.
 struct Block {
-  base::Arena<LocalDecl, LocalId> vars;
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Stmt, StmtId> stmts;
   base::Arena<Block, BlockId> child_scopes;
@@ -183,18 +181,6 @@ struct Block {
   // the arena yet left out of the executed sequence.
   auto AppendStmt(StmtData data) -> StmtId {
     return AppendStmt(Stmt{.label = std::nullopt, .data = std::move(data)});
-  }
-
-  // Declare a body-local variable: register it in the var arena and emit its
-  // declaration statement in the body. The two must co-occur for a genuine
-  // local, so they are exposed as one operation. (A method formal is a local
-  // declared in the signature, not the body, so it is registered without a
-  // declaration statement.)
-  auto AppendLocal(LocalDecl decl, ExprId init) -> LocalRef {
-    const LocalId var = vars.Add(std::move(decl));
-    const LocalRef ref{.hops = BlockHops{.value = 0}, .var = var};
-    AppendStmt(LocalDeclStmt{.target = ref, .init = init});
-    return ref;
   }
 
   // Append an `if (cond) <then_body>` statement, registering `then_body` as a

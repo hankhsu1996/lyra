@@ -6,10 +6,14 @@
 
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -29,14 +33,19 @@ auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, WalkFrame frame, std::string name,
     const hir::ContinuousAssign& src, std::optional<NetDriver> net_driver)
     -> diag::Result<mir::MethodDecl> {
-  mir::Block process_block;
-  const mir::LocalId self_id = process_block.vars.Add(
+  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  mir::CallableCode code;
+  CallableBindings bindings(unit, code);
+  const mir::LocalId self_id = bindings.Declare(
+      BindingOriginId::Receiver(),
       mir::LocalDecl{
           .name = "self", .type = frame.current_class->self_pointer_type});
+  const WalkFrame outer_frame = frame.WithBlock(&code.body)
+                                    .WithBindings(&bindings)
+                                    .WithCoroutineBody(true);
+
   mir::Block body_block;
-  const WalkFrame body_frame = frame.WithBlock(&body_block)
-                                   .WithSelfBinding(self_id, frame.block_depth)
-                                   .Deeper();
+  const WalkFrame body_frame = outer_frame.WithBlock(&body_block);
 
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
 
@@ -47,9 +56,9 @@ auto LowerContinuousAssign(
 
   // Build `self.Services()` in the body so an observable LHS routes through
   // `Var<T>::Set` (or `Mutate` for a selector chain) and a net driver routes
-  // through `Driver<T>::Update`. The body's `self` is already bound via
-  // `WithSelfBinding(self_id, ...)` above, so the self read resolves through
-  // the frame the same way a process body's does.
+  // through `Driver<T>::Update`. The body's `self` is the receiver binding
+  // seeded above, reached through the same capture machinery a process body's
+  // self read uses.
   const mir::ExprId body_self_ref = body_block.exprs.Add(
       MakeSelfRefExpr(body_frame, frame.current_class->self_pointer_type));
   const mir::ExprId body_services_id = body_block.exprs.Add(
@@ -81,32 +90,26 @@ auto LowerContinuousAssign(
         std::nullopt, assign_type, lowerer.Module().Unit().builtins.void_type);
     effect_id = body_block.exprs.Add(assign_expr);
   }
-  body_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = effect_id}});
+  body_block.AppendStmt(mir::ExprStmt{.expr = effect_id});
 
   body_block.AppendStmt(MakeSensitivityWaitStmt(
       body_block, body_frame, lowerer, src.sensitivity_list));
 
   const mir::BlockId body_scope_id =
-      process_block.child_scopes.Add(std::move(body_block));
-  process_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::ForStmt{
-              .init = {},
-              .condition = std::nullopt,
-              .step = {},
-              .scope = body_scope_id}});
-  process_block.AppendStmt(
+      code.body.child_scopes.Add(std::move(body_block));
+  code.body.AppendStmt(
+      mir::ForStmt{
+          .init = {},
+          .condition = std::nullopt,
+          .step = {},
+          .scope = body_scope_id});
+  code.body.AppendStmt(
       mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
+  code.params = {self_id};
+  code.result_type = unit.builtins.coroutine_void;
   return mir::MethodDecl{
       .name = std::move(name),
-      .code =
-          mir::CallableCode{
-              .params = {self_id},
-              .result_type = lowerer.Module().Unit().builtins.coroutine_void,
-              .body = std::move(process_block)},
+      .code = std::move(code),
       .overrides = std::nullopt,
       .visibility = mir::MethodVisibility::kInternal};
 }

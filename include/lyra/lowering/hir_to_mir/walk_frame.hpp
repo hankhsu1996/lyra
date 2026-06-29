@@ -1,12 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/lowering/hir_to_mir/block_depth.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
-#include "lyra/mir/local.hpp"
 
 namespace lyra::mir {
 struct Class;
@@ -15,8 +12,7 @@ struct Block;
 
 namespace lyra::lowering::hir_to_mir {
 
-class CaptureSink;
-class IterationBindingRegistry;
+class CallableBindings;
 
 // Singly-linked node carrying a class's parent chain so a leaf reference
 // can read the declared type of a member at `hops > 0`. Each node lives on
@@ -47,42 +43,23 @@ struct WalkFrame {
 
   // Outer classes reached by climbing `parent` links, in the same order as the
   // lowerer `parent_` chain. Populated by `WithClass` when the construction
-  // walk opens a new class. Read via `EnclosingClassAtHops` to
-  // resolve a member reference at `hops > 0`.
+  // walk opens a new class. Read via `EnclosingClassAtHops` to resolve a member
+  // reference at `hops > 0`. This is the object-graph axis, distinct from the
+  // lexical binding axis carried by `bindings`.
   const ScopeChainNode* outer_classes = nullptr;
 
   // The current block write target. Set when a walker opens a new block
   // (process body, nested block body, fork branch body, closure body) and
-  // entered via `WithBlock`. Null outside a block.
+  // entered via `WithBlock`. Null outside a block. A block places statements
+  // and exprs; it does not resolve a reference to its binding.
   mir::Block* current_block = nullptr;
 
-  // The current block-nesting depth measured from the body root (depth 0).
-  // Increments when a walker descends into a nested `mir::Block`. Used by
-  // `LowerProceduralVarRefExpr` to compute the hop count from the reading site
-  // back to the declaration depth.
-  BlockDepth block_depth{};
-
-  // The capture sink of the closure body being lowered. A local reference whose
-  // declaration sits above the sink's boundary routes through it so the
-  // closure's captures are composed as the body is built. Null outside a
-  // closure body.
-  CaptureSink* capture_sink = nullptr;
-
-  // The array-method `with`-clause iteration parameters reachable while
-  // lowering a clause body (LRM 7.12.4), keyed by clause identity. An `item` /
-  // `item.index` reference resolves through it by identity, so a clause nested
-  // in the body can still reach an outer clause's parameter. Null outside a
-  // with-clause body.
-  IterationBindingRegistry* iteration_bindings = nullptr;
-
-  // The `self` binding at the root of the current body. Set at body entry
-  // (process / method / constructor / closure) and unchanged through the
-  // body walk; updated on entry into a fresh body to that body's own self
-  // id. Empty before any body has been entered. The declaration depth
-  // records where the binding was declared so a deeper
-  // reader can compute hops as `current_depth - self_decl_depth`.
-  std::optional<mir::LocalId> self_binding;
-  BlockDepth self_decl_depth{};
+  // The binding-resolution context of the callable body being lowered: a
+  // reference resolves to a binding through it, and entering a closure body
+  // installs a child context whose parent is this one (so a capture forwards
+  // one callable boundary at a time). Stable through nested blocks of one
+  // callable; replaced at a callable boundary.
+  CallableBindings* bindings = nullptr;
 
   // Whether the enclosing callable body suspends -- a process, a task, or a
   // closure synthesized to run as a separate concurrent process (fork branch).
@@ -140,43 +117,10 @@ struct WalkFrame {
     return next;
   }
 
-  [[nodiscard]] auto Deeper() const -> WalkFrame {
+  [[nodiscard]] auto WithBindings(CallableBindings* callable_bindings) const
+      -> WalkFrame {
     WalkFrame next = *this;
-    next.block_depth = block_depth.Inner();
-    return next;
-  }
-
-  // Descend `extras` block-nesting levels at once. A construct lowered as a
-  // chain of nested scopes (a case cascade's if-then-else chain) enters its
-  // Nth body `extras = N` levels below the wrapper.
-  [[nodiscard]] auto DeeperBy(std::size_t extras) const -> WalkFrame {
-    WalkFrame next = *this;
-    for (std::size_t i = 0; i < extras; ++i) {
-      next.block_depth = next.block_depth.Inner();
-    }
-    return next;
-  }
-
-  [[nodiscard]] auto WithCaptureSink(CaptureSink* sink) const -> WalkFrame {
-    WalkFrame next = *this;
-    next.capture_sink = sink;
-    return next;
-  }
-
-  // Threads the registry of active `with`-clause iteration parameters into the
-  // body subtree being lowered (LRM 7.12.4).
-  [[nodiscard]] auto WithIterationBindings(
-      IterationBindingRegistry* registry) const -> WalkFrame {
-    WalkFrame next = *this;
-    next.iteration_bindings = registry;
-    return next;
-  }
-
-  [[nodiscard]] auto WithSelfBinding(
-      mir::LocalId id, BlockDepth decl_depth) const -> WalkFrame {
-    WalkFrame next = *this;
-    next.self_binding = id;
-    next.self_decl_depth = decl_depth;
+    next.bindings = callable_bindings;
     return next;
   }
 

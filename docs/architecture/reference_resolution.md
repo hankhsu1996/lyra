@@ -31,6 +31,10 @@ resolution serves both accessing the target's value and observing its changes.
   `compilation_unit_model.md`).
 - The compile-time identity kinds used to thread route segments (see `identity_and_ownership.md`,
   `hir.md`, `mir.md`).
+- The lexical axis of reference: how a value reference names a binding in its own callable body, and
+  how a binding crosses a closure boundary by capture (see `binding_and_capture.md`). This doc owns
+  the object-graph and cross-unit axis; a multi-segment reference splits cleanly between the two,
+  with the receiver value resolved lexically and the object-graph hops resolved here.
 - How an observed change wakes a dependent process (see `scheduling.md`).
 - Storage placement and offsets of members (see `lir.md`).
 - The phases the route executes in (see `elaboration_lifecycle.md`).

@@ -15,6 +15,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -49,7 +50,7 @@ auto LowerDestructuringAssign(
     -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   std::vector<std::uint64_t> part_widths;
   part_widths.reserve(lhs_concat.operands.size());
@@ -88,9 +89,10 @@ auto LowerDestructuringAssign(
 
   const mir::ExprId temp_default_init = wrapper.exprs.Add(
       BuildDefaultValueExpr(process.Module(), wrapper_frame, temp_type));
-  const mir::LocalRef snapshot_ref = wrapper.AppendLocal(
-      mir::LocalDecl{.name = "_lyra_destruct_rhs", .type = temp_type},
-      temp_default_init);
+  const mir::LocalId snapshot_var = wrapper_frame.bindings->DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_destruct_rhs", .type = temp_type});
+  wrapper.AppendStmt(
+      mir::LocalDeclStmt{.target = snapshot_var, .init = temp_default_init});
 
   // RHS is evaluated once; the snapshot temp is what gets distributed,
   // which is what makes `{a, b} = {b, a}` swap correctly.
@@ -104,7 +106,7 @@ auto LowerDestructuringAssign(
   }
 
   const mir::ExprId temp_assign_target =
-      wrapper.exprs.Add(mir::Expr{.data = snapshot_ref, .type = temp_type});
+      wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
   const mir::ExprId temp_assign_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
@@ -137,7 +139,7 @@ auto LowerDestructuringAssign(
             process.Module().Unit().builtins.int32,
             static_cast<std::int64_t>(w)));
     const mir::ExprId temp_ref =
-        wrapper.exprs.Add(mir::Expr{.data = snapshot_ref, .type = temp_type});
+        wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
     const mir::TypeId slice_type = process.Module().Unit().types.Intern(
         mir::PackedArrayType{
             .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
@@ -254,7 +256,7 @@ auto LowerSubroutineCallWithWritebacks(
   mir::CompilationUnit& unit = module.Unit();
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   // The completion layout the callee body and this call site share.
   const std::vector<mir::TypeId> components =
@@ -364,9 +366,10 @@ auto LowerSubroutineCallWithWritebacks(
                         .data = mir::AwaitExpr{.awaitable = call_id},
                         .type = payload_type})
               : call_id;
-  const mir::LocalRef completion = wrapper.AppendLocal(
-      mir::LocalDecl{.name = "_lyra_completion", .type = payload_type},
-      completion_value);
+  const mir::LocalId completion = wrapper_frame.bindings->DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
+  wrapper.AppendStmt(
+      mir::LocalDeclStmt{.target = completion, .init = completion_value});
 
   const mir::ExprId services_id =
       wrapper.exprs.Add(BuildServicesCallExpr(module, wrapper_frame));
@@ -376,11 +379,10 @@ auto LowerSubroutineCallWithWritebacks(
     // component out of the tuple.
     mir::ExprId value_id{};
     if (components.size() == 1) {
-      value_id =
-          wrapper.exprs.Add(mir::Expr{.data = completion, .type = wb.type});
+      value_id = wrapper.exprs.Add(mir::MakeLocalRefExpr(completion, wb.type));
     } else {
-      const mir::ExprId tuple_read = wrapper.exprs.Add(
-          mir::Expr{.data = completion, .type = payload_type});
+      const mir::ExprId tuple_read =
+          wrapper.exprs.Add(mir::MakeLocalRefExpr(completion, payload_type));
       value_id = wrapper.exprs.Add(
           mir::Expr{
               .data =
