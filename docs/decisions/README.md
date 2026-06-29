@@ -132,6 +132,10 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   allocates; SystemVerilog elaboration is a staged build / resolve / initialize / activate protocol,
   with connections declarative until a single resolve phase and initializers running after it;
   recursive-constructor-as-executor is rejected.
+- [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
+  driver slots and capability-handle drivers; drivers attach during Resolve along the reference
+  route and are validated at a materialized Seal barrier; single-driver is the N=1 case; net and
+  variable stay distinct types.
 
 ### Compile-time model and specialization
 

@@ -292,6 +292,12 @@ class MirDumper {
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);
             },
+            [](const ResolvedType& r) -> std::string {
+              return std::format("Resolved(value=Type[{}])", r.value.value);
+            },
+            [](const DriverType& d) -> std::string {
+              return std::format("Driver(value=Type[{}])", d.value.value);
+            },
         },
         t.data);
   }

@@ -18,8 +18,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/module_unit.hpp"
+#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/hir/structural_var.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -30,14 +30,17 @@ class ClassType;
 
 namespace lyra::lowering::ast_to_hir {
 
-struct StructuralVarBinding {
+struct StructuralDataObjectBinding {
   ScopeFrameId home_frame{};
-  hir::StructuralVarId var_id{};
+  hir::StructuralDataObjectId var_id{};
   hir::TypeId type{};
 };
 
-using StructuralVarBindings =
-    std::unordered_map<const slang::ast::VariableSymbol*, StructuralVarBinding>;
+// Keyed by `ValueSymbol`, the common base of a variable and a net: both are
+// named structural signals a reference or a continuous-assignment target binds
+// to the same way.
+using StructuralDataObjectBindings = std::unordered_map<
+    const slang::ast::ValueSymbol*, StructuralDataObjectBinding>;
 
 struct SubroutineBinding {
   ScopeFrameId owner_frame{};
@@ -167,12 +170,12 @@ class ModuleLowerer {
 
   // Binding registries. Each Map* asserts no double-mapping for the same
   // slang symbol.
-  void MapStructuralVarBinding(
-      const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
-      hir::StructuralVarId local, hir::TypeId type);
-  [[nodiscard]] auto LookupStructuralVarBinding(
-      const slang::ast::VariableSymbol& var) const
-      -> std::optional<StructuralVarBinding>;
+  void MapStructuralDataObjectBinding(
+      const slang::ast::ValueSymbol& var, ScopeFrameId home_frame,
+      hir::StructuralDataObjectId local, hir::TypeId type);
+  [[nodiscard]] auto LookupStructuralDataObjectBinding(
+      const slang::ast::ValueSymbol& var) const
+      -> std::optional<StructuralDataObjectBinding>;
 
   void MapSubroutineBinding(
       const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
@@ -246,7 +249,7 @@ class ModuleLowerer {
   // Registries.
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
-  StructuralVarBindings structural_var_bindings_;
+  StructuralDataObjectBindings structural_data_object_bindings_;
   SubroutineBindings subroutine_bindings_;
   LoopVarBindings loop_var_bindings_;
   OwnedChildBindings owned_child_bindings_;

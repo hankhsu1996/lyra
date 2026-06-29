@@ -232,6 +232,16 @@ auto RenderTypeAsCpp(
                 "lyra::runtime::Var<{}>",
                 RenderTypeAsCpp(unit, owner_class, o.value));
           },
+          [&](const mir::ResolvedType& r) -> std::string {
+            return std::format(
+                "lyra::runtime::ResolvedNet<{}, lyra::runtime::WireResolver>",
+                RenderTypeAsCpp(unit, owner_class, r.value));
+          },
+          [&](const mir::DriverType& d) -> std::string {
+            return std::format(
+                "lyra::runtime::Driver<{}, lyra::runtime::WireResolver>",
+                RenderTypeAsCpp(unit, owner_class, d.value));
+          },
           [](const auto&) -> std::string {
             throw InternalError(
                 "RenderTypeAsCpp: unsupported MIR type for current C++ render "

@@ -1,0 +1,13 @@
+id: cpp.nets_wire_single_driver
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: 10
+    seen_decl: 11
+    seen_assign: 12

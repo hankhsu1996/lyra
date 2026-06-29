@@ -13,8 +13,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
-#include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_alias.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -193,7 +193,8 @@ struct StructuralScope {
   // LRM 27.6); empty for other scopes.
   std::string source_name;
   TimeResolution time_resolution;
-  base::Arena<StructuralVarDecl, StructuralVarId> structural_vars;
+  base::Arena<StructuralDataObjectDecl, StructuralDataObjectId>
+      structural_data_objects;
   base::Arena<LoopVarDecl, LoopVarDeclId> loop_var_decls;
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Process, ProcessId> processes;

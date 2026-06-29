@@ -93,6 +93,8 @@ auto Type::Kind() const -> TypeKind {
           [](const UnionType&) { return TypeKind::kUnion; },
           [](const ExternalRefType&) { return TypeKind::kExternalRef; },
           [](const ObservableType&) { return TypeKind::kObservable; },
+          [](const ResolvedType&) { return TypeKind::kResolved; },
+          [](const DriverType&) { return TypeKind::kDriver; },
       },
       data);
 }
@@ -152,7 +154,8 @@ auto AsUniquePointee(const CompilationUnit& unit, TypeId type)
 auto IsObservableCellType(const Type& ty) -> bool {
   return std::holds_alternative<ObservableType>(ty.data) ||
          std::holds_alternative<ExternalRefType>(ty.data) ||
-         std::holds_alternative<RefType>(ty.data);
+         std::holds_alternative<RefType>(ty.data) ||
+         std::holds_alternative<ResolvedType>(ty.data);
 }
 
 auto ObservableInnerValueType(const Type& ty) -> TypeId {
@@ -164,6 +167,9 @@ auto ObservableInnerValueType(const Type& ty) -> TypeId {
   }
   if (const auto* rf = std::get_if<RefType>(&ty.data)) {
     return rf->pointee;
+  }
+  if (const auto* rn = std::get_if<ResolvedType>(&ty.data)) {
+    return rn->value;
   }
   throw InternalError(
       "ObservableInnerValueType: type is not an observable cell wrapper");

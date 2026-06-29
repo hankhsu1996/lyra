@@ -19,9 +19,9 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
@@ -399,9 +399,10 @@ class HirDumper {
               return std::format("RealLiteral({})", lit.value);
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
-            [](const StructuralVarRef& r) -> std::string {
+            [](const StructuralDataObjectRef& r) -> std::string {
               return std::format(
-                  "StructuralVar[{}](hops={})", r.var.value, r.hops.value);
+                  "StructuralDataObject[{}](hops={})", r.var.value,
+                  r.hops.value);
             },
             [](const ProceduralVarRef& r) -> std::string {
               return std::format("ProceduralVar[{}]", r.var.value);
@@ -429,9 +430,10 @@ class HirDumper {
   static auto FormatSensitivityRef(const SensitivityRef& ref) -> std::string {
     return std::visit(
         Overloaded{
-            [](const StructuralVarRef& r) -> std::string {
+            [](const StructuralDataObjectRef& r) -> std::string {
               return std::format(
-                  "hops={} var=StructuralVar[{}]", r.hops.value, r.var.value);
+                  "hops={} var=StructuralDataObject[{}]", r.hops.value,
+                  r.var.value);
             },
             [](const CrossUnitVarRef& r) -> std::string {
               return std::format("cross_unit_ref={}", r.id.value);
@@ -849,22 +851,27 @@ class HirDumper {
     scope_stack_.push_back(&s);
     Line("Scope:");
     Indent();
-    for (std::size_t i = 0; i < s.structural_vars.size(); ++i) {
-      const auto& v =
-          s.structural_vars.Get(StructuralVarId{static_cast<std::uint32_t>(i)});
-      std::string init_suffix;
-      if (v.initializer.has_value()) {
-        init_suffix = std::format(" init=Expr[{}]", v.initializer->value);
-      }
-      std::string ref_suffix;
-      if (v.reference.has_value()) {
-        ref_suffix =
-            *v.reference == ReferenceBinding::kConstRef ? " const ref" : " ref";
+    for (std::size_t i = 0; i < s.structural_data_objects.size(); ++i) {
+      const auto& v = s.structural_data_objects.Get(
+          StructuralDataObjectId{static_cast<std::uint32_t>(i)});
+      std::string suffix;
+      if (const auto* var = std::get_if<StructuralVariableDecl>(&v.kind)) {
+        if (var->reference.has_value()) {
+          suffix += *var->reference == ReferenceBinding::kConstRef
+                        ? " const ref"
+                        : " ref";
+        }
+        if (var->initializer.has_value()) {
+          suffix += std::format(" init=Expr[{}]", var->initializer->value);
+        }
+      } else {
+        const auto& net = std::get<StructuralNetDecl>(v.kind);
+        suffix += net.net_type == NetType::kWire ? " net=wire" : " net=tri";
       }
       Line(
           std::format(
-              "StructuralVar[{}] \"{}\" : Type[{}]{}{}", i, v.name,
-              v.type.value, ref_suffix, init_suffix));
+              "StructuralDataObject[{}] \"{}\" : Type[{}]{}", i, v.name,
+              v.type.value, suffix));
     }
     for (std::size_t i = 0; i < s.loop_var_decls.size(); ++i) {
       const auto& lv =

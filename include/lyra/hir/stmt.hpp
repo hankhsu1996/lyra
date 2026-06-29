@@ -220,8 +220,8 @@ struct ImplicitEventControl {
 // LRM 15.5.2 `@e;`. The controlled timing is a wait on a named event rather
 // than a value-change event. HIR mirrors slang's TimingControl shape; HIR ->
 // MIR collapses this onto a method call (`event.Await()`) on the named-event
-// data type. The `event` ExprId resolves to a PrimaryExpr of StructuralVarRef
-// pointing at the event variable.
+// data type. The `event` ExprId resolves to a PrimaryExpr of
+// StructuralDataObjectRef pointing at the event variable.
 struct NamedEventControl {
   ExprId event;
 };
@@ -237,7 +237,7 @@ struct TimedStmt {
 // LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement.
 // HIR -> MIR collapses this onto a method call (`event.Trigger()`) on the
 // named-event data type. The `event` ExprId resolves to a PrimaryExpr of
-// StructuralVarRef pointing at the event variable.
+// StructuralDataObjectRef pointing at the event variable.
 struct EventTriggerStmt {
   ExprId event;
 };

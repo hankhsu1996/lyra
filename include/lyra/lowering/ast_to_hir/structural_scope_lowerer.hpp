@@ -74,6 +74,8 @@ class StructuralScopeLowerer {
   auto PopulateVariableMember(
       const slang::ast::VariableSymbol& var, WalkFrame frame)
       -> diag::Result<void>;
+  auto PopulateNetMember(const slang::ast::NetSymbol& net, WalkFrame frame)
+      -> diag::Result<void>;
   // The reference binding of `var` if it is the internal variable of a `ref` /
   // `const ref` port of this module body (LRM 23.3.3.2); nullopt otherwise.
   [[nodiscard]] auto ReferenceBindingFor(const slang::ast::VariableSymbol& var)

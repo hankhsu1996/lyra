@@ -27,7 +27,8 @@ namespace lyra::lowering::hir_to_mir {
 // time 0" requirement for inferred sensitivity.
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, WalkFrame frame, std::string name,
-    const hir::ContinuousAssign& src) -> diag::Result<mir::MethodDecl> {
+    const hir::ContinuousAssign& src, std::optional<NetDriver> net_driver)
+    -> diag::Result<mir::MethodDecl> {
   mir::Block process_block;
   const mir::LocalId self_id = process_block.vars.Add(
       mir::LocalDecl{
@@ -44,27 +45,45 @@ auto LowerContinuousAssign(
   const mir::TypeId assign_type = (*rhs_or).type;
   const mir::ExprId rhs_id = body_block.exprs.Add(*std::move(rhs_or));
 
-  auto lhs_or = lowerer.LowerLhsExpr(hir_scope.exprs.Get(src.lhs), body_frame);
-  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = body_block.exprs.Add(*std::move(lhs_or));
-
   // Build `self.Services()` in the body so an observable LHS routes through
-  // `Var<T>::Set` (or `Mutate` for a selector chain). The body's `self` is
-  // already bound via `WithSelfBinding(self_id, ...)` above, so the self read
-  // resolves through the frame the same way a process body's does.
+  // `Var<T>::Set` (or `Mutate` for a selector chain) and a net driver routes
+  // through `Driver<T>::Update`. The body's `self` is already bound via
+  // `WithSelfBinding(self_id, ...)` above, so the self read resolves through
+  // the frame the same way a process body's does.
   const mir::ExprId body_self_ref = body_block.exprs.Add(
       MakeSelfRefExpr(body_frame, frame.current_class->self_pointer_type));
   const mir::ExprId body_services_id = body_block.exprs.Add(
       mir::MakeServicesCallExpr(
           body_self_ref, lowerer.Module().Unit().builtins.services));
 
-  const mir::Expr assign_expr = BuildObservableAssignExpr(
-      lowerer.Module().Unit(), body_block, body_services_id, lhs_id, rhs_id,
-      std::nullopt, assign_type, lowerer.Module().Unit().builtins.void_type);
-  const mir::ExprId assign_id = body_block.exprs.Add(assign_expr);
+  mir::ExprId effect_id{};
+  if (net_driver.has_value()) {
+    // A net target drives one of the net's driver slots: the body updates the
+    // driver handle member with the evaluated right-hand side, and the net
+    // re-resolves (LRM 6.5).
+    const mir::ExprId driver_self = body_block.exprs.Add(
+        MakeSelfRefExpr(body_frame, frame.current_class->self_pointer_type));
+    const mir::ExprId driver_access = body_block.exprs.Add(
+        mir::MakeMemberAccessExpr(
+            driver_self, mir::MemberRef{.var = net_driver->driver_member},
+            net_driver->driver_type));
+    effect_id = body_block.exprs.Add(
+        mir::MakeNetDriverUpdateCallExpr(
+            driver_access, body_services_id, rhs_id,
+            lowerer.Module().Unit().builtins.void_type));
+  } else {
+    auto lhs_or =
+        lowerer.LowerLhsExpr(hir_scope.exprs.Get(src.lhs), body_frame);
+    if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+    const mir::ExprId lhs_id = body_block.exprs.Add(*std::move(lhs_or));
+    const mir::Expr assign_expr = BuildObservableAssignExpr(
+        lowerer.Module().Unit(), body_block, body_services_id, lhs_id, rhs_id,
+        std::nullopt, assign_type, lowerer.Module().Unit().builtins.void_type);
+    effect_id = body_block.exprs.Add(assign_expr);
+  }
   body_block.AppendStmt(
       mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
+          .label = std::nullopt, .data = mir::ExprStmt{.expr = effect_id}});
 
   body_block.AppendStmt(MakeSensitivityWaitStmt(
       body_block, body_frame, lowerer, src.sensitivity_list));

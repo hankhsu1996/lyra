@@ -348,6 +348,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/fork.hpp\"\n";
   out += "#include \"lyra/runtime/gc_ref.hpp\"\n";
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
+  out += "#include \"lyra/runtime/net.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/sim_time.hpp\"\n";

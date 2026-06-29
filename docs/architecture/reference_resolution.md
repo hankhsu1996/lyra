@@ -35,7 +35,8 @@ resolution serves both accessing the target's value and observing its changes.
 - Storage placement and offsets of members (see `lir.md`).
 - The phases the route executes in (see `elaboration_lifecycle.md`).
 - Net resolution and net merging across ports (a single simulated net shared by both sides). That is
-  a design-global net-resolution concern, separate from per-object reference resolution.
+  a design-global net-resolution concern, separate from per-object reference resolution; a net's own
+  driver resolution is owned by `net_resolution.md`, which reaches its drivers through this route.
 
 ## Core Invariants
 

@@ -33,16 +33,18 @@ Read top to bottom on first pass:
 15. `hierarchy_and_generate.md` -- hierarchy and generate ownership
 16. `reference_resolution.md` -- references as routes from origin to typed endpoint; per-segment
     classification by layout visibility; sealed endpoint on the hot path
-17. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes each
+17. `net_resolution.md` -- a net's value as the resolution of its driver contributions; net vs
+    variable; drivers attached along the reference route
+18. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes each
     route segment by visibility (typed for layout-owned, SDK for opaque)
-18. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
+19. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
     emission; what a backend may and may not name in render
-19. `identity_and_ownership.md` -- identity rules and forbidden shapes
-20. `lowering_boundaries.md` -- what each lowering may and may not do
-21. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+20. `identity_and_ownership.md` -- identity rules and forbidden shapes
+21. `lowering_boundaries.md` -- what each lowering may and may not do
+22. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-22. `incremental_build.md` -- query-based incremental compilation and caching
-23. `testing_strategy.md` -- test categories and structure
+23. `incremental_build.md` -- query-based incremental compilation and caching
+24. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -59,6 +61,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Generate as constructor-time logic; object graph shape                              | `hierarchy_and_generate.md` |
 | Instance array as a data type; multiplicity vs generate axes                        | `hierarchy_and_generate.md` |
 | Reference routes; per-segment classification by layout visibility; sealed endpoints | `reference_resolution.md`   |
+| Net value as the resolution of driver contributions; net vs variable; drivers       | `net_resolution.md`         |
 | Per-unit artifact emission; cross-unit realization via the SDK; no wiring           | `emission_model.md`         |
 | Per-node within-artifact render; type mapping vs value emission                     | `backend_contract.md`       |
 | Parameter values, specialization keys, per-specialization artifacts                 | `specialization_model.md`   |
@@ -92,6 +95,7 @@ it compiles and passes tests.
 | Decision touches...                                            | Binding docs (read all, top-down)                                                                                            |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Cross-unit access / hierarchical refs / ports / connectivity   | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `elaboration_lifecycle`                    |
+| Nets / drivers / net resolution / net-typed ports              | `north_star`, `net_resolution`, `reference_resolution`, `elaboration_lifecycle`, `mir`                                       |
 | Backend emit / artifact structure / SDK boundary               | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `backend_contract`, `runtime_distribution` |
 | Compilation boundaries / unit dependencies / incrementality    | `north_star`, `compilation_unit_model`, `incremental_build`                                                                  |
 | Hierarchy / generate / object graph / construction             | `north_star`, `hierarchy_and_generate`, `runtime_model`, `elaboration_lifecycle`                                             |

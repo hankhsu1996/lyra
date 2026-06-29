@@ -143,10 +143,11 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 // (`ObservableType` / `ExternalRefType`) for observable storage, the plain
 // value type otherwise. The dispatcher decides whether to wrap the result
 // in an `ObservableMethod{kGet}` call to unwrap to a value.
-auto LowerStructuralVarRefExpr(
+auto LowerStructuralDataObjectRefExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::StructuralVarRef& m) -> mir::Expr {
-  const mir::MemberId var = lowerer.TranslateStructuralVar(m.hops, m.var);
+    const hir::StructuralDataObjectRef& m) -> mir::Expr {
+  const mir::MemberId var =
+      lowerer.TranslateStructuralDataObject(m.hops, m.var);
   return BuildStructuralMemberAccessExpr(
       frame, lowerer.Module().Unit(), mir::EnclosingHops{.value = m.hops.value},
       var);
@@ -303,8 +304,8 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::NullLiteral&) -> mir::Expr {
             return LowerHirNullLiteral(result_type);
           },
-          [&](const hir::StructuralVarRef& m) -> mir::Expr {
-            return LowerStructuralVarRefExpr(
+          [&](const hir::StructuralDataObjectRef& m) -> mir::Expr {
+            return LowerStructuralDataObjectRefExpr(
                 process.EnclosingScopeLowerer(), frame, m);
           },
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
@@ -356,8 +357,8 @@ auto LowerHirPrimaryExprStructural(
           [&](const hir::NullLiteral&) -> mir::Expr {
             return LowerHirNullLiteral(result_type);
           },
-          [&](const hir::StructuralVarRef& m) -> mir::Expr {
-            return LowerStructuralVarRefExpr(lowerer, frame, m);
+          [&](const hir::StructuralDataObjectRef& m) -> mir::Expr {
+            return LowerStructuralDataObjectRefExpr(lowerer, frame, m);
           },
           [](const hir::ProceduralVarRef&) -> mir::Expr {
             throw InternalError(

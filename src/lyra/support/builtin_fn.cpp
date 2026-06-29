@@ -251,6 +251,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "set";
     case BuiltinFn::kMutate:
       return "mutate";
+    case BuiltinFn::kAttachDriver:
+      return "attach_driver";
+    case BuiltinFn::kUpdateDriver:
+      return "update_driver";
     case BuiltinFn::kServices:
       return "services";
     case BuiltinFn::kSubmitNba:

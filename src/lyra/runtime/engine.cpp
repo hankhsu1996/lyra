@@ -53,12 +53,16 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
   }
   // Link every top before any phase runs, so an upward climb during resolution
   // sees the whole tree (the root and all sibling tops already exist). The
-  // phases run design-wide in order: resolve every reference, then initialize
-  // every scope's variables, then activate every scope's processes -- so an
-  // initializer observes resolved references, and processes start only after
-  // all initialization.
+  // phases run design-wide in order: resolve every reference and attachment,
+  // seal and validate the whole design's topology, initialize every scope's
+  // variables, then activate every scope's processes -- so sealing sees every
+  // attachment, an initializer observes resolved references, and processes
+  // start only after all initialization.
   for (const auto& top : tops) {
     top.scope->Resolve();
+  }
+  for (const auto& top : tops) {
+    top.scope->Seal();
   }
   for (const auto& top : tops) {
     top.scope->Initialize();

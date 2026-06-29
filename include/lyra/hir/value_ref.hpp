@@ -6,17 +6,17 @@
 
 #include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
-#include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 
 namespace lyra::hir {
 
-struct StructuralVarRef {
+struct StructuralDataObjectRef {
   StructuralHops hops;
-  StructuralVarId var;
+  StructuralDataObjectId var;
 
-  auto operator==(const StructuralVarRef&) const -> bool = default;
+  auto operator==(const StructuralDataObjectRef&) const -> bool = default;
 };
 
 struct CrossUnitRefId {
@@ -70,8 +70,9 @@ struct IterationBindingRef {
   auto operator==(const IterationBindingRef&) const -> bool = default;
 };
 
-// A sensitivity leaf observes either a this-unit structural var or a cross-unit
-// member; both resolve to a stored `Observable` the scheduler subscribes to.
-using SensitivityRef = std::variant<StructuralVarRef, CrossUnitVarRef>;
+// A sensitivity leaf observes either a this-unit structural data object or a
+// cross-unit member; both resolve to a stored `Observable` the scheduler
+// subscribes to.
+using SensitivityRef = std::variant<StructuralDataObjectRef, CrossUnitVarRef>;
 
 }  // namespace lyra::hir

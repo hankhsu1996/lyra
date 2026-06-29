@@ -86,11 +86,11 @@ auto MakeSensitivityWaitStmt(
   for (const auto& entry : sensitivity_list) {
     const auto [hops, var] = std::visit(
         Overloaded{
-            [&](const hir::StructuralVarRef& r)
+            [&](const hir::StructuralDataObjectRef& r)
                 -> std::pair<mir::EnclosingHops, mir::MemberId> {
               return {
                   mir::EnclosingHops{.value = r.hops.value},
-                  lowerer.TranslateStructuralVar(r.hops, r.var)};
+                  lowerer.TranslateStructuralDataObject(r.hops, r.var)};
             },
             [&](const hir::CrossUnitVarRef& r)
                 -> std::pair<mir::EnclosingHops, mir::MemberId> {
