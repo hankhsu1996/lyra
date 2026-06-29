@@ -88,7 +88,8 @@ auto LowerContinuousAssign(
               .params = {self_id},
               .result_type = lowerer.Module().Unit().builtins.coroutine_void,
               .body = std::move(process_block)},
-      .overrides = std::nullopt};
+      .overrides = std::nullopt,
+      .visibility = mir::MethodVisibility::kInternal};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

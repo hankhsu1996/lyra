@@ -282,7 +282,9 @@ auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
 auto LowerHirPrimaryExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::Primary& p,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& lowerer = process.Owner();
+  // A reference to an enclosing-scope declaration resolves against the body's
+  // structural scope; it appears only in a structural body, so the scope is
+  // reached lazily and a class method body never requests it.
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
@@ -302,16 +304,29 @@ auto LowerHirPrimaryExprProc(
             return LowerHirNullLiteral(result_type);
           },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
-            return LowerStructuralVarRefExpr(lowerer, frame, m);
+            return LowerStructuralVarRefExpr(
+                process.EnclosingScopeLowerer(), frame, m);
           },
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
             return LowerProceduralVarRefExpr(process, frame, l, result_type);
           },
+          [&](const hir::ClassPropertyRef& r) -> mir::Expr {
+            const mir::TypeId self_type =
+                frame.current_class->self_pointer_type;
+            const mir::ExprId self_ref = frame.current_block->exprs.Add(
+                MakeSelfRefExpr(frame, self_type));
+            return mir::MakeMemberAccessExpr(
+                self_ref,
+                mir::MemberRef{.var = mir::MemberId{.value = r.field_index}},
+                result_type);
+          },
           [&](const hir::LoopVarRef& lv) -> mir::Expr {
-            return LowerLoopVarRefExpr(lowerer, frame, lv, result_type);
+            return LowerLoopVarRefExpr(
+                process.EnclosingScopeLowerer(), frame, lv, result_type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
-            return LowerCrossUnitVarRefExpr(lowerer, frame, c);
+            return LowerCrossUnitVarRefExpr(
+                process.EnclosingScopeLowerer(), frame, c);
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame, result_type);
@@ -347,6 +362,11 @@ auto LowerHirPrimaryExprStructural(
           [](const hir::ProceduralVarRef&) -> mir::Expr {
             throw InternalError(
                 "LowerHirPrimaryExprStructural: HIR ProceduralVarRef does not "
+                "appear in structural expressions");
+          },
+          [](const hir::ClassPropertyRef&) -> mir::Expr {
+            throw InternalError(
+                "LowerHirPrimaryExprStructural: HIR ClassPropertyRef does not "
                 "appear in structural expressions");
           },
           [&](const hir::LoopVarRef& lv) -> mir::Expr {

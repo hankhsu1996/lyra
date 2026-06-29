@@ -126,7 +126,8 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
               .params = {self_id},
               .result_type = process.Module().Unit().builtins.coroutine_void,
               .body = std::move(process_block)},
-      .overrides = std::nullopt};
+      .overrides = std::nullopt,
+      .visibility = process.Visibility()};
 }
 
 // Wraps the body in a `forever` loop. `implicit_sensitivity`, if present,
@@ -153,7 +154,8 @@ auto LowerForeverProcess(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     if (implicit_sensitivity != nullptr) {
       body_block.AppendStmt(MakeSensitivityWaitStmt(
-          body_block, body_frame, process.Owner(), *implicit_sensitivity));
+          body_block, body_frame, process.EnclosingScopeLowerer(),
+          *implicit_sensitivity));
     }
   }
 
@@ -176,7 +178,8 @@ auto LowerForeverProcess(
               .params = {self_id},
               .result_type = process.Module().Unit().builtins.coroutine_void,
               .body = std::move(process_block)},
-      .overrides = std::nullopt};
+      .overrides = std::nullopt,
+      .visibility = process.Visibility()};
 }
 
 }  // namespace
@@ -197,7 +200,7 @@ auto ProcessLowerer::Run(const hir::Process& src)
   throw InternalError("ProcessLowerer::Run: unknown HIR ProcessKind");
 }
 
-auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
+auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     -> diag::Result<mir::MethodDecl> {
   const WalkFrame& parent = owner_ctor_frame_;
   mir::Block body_block;
@@ -328,7 +331,8 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
               .params = std::move(params),
               .result_type = result_type,
               .body = std::move(body_block)},
-      .overrides = std::nullopt};
+      .overrides = std::nullopt,
+      .visibility = Visibility()};
 }
 
 auto ProcessLowerer::BuildReturnPayload(

@@ -42,6 +42,16 @@ struct ProceduralVarRef {
   auto operator==(const ProceduralVarRef&) const -> bool = default;
 };
 
+// A reference to a class property (LRM 8.4) from within an instance method
+// body, where the property is named without an explicit handle and reaches the
+// invoking object through the method's receiver. `field_index` is the
+// property's declaration-order position in the enclosing class.
+struct ClassPropertyRef {
+  std::uint32_t field_index;
+
+  auto operator==(const ClassPropertyRef&) const -> bool = default;
+};
+
 struct LoopVarRef {
   StructuralHops hops;
   LoopVarDeclId loop_var;
