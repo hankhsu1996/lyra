@@ -11,7 +11,8 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Walks through container-access CallExprs to the LHS chain's root primary.
+// Walks through container-access CallExprs and member-ref projections to the
+// LHS chain's root primary.
 [[nodiscard]] auto FindLhsRootId(const mir::Block& block, mir::ExprId lhs_id)
     -> mir::ExprId;
 

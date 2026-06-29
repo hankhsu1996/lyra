@@ -34,13 +34,18 @@ live reference.
 
 `Get` is a transient view; the `Id` is the only durable handle.
 
-1. **The arena stays a relocatable `vector`.** Dense contiguous storage, the cheapest `Id -> T`
-   indexing, and good iteration locality are kept. The arena does not promise that a `Get` reference
-   survives an `Add`.
+1. **The arena stays a relocatable `vector`.** Contiguous storage, good iteration / cache locality,
+   and the simplest storage model are kept. (A `deque` or paged arena would still index in O(1); the
+   cost of switching is contiguity and locality, not lookup speed.) The arena does not promise that
+   a `Get` reference survives an `Add`.
 
 2. **Same-arena mutation invalidates prior `Get` results.** Any `Add` may relocate the backing
    storage, invalidating every reference, pointer, and iterator a prior `Get` returned to that
-   arena. This contract lives on the `Arena` type.
+   arena. This contract lives on the `Arena` type. A `Get` reference is usable by any caller, not
+   only the arena's owner, but only within a lexical region in which that arena is guaranteed not to
+   grow -- it is a scoped borrow, never an identity that is stored or passed on. `reserve()` does
+   not change this: capacity that happens to be sufficient in one run is not a contract, and a
+   caller may never rely on a reference surviving an `Add` because the vector looked large enough.
 
 3. **Lowering projects facts before mutating.** To carry information from a node past an `Add`, a
    caller projects the value it needs -- an `Id`, a kind, a copied field -- before the `Add`, and
@@ -57,9 +62,14 @@ live reference.
 - **Stable-reference storage (deque / segmented / paged) so `Get` references survive `Add`.** This
   extends the contract of every arena -- system-wide -- to serve a capability no site requires: the
   usage evidence shows the value needed past a mutation is always a projectable fact, never a live
-  whole-node borrow. It trades contiguity, locality, and the cheapest indexing on a read-heavy hot
-  path for a guarantee nothing depends on, and over-extends the abstraction from an incidental code
-  shape. Reconsider only if a genuine need for a stable cross-mutation whole-node borrow appears.
+  whole-node borrow. The deeper cost is not performance but the abstraction boundary: the
+  relocatable-`vector` contract is what forces every cross-mutation dataflow to be an explicit `Id`
+  or projected value. Stable-reference storage would invite treating a live `Get` reference as a
+  passable, savable identity -- an erosion of the id-first model, not a neutral container swap. It
+  also trades contiguity and locality on a read-heavy hot path for a guarantee nothing depends on.
+  Reconsider only if a genuine need appears for a live whole-node borrow held across an arena
+  mutation that cannot be re-expressed as an `Id`, a copy, a snapshot, or an owned descriptor; a
+  recurring copy-before-`Add` is the expected shape, not evidence for the change.
 
 - **`Get` returns by value.** Safe by construction, but copies a fat node (`Type`, `Expr`) on every
   read, on the hot path, when most reads touch a single field. The need is to copy the _one fact_
