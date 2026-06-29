@@ -13,3 +13,8 @@ expect:
     t_rt: 0x0AABBCCD
     t_ovr: 0x7f
     t_h: 0xBEEF
+    c_rt: 15
+    n_rt: 99
+    nu_x: 11
+    nu_y: 22
+    nu_hbit: 16

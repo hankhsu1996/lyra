@@ -272,20 +272,35 @@ struct TupleGetExpr {
 // Builds a union value whose active member is component `index`, carrying
 // `value`. The value-build primitive for `UnionType`, the active-member
 // analogue of `TupleExpr`: a tuple literal lists every component, a union
-// literal names the one live member. A union member write `u.f = v` lowers to
-// assigning the union place a fresh `UnionExpr{index, value}` -- the member
-// access never survives as a writable place. `Expr::type` is the `UnionType`.
+// literal names the one live member. Used to construct a union value -- a
+// default-initialized union builds `UnionExpr{0, <member 0 default>}`.
+// `Expr::type` is the `UnionType`.
 struct UnionExpr {
   std::size_t index;
   ExprId value;
 };
 
-// Reads component `index` out of a union value (`union.index`), the read-only
-// active-member analogue of `TupleGetExpr`. `Expr::type` is the component's
-// type. Never appears as an lvalue: a write is a whole-union replacement via
-// `UnionExpr`, not a projection. Reading a member other than the live one is
-// undefined in SV (LRM 7.3); the backend returns that member's default.
-struct UnionGetExpr {
+// Reads component `index` of a union value (`union.index`), the read side of
+// union member access and the active-member analogue of `TupleGetExpr`.
+// `Expr::type` is the component's type. Reading an inactive member is undefined
+// in SV (LRM 7.3) and the backend returns that member's default. The write side
+// is `UnionMemberRefExpr`; the read and write are separate access forms because
+// a union member's read realization (a value) differs from its write
+// realization (a reference that activates the member), exactly as a packed
+// array element splits into element-value and element-reference forms.
+struct UnionMemberExpr {
+  ExprId union_value;
+  std::size_t index;
+};
+
+// The writable location of union member `index` (`u.f` as an assignment
+// target), the write side and by-reference counterpart of `UnionMemberExpr`.
+// `Expr::type` is the component's type. As an `AssignExpr` target it carries
+// `u.f = v`, `u.f op= v`, and a nested `u.f.g = v` uniformly with every other
+// lvalue; the backend renders it as a reference to the active member (making
+// the member active first if needed), so further member or element projection
+// composes on it as on a struct member.
+struct UnionMemberRefExpr {
   ExprId union_value;
   std::size_t index;
 };
@@ -296,7 +311,7 @@ using ExprData = std::variant<
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
     PointerCastExpr, CastExpr, MemberAccessExpr, ClosureExpr, ConcatExpr,
     ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr,
-    UnionExpr, UnionGetExpr>;
+    UnionExpr, UnionMemberExpr, UnionMemberRefExpr>;
 
 struct Expr {
   ExprData data;

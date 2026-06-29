@@ -8,7 +8,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -711,13 +710,15 @@ auto LowerHirElementSelectExpr(
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
   const auto& hir_base_ty = module.Hir().types.Get(hir_base.type);
-  // LRM 6.16.3: a string has no element lvalue, so an index read realizes as
-  // the getc query (the write side realizes as putc in the assignment path).
+  // LRM 6.16: indexed character read `s[i]` is the element-value access, the
+  // read-side dual of the element-reference write. It joins the generic
+  // element-access path (the explicit `getc` / `putc` methods are a separate
+  // lowering); the value-vs-reference pair mirrors a packed array element.
   if (hir_base_ty.Kind() == hir::TypeKind::kString) {
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee = mir::Direct{.target = support::BuiltinFn::kGetc},
+                .callee = ElementAccessCallee(AccessSide::kRead),
                 .arguments = {base_id, idx_id}},
         .type = result_type};
   }
@@ -796,8 +797,8 @@ auto LowerHirMemberAccessExpr(
         .type = result_type};
   }
   // LRM 7.3: an unpacked union member read projects the active member by index
-  // out of the overlapping-storage value (`UnionGetExpr`); reading an inactive
-  // member is undefined and the backend returns that member's default.
+  // out of the overlapping-storage value (`UnionMemberExpr`); reading an
+  // inactive member is undefined and the backend returns that member's default.
   if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedUnion) {
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
@@ -805,7 +806,8 @@ auto LowerHirMemberAccessExpr(
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
     return mir::Expr{
         .data =
-            mir::UnionGetExpr{.union_value = base_id, .index = sel.field_index},
+            mir::UnionMemberExpr{
+                .union_value = base_id, .index = sel.field_index},
         .type = result_type};
   }
   const auto& fields =
@@ -840,6 +842,18 @@ auto LowerHirElementSelectExprLhs(
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
   const auto& hir_base_ty = module.Hir().types.Get(hir_base.type);
+  // LRM 6.16: indexed character write `s[i] = ...` is the element-reference
+  // access, the write-side dual of the element-value read. It joins the generic
+  // element-access path so the place flows through the observable mutate route
+  // and the assignment shape uniformly.
+  if (hir_base_ty.Kind() == hir::TypeKind::kString) {
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee = ElementAccessCallee(AccessSide::kLhs),
+                .arguments = {base_id, idx_id}},
+        .type = result_type};
+  }
   return LowerElementSelectInner(
       module, block, hir_base_ty, module.TranslateType(hir_idx.type), base_id,
       idx_id, AccessSide::kLhs, result_type, false);
@@ -901,15 +915,20 @@ auto LowerHirMemberAccessExprLhs(
         .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
         .type = result_type};
   }
-  // A union member write is a whole-union replacement, intercepted at
-  // assignment lowering before any place is built; a union member never yields
-  // a writable place. Reaching here means a ref / output binding to a union
-  // member (LRM 7.3), which is not yet supported.
+  // LRM 7.3: an unpacked union member write is the write-side access form
+  // `UnionMemberRefExpr` over the union place (the by-reference counterpart of
+  // the `UnionMemberExpr` read). The observable root routes through the cell's
+  // mutate path later; the place is just the projection here.
   if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedUnion) {
-    return diag::Fail(
-        base_hir_expr.span, diag::DiagCode::kUnsupportedAssignmentTarget,
-        "a reference or output binding to a union member is not yet supported");
+    auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
+    if (!base_or) return std::unexpected(std::move(base_or.error()));
+    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+    return mir::Expr{
+        .data =
+            mir::UnionMemberRefExpr{
+                .union_value = base_id, .index = sel.field_index},
+        .type = result_type};
   }
   const auto& fields =
       GetAggregateFields(module.Hir().types.Get(base_hir_expr.type));

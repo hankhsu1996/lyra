@@ -334,9 +334,10 @@ struct TupleType {
 // value at a time (the generic-language C `union`, distinct from the product
 // `TupleType` and from a tagged sum). The value-layer realization of an SV
 // untagged unpacked union (LRM 7.3); the member names are dropped to positions
-// at HIR-to-MIR, the index is the carrier. Built and read by `UnionExpr` /
-// `UnionGetExpr`. Carries component types only: a tagged union is a separate
-// concept rejected at the HIR-to-MIR gate, so no flag distinguishes one here.
+// at HIR-to-MIR, the index is the carrier. Built by `UnionExpr`, read by
+// `UnionMemberExpr`, written through `UnionMemberRefExpr`. Carries component
+// types only: a tagged union is a separate concept rejected at the HIR-to-MIR
+// gate, so no flag distinguishes one here.
 struct UnionType {
   std::vector<TypeId> elements;
 

@@ -39,17 +39,33 @@ class Union {
     return u;
   }
 
-  // Read component `I`. Returns the value when `I` is the active member;
-  // otherwise returns that component's default, the deterministic stand-in for
-  // an SV-undefined cross-member read.
+  // Read component `I` (the read side of member access). Returns the value when
+  // `I` is the active member; otherwise returns that component's default, the
+  // deterministic stand-in for an SV-undefined cross-member read.
   template <std::size_t I>
-  [[nodiscard]] auto Get() const
+  [[nodiscard]] auto Member() const
       -> std::variant_alternative_t<I, std::variant<Ts...>> {
-    using Member = std::variant_alternative_t<I, std::variant<Ts...>>;
+    using Component = std::variant_alternative_t<I, std::variant<Ts...>>;
     if (const auto* active = std::get_if<I>(&data_)) {
       return *active;
     }
-    return Member{};
+    return Component{};
+  }
+
+  // The writable location of component `I` (the write side of member access),
+  // the by-reference counterpart of `Member`. Returns a reference to the active
+  // member's storage, making `I` active first if it is not -- so a write
+  // activates the member it targets. A read goes through `Member` and never
+  // activates; only a write takes this reference, so `u.f = v`, `u.f op= v`,
+  // and a nested `u.f.g = v` all compose on it the way a struct member's
+  // reference does.
+  template <std::size_t I>
+  [[nodiscard]] auto MemberRef()
+      -> std::variant_alternative_t<I, std::variant<Ts...>>& {
+    if (auto* active = std::get_if<I>(&data_)) {
+      return *active;
+    }
+    return data_.template emplace<I>();
   }
 
   // LRM 11.4.5 `==` / `!=` (Any data type). Unions are equal only when the same

@@ -53,17 +53,25 @@ not a product with a different label.
    is a semantic statement, not a storage-layout claim; how a backend stores it is a realization
    concern owned by the backend contract.
 
-4. **Member read is an access primitive `UnionGetExpr{union, index}`**, parallel to `TupleGetExpr`.
-   It is read-only: it never appears as an lvalue or a writable place.
+4. **Member access is a matched read / write access pair, the active-member analogue of a packed
+   array element's `Element` / `ElementRef`.** The read is `UnionMemberExpr{union, index}` (yielding
+   the active member's value, the inactive-member default, point 8); the write is
+   `UnionMemberRefExpr{union, index}` (a reference to the active member's storage). They are two
+   access forms, not one, because a union member's read realization (a value) differs from its write
+   realization (an activating reference) -- the same reason a packed array element splits into a
+   value form and a reference form (`slice-value-semantics.md`). They are distinguished by index at
+   compile time, so each is a node rather than a callee. There is no union-specific reference
+   concept: the write form is an ordinary reference into the active member's storage.
 
-5. **Member write is whole-union replacement.** `u.f = v` lowers to assigning the union _place_ a
-   freshly built single-member union value: `UnionExpr{index, value}`. The member access never
-   survives as a writable place; the write targets the union one level up. This is the same shape as
-   a string element write, which has no element lvalue and realizes as `putc` against the string
-   place (LRM 6.16.2). A compound `u.f op= v` reads the active member through `UnionGetExpr`,
-   applies the operator, and rebuilds the union -- the read side uses `UnionGetExpr`, the write side
-   uses `UnionExpr`, and the two are never conflated. Taking a place or a `ref` / `output` binding
-   to a union member is rejected for now.
+5. **Member write and compound assignment are uniform with every other lvalue.** `u.f = v`,
+   `u.f op= v`, and a nested `u.f.g = v` lower to `AssignExpr` over `UnionMemberRefExpr`, exactly as
+   an array-element or struct-member write does; there is no whole-union-replacement desugar and no
+   read-modify-write at the lowering. The backend renders the write target as a reference to the
+   active member's storage (making the member active first if it is not), so a nested member or
+   element write composes on it as on a struct member; "evaluate the left-hand side once" (LRM
+   11.4.1) is the backend's job on the single target (see
+   [compound-assignment-write-location](compound-assignment-write-location.md)). `UnionExpr` builds
+   a whole union value (default initialization, point 6); it is not the member-write shape.
 
 6. **Default initialization synthesizes `UnionExpr{0, <member 0's Table 7-1 default>}`** at each
    default-construct site, never stored on the type. As with the struct, the interned `UnionType`
@@ -108,8 +116,8 @@ not a product with a different label.
 
 ## Consequences
 
-- A new MIR type variant (`UnionType`) and two expression primitives (`UnionExpr`, `UnionGetExpr`),
-  parallel to the tuple pair.
+- A new MIR type variant (`UnionType`) and three expression primitives: `UnionExpr` (build a whole
+  union value), `UnionMemberExpr` (read a member), and `UnionMemberRefExpr` (write a member).
 - A new runtime value type `lyra::value::Union<Ts...>`, composing `LyraValue` from its active
   member.
 - `struct-union.md` N1-N3 build on this. A declared union must default-initialize to run, so the

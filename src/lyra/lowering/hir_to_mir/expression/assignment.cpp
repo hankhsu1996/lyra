@@ -17,7 +17,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
@@ -30,7 +29,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -47,6 +45,12 @@ auto IsExprRootedAtStructuralVar(const mir::Block& block, mir::ExprId expr_id)
           [](const mir::MemberRef&) { return true; },
           [](const mir::MemberAccessExpr&) { return true; },
           [](const mir::LocalRef&) { return false; },
+          [&](const mir::TupleGetExpr& g) {
+            return IsExprRootedAtStructuralVar(block, g.tuple);
+          },
+          [&](const mir::UnionMemberRefExpr& g) {
+            return IsExprRootedAtStructuralVar(block, g.union_value);
+          },
           [&](const mir::CallExpr& c) {
             if (!mir::IsContainerAccessCallee(c.callee) ||
                 c.arguments.empty()) {
@@ -121,6 +125,28 @@ auto CloneLhsExprForNbaBody(
           [&](const mir::MemberRef&) -> mir::ExprId {
             return body.exprs.Add(outer_expr);
           },
+          [&](const mir::TupleGetExpr& g) -> mir::ExprId {
+            return body.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::TupleGetExpr{
+                            .tuple = CloneLhsExprForNbaBody(
+                                closure, outer_block, self_ptr_type,
+                                snapshot_counter, g.tuple),
+                            .index = g.index},
+                    .type = outer_expr.type});
+          },
+          [&](const mir::UnionMemberRefExpr& g) -> mir::ExprId {
+            return body.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::UnionMemberRefExpr{
+                            .union_value = CloneLhsExprForNbaBody(
+                                closure, outer_block, self_ptr_type,
+                                snapshot_counter, g.union_value),
+                            .index = g.index},
+                    .type = outer_expr.type});
+          },
           [&](const mir::MemberAccessExpr& m) -> mir::ExprId {
             const mir::ExprId body_receiver = body.exprs.Add(
                 mir::Expr{
@@ -146,17 +172,6 @@ auto CloneLhsExprForNbaBody(
           },
       },
       outer_expr.data);
-}
-
-auto MakeStringMethodCallExpr(
-    support::BuiltinFn fn, std::vector<mir::ExprId> args, mir::TypeId type)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = fn},
-              .arguments = std::move(args)},
-      .type = type};
 }
 
 // Axis B (timing), deferred half: build the closure the NBA region invokes.
@@ -271,119 +286,6 @@ auto LowerObservableAssign(
       });
 }
 
-// Axis A for a string element target: putc, the symmetric counterpart of the
-// getc index read, because a string exposes no element lvalue (LRM 6.16.2). A
-// compound `s[i] op= v` is desugared here to a getc read-modify so the effect
-// always carries the final byte; the receiver routes through `Var<String>::
-// Mutate` so a deferred write still wakes the cell's subscribers.
-auto LowerStringElementAssign(
-    ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
-    const hir::ElementSelectExpr& sel, diag::SourceSpan span,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_process = process.HirBody();
-  const auto& unit = process.Module().Unit();
-  auto& block = *frame.current_block;
-
-  const auto& base_hir = hir_process.exprs.Get(sel.base_value);
-  auto cell_or = process.LowerLhsExpr(base_hir, frame.WithLvalueTarget(true));
-  if (!cell_or) return std::unexpected(std::move(cell_or.error()));
-  const mir::ExprId cell_id = block.exprs.Add(*std::move(cell_or));
-
-  auto idx_or = process.LowerExpr(hir_process.exprs.Get(sel.index), frame);
-  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
-
-  auto rhs_or = process.LowerExpr(hir_process.exprs.Get(a.rhs), frame);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  mir::ExprId value_id = block.exprs.Add(*std::move(rhs_or));
-
-  // A compound write only ever reaches here blocking (compound + NBA is not a
-  // legal SV form, rejected upstream), so the read-modify lands in the active
-  // region before the effect runs.
-  if (a.compound_op.has_value()) {
-    auto base_read_or = process.LowerExpr(base_hir, frame);
-    if (!base_read_or) return std::unexpected(std::move(base_read_or.error()));
-    const mir::ExprId base_read_id = block.exprs.Add(*std::move(base_read_or));
-    const mir::ExprId cur_id = block.exprs.Add(MakeStringMethodCallExpr(
-        support::BuiltinFn::kGetc, {base_read_id, idx_id}, result_type));
-    value_id = block.exprs.Add(BuildMirBinaryExpr(
-        unit, block, LowerBinaryOp(*a.compound_op), cur_id, value_id,
-        result_type));
-  }
-
-  const std::array<mir::ExprId, 2> operands{idx_id, value_id};
-  return ApplyAssignEffect(
-      process, frame, a.kind, span, cell_id, operands,
-      [&](mir::Block& blk, mir::ExprId target, std::span<const mir::ExprId> ops,
-          mir::ExprId services) -> mir::Expr {
-        mir::ExprId recv = target;
-        const mir::ExprId root = FindLhsRootId(blk, target);
-        if (mir::IsObservableCellType(
-                unit.types.Get(blk.exprs.Get(root).type))) {
-          recv = RewriteLhsRootWithMutate(unit, blk, target, services);
-        }
-        return MakeStringMethodCallExpr(
-            support::BuiltinFn::kPutc, {recv, ops[0], ops[1]},
-            unit.builtins.void_type);
-      });
-}
-
-// Axis A for a union member target: a whole-union replacement (LRM 7.3). A
-// union holds one member at a time, so `u.f = v` is the union place taking a
-// fresh single-member value `UnionExpr{f, v}` -- the member access is never a
-// writable place, the same shape as a string element write that has no element
-// lvalue. A compound `u.f op= v` reads the active member, applies the operator,
-// and rebuilds; the receiver routes through the cell's Set / Mutate path so the
-// timing envelope and observable wakeup are shared with every other target.
-auto LowerUnionMemberAssign(
-    ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
-    const hir::MemberAccessExpr& sel, diag::SourceSpan span,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_process = process.HirBody();
-  const auto& unit = process.Module().Unit();
-  auto& block = *frame.current_block;
-
-  const auto& base_hir = hir_process.exprs.Get(sel.base_value);
-  auto place_or = process.LowerLhsExpr(base_hir, frame.WithLvalueTarget(true));
-  if (!place_or) return std::unexpected(std::move(place_or.error()));
-  const mir::ExprId place_id = block.exprs.Add(*std::move(place_or));
-  const mir::TypeId union_type = process.Module().TranslateType(base_hir.type);
-
-  auto rhs_or = process.LowerExpr(hir_process.exprs.Get(a.rhs), frame);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  mir::ExprId member_value_id = block.exprs.Add(*std::move(rhs_or));
-
-  // A compound write only ever reaches here blocking (compound + NBA is not a
-  // legal SV form, rejected upstream), so the read of the active member lands
-  // in the active region before the effect runs.
-  if (a.compound_op.has_value()) {
-    auto cur_or = process.LowerExpr(hir_process.exprs.Get(a.lhs), frame);
-    if (!cur_or) return std::unexpected(std::move(cur_or.error()));
-    const mir::ExprId cur_id = block.exprs.Add(*std::move(cur_or));
-    member_value_id = block.exprs.Add(BuildMirBinaryExpr(
-        unit, block, LowerBinaryOp(*a.compound_op), cur_id, member_value_id,
-        result_type));
-  }
-
-  const mir::ExprId union_value_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::UnionExpr{
-                  .index = sel.field_index, .value = member_value_id},
-          .type = union_type});
-
-  const std::array<mir::ExprId, 1> operands{union_value_id};
-  const mir::TypeId void_type = unit.builtins.void_type;
-  return ApplyAssignEffect(
-      process, frame, a.kind, span, place_id, operands,
-      [&](mir::Block& blk, mir::ExprId target, std::span<const mir::ExprId> ops,
-          mir::ExprId services) -> mir::Expr {
-        return BuildObservableAssignExpr(
-            unit, blk, services, target, ops[0], std::nullopt, union_type,
-            void_type);
-      });
-}
-
 }  // namespace
 
 auto LowerHirAssignExprProc(
@@ -395,28 +297,12 @@ auto LowerHirAssignExprProc(
         "is not a legal SV form (LRM A.6.2 grammar)");
   }
 
-  // Axis A: pick the target's write effect. A string element has no lvalue, so
-  // it realizes as putc (LRM 6.16.2); every other target is an observable cell
-  // or a local. Axis B (blocking vs deferred) is handled uniformly inside each.
-  const auto& hir_process = process.HirBody();
-  const hir::Expr& hir_lhs = hir_process.exprs.Get(a.lhs);
-  if (const auto* sel = std::get_if<hir::ElementSelectExpr>(&hir_lhs.data)) {
-    const hir::Type& base_ty = process.Module().Hir().types.Get(
-        hir_process.exprs.Get(sel->base_value).type);
-    if (base_ty.Kind() == hir::TypeKind::kString) {
-      return LowerStringElementAssign(
-          process, frame, a, *sel, span, result_type);
-    }
-  }
-  // A union member write is a whole-union replacement, not a place projection,
-  // so it is intercepted here before the generic place-based path (LRM 7.3).
-  if (const auto* sel = std::get_if<hir::MemberAccessExpr>(&hir_lhs.data)) {
-    const hir::Type& base_ty = process.Module().Hir().types.Get(
-        hir_process.exprs.Get(sel->base_value).type);
-    if (base_ty.Kind() == hir::TypeKind::kUnpackedUnion) {
-      return LowerUnionMemberAssign(process, frame, a, *sel, span, result_type);
-    }
-  }
+  // Every target -- whole var, array / string element, struct / union member --
+  // lowers to one shape: the LHS is an op=-able write location, and the write
+  // is a single `AssignExpr{target, compound_op?, value}`. "Evaluate the
+  // left-hand side once" (LRM 11.4.1) is the backend's job on that single
+  // target. The blocking vs deferred (NBA) choice is the timing envelope
+  // inside.
   return LowerObservableAssign(process, frame, a, span, result_type);
 }
 
