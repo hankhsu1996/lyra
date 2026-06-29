@@ -50,9 +50,14 @@ auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
     unit_.DefineClass(TranslateClass(hir_id), *std::move(class_or));
   }
 
+  // Two-sweep structural lowering: the first sweep mints every class identity
+  // and publishes its shape; the second lowers every body and commits the
+  // composed class to the unit.
   StructuralScopeLowerer root(*this, nullptr, hir_->name, hir_->root_scope);
-  auto top_r = root.Run(root_frame);
+  auto top_r = root.DeclareShape();
   if (!top_r) return std::unexpected(std::move(top_r.error()));
+  auto body_r = root.PopulateBodies(root_frame);
+  if (!body_r) return std::unexpected(std::move(body_r.error()));
 
   unit_.root = *top_r;
   return std::move(unit_);

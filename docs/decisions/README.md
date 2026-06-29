@@ -56,6 +56,11 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 
 - [lowering-organization](lowering-organization.md) -- how lowering passes organize their internal
   objects (facts, registries, builders, walk frame).
+- [declarations-before-bodies](declarations-before-bodies.md) -- within a compilation unit, every
+  structural declaration's identity and shape is CU-global, canonical, and queryable through the
+  compilation unit before any executable lowering begins; covers subroutine forward / mutual
+  reference, cross-scope hierarchical reference's typed segments, SV class mutual reference, and
+  hierarchical callable dispatch.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
 - [conversion-folding](conversion-folding.md) -- when type conversions are folded.
 - [variable-initialization](variable-initialization.md) -- LRM 10.5 variable initialization as a
