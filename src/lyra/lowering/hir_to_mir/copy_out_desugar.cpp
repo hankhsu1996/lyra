@@ -9,6 +9,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -35,9 +36,9 @@ auto BuildOutputArgSlot(
   auto value_or = proc.LowerExpr(hir_body.exprs.Get(actual_hir), frame);
   if (!value_or) return std::unexpected(std::move(value_or.error()));
   const mir::ExprId init_id = wrapper.exprs.Add(*std::move(value_or));
-  const mir::LocalRef temp = wrapper.AppendLocal(
-      mir::LocalDecl{.name = std::string{temp_name}, .type = actual_type},
-      init_id);
+  const mir::LocalId temp = frame.bindings->DeclareAnonymous(
+      mir::LocalDecl{.name = std::string{temp_name}, .type = actual_type});
+  wrapper.AppendStmt(mir::LocalDeclStmt{.target = temp, .init = init_id});
   return OutputArgSlot{.actual = actual_id, .temp = temp, .type = actual_type};
 }
 
@@ -74,7 +75,7 @@ auto BuildCopyOutBlock(
 
   for (const OutputArgSlot& slot : slots) {
     const mir::ExprId temp_read =
-        wrapper.exprs.Add(mir::Expr{.data = slot.temp, .type = slot.type});
+        wrapper.exprs.Add(mir::MakeLocalRefExpr(slot.temp, slot.type));
     const mir::Expr copy_out_expr = BuildObservableAssignExpr(
         unit, wrapper, services_id, slot.actual, temp_read, std::nullopt,
         slot.type, void_type);

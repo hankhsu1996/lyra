@@ -75,7 +75,7 @@ class Engine {
     return services_;
   }
 
-  void SubmitNba(std::function<void()> closure);
+  void SubmitNba(std::function<void(RuntimeServices&)> closure);
   void SubmitPostponed(std::function<void()> closure);
 
   void TriggerValueChange(
@@ -126,7 +126,7 @@ class Engine {
     std::deque<CoroutineHandle> active;
     std::deque<CoroutineHandle> inactive;
     std::vector<CoroutineHandle> next_delta;
-    std::vector<std::function<void()>> nba;
+    std::vector<std::function<void(RuntimeServices&)>> nba;
     std::vector<std::function<void()>> postponed;
     std::map<SimTime, std::vector<CoroutineHandle>> delayed;
     std::vector<CoroutineHandle> finals;

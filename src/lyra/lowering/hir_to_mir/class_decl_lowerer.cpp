@@ -3,10 +3,13 @@
 #include <expected>
 #include <utility>
 
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -31,19 +34,22 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       .ctor_prefix_params = {},
       .params = {},
       .members = {},
-      .constructor_block = {},
+      .constructor = {},
       .contained = {},
       .methods = {},
       .type_aliases = {}};
 
-  mir::Block ctor_block;
-  const mir::LocalId self_id = ctor_block.vars.Add(
+  mir::CallableCode ctor_code;
+  CallableBindings ctor_bindings(module.Unit(), ctor_code);
+  const mir::LocalId self_id = ctor_bindings.Declare(
+      BindingOriginId::Receiver(),
       mir::LocalDecl{.name = "self", .type = self_pointer_type});
+  mir::Block& ctor_block = ctor_code.body;
   ScopeChainNode scope_link{};
   const WalkFrame frame = WalkFrame{}
                               .WithClass(&mir_class, scope_link)
                               .WithBlock(&ctor_block)
-                              .WithSelfBinding(self_id, {});
+                              .WithBindings(&ctor_bindings);
 
   // A class property owns its storage directly -- it is not an observable cell,
   // so it is a plain value-typed member and its construction-time default is a
@@ -64,7 +70,9 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
     ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 
-  mir_class.constructor_block = std::move(ctor_block);
+  ctor_code.params = {self_id};
+  ctor_code.result_type = module.Unit().builtins.void_type;
+  mir_class.constructor = std::move(ctor_code);
 
   // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
   // resolves the body's `self` to the managed handle, and the method's

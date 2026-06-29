@@ -11,6 +11,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class.hpp"
@@ -82,14 +83,20 @@ void OpenActivationScope(
       mir::Expr{
           .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
           .type = handle_type});
-  const mir::LocalRef handle = block.AppendLocal(
-      mir::LocalDecl{.name = box_name + "_h", .type = handle_type}, init);
+  // The handle is a synthesized carrier owned by the box's identity, declared
+  // in this body and captured (by value, owning) by any branch that borrows a
+  // promoted member.
+  const BindingOriginId handle_origin =
+      BindingOriginId::Synthesized(box_id.value, 0);
+  const mir::LocalId handle = frame.bindings->Declare(
+      handle_origin,
+      mir::LocalDecl{.name = box_name + "_h", .type = handle_type});
+  block.AppendStmt(mir::LocalDeclStmt{.target = handle, .init = init});
 
   for (std::size_t i = 0; i < promoted.size(); ++i) {
     process.RecordPendingActivation(
         promoted[i], PromotedVarBinding{
-                         .handle_depth = frame.block_depth,
-                         .handle = handle.var,
+                         .handle_origin = handle_origin,
                          .handle_type = handle_type,
                          .member = members[i]});
   }
@@ -107,7 +114,7 @@ auto LowerBlockStmt(
     const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block child_block;
-  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
+  const WalkFrame child_frame = frame.WithBlock(&child_block);
   OpenActivationScope(process, child_frame, b);
   for (const hir::StmtId child_hir_id : b.statements) {
     const hir::Stmt& child = hir_proc.stmts.Get(child_hir_id);
@@ -127,7 +134,7 @@ auto LowerStmtIntoChildScope(
     ProcessLowerer& process, WalkFrame frame, hir::StmtId hir_stmt_id)
     -> diag::Result<mir::Block> {
   mir::Block child_block;
-  const WalkFrame child_frame = frame.WithBlock(&child_block).Deeper();
+  const WalkFrame child_frame = frame.WithBlock(&child_block);
   const hir::Stmt& hir_stmt = process.HirBody().stmts.Get(hir_stmt_id);
   auto lowered = process.LowerStmt(hir_stmt, child_frame);
   if (!lowered) {

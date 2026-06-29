@@ -37,11 +37,11 @@ Three forces made the receiver model a real decision:
 
 ## Decision
 
-**Every MIR callable body's first binding is `self : Pointer<Self>` -- `body.vars[0]` is a local
+**Every MIR callable body's first binding is `self : Pointer<Self>` -- `locals[0]` is a local
 declaration of that pointer type, named `self`. The binding is added unconditionally, not derived
 from whether the body happens to touch class state. The body reaches every class member through
 `MemberAccessExpr(receiver = DerefExpr(LocalRef(self)), var = ...)`. The body's read of `self` is
-identical across every callable form -- a backend reads `vars[0]` the same way in a process, a
+identical across every callable form -- a backend reads `locals[0]` the same way in a process, a
 method, a constructor body, and a closure.**
 
 Where `self`'s value comes from differs by callable form, following each form's natural binding
@@ -52,7 +52,7 @@ shape:
   call site invoking a method, the C++ constructor running the init body -- and supplies it at
   invocation. The body's binding is filled by the call.
 - **Closure** binds `self` -- the code's first parameter (`code.params[0]`, landing at the body's
-  `vars[0]`) -- into its environment, the enclosing scope's read of its own `self` supplying the
+  `locals[0]`) -- into its environment, the enclosing scope's read of its own `self` supplying the
   bound value at construction. `self` is an ordinary environment field, bound like any other
   captured variable, not a privileged slot (see `unified-callable-model.md`). This holds for every
   closure form, the fork branch included. No invoker of a closure value -- the NBA /
@@ -179,14 +179,14 @@ binding pushes the answer up to one place that every backend just reads.
 ## Consequences
 
 - `mir::Process`, `mir::MethodDecl`, `mir::ClosureExpr`, and the constructor body each declare a
-  `self` binding at `body.vars[0]` whose type is the borrowed-pointer to the enclosing class. The
+  `self` binding at `locals[0]` whose type is the borrowed-pointer to the enclosing class. The
   binding's name is `self`; the type makes the pointee unambiguous.
 
 - `self` is the code's first parameter (`code.params[0]`) for every callable, landing at
-  `body.vars[0]`. For method-form callables (process, method, constructor body) the caller supplies
-  it at invocation. For a closure -- every closure, the fork branch included -- the closure value
-  binds it into its environment, the enclosing scope's read of its own `self` supplying the bound
-  value at construction. It is an ordinary environment field, not a privileged slot
+  `locals[0]`. For method-form callables (process, method, constructor body) the caller supplies it
+  at invocation. For a closure -- every closure, the fork branch included -- the closure value binds
+  it into its environment, the enclosing scope's read of its own `self` supplying the bound value at
+  construction. It is an ordinary environment field, not a privileged slot
   (`unified-callable-model.md`).
 
 - A new MIR expression `MemberAccessExpr { receiver: ExprId, var: MemberRef-fields }` replaces the
@@ -214,7 +214,7 @@ binding pushes the answer up to one place that every backend just reads.
   semantics.
 
 - Forbidden Shape: a MIR expression whose meaning depends on which callable encloses it. The
-  receiver is reached through `body.vars[0]` as the `self` binding, not through an expression that
+  receiver is reached through `locals[0]` as the `self` binding, not through an expression that
   means "look around and figure it out".
 
 ## Cross-references

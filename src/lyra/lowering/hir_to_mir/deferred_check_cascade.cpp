@@ -12,6 +12,8 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -19,7 +21,6 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/deferred_check_site.hpp"
 #include "lyra/mir/expr.hpp"
@@ -27,7 +28,6 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -107,8 +107,8 @@ auto SnapshotPredicate(
 }
 
 auto BuildDiagnosticThenScope(
-    mir::CompilationUnit& unit, mir::TypeId self_pointer_type,
-    mir::LocalId self_binding, mir::LocalId count_var,
+    mir::CompilationUnit& unit, CallableBindings& bindings,
+    BodyBindingRef self_ref, mir::LocalId count_var,
     const CheckVerdict& verdict, std::string origin) -> mir::Block {
   mir::Block block;
   const mir::TypeId int32_type = unit.builtins.int32;
@@ -116,12 +116,8 @@ auto BuildDiagnosticThenScope(
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.prefix_text});
   if (verdict.include_count_value) {
-    const mir::ExprId count_read_id = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops = mir::BlockHops{.value = 1}, .var = count_var},
-            .type = int32_type});
+    const mir::ExprId count_read_id =
+        block.exprs.Add(mir::MakeLocalRefExpr(count_var, int32_type));
     items.emplace_back(
         mir::RuntimePrintValue(
             count_read_id, int32_type,
@@ -135,14 +131,10 @@ auto BuildDiagnosticThenScope(
   const mir::ExprId items_array =
       block.exprs.Add(BuildPrintItemsArray(unit, block, items, 0));
 
-  // `self` lives in the enclosing closure body; this then-scope sits one level
-  // deeper, so the read climbs one hop -- matching the count_var read above.
-  const mir::ExprId self_read = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::LocalRef{
-                  .hops = mir::BlockHops{.value = 1}, .var = self_binding},
-          .type = self_pointer_type});
+  // `self` is the closure body's captured receiver; this then-scope is a block
+  // of that same body, so the read names the capture directly.
+  const mir::ExprId self_read =
+      block.exprs.Add(bindings.MakeReadExpr(self_ref));
   const mir::ExprId services = block.exprs.Add(
       mir::MakeServicesCallExpr(self_read, unit.builtins.services));
 
@@ -191,36 +183,26 @@ auto BuildUniqueCheckClosure(
   mir::Block& body = closure.Body();
 
   const mir::TypeId int32_type = module.Unit().builtins.int32;
-  const mir::TypeId self_ptr_type =
-      wrapper_frame.current_class->self_pointer_type;
-  const mir::LocalId self_binding = closure.SelfBinding();
+  const BodyBindingRef self_ref =
+      closure.Bindings().EnsureCarrier(BindingOriginId::Receiver());
 
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
   for (std::size_t i = 0; i < snapshot_vars.size(); ++i) {
-    const mir::TypeId snap_type = wrapper.vars.Get(snapshot_vars[i]).type;
-    const mir::ExprId outer_read_id = wrapper.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops = mir::BlockHops{.value = 0},
-                    .var = snapshot_vars[i]},
-            .type = snap_type});
+    const mir::ExprId outer_read_id =
+        wrapper.exprs.Add(wrapper_frame.bindings->MakeReadExpr(
+            BodyBindingRef{.ref = snapshot_vars[i]}));
     inner_reads.push_back(closure.CaptureByValue(
         outer_read_id, std::format("_lyra_unique_bind_{}", i)));
   }
 
-  const mir::LocalId count_var = body.vars.Add(
+  const mir::LocalId count_var = closure.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_unique_count", .type = int32_type});
 
   const mir::ExprId zero_init_id =
       body.exprs.Add(mir::MakeInt32Literal(int32_type, 0));
   body.AppendStmt(
-      mir::LocalDeclStmt{
-          .target =
-              mir::LocalRef{
-                  .hops = mir::BlockHops{.value = 0}, .var = count_var},
-          .init = zero_init_id});
+      mir::LocalDeclStmt{.target = count_var, .init = zero_init_id});
 
   for (const mir::ExprId bit_read : inner_reads) {
     const mir::ExprId one_lit =
@@ -235,12 +217,8 @@ auto BuildUniqueCheckClosure(
                     .then_value = one_lit,
                     .else_value = zero_lit},
             .type = int32_type});
-    const mir::ExprId count_read = body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops = mir::BlockHops{.value = 0}, .var = count_var},
-            .type = int32_type});
+    const mir::ExprId count_read =
+        body.exprs.Add(mir::MakeLocalRefExpr(count_var, int32_type));
     const mir::ExprId added = body.exprs.Add(
         mir::Expr{
             .data =
@@ -249,12 +227,8 @@ auto BuildUniqueCheckClosure(
                     .lhs = count_read,
                     .rhs = cond_value},
             .type = int32_type});
-    const mir::ExprId count_target = body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops = mir::BlockHops{.value = 0}, .var = count_var},
-            .type = int32_type});
+    const mir::ExprId count_target =
+        body.exprs.Add(mir::MakeLocalRefExpr(count_var, int32_type));
     const mir::ExprId assign = body.exprs.Add(
         mir::Expr{
             .data = mir::AssignExpr{.target = count_target, .value = added},
@@ -264,12 +238,8 @@ auto BuildUniqueCheckClosure(
 
   const CheckVerdict verdict = VerdictFor(check, snapshot_vars.size());
 
-  const mir::ExprId final_count_read = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::LocalRef{
-                  .hops = mir::BlockHops{.value = 0}, .var = count_var},
-          .type = int32_type});
+  const mir::ExprId final_count_read =
+      body.exprs.Add(mir::MakeLocalRefExpr(count_var, int32_type));
   const mir::ExprId expected_lit = body.exprs.Add(
       mir::MakeInt32Literal(
           int32_type, static_cast<std::int64_t>(verdict.expected)));
@@ -283,7 +253,7 @@ auto BuildUniqueCheckClosure(
           .type = int32_type});
 
   mir::Block diag_block = BuildDiagnosticThenScope(
-      module.Unit(), self_ptr_type, self_binding, count_var, verdict,
+      module.Unit(), closure.Bindings(), self_ref, count_var, verdict,
       std::move(origin));
 
   const mir::BlockId diag_scope_id =
@@ -309,12 +279,11 @@ auto BuildDeferredCheckCascade(
   const mir::TypeId void_type = module.Unit().builtins.void_type;
   const mir::TypeId int32_type = module.Unit().builtins.int32;
 
-  // SnapshotPredicate / BuildDefaultValueExpr append to wrapper, so
-  // route through a wrapper-local frame; the cascade levels each derive their
-  // own local frames below. The wrapper itself sits one block
-  // deeper than the caller, so any read of an enclosing binding (e.g. the
-  // process body's `self`) climbs through that extra level.
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
+  // SnapshotPredicate / BuildDefaultValueExpr append to wrapper, so route
+  // through a wrapper-local frame; the cascade levels each derive their own
+  // local frames below. The snapshot vars are body-locals of this callable, so
+  // every read names them directly with no nesting bookkeeping.
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   std::vector<mir::LocalId> snapshot_vars;
   snapshot_vars.reserve(branches.size());
@@ -347,23 +316,15 @@ auto BuildDeferredCheckCascade(
                           .target = support::BuiltinFn::kSubmitObserved},
                   .arguments = {self_id, site_id_expr, closure_expr_id}},
           .type = void_type});
-  wrapper.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::ExprStmt{.expr = submit_expr_id}});
+  wrapper.AppendStmt(mir::ExprStmt{.expr = submit_expr_id});
 
-  // Cascade level i sits i scopes deeper than wrapper, so the read uses hops=i.
+  // The snapshot vars are body-locals; each cascade level names its predicate
+  // snapshot directly.
   std::optional<mir::Block> tail = std::move(tail_else);
   for (std::size_t i = branches.size(); i-- > 1;) {
     mir::Block level_block;
     const mir::ExprId cond_read = level_block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops =
-                        mir::BlockHops{.value = static_cast<std::uint32_t>(i)},
-                    .var = snapshot_vars[i]},
-            .type = int32_type});
+        mir::MakeLocalRefExpr(snapshot_vars[i], int32_type));
 
     const mir::BlockId body_scope_id =
         level_block.child_scopes.Add(std::move(branches[i].body));
@@ -373,23 +334,16 @@ auto BuildDeferredCheckCascade(
     }
 
     level_block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::IfStmt{
-                .condition = cond_read,
-                .then_scope = body_scope_id,
-                .else_scope = else_scope_id}});
+        mir::IfStmt{
+            .condition = cond_read,
+            .then_scope = body_scope_id,
+            .else_scope = else_scope_id});
     tail = std::move(level_block);
   }
 
   if (!branches.empty()) {
-    const mir::ExprId cond_read0 = wrapper.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops = mir::BlockHops{.value = 0},
-                    .var = snapshot_vars[0]},
-            .type = int32_type});
+    const mir::ExprId cond_read0 =
+        wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_vars[0], int32_type));
 
     const mir::BlockId body0_id =
         wrapper.child_scopes.Add(std::move(branches[0].body));
@@ -399,12 +353,10 @@ auto BuildDeferredCheckCascade(
     }
 
     wrapper.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::IfStmt{
-                .condition = cond_read0,
-                .then_scope = body0_id,
-                .else_scope = else0_id}});
+        mir::IfStmt{
+            .condition = cond_read0,
+            .then_scope = body0_id,
+            .else_scope = else0_id});
   }
 
   const mir::BlockId wrapper_scope_id =
@@ -422,7 +374,7 @@ auto LowerUniqueIfStmt(
   const auto cascade = FlattenUniqueCascade(hir_proc, root);
 
   mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   // Lower each branch condition into wrapper; these are the predicates
   // that BuildDeferredCheckCascade will snapshot.
@@ -435,31 +387,22 @@ auto LowerUniqueIfStmt(
     predicates.push_back(wrapper.exprs.Add(*std::move(cond_or)));
   }
 
-  // Lower each body into its own child scope. Cascade level i sits i scopes
-  // deeper than wrapper, so each body lowering descends i extra frames before
-  // opening its own child scope (LowerStmtIntoChildScope adds one more).
+  // Lower each body into its own child scope.
   std::vector<DeferredCheckBranch> branches;
   branches.reserve(cascade.bodies.size());
   for (std::size_t i = 0; i < cascade.bodies.size(); ++i) {
-    auto body_or = LowerStmtIntoChildScope(
-        process, wrapper_frame.DeeperBy(i), cascade.bodies[i]);
+    auto body_or =
+        LowerStmtIntoChildScope(process, wrapper_frame, cascade.bodies[i]);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
     branches.push_back(
         DeferredCheckBranch{
             .predicate = predicates[i], .body = std::move(*body_or)});
   }
 
-  // The trailing else sits at the same MIR depth as the last branch body
-  // (their if-then-else share an enclosing level scope), so the lowering
-  // walks one fewer level than `bodies.size()` extras.
   std::optional<mir::Block> tail_scope;
   if (cascade.tail_else.has_value()) {
-    const WalkFrame tail_enter_frame =
-        cascade.bodies.empty()
-            ? wrapper_frame
-            : wrapper_frame.DeeperBy(cascade.bodies.size() - 1);
     auto tail_or =
-        LowerStmtIntoChildScope(process, tail_enter_frame, *cascade.tail_else);
+        LowerStmtIntoChildScope(process, wrapper_frame, *cascade.tail_else);
     if (!tail_or) return std::unexpected(std::move(tail_or.error()));
     tail_scope = std::move(*tail_or);
   }

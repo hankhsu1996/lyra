@@ -33,7 +33,7 @@ namespace lyra::lowering::hir_to_mir {
 
 struct OutputArgSlot {
   mir::ExprId actual{};
-  mir::LocalRef temp{};
+  mir::LocalId temp{};
   mir::TypeId type{};
 };
 

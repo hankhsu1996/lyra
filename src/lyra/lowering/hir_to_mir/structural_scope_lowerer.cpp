@@ -17,6 +17,8 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -26,7 +28,6 @@
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/base_contract.hpp"
-#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -259,9 +260,7 @@ void EmitExternalUnitDimLevel(
                   mir::AssignExpr{
                       .target = chain_expr_id, .value = ctor_call_id},
               .type = leaf_pointer_type});
-      block.AppendStmt(
-          mir::Stmt{
-              .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
+      block.AppendStmt(mir::ExprStmt{.expr = assign_id});
     } else {
       const mir::ExprId emplace_id = block.exprs.Add(
           mir::Expr{
@@ -272,10 +271,7 @@ void EmitExternalUnitDimLevel(
                               .target = support::BuiltinFn::kVectorEmplace},
                       .arguments = {chain_expr_id, ctor_call_id}},
               .type = builtins.void_type});
-      block.AppendStmt(
-          mir::Stmt{
-              .label = std::nullopt,
-              .data = mir::ExprStmt{.expr = emplace_id}});
+      block.AppendStmt(mir::ExprStmt{.expr = emplace_id});
     }
 
     // The just-built child is reachable via the scalar slot directly or via
@@ -310,9 +306,7 @@ void EmitExternalUnitDimLevel(
                         mir::Direct{.target = support::BuiltinFn::kAttachChild},
                     .arguments = {self_read(), leaf_deref_id}},
             .type = builtins.void_type});
-    block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt, .data = mir::ExprStmt{.expr = attach_id}});
+    block.AppendStmt(mir::ExprStmt{.expr = attach_id});
     return;
   }
 
@@ -341,10 +335,7 @@ void EmitExternalUnitDimLevel(
                               .target = support::BuiltinFn::kVectorEmplace},
                       .arguments = {chain_expr_id, empty_inner_id}},
               .type = builtins.void_type});
-      block.AppendStmt(
-          mir::Stmt{
-              .label = std::nullopt,
-              .data = mir::ExprStmt{.expr = emplace_id}});
+      block.AppendStmt(mir::ExprStmt{.expr = emplace_id});
       const mir::ExprId inner_chain_id = block.exprs.Add(
           mir::Expr{
               .data =
@@ -740,8 +731,7 @@ void AppendExternUpMethodCall(
                   .callee = mir::Direct{.target = method},
                   .arguments = std::move(args)},
           .type = void_type});
-  block.AppendStmt(
-      mir::Stmt{.label = std::nullopt, .data = mir::ExprStmt{.expr = call}});
+  block.AppendStmt(mir::ExprStmt{.expr = call});
 }
 
 // `path_after_anchor` excludes the anchor (the `$root` token for a root
@@ -870,9 +860,7 @@ void InstallCrossUnitRefs(StructuralScopeLowerer& lowerer, WalkFrame frame) {
         mir::Expr{
             .data = mir::AssignExpr{.target = target, .value = nav},
             .type = slot_type});
-    ctor_block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
+    ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 }
 
@@ -909,9 +897,7 @@ void AppendProcessRegistration(
                                         : support::BuiltinFn::kRegisterInitial},
                   .arguments = {reg_self, body_call}},
           .type = module.Unit().builtins.void_type});
-  block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = reg_call}});
+  block.AppendStmt(mir::ExprStmt{.expr = reg_call});
 }
 
 // Realizes each port connection (LRM 23.3.3). An input or output port is the
@@ -972,9 +958,7 @@ auto InstallPortConnections(
           mir::Expr{
               .data = mir::AssignExpr{.target = target, .value = ref_value},
               .type = ref_type});
-      resolve_block.AppendStmt(
-          mir::Stmt{
-              .label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
+      resolve_block.AppendStmt(mir::ExprStmt{.expr = assign});
       continue;
     }
     const auto& cell = std::get<hir::PortCellEndpoint>(pc.endpoint);
@@ -1156,8 +1140,8 @@ void ValidateOwnedChildConstruction(
 // unique pointer to its slot; a vector member emplaces into the storage
 // vector and the attach call reaches the just-pushed element through
 // `vector_back`. `arm_frame` must point at the block where the stmts land
-// and carry the correct hop count to `self` (the parent constructor's
-// first local) for the lowering site's depth.
+// and carry the constructor's bindings so a `self` read resolves to the
+// receiver binding.
 void AppendOwnedChildConstruction(
     ModuleLowerer& module, const WalkFrame& arm_frame, mir::MemberId target_var,
     mir::ClassId child_scope_id, std::vector<mir::ExprId> ctor_args,
@@ -1270,10 +1254,7 @@ void AppendOwnedChildConstruction(
                             .target = support::BuiltinFn::kVectorEmplace},
                     .arguments = {member_access_id, ctor_call_id}},
             .type = builtins.void_type});
-    arm_block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::ExprStmt{.expr = emplace_call_id}});
+    arm_block.AppendStmt(mir::ExprStmt{.expr = emplace_call_id});
 
     // Re-read the member; the back-element call yields a reference to the
     // most-recently-pushed unique pointer.
@@ -1299,9 +1280,7 @@ void AppendOwnedChildConstruction(
                 mir::AssignExpr{
                     .target = member_access_id, .value = ctor_call_id},
             .type = child_ptr_type});
-    arm_block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
+    arm_block.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
     const mir::ExprId scalar_access_id = arm_block.exprs.Add(
         mir::MakeMemberAccessExpr(
@@ -1320,45 +1299,33 @@ void AppendOwnedChildConstruction(
                       mir::Direct{.target = support::BuiltinFn::kAttachChild},
                   .arguments = {self_read(), child_ref_id}},
           .type = builtins.void_type});
-  arm_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::ExprStmt{.expr = attach_call_id}});
+  arm_block.AppendStmt(mir::ExprStmt{.expr = attach_call_id});
 }
 
-// The for-stmt body block is one level below the parent constructor block where
-// the induction var was declared, so a `LocalRef` to that var read from inside
-// the body hops up once.
+// The induction var is a body-local of the constructor; the for-stmt body is a
+// child block of that same callable, so a read names the var directly.
 auto MakeForBodyInductionVarArg(mir::LocalId induction_var_id, mir::TypeId type)
     -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::LocalRef{
-              .hops = mir::BlockHops{.value = 1}, .var = induction_var_id},
-      .type = type};
+  return mir::MakeLocalRefExpr(induction_var_id, type);
 }
 
 // Builds the body block of a single generate arm. Each arm constructs one
 // owned-child instance (scalar for `if` / `case` generate, one element of the
 // member-vector per iteration for `for` generate) and records it on the parent
-// for by-name lookup. `depth_offset` tells the lowering how many levels below
-// `frame.block_depth` the produced block will run -- the call shape inside
-// references `self` through a hop count derived from that depth, so the caller
-// must pass the offset that matches where it places the returned block in its
-// control-flow scaffold (an if-then-scope or for-body sits one level deeper;
-// a case-cascade body sits `1 + item_index + 1` deeper). The optional
+// for by-name lookup. The arm body is a child block of the constructor
+// callable; its `self` read resolves through the callable's receiver binding,
+// independent of how deep the control-flow scaffold nests it. The optional
 // `array_index_arg` populates the runtime index slot for a vector member; for
 // a scalar member it is `nullopt` (the registered index list is empty).
 auto BuildGenerateArmBody(
-    ModuleLowerer& module, WalkFrame frame, std::size_t depth_offset,
+    ModuleLowerer& module, WalkFrame frame,
     const GenerateBindings& gen_bindings, hir::StructuralScopeId arm_scope_id,
     std::vector<mir::Expr> args, std::optional<mir::Expr> array_index_arg)
     -> mir::Block {
   const auto& binding = gen_bindings.by_scope_id.at(arm_scope_id.value);
 
   mir::Block arm_block;
-  const WalkFrame arm_frame =
-      frame.WithBlock(&arm_block).DeeperBy(depth_offset);
+  const WalkFrame arm_frame = frame.WithBlock(&arm_block);
 
   std::vector<mir::ExprId> arg_ids;
   arg_ids.reserve(args.size());
@@ -1389,13 +1356,13 @@ auto LowerIfGenerate(
   const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
 
   const mir::BlockId then_id = block.child_scopes.Add(BuildGenerateArmBody(
-      lowerer.Module(), frame, 1, gen_bindings, if_gen.then_scope, {},
+      lowerer.Module(), frame, gen_bindings, if_gen.then_scope, {},
       std::nullopt));
 
   std::optional<mir::BlockId> else_id;
   if (if_gen.else_scope.has_value()) {
     else_id = block.child_scopes.Add(BuildGenerateArmBody(
-        lowerer.Module(), frame, 1, gen_bindings, *if_gen.else_scope, {},
+        lowerer.Module(), frame, gen_bindings, *if_gen.else_scope, {},
         std::nullopt));
   }
 
@@ -1423,34 +1390,26 @@ auto LowerCaseGenerate(
   const CaseSnapshotRefs snapshot =
       AppendCaseSnapshot(lowerer.Module(), wrapper_frame, cond_expr_id);
 
-  // Case-cascade nesting places body_scope[k] one level below the cascade
-  // chain entry that selects it: item 0 sits two blocks below the outer
-  // BlockStmt (wrapper / item-0 then-scope), item 1 sits three blocks below
-  // (wrapper / level(1) / item-1 then-scope), and so on. The default scope
-  // lands as the deepest else branch -- the same depth the last item occupies.
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(case_gen.items.size());
   for (std::size_t i = 0; i < case_gen.items.size(); ++i) {
-    const std::size_t arm_depth = 2 + i;
     body_scopes.push_back(BuildGenerateArmBody(
-        lowerer.Module(), frame, arm_depth, gen_bindings,
-        case_gen.items[i].scope, {}, std::nullopt));
+        lowerer.Module(), frame, gen_bindings, case_gen.items[i].scope, {},
+        std::nullopt));
   }
 
   std::optional<mir::Block> default_scope;
   if (case_gen.default_scope.has_value()) {
-    const std::size_t default_depth =
-        case_gen.items.empty() ? 1 : 1 + case_gen.items.size();
     default_scope = BuildGenerateArmBody(
-        lowerer.Module(), frame, default_depth, gen_bindings,
-        *case_gen.default_scope, {}, std::nullopt);
+        lowerer.Module(), frame, gen_bindings, *case_gen.default_scope, {},
+        std::nullopt);
   }
 
   auto build_predicate =
-      [&](WalkFrame enc_frame, std::size_t item_idx,
-          std::uint32_t sel_hops) -> diag::Result<mir::ExprId> {
+      [&](WalkFrame enc_frame,
+          std::size_t item_idx) -> diag::Result<mir::ExprId> {
     return BuildEqualityChain(
-        enc_frame, snapshot, bit_type, mir::BinaryOp::kEquality, sel_hops,
+        enc_frame, snapshot, bit_type, mir::BinaryOp::kEquality,
         case_gen.items[item_idx].labels.size(),
         [&](WalkFrame label_frame,
             std::size_t li) -> diag::Result<mir::ExprId> {
@@ -1480,10 +1439,9 @@ auto LowerLoopGenerate(
   const auto& var_decl = enclosing_scope.loop_var_decls.Get(loop.loop_var);
   const mir::TypeId genvar_type = lowerer.Module().TranslateType(var_decl.type);
 
-  const mir::LocalId loop_local_id = block.vars.Add(
+  const mir::LocalId loop_local_id = frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = var_decl.name, .type = genvar_type});
-  const mir::LocalRef loop_local{
-      .hops = mir::BlockHops{.value = 0}, .var = loop_local_id};
+  const mir::LocalRef loop_local{.var = loop_local_id};
 
   lowerer.MapLoopVarAsProcedural(loop.loop_var, loop_local);
 
@@ -1525,14 +1483,14 @@ auto LowerLoopGenerate(
 
   const mir::BlockId loop_scope_id =
       block.child_scopes.Add(BuildGenerateArmBody(
-          lowerer.Module(), frame, 1, gen_bindings, loop.scope,
+          lowerer.Module(), frame, gen_bindings, loop.scope,
           std::move(body_args), std::move(array_index_arg)));
 
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::ForStmt{
           .init = {mir::ForInitDecl{
-              .induction_var = loop_local, .init = init_id}},
+              .induction_var = loop_local_id, .init = init_id}},
           .condition = cond_id,
           .step = {step_id},
           .scope = loop_scope_id}};
@@ -1716,39 +1674,51 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
 
   const mir::TypeId void_type = module.Unit().builtins.void_type;
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
-
-  // The four bodies the scope emits to, with their own `self` locals and
-  // walk frames. Stack-local; live only for this call.
-  mir::Block ctor_block;
-  const mir::LocalId ctor_self_id = ctor_block.vars.Add(
-      mir::LocalDecl{.name = "self", .type = self_ptr_type});
-  mir::Block initialize_block;
-  const mir::LocalId init_self_id = initialize_block.vars.Add(
-      mir::LocalDecl{.name = "self", .type = self_ptr_type});
-  mir::Block resolve_block;
-  const mir::LocalId resolve_self_id = resolve_block.vars.Add(
-      mir::LocalDecl{.name = "self", .type = self_ptr_type});
-  mir::Block activate_block;
-  const mir::LocalId activate_self_id = activate_block.vars.Add(
-      mir::LocalDecl{.name = "self", .type = self_ptr_type});
-
   ScopeChainNode outer_scope_link{};
+  const auto seed_self = [&](CallableBindings& bindings) -> mir::LocalId {
+    return bindings.Declare(
+        BindingOriginId::Receiver(),
+        mir::LocalDecl{.name = "self", .type = self_ptr_type});
+  };
+
+  // Each lifecycle phase is a callable like any other: `self` is the receiver
+  // binding seeded into its `locals`, and every nested block's `self` read
+  // resolves through that one binding.
+  mir::CallableCode ctor_code;
+  CallableBindings ctor_bindings(module.Unit(), ctor_code);
+  const mir::LocalId self_id = seed_self(ctor_bindings);
+  mir::Block& ctor_block = ctor_code.body;
   const WalkFrame ctor_frame =
       parent_frame.WithClass(&mir_class, outer_scope_link)
           .WithBlock(&ctor_block)
-          .WithSelfBinding(ctor_self_id, parent_frame.block_depth);
+          .WithBindings(&ctor_bindings);
+
+  mir::CallableCode initialize_code;
+  CallableBindings init_bindings(module.Unit(), initialize_code);
+  const mir::LocalId init_self_id = seed_self(init_bindings);
+  mir::Block& initialize_block = initialize_code.body;
   const WalkFrame init_frame =
       parent_frame.WithClass(&mir_class, outer_scope_link)
           .WithBlock(&initialize_block)
-          .WithSelfBinding(init_self_id, parent_frame.block_depth);
+          .WithBindings(&init_bindings);
+
+  mir::CallableCode resolve_code;
+  CallableBindings resolve_bindings(module.Unit(), resolve_code);
+  const mir::LocalId resolve_self_id = seed_self(resolve_bindings);
+  mir::Block& resolve_block = resolve_code.body;
   const WalkFrame resolve_frame =
       parent_frame.WithClass(&mir_class, outer_scope_link)
           .WithBlock(&resolve_block)
-          .WithSelfBinding(resolve_self_id, parent_frame.block_depth);
+          .WithBindings(&resolve_bindings);
+
+  mir::CallableCode activate_code;
+  CallableBindings activate_bindings(module.Unit(), activate_code);
+  const mir::LocalId activate_self_id = seed_self(activate_bindings);
+  mir::Block& activate_block = activate_code.body;
   const WalkFrame activate_frame =
       parent_frame.WithClass(&mir_class, outer_scope_link)
           .WithBlock(&activate_block)
-          .WithSelfBinding(activate_self_id, parent_frame.block_depth);
+          .WithBindings(&activate_bindings);
   const auto self_read = [&]() -> mir::ExprId {
     return ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type));
   };
@@ -1808,9 +1778,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           module.Unit(), initialize_block, services_id, init_target, value_id,
           std::nullopt, mir_value_type, module.Unit().builtins.void_type);
       const mir::ExprId assign_id = initialize_block.exprs.Add(init_expr);
-      initialize_block.AppendStmt(
-          mir::Stmt{
-              .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
+      initialize_block.AppendStmt(mir::ExprStmt{.expr = assign_id});
     }
 
     // A value signal, or a named event, records its address under its name so a
@@ -1843,9 +1811,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                               .target = support::BuiltinFn::kRegisterSignal},
                       .arguments = {self_read(), name_id, addr_id}},
               .type = void_type});
-      ctor_block.AppendStmt(
-          mir::Stmt{
-              .label = std::nullopt, .data = mir::ExprStmt{.expr = call}});
+      ctor_block.AppendStmt(mir::ExprStmt{.expr = call});
     }
   }
 
@@ -1936,7 +1902,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       lowerer, ctor_frame, resolve_frame, activate_frame);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
 
-  mir_class.constructor_block = std::move(ctor_block);
+  ctor_code.params = {self_id};
+  ctor_code.result_type = void_type;
+  mir_class.constructor = std::move(ctor_code);
   // The resolve, initialize, and activate phases are synthesized callables run
   // by the engine after construction (LRM 23.3.3.2 / 6.8 / 9.2), present only
   // when the scope has work for that phase. Each is an ordinary method that
@@ -1944,40 +1912,34 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // reference, so the engine reaches the body through one override-driven shim
   // -- the same machinery a user-defined virtual method uses.
   if (!resolve_block.root_stmts.empty()) {
+    resolve_code.params = {resolve_self_id};
+    resolve_code.result_type = void_type;
     mir_class.methods.Add(
         mir::MethodDecl{
             .name = "ResolveState",
-            .code =
-                mir::CallableCode{
-                    .params = {resolve_self_id},
-                    .result_type = void_type,
-                    .body = std::move(resolve_block)},
+            .code = std::move(resolve_code),
             .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
                 .method = mir::RuntimeMethod::kResolve}},
             .visibility = mir::MethodVisibility::kInternal});
   }
   if (!initialize_block.root_stmts.empty()) {
+    initialize_code.params = {init_self_id};
+    initialize_code.result_type = void_type;
     mir_class.methods.Add(
         mir::MethodDecl{
             .name = "InitializeState",
-            .code =
-                mir::CallableCode{
-                    .params = {init_self_id},
-                    .result_type = void_type,
-                    .body = std::move(initialize_block)},
+            .code = std::move(initialize_code),
             .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
                 .method = mir::RuntimeMethod::kInitialize}},
             .visibility = mir::MethodVisibility::kInternal});
   }
   if (!activate_block.root_stmts.empty()) {
+    activate_code.params = {activate_self_id};
+    activate_code.result_type = void_type;
     mir_class.methods.Add(
         mir::MethodDecl{
             .name = "CreateProcesses",
-            .code =
-                mir::CallableCode{
-                    .params = {activate_self_id},
-                    .result_type = void_type,
-                    .body = std::move(activate_block)},
+            .code = std::move(activate_code),
             .overrides = mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
                 .method = mir::RuntimeMethod::kActivate}},
             .visibility = mir::MethodVisibility::kInternal});
@@ -2006,9 +1968,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::TypeId precision_type = module.Unit().types.Intern(
           mir::MachineIntType{
               .bit_width = 8, .signedness = mir::Signedness::kSigned});
-      mir::Block precision_block;
-      const mir::LocalId precision_self = precision_block.vars.Add(
+      mir::CallableCode precision_code;
+      const mir::LocalId precision_self = precision_code.locals.Add(
           mir::LocalDecl{.name = "self", .type = self_readonly_pointer_type});
+      mir::Block& precision_block = precision_code.body;
       const mir::ExprId precision_value = precision_block.exprs.Add(
           mir::Expr{
               .data =
@@ -2026,14 +1989,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       precision_block.AppendStmt(
           mir::ReturnStmt{
               .value = precision_value, .is_coroutine_return = false});
+      precision_code.params = {precision_self};
+      precision_code.result_type = precision_type;
       mir_class.methods.Add(
           mir::MethodDecl{
               .name = "TimePrecisionPower",
-              .code =
-                  mir::CallableCode{
-                      .params = {precision_self},
-                      .result_type = precision_type,
-                      .body = std::move(precision_block)},
+              .code = std::move(precision_code),
               .overrides =
                   mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
                       .method = mir::RuntimeMethod::kTimePrecisionPower}},
@@ -2042,9 +2003,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (contract.exposes_def_name) {
       const mir::TypeId string_view_type =
           module.Unit().types.Intern(mir::StringViewType{});
-      mir::Block def_name_block;
-      const mir::LocalId def_name_self = def_name_block.vars.Add(
+      mir::CallableCode def_name_code;
+      const mir::LocalId def_name_self = def_name_code.locals.Add(
           mir::LocalDecl{.name = "self", .type = self_readonly_pointer_type});
+      mir::Block& def_name_block = def_name_code.body;
       const mir::ExprId def_name_value = def_name_block.exprs.Add(
           mir::Expr{
               .data = mir::StringLiteral{.value = mir_class.name},
@@ -2052,14 +2014,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       def_name_block.AppendStmt(
           mir::ReturnStmt{
               .value = def_name_value, .is_coroutine_return = false});
+      def_name_code.params = {def_name_self};
+      def_name_code.result_type = string_view_type;
       mir_class.methods.Add(
           mir::MethodDecl{
               .name = "DefName",
-              .code =
-                  mir::CallableCode{
-                      .params = {def_name_self},
-                      .result_type = string_view_type,
-                      .body = std::move(def_name_block)},
+              .code = std::move(def_name_code),
               .overrides =
                   mir::OverriddenMethodRef{mir::RuntimeLibraryMethodRef{
                       .method = mir::RuntimeMethod::kDefName}},

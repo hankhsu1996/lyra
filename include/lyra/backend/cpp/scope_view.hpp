@@ -1,43 +1,56 @@
 #pragma once
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/mir/block_hops.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::backend::cpp {
 
 // The rendering fold's walk position. The MIR-to-C++ emit is a fold, not a
 // construction pass: it accumulates nothing and owns no output, so this
 // carries only what reading a node needs -- the unit (for type and arena
-// lookups) and the chain of enclosing scopes. A hops-relative reference
-// resolves by climbing that chain, exactly as the construction-side
-// `WalkFrame` resolves it; this is the read-only twin of that frame, thin
-// because every decision is already baked into the MIR it reads. Immutable
-// and copied on descent (`WithBlock` / `WithClass`); it grows no member per
-// concept, so it is not the forbidden growing `*Context`.
+// lookups), the enclosing class chain (for object-graph navigation), and the
+// current callable code. A local or capture reference resolves directly
+// against the code's `locals` / `captures` arenas, the read-only twin of how
+// the construction-side `CallableBindings` declared them. Immutable and copied
+// on descent (`WithBlock` / `WithClass` / `WithClosure`); it grows no member
+// per concept, so it is not the forbidden growing `*Context`.
 class ScopeView {
  public:
   static auto ForRoot(
       const mir::CompilationUnit& unit, const mir::Class& cls,
-      const mir::Block& block) -> ScopeView {
-    return ScopeView{unit, cls, block};
+      const mir::CallableCode& code) -> ScopeView {
+    return ScopeView{unit, cls, code, code.body, nullptr};
   }
 
   [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
-    return ScopeView{*unit_, *class_, child, this, class_parent_};
+    return ScopeView{*unit_, *class_, *code_, child, class_parent_};
   }
 
+  // Descend into a child class's callable. The child's body and locals replace
+  // the current ones; this view becomes the child's enclosing-class link.
   [[nodiscard]] auto WithClass(
-      const mir::Class& child_class, const mir::Block& root_block) const
+      const mir::Class& child_class, const mir::CallableCode& child_code) const
       -> ScopeView {
-    return ScopeView{*unit_, child_class, root_block, nullptr, this};
+    return ScopeView{*unit_, child_class, child_code, child_code.body, this};
+  }
+
+  // Enter a closure's own code while staying in the same class context: a
+  // closure runs against the same object, so the enclosing-class chain is
+  // unchanged; only the local / capture arenas and the body block swap.
+  [[nodiscard]] auto WithClosure(const mir::CallableCode& closure_code) const
+      -> ScopeView {
+    return ScopeView{
+        *unit_, *class_, closure_code, closure_code.body, class_parent_};
   }
 
   ScopeView(const ScopeView&) = delete;
@@ -54,19 +67,26 @@ class ScopeView {
     return *class_;
   }
 
+  [[nodiscard]] auto Code() const -> const mir::CallableCode& {
+    return *code_;
+  }
+
   [[nodiscard]] auto Block() const -> const mir::Block& {
     return *block_;
   }
 
-  [[nodiscard]] auto BlockAtHops(mir::BlockHops hops) const
-      -> const mir::Block& {
-    if (hops.value == 0) {
-      return *block_;
-    }
-    if (block_parent_ == nullptr) {
-      throw InternalError("ScopeView::BlockAtHops: hops out of range");
-    }
-    return block_parent_->BlockAtHops(mir::BlockHops{.value = hops.value - 1});
+  // An activation local / parameter of the current callable, named directly by
+  // its id in the callable's one `locals` arena.
+  [[nodiscard]] auto Local(const mir::LocalRef& ref) const
+      -> const mir::LocalDecl& {
+    return code_->locals.Get(ref.var);
+  }
+
+  // An environment field of the current callable, named by its id in the
+  // callable's `captures` arena.
+  [[nodiscard]] auto Capture(const mir::CaptureRef& ref) const
+      -> const mir::LocalDecl& {
+    return code_->captures.Get(ref.capture);
   }
 
   [[nodiscard]] auto EnclosingClassAtHops(mir::EnclosingHops hops) const
@@ -98,29 +118,19 @@ class ScopeView {
  private:
   ScopeView(
       const mir::CompilationUnit& unit, const mir::Class& cls,
-      const mir::Block& block)
-      : unit_(&unit),
-        class_(&cls),
-        block_(&block),
-        block_parent_(nullptr),
-        class_parent_(nullptr) {
-  }
-
-  ScopeView(
-      const mir::CompilationUnit& unit, const mir::Class& cls,
-      const mir::Block& block, const ScopeView* block_parent,
+      const mir::CallableCode& code, const mir::Block& block,
       const ScopeView* class_parent)
       : unit_(&unit),
         class_(&cls),
+        code_(&code),
         block_(&block),
-        block_parent_(block_parent),
         class_parent_(class_parent) {
   }
 
   const mir::CompilationUnit* unit_;
   const mir::Class* class_;
+  const mir::CallableCode* code_;
   const mir::Block* block_;
-  const ScopeView* block_parent_;
   const ScopeView* class_parent_;
 };
 

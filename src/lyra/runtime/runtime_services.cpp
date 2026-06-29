@@ -11,7 +11,7 @@
 
 namespace lyra::runtime {
 
-void RuntimeServices::SubmitNba(std::function<void()> closure) {
+void RuntimeServices::SubmitNba(std::function<void(RuntimeServices&)> closure) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::SubmitNba: no Engine bound");
   }

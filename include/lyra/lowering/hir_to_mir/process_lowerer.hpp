@@ -16,7 +16,7 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
-#include "lyra/lowering/hir_to_mir/block_depth.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -29,14 +29,11 @@
 namespace lyra::lowering::hir_to_mir {
 
 struct AutomaticVarBinding {
-  BlockDepth declaration_procedural_depth;
-  mir::LocalId var;
-  // The slot's declared MIR type, carried here because the declaring block is
-  // not reachable while the enclosing body is still being lowered -- unlike a
-  // static var, whose member type is read live from the already-built class
-  // arena. A `ref` / `const ref` formal's slot is a `RefType`, so a reference
-  // to it lifts to the cell protocol (`kGet` / `kSet` / `kMutate`) instead of
-  // reading the unwrapped value.
+  // The slot's declared MIR type. A `ref` / `const ref` formal's slot is a
+  // `RefType`, so a reference to it lifts to the cell protocol (`kGet` / `kSet`
+  // / `kMutate`) instead of reading the unwrapped value. The binding's
+  // cross-body identity is its HIR procedural-var id, materialized through the
+  // callable's binding context, not stored here.
   mir::TypeId type;
 };
 
@@ -50,8 +47,10 @@ struct StaticVarBinding {
 // `handle_depth`; a branch reaches the same member through a by-value copy of
 // the handle. `handle_type` is the handle's `PointerType{kShared}` type.
 struct PromotedVarBinding {
-  BlockDepth handle_depth;
-  mir::LocalId handle;
+  // The shared activation handle's cross-body origin: the reading body makes
+  // the handle available (a by-value, owning copy that keeps the activation
+  // alive) and projects the promoted member from it.
+  BindingOriginId handle_origin;
   mir::TypeId handle_type;
   mir::MemberId member;
 };
@@ -64,9 +63,9 @@ using ProceduralVarBinding =
 
 // Per-process / method lowering registries. Carries facts to the
 // surrounding module and class, time resolution, the HIR body, and
-// the procedural-var binding table. Traversal state (current block depth,
-// active closure capture sink, active with-clause index binding) lives on
-// `WalkFrame`, not on the lowerer.
+// the procedural-var binding table. Per-recursion traversal state -- the
+// current block and class, the binding-resolution context, and whether the
+// body is a coroutine -- lives on `WalkFrame`, not on the lowerer.
 class ProcessLowerer {
  public:
   // Facts: every parameter is set once at construction and never mutated for
@@ -79,7 +78,7 @@ class ProcessLowerer {
   // the caller passes `"process_N"`; methods pass `src.name`). The
   // `owner_ctor_frame` is the enclosing class's constructor-time
   // frame -- the static-local lowering reads it to place per-instance storage
-  // and its init AssignExpr into the owner's constructor_block. `visibility` is
+  // and its init AssignExpr into the owner's constructor body. `visibility` is
   // the access the produced method declares: a class instance method is public,
   // a scope's processes and subroutines are internal.
   ProcessLowerer(
@@ -262,8 +261,8 @@ class ProcessLowerer {
   // for a bare `return;`. Reads the pack locals at `frame`'s depth, so a return
   // nested in an inner block resolves the correct hops.
   [[nodiscard]] auto BuildReturnPayload(
-      mir::Block& block, const WalkFrame& frame,
-      std::optional<mir::ExprId> explicit_value) -> std::optional<mir::ExprId>;
+      mir::Block& block, std::optional<mir::ExprId> explicit_value)
+      -> std::optional<mir::ExprId>;
 
  private:
   ModuleLowerer* module_;
@@ -279,7 +278,6 @@ class ProcessLowerer {
   // Run(subroutine) before its body walks and read by every return site. All
   // default for a process or an empty-payload callable: no result var, no pack
   // locals, so BuildReturnPayload yields a plain `return;`.
-  BlockDepth completion_decl_depth_{};
   std::optional<mir::LocalId> result_var_;
   mir::TypeId result_value_type_{};
   std::vector<mir::LocalId> output_pack_vars_;

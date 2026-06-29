@@ -54,9 +54,9 @@ closure is code plus a captured environment, and "async" is the result type (`as
 
 2. **`self` is an instance method's first parameter.** Every instance-method body reaches its
    enclosing object's members through `self`, the code's first ordinary parameter, read as
-   `body.vars[0]` by every member access. A callable value binds `self` into its environment; a
-   direct call supplies it per invocation. Whether a bound `self` is realized as a passed parameter
-   or a captured field is a backend realization driven by lifetime, not a MIR distinction. A
+   `locals[0]` by every member access. A callable value binds `self` into its environment; a direct
+   call supplies it per invocation. Whether a bound `self` is realized as a passed parameter or a
+   captured field is a backend realization driven by lifetime, not a MIR distinction. A
    type-associated (static) function has no receiver and no `self`. _Consequence: there is no
    privileged `self` capture slot and no per-form receiver mechanism; `self` is uniform across
    instance methods, and a static function simply omits it._
@@ -101,6 +101,10 @@ closure is code plus a captured environment, and "async" is the result type (`as
   (the call protocol), and each bound field's type (snapshot versus alias). The compiler-synthesized
   closures are the lowering's encoding of a deferred, concurrent, or per-element body; no
   SystemVerilog source construct is itself a closure.
+- `binding_and_capture.md` owns how the environment is populated: which logical binding each field
+  captures, how a binding crosses each callable boundary (per-body materialization and recursive
+  forwarding), and the carrier-versus-view choice the field's snapshot-or-alias type records. This
+  doc owns the environment as structure; that doc owns what fills it.
 - The referencing site decides use: a direct call, a fork that spawns each branch value, a region
   submit, a per-element iteration, or a constructor-time lifecycle registration (a process is an
   instance-bound callable value registered during construction; a finalization hook is a distinct

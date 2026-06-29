@@ -186,7 +186,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
   const auto& hir_proc = process.HirBody();
 
   mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper).Deeper();
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   std::vector<OutputArgSlot> slots;
   mir::Expr call_expr{};
@@ -203,7 +203,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.exprs.Add(*std::move(fd_or));
       const mir::ExprId temp_ref = wrapper.exprs.Add(
-          mir::Expr{.data = slots[0].temp, .type = slots[0].type});
+          mir::MakeLocalRefExpr(slots[0].temp, slots[0].type));
       call_expr = BuildFileIoCall(
           process, wrapper_frame, info.builtin_fn, {temp_ref, fd_id},
           process.Module().Unit().builtins.int32);
@@ -255,7 +255,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
       const mir::ExprId temp_ref = wrapper.exprs.Add(
-          mir::Expr{.data = slots[0].temp, .type = slots[0].type});
+          mir::MakeLocalRefExpr(slots[0].temp, slots[0].type));
 
       std::vector<mir::ExprId> operands{temp_ref, fd_id};
       if (unpacked != nullptr) {
@@ -300,7 +300,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
       const mir::ExprId temp_ref = wrapper.exprs.Add(
-          mir::Expr{.data = slots[0].temp, .type = slots[0].type});
+          mir::MakeLocalRefExpr(slots[0].temp, slots[0].type));
       call_expr = BuildFileIoCall(
           process, wrapper_frame, info.builtin_fn, {fd_id, temp_ref},
           process.Module().Unit().builtins.int32);

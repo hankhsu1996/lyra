@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -12,7 +11,6 @@
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -44,11 +42,12 @@ auto AppendCaseSnapshot(
 // case / case-inside-value items, kCasezEquality / kCasexEquality for casez /
 // casex). `lower_label(label_frame, label_idx)` lowers one label into the
 // scope reached via `label_frame.current_block` and returns its
-// ExprId. label_count must be >= 1.
+// ExprId. The snapshot var is a body-local, named directly. label_count must
+// be >= 1.
 template <typename LabelLowerer>
 auto BuildEqualityChain(
     WalkFrame frame, CaseSnapshotRefs snapshot, mir::TypeId bit_type,
-    mir::BinaryOp compare_op, std::uint32_t sel_hops, std::size_t label_count,
+    mir::BinaryOp compare_op, std::size_t label_count,
     LabelLowerer&& lower_label, const mir::CompilationUnit& unit)
     -> diag::Result<mir::ExprId> {
   auto& enc_scope = *frame.current_block;
@@ -60,12 +59,7 @@ auto BuildEqualityChain(
     }
     const mir::ExprId label_id = *label_or;
     const mir::ExprId sel_ref = enc_scope.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops = mir::BlockHops{.value = sel_hops},
-                    .var = snapshot.sel_var},
-            .type = snapshot.sel_type});
+        mir::MakeLocalRefExpr(snapshot.sel_var, snapshot.sel_type));
     const mir::ExprId cmp = enc_scope.exprs.Add(BuildMirBinaryExpr(
         unit, enc_scope, compare_op, sel_ref, label_id, bit_type));
     if (acc.has_value()) {
@@ -80,18 +74,17 @@ auto BuildEqualityChain(
 
 // Assembles the SV-case if/else-if cascade. `wrapper_block` already holds the
 // snapshot decl + assign (from AppendCaseSnapshot); it is moved in. body_scopes
-// and default_scope are pre-lowered Blocks (caller is responsible for
-// any depth bookkeeping required during their lowering). `frame` is the frame
-// the cascade lives in; it carries the parent block, depth, and
-// closure context so per-level predicate blocks get the right composition when
-// the predicate builder constructs them.
+// and default_scope are pre-lowered Blocks. `frame` is the frame the cascade
+// lives in; it carries the parent block and closure context so per-level
+// predicate blocks get the right composition when the predicate builder
+// constructs them.
 //
-// build_predicate(level_frame, item_idx, sel_hops) is invoked once per item
-// from innermost (item_count - 1) to outermost (0). level_frame's
-// current_block points at the block into which the predicate is
-// lowered (wrapper_block for the outermost item, a fresh intermediate block
-// for the rest). sel_hops gives the hop count from that block to the one
-// where the snapshot var was declared.
+// build_predicate(level_frame, item_idx) is invoked once per item from
+// innermost (item_count - 1) to outermost (0). level_frame's current_block
+// points at the block into which the predicate is lowered (wrapper_block for
+// the outermost item, a fresh intermediate block for the rest). The snapshot
+// var is a body-local, so the predicate names it directly with no hop
+// bookkeeping.
 //
 // Returns a BlockStmt wrapping the snapshot + cascade.
 template <typename PredicateBuilder>
@@ -105,9 +98,9 @@ auto BuildCaseCascade(
 
   for (std::size_t i = item_count; i-- > 1;) {
     mir::Block level_block;
-    const WalkFrame level_frame = frame.WithBlock(&level_block).Deeper();
-    auto pred_or = std::forward<PredicateBuilder>(build_predicate)(
-        level_frame, i, static_cast<std::uint32_t>(i));
+    const WalkFrame level_frame = frame.WithBlock(&level_block);
+    auto pred_or =
+        std::forward<PredicateBuilder>(build_predicate)(level_frame, i);
     if (!pred_or) {
       return std::unexpected(std::move(pred_or.error()));
     }
@@ -120,20 +113,18 @@ auto BuildCaseCascade(
     }
 
     level_block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::IfStmt{
-                .condition = *pred_or,
-                .then_scope = body_scope_id,
-                .else_scope = else_scope_id}});
+        mir::IfStmt{
+            .condition = *pred_or,
+            .then_scope = body_scope_id,
+            .else_scope = else_scope_id});
 
     tail = std::move(level_block);
   }
 
   if (item_count > 0) {
-    const WalkFrame wrapper_frame = frame.WithBlock(&wrapper_block).Deeper();
+    const WalkFrame wrapper_frame = frame.WithBlock(&wrapper_block);
     auto pred0_or =
-        std::forward<PredicateBuilder>(build_predicate)(wrapper_frame, 0, 0);
+        std::forward<PredicateBuilder>(build_predicate)(wrapper_frame, 0);
     if (!pred0_or) {
       return std::unexpected(std::move(pred0_or.error()));
     }
@@ -146,25 +137,22 @@ auto BuildCaseCascade(
     }
 
     wrapper_block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::IfStmt{
-                .condition = *pred0_or,
-                .then_scope = body0_id,
-                .else_scope = else0_id}});
+        mir::IfStmt{
+            .condition = *pred0_or,
+            .then_scope = body0_id,
+            .else_scope = else0_id});
   } else if (tail.has_value()) {
     const mir::BlockId def_id =
         wrapper_block.child_scopes.Add(std::move(*tail));
-    wrapper_block.AppendStmt(
-        mir::Stmt{
-            .label = std::nullopt, .data = mir::BlockStmt{.scope = def_id}});
+    wrapper_block.AppendStmt(mir::BlockStmt{.scope = def_id});
   }
 
   const mir::BlockId wrapper_scope_id =
       frame.current_block->child_scopes.Add(std::move(wrapper_block));
 
   return mir::Stmt{
-      .label = outer_label, .data = mir::BlockStmt{.scope = wrapper_scope_id}};
+      .label = std::move(outer_label),
+      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

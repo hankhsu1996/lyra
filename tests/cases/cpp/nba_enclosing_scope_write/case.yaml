@@ -1,0 +1,12 @@
+id: cpp.nba_enclosing_scope_write
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    q_if: 7
+    q_for: [7, 8]

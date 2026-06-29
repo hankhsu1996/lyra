@@ -13,9 +13,7 @@
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -30,8 +28,7 @@ auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
             // yields (every integral value is a PackedArray), so `auto` is the
             // exact same type as spelling it out -- and reads as the idiomatic
             // loop counter.
-            const auto& lv = view.BlockAtHops(d.induction_var.hops)
-                                 .vars.Get(d.induction_var.var);
+            const auto& lv = view.Code().locals.Get(d.induction_var);
             const auto& init_expr = view.Block().exprs.Get(d.init);
             return std::format(
                 "auto {} = {}", lv.name, RenderExpr(view, init_expr));
@@ -61,7 +58,7 @@ auto RenderEventEdgeAsRuntime(mir::EventEdge edge) -> std::string_view {
 auto RenderLocalDeclStmt(
     const ScopeView& view, const mir::LocalDeclStmt& s, std::size_t indent)
     -> std::string {
-  const auto& lv = view.BlockAtHops(s.target.hops).vars.Get(s.target.var);
+  const auto& lv = view.Code().locals.Get(s.target);
   const auto& init_expr = view.Block().exprs.Get(s.init);
   return std::format(
       "{}{} {} = {};\n", Indent(indent),

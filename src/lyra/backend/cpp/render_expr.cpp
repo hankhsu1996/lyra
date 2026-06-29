@@ -1,6 +1,5 @@
 #include "lyra/backend/cpp/render_expr.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -180,9 +179,17 @@ auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
   // Every callable body is a static function over the explicit receiver `self`
-  // (its `vars[0]`), so a local reference renders as its own name -- `self`
+  // (its `locals[0]`), so a local reference renders as its own name -- `self`
   // included, which is just the first parameter's name.
-  return view.BlockAtHops(ref.hops).vars.Get(ref.var).name;
+  return view.Local(ref).name;
+}
+
+// A capture renders as its own name: the closure's capture clause binds a
+// lambda member of that name, so the body names it directly. An alias capture
+// holds a `Ref<T>`; reads / writes go through that name like any other.
+auto LookupCaptureName(const ScopeView& view, const mir::CaptureRef& ref)
+    -> std::string {
+  return view.Capture(ref).name;
 }
 
 }  // namespace
@@ -331,12 +338,6 @@ auto RenderCastExpr(
 
 }  // namespace
 
-// LHS expression render: produces a write-target reference (a name, a
-// dereference, or a chain of container-access `CallExpr`s whose runtime
-// overloads return write-through references). The observable-cell
-// `Mutate(svc)` adapter is already in MIR as a `DerefExpr` wrapping an
-// `ObservableMethod{kMutate}` call -- this render emits nothing implicit
-// on top of the explicit MIR shape.
 // The C++ field name a member access reaches. The member belongs to the
 // receiver's class, named by the receiver's object type -- so the class is
 // resolved from the receiver, not from the ambient enclosing-class chain.
@@ -361,6 +362,12 @@ auto MemberFieldName(const ScopeView& view, const mir::MemberAccessExpr& m)
   return view.ClassByObjectType(pointee).members.Get(m.member.var).name;
 }
 
+// LHS expression render: produces a write-target reference (a name, a
+// dereference, or a chain of container-access `CallExpr`s whose runtime
+// overloads return write-through references). The observable-cell
+// `Mutate(svc)` adapter is already in MIR as a `DerefExpr` wrapping an
+// `ObservableMethod{kMutate}` call -- this render emits nothing implicit
+// on top of the explicit MIR shape.
 auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
     -> std::string {
   return std::visit(
@@ -372,6 +379,9 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           },
           [&](const mir::LocalRef& l) -> std::string {
             return LookupLocalName(view, l);
+          },
+          [&](const mir::CaptureRef& c) -> std::string {
+            return LookupCaptureName(view, c);
           },
           // HIR-to-MIR lowers an LHS selector chain to write-form nodes -- a
           // container-access `CallExpr` with a write callee (per
@@ -418,7 +428,8 @@ namespace {
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
   return std::holds_alternative<mir::MemberAccessExpr>(expr.data) ||
          std::holds_alternative<mir::DerefExpr>(expr.data) ||
-         std::holds_alternative<mir::LocalRef>(expr.data);
+         std::holds_alternative<mir::LocalRef>(expr.data) ||
+         std::holds_alternative<mir::CaptureRef>(expr.data);
 }
 
 // Render a compound op suffix for the SV `op=` family. Arithmetic /
@@ -518,13 +529,14 @@ auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
       bind.name);
 }
 
-// A closure renders from its code (parameters, result type, body) and its bound
-// environment alone. A synchronous closure is a capture-clause lambda whose
-// captures are the bound parameters and whose lambda parameters are the unbound
-// (per-invocation) ones. A coroutine closure (result type `Coroutine`) is a
-// stateless lambda whose bound parameters pass as frame-copied lambda
-// parameters supplied by an immediate call -- a capturing coroutine lambda
-// would dangle once the spawned branch outlives the referencing site.
+// A closure renders from its code (captures, per-invocation parameters, result
+// type, body) and its capture initializers. A synchronous closure is a
+// capture-clause lambda whose captures are the code's `captures` fields and
+// whose lambda parameters are the code's per-invocation `params`. A coroutine
+// closure (result type `Coroutine`) is a stateless lambda whose capture fields
+// pass as frame-copied lambda parameters supplied by an immediate call -- a
+// capturing coroutine lambda would dangle once the spawned branch outlives the
+// referencing site.
 auto RenderClosureExpr(
     const ScopeView& view, const mir::ClosureExpr& closure,
     mir::TypeId result_type) -> std::string {
@@ -536,58 +548,48 @@ auto RenderClosureExpr(
   const std::string return_clause = std::format(
       " -> {}", RenderTypeAsCpp(view.Unit(), view.Class(), result_type));
 
-  const ScopeView body_view =
-      ScopeView::ForRoot(view.Unit(), view.Class(), code.body);
+  const ScopeView body_view = view.WithClosure(code);
   const std::string body =
       std::format(" {{\n{}}}", RenderBlockStatements(body_view, 1));
 
-  const auto is_bound = [&](mir::LocalId param) {
-    return std::ranges::any_of(
-        closure.environment,
-        [&](const mir::EnvBinding& b) { return b.param == param; });
-  };
-
   if (std::holds_alternative<mir::CoroutineType>(
           view.Unit().types.Get(result_type).data)) {
-    for (const mir::LocalId param : code.params) {
-      if (!is_bound(param)) {
-        throw InternalError(
-            "RenderClosureExpr: coroutine closure has an unbound parameter");
-      }
+    if (!code.params.empty()) {
+      throw InternalError(
+          "RenderClosureExpr: coroutine closure has per-invocation parameters");
     }
     std::string params;
     std::string args;
-    for (std::size_t i = 0; i < closure.environment.size(); ++i) {
-      const auto& bind = code.body.vars.Get(closure.environment[i].param);
+    for (std::size_t i = 0; i < closure.capture_inits.size(); ++i) {
+      const auto& field = code.captures.Get(closure.capture_inits[i].target);
       if (i != 0) {
         params += ", ";
         args += ", ";
       }
-      params += RenderBindingParamDecl(view, bind);
-      args += RenderExpr(view, view.Expr(closure.environment[i].value));
+      params += RenderBindingParamDecl(view, field);
+      args += RenderExpr(view, view.Expr(closure.capture_inits[i].source));
     }
     return std::format("[]({}){}{}({})", params, return_clause, body, args);
   }
 
   // The capture clause never contains `[this]`, `[=]`, or `[&]` -- every entry
-  // is a named by-value binding `name = <value>`; an alias binding's value is a
+  // is a named by-value binding `name = <value>`; an alias field's value is a
   // reference-construct, so it binds a `Ref<T>` without a hidden C++ reference.
   std::string captures_text;
-  for (std::size_t i = 0; i < closure.environment.size(); ++i) {
-    const std::string& bind_name =
-        code.body.vars.Get(closure.environment[i].param).name;
+  for (std::size_t i = 0; i < closure.capture_inits.size(); ++i) {
+    const std::string& field_name =
+        code.captures.Get(closure.capture_inits[i].target).name;
     if (i != 0) captures_text += ", ";
     captures_text += std::format(
-        "{} = {}", bind_name,
-        RenderExpr(view, view.Expr(closure.environment[i].value)));
+        "{} = {}", field_name,
+        RenderExpr(view, view.Expr(closure.capture_inits[i].source)));
   }
 
   std::string params_text;
   bool first_param = true;
   for (const mir::LocalId param : code.params) {
-    if (is_bound(param)) continue;
     if (!first_param) params_text += ", ";
-    params_text += RenderBindingParamDecl(view, code.body.vars.Get(param));
+    params_text += RenderBindingParamDecl(view, code.locals.Get(param));
     first_param = false;
   }
 
@@ -800,6 +802,9 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::LocalRef& l) -> std::string {
             return LookupLocalName(view, l);
+          },
+          [&](const mir::CaptureRef& c) -> std::string {
+            return LookupCaptureName(view, c);
           },
           [&](const mir::UnaryExpr& u) -> std::string {
             return RenderUnaryExpr(view, u);

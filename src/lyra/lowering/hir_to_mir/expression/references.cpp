@@ -10,9 +10,7 @@
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/hir_to_mir/block_depth.hpp"
-#include "lyra/lowering/hir_to_mir/capture_sink.hpp"
-#include "lyra/lowering/hir_to_mir/iteration_binding_registry.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -166,39 +164,24 @@ auto LowerProceduralVarRefExpr(
         sb->var);
   }
   // A lifetime-extended automatic (LRM 6.21) lives in a shared activation
-  // object; the read / write reaches its member through the handle. Inside a
-  // detached branch the handle is above the closure boundary, so it is captured
-  // by value -- a shared-pointer copy that keeps the activation alive.
+  // object; the read / write reaches its member through the handle. The handle
+  // is a carrier the resolver makes available in this body (a by-value, owning
+  // copy inside a detached branch), and the promoted member projects from it.
   if (const auto* pb = std::get_if<PromotedVarBinding>(&binding)) {
-    auto& block = *frame.current_block;
-    mir::ExprId handle_ref{};
-    if (auto* sink = frame.capture_sink;
-        sink != nullptr && pb->handle_depth < sink->BoundaryDepth()) {
-      handle_ref = block.exprs.Add(sink->CaptureByValue(
-          pb->handle, pb->handle_depth, pb->handle_type, frame.block_depth));
-    } else {
-      handle_ref = block.exprs.Add(
-          mir::MakeLocalRefExpr(
-              frame.block_depth - pb->handle_depth, pb->handle,
-              pb->handle_type));
-    }
+    const BodyBindingRef handle =
+        frame.bindings->EnsureCarrier(pb->handle_origin);
+    const mir::ExprId handle_ref =
+        frame.current_block->exprs.Add(frame.bindings->MakeReadExpr(handle));
     return mir::MakeMemberAccessExpr(
         handle_ref, mir::MemberRef{.var = pb->member}, type);
   }
-  const auto& ab = std::get<AutomaticVarBinding>(binding);
-  if (auto* sink = frame.capture_sink) {
-    if (ab.declaration_procedural_depth < sink->BoundaryDepth()) {
-      return sink->Capture(
-          ab.var, ab.declaration_procedural_depth, type, frame.block_depth);
-    }
-  }
-  if (ab.declaration_procedural_depth > frame.block_depth) {
-    throw InternalError(
-        "LowerProceduralVarRefExpr: declaration depth exceeds current depth "
-        "(forward reference into a child scope)");
-  }
-  return mir::MakeLocalRefExpr(
-      frame.block_depth - ab.declaration_procedural_depth, ab.var, ab.type);
+  // An ordinary automatic local: resolve its carrier in this body -- a direct
+  // local in the declaring body, a captured field in a closure -- and read it.
+  // The reference's value-versus-cell shape follows the materialized binding's
+  // type, which the dispatcher unwraps with `kGet` when it is a cell.
+  const BodyBindingRef ref =
+      frame.bindings->EnsureCarrier(BindingOriginId::Procedural(l.var));
+  return frame.bindings->MakeReadExpr(ref);
 }
 
 auto LowerCrossUnitVarRefExpr(
@@ -248,23 +231,16 @@ auto LowerLoopVarRefExpr(
 // a deeper clause's closure (the parameter's declaration sits above that
 // closure's boundary).
 auto LowerIterationBindingRefExpr(
-    const hir::IterationBindingRef& ref, WalkFrame frame, mir::TypeId type)
-    -> mir::Expr {
-  if (frame.iteration_bindings == nullptr) {
-    throw InternalError(
-        "LowerIterationBindingRefExpr: with-clause iteration reference outside "
-        "an array-method `with` body (LRM 7.12.4)");
-  }
-  const IterationBinding binding =
-      frame.iteration_bindings->Lookup(ref.clause, ref.role);
-  if (auto* sink = frame.capture_sink) {
-    if (binding.decl_depth < sink->BoundaryDepth()) {
-      return sink->Capture(
-          binding.var, binding.decl_depth, type, frame.block_depth);
-    }
-  }
-  return mir::MakeLocalRefExpr(
-      frame.block_depth - binding.decl_depth, binding.var, type);
+    const hir::IterationBindingRef& ref, WalkFrame frame) -> mir::Expr {
+  // The with-clause parameter's cross-body identity is its clause id and role;
+  // `EnsureCarrier` reads it directly in the clause's own closure or captures
+  // it
+  // -- forwarding one boundary at a time -- when the reference sits inside a
+  // deeper clause's closure (LRM 7.12.4). The result type comes from the
+  // resolved binding's arena, so no caller-supplied type is needed.
+  return frame.bindings->MakeReadExpr(frame.bindings->EnsureCarrier(
+      BindingOriginId::Iterator(
+          ref.clause.value, static_cast<std::uint32_t>(ref.role))));
 }
 
 }  // namespace
@@ -330,7 +306,7 @@ auto LowerHirPrimaryExprProc(
                 process.EnclosingScopeLowerer(), frame, c);
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
-            return LowerIterationBindingRefExpr(r, frame, result_type);
+            return LowerIterationBindingRefExpr(r, frame);
           },
       },
       p);
@@ -377,7 +353,7 @@ auto LowerHirPrimaryExprStructural(
             return LowerCrossUnitVarRefExpr(lowerer, frame, c);
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
-            return LowerIterationBindingRefExpr(r, frame, result_type);
+            return LowerIterationBindingRefExpr(r, frame);
           },
       },
       p);

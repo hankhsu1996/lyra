@@ -312,20 +312,24 @@ struct UnionGetRefExpr {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
-    HostIntLiteral, ParamRef, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
-    ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
-    PointerCastExpr, CastExpr, MemberAccessExpr, ClosureExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr,
-    UnionExpr, UnionGetExpr, UnionGetRefExpr>;
+    HostIntLiteral, ParamRef, LocalRef, CaptureRef, UnaryExpr, BinaryExpr,
+    BoolCastExpr, ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
+    AddressOfExpr, PointerCastExpr, CastExpr, MemberAccessExpr, ClosureExpr,
+    ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr,
+    TupleGetExpr, UnionExpr, UnionGetExpr, UnionGetRefExpr>;
 
 struct Expr {
   ExprData data;
   TypeId type;
 };
 
-[[nodiscard]] inline auto MakeLocalRefExpr(
-    BlockHops hops, LocalId var, TypeId type) -> Expr {
-  return Expr{.data = LocalRef{.hops = hops, .var = var}, .type = type};
+[[nodiscard]] inline auto MakeLocalRefExpr(LocalId var, TypeId type) -> Expr {
+  return Expr{.data = LocalRef{.var = var}, .type = type};
+}
+
+[[nodiscard]] inline auto MakeCaptureRefExpr(CaptureId capture, TypeId type)
+    -> Expr {
+  return Expr{.data = CaptureRef{.capture = capture}, .type = type};
 }
 
 [[nodiscard]] inline auto MakeMemberAccessExpr(

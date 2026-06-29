@@ -13,6 +13,8 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/base_contract.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/capture_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
@@ -476,14 +478,6 @@ class MirDumper {
     return *scope_stack_[scope_stack_.size() - 1 - hops];
   }
 
-  [[nodiscard]] auto ResolveBlockAtHops(std::uint32_t hops) const
-      -> const Block& {
-    if (hops >= block_stack_.size()) {
-      throw InternalError("MirDumper::ResolveBlockAtHops: hops out of range");
-    }
-    return *block_stack_[block_stack_.size() - 1 - hops];
-  }
-
   static auto FormatIntegralConstant(const IntegralConstant& c) -> std::string {
     std::string out = std::format(
         "{}'{}", c.width, c.signedness == Signedness::kSigned ? 's' : 'u');
@@ -547,11 +541,14 @@ class MirDumper {
                   r.receiver.value, r.param.value);
             },
             [this](const LocalRef& r) -> std::string {
-              const auto& owner = ResolveBlockAtHops(r.hops.value);
-              const auto& var = owner.vars.Get(r.var);
+              const auto& var = code_->locals.Get(r.var);
               return std::format(
-                  "LocalRef[hops={}, var={}] \"{}\"", r.hops.value, r.var.value,
-                  var.name);
+                  "LocalRef[var={}] \"{}\"", r.var.value, var.name);
+            },
+            [this](const CaptureRef& r) -> std::string {
+              const auto& field = code_->captures.Get(r.capture);
+              return std::format(
+                  "CaptureRef[capture={}] \"{}\"", r.capture.value, field.name);
             },
             [](const UnaryExpr& u) -> std::string {
               return std::format(
@@ -619,9 +616,9 @@ class MirDumper {
             },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
-                  "ClosureExpr params={} environment={}",
+                  "ClosureExpr params={} captures={}",
                   cl.code == nullptr ? 0 : cl.code->params.size(),
-                  cl.environment.size());
+                  cl.capture_inits.size());
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -741,7 +738,7 @@ class MirDumper {
 
     Line("Constructor:");
     Indent();
-    DumpBlock(s.constructor_block);
+    DumpCallableBody(s.constructor);
     Dedent();
 
     Dedent();
@@ -780,28 +777,50 @@ class MirDumper {
       Line(std::format("Overrides: {}", target));
     }
     for (std::size_t i = 0; i < d.code.params.size(); ++i) {
-      const auto& param = d.code.body.vars.Get(d.code.params[i]);
+      const auto& param = d.code.locals.Get(d.code.params[i]);
       Line(
           std::format(
               "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
     }
-    DumpBlock(d.code.body);
+    DumpCallableBody(d.code);
     Dedent();
   }
 
-  void DumpBlock(const Block& scope) {
-    block_stack_.push_back(&scope);
-    if (!scope.vars.empty()) {
+  // A callable owns its binding arenas: every activation local lives in
+  // `locals`, every closure environment field in `captures`. Dump both, then
+  // the body block, with `code_` set so `LocalRef` / `CaptureRef` reads resolve
+  // against this callable's arenas.
+  void DumpCallableBody(const CallableCode& code) {
+    const CallableCode* saved = code_;
+    code_ = &code;
+    if (!code.locals.empty()) {
       Line("Locals:");
       Indent();
-      for (std::size_t i = 0; i < scope.vars.size(); ++i) {
-        const auto& v = scope.vars.Get(LocalId{static_cast<std::uint32_t>(i)});
+      for (std::size_t i = 0; i < code.locals.size(); ++i) {
+        const auto& v = code.locals.Get(LocalId{static_cast<std::uint32_t>(i)});
         Line(
             std::format(
                 "Local[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
       }
       Dedent();
     }
+    if (!code.captures.empty()) {
+      Line("Captures:");
+      Indent();
+      for (std::size_t i = 0; i < code.captures.size(); ++i) {
+        const auto& v =
+            code.captures.Get(CaptureId{static_cast<std::uint32_t>(i)});
+        Line(
+            std::format(
+                "Capture[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
+      }
+      Dedent();
+    }
+    DumpBlock(code.body);
+    code_ = saved;
+  }
+
+  void DumpBlock(const Block& scope) {
     if (!scope.exprs.empty()) {
       Line("Exprs:");
       Indent();
@@ -827,18 +846,15 @@ class MirDumper {
       }
     }
     Dedent();
-    block_stack_.pop_back();
   }
 
   void DumpLocalDeclStmt(
       const Block& enclosing, StmtId id, const LocalDeclStmt& s) {
-    const auto& owner = ResolveBlockAtHops(s.target.hops.value);
-    const auto& var = owner.vars.Get(s.target.var);
+    const auto& var = code_->locals.Get(s.target);
     Line(
         std::format(
-            "Stmt[{}] LocalDeclStmt "
-            "target=LocalRef[hops={}, var={}] \"{}\"",
-            id.value, s.target.hops.value, s.target.var.value, var.name));
+            "Stmt[{}] LocalDeclStmt target=LocalRef[var={}] \"{}\"", id.value,
+            s.target.value, var.name));
     Indent();
     Line(
         std::format(
@@ -957,33 +973,36 @@ class MirDumper {
       }
       Dedent();
     }
-    if (closure.environment.empty()) {
-      Line("environment: (none)");
+    // The capture initializers' `source` expressions live in the enclosing
+    // block, so resolve them against `code_` as it stands now (the enclosing
+    // callable), before `DumpCallableBody` swaps `code_` to the closure code.
+    if (closure.capture_inits.empty()) {
+      Line("captures: (none)");
     } else {
-      Line("environment:");
+      Line("captures:");
       Indent();
-      for (std::size_t i = 0; i < closure.environment.size(); ++i) {
-        DumpEnvBinding(i, closure.environment[i], enclosing);
+      for (std::size_t i = 0; i < closure.capture_inits.size(); ++i) {
+        DumpCaptureInit(i, closure.capture_inits[i], enclosing);
       }
       Dedent();
     }
     Line("body:");
     Indent();
-    DumpBlock(closure.code->body);
+    DumpCallableBody(*closure.code);
     Dedent();
   }
 
-  void DumpEnvBinding(
-      std::size_t index, const EnvBinding& binding, const Block& enclosing) {
+  void DumpCaptureInit(
+      std::size_t index, const CaptureInit& init, const Block& enclosing) {
     Line(
         std::format(
-            "[{}] EnvBinding param=LocalId{{{}}} value=Expr[{}]", index,
-            binding.param.value, binding.value.value));
+            "[{}] CaptureInit target=CaptureId{{{}}} source=Expr[{}]", index,
+            init.target.value, init.source.value));
     Indent();
     Line(
         std::format(
-            "Expr[{}] {}", binding.value.value,
-            FormatExpr(enclosing, binding.value)));
+            "Expr[{}] {}", init.source.value,
+            FormatExpr(enclosing, init.source)));
     Dedent();
   }
 
@@ -1090,14 +1109,11 @@ class MirDumper {
                 const std::string init_str = std::format(
                     " = Expr[{}] {}", d.init.value,
                     FormatExpr(enclosing, d.init));
-                const auto& owner =
-                    ResolveBlockAtHops(d.induction_var.hops.value);
-                const auto& var = owner.vars.Get(d.induction_var.var);
+                const auto& var = code_->locals.Get(d.induction_var);
                 Line(
                     std::format(
-                        "[{}] decl LocalRef[hops={}, var={}] \"{}\"{}", i,
-                        d.induction_var.hops.value, d.induction_var.var.value,
-                        var.name, init_str));
+                        "[{}] decl LocalRef[var={}] \"{}\"{}", i,
+                        d.induction_var.value, var.name, init_str));
               },
               [&](const ForInitExpr& e) {
                 Line(
@@ -1177,7 +1193,7 @@ class MirDumper {
   int indent_ = 0;
   std::vector<const Class*> scope_stack_;
   const CompilationUnit* unit_ = nullptr;
-  std::vector<const Block*> block_stack_;
+  const CallableCode* code_ = nullptr;
 };
 
 }  // namespace

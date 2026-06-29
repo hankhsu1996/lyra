@@ -218,21 +218,22 @@ auto LowerScanSystemSubroutineCall(
   // file form can rewind the unconsumed tail before the next read.
   const mir::ExprId consumed_init =
       body.exprs.Add(mir::MakeInt32Literal(int32_t_id, 0));
-  const mir::LocalRef consumed_ref = body.AppendLocal(
-      mir::LocalDecl{.name = "_lyra_scan_consumed", .type = int32_t_id},
-      consumed_init);
+  const mir::LocalId consumed_var = closure.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_scan_consumed", .type = int32_t_id});
+  body.AppendStmt(
+      mir::LocalDeclStmt{.target = consumed_var, .init = consumed_init});
 
   std::vector<mir::LocalId> temp_ids;
   temp_ids.reserve(target_types.size());
   for (std::size_t k = 0; k < target_types.size(); ++k) {
     const mir::ExprId init_id = body.exprs.Add(
         BuildDefaultValueExpr(module, closure_frame, target_types[k]));
-    const mir::LocalRef temp_ref = body.AppendLocal(
+    const mir::LocalId temp_var = closure.Bindings().DeclareAnonymous(
         mir::LocalDecl{
             .name = std::format("_lyra_scan_temp_{}", k),
-            .type = target_types[k]},
-        init_id);
-    temp_ids.push_back(temp_ref.var);
+            .type = target_types[k]});
+    body.AppendStmt(mir::LocalDeclStmt{.target = temp_var, .init = init_id});
+    temp_ids.push_back(temp_var);
   }
 
   std::vector<mir::ExprId> scan_args;
@@ -240,11 +241,10 @@ auto LowerScanSystemSubroutineCall(
   scan_args.push_back(source_id);
   scan_args.push_back(format_id);
   scan_args.push_back(
-      body.exprs.Add(mir::Expr{.data = consumed_ref, .type = int32_t_id}));
+      body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int32_t_id)));
   for (std::size_t k = 0; k < target_types.size(); ++k) {
-    scan_args.push_back(body.exprs.Add(
-        mir::MakeLocalRefExpr(
-            mir::BlockHops{.value = 0}, temp_ids[k], target_types[k])));
+    scan_args.push_back(
+        body.exprs.Add(mir::MakeLocalRefExpr(temp_ids[k], target_types[k])));
   }
   const mir::ExprId parse_call_id = body.exprs.Add(
       mir::Expr{
@@ -254,9 +254,10 @@ auto LowerScanSystemSubroutineCall(
                   .arguments = std::move(scan_args)},
           .type = integer_t});
 
-  const mir::LocalRef count_ref = body.AppendLocal(
-      mir::LocalDecl{.name = "_lyra_scan_count", .type = integer_t},
-      parse_call_id);
+  const mir::LocalId count_var = closure.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_scan_count", .type = integer_t});
+  body.AppendStmt(
+      mir::LocalDeclStmt{.target = count_var, .init = parse_call_id});
 
   if (is_file) {
     const mir::ExprId services_after =
@@ -269,7 +270,7 @@ auto LowerScanSystemSubroutineCall(
                     .arguments = {services_after}},
             .type = unit.builtins.files});
     const mir::ExprId consumed_read =
-        body.exprs.Add(mir::Expr{.data = consumed_ref, .type = int32_t_id});
+        body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int32_t_id));
     const mir::ExprId advance_call = body.exprs.Add(
         mir::Expr{
             .data =
@@ -285,7 +286,7 @@ auto LowerScanSystemSubroutineCall(
   // k+1 matches were made, so the commit is gated on the matched count.
   for (std::size_t k = 0; k < target_types.size(); ++k) {
     const mir::ExprId count_read_id =
-        body.exprs.Add(mir::Expr{.data = count_ref, .type = integer_t});
+        body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
     const mir::ExprId k_lit_id = body.exprs.Add(
         mir::MakeIntegerLiteral(integer_t, static_cast<std::int64_t>(k + 1)));
     const mir::ExprId cond_id = body.exprs.Add(
@@ -298,14 +299,13 @@ auto LowerScanSystemSubroutineCall(
             .type = bit_t});
 
     mir::Block then_body;
-    const WalkFrame then_frame = closure_frame.WithBlock(&then_body).Deeper();
+    const WalkFrame then_frame = closure_frame.WithBlock(&then_body);
     auto lvalue_or = process.LowerLhsExpr(
         hir_proc.exprs.Get(*call.arguments[k + 2]), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
     const mir::ExprId temp_read_id = then_body.exprs.Add(
-        mir::MakeLocalRefExpr(
-            mir::BlockHops{.value = 1}, temp_ids[k], target_types[k]));
+        mir::MakeLocalRefExpr(temp_ids[k], target_types[k]));
     const mir::ExprId services_id_then = then_body.exprs.Add(
         BuildServicesCallExpr(process.Module(), then_frame));
     const mir::Expr assign_expr = BuildObservableAssignExpr(
@@ -318,7 +318,7 @@ auto LowerScanSystemSubroutineCall(
   }
 
   const mir::ExprId count_id =
-      body.exprs.Add(mir::Expr{.data = count_ref, .type = integer_t});
+      body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
   return BuildClosureCallExpr(*frame.current_block, closure.Build(count_id));
 }
 

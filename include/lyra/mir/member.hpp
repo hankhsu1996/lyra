@@ -16,9 +16,8 @@ struct MemberId {
 
 // A declaration carries name and type only. LRM 10.5 variable initialization
 // (the user-supplied `= value` or the LRM Table 6-7 type default) lowers to
-// an `AssignExpr` statement at the top of the enclosing class's
-// `constructor_block.root_stmts`; every backend renders construction-time
-// state from that single statement list.
+// an `AssignExpr` statement in the enclosing class's constructor body; every
+// backend renders construction-time state from that statement list.
 struct MemberDecl {
   std::string name;
   // By-name lookup key; differs from the unique physical `name` only for a

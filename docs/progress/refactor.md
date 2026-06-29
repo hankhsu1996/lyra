@@ -233,24 +233,24 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `process.name + "__static"` rather than computing from an iteration index; the walker-state
       propagation of the frame field name continues until R18 dissolves the walk frame.
 
-- [x] R16 -- Give every MIR callable body an explicit `self` first binding -- `body.vars[0]` is a
-      local of borrowed-pointer-to-enclosing-class type, named `self`. Route every class-member
-      access through a new `mir::MemberAccessExpr { receiver, var }` whose receiver reaches `self`
-      via `DerefExpr(LocalRef(self))`. Today four distinct receiver mechanisms coexist -- method
-      `this` (process / method / constructor bodies), fork-branch `(M* self)` parameter, NBA /
-      `$strobe` / scan closures' `[this]` or `[=, this]` capture, and `mir::MemberRef`'s
-      implicit-receiver render -- and the cpp backend dispatches between them through
-      `RenderContext` walker state (`ReceiverObject()` / `WithReceiver(...)` /
-      `DeferredByValueCapture()` / `MemberPrefix()`). The same dispatch would have to be re-derived
-      by every future backend (LIR / LLVM-IR). Target shape: `body.vars[0]` is uniformly `self`
-      across every callable form, but how it is supplied follows each form's natural binding
-      mechanism -- a process / method / constructor body receives `self` as its first formal
-      parameter (the caller supplies), while a closure carries `self` as its first by-value capture
-      (the enclosing scope snapshots its own self at construction). `mir::SelfScopeExpr` is removed
-      (its job was to denote "the current receiver, whatever that is" -- precisely the
-      implicit-context shape this refactor eliminates). C++ emit per form: process / method /
-      constructor bodies as `static auto <name>(M* self, ...) -> ... { ... }`, with the C++
-      constructor delegating its body to a `static init(this)` call; closures as
+- [x] R16 -- Give every MIR callable body an explicit `self` first binding -- `locals[0]` is a local
+      of borrowed-pointer-to-enclosing-class type, named `self`. Route every class-member access
+      through a new `mir::MemberAccessExpr { receiver, var }` whose receiver reaches `self` via
+      `DerefExpr(LocalRef(self))`. Today four distinct receiver mechanisms coexist -- method `this`
+      (process / method / constructor bodies), fork-branch `(M* self)` parameter, NBA / `$strobe` /
+      scan closures' `[this]` or `[=, this]` capture, and `mir::MemberRef`'s implicit-receiver
+      render -- and the cpp backend dispatches between them through `RenderContext` walker state
+      (`ReceiverObject()` / `WithReceiver(...)` / `DeferredByValueCapture()` / `MemberPrefix()`).
+      The same dispatch would have to be re-derived by every future backend (LIR / LLVM-IR). Target
+      shape: `locals[0]` is uniformly `self` across every callable form, but how it is supplied
+      follows each form's natural binding mechanism -- a process / method / constructor body
+      receives `self` as its first formal parameter (the caller supplies), while a closure carries
+      `self` as its first by-value capture (the enclosing scope snapshots its own self at
+      construction). `mir::SelfScopeExpr` is removed (its job was to denote "the current receiver,
+      whatever that is" -- precisely the implicit-context shape this refactor eliminates). C++ emit
+      per form: process / method / constructor bodies as
+      `static auto <name>(M* self, ...) -> ... { ... }`, with the C++ constructor delegating its
+      body to a `static init(this)` call; closures as
       `[self = <enclosing self>, cap1 = ..., &cap2 = ...](closure_params) -> R { ... }` -- every
       capture is name-explicit, the clause never contains `[this]`, `[=]`, or `[&]`.
       `CreateProcesses()` remains a virtual instance method (C++ requires it) and emits
@@ -293,7 +293,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       and the "Rendering Folds" section).
 
 - [x] R19 -- LRM 10.5 variable initialization lowers to an `AssignExpr` statement at the top of
-      `constructor_block.root_stmts`, with the value being the user-supplied expression when present
+      `constructor.body.root_stmts`, with the value being the user-supplied expression when present
       or the LRM Table 6-7 type default. `mir::MemberDecl.initializer` is removed; MIR has exactly
       one mechanism for construction-time work (the statement list). `RenderField` emits a pure
       value-init declaration (`Var<T> name{};` or `T name{};`) with no inline initializer;
@@ -678,12 +678,14 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       naturally with R45's call-shape work, which also moves per-symbol resolution off the reference
       node.
 
-- [ ] R51 -- Close R45's last asymmetry: a class constructor should be a `mir::MethodDecl` whose
-      signature MIR states in full, not a special `Block` on the side. R45 unified the call side
-      onto `Direct / Indirect / Construct`, so a child construction at a parent's body already emits
-      a generic `Construct(self, segment, services, structural...)` callee whose args are plain MIR
-      primitives. The receiver side -- the constructor declaration -- is still a bare
-      `Class::constructor_block` with `body.vars[0] = self`; the C++ ctor entry args
+- [ ] R51 -- Close R45's last asymmetry: a class constructor should be a `mir::MethodDecl` resolved
+      through `Construct` like any other callable, not a separate `CallableCode` field on the side.
+      R45 unified the call side onto `Direct / Indirect / Construct`, so a child construction at a
+      parent's body already emits a generic `Construct(self, segment, services, structural...)`
+      callee whose args are plain MIR primitives. The receiver side -- the constructor declaration
+      -- is now a `Class::constructor` `CallableCode` carrying its own signature
+      (`locals[0] = self`), but it is still a separate field rather than a `MethodDecl` resolved
+      through `Construct` like any other callable; the C++ ctor entry args
       (`parent / segment / services / structural...`) are not in MIR at all. The interim shape lands
       the prefix args as `Class::ctor_prefix_params` so the render can iterate without restating any
       type literal, and the render forwards each prefix arg to the base by pure name pass-through
@@ -696,6 +698,31 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       without the render learning what `HierarchySegment` / `Scope*` / `RuntimeServices&` mean.
       **Likely interacts with**: R8 (callable-model unification) and R47 (SV class object model),
       since both touch what "a class with a body" looks like at MIR.
+
+- [ ] R52 -- Unify the compiler-generated aggregate, and decide whether a closure is one. An
+      "aggregate with fields plus a construction" is represented several ways today: `mir::Class`
+      (the object model -- nominal, reference-reached, with optional base / methods / dispatch /
+      lifecycle; a baseless `mir::Class` is already used as the promotion activation box, so a
+      compiler-generated aggregate over `mir::Class` already exists), the value aggregates
+      `TupleType` / `UnionType` (structural, value-semantic, by-position, no construction protocol),
+      and the closure environment (its own capture-layout / capture-init shape from the
+      binding/capture reset). A coroutine frame is a fourth, today backend-implicit and not a MIR
+      aggregate at all. These are all ordered (name, type) fields plus a construction, differing
+      only along orthogonal axes -- nominal vs structural identity, value vs reference reachability,
+      fields-only vs with-methods, and placement (inline / stack / heap / coroutine-frame /
+      scheduler). The target is a from-scratch design round -- "what is Lyra's fundamental
+      compiler-generated aggregate" -- in which closure environment, activation record, coroutine
+      frame, and the value aggregates are each a role-specialization of one underlying notion, NOT a
+      collapse of everything into `mir::Class` (a closure environment must not inherit object
+      dispatch / lifecycle / managed-reference semantics). The closure-as-object question -- whether
+      a closure value is an instance of a generated environment aggregate whose body is its method,
+      the C++/Rust closure-type model -- is the central decision; the existing activation box is the
+      grounding precedent, and the open axis is nominal (a registered baseless class, like the
+      activation box) vs structural (anonymous by-shape, like a tuple). The binding/capture reset's
+      capture-layout (field decls) and capture-init (construction initializers) are the foundation
+      this builds on, not throwaway. **Blocker**: the binding/capture contract must finalize first;
+      and this is a research topic that warrants its own design round before any code. **Interacts
+      with**: R47 (object model), R51 (a class with a body), R8 (callable model).
 
 ## Out of Scope
 

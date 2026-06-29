@@ -12,6 +12,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/with_clause_id.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
@@ -23,13 +25,11 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
-#include "lyra/lowering/hir_to_mir/iteration_binding_registry.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/block_hops.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
@@ -94,16 +94,19 @@ auto LowerAssociativeTraversal(
   // probe = idx -- snapshot the current index value into a plain local.
   auto idx_read_or = lowerer.LowerExpr(hir_exprs.Get(idx_hir), closure_frame);
   if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
-  const mir::LocalRef probe_ref = body.AppendLocal(
-      mir::LocalDecl{.name = "_lyra_trav_probe", .type = key_type},
-      body.exprs.Add(*std::move(idx_read_or)));
+  const mir::LocalId probe_var = closure.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_trav_probe", .type = key_type});
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = probe_var,
+          .init = body.exprs.Add(*std::move(idx_read_or))});
 
   // found = (map).<kind>(probe) -- pure query: mutates probe, yields 1/0.
   auto map_read_or = lowerer.LowerExpr(hir_exprs.Get(recv_hir), closure_frame);
   if (!map_read_or) return std::unexpected(std::move(map_read_or.error()));
   const mir::ExprId map_read_id = body.exprs.Add(*std::move(map_read_or));
   const mir::ExprId probe_read_id =
-      body.exprs.Add(mir::Expr{.data = probe_ref, .type = key_type});
+      body.exprs.Add(mir::MakeLocalRefExpr(probe_var, key_type));
   const mir::ExprId query_id = body.exprs.Add(
       mir::Expr{
           .data =
@@ -111,16 +114,16 @@ auto LowerAssociativeTraversal(
                   .callee = mir::Direct{.target = fn},
                   .arguments = {map_read_id, probe_read_id}},
           .type = result_type});
-  const mir::LocalRef found_ref = body.AppendLocal(
-      mir::LocalDecl{.name = "_lyra_trav_found", .type = result_type},
-      query_id);
+  const mir::LocalId found_var = closure.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_trav_found", .type = result_type});
+  body.AppendStmt(mir::LocalDeclStmt{.target = found_var, .init = query_id});
 
   // idx = probe -- observable write-back fires the LRM 4.3 update event.
   auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), closure_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
   const mir::ExprId idx_lhs_id = body.exprs.Add(*std::move(idx_lhs_or));
   const mir::ExprId probe_writeback_id =
-      body.exprs.Add(mir::Expr{.data = probe_ref, .type = key_type});
+      body.exprs.Add(mir::MakeLocalRefExpr(probe_var, key_type));
   const mir::ExprId services_id =
       body.exprs.Add(BuildServicesCallExpr(lowerer.Module(), closure_frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
@@ -129,7 +132,7 @@ auto LowerAssociativeTraversal(
   body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
 
   const mir::ExprId found_id =
-      body.exprs.Add(mir::Expr{.data = found_ref, .type = result_type});
+      body.exprs.Add(mir::MakeLocalRefExpr(found_var, result_type));
   return BuildClosureCallExpr(*frame.current_block, closure.Build(found_id));
 }
 
@@ -221,37 +224,37 @@ auto BuildArrayMethodClosure(
       with_clause != nullptr ? with_clause->element_name : std::string{"item"};
 
   ClosureBuilder closure(lowerer.Module().Unit(), frame);
-  const mir::LocalId item_binding = closure.AddParam(iterator_name, item_type);
-  const mir::LocalId index_binding = closure.AddParam("index", index_type);
   mir::Block& body = closure.Body();
 
   mir::ExprId body_return_value{};
   if (with_clause != nullptr) {
-    // `item` and `item.index` (LRM 7.12.4) are this clause's two closure
-    // parameters; register them by clause identity so the body resolves each
-    // reference by identity and captures it when it crosses a closure boundary.
-    // The registry is shared down the nesting (an inner clause adds to the same
-    // one), so a clause nested in the body still reaches this outer iterator.
-    const BlockDepth decl_depth = closure.Frame().block_depth;
-    IterationBindingRegistry owned_registry;
-    IterationBindingRegistry* registry = frame.iteration_bindings != nullptr
-                                             ? frame.iteration_bindings
-                                             : &owned_registry;
-    registry->Register(
-        with_clause->id, {.var = item_binding, .decl_depth = decl_depth},
-        {.var = index_binding, .decl_depth = decl_depth});
-    auto body_expr_or = lowerer.LowerExpr(
-        hir_exprs.Get(with_clause->expr),
-        closure.Frame().WithIterationBindings(registry));
+    // `item` and `item.index` (LRM 7.12.4) are this clause's two per-invocation
+    // parameters, declared under the clause's iterator origins so the body
+    // resolves each reference by identity and captures it -- through the same
+    // forwarding machinery as any binding -- when it crosses a closure boundary
+    // (a clause nested in the body still reaches this outer iterator).
+    closure.AddParam(
+        BindingOriginId::Iterator(
+            with_clause->id.value,
+            static_cast<std::uint32_t>(hir::IterationBindingRole::kElement)),
+        iterator_name, item_type);
+    closure.AddParam(
+        BindingOriginId::Iterator(
+            with_clause->id.value,
+            static_cast<std::uint32_t>(hir::IterationBindingRole::kIndex)),
+        "index", index_type);
+    auto body_expr_or =
+        lowerer.LowerExpr(hir_exprs.Get(with_clause->expr), closure.Frame());
     if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
     body_return_value = body.exprs.Add(*std::move(body_expr_or));
   } else {
-    body_return_value = body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::LocalRef{
-                    .hops = mir::BlockHops{.value = 0}, .var = item_binding},
-            .type = item_type});
+    // A built-in reduction (no with-clause) returns the bare element; its two
+    // parameters carry no cross-body identity -- nothing can capture them.
+    const mir::LocalId item_binding =
+        closure.AddParamAnonymous(iterator_name, item_type);
+    closure.AddParamAnonymous("index", index_type);
+    body_return_value =
+        body.exprs.Add(mir::MakeLocalRefExpr(item_binding, item_type));
   }
   return closure.Build(body_return_value);
 }

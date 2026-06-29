@@ -1,17 +1,15 @@
 #pragma once
 
-#include <optional>
 #include <string_view>
 #include <vector>
 
-#include "lyra/lowering/hir_to_mir/block_depth.hpp"
-#include "lyra/lowering/hir_to_mir/capture_sink.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/closure.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -20,31 +18,30 @@ class CompilationUnit;
 
 namespace lyra::lowering::hir_to_mir {
 
-// A closure under construction. The constructor opens a fresh body scope, makes
-// `self` the code's first parameter (`code.params[0]`), binds it into the
-// environment, and installs a capture sink, so a read of an enclosing variable
-// while lowering the body through `Frame()` becomes an environment binding
-// (LRM 6.21). A site that authors the body by hand instead of lowering HIR
-// snapshots specific outer expressions with `CaptureByValue`; the two binding
-// paths coexist, and `self` is always the first bound parameter.
+// A closure under construction. A closure is a callable value: callable code (a
+// signature, a result type, a body) plus a bound environment. The builder owns
+// the code and a child binding context whose parent is the enclosing callable,
+// so a reference to an enclosing binding while the body is lowered through
+// `Frame()` becomes a captured environment field, forwarded one boundary at a
+// time. `self` is not a builder concept: a body that reaches its enclosing
+// object's members resolves the receiver through the same capture machinery as
+// any binding, so the builder never special-cases it.
 //
-// `coroutine` selects a fork-branch body (LRM 9.3.2): its `return`s render
-// as `co_return` and the terminal is `BuildCoroutine`. `by_value_depth` is
-// the sink snapshot boundary -- a capture declared at that depth is
-// snapshotted by value, any deeper-enclosing capture aliases the live cell;
-// pass it for a fork branch (block-item locals snapshot) and leave it empty
-// for a synchronous body (every sink capture aliases).
+// `coroutine` selects a fork-branch body (LRM 9.3.2): its `return`s render as
+// `co_return` and the terminal is `BuildCoroutine`. `policy` is the capture
+// policy -- a fork branch passes the origins of its own block-item declarations
+// as the snapshot set (those snapshot, deeper-enclosing bindings alias); a
+// synchronous body passes the default (every forwarded binding aliases).
 //
 // A closure is a value; how it is invoked -- an immediately-invoked call, a
-// fork spawn, a deferred submit, a with-clause iteration -- is the caller's
-// concern, not the builder's. Non-movable: `Frame()` hands out a frame that
-// points into the owned body scope and sink.
+// fork spawn, a deferred submit, a with-clause iteration -- is the referencing
+// site's concern, not the builder's. Non-movable: `Frame()` and `Bindings()`
+// hand out references into the owned code and binding context.
 class ClosureBuilder {
  public:
   ClosureBuilder(
       mir::CompilationUnit& unit, const WalkFrame& enclosing,
-      bool coroutine = false,
-      std::optional<BlockDepth> by_value_depth = std::nullopt);
+      bool coroutine = false, CapturePolicy policy = {});
 
   ClosureBuilder(const ClosureBuilder&) = delete;
   auto operator=(const ClosureBuilder&) -> ClosureBuilder& = delete;
@@ -52,35 +49,38 @@ class ClosureBuilder {
   auto operator=(ClosureBuilder&&) -> ClosureBuilder& = delete;
   ~ClosureBuilder() = default;
 
-  // The frame to lower the body through: the body scope is current, `self` is
-  // bound, and the sink intercepts enclosing-variable reads. A caller that
-  // needs a parameter to play a frame-level role (an `item.index` index)
-  // decorates this frame at its own lowering call site.
+  // The frame to lower the body through: the body block is current and the
+  // child binding context resolves enclosing references as captures.
   [[nodiscard]] auto Frame() const -> const WalkFrame& {
     return frame_;
   }
-  // The body scope to append statements / locals into.
+  // The body block to append statements / exprs into.
   [[nodiscard]] auto Body() -> mir::Block& {
-    return body_;
+    return code_.body;
   }
-  // The `self` receiver binding (`code.params[0]`), for a hand-authored body
-  // that builds its own `self` reads.
-  [[nodiscard]] auto SelfBinding() const -> mir::LocalId {
-    return self_binding_;
+  // The body's binding context, for a caller that materializes a binding by
+  // hand (a receiver for a deferred check, an explicit carrier).
+  [[nodiscard]] auto Bindings() -> CallableBindings& {
+    return bindings_;
   }
 
-  // Declares a per-invocation parameter (LRM 7.12.4 with-clause). Allocates the
-  // body slot and records the parameter; the caller maps any HIR iterator to
-  // the returned binding before lowering the body. Any role a parameter plays
-  // in the body -- a with-clause iterator, the `item.index` index -- is the
-  // caller's to wire onto the frame it lowers through, not the builder's.
-  auto AddParam(std::string_view name, mir::TypeId type) -> mir::LocalId;
+  // Declares a per-invocation parameter (LRM 7.12.4 with-clause) with its
+  // cross-body origin, so a nested clause can capture it. Allocates the body
+  // slot and records the parameter; returns its binding.
+  auto AddParam(BindingOriginId origin, std::string_view name, mir::TypeId type)
+      -> mir::LocalId;
 
-  // Snapshots an outer-scope expression into the body by value: allocates a
-  // body parameter, binds it to `outer_id` in the environment, and returns the
-  // body-side read. An integer literal clones verbatim so the body still sees a
-  // literal (constant-extracting passes depend on that shape) and no binding is
-  // made.
+  // Declares a per-invocation parameter with no cross-body identity: the body
+  // names it directly and no nested closure can capture it (a built-in array
+  // reduction whose body is the bare element, with no with-clause).
+  auto AddParamAnonymous(std::string_view name, mir::TypeId type)
+      -> mir::LocalId;
+
+  // Snapshots a computed outer-scope expression into the body by value:
+  // captures it as an environment field and returns the body-side read. An
+  // integer literal clones verbatim so the body still sees a literal (no field
+  // is made). Used by closures that build their environment by hand (the
+  // non-blocking-assignment place / operand snapshots).
   auto CaptureByValue(mir::ExprId outer_id, std::string_view name)
       -> mir::ExprId;
 
@@ -99,11 +99,9 @@ class ClosureBuilder {
 
   mir::CompilationUnit* unit_;
   mir::Block* outer_;
-  mir::Block body_;
-  mir::LocalId self_binding_{};
-  CaptureSink sink_;
+  mir::CallableCode code_;
+  CallableBindings bindings_;
   WalkFrame frame_;
-  std::vector<mir::EnvBinding> environment_;
   std::vector<mir::LocalId> invocation_params_;
 };
 
