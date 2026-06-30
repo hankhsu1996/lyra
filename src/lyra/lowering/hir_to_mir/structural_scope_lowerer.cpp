@@ -458,6 +458,11 @@ void DeclareCrossUnitRefSlots(
         std::holds_alternative<hir::UpwardRootHead>(cu.head) ||
         std::holds_alternative<hir::UpwardNamedHead>(cu.head);
     if (is_upward) {
+      if (cu.target_net_type.has_value()) {
+        throw InternalError(
+            "DeclareCrossUnitRefSlots: an upward cross-unit reference to a net "
+            "is not yet supported");
+      }
       // The member's type carries only the wrapped element; the
       // per-reference navigation plan is emitted as ordinary `CallExpr`
       // statements in the constructor body when the bind sweep runs.
@@ -468,12 +473,17 @@ void DeclareCrossUnitRefSlots(
           mir::MemberDecl{.name = std::move(member_name), .type = ext_type});
       lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = var}, ext_type);
     } else {
-      // The pointee matches the producer's storage cell. A producer-side
-      // value-storage signal is wrapped in `ObservableType` at its declaration
-      // (so a write fires subscribers), and the cross-unit pointer must point
-      // at the same wrapped cell -- otherwise the C++ types mismatch.
+      // The pointee matches the producer's actual storage cell so a read or
+      // drive reaches the right access protocol. A net producer owns a resolved
+      // cell (`ResolvedType`); any other value-storage signal is wrapped in
+      // `ObservableType` at its declaration so a write fires subscribers. The
+      // cross-unit pointer must point at that same cell -- otherwise the C++
+      // types mismatch.
+      const mir::TypeId value = module.TranslateType(cu.type);
       const mir::TypeId leaf =
-          MaybeWrapObservable(module, module.TranslateType(cu.type));
+          cu.target_net_type.has_value()
+              ? module.Unit().types.Intern(mir::ResolvedType{.value = value})
+              : MaybeWrapObservable(module, value);
       const mir::TypeId slot_type =
           module.Unit().types.PointerTo(leaf, mir::PointerOwnership::kBorrowed);
       const mir::MemberId slot = shape.members.Add(
@@ -900,21 +910,35 @@ void AppendProcessRegistration(
   block.AppendStmt(mir::ExprStmt{.expr = reg_call});
 }
 
+auto AttachNetDriver(
+    const StructuralScopeLowerer& lowerer, mir::Class& mir_class,
+    mir::ExprId net_access, mir::TypeId value_type,
+    const std::string& driver_name, hir::ExprId source,
+    const WalkFrame& resolve_frame, const WalkFrame& init_frame,
+    mir::TypeId self_ptr_type) -> diag::Result<NetDriver>;
+
+auto ContinuousAssignNetTarget(
+    const StructuralScopeLowerer& lowerer, const mir::Class& mir_class,
+    const hir::ContinuousAssign& ca) -> std::optional<mir::MemberId>;
+
 // Realizes each port connection (LRM 23.3.3). An input or output port is the
 // implied continuous assignment between the two cells, materialized as the same
-// synthesized process a scope-level `assign` produces, registered as a process.
-// A `ref` port instead binds the child's reference member -- navigated by name
-// from the owned child -- to the connected variable's cell, emitted into the
-// resolve block: one assignment of a reference, with no second cell and no
-// continuous assignment.
+// synthesized process a scope-level `assign` produces, registered as a process;
+// when the driven side is a net the edge attaches a driver rather than writing
+// the cell. A `ref` port instead binds the child's reference member --
+// navigated by name from the owned child -- to the connected variable's cell,
+// emitted into the resolve block: one assignment of a reference, with no second
+// cell and no continuous assignment.
 auto InstallPortConnections(
     StructuralScopeLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
-    WalkFrame activate_frame) -> diag::Result<void> {
+    WalkFrame init_frame, WalkFrame activate_frame) -> diag::Result<void> {
   mir::Class& mir_class = *frame.current_class;
   mir::Block& resolve_block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   ModuleLowerer& module = lowerer.Module();
   const mir::TypeId scope_ptr_type = module.Unit().builtins.scope_ptr;
+  const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
+  std::size_t net_port_index = 0;
   for (const auto& pc : hir_scope.port_connections) {
     if (pc.direction == hir::PortDirection::kRef) {
       // Bind the child's reference member to the connected variable's cell in
@@ -963,14 +987,72 @@ auto InstallPortConnections(
     }
     const auto& cell = std::get<hir::PortCellEndpoint>(pc.endpoint);
     const bool is_input = pc.direction == hir::PortDirection::kInput;
+    // A port connection is a reactive edge: the source is read, the sink is
+    // driven. An input port's source is the parent expression and its sink is
+    // the child cell; an output port's source is the child cell and its sink is
+    // the parent target. The edge body is the same continuous assignment either
+    // way; only the sink's capability picks the write protocol -- a net cell
+    // takes a driver, a variable cell a direct assignment (LRM 23.3.3).
     const hir::ContinuousAssign assign{
         .span = pc.span,
         .lhs = is_input ? cell.cell : pc.peer,
         .rhs = is_input ? pc.peer : cell.cell,
         .sensitivity_list = pc.sensitivity};
+
+    // The sink is a net in two shapes: an input port whose child cell is a net
+    // (reached cross-unit), or an output port whose parent target is a net
+    // (local). Either resolves to a driver the edge's process updates; a
+    // non-net sink keeps the direct continuous-assign write.
+    std::optional<NetDriver> net_driver;
+    auto attach_sink_driver = [&](mir::ExprId net_access,
+                                  hir::ExprId source) -> diag::Result<void> {
+      const mir::TypeId value_type =
+          std::get<mir::ResolvedType>(
+              module.Unit()
+                  .types.Get(resolve_block.exprs.Get(net_access).type)
+                  .data)
+              .value;
+      const std::string driver_name =
+          std::format("net_port_{}__driver", net_port_index++);
+      auto driver_or = AttachNetDriver(
+          lowerer, mir_class, net_access, value_type, driver_name, source,
+          resolve_frame, init_frame, self_ptr_type);
+      if (!driver_or) return std::unexpected(std::move(driver_or.error()));
+      net_driver = *driver_or;
+      return {};
+    };
+    if (is_input) {
+      const auto* prim =
+          std::get_if<hir::PrimaryExpr>(&hir_scope.exprs.Get(cell.cell).data);
+      const auto* cuv = prim != nullptr
+                            ? std::get_if<hir::CrossUnitVarRef>(&prim->data)
+                            : nullptr;
+      if (cuv != nullptr &&
+          hir_scope.cross_unit_refs.Get(cuv->id).target_net_type.has_value()) {
+        auto net_or =
+            lowerer.LowerLhsExpr(hir_scope.exprs.Get(cell.cell), resolve_frame);
+        if (!net_or) return std::unexpected(std::move(net_or.error()));
+        const mir::ExprId net_access =
+            resolve_block.exprs.Add(*std::move(net_or));
+        auto r = attach_sink_driver(net_access, pc.peer);
+        if (!r) return std::unexpected(std::move(r.error()));
+      }
+    } else if (
+        const auto net_member =
+            ContinuousAssignNetTarget(lowerer, mir_class, assign)) {
+      const mir::TypeId net_type = mir_class.members.Get(*net_member).type;
+      const mir::ExprId net_self = resolve_block.exprs.Add(
+          MakeSelfRefExpr(resolve_frame, self_ptr_type));
+      const mir::ExprId net_access = resolve_block.exprs.Add(
+          mir::MakeMemberAccessExpr(
+              net_self, mir::MemberRef{.var = *net_member}, net_type));
+      auto r = attach_sink_driver(net_access, assign.rhs);
+      if (!r) return std::unexpected(std::move(r.error()));
+    }
+
     std::string name = std::format("process_{}", mir_class.methods.size());
-    auto decl_or =
-        LowerContinuousAssign(lowerer, frame, std::move(name), assign);
+    auto decl_or = LowerContinuousAssign(
+        lowerer, frame, std::move(name), assign, net_driver);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
     AppendProcessRegistration(module, activate_frame, body, false);
@@ -1022,14 +1104,17 @@ auto ContinuousAssignNetTarget(
   return target;
 }
 
-// Installs a driver for a net-targeted continuous assignment: a driver-handle
-// member bound at Resolve (`self->driver = (self->net).AttachDriver()`) and
-// seeded at Initialize (`self->driver.Update(services, rhs)`). Returns the
-// driver handle the activation process updates whenever the right-hand side
-// changes.
+// Installs a driver on a net cell reached through a route: a driver-handle
+// member bound at Resolve (`self->driver = net_access.AttachDriver()`) and
+// seeded at Initialize (`self->driver.Update(services, source)`). `net_access`
+// is the resolve-phase lvalue of the net cell -- a local member access for a
+// continuous assignment, a cross-unit navigation for a port connection -- and
+// `source` is the driving expression, lowered in the initialize phase. Returns
+// the driver handle the activation process updates whenever the source changes.
 auto AttachNetDriver(
     const StructuralScopeLowerer& lowerer, mir::Class& mir_class,
-    mir::MemberId net_member, const hir::ContinuousAssign& ca,
+    mir::ExprId net_access, mir::TypeId value_type,
+    const std::string& driver_name, hir::ExprId source,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
     mir::TypeId self_ptr_type) -> diag::Result<NetDriver> {
   ModuleLowerer& module = lowerer.Module();
@@ -1037,29 +1122,18 @@ auto AttachNetDriver(
   mir::Block& resolve_block = *resolve_frame.current_block;
   mir::Block& init_block = *init_frame.current_block;
 
-  const mir::TypeId net_type = mir_class.members.Get(net_member).type;
-  const mir::TypeId value_type =
-      std::get<mir::ResolvedType>(module.Unit().types.Get(net_type).data).value;
   const mir::TypeId driver_type =
       module.Unit().types.Intern(mir::DriverType{.value = value_type});
   const mir::MemberId driver_member = mir_class.members.Add(
-      mir::MemberDecl{
-          .name =
-              std::format("{}__driver", mir_class.members.Get(net_member).name),
-          .type = driver_type});
+      mir::MemberDecl{.name = driver_name, .type = driver_type});
 
-  const auto resolve_self = [&] {
-    return resolve_block.exprs.Add(
-        MakeSelfRefExpr(resolve_frame, self_ptr_type));
-  };
-  const mir::ExprId net_access = resolve_block.exprs.Add(
-      mir::MakeMemberAccessExpr(
-          resolve_self(), mir::MemberRef{.var = net_member}, net_type));
   const mir::ExprId attach = resolve_block.exprs.Add(
       mir::MakeNetAttachDriverCallExpr(net_access, driver_type));
+  const mir::ExprId resolve_self =
+      resolve_block.exprs.Add(MakeSelfRefExpr(resolve_frame, self_ptr_type));
   const mir::ExprId driver_lhs = resolve_block.exprs.Add(
       mir::MakeMemberAccessExpr(
-          resolve_self(), mir::MemberRef{.var = driver_member}, driver_type));
+          resolve_self, mir::MemberRef{.var = driver_member}, driver_type));
   const mir::ExprId attach_assign = resolve_block.exprs.Add(
       mir::Expr{
           .data = mir::AssignExpr{.target = driver_lhs, .value = attach},
@@ -1068,9 +1142,9 @@ auto AttachNetDriver(
       mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = attach_assign}});
 
-  auto rhs_or = lowerer.LowerExpr(hir_scope.exprs.Get(ca.rhs), init_frame);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::ExprId seed_rhs = init_block.exprs.Add(*std::move(rhs_or));
+  auto source_or = lowerer.LowerExpr(hir_scope.exprs.Get(source), init_frame);
+  if (!source_or) return std::unexpected(std::move(source_or.error()));
+  const mir::ExprId seed_value = init_block.exprs.Add(*std::move(source_or));
   const auto init_self = [&] {
     return init_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type));
   };
@@ -1081,7 +1155,7 @@ auto AttachNetDriver(
           init_self(), mir::MemberRef{.var = driver_member}, driver_type));
   const mir::ExprId seed_update = init_block.exprs.Add(
       mir::MakeNetDriverUpdateCallExpr(
-          seed_driver, seed_services, seed_rhs,
+          seed_driver, seed_services, seed_value,
           module.Unit().builtins.void_type));
   init_block.AppendStmt(
       mir::Stmt{
@@ -1810,6 +1884,27 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       }
     }
 
+    // A net cell installs its empty-driver resolved value at construction (LRM
+    // 6.6.1), in the constructor rather than the initialize phase: a net is a
+    // readable, well-typed observable before any driver attaches, and before a
+    // cross-unit reader seeds from it during the parent-first initialize phase,
+    // so an undriven read sees the net type's undriven value, never an
+    // uninitialized cell. Drivers, attached at Resolve, update it from there.
+    if (is_net) {
+      const mir::ExprId net_target = ctor_block.exprs.Add(
+          mir::MakeMemberAccessExpr(
+              self_read(), mir::MemberRef{.var = mir_id}, mir_field_type));
+      const mir::ExprId prototype = ctor_block.exprs.Add(
+          BuildDefaultValueFromHir(module, ctor_frame, d.type));
+      ctor_block.AppendStmt(
+          mir::Stmt{
+              .label = std::nullopt,
+              .data = mir::ExprStmt{
+                  .expr = ctor_block.exprs.Add(
+                      mir::MakeObservableInitializeCallExpr(
+                          net_target, prototype, void_type))}});
+    }
+
     // A value signal, or a named event, records its address under its name so a
     // cross-unit referrer resolves it by name at construction. The excluded
     // members -- owned children and cross-unit reference slots -- are not
@@ -1892,9 +1987,23 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             "a net with more than one driver is not yet supported");
       }
       driven_nets.push_back(*net_member);
+      // The net cell is a local member; its resolve-phase lvalue is a member
+      // access off `self`.
+      mir::Block& resolve_block = *resolve_frame.current_block;
+      const mir::TypeId net_type = mir_class.members.Get(*net_member).type;
+      const mir::TypeId value_type =
+          std::get<mir::ResolvedType>(module.Unit().types.Get(net_type).data)
+              .value;
+      const mir::ExprId net_self = resolve_block.exprs.Add(
+          MakeSelfRefExpr(resolve_frame, self_ptr_type));
+      const mir::ExprId net_access = resolve_block.exprs.Add(
+          mir::MakeMemberAccessExpr(
+              net_self, mir::MemberRef{.var = *net_member}, net_type));
+      const std::string driver_name =
+          std::format("{}__driver", mir_class.members.Get(*net_member).name);
       auto driver_or = AttachNetDriver(
-          lowerer, mir_class, *net_member, ca, resolve_frame, init_frame,
-          self_ptr_type);
+          lowerer, mir_class, net_access, value_type, driver_name, ca.rhs,
+          resolve_frame, init_frame, self_ptr_type);
       if (!driver_or) return std::unexpected(std::move(driver_or.error()));
       net_driver = *driver_or;
     }
@@ -1928,7 +2037,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   EmitInstanceMemberConstruction(lowerer, ctor_frame);
   InstallCrossUnitRefs(lowerer, ctor_frame);
   auto port_conn_r = InstallPortConnections(
-      lowerer, ctor_frame, resolve_frame, activate_frame);
+      lowerer, ctor_frame, resolve_frame, init_frame, activate_frame);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
 
   ctor_code.params = {self_id};

@@ -101,12 +101,18 @@ using CrossUnitRefHead =
 // A cross-unit reference resolved once at construction. `head` is where
 // navigation starts; `path` carries the shared navigation from the head down to
 // the referenced leaf, by name across the unit boundary; `type` is the
-// slang-resolved leaf type. The slot is read / written / observed through one
-// stored direct reference.
+// slang-resolved leaf data type. `target_net_type` is the target's net type
+// when the target is a net (LRM 6.7: the net type fixes how drivers resolve and
+// the undriven value), or empty when the target is a variable. Together they
+// determine the producer's actual cell -- a resolved net of that net type, or a
+// variable's observable cell -- which the realized cross-unit cell must match
+// so a read reaches the right access protocol. The slot is read / written /
+// observed through one stored direct reference.
 struct CrossUnitRefDecl {
   CrossUnitRefHead head;
   std::vector<PathStep> path;
   TypeId type;
+  std::optional<NetType> target_net_type;
 };
 
 // `target_unit` is a cross-unit reference -- the name of the instantiated unit,
@@ -123,11 +129,13 @@ struct InstanceMemberDecl {
 enum class PortDirection : std::uint8_t { kInput, kOutput, kRef };
 
 // How the child port is reached, by realization. An input or output port has
-// its own cell and is realized as a reactive edge that reads it during
-// simulation, so it holds a persistent cross-unit reference (`cell`, a
-// `CrossUnitVarRef`). A `ref` port owns no cell; it is bound once in the
-// resolve phase, so it holds only the by-name reach (`head` + `path`, with
-// `type` the port value type) -- no persistent slot.
+// its own cell and is realized as a reactive edge over it (a variable cell is
+// written / read, a net cell is driven / read), so it holds a persistent
+// cross-unit reference (`cell`, a `CrossUnitVarRef`) whose target capability
+// (net versus variable) the reference itself carries. A `ref` port owns no
+// cell; it is bound once in the resolve phase, so it holds only the by-name
+// reach
+// (`head` + `path`, with `type` the port value type) -- no persistent slot.
 struct PortCellEndpoint {
   ExprId cell;
 };

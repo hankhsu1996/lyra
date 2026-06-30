@@ -12,6 +12,7 @@
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/NetType.h>
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
 
@@ -59,10 +60,6 @@ auto ConnectElementPorts(
       return PortConnectionUnsupported(
           span, "inout port connection is not yet supported");
     }
-    if (port.isNetPort()) {
-      return PortConnectionUnsupported(
-          span, "net-typed port connection is not yet supported");
-    }
     const auto* internal =
         port.internalSymbol == nullptr
             ? nullptr
@@ -86,6 +83,21 @@ auto ConnectElementPorts(
       // default initial value (LRM 23.3.3.2); no parent driver is installed.
       continue;
     }
+    // A net port's child member is a resolved-net cell, reached across the
+    // boundary like any cross-unit cell (LRM 6.5, 23.3.3); HIR-to-MIR realizes
+    // the connection as a reactive edge whose net side attaches a driver. Only
+    // the `wire` / `tri` resolution is supported; other net types are rejected.
+    if (port.isNetPort()) {
+      switch (internal->as<slang::ast::NetSymbol>().netType.netKind) {
+        case slang::ast::NetType::Wire:
+        case slang::ast::NetType::Tri:
+          break;
+        default:
+          return PortConnectionUnsupported(
+              span, "this net type is not yet supported");
+      }
+    }
+
     const bool is_ref = port.direction == slang::ast::ArgumentDirection::Ref;
     if (is_ref) {
       // A `const ref` port shares storage but forbids the child writing through
