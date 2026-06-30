@@ -3,7 +3,6 @@
 #include <array>
 #include <concepts>
 #include <cstdint>
-#include <initializer_list>
 #include <span>
 #include <type_traits>
 #include <variant>
@@ -11,59 +10,38 @@
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/packed.hpp"
+#include "lyra/value/packed_type.hpp"
 
 namespace lyra::value {
 
 class PackedArrayRef;
 
-// Declared range of one packed dimension. Outermost dimension is dims[0]; the
-// inner element type's dim stack follows. For `bit [N-1:0]`: dims = [{N-1,
-// 0}] (1D, each element is one bit). For `bit [1:0][7:0]`: dims = [{1, 0},
-// {7, 0}] (2D, each outer element is `bit [7:0]`).
+// Unified integral value, mirroring slang's `IntegralType`: one type for every
+// integral, three attributes plus a dim stack. `backend::cpp` emits every
+// SystemVerilog integral (`byte`, `shortint`, `int`, `longint`, `integer`,
+// `time`, `bit [N:0]`, `logic [N:0]`, `reg [N:0]`, and multi-dim packed forms
+// like `bit [N:0][M:0]`) as `PackedArray`.
 //
-// This carries SystemVerilog's declared bounds. Storage layout is private --
-// PackedArray today uses flat-bit BitValue/LogicValue, but the API contract
-// is element-level (operator[] / Slice take outer-element positions), so
-// future storage optimizations (canonical byte alignment, vector-of-elements
-// for huge outer dims, etc.) change runtime internals without touching the
-// emit or this contract.
-struct PackedRange {
-  std::int64_t left;
-  std::int64_t right;
-
-  [[nodiscard]] auto ElementCount() const -> std::uint64_t {
-    return static_cast<std::uint64_t>(
-        (left >= right ? left - right : right - left) + 1);
-  }
-};
-
-// Unified integral value. Mirrors slang's `IntegralType` and the legacy
-// archive's `IntegralInfo`: one type, three attributes plus a dim stack.
-// `backend::cpp` emits every SystemVerilog integral (`byte`, `shortint`,
-// `int`, `longint`, `integer`, `time`, `bit [N:0]`, `logic [N:0]`, `reg
-// [N:0]`, and multi-dim packed forms like `bit [N:0][M:0]`) as `PackedArray`.
-//
-// `dims_` carries the declared structure: 1D for vectors, multi-dim for
-// packed-of-packed. `operator[]` and `Slice` dispatch via `dims_` so the API
-// is element-level regardless of operand dimensionality -- the emitted C++
-// never bakes element-width arithmetic into call sites. Storage layout (flat
-// bit planes today; potentially canonical-byte-aligned or vector-of-elements
-// once optimization work begins) is private to PackedArray and disjoint from
-// the API contract.
+// The dimension stack carries the declared structure: 1D for vectors,
+// multi-dim for packed-of-packed. `operator[]` and `Slice` dispatch on it so
+// the API is element-level regardless of operand dimensionality, and the
+// emitted C++ never bakes element-width arithmetic into call sites. Storage
+// layout (flat bit planes today; potentially canonical-byte-aligned or
+// vector-of-elements once optimization work begins) is private to PackedArray
+// and disjoint from the API contract.
 class PackedArray {
  public:
-  // Default constructor: 0-bit unsigned 2-state. A 0-bit PackedArray is not a
-  // valid SV value -- it serves as the "uninitialized" sentinel state that lets
-  // `Var<PackedArray>` be declared without an inline initializer; the first
-  // assignment into a 0-bit destination adopts the source's shape (see
-  // `AssignFrom`).
+  // Default constructor: a 0-bit empty value, not a valid SystemVerilog value.
+  // It is the unestablished state of a freshly value-initialized cell and of
+  // the default-constructed internal slots STL and the container wrappers
+  // require; a later operation installs the declared representation before any
+  // read.
   PackedArray();
 
-  // Primary constructor: declared dim stack + sign + 4-state. Total bit
-  // width is the product of dim sizes (cached internally as `bit_width_`).
-  PackedArray(
-      std::initializer_list<PackedRange> dims, bool is_signed,
-      bool is_four_state);
+  // Primary constructor: a default value of the declared type. Generated code
+  // builds the `PackedType` inline (`PackedArray(PackedType{{{3,0},{7,0}},
+  // false, true})`); a selector builds one from runtime-computed dims.
+  explicit PackedArray(PackedType type);
 
   // 1D shorthand for the common `bit [bit_width-1:0]` case. Equivalent to
   // the dim-list constructor with `{{bit_width-1, 0}}`.
@@ -92,33 +70,36 @@ class PackedArray {
   // C++ keeps the SV-level reason visible.
   [[nodiscard]] static auto FromBool(bool value) -> PackedArray;
 
-  // Construct a narrow PackedArray (bit_width <= 64) from an integer value.
-  // The `std::int64_t` parameter is the carrier type wide enough to cover
-  // every narrow width; the resulting shape is set by `bit_width`, with bits
-  // above masked out and the unknown plane left at zero.
+  // Constructs a narrow PackedArray (bit_width <= 64) from an integer value:
+  // bits above the width are masked out and the unknown plane is left at zero.
+  // The result shape comes from a `prototype` value whose type supplies it (a
+  // conversion's destination, the prototype's own contents unused), a
+  // `PackedType` (a literal's declared type), or a single bit width (an
+  // internal caller's computed flat width).
+  [[nodiscard]] static auto FromInt(
+      std::int64_t value, const PackedArray& prototype) -> PackedArray;
+  [[nodiscard]] static auto FromInt(std::int64_t value, const PackedType& type)
+      -> PackedArray;
   [[nodiscard]] static auto FromInt(
       std::int64_t value, std::uint64_t bit_width, bool is_signed,
       bool is_four_state) -> PackedArray;
 
-  // Construct a PackedArray of arbitrary width from raw word planes. Used
-  // by cpp emit for any literal that does not fit a single int64 carrier:
-  // widths > 64 bits, or 4-state literals carrying X/Z bits. `value_words`
-  // must have ceil(bit_width / 64) entries; bits above `bit_width` in the
-  // top word are masked. For 2-state shapes `unknown_words` must be empty;
-  // for 4-state shapes it must either be empty (no X/Z) or match
-  // `value_words` in size.
+  // Construct a PackedArray of the declared type from raw word planes, for a
+  // literal that does not fit a single int64 carrier: widths > 64 bits, or
+  // 4-state literals carrying X/Z bits. `value_words` must have
+  // ceil(bit_width / 64) entries; bits above `bit_width` in the top word are
+  // masked. For 2-state shapes `unknown_words` must be empty; for 4-state
+  // shapes it must either be empty (no X/Z) or match `value_words` in size.
+  // Generated code passes the word planes as `std::array` spans and the shape
+  // as a `PackedType`.
   [[nodiscard]] static auto FromWords(
-      std::initializer_list<std::uint64_t> value_words,
-      std::initializer_list<std::uint64_t> unknown_words,
-      std::uint64_t bit_width, bool is_signed, bool is_four_state)
+      std::span<const std::uint64_t> value_words,
+      std::span<const std::uint64_t> unknown_words, const PackedType& type)
       -> PackedArray;
 
-  // Span-based twin of FromWords for callers that assemble word planes
-  // dynamically (e.g. the $sscanf scanner accumulating an arbitrary number
-  // of bits). Same shape contract: `value_words.size() ==
-  // ceil(bit_width / 64)`; for 2-state shapes `unknown_words` must be empty;
-  // for 4-state shapes it must either be empty (no X/Z) or match
-  // `value_words` in size.
+  // Width-shorthand twin of FromWords for callers that assemble word planes
+  // dynamically against a 1-D flat width (e.g. the $sscanf scanner
+  // accumulating an arbitrary number of bits). Same word-plane contract.
   [[nodiscard]] static auto FromWords(
       std::span<const std::uint64_t> value_words,
       std::span<const std::uint64_t> unknown_words, std::uint64_t bit_width,
@@ -136,22 +117,18 @@ class PackedArray {
       std::span<const char> bytes, std::uint64_t bit_width, bool is_signed,
       bool is_four_state) -> PackedArray;
 
-  // Width-aware conversion. Constructs a fresh PackedArray of the
-  // destination shape and copies bits from `src`, sign- or zero-extending
-  // per `src`'s signedness when widening, truncating when narrowing.
-  // 2-state -> 4-state leaves the unknown plane zero; 4-state -> 2-state
-  // collapses any X/Z bits to 0. Both wide (>64-bit) and 4-state paths are
-  // supported.
+  // Converts `src` to the `prototype`'s declared representation: a fresh value
+  // of the prototype's shape carrying `src`'s bits, sign- or zero-extended when
+  // widening and truncated when narrowing per `src`'s signedness, with the
+  // unknown plane adjusted across the 2-state / 4-state boundary (widening adds
+  // a zero plane, narrowing collapses X/Z to 0). Generated code passes a
+  // prototype value of the destination type (its contents are unused); the
+  // single-bit-width form is an internal shorthand for a computed flat width.
+  [[nodiscard]] static auto ConvertFrom(
+      const PackedArray& src, PackedArray prototype) -> PackedArray;
   [[nodiscard]] static auto ConvertFrom(
       const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
       bool dst_is_four_state) -> PackedArray;
-
-  // Emit-side selector chain reads against a mutable base produce a
-  // `PackedArrayRef` rvalue; this overload materializes via direct-init so
-  // emit can pass the chain expression straight in.
-  [[nodiscard]] static auto ConvertFrom(
-      const PackedArrayRef& src, std::uint64_t dst_bit_width,
-      bool dst_is_signed, bool dst_is_four_state) -> PackedArray;
 
   // LRM 11.4.12: `{a, b, c, ...}`. First operand occupies the result's MSBs,
   // last occupies the LSBs. Total bit width is the sum of operand widths.
@@ -187,8 +164,8 @@ class PackedArray {
   [[nodiscard]] auto IsFourState() const -> bool;
 
   // Restore the value to this shape's canonical default in place: all-zero
-  // for 2-state, all-X for 4-state (LRM Table 6-7 / Table 7-1). Shape fields
-  // (`bit_width_`, `is_signed_`, `is_four_state_`, `dims_`) are preserved.
+  // for 2-state, all-X for 4-state (LRM Table 6-7 / Table 7-1). The declared
+  // type (dimensions, signedness, state domain) is preserved.
   // Container shield slots call this on OOB access so the slot mirrors what
   // a freshly-defaulted element would read as.
   auto ResetToDefault() -> void;
@@ -236,7 +213,7 @@ class PackedArray {
   // formatter, which post-process the NUL byte differently.
   [[nodiscard]] auto ByteString() const -> std::string;
 
-  // Typed view accessors. The atom encoded in `is_four_state_` selects which
+  // Typed view accessors. The state domain selects which
   // overload is callable: 2-state stores expose Bit views, 4-state stores
   // expose Logic views. Calling the wrong one throws InternalError.
   [[nodiscard]] auto AsBitView() -> BitView;
@@ -244,44 +221,35 @@ class PackedArray {
   [[nodiscard]] auto AsLogicView() -> LogicView;
   [[nodiscard]] auto AsLogicView() const -> ConstLogicView;
 
-  // Construction adopts the source's shape (a fresh object has no declared
-  // shape to preserve). Assignment is the opposite -- it preserves this
-  // variable's declared shape via AssignFrom, because a SystemVerilog variable
-  // keeps its type across assignment. The move constructor leaves the source a
-  // valid zero-of-the-same-shape (not an empty husk), so PackedArray relocates
-  // correctly inside STL containers (queue / vector / deque insert and erase).
+  // A pure value: copy, move, and assignment all replace the whole value --
+  // declared type and contents together. A SystemVerilog variable keeps its
+  // declared type across assignment, but that is enforced at the store boundary
+  // (which converts the right-hand side to the destination's declared type
+  // before the store) and the variable cell, not by the value's own assignment.
+  // With no shape-preserving assignment, the type relocates correctly inside
+  // STL containers through the defaulted move, with no special handling.
   PackedArray(const PackedArray&) = default;
-  PackedArray(PackedArray&& other) noexcept;
-  auto operator=(const PackedArray& other) -> PackedArray&;
-  auto operator=(PackedArray&& other) noexcept(false) -> PackedArray&;
+  PackedArray(PackedArray&&) noexcept = default;
+  auto operator=(const PackedArray&) -> PackedArray& = default;
+  auto operator=(PackedArray&&) noexcept -> PackedArray& = default;
   ~PackedArray() = default;
 
-  // Width-aware copy preserving THIS object's shape. The shape
-  // (bit_width / signedness / 4-state / dims) is declared type information
-  // fixed at construction; assignment keeps it and copies the source's bits
-  // in. ExpectSameShape guards a missing upstream ConvertFrom.
-  auto AssignFrom(const PackedArray& other) -> void;
+  // True for the 0-bit empty state a value-initialized cell holds before its
+  // declared representation is installed. The representation is installed once,
+  // before any store; every store is then asserted against it. This predicate
+  // distinguishes the not-yet-installed state from an installed one.
+  [[nodiscard]] auto IsUninitialized() const -> bool;
 
-  // Storage-level swap, bypassing AssignFrom's shape-preservation rule.
-  // Found by ADL so STL element-relocation primitives (`std::ranges::sort`,
-  // `reverse`, etc.) can shuffle PackedArrays inside a container without
-  // tripping the user-facing "assignment preserves destination shape"
-  // invariant. Element relocation within a container is structural motion,
-  // not an SV-visible assignment, so adopting source shape via swap is the
-  // correct primitive for that context. Name is lowercase to satisfy the
-  // ADL contract std::swap and std::ranges::swap require.
-  // NOLINTNEXTLINE(readability-identifier-naming)
-  friend auto swap(PackedArray& a, PackedArray& b) noexcept -> void {
-    using std::swap;
-    swap(a.bit_width_, b.bit_width_);
-    swap(a.is_signed_, b.is_signed_);
-    swap(a.is_four_state_, b.is_four_state_);
-    swap(a.storage_, b.storage_);
-    swap(a.dims_, b.dims_);
-  }
+  // True when `other` carries the same declared representation -- dimension
+  // stack, signedness, and state domain. Once established, a cell asserts this
+  // on every store: the right-hand side must already be at the cell's declared
+  // type (the store boundary is what converts it there), and the cell never
+  // reshapes. A mismatch reaching a store means a required upstream conversion
+  // was not emitted -- a compiler bug.
+  [[nodiscard]] auto SameRepresentation(const PackedArray& other) const -> bool;
 
   // Extract the value as a 64-bit signed integer. Sign-extends from
-  // bit_width when is_signed_ is true. X/Z bits map to 0. bit_width must
+  // bit_width when the value is signed. X/Z bits map to 0. bit_width must
   // be <= 64.
   [[nodiscard]] auto ToInt64() const -> std::int64_t;
 
@@ -370,7 +338,9 @@ class PackedArray {
   // returns the new value (standard C++ idiom); postfix snapshots the old
   // value, mutates, returns the snapshot.
   auto operator++() -> PackedArray& {
-    return *this = *this + FromInt(1, bit_width_, is_signed_, is_four_state_);
+    return *this = *this + FromInt(
+                               1, type_.bit_width, type_.is_signed,
+                               type_.is_four_state);
   }
   auto operator++(int) -> PackedArray {
     PackedArray prior = *this;
@@ -378,7 +348,9 @@ class PackedArray {
     return prior;
   }
   auto operator--() -> PackedArray& {
-    return *this = *this - FromInt(1, bit_width_, is_signed_, is_four_state_);
+    return *this = *this - FromInt(
+                               1, type_.bit_width, type_.is_signed,
+                               type_.is_four_state);
   }
   auto operator--(int) -> PackedArray {
     PackedArray prior = *this;
@@ -423,8 +395,8 @@ class PackedArray {
       const PackedArray& value) -> void;
 
   // Proxy-chain entry points. Positions are in the operand's outer-element
-  // units; `dims_` decides the element bit width internally. For a 1D
-  // operand (`dims_.size() == 1`), one "element" is one bit, so the chain
+  // units; the dimension stack decides the element bit width internally. For a
+  // 1D operand (a single dimension), one "element" is one bit, so the chain
   // realises LRM 11.5.1 bit-select / part-select directly. For a multi-dim
   // operand, one "element" is the inner subtype, and the API scales
   // positions internally.
@@ -483,9 +455,9 @@ class PackedArray {
   [[nodiscard]] auto ReductionXnor() const -> PackedArray;
 
  private:
-  // Constructs a value of the given runtime dim stack. Twin of the
-  // `initializer_list` dim constructor, for shapes computed at runtime (a
-  // selector's result dims). Bit width is the product of the dims.
+  // Constructs a default value of a dim stack computed at runtime (a selector's
+  // result dims), without first materializing a `PackedType`. Bit width is the
+  // product of the dims.
   PackedArray(
       std::span<const PackedRange> dims, bool is_signed, bool is_four_state);
 
@@ -495,8 +467,8 @@ class PackedArray {
   // fully written (value from `value_words`, unknown from `unknown_words` or
   // zero when empty); no caller can leak the all-X residue left by
   // LogicValue's default ctor. The value is built with `dims` from the start,
-  // so its shape is never patched in afterward. `MakeFromWordPlanes` is the
-  // 1-D shorthand.
+  // so its shape is never patched in afterward. The single-bit-width overload
+  // is the 1-D shorthand.
   [[nodiscard]] static auto MakeFromWordPlanesShaped(
       std::span<const PackedRange> dims, bool is_signed, bool is_four_state,
       std::span<const std::uint64_t> value_words,
@@ -506,11 +478,20 @@ class PackedArray {
       std::span<const std::uint64_t> value_words,
       std::span<const std::uint64_t> unknown_words) -> PackedArray;
 
-  std::uint64_t bit_width_;
-  bool is_signed_;
-  bool is_four_state_;
+  // Copies `src`'s bits into the already-shaped destination `dst`, sign- or
+  // zero-extending or truncating per `src`'s signedness and adjusting the
+  // unknown plane across the state-domain boundary. The shared core of the
+  // ConvertFrom overloads, which differ only in how they obtain `dst` (a
+  // prebuilt prototype value, or a fresh value of a given bit width).
+  [[nodiscard]] static auto ConvertBitsInto(
+      PackedArray dst, const PackedArray& src) -> PackedArray;
+
+  // The integral value's declared type: dimension stack, signedness, state
+  // domain, and the width derived from the dimensions. The same descriptor a
+  // construction takes and an enum base declares (`PackedType`), so the queries
+  // below all derive from one source.
+  PackedType type_;
   std::variant<BitValue, LogicValue> storage_;
-  std::vector<PackedRange> dims_;
 };
 
 // Writable reference into a sub-range of a PackedArray. Composes through

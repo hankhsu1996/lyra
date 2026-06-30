@@ -20,24 +20,25 @@ default-initialise the copy, return.
 
 ### Sort uses selection sort, not the standard-library introsort
 
-The packed-array move-assign operator preserves the destination's declared shape rather than
-adopting the source's; this is the correct semantic for SV-language assignments. The standard
-library's `std::ranges::sort` (libstdc++ introsort) internally evicts an element into a temporary
-via move-construct, then move-assigns from another element into the now-empty slot; that move-
-assign tripping the shape check produces a runtime error. Reverse works because it uses `iter_swap`,
-which is ADL-hooked with a friend `swap` that exchanges storage directly. Sort cannot be ADL-hooked
-the same way -- it touches elements via `=`, not `swap`. The runtime therefore implements `Sort` /
-`Rsort` as in-place selection sort using ADL `swap`. The asymptotic O(n^2) cost is acceptable
-because (a) the realistic SV workload runs sort on small arrays and (b) the alternative -- relaxing
-the move-assign shape check -- would silently weaken the shape-preservation safety net used by
-user-facing assignments.
+The SV comparison over 4-state keys is not a strict weak ordering. A key carrying an `x` / `z`
+compares indeterminate, so `a < b` and `b < a` can both be false while a definite `a < c` still
+holds -- the equivalence the comparator induces is not transitive. `std::ranges::sort` (libstdc++
+introsort) is undefined behaviour on such a comparator: it relies on a strict weak ordering for its
+partition bounds and can read out of range. A pairwise in-place selection sort makes no such
+assumption -- it yields a defined order with no UB. The asymptotic O(n^2) cost is acceptable because
+the realistic SV workload runs sort on small arrays.
+
+(An earlier version of this decision rested instead on the packed-array move-assign preserving the
+destination's shape, which `std::ranges::sort`'s element eviction would have tripped. The
+value-model reset made every value pure -- assignment adopts the whole value, see
+[value-store-discipline](value-store-discipline.md) -- so that reason no longer applies; the
+strict-weak-ordering reason above is what keeps selection sort in place.)
 
 ## Rejected alternatives
 
-- Relaxing the packed-array move-assign to adopt the source shape. Would let `std::ranges::sort`
-  work directly, but would silently reshape destinations on SV assignments if any backend conversion
-  path failed to insert the matching conversion. Keeping the shape-preservation guarantee in place
-  is worth the O(n^2) sort.
+- Switching to `std::ranges::sort` now that the move-assign no longer preserves shape. The shape
+  obstacle is gone, but the 4-state comparator is still not a strict weak ordering, so the standard
+  sort would be undefined behaviour. A robust pairwise sort is required regardless.
 
 ## Notes
 

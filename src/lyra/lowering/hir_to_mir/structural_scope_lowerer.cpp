@@ -1755,30 +1755,59 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         var_kind != mir::TypeKind::kExternalUnitObject &&
         var_kind != mir::TypeKind::kEvent;
     if (is_assignable_value) {
-      mir::ExprId value_id{};
-      if (var->initializer.has_value()) {
-        auto value_or = lowerer.LowerExpr(
-            hir_scope.exprs.Get(*var->initializer), init_frame);
-        if (!value_or) return std::unexpected(std::move(value_or.error()));
-        value_id = initialize_block.exprs.Add(*std::move(value_or));
-      } else {
-        value_id = initialize_block.exprs.Add(
-            BuildDefaultValueFromHir(module, init_frame, d.type));
-      }
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeMemberAccessExpr(
               init_self_read(), mir::MemberRef{.var = mir_id}, mir_field_type));
-      // An observable cell init routes through `Var<T>::Set` so the field's
-      // engine-side change-tracking sees the initial value. Plain fields use a
-      // regular `AssignExpr`.
-      const mir::ExprId services_id = initialize_block.exprs.Add(
-          mir::MakeServicesCallExpr(
-              init_self_read(), module.Unit().builtins.services));
-      const mir::Expr init_expr = BuildObservableAssignExpr(
-          module.Unit(), initialize_block, services_id, init_target, value_id,
-          std::nullopt, mir_value_type, module.Unit().builtins.void_type);
-      const mir::ExprId assign_id = initialize_block.exprs.Add(init_expr);
-      initialize_block.AppendStmt(mir::ExprStmt{.expr = assign_id});
+      const auto append_stmt = [&](mir::Expr expr) {
+        initialize_block.AppendStmt(
+            mir::Stmt{
+                .label = std::nullopt,
+                .data = mir::ExprStmt{
+                    .expr = initialize_block.exprs.Add(std::move(expr))}});
+      };
+      // An observable cell init routes the value through the cell's wrapper so
+      // its engine-side change-tracking sees it; a plain field gets a regular
+      // assignment.
+      const auto emit_value_store = [&](mir::ExprId value_id) {
+        const mir::ExprId services_id = initialize_block.exprs.Add(
+            mir::MakeServicesCallExpr(
+                init_self_read(), module.Unit().builtins.services));
+        append_stmt(BuildObservableAssignExpr(
+            module.Unit(), initialize_block, services_id, init_target, value_id,
+            std::nullopt, mir_value_type, module.Unit().builtins.void_type));
+      };
+
+      // Every observable value cell installs its declared representation and
+      // default at construction (LRM 10.5), so its type is fixed by
+      // construction and a later store -- including a user initializer -- is
+      // verified against it rather than discovered from whichever store runs
+      // first. A non-observable value member carries no cell wrapper, so it
+      // installs its representation through an ordinary store of the default.
+      if (mir::IsObservableCellType(module.Unit().types.Get(mir_field_type))) {
+        const mir::ExprId prototype = initialize_block.exprs.Add(
+            BuildDefaultValueFromHir(module, init_frame, d.type));
+        append_stmt(
+            mir::MakeObservableInitializeCallExpr(
+                init_target, prototype, module.Unit().builtins.void_type));
+        if (var->initializer.has_value()) {
+          auto value_or = lowerer.LowerExpr(
+              hir_scope.exprs.Get(*var->initializer), init_frame);
+          if (!value_or) return std::unexpected(std::move(value_or.error()));
+          emit_value_store(initialize_block.exprs.Add(*std::move(value_or)));
+        }
+      } else {
+        mir::ExprId value_id{};
+        if (var->initializer.has_value()) {
+          auto value_or = lowerer.LowerExpr(
+              hir_scope.exprs.Get(*var->initializer), init_frame);
+          if (!value_or) return std::unexpected(std::move(value_or.error()));
+          value_id = initialize_block.exprs.Add(*std::move(value_or));
+        } else {
+          value_id = initialize_block.exprs.Add(
+              BuildDefaultValueFromHir(module, init_frame, d.type));
+        }
+        emit_value_store(value_id);
+      }
     }
 
     // A value signal, or a named event, records its address under its name so a

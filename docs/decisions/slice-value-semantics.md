@@ -132,8 +132,7 @@ not, and a runtime modeling one should not invent the unification.
 
 - LRM 7.4.5 + Table 7-1 (invalid-index read / write), 7.4.6 (operations on arrays), 7.6 (array
   assignment is a copy), 7.7 (a by-value array argument is a copy).
-- `value-assignment-and-moved-from.md` -- the fat-value, shape-preserving assignment model the
-  materialized read produces into.
+- `integral-representation.md` -- the fat value a materialized read produces.
 - `runtime-shape-and-default-value.md` -- the element-shape shield slot that sources the synthesized
   default in an out-of-range slice position.
 - `queue-operators.md` -- the parallel "read and write are different operations, chosen at lowering"

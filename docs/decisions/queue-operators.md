@@ -42,25 +42,33 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
    the read-side otherwise. Keeping the choice at lowering leaves the backend render purely
    mechanical: it emits the method the node names and never re-decides read versus write.
 
-3. **Unpacked concatenation reuses the concatenation value-build primitive.** Packed, string, and
-   queue `{...}` are the same `ConcatExpr` primitive, realized per result type -- a bit join, a
-   string join, or the runtime queue builder. The backend derives element-vs-spread from each
-   operand's type (an unpacked-container operand is spliced, anything else is one element), so the
-   node needs no per-operand tag. A second concatenation node was rejected for the same reason as a
-   dedicated access node: concatenation is one primitive, and the result type already states which
-   realization applies.
+3. **Packed and string concatenation are the value-build primitive; a queue concatenation is a
+   runtime builder call.** A packed or string `{...}` is the `ConcatExpr` primitive realized per
+   result type -- a bit join or a string join -- whose result shape is carried entirely by the
+   result type, so the operands are joined directly. A queue `{...}` is not the same primitive:
+   because the queue value is an ordinary value that carries its own declared representation, a
+   queue concatenation must produce a value already holding its element shape and LRM 7.10.5 bound,
+   and an empty `{}` cannot recover an element shape from its parts. It therefore lowers to a call
+   against the queue builder whose element-default and bound arguments are produced by lowering --
+   the same channel every other shaped container construction uses -- ahead of the concatenation
+   parts; the backend derives element-vs-spread from each part's type (an unpacked-container part is
+   spliced, anything else is one element), so the call needs no per-part tag. Carrying the element
+   shape as a payload field on the shared concatenation node was rejected: the element default is
+   ordinary construction data the result type already implies, supplied through the call's
+   arguments, not a field only one result type reads.
 
-4. **A queue's element shape and bound are declared-type properties, preserved across assignment.**
-   `value-assignment-and-moved-from.md` established that a shape-bearing value keeps the
-   destination's declared type across assignment and copies only the value in. A queue's element
-   shape (its out-of-bounds shield slot, see `runtime-shape-and-default-value.md`) and its LRM
-   7.10.5 bound are that kind of property: `q = rhs` keeps `q`'s shape and bound and copies the
-   elements, rather than adopting the source's. Because a declared queue is default-constructed and
-   then initialized by assignment, the value type adopts the source's shape (and bound) on that
-   first store and preserves thereafter -- so assigning the empty `{}` or an unbounded concatenation
-   result keeps the variable's shape, and the concatenation value therefore carries no element
-   default. This is what removed an earlier element-default field that had been compensating for an
-   assignment that wrongly adopted the source's shape.
+4. **A queue's element shape and bound are declared-type properties the store boundary conforms to,
+   not a shape-preserving assignment.** A queue's element shape (its out-of-bounds shield slot, see
+   `runtime-shape-and-default-value.md`) and its LRM 7.10.5 bound are fixed by its declared type,
+   while its length and elements are value state. The queue value is an ordinary value -- copy,
+   move, and assignment all replace it whole -- and the declared element shape and bound are
+   established at construction and re-applied at every semantic store, not preserved by the value's
+   own assignment operator. So a concatenation value carries its element default and bound (an empty
+   `{}` therefore matches its declared type rather than relying on the destination to keep one), and
+   assigning a differently-bounded source conforms it to the destination's bound at the store
+   boundary. This keeps the "the cell owns the declared type, the store converts to it" discipline
+   uniform with every other value family, rather than letting a queue's assignment operator silently
+   keep the destination's shape.
 
 5. **`$` resolves to `size - 1` at the indexing site.** Slang models `$` as an unbounded literal
    with no value of its own; it means "the last index" of the queue being indexed. The AST-to-HIR
@@ -77,7 +85,7 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
 - All three queue slice forms (`q[a:b]`, `q[base+:w]`, `q[base-:w]`) are supported: they reduce to a
   low / high pair fed to the same `Slice` method call, so the indexed forms cost no extra machinery.
 - An unpacked concatenation whose result is a dynamic or fixed array rather than a queue is rejected
-  with a diagnostic; it extends the same `ConcatExpr` mechanism when a consumer needs it.
+  with a diagnostic; it extends the same builder mechanism when a consumer needs it.
 - `$` is supported in procedural contexts, where every documented queue idiom lives. A `$` in a
   structural context (a continuous assignment) surfaces as unsupported rather than silently
   mis-lowering.
@@ -87,8 +95,6 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
 - LRM 7.10 (queues), 7.10.1 (operators / invalid index / `q[$+1]`), 7.10.4 (push / pop / insert via
   assignment and concatenation), 7.10.5 (bounded queues), 10.10 (unpacked array concatenation),
   11.2.2 / 11.4.5 (aggregate equality).
-- `value-assignment-and-moved-from.md` -- the type-vs-value distinction the queue's shape and bound
-  follow.
 - `runtime-shape-and-default-value.md` -- the element-shape shield slot a queue carries.
 - `builtin-call-identity.md` -- the built-in method-call mechanism these operators reuse rather than
   adding select nodes beside.

@@ -99,11 +99,11 @@ that were previously deferred:
    `engine.Services()` at construction.
 2. **`Var<T>` must be default-constructible.** A `Var<PackedArray> a{};` value-initializes the inner
    `T` through `T value_{}`. `PackedArray`, `UnpackedArray<T>`, and `DynamicArray<T>` gain default
-   constructors that produce a 0-bit sentinel ("uninitialized") shape; the first MIR-level
-   `AssignFrom` from a non-zero source shape adopts the source's shape (subsequent writes preserve
-   destination shape per LRM 10.6.1). The `WordCountForBits` / `PackedWords` 0-bit guards are
-   relaxed correspondingly. The default state is unobservable: MIR guarantees an `AssignExpr` runs
-   before any read.
+   constructors that produce a 0-bit unestablished shape; the cell installs its declared type at
+   construction, before any store, and a store then requires the right-hand side to already be at
+   that representation (LRM 10.6.1). The `WordCountForBits` / `PackedWords` 0-bit guards are relaxed
+   correspondingly. The default state is unobservable: MIR guarantees the install runs before any
+   read.
 
 ### Why every value var gets an init statement, including the default case
 
@@ -177,9 +177,9 @@ pointers). The filter is structural: any var whose MIR type is in the set
 - `Scope` takes `RuntimeServices&` at construction; `Scope::Bind()` no longer takes a services
   argument; the generated host `main.cpp` constructs `Engine` before the top instance and passes
   `engine.Services()` to the top's constructor.
-- `PackedArray`, `UnpackedArray<T>`, `DynamicArray<T>` gain default constructors;
-  `PackedArray::AssignFrom` adopts the source shape when the destination is the 0-bit sentinel;
-  `WordCountForBits` and `PackedWords::PackedWords` accept 0-bit input.
+- `PackedArray`, `UnpackedArray<T>`, `DynamicArray<T>` gain default constructors that install their
+  declared type at construction; `WordCountForBits` and `PackedWords::PackedWords` accept 0-bit
+  input.
 - LIR / LLVM-IR lowering reads the construction-time state straight from
   `constructor.body.root_stmts`. No backend re-derives type defaults or syntactic position from a
   side field.

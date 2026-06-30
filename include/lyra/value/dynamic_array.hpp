@@ -14,6 +14,7 @@
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -21,73 +22,59 @@
 namespace lyra::value {
 
 // SystemVerilog dynamic array (LRM 7.5). Size set at run time via `new[N]` /
-// `new[N](other)` constructors; default is the empty array (LRM Table 6-7).
-//
-// `element_default_` holds the LRM Table 7-1 default an invalid-index read
-// returns (LRM 7.4.5) and the prototype every fill / slice / locator copies.
-// It carries the element's runtime shape (bit width, signedness, 2/4-state for
-// `T = PackedArray`) that the C++ type alone cannot recover, so it is supplied
-// at construction. It is only ever read or copied, never written, so a const
-// read returns it directly with no scrub. `discard_sink_` is the throwaway
-// an invalid-index write lands on; the non-const write path scrubs it to
-// canonical via `T::ResetToDefault` before handing out the reference, so a
-// discarded write never leaks into a later access.
+// `new[N](other)` constructors; default is the empty array (LRM Table 6-7). The
+// element default and the invalid-index discard target are carried by an
+// `OobShield`.
 template <typename T>
 class DynamicArray {
  public:
   using ElementType = T;
 
-  // Sentinel "uninitialized" form -- empty container with default-constructed
-  // default / sink slots. Used as the declared default state of a
-  // `Var<DynamicArray<T>>` field; the first MIR-level assignment overwrites the
-  // whole array (LRM 10.5 variable initialization).
+  // Sentinel "uninitialized" form -- empty container with a default-constructed
+  // shield. Used as the declared default state of a `Var<DynamicArray<T>>`
+  // field; the first MIR-level assignment overwrites the whole array (LRM 10.5
+  // variable initialization).
   DynamicArray() = default;
 
-  // Empty container with the default / sink slots seeded. Used for declarations
-  // like `int arr[];` where the array starts empty but the element shape is
-  // known at lowering time.
+  // Empty container with the shield seeded. Used for declarations like
+  // `int arr[];` where the array starts empty but the element shape is known at
+  // lowering time.
   explicit DynamicArray(T element_default)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)) {
+      : shield_(std::move(element_default)) {
   }
 
   // LRM 7.5.1 `new[N]`: build `n` elements, each a copy of the element default.
   // `n` is a longint per LRM 7.5.1; the negative-N case throws at construction.
   DynamicArray(const PackedArray& n, T element_default)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)) {
+      : shield_(std::move(element_default)) {
     const std::int64_t n_val = n.ToInt64();
     if (n_val < 0) {
       throw InternalError(
           "DynamicArray::new[N]: size operand is negative (LRM 7.5.1)");
     }
-    data_.assign(static_cast<std::size_t>(n_val), element_default_);
+    data_.assign(static_cast<std::size_t>(n_val), shield_.Default());
   }
 
-  // LRM 7.5.1 `new[N](other)`: copy `other` then `resize(N, element_default_)`
-  // -- `std::vector::resize` truncates when target is smaller and pads with the
-  // fill value when target is larger, covering both halves of LRM 7.5.1 in one
-  // call.
+  // LRM 7.5.1 `new[N](other)`: copy `other` then resize to `N` with the element
+  // default -- `std::vector::resize` truncates when target is smaller and pads
+  // with the fill value when target is larger, covering both halves of LRM
+  // 7.5.1 in one call.
   DynamicArray(const PackedArray& n, T element_default, const DynamicArray& src)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
-        data_(src.data_) {
+      : shield_(std::move(element_default)), data_(src.data_) {
     const std::int64_t n_val = n.ToInt64();
     if (n_val < 0) {
       throw InternalError(
           "DynamicArray::new[N](src): size operand is negative (LRM 7.5.1)");
     }
-    data_.resize(static_cast<std::size_t>(n_val), element_default_);
+    data_.resize(static_cast<std::size_t>(n_val), shield_.Default());
   }
 
-  // LRM 10.9.1 assignment-pattern construction: default / sink slots seeded,
-  // size taken from the pattern's element list. Mirrors `UnpackedArray`'s span
+  // LRM 10.9.1 assignment-pattern construction: shield seeded, size taken from
+  // the pattern's element list. Mirrors `UnpackedArray`'s span
   // ctor so a single emit path produces `std::array<T, N>{...}` as the
   // second argument for either container.
   DynamicArray(T element_default, std::span<const T> init)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
-        data_(init.begin(), init.end()) {
+      : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
 
   DynamicArray(const DynamicArray&) = default;
@@ -95,22 +82,6 @@ class DynamicArray {
   auto operator=(const DynamicArray&) -> DynamicArray& = default;
   auto operator=(DynamicArray&&) noexcept -> DynamicArray& = default;
   ~DynamicArray() = default;
-
-  // ADL swap so STL element-relocation primitives can shuffle nested
-  // DynamicArrays inside an outer container (e.g. `matrix.reverse()` on
-  // `int matrix[][]` swaps two row arrays). The default move-assign on
-  // DynamicArray<PackedArray> trips PackedArray::AssignFrom's
-  // shape-preservation rule because storage moves out without the
-  // shape scalars being reset; swapping member-wise avoids the path.
-  // Mirrors PackedArray's friend swap; same NOLINT rationale (ADL name
-  // is mandated lowercase).
-  // NOLINTNEXTLINE(readability-identifier-naming)
-  friend auto swap(DynamicArray& a, DynamicArray& b) noexcept -> void {
-    using std::swap;
-    swap(a.element_default_, b.element_default_);
-    swap(a.discard_sink_, b.discard_sink_);
-    swap(a.data_, b.data_);
-  }
 
   // LRM 7.5.1: size() yields an SV int.
   [[nodiscard]] auto Size() const -> PackedArray {
@@ -139,22 +110,19 @@ class DynamicArray {
     data_.clear();
   }
 
-  // LRM 7.4.5: an invalid-index write lands on `discard_sink_`, scrubbed to
-  // canonical first so a compound write reads the element default before the
-  // result is thrown away.
+  // LRM 7.4.5: an invalid-index write lands on the shield's discard target.
   [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
-      discard_sink_.ResetToDefault();
-      return discard_sink_;
+      return shield_.DiscardTarget();
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
-  // 7-1) directly -- `element_default_` is never written, so no scrub.
+  // 7-1).
   [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
     if (IsInvalidIndex(idx)) {
-      return element_default_;
+      return shield_.Default();
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
@@ -168,15 +136,15 @@ class DynamicArray {
       -> UnpackedArray<T> {
     const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     return UnpackedArray<T>(
-        element_default_,
-        detail::ArraySliceGather(data_, element_default_, offset, count));
+        shield_.Default(),
+        detail::ArraySliceGather(data_, shield_.Default(), offset, count));
   }
 
   [[nodiscard]] auto SliceRef(
       const PackedArray& offset, const PackedArray& count_pa)
       -> ArraySliceRef<T> {
     const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
-    return ArraySliceRef<T>{data_, element_default_, offset, count};
+    return ArraySliceRef<T>{data_, shield_.Default(), offset, count};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality. Runtime size mismatch yields
@@ -392,8 +360,7 @@ class DynamicArray {
                         static_cast<std::uint64_t>(data_.size());
   }
 
-  T element_default_;
-  T discard_sink_;
+  detail::OobShield<T> shield_;
   std::vector<T> data_;
 };
 

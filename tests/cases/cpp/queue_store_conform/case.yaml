@@ -1,0 +1,16 @@
+id: cpp.queue_store_conform
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    unbounded: [10, 20, 30, 40, 50]
+    s_unbounded: 5
+    bounded: [10, 20, 30]
+    s_bounded: 3
+    cleared: []
+    s_cleared: 0

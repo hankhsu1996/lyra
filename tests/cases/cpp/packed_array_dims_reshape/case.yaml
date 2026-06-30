@@ -1,0 +1,18 @@
+id: cpp.packed_array_dims_reshape
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    init_reshape: "32'hAABBCCDD"
+    init_b3: "8'hAA"
+    init_b2: "8'hBB"
+    init_b1: "8'hCC"
+    init_b0: "8'hDD"
+    proc_reshape: "32'h11223344"
+    proc_b3: "8'h11"
+    proc_b0: "8'h44"

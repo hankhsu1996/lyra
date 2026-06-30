@@ -1,0 +1,17 @@
+id: cpp.packed_struct_mixed_state_field
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    uninit_lo: 0x00
+    res_lo: 0xc8
+    res_hi: 0xff
+    res_sgn: 0xfffffffd
+    res_u: 0x2a
+    res_nested: 0x09
+    back_lo: 0xc8

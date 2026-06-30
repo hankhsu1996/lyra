@@ -1,9 +1,6 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 
-#include <cstdint>
-#include <utility>
-#include <vector>
-
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -18,26 +15,6 @@ namespace {
 auto IsRealFamilyKind(mir::TypeKind k) -> bool {
   return k == mir::TypeKind::kReal || k == mir::TypeKind::kShortReal ||
          k == mir::TypeKind::kRealTime;
-}
-
-// Three trailing operands `PackedArray::FromInt` / `ConvertFrom` consume after
-// the value: `(bit_width, is_signed, is_four_state)`. The runtime entry's
-// signature takes host scalars (`uint64_t`, `bool`, `bool`), not SV-typed
-// `PackedArray` values, so the lowering synthesizes `HostIntLiteral` for
-// each -- they render as bare C++ integer literals that C++ implicitly
-// narrows / converts to the parameter types.
-void AppendPackedShapeArgs(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    const mir::PackedArrayType& dst_pa, std::vector<mir::ExprId>& args) {
-  const mir::TypeId int32_type = unit.builtins.int32;
-  const auto host_lit = [&](std::int64_t v) {
-    return block.exprs.Add(
-        mir::Expr{.data = mir::HostIntLiteral{.value = v}, .type = int32_type});
-  };
-  args.push_back(host_lit(static_cast<std::int64_t>(dst_pa.BitWidth())));
-  args.push_back(
-      host_lit(dst_pa.signedness == mir::Signedness::kSigned ? 1 : 0));
-  args.push_back(host_lit(dst_pa.IsFourState() ? 1 : 0));
 }
 
 // `Real(operand)` / `ShortReal(operand)` invokes the explicit `RealValue`
@@ -71,13 +48,28 @@ auto BuildRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
       .type = unit.builtins.int32};
 }
 
-// `PackedArray::FromInt(int_value, width, signed, four_state)` -- the static
-// factory used by the real-to-integral and small-literal paths.
+// The destination representation a packed factory call lands its result into,
+// carried as an ordinary MIR value of the destination type -- a default literal
+// -- so the representation reaches the runtime through the argument list, not
+// composed by the backend from type payload. Its contents are overwritten by
+// the factory; only its type's declared shape matters.
+auto BuildPackedShapePrototype(
+    mir::Block& block, const mir::PackedArrayType& dst_pa, mir::TypeId dst_type)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::IntegerLiteral{.value = DefaultIntegralConstant(dst_pa)},
+          .type = dst_type});
+}
+
+// `PackedArray::FromInt(int_value, prototype)` -- the static factory used by
+// the real-to-integral path: lands `int_value` into the prototype's declared
+// representation.
 auto BuildPackedArrayFromInt(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId int_value,
+    mir::Block& block, mir::ExprId int_value,
     const mir::PackedArrayType& dst_pa, mir::TypeId dst_type) -> mir::Expr {
-  std::vector<mir::ExprId> args{int_value};
-  AppendPackedShapeArgs(unit, block, dst_pa, args);
+  const mir::ExprId prototype =
+      BuildPackedShapePrototype(block, dst_pa, dst_type);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -85,17 +77,18 @@ auto BuildPackedArrayFromInt(
                   mir::Direct{
                       .target = support::BuiltinFn::kFromInt,
                       .qualification = mir::TypeQualifier{.type = dst_type}},
-              .arguments = std::move(args)},
+              .arguments = {int_value, prototype}},
       .type = dst_type};
 }
 
-// `PackedArray::ConvertFrom(other, width, signed, four_state)` -- reshape a
-// packed vector to the target shape.
+// `PackedArray::ConvertFrom(src, prototype)` -- reshape `src` into the
+// prototype's declared representation (width / signedness / state domain /
+// dimension stack).
 auto BuildPackedArrayConvertFrom(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId src_id,
-    const mir::PackedArrayType& dst_pa, mir::TypeId dst_type) -> mir::Expr {
-  std::vector<mir::ExprId> args{src_id};
-  AppendPackedShapeArgs(unit, block, dst_pa, args);
+    mir::Block& block, mir::ExprId src_id, const mir::PackedArrayType& dst_pa,
+    mir::TypeId dst_type) -> mir::Expr {
+  const mir::ExprId prototype =
+      BuildPackedShapePrototype(block, dst_pa, dst_type);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -103,7 +96,7 @@ auto BuildPackedArrayConvertFrom(
                   mir::Direct{
                       .target = support::BuiltinFn::kConvertFrom,
                       .qualification = mir::TypeQualifier{.type = dst_type}},
-              .arguments = std::move(args)},
+              .arguments = {src_id, prototype}},
       .type = dst_type};
 }
 
@@ -161,7 +154,7 @@ auto BuildValueConversion(
     const mir::ExprId rounded_id =
         block.exprs.Add(BuildRoundCall(unit, operand_id));
     return BuildPackedArrayFromInt(
-        unit, block, rounded_id, dst_ty.AsIntegralPacked(), dst_type);
+        block, rounded_id, dst_ty.AsIntegralPacked(), dst_type);
   }
 
   // Integral -> integral: width / signedness / state reshape, with an enum
@@ -173,15 +166,20 @@ auto BuildValueConversion(
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
     const auto& src_pa = src_ty.AsIntegralPacked();
     const auto& dst_pa = dst_ty.AsIntegralPacked();
-    const bool same_shape = src_pa.BitWidth() == dst_pa.BitWidth() &&
-                            src_pa.signedness == dst_pa.signedness &&
-                            src_pa.atom == dst_pa.atom;
+    // Representation equality across every axis the value carries -- width,
+    // signedness, state domain, and the dimension stack. A same-width
+    // dims-only difference (a flat vector reaching a packed-of-packed
+    // destination) is a real reshape the front end draws no conversion for, so
+    // it must reshape here.
+    const bool same_shape = src_pa.signedness == dst_pa.signedness &&
+                            src_pa.atom == dst_pa.atom &&
+                            src_pa.dims == dst_pa.dims;
     const bool src_is_enum = src_ty.IsEnum();
     const bool dst_is_enum = dst_ty.IsEnum();
     mir::ExprId body_id = operand_id;
     if (!same_shape) {
-      body_id = block.exprs.Add(BuildPackedArrayConvertFrom(
-          unit, block, operand_id, dst_pa, dst_type));
+      body_id = block.exprs.Add(
+          BuildPackedArrayConvertFrom(block, operand_id, dst_pa, dst_type));
     }
     if (dst_is_enum || src_is_enum) {
       return mir::Expr{
@@ -208,9 +206,41 @@ auto BuildValueConversion(
         unit, operand_id, support::BuiltinFn::kFromPackedArray);
   }
 
+  // Queue -> queue: assignment requires equivalent element types (LRM 7.10), so
+  // the element representation already matches and only the LRM 7.10.5 bound
+  // can differ. Conform the source's contents to the destination's bound, which
+  // a pure whole-value adopt would otherwise drop -- the bound is a declared
+  // property of the destination variable.
+  if (const auto* dst_q = std::get_if<mir::QueueType>(&dst_ty.data);
+      dst_q != nullptr && std::holds_alternative<mir::QueueType>(src_ty.data)) {
+    const std::int64_t bound =
+        dst_q->max_bound.has_value()
+            ? static_cast<std::int64_t>(*dst_q->max_bound)
+            : -1;
+    const mir::ExprId bound_id =
+        block.exprs.Add(mir::MakeInt32Literal(unit.builtins.int32, bound));
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{.target = support::BuiltinFn::kConformBound},
+                .arguments = {operand_id, bound_id}},
+        .type = dst_type};
+  }
+
   // Identity fallback: the lowering inserted a conversion the type system
   // already satisfies (e.g. string -> string lift).
   return operand_expr;
+}
+
+auto ConvertToType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId dst_type) -> mir::ExprId {
+  if (block.exprs.Get(operand_id).type == dst_type) {
+    return operand_id;
+  }
+  return block.exprs.Add(
+      BuildValueConversion(unit, block, operand_id, dst_type));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

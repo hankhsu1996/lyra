@@ -30,6 +30,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Services";
     case support::BuiltinFn::kGet:
       return "Get";
+    case support::BuiltinFn::kInitialize:
+      return "Initialize";
     case support::BuiltinFn::kSet:
       return "Set";
     case support::BuiltinFn::kMutate:
@@ -262,6 +264,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "FromPackedArray";
     case support::BuiltinFn::kFromByteArray:
       return "FromByteArray";
+    case support::BuiltinFn::kConformBound:
+      return "ConformBound";
+    case support::BuiltinFn::kMakeQueueConcat:
+      return "MakeQueueConcat";
     case support::BuiltinFn::kPow:
       return "Pow";
     case support::BuiltinFn::kShiftLeft:
@@ -508,9 +514,46 @@ auto RenderCalleePart(
 
 }  // namespace
 
+// LRM 10.10 unpacked-queue concatenation. The first two arguments seed the
+// builder with a default element of the queue's element type and its LRM 7.10.5
+// bound (a negative bound means unbounded); the remaining arguments are the
+// parts, each spliced (an unpacked container of the element type) or appended
+// as one element by its own type. The element type names the `<T>` template
+// argument.
+auto RenderMakeQueueConcatCall(
+    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
+    -> std::string {
+  const auto& queue_ty =
+      std::get<mir::QueueType>(view.Unit().types.Get(result_type).data);
+  std::string out = std::format(
+      "lyra::value::MakeQueueConcat<{}>({}, {}",
+      RenderTypeAsCpp(view.Unit(), view.Class(), queue_ty.element_type),
+      RenderExpr(view, view.Expr(call.arguments[0])),
+      RenderExpr(view, view.Expr(call.arguments[1])));
+  for (std::size_t i = 2; i < call.arguments.size(); ++i) {
+    const auto& part = view.Expr(call.arguments[i]);
+    const auto& part_ty = view.Unit().types.Get(part.type);
+    const bool spread =
+        std::holds_alternative<mir::QueueType>(part_ty.data) ||
+        std::holds_alternative<mir::DynamicArrayType>(part_ty.data) ||
+        std::holds_alternative<mir::UnpackedArrayType>(part_ty.data);
+    const std::string rendered = RenderExpr(view, part);
+    out += spread ? std::format(", lyra::value::QSpread({})", rendered)
+                  : std::format(", lyra::value::QElem({})", rendered);
+  }
+  out += ")";
+  return out;
+}
+
 auto RenderCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> std::string {
+  if (const auto* direct = std::get_if<mir::Direct>(&call.callee)) {
+    if (const auto* id = std::get_if<support::BuiltinFn>(&direct->target);
+        id != nullptr && *id == support::BuiltinFn::kMakeQueueConcat) {
+      return RenderMakeQueueConcatCall(view, call, result_type);
+    }
+  }
   const CalleeRender callee = RenderCalleePart(view, call, result_type);
   std::string args;
   for (std::size_t i = callee.leading_arg_count; i < call.arguments.size();

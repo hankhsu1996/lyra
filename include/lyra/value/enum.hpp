@@ -29,16 +29,13 @@ struct EnumMember {
 template <typename Derived>
 class Enum : public PackedArray {
  public:
-  Enum()
-      : PackedArray(
-            static_cast<std::uint64_t>(Derived::kBase.width),
-            Derived::kBase.is_signed, Derived::kBase.is_four_state) {
+  Enum() : PackedArray(Derived::kBase) {
     AssertWellFormed();
   }
 
   explicit Enum(PackedArray v) : PackedArray(std::move(v)) {
     AssertWellFormed();
-    if (BitWidth() != static_cast<std::uint64_t>(Derived::kBase.width) ||
+    if (BitWidth() != Derived::kBase.bit_width ||
         IsSigned() != Derived::kBase.is_signed ||
         IsFourState() != Derived::kBase.is_four_state) {
       throw InternalError(
@@ -93,9 +90,7 @@ class Enum : public PackedArray {
   }
 
   static auto MakeFromInt64(std::int64_t v) -> PackedArray {
-    return PackedArray::FromInt(
-        v, static_cast<std::uint64_t>(Derived::kBase.width),
-        Derived::kBase.is_signed, Derived::kBase.is_four_state);
+    return PackedArray::FromInt(v, Derived::kBase);
   }
 
   // LRM 6.19.5.3/4: if the current value is not a member of the enumeration

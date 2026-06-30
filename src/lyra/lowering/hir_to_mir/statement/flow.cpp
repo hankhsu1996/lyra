@@ -10,6 +10,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -99,6 +100,7 @@ auto LowerAutomaticVarDeclStmt(
     init_value = block.exprs.Add(
         BuildDefaultValueFromHir(process.Module(), frame, hir_local.type));
   }
+  init_value = ConvertToType(process.Module().Unit(), block, init_value, type);
 
   return mir::Stmt{
       .label = std::move(label),
@@ -132,6 +134,7 @@ auto LowerPromotedVarDeclStmt(
     init_value = block.exprs.Add(
         BuildDefaultValueFromHir(process.Module(), frame, hir_type));
   }
+  init_value = ConvertToType(process.Module().Unit(), block, init_value, type);
   const mir::ExprId assign =
       block.exprs.Add(mir::MakeAssignExpr(target, init_value, type));
   return mir::Stmt{

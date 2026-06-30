@@ -104,8 +104,12 @@ enum class BuiltinFn : std::uint16_t {
   // A constant argument is folded downstream, never in lowering.
   kClog2,
   // Observable storage cell operations. `Set` / `Mutate` thread services
-  // as the second argument.
+  // as the second argument. `Initialize` installs the cell's declared
+  // representation once at construction (no services -- no subscribers yet);
+  // every later `Set` then requires the right-hand side to already be at that
+  // representation.
   kGet,
+  kInitialize,
   kSet,
   kMutate,
   // Net driver operations (LRM 6.5). `AttachDriver` is a `ResolvedNet` method
@@ -289,6 +293,16 @@ enum class BuiltinFn : std::uint16_t {
   kConvertFrom,
   kFromPackedArray,
   kFromByteArray,
+  // Conforms a queue value to a destination's LRM 7.10.5 bound (a negative
+  // argument means unbounded): the store boundary brings a differently-bounded
+  // source to the destination's declared bound. An instance method on the
+  // queue value.
+  kConformBound,
+  // Builds an unpacked-queue concatenation value (LRM 10.10). The first two
+  // arguments are a default element of the queue's element type and its LRM
+  // 7.10.5 bound; the remaining arguments are the concatenation parts, each
+  // spliced or appended by its own type. A free function over the element type.
+  kMakeQueueConcat,
   // Operator realizations on `PackedArray`. HIR-to-MIR lifts the
   // method-style SV operators (LRM 11.4) into `CallExpr` against these
   // entries, so the backend renders every operator mechanically: native

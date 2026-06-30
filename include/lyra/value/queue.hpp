@@ -16,6 +16,7 @@
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -23,111 +24,75 @@ namespace lyra::value {
 // SystemVerilog queue (LRM 7.10): a variable-size ordered collection with
 // efficient insertion and removal at both ends, so the storage is a
 // `std::deque<T>` rather than the `std::vector<T>` the dynamic array uses.
-// Default value is the empty queue (LRM Table 6-7).
-//
-// `element_default_` holds the LRM Table 7-1 default an invalid-index read
-// returns (LRM 7.4.5 / 7.10.1) and the prototype that seeds construction,
-// growth (the `q[$+1]` append), slice / locator results, and an empty-queue
-// pop. It carries the element's runtime shape (bit width, signedness,
-// 2/4-state for `T = PackedArray`) that the C++ type alone cannot recover, so
-// it is supplied at construction; it is only ever read or copied, never
-// written, so a const read returns it directly with no scrub. `discard_sink_`
-// is the throwaway an invalid-index write lands on; the non-const write path
-// scrubs it to canonical via `T::ResetToDefault` before handing out the
-// reference.
+// Default value is the empty queue (LRM Table 6-7). The element default --
+// returned on an invalid-index read and copied to seed growth (the `q[$+1]`
+// append), slice results, and an empty-queue pop -- and the invalid-index
+// discard target are carried by an `OobShield`.
 template <typename T>
 class Queue {
  public:
   using ElementType = T;
 
-  // Sentinel "uninitialized" form -- empty queue with default-constructed
-  // default / sink slots. Used as the declared default state of a queue field;
-  // the first MIR-level assignment overwrites the whole queue (LRM 10.5
-  // variable initialization).
+  // Empty queue carrying no element shape, the unestablished state of a
+  // freshly value-initialized cell before its declared representation is
+  // installed. A declared queue is constructed through one of the seeding forms
+  // below, or installed via the cell's initialization; the empty form exists
+  // only for the default-constructed slots STL containers require.
   Queue() = default;
 
-  // Empty queue with the default / sink slots seeded. Used for declarations
-  // like `int q[$];` where the queue starts empty but the element shape is
-  // known at lowering time.
-  explicit Queue(T element_default)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
-        default_seeded_(true) {
+  // Empty queue with the shield seeded. Used for declarations like `int q[$];`
+  // where the queue starts empty but the element shape is known at lowering
+  // time.
+  explicit Queue(T element_default) : shield_(std::move(element_default)) {
   }
 
-  // LRM 10.9.1 assignment-pattern construction: default / sink slots seeded,
-  // elements taken from the pattern's list. The list is a span so the emit side
-  // hands in a `std::array<T, N>{...}` literal, mirroring `DynamicArray`.
+  // LRM 10.9.1 assignment-pattern construction: shield seeded, elements taken
+  // from the pattern's list. The list is a span so the emit side hands in a
+  // `std::array<T, N>{...}` literal, mirroring `DynamicArray`.
   Queue(T element_default, std::span<const T> init)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
-        data_(init.begin(), init.end()),
-        default_seeded_(true) {
+      : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
 
   // LRM 7.10.5 bounded queue `int q[$:N]`: the empty start is unchanged, but
   // the maximum index N is recorded so growth past N+1 elements is discarded
   // with a warning. The bound arrives as a PackedArray construction argument.
   Queue(T element_default, const PackedArray& max_bound)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())),
-        default_seeded_(true) {
+      : shield_(std::move(element_default)),
+        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
   }
 
   // LRM 7.10.5 bounded queue initialized by an assignment pattern: take the
   // pattern's elements, record the bound, and trim any overflow on entry.
   Queue(
       T element_default, std::span<const T> init, const PackedArray& max_bound)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
+      : shield_(std::move(element_default)),
         data_(init.begin(), init.end()),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())),
-        default_seeded_(true) {
+        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
     EnforceBound();
   }
 
   Queue(const Queue&) = default;
   Queue(Queue&&) noexcept = default;
-  // LRM 10.6.1: the element shape and the LRM 7.10.5 bound are declared-type
-  // properties of the variable, not value content. A declared queue is
-  // default-constructed and then initialized by assignment, so an as-yet-
-  // unseeded target adopts the source's element
-  // shape (and an unbounded target the source's bound) on that first store;
-  // once seeded it keeps its own shape and bound on every later assignment and
-  // copies only the elements in -- so assigning the empty `{}` or an unbounded
-  // concat result preserves the variable's shape rather than overwriting it.
-  auto operator=(const Queue& other) -> Queue& {
-    if (this != &other) {
-      if (!default_seeded_ && other.default_seeded_) {
-        element_default_ = other.element_default_;
-        discard_sink_ = other.element_default_;
-        default_seeded_ = true;
-      }
-      data_ = other.data_;
-      if (!max_bound_.has_value()) {
-        max_bound_ = other.max_bound_;
-      }
-      EnforceBound();
-    }
-    return *this;
-  }
-  auto operator=(Queue&& other) noexcept -> Queue& {
-    if (this != &other) {
-      if (!default_seeded_ && other.default_seeded_) {
-        element_default_ = other.element_default_;
-        discard_sink_ = std::move(other.element_default_);
-        default_seeded_ = true;
-      }
-      data_ = std::move(other.data_);
-      if (!max_bound_.has_value()) {
-        max_bound_ = other.max_bound_;
-      }
-      EnforceBound();
-    }
-    return *this;
-  }
+  auto operator=(const Queue&) -> Queue& = default;
+  auto operator=(Queue&&) noexcept -> Queue& = default;
   ~Queue() = default;
+
+  // The element shape and the LRM 7.10.5 bound are declared-type properties of
+  // the destination variable, not value content. The store boundary brings the
+  // right-hand side to the destination representation before a semantic store,
+  // so a cross-representation source is conformed here rather than preserved by
+  // a shape-keeping assignment. Returns a copy carrying `bound` (a negative
+  // value means unbounded) and this queue's element shape and contents, trimmed
+  // to the bound.
+  [[nodiscard]] auto ConformBound(const PackedArray& bound) const -> Queue {
+    const std::int64_t b = bound.ToInt64();
+    Queue result = *this;
+    result.max_bound_ =
+        b < 0 ? std::nullopt
+              : std::optional<std::uint64_t>(static_cast<std::uint64_t>(b));
+    result.EnforceBound();
+    return result;
+  }
 
   // LRM 7.10.2.1: size() yields an SV int.
   [[nodiscard]] auto Size() const -> PackedArray {
@@ -216,19 +181,18 @@ class Queue {
 
   // LRM 7.10.1 / 7.4.5 read: an index outside `0..size-1` (or carrying x/z)
   // misses. Reads never grow the queue -- the write path owns the `q[$+1]`
-  // append semantic. The non-const overload returns the writable scratch sink;
-  // the const overload returns the element default by direct reference.
+  // append semantic. The non-const overload returns the shield's discard
+  // target; the const overload returns the element default by direct reference.
   [[nodiscard]] auto Element(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
-      discard_sink_.ResetToDefault();
-      return discard_sink_;
+      return shield_.DiscardTarget();
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
   [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
     if (IsInvalidIndex(idx)) {
-      return element_default_;
+      return shield_.Default();
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
@@ -245,27 +209,25 @@ class Queue {
         return data_[static_cast<std::size_t>(v)];
       }
       if (v >= 0 && static_cast<std::uint64_t>(v) == data_.size()) {
-        data_.push_back(element_default_);
+        data_.push_back(shield_.Default());
         EnforceBound();
         if (static_cast<std::uint64_t>(v) < data_.size()) {
           return data_[static_cast<std::size_t>(v)];
         }
-        discard_sink_.ResetToDefault();
-        return discard_sink_;
+        return shield_.DiscardTarget();
       }
     }
-    discard_sink_.ResetToDefault();
-    return discard_sink_;
+    return shield_.DiscardTarget();
   }
 
   // LRM 7.10.1 queue slice `q[lo:hi]`. An x/z bound, or `lo > hi` after
   // clamping, yields the empty queue. `lo` clamps up to 0 and `hi` clamps down
   // to the last index (`q[a:b]` with `a < 0` is `q[0:b]`, with `b > $` is
-  // `q[a:$]`). The result carries this queue's element shape via
-  // `element_default_`.
+  // `q[a:$]`). The result carries this queue's element shape, seeded from the
+  // shield's default.
   [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
       -> Queue {
-    Queue out(element_default_);
+    Queue out(shield_.Default());
     if (lo.HasUnknown() || hi.HasUnknown() || data_.empty()) {
       return out;
     }
@@ -289,11 +251,11 @@ class Queue {
   }
 
   // LRM 7.10.2.4 / 7.10.2.5: remove and return the first / last element. On an
-  // empty queue the result is the element type's LRM Table 7-1 default (a copy
-  // of `element_default_`) and the queue is left unchanged.
+  // empty queue the result is the element type's LRM Table 7-1 default and the
+  // queue is left unchanged.
   auto PopFront() -> T {
     if (data_.empty()) {
-      return element_default_;
+      return shield_.Default();
     }
     T front = std::move(data_.front());
     data_.pop_front();
@@ -301,7 +263,7 @@ class Queue {
   }
   auto PopBack() -> T {
     if (data_.empty()) {
-      return element_default_;
+      return shield_.Default();
     }
     T back = std::move(data_.back());
     data_.pop_back();
@@ -484,17 +446,17 @@ class Queue {
     }
   }
 
-  T element_default_;
-  T discard_sink_;
+  detail::OobShield<T> shield_;
   std::deque<T> data_;
   std::optional<std::uint64_t> max_bound_ = std::nullopt;
-  bool default_seeded_ = false;
 };
 
 // LRM 10.10 unpacked array concatenation builder. The backend wraps each part
 // as a single element (`QElem`) or an array to splice in element order
 // (`QSpread`); `MakeQueueConcat` folds the parts onto a queue seeded with the
-// element default, so even the empty `{}` carries the element shape.
+// element shape and bound of its result type, so even the empty `{}` carries
+// the declared representation -- the concatenation value matches its type with
+// no destination-side shape preservation.
 template <typename T>
 struct ConcatElemArg {
   T value;
@@ -524,13 +486,23 @@ auto AppendConcatPart(Queue<T>& out, const ConcatSpreadArg<C>& part) -> void {
   }
 }
 
-// The result is default-constructed (unseeded): the destination of the
-// enclosing assignment keeps its own element shape (LRM 10.6.1), so the concat
-// value need not carry one. The element type is supplied explicitly because it
-// cannot be deduced from an empty `{}` part list.
+// The result carries its element shape and LRM 7.10.5 bound (a negative bound
+// means unbounded) so the concatenation value matches its declared type, even
+// for the empty `{}`. `element_default` cannot be deduced from an empty part
+// list, so it is supplied explicitly; the parts are folded on and the bound
+// enforced.
 template <typename T, typename... Parts>
-auto MakeQueueConcat(const Parts&... parts) -> Queue<T> {
-  Queue<T> out;
+auto MakeQueueConcat(
+    const T& element_default, std::int64_t max_bound, const Parts&... parts)
+    -> Queue<T> {
+  Queue<T> out =
+      max_bound < 0
+          ? Queue<T>(element_default)
+          : Queue<T>(
+                element_default,
+                PackedArray::Int(static_cast<std::int32_t>(max_bound)));
+  // Each PushBack enforces the bound, so an over-long concatenation trims as it
+  // folds (LRM 7.10.5).
   (AppendConcatPart(out, parts), ...);
   return out;
 }

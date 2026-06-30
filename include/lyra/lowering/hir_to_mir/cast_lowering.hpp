@@ -26,4 +26,14 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::Expr;
 
+// Returns `operand_id` already at `dst_type`: the operand unchanged when its
+// type already matches, otherwise the converted expression interned into
+// `block`. This is the single entry every semantic store routes its right-hand
+// side through to reach the destination's full declared representation, for
+// every value family -- the store boundary never decides per type whether a
+// conversion applies.
+[[nodiscard]] auto ConvertToType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId dst_type) -> mir::ExprId;
+
 }  // namespace lyra::lowering::hir_to_mir

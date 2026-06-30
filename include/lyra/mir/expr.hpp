@@ -212,6 +212,12 @@ struct MemberAccessExpr {
   MemberRef member;
 };
 
+// LRM 11.4.12 concatenation of packed or string operands, joined directly into
+// the result value (the result shape is fully carried by `Expr::type`). An
+// unpacked-queue concatenation is not this primitive: it carries an element
+// shape and spread semantics and is a runtime builder call against the queue
+// API, so it lowers to a `CallExpr` whose default-element and bound arguments
+// come from lowering, not a payload on this node.
 struct ConcatExpr {
   std::vector<ExprId> operands;
 };
@@ -375,6 +381,20 @@ struct Expr {
               .callee = Direct{.target = support::BuiltinFn::kGet},
               .arguments = {cell}},
       .type = value_type};
+}
+
+// `cell.Initialize(prototype)` -- installs the cell's declared representation
+// (and default contents) once at construction. `prototype` is a value of the
+// cell's declared type; only its representation is used. No services: it runs
+// before any process, so there are no subscribers to fire.
+[[nodiscard]] inline auto MakeObservableInitializeCallExpr(
+    ExprId cell, ExprId prototype, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = support::BuiltinFn::kInitialize},
+              .arguments = {cell, prototype}},
+      .type = void_type};
 }
 
 // `cell.Set(services, value)` -- whole-cell write that fires subscribers

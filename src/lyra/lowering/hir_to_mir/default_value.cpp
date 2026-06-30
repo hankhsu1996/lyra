@@ -19,8 +19,6 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
-
 // LRM Table 6-7: 4-state integral types default to all-`x`; 2-state default
 // to all-zero. The `x` encoding is (value=1, state=1) per bit, so the bit
 // planes are 1s up to `width`, with the unused high bits of the top word
@@ -50,6 +48,8 @@ auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
   }
   return c;
 }
+
+namespace {
 
 // Wrap element exprs into an unpacked-array construction: the element type's
 // default prototype (honoring its own member inits) plus the element list.
