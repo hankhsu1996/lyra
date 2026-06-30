@@ -236,6 +236,16 @@ class MirDumper {
               return std::format(
                   "Coroutine(payload=Type[{}])", c.payload.value);
             },
+            [](const CallableType& c) -> std::string {
+              std::string params;
+              for (std::size_t i = 0; i < c.params.size(); ++i) {
+                if (i != 0) params += ", ";
+                params += std::format("Type[{}]", c.params[i].value);
+              }
+              return std::format(
+                  "Callable(params=[{}], result=Type[{}])", params,
+                  c.result.value);
+            },
             [](const RefType& r) -> std::string {
               return std::format(
                   "Ref({}pointee=Type[{}])",

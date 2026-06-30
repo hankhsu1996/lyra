@@ -5,6 +5,7 @@
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -58,10 +59,17 @@ auto ClosureBuilder::CaptureByValue(mir::ExprId outer_id, std::string_view name)
 auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
   code_.result_type = result_type;
   code_.params = invocation_params_;
+  std::vector<mir::TypeId> param_types;
+  param_types.reserve(code_.params.size());
+  for (const mir::LocalId param : code_.params) {
+    param_types.push_back(code_.locals.Get(param).type);
+  }
+  const mir::TypeId callable_type =
+      unit_->types.CallableOf(std::move(param_types), result_type);
   mir::ClosureExpr closure;
   closure.capture_inits = bindings_.TakeCaptureInits();
   closure.code = std::make_unique<mir::CallableCode>(std::move(code_));
-  return mir::Expr{.data = std::move(closure), .type = result_type};
+  return mir::Expr{.data = std::move(closure), .type = callable_type};
 }
 
 auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
@@ -81,7 +89,8 @@ auto ClosureBuilder::BuildVoid() -> mir::Expr {
 }
 
 auto BuildClosureCallExpr(mir::Block& block, mir::Expr closure) -> mir::Expr {
-  const mir::TypeId result_type = closure.type;
+  const mir::TypeId result_type =
+      std::get<mir::ClosureExpr>(closure.data).code->result_type;
   const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
   return mir::Expr{
       .data =

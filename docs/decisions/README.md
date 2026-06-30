@@ -83,6 +83,11 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
   Result type is the call protocol (`Coroutine<T>`), parameter direction normalizes to data flow
   (`output` / `inout` to an output pack, `ref` to `Ref<T>`), DPI is an external-callable variant,
   process is an instance-bound value registered at constructor time. Target model; not yet built.
+- [closure-environment-and-activation-frame](closure-environment-and-activation-frame.md) -- the
+  closure environment is a value `TupleType` (not a closure-only capture universe, not an object);
+  the callable value gains a concrete type and an erased `Callable<Sig>` with an explicit erasure;
+  the activation frame is a thin reference-storage specialization sharing one substrate with the
+  nominal object, not a baseless `mir::Class`. Target model; not yet built.
 - [builtin-call-identity](builtin-call-identity.md) -- built-in method calls carry a flat
   closed-namespace identifier (`support::BuiltinFn`) shared between HIR and MIR; per-family enum
   splits are out.

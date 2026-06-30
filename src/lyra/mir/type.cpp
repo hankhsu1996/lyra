@@ -95,6 +95,7 @@ auto Type::Kind() const -> TypeKind {
           [](const ObservableType&) { return TypeKind::kObservable; },
           [](const ResolvedType&) { return TypeKind::kResolved; },
           [](const DriverType&) { return TypeKind::kDriver; },
+          [](const CallableType&) { return TypeKind::kCallable; },
       },
       data);
 }
