@@ -283,6 +283,23 @@ auto PackedArray::ResetToDefault() -> void {
   }
 }
 
+auto PackedArray::HighImpedanceLike(const PackedArray& prototype)
+    -> PackedArray {
+  if (!prototype.type_.is_four_state) {
+    // A 2-state shape has no high-impedance state; the undriven value is the
+    // all-zero canonical default (z collapses to 0 outside the 4-state domain).
+    return PackedArray(prototype.type_);
+  }
+  // z is the value plane all-0 with the unknown plane all-1 (x is value 1,
+  // unknown 1). Construction masks the bits above the declared width in the top
+  // word.
+  const std::uint64_t width = prototype.type_.bit_width;
+  const std::size_t words = static_cast<std::size_t>((width + 63) / 64);
+  const std::vector<std::uint64_t> value_words(words, 0);
+  const std::vector<std::uint64_t> unknown_words(words, ~std::uint64_t{0});
+  return FromWords(value_words, unknown_words, prototype.type_);
+}
+
 auto PackedArray::Dims() const -> std::span<const PackedRange> {
   return std::span<const PackedRange>{type_.dims.data(), type_.dims.size()};
 }

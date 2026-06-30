@@ -26,8 +26,12 @@ This workstream reasons from these and does not restate them:
 
 ## Lifecycle prerequisite
 
-- [x] The Seal barrier is realized as a design-wide phase between Resolve and Initialize. The
-      lifecycle defines it; net topology validation (N4) is the first consumer that requires it.
+- [ ] The Seal barrier is a design-global, coordinator-owned step, materialized when its first
+      consumer needs it (N4 net-topology validation). It validates and freezes the whole design's
+      driver topology at once -- a single-driver constraint or a forwarding chain spans scopes -- so
+      it is an engine-level pass over the elaborated design, never a per-scope hook. Until that
+      consumer lands, the Resolve-before-Initialize ordering the engine already enforces is the only
+      barrier the in-scope sub-steps require.
 
 ## Sub-steps
 
@@ -36,15 +40,21 @@ This workstream reasons from these and does not restate them:
       (`wire w = expr`). The driver attaches at Resolve, seeds at Initialize, and updates in the
       activation process; a read observes the driver's value. Single-driver is the identity case of
       the resolution model, not a special path.
-- [ ] N2 -- The `wire` / `tri` resolution function over the driver set: an undriven net (no driver)
-      reads high-impedance (`z`) at the net's width, and two or more drivers resolve under the
-      tri-state truth table (LRM 6.6.1) -- agreement passes through, conflict yields `x`,
-      all-high-impedance yields high-impedance. The N=0 and N>=2 cases of the resolver that N1's
-      single driver exercises as identity.
-- [ ] N3 -- Net-typed port connections: a net driven across a module port in either direction (a
-      child output driving a parent net, a parent net driving a child input net), single- and
-      multi-driver, distributed across an instance array. This is the net facet of the port work
-      tracked in `hierarchy.md` (E5) and the first full-testbench wall in `ibex.md`.
+- [x] N2 -- Net-typed port connections (LRM 23.3.3), single-driver, both directions: a parent net or
+      variable drives a child's input net, and a child's output net drives a parent variable or net,
+      distributed across an instance array and through multi-level chains. A connection is one
+      reactive edge -- the source is read, the sink is driven (a net sink attaches a driver, a
+      variable sink writes) -- reusing N1's identity resolver; the new work is reaching the
+      cross-unit net through the binding route. A net is a readable, well-typed observable from
+      construction: it installs its empty-driver value (an undriven `wire` / `tri` reads `z` at its
+      width), so a read before any driver attaches is valid rather than an uninitialized cell. This
+      is the net facet of the port work in `hierarchy.md` (E5) and clears the first full-testbench
+      wall in `ibex.md`.
+- [ ] N3 -- Multi-driver `wire` / `tri` resolution (LRM 6.6.1, Table 6-2): two or more drivers on
+      one net -- local continuous assignments, sources arriving across ports, or both -- resolve
+      under the tri-state truth table, where agreement passes through, conflict yields `x`, and
+      all-high-impedance yields `z`. This is the N>=2 case of the resolver; the N=0 undriven value
+      and the N=1 single driver are the identity cases N1 and N2 already establish.
 - [ ] N4 -- A single-driver net type (`uwire`) reports a diagnostic when more than one driver
       attaches, naming each driver's source. The constraint is on the number of attached drivers,
       not on any current value.

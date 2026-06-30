@@ -15,6 +15,7 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/NetType.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -143,6 +144,33 @@ auto ModuleLowerer::LookupOwnedChildBinding(
   return it->second;
 }
 
+namespace {
+
+// The HIR net type of a cross-unit reference's target when the target is a net
+// (LRM 6.7), or empty when it is a variable. The net type, not a plain net
+// flag, is what determines the target's resolved cell -- its resolver and
+// undriven value. Only `wire` / `tri` are supported; other net types are
+// rejected at the net's own declaration, so encountering one here is a lowering
+// invariant violation, not a user-facing case.
+auto TargetNetType(const slang::ast::ValueSymbol& target)
+    -> std::optional<hir::NetType> {
+  if (target.kind != slang::ast::SymbolKind::Net) {
+    return std::nullopt;
+  }
+  switch (target.as<slang::ast::NetSymbol>().netType.netKind) {
+    case slang::ast::NetType::Wire:
+      return hir::NetType::kWire;
+    case slang::ast::NetType::Tri:
+      return hir::NetType::kTri;
+    default:
+      throw InternalError(
+          "TargetNetType: cross-unit reference to an unsupported net type; the "
+          "net's own declaration validates the supported net types");
+  }
+}
+
+}  // namespace
+
 auto ModuleLowerer::MapOrGetCrossUnitRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
     hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
@@ -155,7 +183,10 @@ auto ModuleLowerer::MapOrGetCrossUnitRef(
   const hir::CrossUnitRefId id{static_cast<std::uint32_t>(slots.size())};
   slots.push_back(
       hir::CrossUnitRefDecl{
-          .head = std::move(head), .path = std::move(path), .type = type});
+          .head = std::move(head),
+          .path = std::move(path),
+          .type = type,
+          .target_net_type = TargetNetType(target)});
   frame_dedup.emplace(&target, id);
   return id;
 }
@@ -204,19 +235,22 @@ auto ModuleLowerer::TranslateSensitivityReads(
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
   for (const auto& read : reads) {
-    const auto* var = read.symbol->as_if<slang::ast::VariableSymbol>();
-    if (var == nullptr) continue;
+    // Both a variable and a net are observable value symbols a process can wait
+    // on; sensitivity subscribes to either (a net's resolved value changing is
+    // an update event just like a variable write, LRM 9.4.2).
+    const auto* value = read.symbol->as_if<slang::ast::ValueSymbol>();
+    if (value == nullptr) continue;
     // A footprint is meaningful only for a signal the runtime bit-addresses: a
     // packed bit vector, which renders to one observable cell whose change set
     // is read per bit. For an enum, unpacked aggregate, string, or real the
     // runtime observes the whole signal on any change, so the read carries no
     // footprint regardless of the flat-bit view the DFA computed over its own
     // encoding.
-    const auto& read_type = var->getType();
+    const auto& read_type = value->getType();
     const std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint =
         read_type.isIntegral() && !read_type.isEnum() ? read.footprint
                                                       : std::nullopt;
-    if (const auto binding = LookupStructuralDataObjectBinding(*var)) {
+    if (const auto binding = LookupStructuralDataObjectBinding(*value)) {
       const auto hops = frame.HopsTo(binding->home_frame);
       if (!hops.has_value()) continue;
       out.push_back(
@@ -230,7 +264,7 @@ auto ModuleLowerer::TranslateSensitivityReads(
     // A read of a cross-unit member resolves to the slot that body lowering
     // created for it; subscribing through the slot is what makes always_comb
     // re-trigger on a child's signal.
-    if (const auto slot = LookupCrossUnitRef(frame.Current(), *var)) {
+    if (const auto slot = LookupCrossUnitRef(frame.Current(), *value)) {
       out.push_back(
           hir::SensitivityEntry{
               .ref = hir::CrossUnitVarRef{.id = *slot},

@@ -46,6 +46,15 @@ struct WireResolver {
         "WireResolver::Resolve: more than one driver contribution; the "
         "lowering rejects multi-driver nets");
   }
+
+  // The empty-driver value of a `wire` / `tri` net: high-impedance at the
+  // declared width (LRM 6.6.1). `prototype` carries the net's declared type;
+  // its contents are unused. The net installs this at construction so an
+  // undriven read sees the net type's undriven value.
+  [[nodiscard]] static auto ResolveEmpty(const value::PackedArray& prototype)
+      -> value::PackedArray {
+    return value::PackedArray::HighImpedanceLike(prototype);
+  }
 };
 
 template <value::LyraValue T, class Resolver>
@@ -63,10 +72,20 @@ class ResolvedNet : public Observable {
  public:
   ResolvedNet() = default;
 
-  // The undriven value (high-impedance for the common net types) seeds the
-  // resolution when no driver contributes.
-  explicit ResolvedNet(T undriven)
-      : resolved_(undriven), undriven_(std::move(undriven)) {
+  // Installs, once at construction, the net's empty-driver resolved value at
+  // the prototype's declared type. The net is therefore a readable, well-typed
+  // observable before any driver attaches, and an undriven read sees the net
+  // type's undriven value rather than an uninitialized cell. Installing twice
+  // is a lowering defect.
+  void Initialize(T prototype) {
+    if constexpr (std::same_as<T, value::PackedArray>) {
+      if (!resolved_.IsUninitialized()) {
+        throw InternalError(
+            "ResolvedNet::Initialize: cell is already initialized");
+      }
+    }
+    undriven_ = Resolver::ResolveEmpty(prototype);
+    resolved_ = undriven_;
   }
 
   ResolvedNet(const ResolvedNet&) = delete;
