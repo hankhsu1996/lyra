@@ -12,13 +12,16 @@ unpacked arrays here; the variable-size aggregate family in `aggregate.md`), `da
 Enum, real, string, fixed-size unpacked arrays, the integral-family declaration initializers, and
 parameter references in expressions are complete. The variable-size aggregate family (dynamic array,
 queue, associative array) is complete; see `aggregate.md`. Unpacked struct and union are complete.
-The default-init and representation families remain.
+Default initialization (LRM Table 6-7) and value representation, including a wide value carrying X/Z
+across the 64-bit word boundary, are complete. Chandle is the only remaining datatype, and its
+representation is built with the DPI boundary it serves.
 
-| Item | Status                                                                                    |
-| ---- | ----------------------------------------------------------------------------------------- |
-| -    | Variable-size aggregates (array / queue / assoc) -- `aggregate.md` (complete).            |
-| -    | Unpacked struct / union -- complete.                                                      |
-| -    | `datatypes/default_init`, `datatypes/representation` -- no progress sub-steps opened yet. |
+| Item | Status                                                                         |
+| ---- | ------------------------------------------------------------------------------ |
+| -    | Variable-size aggregates (array / queue / assoc) -- `aggregate.md` (complete). |
+| -    | Unpacked struct / union -- complete.                                           |
+| -    | `datatypes/default_init`, `datatypes/representation` -- complete.              |
+| -    | Chandle -- rides on the DPI workstream (its only non-null value source).       |
 
 ## Enum
 

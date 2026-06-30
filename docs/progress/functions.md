@@ -73,26 +73,30 @@ everything and the inline "rides on" notes record the real dependencies.
       variable or unpacked-array element; mixes with `output` / `inout` in one call. Not yet:
       compound, partial, or increment / decrement writes through a reference formal (whole-variable
       reads and writes are supported); class properties and unpacked-struct members (those data
-      types); and the outdated-reference rules for resized / deleted container elements, which ride
-      on F8.
+      types); and the LRM 13.5.2 outdated-reference rules for a reference bound to a dynamic-array,
+      queue, or associative-array element -- resizing, deleting, or reassigning the container inside
+      the body makes the reference outdated, so a later write through it is not visible outside.
+      Binding a reference to a variable-size container element, together with the detach-on-outdate
+      semantics, is the remaining gap.
 
 ### Local storage
 
 - [x] F5 -- Function-local default initialization (LRM 13.3.2 default-init, 6.8). 2-state locals
       default to 0, 4-state locals to X (four-state suite), unpacked arrays element-wise, and string
-      locals to empty; the same default applies to every other data-type family Lyra supports.
-      Container and unpacked-union locals follow once those data types exist (containers ride on
-      F8).
+      locals to empty; the same default applies to every other data-type family Lyra supports,
+      including container and unpacked-union locals.
 
 ### Data types across the boundary
 
 - [x] F7 -- `string` arguments and return values. Managed lifecycle across the call boundary;
       concatenated and computed string returns.
-- [ ] F8 -- Container arguments and return values: dynamic array, queue, associative array. Managed
-      ownership and lifecycle across the boundary, including `output` / `inout` containers and the
-      outdated-reference rules of LRM 13.5.2. The container value types now exist (`aggregate.md`),
-      so the subroutine ABI carries them by value through the same path as any other type; what
-      remains is the cross-boundary lifecycle and the LRM 13.5.2 outdated-reference rules.
+- [x] F8 -- Container arguments and return values: dynamic array, queue, associative array. The
+      subroutine ABI carries a container by value through the same path as every other value family,
+      so `input`, `output`, `inout`, and return all cross the boundary as whole-value copies: an
+      `output` overwrites the actual's prior container, an `inout` that mutates, resizes, or
+      reassigns inside the body copies the resulting container back, and a returned container is
+      independent of the body's local. The outdated-reference rules of LRM 13.5.2 are a `ref`-formal
+      concern, not a by-value one, and are tracked with F10.
 - [ ] F9 -- `chandle` arguments and return values (LRM 6.14). Identity round-trip and `null`
       handling through the subroutine boundary.
 
