@@ -27,6 +27,7 @@
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/dump.hpp"
+#include "lyra/lir/dump.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/support/subprocess.hpp"
 
@@ -35,6 +36,7 @@ namespace {
 enum class CommandKind {
   kDumpHir,
   kDumpMir,
+  kDumpLir,
   kEmitCpp,
   kCompile,
   kRun,
@@ -126,10 +128,13 @@ auto ParseArgs(int argc, char** argv)
   argparse::ArgumentParser dump_cmd("dump");
   argparse::ArgumentParser dump_hir_cmd("hir");
   argparse::ArgumentParser dump_mir_cmd("mir");
+  argparse::ArgumentParser dump_lir_cmd("lir");
   AddCompilationFlags(dump_hir_cmd);
   AddCompilationFlags(dump_mir_cmd);
+  AddCompilationFlags(dump_lir_cmd);
   dump_cmd.add_subparser(dump_hir_cmd);
   dump_cmd.add_subparser(dump_mir_cmd);
+  dump_cmd.add_subparser(dump_lir_cmd);
 
   argparse::ArgumentParser emit_cmd("emit");
   argparse::ArgumentParser emit_cpp_cmd("cpp");
@@ -192,10 +197,14 @@ auto ParseArgs(int argc, char** argv)
     } else if (dump_cmd.is_subcommand_used("mir")) {
       out.cmd = CommandKind::kDumpMir;
       BindCompilationFlags(dump_mir_cmd, out);
+    } else if (dump_cmd.is_subcommand_used("lir")) {
+      out.cmd = CommandKind::kDumpLir;
+      BindCompilationFlags(dump_lir_cmd, out);
     } else {
       return std::unexpected(
           std::format(
-              "dump requires 'hir' or 'mir'\n{}", dump_cmd.help().str()));
+              "dump requires 'hir', 'mir', or 'lir'\n{}",
+              dump_cmd.help().str()));
     }
   } else if (program.is_subcommand_used("emit")) {
     if (emit_cmd.is_subcommand_used("cpp")) {
@@ -327,9 +336,16 @@ auto main(int argc, char** argv) -> int {
     }
 
     lyra::diag::DiagnosticSink sink;
-    const auto stop_after = args.cmd == CommandKind::kDumpHir
-                                ? lyra::compiler::StopAfter::kHir
-                                : lyra::compiler::StopAfter::kMir;
+    const auto stop_after = [&] {
+      switch (args.cmd) {
+        case CommandKind::kDumpHir:
+          return lyra::compiler::StopAfter::kHir;
+        case CommandKind::kDumpLir:
+          return lyra::compiler::StopAfter::kLir;
+        default:
+          return lyra::compiler::StopAfter::kMir;
+      }
+    }();
     auto result = lyra::compiler::Compile(args.input, sink, stop_after);
 
     // `run` executes the simulation; its stdout/stderr are the simulation's
@@ -396,6 +412,11 @@ auto main(int argc, char** argv) -> int {
       case CommandKind::kDumpMir:
         for (const auto& unit : *result.artifacts.mir_units) {
           fmt::print("{}", lyra::mir::DumpMir(unit));
+        }
+        return 0;
+      case CommandKind::kDumpLir:
+        for (const auto& unit : *result.artifacts.lir_units) {
+          fmt::print("{}", lyra::lir::DumpLir(unit));
         }
         return 0;
       case CommandKind::kEmitCpp: {

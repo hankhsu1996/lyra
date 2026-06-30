@@ -8,6 +8,7 @@
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/mir_to_lir/lower.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
@@ -35,36 +36,66 @@ auto Compile(
   }
 
   lowering::ast_to_hir::SensitivityAnalyzer sensitivity_analyzer;
-  auto hir = lowering::ast_to_hir::LowerCompilation(
-      lowering::ast_to_hir::LowerCompilationFacts(
-          *result.artifacts.parse->compilation,
-          result.artifacts.parse->source_mapper, sensitivity_analyzer,
-          input.disable_assertions));
-  if (!hir) {
-    sink.Report(std::move(hir.error()));
-    return result;
-  }
-  result.artifacts.hir_units = std::move(*hir);
+  const lowering::ast_to_hir::LowerCompilationFacts facts(
+      *result.artifacts.parse->compilation,
+      result.artifacts.parse->source_mapper, sensitivity_analyzer,
+      input.disable_assertions);
   result.artifacts.top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(
       *result.artifacts.parse->compilation);
 
-  if (stop_after == StopAfter::kHir) {
+  // Each unit runs its whole lowering pipeline (HIR -> MIR -> LIR) as an
+  // independent vertical: a unit reads only its own body and the shared
+  // frontend, never another unit's lowered artifacts. Reserving the artifact
+  // vectors to the unit count keeps each stored MIR at a stable address, so a
+  // LIR unit that borrows its source MIR stays valid as later units append.
+  const bool want_mir = stop_after >= StopAfter::kMir;
+  const bool want_lir = stop_after >= StopAfter::kLir;
+  if (auto ok = lowering::ast_to_hir::RejectDpiExports(facts); !ok) {
+    sink.Report(std::move(ok.error()));
     return result;
   }
+  const auto bodies = lowering::ast_to_hir::CollectUnitBodies(facts);
 
-  std::vector<mir::CompilationUnit> units;
-  units.reserve(result.artifacts.hir_units->size());
-  for (const auto& hir_unit : *result.artifacts.hir_units) {
-    lowering::hir_to_mir::ModuleLowerer module(
-        hir_unit, result.artifacts.parse->diag_sources);
-    auto unit_or = module.Run();
-    if (!unit_or) {
-      sink.Report(std::move(unit_or.error()));
+  std::vector<hir::ModuleUnit> hir_units;
+  std::vector<mir::CompilationUnit> mir_units;
+  std::vector<lir::CompilationUnit> lir_units;
+  hir_units.reserve(bodies.size());
+  mir_units.reserve(bodies.size());
+  lir_units.reserve(bodies.size());
+
+  for (const auto* body : bodies) {
+    auto hir_or = lowering::ast_to_hir::LowerUnit(facts, *body);
+    if (!hir_or) {
+      sink.Report(std::move(hir_or.error()));
       return result;
     }
-    units.push_back(*std::move(unit_or));
+    hir_units.push_back(*std::move(hir_or));
+    if (!want_mir) {
+      continue;
+    }
+
+    lowering::hir_to_mir::ModuleLowerer module(
+        hir_units.back(), result.artifacts.parse->diag_sources);
+    auto mir_or = module.Run();
+    if (!mir_or) {
+      sink.Report(std::move(mir_or.error()));
+      return result;
+    }
+    mir_units.push_back(*std::move(mir_or));
+    if (!want_lir) {
+      continue;
+    }
+
+    lir_units.push_back(lowering::mir_to_lir::LowerUnit(mir_units.back()));
   }
-  result.artifacts.mir_units = std::move(units);
+
+  result.artifacts.hir_units = std::move(hir_units);
+  if (want_mir) {
+    result.artifacts.mir_units = std::move(mir_units);
+  }
+  if (want_lir) {
+    result.artifacts.lir_units = std::move(lir_units);
+  }
 
   return result;
 }

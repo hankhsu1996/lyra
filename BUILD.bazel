@@ -138,6 +138,19 @@ cc_library(
 )
 
 cc_library(
+    name = "lir",
+    srcs = glob(["src/lyra/lir/*.cpp"]),
+    hdrs = glob(["include/lyra/lir/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":mir",
+        ":support",
+    ],
+)
+
+cc_library(
     name = "frontend",
     srcs = glob(["src/lyra/frontend/*.cpp"]),
     hdrs = glob(["include/lyra/frontend/*.hpp"]),
@@ -185,6 +198,20 @@ cc_library(
 )
 
 cc_library(
+    name = "mir_to_lir",
+    srcs = glob(["src/lyra/lowering/mir_to_lir/**/*.cpp"]),
+    hdrs = glob(["include/lyra/lowering/mir_to_lir/**/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lir",
+        ":mir",
+        ":support",
+    ],
+)
+
+cc_library(
     name = "backend_cpp",
     srcs = glob(["src/lyra/backend/cpp/*.cpp"]),
     hdrs = glob(["include/lyra/backend/cpp/*.hpp"]),
@@ -210,7 +237,9 @@ cc_library(
         ":frontend",
         ":hir",
         ":hir_to_mir",
+        ":lir",
         ":mir",
+        ":mir_to_lir",
         ":support",
     ],
 )
@@ -255,6 +284,7 @@ cc_binary(
         ":driver",
         ":frontend",
         ":hir",
+        ":lir",
         ":mir",
         ":support",
         "@argparse",
