@@ -110,7 +110,8 @@ full support.
       structural (continuous-assign) right-hand side that applies a reduction operator to a
       part-select whose width comes from `$bits` (the `ibex_top` parity check,
       `assign unused = ^busy_q[$bits(mubi_t)-1:1]`). This is `ibex_top`'s first stop once its
-      children lower.
+      children lower. The reduction and part-select already lower; the gap is `$bits` of a type,
+      which has no elaboration-constant lowering yet. Unblocked by `query-functions.md` Q1.
 - [ ] Further structural-expression forms surfaced as later passes get deeper (recorded here as
       discovery continues).
 

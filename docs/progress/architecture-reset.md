@@ -183,6 +183,14 @@ Tracked in `processes.md`.
 - [ ] processes/generate -- process generate; if / for-generate with `initial` and continuous-assign
       bodies run today, the full generate-form x procedural-block matrix is unverified (P12).
 
+### system functions
+
+- [ ] Query functions -- the data-query and array-query system functions (`$bits`, `$typename`,
+      `$left` / `$right` / `$low` / `$high` / `$increment` / `$size`, `$dimensions` /
+      `$unpacked_dimensions`), as elaboration-time constants for fixed-size operands and runtime
+      queries for dynamically sized ones (`query-functions.md`). The value-computation functions
+      (`$clog2`, `$signed` / `$unsigned`, `$isunknown` / `$countones` / `$onehot`) are supported.
+
 ### system tasks
 
 - [ ] System tasks -- the `$display` / `$write` / `$strobe` / `$monitor` family, file IO,

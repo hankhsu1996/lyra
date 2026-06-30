@@ -14,7 +14,8 @@ Done when:
 
 ## Actionable
 
-All items closed; operator surface in scope is complete.
+- W14 -- a range-select read whose two bounds have different state domains aborts at runtime. The
+  rest of the operator surface in scope is complete.
 
 ## Sub-Steps
 
@@ -53,6 +54,13 @@ merged node.
 - [x] W6 -- Selector lvalue (write side, including NBA + selector). LRM 11.5.1 write rules
       (fully-OOB no-op, partial-OOB only in-range bits, X / Z position no-op) all hold. Closes
       `datatypes/packed/indexed_part_select` for the write half.
+- [ ] W14 -- A range-select read whose two bounds have different state domains aborts at runtime
+      (e.g. `v[$bits(t)-1:1]`, where the `$bits`-derived bound is 4-state and the literal bound is
+      2-state). The endpoint-ordering step compares the two bounds assuming a shared storage domain
+      -- true for the common two-literal case, not when the bounds are typed differently. The fix
+      reconciles the endpoints to a common domain before comparing; a broader audit should cover
+      every comparison the selector lowering synthesizes. Pre-existing (a `localparam integer` bound
+      reaches it too); surfaced by `$bits` in a part-select bound (`query-functions.md` Q1).
 
 ### Construction
 
