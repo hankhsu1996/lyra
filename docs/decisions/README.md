@@ -16,6 +16,10 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 
 - [integral-representation](integral-representation.md) -- one fat `PackedArray` carries integral
   shape (width / signedness / 4-state / dims) as runtime fields, not C++ template parameters.
+- [value-store-discipline](value-store-discipline.md) -- a value is pure (declared type immutable at
+  construction, assignment replaces the whole value); preserving the destination's declared type
+  across assignment lives at the store boundary and the cell, not in the value's assignment
+  operator.
 - [value-type-concepts](value-type-concepts.md) -- the `lyra::value` operator surface is a lattice
   of composable C++ concepts, one per LRM operator family.
 - [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- runtime shape lives on

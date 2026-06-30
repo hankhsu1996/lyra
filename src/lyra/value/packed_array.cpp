@@ -1297,9 +1297,15 @@ auto PackedArray::AssignSlice(
     throw InternalError(
         "PackedArray::AssignSlice: value width does not match slice width");
   }
-  if (value.IsFourState() != type_.is_four_state) {
+  // A 2-state field inside a 4-state aggregate (LRM 7.2.1) writes a 2-state
+  // value into a 4-state slot; the loop below clears the unknown plane at the
+  // written positions (the value carries none), widening it. The reverse never
+  // occurs: a 2-state aggregate has only 2-state fields, so a 4-state value
+  // reaching 2-state storage is a missing upstream coercion.
+  if (value.IsFourState() && !type_.is_four_state) {
     throw InternalError(
-        "PackedArray::AssignSlice: value state kind does not match target");
+        "PackedArray::AssignSlice: a 4-state value cannot be written into "
+        "2-state storage");
   }
   if (lsb_bit.HasUnknown() || lsb_bit.BitWidth() > 64U) {
     return;

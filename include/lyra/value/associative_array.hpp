@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <concepts>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -15,6 +14,7 @@
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/string.hpp"
@@ -127,41 +127,33 @@ struct Formatter<WildcardKey> {
 // iteration and `%p` formatting follow the LRM 7.8 key ordering and stay
 // deterministic.
 //
-// `element_default_` holds the element-type default -- the LRM Table 7-1
-// value read from a nonexistent array entry. It carries the element's
-// runtime shape (supplied at construction because `V = PackedArray` carries
-// shape the C++ type cannot recover) and is only ever read or copied, never
-// written, so a read returns it directly. A read of a nonexistent or invalid
-// key (LRM 7.8.6) returns it unless `user_default_` overrides it (LRM
-// 7.9.11). `discard_sink_` is the throwaway an invalid-key write lands on,
-// scrubbed to canonical by the non-const write path. There is no
-// out-of-bounds concept here: an associative
-// array has no index bounds, so the trigger is a missing or invalid key, never
-// a boundary.
+// The element default and the invalid-key discard target are carried by an
+// `OobShield`. A read of a nonexistent or invalid key (LRM 7.8.6) returns the
+// element default unless `user_default_` overrides it (LRM 7.9.11). There is no
+// boundary trigger as in an indexed array -- an associative array has no index
+// bounds -- so the shield fires on a missing or invalid key instead.
 template <typename K, typename V>
 class AssociativeArray {
  public:
   using KeyType = K;
   using ElementType = V;
 
-  // Sentinel "uninitialized" form -- empty map with default-constructed
-  // default / sink slots, used as the declared default state of an associative
-  // field before the constructor scope seeds the element shape.
+  // Sentinel "uninitialized" form -- empty map with a default-constructed
+  // shield, used as the declared default state of an associative field before
+  // the constructor scope seeds the element shape.
   AssociativeArray() = default;
 
-  // Empty map with the default / sink slots seeded, used for declarations like
+  // Empty map with the shield seeded, used for declarations like
   // `int m[string];` where the element shape is known at lowering time.
   explicit AssociativeArray(V element_default)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)) {
+      : shield_(std::move(element_default)) {
   }
 
   // LRM 7.9.11 associative literal `'{key: value, ...}`: seed the map from the
-  // (key, value) entries. The default slots still carry the element-type
-  // default for a read of an absent key.
+  // (key, value) entries. The shield still carries the element-type default for
+  // a read of an absent key.
   AssociativeArray(V element_default, std::span<const Tuple<K, V>> entries)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)) {
+      : shield_(std::move(element_default)) {
     for (const auto& entry : entries) {
       data_.insert_or_assign(entry.template Get<0>(), entry.template Get<1>());
     }
@@ -172,8 +164,7 @@ class AssociativeArray {
   // a later write (LRM 7.8.7).
   AssociativeArray(
       V element_default, std::span<const Tuple<K, V>> entries, V user_default)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
+      : shield_(std::move(element_default)),
         user_default_(std::move(user_default)) {
     for (const auto& entry : entries) {
       data_.insert_or_assign(entry.template Get<0>(), entry.template Get<1>());
@@ -239,15 +230,14 @@ class AssociativeArray {
   // (LRM 7.8.6) yields the discard sink instead, so the write is discarded.
   [[nodiscard]] auto ElementRef(const K& key) -> V& {
     if (IsInvalidKey(key)) {
-      discard_sink_.ResetToDefault();
-      return discard_sink_;
+      return shield_.DiscardTarget();
     }
     auto it = data_.find(key);
     if (it == data_.end()) {
       it = data_
                .emplace(
                    key, user_default_.has_value() ? *user_default_
-                                                  : element_default_)
+                                                  : shield_.Default())
                .first;
     }
     return it->second;
@@ -525,9 +515,9 @@ class AssociativeArray {
 
   // The value a read of an absent or invalid key yields (LRM 7.8.6 / 7.9.11):
   // the persistent user default when one was set, otherwise the element-type
-  // default. `element_default_` is never written, so it is returned directly.
+  // default the shield carries.
   [[nodiscard]] auto MissValue() const -> const V& {
-    return user_default_.has_value() ? *user_default_ : element_default_;
+    return user_default_.has_value() ? *user_default_ : shield_.Default();
   }
 
   // The LRM 7.12 entry stream (decision: array-manipulation-entry-stream): a
@@ -541,8 +531,7 @@ class AssociativeArray {
            });
   }
 
-  V element_default_;
-  V discard_sink_;
+  detail::OobShield<V> shield_;
   std::optional<V> user_default_;
   std::map<K, V, typename AssocKeyTraits<K>::Less> data_;
 };
