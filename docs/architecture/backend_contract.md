@@ -99,14 +99,16 @@ will hit the same obstruction. The bug is in MIR, not in render.
 
 - **An `if`-branch, ternary, or switch in a value-emission entry whose arms produce different
   syntactic shapes.** This is the canonical render-side defect: render is making a decision that
-  should be a MIR-level distinction. The fix is upstream, never inside render.
+  should be a MIR-level distinction. The fix is upstream, never inside render. (The sole exception
+  is a leaf literal materializing its own value -- see Notes.)
 
 - A value-emission entry that composes a target-language type literal as a string. Every
   target-language type literal a backend emits comes from the type-mapping dispatch.
 
 - A value-emission entry that names a runtime library identifier (wrapper type, helper function,
   helper struct, method spelling) directly. The runtime library's identifiers appear at render
-  through the MIR types and MIR calls that map onto them.
+  through the MIR types and MIR calls that map onto them. (The sole exception is a leaf literal
+  materializing its own value -- see Notes.)
 
 - A value-emission entry that switches on a MIR type's payload to choose a non-mechanical emission
   form. Type payload is for type-mapping; value emission acting on it reads value-layer data carried
@@ -158,3 +160,20 @@ primitives (one initialize method per construction variant, taking flat primitiv
 HIR-to-MIR emits the call, then render translates uniformly. The asymmetry between "some members are
 default-initialized, some need construction" is expressed in MIR's expression set, not in render's
 branch tables.
+
+A leaf literal is the one bounded exception to invariants 2 and 3. An integer, real, or string
+literal has no faithful render but a runtime-library construction of its own value, so its render
+names the runtime value type and composes the construction -- including choosing the constructor
+form that expresses the literal's own value kind, such as a narrow integer versus a wide or
+X-bearing one -- from that literal's value and type alone. The exception is bounded to a literal
+materializing _itself_: it earns the carve-out only because the construction is a fixed function of
+the single literal node. A value-emission entry may not read another node's type -- an enclosing
+declaration, a call qualification, an expected destination -- to synthesize operands or pick a form;
+that is the forbidden shape, with no exception.
+
+A shape that a conversion or factory call must hand the runtime therefore travels as an ordinary MIR
+value: a literal of the destination type, whose contents are unused and whose type supplies the
+shape. The shape reaches render as its own leaf node (rendered by the exception above), never
+composed by the consuming call's render from the call's type. A render branch that reads a call's
+type qualification to append shape arguments is the forbidden shape; the prototype-value argument is
+the mechanical alternative.

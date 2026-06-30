@@ -142,26 +142,25 @@ class Var : public Observable {
   auto operator=(Var&&) -> Var& = delete;
   ~Var() = default;
 
-  // Records the new value and reports whether it differs from the old (LRM
-  // 9.4.2 `===` semantics for @() detection -- the engine fires subscribers
-  // only on a real change). The store always happens so a freshly-defaulted
-  // cell adopts shape and implementation-side seeds (e.g. an
-  // `AssociativeArray`'s `element_default_`) from the source on the first
-  // write, even when the SV-visible content compares identical (both empty).
-  auto AssignIfChanged(const T& v) -> bool {
-    const bool changed = !value_.IsBitIdentical(v);
-    value_ = v;
-    return changed;
-  }
-
-  auto AssignIfChanged(T&& v) -> bool {
-    const bool changed = !value_.IsBitIdentical(v);
-    value_ = std::move(v);
-    return changed;
-  }
-
   [[nodiscard]] auto Get() const noexcept -> const T& {
     return value_;
+  }
+
+  // Installs the cell's declared representation (and default contents) exactly
+  // once, at construction; `prototype` is a value of the cell's declared type,
+  // only its representation is used. Installing twice, or a store before
+  // installation, is a lowering defect and throws. After installation, every
+  // store requires the right-hand side to already be at this representation --
+  // so the cell's type is fixed by construction, not adopted from whichever
+  // store runs first.
+  void Initialize(T prototype) {
+    if constexpr (std::same_as<T, value::PackedArray>) {
+      if (!value_.IsUninitialized()) {
+        throw InternalError(
+            "Var<PackedArray>::Initialize: cell is already initialized");
+      }
+    }
+    value_ = std::move(prototype);
   }
 
   // Commits a whole-variable write and, on a real change (LRM 4.3 update
@@ -180,6 +179,23 @@ class Var : public Observable {
   auto Mutate(RuntimeServices& services) -> ScopedMutation<T>;
 
  private:
+  // Records the value and reports whether it differs from the old per LRM 9.4.2
+  // `===` (the engine fires @() subscribers only on a real change). Private: it
+  // writes the cell directly, with none of the representation checks a semantic
+  // store performs, so it must never become a public path around that
+  // discipline.
+  auto AssignIfChanged(const T& v) -> bool {
+    const bool changed = !value_.IsBitIdentical(v);
+    value_ = v;
+    return changed;
+  }
+
+  auto AssignIfChanged(T&& v) -> bool {
+    const bool changed = !value_.IsBitIdentical(v);
+    value_ = std::move(v);
+    return changed;
+  }
+
   T value_{};
 };
 
@@ -314,6 +330,22 @@ void Var<T>::Set(RuntimeServices& services, const T& new_val) {
   // A PackedArray write classifies the LSB transition per waiter (LRM 9.4.2
   // Table 9-2); every other cell type only has any-change waiters.
   if constexpr (std::same_as<T, value::PackedArray>) {
+    // The cell's declared representation is installed once at construction and
+    // never reshaped; a store before that is a lowering defect. Every store
+    // must already be at that representation (the store boundary is what
+    // converts the right-hand side there); a mismatch is a missing upstream
+    // conversion -- a compiler bug, surfaced here rather than silently adopting
+    // the wrong shape.
+    if (value_.IsUninitialized()) {
+      throw InternalError(
+          "Var<PackedArray>::Set: store into a cell that was never "
+          "initialized");
+    }
+    if (!value_.SameRepresentation(new_val)) {
+      throw InternalError(
+          "Var<PackedArray>::Set: stored value's representation does not match "
+          "the cell's declared type; a required conversion was not emitted");
+    }
     const value::PackedArray old_val = Get();
     if (AssignIfChanged(new_val)) {
       services.TriggerValueChange(

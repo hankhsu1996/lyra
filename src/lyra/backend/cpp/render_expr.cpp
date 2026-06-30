@@ -69,36 +69,29 @@ auto RenderWordList(std::span<const std::uint64_t> words, std::size_t n)
 auto RenderPackedArrayIntegerLiteral(
     const mir::PackedArrayType& pa, const mir::IntegralConstant& c)
     -> std::string {
-  // Narrow + no X/Z fits a single int64 carrier and reads better as
-  // PackedArray::Int / FromInt. Wide literals or X/Z-bearing literals must
-  // round-trip through explicit value/unknown word planes via FromWords.
+  // A literal materializes as a construction of its own value: a narrow 2-state
+  // value via Int / FromInt, a wide or X/Z-bearing value via FromWords. The
+  // shape -- a 1-D vector or a multi-dimensional stack -- rides in the
+  // PackedType, so the same value path serves any rank and always carries the
+  // literal's actual bits.
   const bool literal_has_xz = !c.state_words.empty() && c.state_words[0] != 0U;
-
-  // FromInt / FromWords both take a single `bit_width`, so a multi-dim PA
-  // shape cannot ride those paths. The only multi-dim literal the synthesiser
-  // produces is the type's LRM Table 6-7 default (all zeros for 2-state, all
-  // x for 4-state), which the dim-list constructor materialises directly --
-  // call it instead of pretending the literal is single-dim.
-  if (pa.dims.size() > 1U) {
-    return std::format(
-        "lyra::value::PackedArray({})", RenderPackedArrayCtorArgs(pa));
-  }
-
   const bool needs_word_planes = c.width > 64U || literal_has_xz;
 
   if (!needs_word_planes) {
     const auto value = IntegralConstantToInt64(c);
-    // 32-bit signed has the named shorthands Int (2-state) / Integer
-    // (4-state); both read far better than the explicit FromInt for the
-    // ubiquitous `int` / `integer` literal.
-    if (pa.BitWidth() == 32U && pa.signedness == mir::Signedness::kSigned) {
+    // A 1-D 32-bit signed value has the named shorthands Int (2-state) /
+    // Integer (4-state); both read far better than the explicit FromInt for the
+    // ubiquitous `int` / `integer` literal. A multi-dimensional 32-bit type
+    // takes the general path so its dimension stack survives.
+    if (pa.dims.size() == 1U && pa.BitWidth() == 32U &&
+        pa.signedness == mir::Signedness::kSigned) {
       return std::format(
           "lyra::value::PackedArray::{}({})",
           pa.atom == mir::BitAtom::kBit ? "Int" : "Integer", value);
     }
     return std::format(
         "lyra::value::PackedArray::FromInt({}LL, {})", value,
-        RenderPackedArrayCtorArgs(pa));
+        RenderPackedType(pa));
   }
 
   const bool is_four_state = pa.atom != mir::BitAtom::kBit;
@@ -107,13 +100,20 @@ auto RenderPackedArrayIntegerLiteral(
         "RenderPackedArrayIntegerLiteral: 2-state PackedArray cannot hold "
         "X/Z literal");
   }
+  // Word planes ride as `std::array` spans (a literal that does not fit an
+  // int64 carrier is the rare wide / X-bearing case); the empty unknown plane
+  // of a 2-state value is an empty span.
   const std::size_t n = (pa.BitWidth() + 63U) / 64U;
-  const std::string value_init = RenderWordList(c.value_words, n);
+  const std::string value_init = std::format(
+      "std::array<std::uint64_t, {}>{}", n, RenderWordList(c.value_words, n));
   const std::string unknown_init =
-      is_four_state ? RenderWordList(c.state_words, n) : std::string{"{}"};
+      is_four_state ? std::format(
+                          "std::array<std::uint64_t, {}>{}", n,
+                          RenderWordList(c.state_words, n))
+                    : std::string{"std::span<const std::uint64_t>{}"};
   return std::format(
       "lyra::value::PackedArray::FromWords({}, {}, {})", value_init,
-      unknown_init, RenderPackedArrayCtorArgs(pa));
+      unknown_init, RenderPackedType(pa));
 }
 
 auto RenderIntegerLiteralExpr(
@@ -597,42 +597,10 @@ auto RenderClosureExpr(
       "[{}]({}){}{}", captures_text, params_text, return_clause, body);
 }
 
-// LRM 10.10 unpacked array concatenation into a queue. Each operand is spliced
-// (an unpacked container of the element type) or appended as a single element
-// (anything else); the empty `{}` is the empty queue. The result is unseeded --
-// the assignment destination keeps its own element shape (LRM 10.6.1) -- so no
-// element default is threaded.
-auto RenderQueueConcat(
-    const ScopeView& view, const mir::Type& result_ty, const mir::ConcatExpr& c)
-    -> std::string {
-  const mir::TypeId elem_type_id =
-      std::get<mir::QueueType>(result_ty.data).element_type;
-  std::string out = std::format(
-      "lyra::value::MakeQueueConcat<{}>(",
-      RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id));
-  for (std::size_t i = 0; i < c.operands.size(); ++i) {
-    const auto& op_expr = view.Expr(c.operands[i]);
-    const auto& op_ty = view.Unit().types.Get(op_expr.type);
-    const bool spread =
-        std::holds_alternative<mir::QueueType>(op_ty.data) ||
-        std::holds_alternative<mir::DynamicArrayType>(op_ty.data) ||
-        std::holds_alternative<mir::UnpackedArrayType>(op_ty.data);
-    std::string rendered = RenderExpr(view, op_expr);
-    if (i != 0) out += ", ";
-    out += spread ? std::format("lyra::value::QSpread({})", rendered)
-                  : std::format("lyra::value::QElem({})", rendered);
-  }
-  out += ")";
-  return out;
-}
-
 auto RenderConcatExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
     -> std::string {
   const auto& result_ty = view.Unit().types.Get(expr.type);
-  if (std::holds_alternative<mir::QueueType>(result_ty.data)) {
-    return RenderQueueConcat(view, result_ty, c);
-  }
   if (c.operands.empty()) {
     throw InternalError("RenderConcatExpr: hir lowering produced empty concat");
   }

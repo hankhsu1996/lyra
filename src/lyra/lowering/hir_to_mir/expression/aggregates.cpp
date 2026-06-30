@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -18,6 +19,8 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -56,6 +59,25 @@ auto BuildArrayReplicationFlatList(
       module, frame, result_type, std::move(flat));
 }
 
+// A packed assignment pattern folds its members into one flat bit plane (LRM
+// 11.4.12), so the ConcatExpr / ReplicationExpr that materialize it carry that
+// flat unsigned shape, not the destination's. This is that flat type: a single
+// dimension of the destination's total width. A multi-dimensional destination
+// then reshapes the flat value through the ordinary store conversion, so the
+// value lands carrying its declared dimensions rather than a flat run -- the
+// "materialization builds shape" rule applied to a value-build primitive.
+auto InternFlatPacked(
+    mir::CompilationUnit& unit, std::uint64_t width, mir::BitAtom atom)
+    -> mir::TypeId {
+  return unit.types.Intern(
+      mir::PackedArrayType{
+          .atom = atom,
+          .signedness = mir::Signedness::kUnsigned,
+          .dims = {mir::PackedRange{
+              .left = static_cast<std::int64_t>(width) - 1, .right = 0}},
+          .form = mir::PackedArrayForm::kExplicit});
+}
+
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
   return std::holds_alternative<mir::UnpackedArrayType>(ty.data) ||
          std::holds_alternative<mir::DynamicArrayType>(ty.data) ||
@@ -75,6 +97,34 @@ auto LowerHirConcatExpr(
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     operand_ids.push_back(block.exprs.Add(*std::move(lowered)));
+  }
+  // An unpacked-queue concatenation is a runtime builder call: it carries a
+  // default value of its declared element type (an empty `{}` part list cannot
+  // supply one) and its LRM 7.10.5 bound, built here as ordinary arguments
+  // ahead of the parts. A packed or string concatenation joins its operands
+  // directly and stays a value-build primitive.
+  const auto& result_ty = lowerer.Module().Unit().types.Get(result_type);
+  if (const auto* q = std::get_if<mir::QueueType>(&result_ty.data)) {
+    const mir::TypeId element_type = q->element_type;
+    const std::int64_t bound = q->max_bound.has_value()
+                                   ? static_cast<std::int64_t>(*q->max_bound)
+                                   : -1;
+    const mir::TypeId int32_type = lowerer.Module().Unit().builtins.int32;
+    std::vector<mir::ExprId> args;
+    args.reserve(operand_ids.size() + 2);
+    args.push_back(block.exprs.Add(
+        BuildDefaultValueExpr(lowerer.Module(), frame, element_type)));
+    args.push_back(block.exprs.Add(
+        mir::Expr{
+            .data = mir::HostIntLiteral{.value = bound}, .type = int32_type}));
+    args.insert(args.end(), operand_ids.begin(), operand_ids.end());
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{.target = support::BuiltinFn::kMakeQueueConcat},
+                .arguments = std::move(args)},
+        .type = result_type};
   }
   return mir::Expr{
       .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
@@ -128,9 +178,14 @@ auto LowerHirAssignmentPatternExpr(
         .data = mir::TupleExpr{.components = std::move(element_ids)},
         .type = result_type};
   }
-  return mir::Expr{
-      .data = mir::ConcatExpr{.operands = std::move(element_ids)},
-      .type = result_type};
+  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  const auto& result_pa = result_ty.AsIntegralPacked();
+  const mir::ExprId concat_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::ConcatExpr{.operands = std::move(element_ids)},
+          .type =
+              InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)});
+  return BuildValueConversion(unit, block, concat_id, result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -165,20 +220,27 @@ auto LowerHirAssignmentPatternReplicationExpr(
         .data = mir::TupleExpr{.components = std::move(components)},
         .type = result_type};
   }
+  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  const auto& result_pa = result_ty.AsIntegralPacked();
+  const std::uint64_t count =
+      ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
+  const std::uint64_t inner_width =
+      count == 0 ? 0 : result_pa.BitWidth() / count;
   const mir::ExprId inner_concat_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ConcatExpr{.operands = std::move(item_ids)},
-          .type = result_type});
+          .type = InternFlatPacked(unit, inner_width, result_pa.atom)});
   auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
-  return mir::Expr{
-      .data =
-          mir::ReplicationExpr{
-              .count = count_id,
-              .concat = inner_concat_id,
-          },
-      .type = result_type};
+  const mir::ExprId repl_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ReplicationExpr{
+                  .count = count_id, .concat = inner_concat_id},
+          .type =
+              InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)});
+  return BuildValueConversion(unit, block, repl_id, result_type);
 }
 
 // LRM 7.5.1 `new[N]` / `new[N](other)`. The argument list on the lowered

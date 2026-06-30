@@ -229,22 +229,24 @@ template <typename R, typename F>
   return out;
 }
 
-// LRM 7.12.2 reverse: in-place reversal. `iter_swap` exchanges element storage
-// through the element type's ADL `swap`, which stays shape-safe for
-// `PackedArray`.
+// LRM 7.12.2 reverse: in-place reversal. The elements are pure values, so the
+// underlying swap is an ordinary whole-value exchange.
 template <typename Seq>
 auto ArrayReverse(Seq& data) -> void {
   std::ranges::reverse(data);
 }
 
 // LRM 7.12.2 sort / rsort: in-place ordering by the closure-projected key.
-// Selection sort (O(n^2)) rather than `std::ranges::sort` because libstdc++'s
-// introsort move-assigns elements, which trips `PackedArray`'s
-// shape-preservation invariant; exchanging storage via the ADL `swap` stays
-// shape-safe, and test-sized arrays make the asymptotic cost a non-issue. The
-// per-element key is materialised once, then the elements move in sync. The
-// ordering family is positional (LRM 7.12.2 is sequence-only), so the index
-// passed to the key closure is the ordinal position.
+// Selection sort rather than `std::ranges::sort` because the SV comparison over
+// 4-state keys is not a strict weak ordering: a key carrying an x / z compares
+// indeterminate, so `a < b` and `b < a` can both be false while a definite
+// `a < c` still holds, breaking transitivity of the induced equivalence.
+// `std::ranges::sort` is undefined behaviour on such a comparator, whereas a
+// pairwise selection sort yields a defined order with no UB; test-sized arrays
+// make the O(n^2) cost a non-issue. The per-element key is materialised once,
+// then the elements move in sync. The ordering family is positional (LRM 7.12.2
+// is sequence-only), so the index passed to the key closure is the ordinal
+// position.
 template <typename Seq, typename F, typename Compare>
 auto ArraySortByKey(Seq& data, F key, Compare cmp) -> void {
   using KeyT = std::invoke_result_t<

@@ -13,6 +13,7 @@
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 
@@ -32,43 +33,33 @@ class ArraySliceRef;
 // 1-bit `PackedArray` so equality on aggregates propagates through the same
 // value-type the integral surface uses.
 //
-// `element_default_` holds the LRM Table 7-1 default an invalid-index read
-// returns (LRM 7.4.5) and the prototype every fill / slice / locator copies.
-// It carries the element's runtime shape (bit width, signedness, 2/4-state for
-// `T = PackedArray`) that the C++ type alone cannot recover, so it is
-// supplied at construction. It is only ever read or copied, never written,
-// so a const read returns it directly with no scrub. `discard_sink_` is the
-// throwaway an invalid-index write lands on; the non-const write path
-// scrubs it to canonical via `T::ResetToDefault` before handing out the
-// reference, so a discarded write never leaks into a later access.
+// The element default and the invalid-index discard target are carried by an
+// `OobShield`.
 template <typename T>
 class UnpackedArray {
  public:
   using ElementType = T;
 
-  // Sentinel "uninitialized" form -- empty container with default-constructed
-  // default / sink slots. Used as the declared default state of a
-  // `Var<UnpackedArray<T>>` field; the first MIR-level assignment overwrites
-  // the whole array (LRM 10.5 variable initialization).
+  // Sentinel "uninitialized" form -- empty container with a default-constructed
+  // shield. Used as the declared default state of a `Var<UnpackedArray<T>>`
+  // field; the first MIR-level assignment overwrites the whole array (LRM 10.5
+  // variable initialization).
   UnpackedArray() = default;
 
-  // Empty container with the default / sink slots seeded. Internal use only --
-  // SV fixed-size arrays are always non-empty; this form serves `Slice` and
-  // similar paths that build a fresh `UnpackedArray` element-by-element.
+  // Empty container with the shield seeded. Internal use only -- SV fixed-size
+  // arrays are always non-empty; this form serves `Slice` and similar paths
+  // that build a fresh `UnpackedArray` element-by-element.
   explicit UnpackedArray(T element_default)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)) {
+      : shield_(std::move(element_default)) {
   }
 
-  // Element-list construction: default / sink slots seeded, plus the explicit
-  // initial elements (LRM 10.9 assignment pattern lowering). The element
-  // list is taken as a span so the emit side can hand in a `std::array<T,
-  // N>{...}` literal whose self-determined type is unambiguous, rather
-  // than relying on context-dependent braced-init binding.
+  // Element-list construction: shield seeded, plus the explicit initial
+  // elements (LRM 10.9 assignment pattern lowering). The element list is taken
+  // as a span so the emit side can hand in a `std::array<T, N>{...}` literal
+  // whose self-determined type is unambiguous, rather than relying on
+  // context-dependent braced-init binding.
   UnpackedArray(T element_default, std::span<const T> init)
-      : element_default_(element_default),
-        discard_sink_(std::move(element_default)),
-        data_(init.begin(), init.end()) {
+      : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
 
   UnpackedArray(const UnpackedArray&) = default;
@@ -112,22 +103,19 @@ class UnpackedArray {
     }
   }
 
-  // LRM 7.4.5: an invalid-index write lands on `discard_sink_`, scrubbed to
-  // canonical first so a compound write reads the element default before the
-  // result is thrown away.
+  // LRM 7.4.5: an invalid-index write lands on the shield's discard target.
   [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
-      discard_sink_.ResetToDefault();
-      return discard_sink_;
+      return shield_.DiscardTarget();
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
-  // 7-1) directly -- `element_default_` is never written, so no scrub.
+  // 7-1).
   [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
     if (IsInvalidIndex(idx)) {
-      return element_default_;
+      return shield_.Default();
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
@@ -141,15 +129,15 @@ class UnpackedArray {
       -> UnpackedArray {
     const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     return UnpackedArray(
-        element_default_,
-        detail::ArraySliceGather(data_, element_default_, offset, count));
+        shield_.Default(),
+        detail::ArraySliceGather(data_, shield_.Default(), offset, count));
   }
 
   [[nodiscard]] auto SliceRef(
       const PackedArray& offset, const PackedArray& count_pa)
       -> ArraySliceRef<T> {
     const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
-    return ArraySliceRef<T>{data_, element_default_, offset, count};
+    return ArraySliceRef<T>{data_, shield_.Default(), offset, count};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality / case-equality. Slang's binding
@@ -342,8 +330,7 @@ class UnpackedArray {
                         static_cast<std::uint64_t>(data_.size());
   }
 
-  T element_default_;
-  T discard_sink_;
+  detail::OobShield<T> shield_;
   std::vector<T> data_;
 
   friend class ArraySliceRef<T>;

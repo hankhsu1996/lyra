@@ -90,8 +90,9 @@ auto LowerCaseStmt(
   // Peel an outer CastExpr widening the selector when state-kind is
   // preserved -- the cpp backend cannot init form=explicit from form=int,
   // and the cascade builds its own per-label compares. Differing state-kind
-  // would make the snapshot 2-state while wildcard labels are 4-state and
-  // PackedArray::ExpectSameShape rejects the per-label compare.
+  // would make the snapshot 2-state while wildcard labels are 4-state, and the
+  // runtime's word-parallel compare requires both operands in the same state
+  // domain.
   auto packed_state = [&](mir::TypeId tid) -> std::optional<bool> {
     const auto& ty = process.Module().Unit().types.Get(tid);
     if (const auto* pa = std::get_if<mir::PackedArrayType>(&ty.data)) {

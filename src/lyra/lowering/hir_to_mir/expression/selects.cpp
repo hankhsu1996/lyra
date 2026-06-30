@@ -85,30 +85,37 @@ auto WrapPackedAsOwned(
       .type = result_type};
 }
 
-// LRM 7.4.1: part-select returns unsigned. The runtime `Slice` honours this
-// (always returns an unsigned `PackedArrayRef`). When the consumer's MIR type
-// is signed -- a `logic signed [...]` packed-struct / union field per LRM
-// 7.2.1 -- return the unsigned-signedness counterpart so the slice's MIR
-// `.type` matches what the runtime produces; an explicit `ConversionExpr`
-// then re-tags to the consumer's signed type.
-auto UnsignedPackedCounterpart(
-    mir::CompilationUnit& unit, mir::TypeId result_type) -> mir::TypeId {
-  const auto& ty = unit.types.Get(result_type);
-  if (!ty.IsPackedArray()) return result_type;
-  const auto& pa = ty.AsPackedArray();
-  if (pa.signedness == mir::Signedness::kUnsigned) return result_type;
-  auto unsigned_pa = pa;
-  unsigned_pa.signedness = mir::Signedness::kUnsigned;
-  return unit.types.Intern(std::move(unsigned_pa));
+// The type a part-select of `source_type` materialises a field of `field_type`
+// as. LRM 11.8.1: a part-select is unsigned regardless of the operands, and its
+// state domain follows the value it selects from, so a field (LRM 7.2.1,
+// selected as a part-select of the aggregate's storage) is produced with the
+// field's dimensions but the aggregate's signedness-stripped state domain --
+// not the field's own declared state. Naming this keeps the field-read's MIR
+// node type equal to what the runtime produces; the field's declared signedness
+// and, for a 2-state field inside a 4-state aggregate, its narrower state
+// domain are reconciled downstream by an explicit conversion.
+auto PartSelectNaturalType(
+    mir::CompilationUnit& unit, mir::TypeId source_type, mir::TypeId field_type)
+    -> mir::TypeId {
+  const auto& source = unit.types.Get(source_type);
+  const auto& field = unit.types.Get(field_type);
+  if (!source.IsPackedArray() || !field.IsPackedArray()) return field_type;
+  auto natural = field.AsPackedArray();
+  natural.signedness = mir::Signedness::kUnsigned;
+  natural.atom = source.AsPackedArray().atom;
+  natural.form = mir::PackedArrayForm::kExplicit;
+  return unit.types.Intern(std::move(natural));
 }
 
-// Wraps a slice result that was rendered at `slice_type` (unsigned) with an
-// explicit `ConversionExpr` to `final_type` when the two differ. No-op when
-// the slice already matches the consumer's MIR type.
-auto WrapSliceSignReTag(
+// Reconciles a field read materialised at its part-select natural type to the
+// field's declared type with an explicit conversion when they differ: the
+// field's signedness (LRM 7.2.1) and, for a 2-state field inside a 4-state
+// aggregate, the X-to-0 collapse into its narrower state domain. A no-op when
+// the value already carries the declared type.
+auto WrapSliceToDeclaredType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::Expr owned,
-    mir::TypeId slice_type, mir::TypeId final_type) -> mir::Expr {
-  if (slice_type == final_type) return owned;
+    mir::TypeId final_type) -> mir::Expr {
+  if (owned.type == final_type) return owned;
   const mir::ExprId owned_id = block.exprs.Add(std::move(owned));
   return BuildValueConversion(unit, block, owned_id, final_type);
 }
@@ -662,11 +669,12 @@ auto LowerRangeSelectInner(
       module.Unit(), block, *std::move(slice_or), result_type);
 }
 
-// Packed-struct / union field access. RHS readers route through the
-// unsigned-slice path with an explicit `ConversionExpr` re-tag to preserve
-// the field's declared signedness (LRM 7.4.1 -- part-select returns
-// unsigned). LHS writers emit the slice call against the field's declared
-// type without the re-tag.
+// Packed-struct / union field access (LRM 7.2.1: a field "can be selected as if
+// it were a packed array"). A read materialises the part-select at its natural
+// type, then converts to the field's declared type, so the field's signedness
+// and 2-state-vs-4-state domain are honoured. A write emits the slice against
+// the field's declared type; the aggregate's storage reconciles the field's
+// representation when the assignment lands.
 auto LowerMemberAccessInner(
     ModuleLowerer& module, mir::Block& block,
     const hir::PackedAggregateField& field, mir::ExprId base_id,
@@ -676,15 +684,16 @@ auto LowerMemberAccessInner(
         module, block, base_id, field.bit_offset, field.bit_width, result_type,
         side);
   }
+  const mir::TypeId source_type = block.exprs.Get(base_id).type;
   const mir::TypeId slice_type =
-      UnsignedPackedCounterpart(module.Unit(), result_type);
+      PartSelectNaturalType(module.Unit(), source_type, result_type);
   mir::Expr slice_call = BuildFieldSliceCallExpr(
       module, block, base_id, field.bit_offset, field.bit_width, slice_type,
       side);
   mir::Expr owned = WrapPackedAsOwned(
       module.Unit(), block, std::move(slice_call), slice_type);
-  return WrapSliceSignReTag(
-      module.Unit(), block, std::move(owned), slice_type, result_type);
+  return WrapSliceToDeclaredType(
+      module.Unit(), block, std::move(owned), result_type);
 }
 
 }  // namespace

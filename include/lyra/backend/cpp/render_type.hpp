@@ -15,10 +15,11 @@ namespace lyra::backend::cpp {
     const mir::CompilationUnit& unit, const mir::Class& owner_class,
     mir::TypeId type_id) -> std::string;
 
-// Renders the constructor argument list for a `lyra::value::PackedArray`
-// variable declared from a kExplicit packed array type, in the form
-// `<bit_width>, <is_signed>, <is_four_state>`.
-[[nodiscard]] auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa)
+// Renders the `lyra::value::PackedType` descriptor for a packed array type, in
+// the form `lyra::value::PackedType{{{l0, r0}, ...}, <is_signed>,
+// <is_four_state>}`. This is the single shape carrier every PackedArray
+// construction takes.
+[[nodiscard]] auto RenderPackedType(const mir::PackedArrayType& pa)
     -> std::string;
 
 // Renders the emitted C++ class name for a MIR enum type. The name is
