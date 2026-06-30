@@ -121,8 +121,8 @@ not a product with a different label.
   union value), `UnionGetExpr` (read a member), and `UnionGetRefExpr` (write a member).
 - A new runtime value type `lyra::value::Union<Ts...>`, composing `LyraValue` from its active
   member.
-- `struct-union.md` N1-N3 build on this. A declared union must default-initialize to run, so the
-  first-member default is part of the first cut rather than a separable later one.
+- A declared union must default-initialize to be usable, so the first-member default lands together
+  with member read and write rather than as a separable later step.
 - Whole-union copy is the existing whole-cell write (`u2 = u` assigns the cell a copied union
   value), and member-in-expression use is the existing member read; neither needs union-specific
   lowering.

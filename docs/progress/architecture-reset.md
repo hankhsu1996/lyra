@@ -64,8 +64,8 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 - [x] datatypes/real
 - [ ] datatypes/representation
 - [x] datatypes/string -- `datatypes.md` (string family SC1..SC3).
-- [ ] datatypes/unpacked -- fixed unpacked arrays and the variable-size aggregate family
-      (`aggregate.md`) are done; unpacked struct / union (`struct-union.md`) remain.
+- [x] datatypes/unpacked -- fixed unpacked arrays, the variable-size aggregate family
+      (`aggregate.md`), and unpacked struct / union.
 - [ ] datatypes/wide_integral -- non-`packed_2d` archive sub-folders covered (`integral.md` J14);
       `packed_2d` (2D element index / slice) belongs to `datatypes/packed`.
 

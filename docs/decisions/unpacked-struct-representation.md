@@ -86,8 +86,9 @@ product, not the object model.
 
 - `mir.md`'s contract that `TupleType` is MIR's only heterogeneous aggregate is reinforced; no
   architecture-doc change is needed.
-- `struct-union.md` S1-S5 build on this representation; the whole-cell observability matches the
-  container model recorded in `aggregate.md`.
+- The unpacked-struct lowering and runtime build on this representation; a module-level struct
+  signal is observable whole-cell, matching the variable-size aggregate containers (dynamic array,
+  queue, associative array).
 - New runtime work: the generic `lyra::value::Tuple<Ts...>` value type, composing `LyraValue` from
   its components.
 - **Union is out of scope here and not pre-built for.** A tagged union (LRM 7.3.2) is a sum type --
