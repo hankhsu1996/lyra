@@ -537,23 +537,22 @@ auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
 // pass as frame-copied lambda parameters supplied by an immediate call -- a
 // capturing coroutine lambda would dangle once the spawned branch outlives the
 // referencing site.
-auto RenderClosureExpr(
-    const ScopeView& view, const mir::ClosureExpr& closure,
-    mir::TypeId result_type) -> std::string {
+auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& closure)
+    -> std::string {
   if (closure.code == nullptr) {
     throw InternalError("RenderClosureExpr: closure has no code");
   }
   const mir::CallableCode& code = *closure.code;
 
   const std::string return_clause = std::format(
-      " -> {}", RenderTypeAsCpp(view.Unit(), view.Class(), result_type));
+      " -> {}", RenderTypeAsCpp(view.Unit(), view.Class(), code.result_type));
 
   const ScopeView body_view = view.WithClosure(code);
   const std::string body =
       std::format(" {{\n{}}}", RenderBlockStatements(body_view, 1));
 
   if (std::holds_alternative<mir::CoroutineType>(
-          view.Unit().types.Get(result_type).data)) {
+          view.Unit().types.Get(code.result_type).data)) {
     if (!code.params.empty()) {
       throw InternalError(
           "RenderClosureExpr: coroutine closure has per-invocation parameters");
@@ -813,7 +812,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
                 MemberFieldName(view, m));
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
-            return RenderClosureExpr(view, cl, expr.type);
+            return RenderClosureExpr(view, cl);
           },
           [&](const mir::ConcatExpr& c) -> std::string {
             return RenderConcatExpr(view, expr, c);

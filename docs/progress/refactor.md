@@ -699,30 +699,41 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       **Likely interacts with**: R8 (callable-model unification) and R47 (SV class object model),
       since both touch what "a class with a body" looks like at MIR.
 
-- [ ] R52 -- Unify the compiler-generated aggregate, and decide whether a closure is one. An
-      "aggregate with fields plus a construction" is represented several ways today: `mir::Class`
-      (the object model -- nominal, reference-reached, with optional base / methods / dispatch /
-      lifecycle; a baseless `mir::Class` is already used as the promotion activation box, so a
-      compiler-generated aggregate over `mir::Class` already exists), the value aggregates
-      `TupleType` / `UnionType` (structural, value-semantic, by-position, no construction protocol),
-      and the closure environment (its own capture-layout / capture-init shape from the
-      binding/capture reset). A coroutine frame is a fourth, today backend-implicit and not a MIR
-      aggregate at all. These are all ordered (name, type) fields plus a construction, differing
-      only along orthogonal axes -- nominal vs structural identity, value vs reference reachability,
-      fields-only vs with-methods, and placement (inline / stack / heap / coroutine-frame /
-      scheduler). The target is a from-scratch design round -- "what is Lyra's fundamental
-      compiler-generated aggregate" -- in which closure environment, activation record, coroutine
-      frame, and the value aggregates are each a role-specialization of one underlying notion, NOT a
-      collapse of everything into `mir::Class` (a closure environment must not inherit object
-      dispatch / lifecycle / managed-reference semantics). The closure-as-object question -- whether
-      a closure value is an instance of a generated environment aggregate whose body is its method,
-      the C++/Rust closure-type model -- is the central decision; the existing activation box is the
-      grounding precedent, and the open axis is nominal (a registered baseless class, like the
-      activation box) vs structural (anonymous by-shape, like a tuple). The binding/capture reset's
-      capture-layout (field decls) and capture-init (construction initializers) are the foundation
-      this builds on, not throwaway. **Blocker**: the binding/capture contract must finalize first;
-      and this is a research topic that warrants its own design round before any code. **Interacts
-      with**: R47 (object model), R51 (a class with a body), R8 (callable model).
+- [ ] R52 -- Collapse the closure environment and the activation frame onto MIR's value/reference
+      spine. The design round this entry once held is resolved: the contract is
+      `../architecture/compiler_generated_storage.md` and the trade-offs are
+      `../decisions/closure-environment-and-activation-frame.md`. The resolution: a closure
+      environment is a value `TupleType` (not a closure-only capture universe, not an object); the
+      callable value gains a first-class type with a concrete level and an erased `Callable<Sig>`
+      level; and the activation frame is a thin reference-storage specialization sharing one
+      substrate with the nominal object rather than being a baseless `mir::Class`. The
+      value/reference spine is the top split -- a single root over value tuples and reference
+      storage is explicitly not built. Staged cuts, each its own review:
+  - [ ] R52a -- First-class callable value type. A closure's MIR type stops being its call result
+        type; MIR gains a concrete closure value type and an erased `Callable<Sig>` with an explicit
+        erasure boundary carrying invoke / ownership / copy contracts. Realizes the first-class
+        callable type `../decisions/unified-callable-model.md` committed to.
+
+  - [ ] R52b -- The closure environment is a value `TupleType`. The closure-only capture-storage IR
+        (`CaptureId` / `CaptureRef` / capture-init) retires; a captured read is a tuple-slot
+        projection whose slot is assigned deterministically from the binding origin, so dumps stay
+        stable and forwarding / dedup keep keying off the origin. `binding_and_capture.md` identity
+        and forwarding are unchanged; only the materialized layout representation changes.
+
+  - [ ] R52c -- The activation frame splits out of `mir::Class`. The promotion box stops being a
+        baseless `mir::Class`; `mir::Class` and the frame are refactored onto one reference-storage
+        substrate (identity-bearing slots, construction / destruction), the frame the thin
+        specialization (shared ownership, no methods / dispatch / lifecycle), the object the rich
+        one. Honors `object_model.md` invariant 1 (no second object IR). "Activation" stays the
+        runtime execution instance; the storage owner is the activation frame.
+
+  - [ ] R52d -- Generalize the HIR-to-MIR capture / lifetime policy. The three capture forms
+        (snapshot value, live-place alias `Ref<T>`, retained frame `Shared<frame>` plus a slot
+        projection) extend beyond fork to deferred scheduling, coroutine suspension, `ref` formals,
+        observable-cell identity, and storage class; a snapshot is a source semantic or a proven
+        equivalence, never a guessed optimization.
+
+    **Interacts with**: R47 (object model), R51 (a class with a body), R8 (callable model).
 
 ## Out of Scope
 

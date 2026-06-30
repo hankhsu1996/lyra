@@ -48,6 +48,7 @@ enum class TypeKind {
   kObservable,
   kResolved,
   kDriver,
+  kCallable,
 };
 
 enum class BitAtom {
@@ -313,6 +314,19 @@ struct CoroutineType {
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
+// The type of a callable value: its signature -- the per-invocation parameter
+// types and the result type. A closure expression carries this type. It states
+// the call interface a referencing site uses; the bound environment is not part
+// of it and stays inside the value. The result type is the call protocol (a
+// CoroutineType for a suspending callable, a value type or Void otherwise), the
+// same protocol a directly-invoked callable's result type carries.
+struct CallableType {
+  std::vector<TypeId> params;
+  TypeId result;
+
+  auto operator==(const CallableType&) const -> bool = default;
+};
+
 // The write capability a reference or borrow grants its holder (the
 // generic-language `&T` vs `&mut T`, a method's `const` vs non-const receiver).
 // Mutability lives on references and borrows, never as a qualifier on an
@@ -461,7 +475,7 @@ using TypeData = std::variant<
     InstanceType, GenScopeType, ServicesType, FilesType, DiagnosticType,
     RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
     VectorType, TupleType, UnionType, ExternalRefType, ObservableType,
-    ResolvedType, DriverType>;
+    ResolvedType, DriverType, CallableType>;
 
 struct Type {
   TypeData data;
