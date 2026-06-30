@@ -1,0 +1,16 @@
+id: cpp.select_on_temporary
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    concat_rsel_rt: 12
+    concat_bsel_rt: 1
+    repl_rsel_rt: 10
+    concat_part_rt: 9
+    computed_idx_rt: 30
+    fn_index_rt: 1

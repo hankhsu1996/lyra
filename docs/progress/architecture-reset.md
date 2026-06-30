@@ -1,205 +1,227 @@
 # Architecture Reset
 
-Tracks the surfaces that existed in the pre-reset codebase and need to be supported again on the
-current architecture. Each item is a chunk of work roughly the size of one to a few PRs. Pipeline
-items reference layers and CLI surfaces; feature items reference the test directory under
-`archived/tests/sv_features/<path>` that documents the expected behavior. When the last item lands,
-this file is deleted.
+Tracks the work to bring the post-reset architecture to completeness. The reset rebuilt the compiler
+around per-unit compilation and a runtime-elaborated object graph (see
+`../architecture/north_star.md`). This file is the top-level index of what that rebuild still owes,
+in four parts:
 
-An item is unchecked even when partial support already exists in the current build. Check off an
-item only when the corresponding archive tests can be reproduced -- or have been intentionally
-deprecated -- on the current architecture. Intentional deprecation is annotated inline with the
-reason; substantive architectural decisions go in `decisions/`.
+- **Infrastructure** -- pipeline and build surfaces the reset has not finished rebuilding.
+- **SystemVerilog features** -- language surfaces to reproduce. The archive under
+  `archived/tests/sv_features/<path>` documents the expected behavior; where a workstream has its
+  own progress file, that file owns the sub-steps and the item here is the roll-up.
+- **Scheduling and sensitivity** -- the runtime engine's region semantics and change detection.
+- **Retired concepts** -- archive surfaces the reset dissolved, recorded with the decision that
+  dissolved each so they are not reintroduced.
 
-When a workstream has its own progress file (e.g. `control-flow.md`, `integral.md`), the granular
-sub-step tracking lives there. The corresponding archive items below remain a high-level inventory;
-the dedicated file is the source of truth for "what is done, in what order, what is blocked".
+An item is checked only when its behavior is reproduced on the current architecture, or, for an
+infrastructure surface, built. Items are written at the semantic level: completing one is flipping
+`[ ]` to `[x]`, not rewriting it into an account of what landed. When every item lands, this file is
+deleted.
 
-## Pipeline Surfaces
+## Infrastructure
 
-- [ ] R1 -- LIR layer implementation. Contract in `../architecture/lir.md`; no source under
-      `src/lyra/lir`.
-- [ ] R2 -- LLVM backend (MIR / LIR -> LLVM IR).
-- [ ] R3 -- JIT execution path (ORC).
-- [ ] R4 -- AOT execution path; runtime delivered as a static library.
-- [ ] R5 -- CLI subcommands for executing simulations: `run`, `compile`, `dump llvm`.
-- [ ] R6 -- Smoke, benchmark, and AOT CI jobs (currently `if: false`; see `../ci/README.md`).
-- [x] R7 -- Test framework variable assertions (`expect.variables`). `tests/framework/runner.cpp`
-      rewrites the source with a synthetic `final` probe block keyed on sentinel markers in stdout
-      and matches each entry against scalar / SV-literal expectations.
-- [ ] R8 -- Per-unit artifact emission. The C++ backend emits one artifact per unit specialization,
-      assembled into the program by linking, rather than collapsing every unit into one translation
-      unit. Contract in `../architecture/emission_model.md` (inv 1); the current single-`main.cpp`
-      aggregation that transitively includes every unit header is the transitional shortcut that doc
-      marks for removal.
+- [ ] LIR -- the execution-oriented IR (CFG, basic blocks, storage). Contract in
+      `../architecture/lir.md`; no source under `src/lyra/lir`.
+- [ ] Execution backend -- MIR / LIR lowered to LLVM IR, consumed as either an AOT binary or a JIT
+      image. JIT and AOT are link-time choices over one backend, not separate surfaces. Contracts in
+      `../architecture/backend_contract.md` and `../architecture/runtime_distribution.md`.
+- [ ] Per-unit artifact emission -- one artifact per unit specialization, assembled by linking,
+      replacing the transitional single-`main.cpp` aggregation. Contract in
+      `../architecture/emission_model.md` (inv 1).
+- [ ] Incremental and parallel compilation -- query-based recompilation of only the units a change
+      touches (`north_star` inv 3). Contract in `../architecture/incremental_build.md`.
+- [ ] Object lifetime and reclamation -- managed object lifetime and the class / module object-model
+      unification. Tracked in `object-model.md`; contract in `../architecture/object_lifetime.md`.
+- [ ] CLI execution surface -- `dump llvm` (rides on LIR), and `run` / `compile` end-to-end against
+      the execution backend.
+- [ ] Execution CI jobs -- smoke, benchmark, and AOT jobs (currently disabled; see
+      `../ci/README.md`), rebuilt once the execution backend lands.
+- [x] Test-framework variable assertions (`expect.variables`) -- `tests/framework/runner.cpp`.
 
-## SystemVerilog Features
+## SystemVerilog features
 
 ### assertions
 
-- [ ] assertions/default
-- [ ] assertions/deferred_assert_actions
-- [ ] assertions/jit_only
+- [ ] assertions/default -- immediate assertions (LRM 16.4). Currently rejected at lowering
+      (`--disable-assertions`).
+- [ ] assertions/deferred -- deferred assertion actions (`assert #0`, LRM 16.4), with encounter-time
+      vs execution-time capture semantics.
+- [ ] assertions/cover -- cover statements (LRM 16.7). Cover-hit observability is a tool feature,
+      not a language one (the archive `jit_only` framing assumed an obsolete JIT-vs-AOT split).
 
 ### compilation_units
 
-- [ ] compilation_units/default
+- [ ] compilation_units/default -- single-unit vs per-file macro visibility (LRM 3.12.1). The
+      `--single-unit` CLI flag and the model (`../architecture/compilation_unit_model.md`) exist;
+      archive coverage to verify.
 
 ### control_flow
 
-Tracked in `control-flow.md`. Covers all `control_flow/*` archive items (case, case_inside,
-conditional, do_while, for, foreach, foreach_2d, forever, repeat, ternary, unique_priority_case,
-unique_priority_if, while).
+- [x] control_flow -- `control-flow.md` (case, conditional, loops, foreach, ternary, unique /
+      priority).
 
 ### datatypes
 
-Granular tracking lives in `integral.md` (integral / packed / wide_integral) and `datatypes.md`
-(every other family). The list below remains a high-level inventory.
+Granular tracking lives in `integral.md` and `datatypes.md`.
 
-- [ ] datatypes/default_init
+- [x] datatypes/default_init -- LRM Table 6-7 default initialization across families and nesting.
 - [x] datatypes/enum
-- [ ] datatypes/general -- chandle (open), parameters (done; `datatypes.md` SI2), typedef.
+- [ ] datatypes/general -- parameters and typedef done; chandle remains and rides on the DPI
+      boundary (its only non-null value source), so it is built with `dpi/*`.
 - [x] datatypes/integral -- `integral.md`.
-- [ ] datatypes/packed -- `packed.md`.
+- [x] datatypes/packed -- `packed.md`.
 - [x] datatypes/real
-- [ ] datatypes/representation
-- [x] datatypes/string -- `datatypes.md` (string family SC1..SC3).
+- [x] datatypes/representation -- X/Z representation, including a wide value carrying X/Z across the
+      64-bit word boundary.
+- [x] datatypes/string -- `datatypes.md`.
 - [x] datatypes/unpacked -- fixed unpacked arrays, the variable-size aggregate family
       (`aggregate.md`), and unpacked struct / union.
-- [ ] datatypes/wide_integral -- non-`packed_2d` archive sub-folders covered (`integral.md` J14);
-      `packed_2d` (2D element index / slice) belongs to `datatypes/packed`.
+- [x] datatypes/wide_integral -- `integral.md`; wide (>64-bit) packed 2D element index / slice.
 
 ### directives
 
-- [ ] directives/time_literals
-- [ ] directives/timescale
+- [ ] directives/timescale -- `timescale.md`.
+- [ ] directives/time_literals -- time literals and unit scaling (`timescale.md`).
 
 ### dpi
 
-- [ ] dpi/export_general
-- [ ] dpi/export_pure
-- [ ] dpi/import_context
-- [ ] dpi/import_general
-- [ ] dpi/import_pure
-- [ ] dpi/svdpi_runtime
-- [ ] dpi/time_query
+HIR scaffolding exists (`include/lyra/hir/dpi.hpp`); none is wired into the active lowering
+pipeline.
+
+- [ ] dpi/import_general -- DPI-C function / task imports (LRM 35.5).
+- [ ] dpi/import_context -- context-mode imports.
+- [ ] dpi/import_pure -- pure (delay-free) imports.
+- [ ] dpi/export_general -- DPI-C exports, including instance-scoped state.
+- [ ] dpi/export_pure -- pure-export declaration validation.
+- [ ] dpi/svdpi_runtime -- the svdpi runtime API (`svScope`, `svContext`, ...).
+- [ ] dpi/time_query -- `$time` family inside DPI-context code; rides on import_context.
+
+### fork_join
+
+- [ ] fork / join / join_any / join_none -- `fork-join.md`.
 
 ### functions
 
-Tracked in `functions.md`, which scopes the full LRM 13 subroutine surface (functions and tasks),
-including features the archive does not exercise. The archive items below remain the high-level
-inventory; each is checked off when `functions.md` reproduces it.
+Tracked in `functions.md` (the full LRM 13 subroutine surface).
 
-- [ ] functions/basic -- `functions.md` F1, F2, F5.
-- [ ] functions/chandle -- `functions.md` F9.
-- [ ] functions/container_outparams -- `functions.md` F4, F8.
-- [ ] functions/container_params -- `functions.md` F7, F8.
-- [x] functions/nested_calls -- `functions.md` F1.
-- [ ] functions/recursion -- `functions.md` F3.
-- [ ] functions/string_return -- `functions.md` F7.
+- [x] functions/basic -- F1, F2, F5.
+- [x] functions/nested_calls -- F1.
+- [x] functions/recursion -- F3.
+- [x] functions/string_return -- F7.
+- [x] functions/container_params -- F7, F8.
+- [x] functions/container_outparams -- F4, F8.
+- [ ] functions/chandle -- F9; rides on the chandle data type (`datatypes/general`).
 
 ### generate
 
-- [ ] generate/generate
+- [ ] generate/generate -- if / case / for-generate, nesting, genvars, processes and instances
+      inside generate, and hierarchical references through generate all lower and run. A
+      genvar-conditional branch (an `if` reading the genvar inside a `for`-generate) is rejected and
+      remains; the archive suite is not yet migrated.
 
 ### hierarchy
 
-Tracked in `hierarchy.md`. Covers `hierarchy/instantiation`, `hierarchy/ports`, and
-`hierarchy/refs`, plus the instantiation side of `generate`.
+Tracked in `hierarchy.md`.
 
-- [ ] hierarchy/instantiation
-- [ ] hierarchy/ports
-- [ ] hierarchy/refs
+- [x] hierarchy/instantiation -- multi-unit compilation, parameter specialization, the object tree,
+      nested hierarchy, instance arrays, generate-wrapped instances (Stages A, B).
+- [x] hierarchy/ports -- directions, named / positional / expression / constant connections,
+      defaults, `ref` ports, pass-through, instance-array and non-integral ports (Stage E).
+      Net-typed ports follow the net model.
+- [x] hierarchy/refs -- downward and upward hierarchical references at any depth, through generate
+      scopes and instance arrays, with cross-instance sensitivity and `%m` paths (Stages C, D). A
+      reference whose head is a named procedural block remains.
 
-### lifecycle
+### nets
 
-- [ ] lifecycle/copy_assign
-- [ ] lifecycle/move_aggregate
-
-### metadata
-
-- [ ] metadata/slot_meta
-
-### mutation
-
-- [ ] mutation/basic
-- [ ] mutation/bulk_ops
-- [ ] mutation/structural
+- [ ] Nets and net resolution -- a net's value as the resolution of its driver contributions,
+      net-typed ports, and multi-driver resolution (`nets.md`).
 
 ### operators
 
+Tracked in `operators.md` and `integral.md`.
+
 - [x] operators/binary -- `integral.md`.
-- [x] operators/binary_string -- `datatypes.md` SC1 (string equality and lexicographic comparison).
+- [x] operators/binary_string -- `datatypes.md` SC1.
 - [x] operators/case_equality -- `operators.md`.
-- [ ] operators/comparison_value_temp -- subsumed by the binary-operator coverage in `integral.md`;
-      the archived `ValueTemp` IR shape does not exist on the current pipeline.
+- [x] operators/wildcard_equality -- `operators.md`.
 - [x] operators/compound_assignment -- `operators.md`.
 - [x] operators/concat -- `operators.md`.
 - [x] operators/inside -- `operators.md`.
 - [x] operators/replicate -- `operators.md`.
-- [ ] operators/replication_patterns -- `packed.md`.
+- [x] operators/replication_patterns -- `packed.md`.
 - [x] operators/shift_overflow -- `integral.md`.
-- [x] operators/unary -- integral surface covered (`integral.md` J14); `++` / `--` archive coverage
-      via `operators.md` W12 and `integral.md` J19.
-- [ ] operators/value_temp_expansion -- subsumed by the binary-operator coverage in `integral.md`;
-      the archived `ValueTemp` IR shape does not exist on the current pipeline.
-- [x] operators/wildcard_equality -- `operators.md`.
-
-### optimization
-
-- [ ] optimization/bounds_check_elimination
-- [ ] optimization/packed_localized_write
+- [x] operators/unary -- `integral.md`; `++` / `--` via `operators.md`.
+- [x] operators/comparison_value_temp -- comparison results used as operands (`integral.md`). The
+      named `ValueTemp` IR is retired; the behavior is ordinary expression handling.
+- [x] operators/value_temp_expansion -- a select or index on a temporary expression result (concat,
+      replication, computed array index, function return). Same retired-IR note as above.
 
 ### packages
 
-- [ ] packages/basic
-- [ ] packages/functions
+- [ ] packages/basic -- package-level declarations and cross-package import (LRM 26). No package
+      lowering exists.
+- [ ] packages/functions -- functions exported from packages (LRM 26.3); rides on packages/basic.
 
 ### processes
 
-Tracked in `processes.md`. Covers procedural blocks (`initial`, `final`, `always`, `always_comb`,
-`always_latch`, `always_ff`), timing controls (`#N`, `@(...)`), assignments (`<=`, `assign`), and
-synchronisation primitives (named events, `wait`, `fork`/`join_*`).
+Tracked in `processes.md`.
 
-- [x] processes/continuous_assign -- `processes.md` P7.
-- [x] processes/delay -- `processes.md` T1.
-- [ ] processes/edge_trigger_bit_select -- `processes.md` T2..T5 cover constant bit-select /
-      range-select / indexed part-select on packed 1D types and event lists thereof. Multi-dim
-      packed, ascending / negative-base ranges, struct fields and unpacked elements are blocked on
-      separate workstreams (see `processes.md` Blocked).
-- [ ] processes/edge_trigger_dynamic -- blocked on compound-event snapshot + re-eval (see
-      `processes.md` Blocked).
-- [x] processes/event_triggers -- `processes.md` T2, T3, T4 cover the event-control surface;
-      remaining named-event trigger lives in P9.
-- [x] processes/final_block -- `processes.md` P2.
-- [ ] processes/generate -- `processes.md` P12.
-- [x] processes/initial -- `processes.md` P1.
-- [ ] processes/named_event -- `processes.md` P9.
-- [x] processes/non_blocking -- `processes.md` P4.
-- [x] processes/wait_event -- `processes.md` P11.
+- [x] processes/initial -- P1.
+- [x] processes/final_block -- P2.
+- [x] processes/continuous_assign -- P7.
+- [x] processes/non_blocking -- P4.
+- [x] processes/delay -- T1.
+- [x] processes/event_triggers -- T2..T4.
+- [x] processes/named_event -- P9.
+- [x] processes/wait_event -- P11.
+- [ ] processes/edge_trigger_bit_select -- packed bit / range / part-select edge sources, including
+      multi-dimensional and ascending / negative-base ranges, are covered (T2..T5); struct-field and
+      unpacked-element edge sources remain.
+- [ ] processes/edge_trigger_dynamic -- compound event expressions (concatenation, arithmetic,
+      dynamic index); needs the snapshot + re-eval wrapper.
+- [ ] processes/generate -- process generate; if / for-generate with `initial` and continuous-assign
+      bodies run today, the full generate-form x procedural-block matrix is unverified (P12).
 
-### scheduling
+### system tasks
 
-- [ ] scheduling/edge_refresh_reconcile
-- [ ] scheduling/managed_aggregate_notify
-- [ ] scheduling/nba_ordering
-- [ ] scheduling/nba_packed
-- [ ] scheduling/nba_routing
-- [ ] scheduling/nba_write_modes
-- [ ] scheduling/regions
-- [ ] scheduling/sub_slot_observation
-- [ ] scheduling/zero_delay
-- [ ] scheduling/zero_delay_time
-
-### system_tf
-
-- [ ] system_tf/effect
-- [ ] system_tf/pure
-- [ ] system_tf/state
+- [ ] System tasks -- the `$display` / `$write` / `$strobe` / `$monitor` family, file IO,
+      `$sformat`, `$time` / `$timeformat`, `$random`, `$readmem*`. Formatting is tracked in
+      `display.md` and RNG in `simulation-rng.md`; most land in the runtime call registry. Known
+      gaps: `$monitor`, `$random`, `$readmem*`. (The archive effect / pure / state classification is
+      retired -- see below.)
 
 ### trace
 
-- [ ] trace/basic
-- [ ] trace/bulk_ops
-- [ ] trace/signal_trace
-- [ ] trace/update_set
+- [ ] trace/signal_trace -- text signal-change trace output (`--trace-signals`), layered on the
+      `Var<T>` subscription model. (The trace / update-set subsystem is retired -- see below.)
+
+## Scheduling and sensitivity
+
+The stratified region scheduler (`../architecture/scheduling.md`) is implemented in the runtime
+engine: LRM 4.4 region order, NBA commit, and `#0` Inactive-region semantics. The core is exercised
+by `processes.md` (non-blocking, delay, events). What remains is mapping the archive scheduling
+suite onto the current tests, and narrowing change detection below whole-variable granularity.
+
+- [ ] scheduling/regions, nba_ordering, nba_packed, nba_write_modes, zero_delay, zero_delay_time --
+      LRM 4.4 region and NBA semantics. The engine implements them; the archive scheduling suite is
+      not yet reproduced as current tests.
+- [ ] Sensitivity narrowing -- bit-, element-, and field-level any-change so a process wakes only on
+      the sub-part it reads (archive `scheduling/sub_slot_observation`, `managed_aggregate_notify`).
+      Reads currently collapse to whole-variable subscription (`processes.md` P10 / P13).
+
+## Retired concepts
+
+These archive surfaces named structures of the pre-reset engine and IR that the current architecture
+does not have. They are recorded so they are not reintroduced as work; do not reproduce them.
+
+| Archive surface                           | Why it no longer exists                                                                                                                                 | Dissolved by                                                |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `mutation/*`                              | A write goes through the `Var<T>` store boundary; there is no separate mutation-op IR family.                                                           | `../decisions/value-store-discipline.md`                    |
+| `trace/{basic, bulk_ops, update_set}`     | `Var<T>::Set` notifies subscribers at write time; there is no trace / update-set subsystem. (User-facing `signal_trace` survives as a feature.)         | `../decisions/value-store-discipline.md`                    |
+| `metadata/slot_meta`                      | Type metadata lives in the MIR type system; there is no runtime slot-metadata registry.                                                                 | `../architecture/mir.md`, `../architecture/object_model.md` |
+| `system_tf/{effect, pure, state}`         | The effect / pure / state classification of system tasks dissolved; every runtime effect is a generic `CallExpr`. (The tasks themselves: above.)        | `../decisions/runtime-effects-as-generic-calls.md`          |
+| `scheduling/edge_refresh_reconcile`       | Old-engine internals (DeltaDirtySlots, post-flush refresh); not in the stratified-scheduler contract.                                                   | `../architecture/scheduling.md`                             |
+| `scheduling/nba_routing`                  | Old-engine per-signal queue routing (deferred-local vs generic queue); the new engine submits NBA closures to one region.                               | `../architecture/scheduling.md`                             |
+| `optimization/*`                          | Part-select write correctness is intrinsic to the slice / store model; backend performance work belongs to the execution backend.                       | `../decisions/slice-value-semantics.md`, `performance.md`   |
+| `lifecycle/{copy_assign, move_aggregate}` | The lifecycle IR family is gone; value copy / move independence is intrinsic to the value model and covered by the struct, aggregate, and string tests. | `../decisions/value-store-discipline.md`                    |

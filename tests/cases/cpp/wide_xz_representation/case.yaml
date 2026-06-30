@@ -1,0 +1,12 @@
+id: cpp.wide_xz_representation
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    xz_lo_rt: "8'b0000zx00"
+    xz_hi_rt: "8'b00zx0000"

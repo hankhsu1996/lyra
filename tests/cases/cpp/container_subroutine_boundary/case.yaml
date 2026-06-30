@@ -1,0 +1,23 @@
+id: cpp.container_subroutine_boundary
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum_rt: 6
+    da0_rt: 15
+    da1_rt: 21
+    grow_sz_rt: 3
+    grow_last_rt: 99
+    filled_sz_rt: 2
+    filled0_rt: 10
+    filled1_rt: 20
+    sq2_rt: 4
+    sq3_rt: 9
+    lookup_rt: 200
+    bump_existing_rt: 111
+    bump_new_rt: 300
