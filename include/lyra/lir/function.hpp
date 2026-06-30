@@ -8,9 +8,10 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/mir/expr.hpp"
+#include "lyra/lir/class_id.hpp"
+#include "lyra/lir/type_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lir {
 
@@ -34,7 +35,7 @@ enum class LocalKind : std::uint8_t { kParam, kTemp };
 
 struct Local {
   std::string name;
-  mir::TypeId type;
+  TypeId type;
   LocalKind kind;
 };
 
@@ -44,12 +45,12 @@ struct Use {
 
 struct IntConst {
   mir::IntegralConstant value;
-  mir::TypeId type;
+  TypeId type;
 };
 
 struct StrConst {
   std::string value;
-  mir::TypeId type;
+  TypeId type;
 };
 
 // An instruction input: a prior value, or an inline constant. A constant is an
@@ -57,9 +58,28 @@ struct StrConst {
 // dataflow origin to name -- it is materialized at the use site.
 using Operand = std::variant<Use, IntConst, StrConst>;
 
-// The target of a call: a direct named callee (a class method or a runtime
-// builtin), or a value constructor named by the call's result type.
-using CallTarget = std::variant<mir::Direct, mir::Construct>;
+// A reference to a class method of this unit: the class and the method's index
+// in that class's method list. Resolved against the LIR unit's own class arena.
+struct MethodRef {
+  ClassId class_id;
+  std::uint32_t index;
+};
+
+struct BuiltinTarget {
+  support::BuiltinFn fn;
+};
+
+struct MethodTarget {
+  MethodRef method;
+};
+
+struct ConstructTarget {
+  TypeId result;
+};
+
+// The target of a call: a runtime builtin, a class method of this unit, or a
+// value constructor named by the call's result type.
+using CallTarget = std::variant<BuiltinTarget, MethodTarget, ConstructTarget>;
 
 struct CallInstr {
   CallTarget target;
@@ -107,7 +127,7 @@ struct Function {
   std::string name;
   base::Arena<Local, ValueId> values;
   std::vector<ValueId> params;
-  mir::TypeId result_type;
+  TypeId result_type;
   std::vector<BasicBlock> blocks;
 };
 

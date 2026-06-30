@@ -45,9 +45,7 @@ auto Compile(
 
   // Each unit runs its whole lowering pipeline (HIR -> MIR -> LIR) as an
   // independent vertical: a unit reads only its own body and the shared
-  // frontend, never another unit's lowered artifacts. Reserving the artifact
-  // vectors to the unit count keeps each stored MIR at a stable address, so a
-  // LIR unit that borrows its source MIR stays valid as later units append.
+  // frontend, never another unit's lowered artifacts.
   const bool want_mir = stop_after >= StopAfter::kMir;
   const bool want_lir = stop_after >= StopAfter::kLir;
   if (auto ok = lowering::ast_to_hir::RejectDpiExports(facts); !ok) {
@@ -86,7 +84,12 @@ auto Compile(
       continue;
     }
 
-    lir_units.push_back(lowering::mir_to_lir::LowerUnit(mir_units.back()));
+    auto lir_or = lowering::mir_to_lir::LowerUnit(mir_units.back());
+    if (!lir_or) {
+      sink.Report(std::move(lir_or.error()));
+      return result;
+    }
+    lir_units.push_back(*std::move(lir_or));
   }
 
   result.artifacts.hir_units = std::move(hir_units);

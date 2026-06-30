@@ -10,8 +10,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/function.hpp"
-#include "lyra/mir/class.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lir {
@@ -36,16 +34,16 @@ class LirDumper {
  private:
   void DumpClass(ClassId id) {
     const Class& cls = unit_->classes.Get(id);
-    const mir::ClassId mir_id{id.value};
-    current_class_ = &unit_->source->GetClass(mir_id);
     Line(std::format("Class \"{}\" (#{})", cls.name, id.value));
     Indent();
+    if (cls.base.has_value()) {
+      Line(std::format("Base: {}", FormatBase(*cls.base)));
+    }
     DumpFunction(cls.constructor);
     for (const Function& method : cls.methods) {
       DumpFunction(method);
     }
     Dedent();
-    current_class_ = nullptr;
   }
 
   void DumpFunction(const Function& fn) {
@@ -106,24 +104,35 @@ class LirDumper {
         term.data);
   }
 
+  [[nodiscard]] static auto FormatBase(const Base& base) -> std::string {
+    return std::visit(
+        Overloaded{[](const RuntimeLibraryBase& r) -> std::string {
+          switch (r.kind) {
+            case RuntimeBaseKind::kInstance:
+              return "Instance";
+            case RuntimeBaseKind::kGenScope:
+              return "GenScope";
+            case RuntimeBaseKind::kScope:
+              return "Scope";
+          }
+          return "?";
+        }},
+        base);
+  }
+
   [[nodiscard]] auto FormatCallTarget(const CallTarget& target) const
       -> std::string {
     return std::visit(
         Overloaded{
-            [&](const mir::Direct& d) -> std::string {
-              return std::visit(
-                  Overloaded{
-                      [&](const mir::MethodId& m) -> std::string {
-                        std::string_view name =
-                            current_class_->methods.Get(m).name;
-                        return std::format("{}", name);
-                      },
-                      [](const support::BuiltinFn& id) -> std::string {
-                        return std::string(support::BuiltinFnName(id));
-                      }},
-                  d.target);
+            [](const BuiltinTarget& b) -> std::string {
+              return std::string(support::BuiltinFnName(b.fn));
             },
-            [](const mir::Construct&) -> std::string { return "Construct"; }},
+            [&](const MethodTarget& m) -> std::string {
+              return unit_->classes.Get(m.method.class_id)
+                  .methods[m.method.index]
+                  .name;
+            },
+            [](const ConstructTarget&) -> std::string { return "Construct"; }},
         target);
   }
 
@@ -157,7 +166,7 @@ class LirDumper {
         op);
   }
 
-  [[nodiscard]] static auto FormatType(mir::TypeId type) -> std::string {
+  [[nodiscard]] static auto FormatType(TypeId type) -> std::string {
     return std::format("t{}", type.value);
   }
 
@@ -177,7 +186,6 @@ class LirDumper {
   }
 
   const CompilationUnit* unit_;
-  const mir::Class* current_class_ = nullptr;
   std::string out_;
   int indent_ = 0;
 };
