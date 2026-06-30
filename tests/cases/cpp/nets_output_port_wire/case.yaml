@@ -1,0 +1,12 @@
+id: cpp.nets_output_port_wire
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "var=33 net=33 chain=33"

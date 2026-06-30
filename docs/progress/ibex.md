@@ -80,10 +80,11 @@ full support.
       separate, optional feature off the critical path to running Ibex.
 - [x] **Packed array whose element is a struct or enum** (a packed array of a packed aggregate, not
       just of a scalar bit/logic).
-- [ ] **Net-typed port connections** -- connecting a net (`wire`) across a module port, as the
-      testbench does when wiring the DUT (the parent's clock / reset signal drives the DUT's input
-      net). The first wall the full top-level testbench hits, and a single-driver connection.
-      Tracked under `nets.md` (N2).
+- [x] **Net-typed port connections** -- connecting a net (`wire`) across a module port, as the
+      testbench does when wiring the DUT: the parent's clock / reset signal drives the DUT's input
+      net, a single-driver connection. Both directions lower (a parent driving a child input net, a
+      child output net driving a parent net or variable), so the full top-level testbench now passes
+      this wall to the cross-unit parameter reference below. Tracked under `nets.md` (N2).
 - [x] **`$signed` / `$unsigned`** system functions.
 - [x] **`$clog2`** system function (LRM 20.8.1). A type-agnostic value query: ceil(log2) of the
       argument read as unsigned, with `$clog2(0)` defined as 0. It lowers to a runtime value query,
