@@ -1,0 +1,13 @@
+id: cpp.wide_packed_2d_element
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    elem_rt: "128'h00000000000000ABC000000000000000"
+    slice_rt: "12'hABC"
+    lsb_rt: 1
