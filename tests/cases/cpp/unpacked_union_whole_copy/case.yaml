@@ -1,0 +1,16 @@
+id: cpp.unpacked_union_whole_copy
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    copy_rt: 42
+    indep_rt: 42
+    arith_rt: 114
+    nested_x_rt: 11
+    nested_y_rt: 22
+    nested_indep_rt: 11

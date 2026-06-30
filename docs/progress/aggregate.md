@@ -4,8 +4,8 @@ Tracks the variable-size aggregate types on the current pipeline: dynamic array 
 queue (`int q [$]`), and associative array (`int m [string]`). Fixed-size unpacked arrays are a
 separate, completed workstream out of scope here. Struct and union are also aggregate types per LRM
 6.5, but their storage and method concerns are unrelated to the variable-size storage problem:
-packed struct / union are tracked in `packed.md`, and unpacked struct / union in `struct-union.md`.
-This file's scope is the variable-size subset only.
+packed struct / union are tracked in `packed.md`, and unpacked struct / union are their own
+separate, completed workstream. This file's scope is the variable-size subset only.
 
 Done when:
 
