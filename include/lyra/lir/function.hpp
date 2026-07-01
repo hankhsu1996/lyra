@@ -9,8 +9,8 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/lir/class_id.hpp"
+#include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/mir/integral_constant.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lir {
@@ -39,12 +39,19 @@ struct Local {
   LocalKind kind;
 };
 
+// A reference to a class method of this unit: the class and the method's index
+// in that class's method list. Resolved against the LIR unit's own class arena.
+struct MethodRef {
+  ClassId class_id;
+  std::uint32_t index;
+};
+
 struct Use {
   ValueId value;
 };
 
 struct IntConst {
-  mir::IntegralConstant value;
+  IntegralConstant value;
   TypeId type;
 };
 
@@ -53,17 +60,18 @@ struct StrConst {
   TypeId type;
 };
 
-// An instruction input: a prior value, or an inline constant. A constant is an
-// operand rather than a value of its own because it has no storage and no
-// dataflow origin to name -- it is materialized at the use site.
-using Operand = std::variant<Use, IntConst, StrConst>;
-
-// A reference to a class method of this unit: the class and the method's index
-// in that class's method list. Resolved against the LIR unit's own class arena.
-struct MethodRef {
-  ClassId class_id;
-  std::uint32_t index;
+// The code address of a method, as a value. A closure is built from a code
+// reference plus its environment, so a method's address is an operand, not a
+// call target.
+struct FuncRef {
+  MethodRef method;
 };
+
+// An instruction input: a prior value, an inline constant, or a code reference.
+// A constant or code reference is an operand rather than a value of its own
+// because it has no storage and no dataflow origin to name -- it is
+// materialized at the use site.
+using Operand = std::variant<Use, IntConst, StrConst, FuncRef>;
 
 struct BuiltinTarget {
   support::BuiltinFn fn;
@@ -86,8 +94,8 @@ struct CallInstr {
   std::vector<Operand> args;
 };
 
-// Builds an aggregate value from its elements -- an array literal feeding a
-// runtime container or argument pack.
+// Builds an aggregate value from its elements -- a data literal such as an
+// array or tuple.
 struct AggregateInstr {
   std::vector<Operand> elements;
 };

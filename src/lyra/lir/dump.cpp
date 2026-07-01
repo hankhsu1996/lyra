@@ -162,6 +162,10 @@ class LirDumper {
             },
             [](const StrConst& c) -> std::string {
               return std::format("str:\"{}\"", c.value);
+            },
+            [](const FuncRef& f) -> std::string {
+              return std::format(
+                  "funcref {}.{}", f.method.class_id.value, f.method.index);
             }},
         op);
   }

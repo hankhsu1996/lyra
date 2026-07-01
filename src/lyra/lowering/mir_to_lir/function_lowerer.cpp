@@ -10,16 +10,33 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
 namespace {
+
+auto TranslateIntegralConstant(const mir::IntegralConstant& c)
+    -> lir::IntegralConstant {
+  return lir::IntegralConstant{
+      .value_words = c.value_words,
+      .state_words = c.state_words,
+      .width = c.width,
+      .signedness = c.signedness == mir::Signedness::kSigned
+                        ? lir::Signedness::kSigned
+                        : lir::Signedness::kUnsigned,
+      .state_kind = c.state_kind == mir::IntegralStateKind::kFourState
+                        ? lir::IntegralStateKind::kFourState
+                        : lir::IntegralStateKind::kTwoState};
+}
 
 auto LowerCallTarget(
     const mir::Callee& callee, lir::ClassId current_class, lir::TypeId result)
@@ -74,7 +91,12 @@ FunctionLowerer::FunctionLowerer(
 
 auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   fn_.name = std::move(name_);
-  fn_.result_type = unit_->TranslateType(result_type_);
+  // A coroutine-bodied callable lowers to its step body, which returns void;
+  // the coroutine value is a closure built where the callable is referenced.
+  fn_.result_type = std::holds_alternative<mir::CoroutineType>(
+                        unit_->Mir().types.Get(result_type_).data)
+                        ? unit_->TranslateType(unit_->Mir().builtins.void_type)
+                        : unit_->TranslateType(result_type_);
 
   for (const mir::LocalId param : params_) {
     const mir::LocalDecl& decl = body_->vars.Get(param);
@@ -101,7 +123,8 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   return std::move(fn_);
 }
 
-auto FunctionLowerer::LowerStmtInto(const mir::Stmt& stmt) -> diag::Result<void> {
+auto FunctionLowerer::LowerStmtInto(const mir::Stmt& stmt)
+    -> diag::Result<void> {
   return std::visit(
       Overloaded{
           [](const mir::EmptyStmt&) -> diag::Result<void> { return {}; },
@@ -143,7 +166,8 @@ auto FunctionLowerer::LowerExpr(mir::ExprId id) -> diag::Result<lir::Operand> {
       Overloaded{
           [&](const mir::IntegerLiteral& lit) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::IntConst{
-                .value = lit.value, .type = unit_->TranslateType(type)}};
+                .value = TranslateIntegralConstant(lit.value),
+                .type = unit_->TranslateType(type)}};
           },
           [&](const mir::StringLiteral& lit) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::StrConst{
@@ -176,6 +200,41 @@ auto FunctionLowerer::LowerExpr(mir::ExprId id) -> diag::Result<lir::Operand> {
               args.push_back(*std::move(lowered));
             }
             const lir::TypeId result_type = unit_->TranslateType(type);
+
+            // A coroutine is a runtime value like any other: the runtime builds
+            // it from an entry code reference and its environment (the
+            // receiver), and it is reached as an opaque handle. It is
+            // constructed through the same Construct path as any other runtime
+            // value; the coroutine call protocol stays the result type.
+            if (std::holds_alternative<mir::CoroutineType>(
+                    unit_->Mir().types.Get(type).data)) {
+              const auto* direct = std::get_if<mir::Direct>(&call.callee);
+              const auto* method =
+                  direct != nullptr
+                      ? std::get_if<mir::MethodId>(&direct->target)
+                      : nullptr;
+              if (method == nullptr) {
+                return diag::Fail(
+                    diag::DiagCode::kUnsupportedExpressionForm,
+                    "mir_to_lir: a coroutine value from a non-method callee is "
+                    "not yet lowerable to LIR");
+              }
+              std::vector<lir::Operand> ctor_args;
+              ctor_args.reserve(args.size() + 1);
+              ctor_args.emplace_back(
+                  lir::FuncRef{
+                      .method = lir::MethodRef{
+                          .class_id = current_class_, .index = method->value}});
+              for (lir::Operand& arg : args) {
+                ctor_args.emplace_back(std::move(arg));
+              }
+              return Emit(
+                  result_type,
+                  lir::CallInstr{
+                      .target = lir::ConstructTarget{.result = result_type},
+                      .args = std::move(ctor_args)});
+            }
+
             auto target =
                 LowerCallTarget(call.callee, current_class_, result_type);
             if (!target) {

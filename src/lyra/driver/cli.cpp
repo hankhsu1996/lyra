@@ -15,6 +15,7 @@
 #include <fmt/core.h>
 
 #include "lyra/backend/cpp/api.hpp"
+#include "lyra/backend/llvm/emit.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -37,6 +38,7 @@ enum class CommandKind {
   kDumpHir,
   kDumpMir,
   kDumpLir,
+  kDumpLlvm,
   kEmitCpp,
   kCompile,
   kRun,
@@ -129,12 +131,15 @@ auto ParseArgs(int argc, char** argv)
   argparse::ArgumentParser dump_hir_cmd("hir");
   argparse::ArgumentParser dump_mir_cmd("mir");
   argparse::ArgumentParser dump_lir_cmd("lir");
+  argparse::ArgumentParser dump_llvm_cmd("llvm");
   AddCompilationFlags(dump_hir_cmd);
   AddCompilationFlags(dump_mir_cmd);
   AddCompilationFlags(dump_lir_cmd);
+  AddCompilationFlags(dump_llvm_cmd);
   dump_cmd.add_subparser(dump_hir_cmd);
   dump_cmd.add_subparser(dump_mir_cmd);
   dump_cmd.add_subparser(dump_lir_cmd);
+  dump_cmd.add_subparser(dump_llvm_cmd);
 
   argparse::ArgumentParser emit_cmd("emit");
   argparse::ArgumentParser emit_cpp_cmd("cpp");
@@ -200,10 +205,13 @@ auto ParseArgs(int argc, char** argv)
     } else if (dump_cmd.is_subcommand_used("lir")) {
       out.cmd = CommandKind::kDumpLir;
       BindCompilationFlags(dump_lir_cmd, out);
+    } else if (dump_cmd.is_subcommand_used("llvm")) {
+      out.cmd = CommandKind::kDumpLlvm;
+      BindCompilationFlags(dump_llvm_cmd, out);
     } else {
       return std::unexpected(
           std::format(
-              "dump requires 'hir', 'mir', or 'lir'\n{}",
+              "dump requires 'hir', 'mir', 'lir', or 'llvm'\n{}",
               dump_cmd.help().str()));
     }
   } else if (program.is_subcommand_used("emit")) {
@@ -341,6 +349,7 @@ auto main(int argc, char** argv) -> int {
         case CommandKind::kDumpHir:
           return lyra::compiler::StopAfter::kHir;
         case CommandKind::kDumpLir:
+        case CommandKind::kDumpLlvm:
           return lyra::compiler::StopAfter::kLir;
         default:
           return lyra::compiler::StopAfter::kMir;
@@ -417,6 +426,12 @@ auto main(int argc, char** argv) -> int {
       case CommandKind::kDumpLir:
         for (const auto& unit : *result.artifacts.lir_units) {
           fmt::print("{}", lyra::lir::DumpLir(unit));
+        }
+        return 0;
+      case CommandKind::kDumpLlvm:
+        for (const auto& unit : *result.artifacts.lir_units) {
+          fmt::print(
+              "{}", lyra::backend::llvm_backend::EmitModule(unit).Print());
         }
         return 0;
       case CommandKind::kEmitCpp: {
