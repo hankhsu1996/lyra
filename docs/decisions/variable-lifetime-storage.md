@@ -40,18 +40,23 @@ local declared in place" to map onto.
 ## Decision
 
 **Honor the frontend's resolved lifetime; realize a static-lifetime body local as a per-instance
-member of the enclosing unit's class, default-initialized once; realize an automatic local as a C++
-local at its source position.** A process and a method use the identical mechanism.
+member of its nearest enclosing addressable scope's class, default-initialized once; realize an
+automatic local as a C++ local at its source position.** A process and a method use the identical
+mechanism.
 
+- An addressable scope is the structural scope (module / generate / SV class) or a materialized
+  procedural storage scope (`procedural-storage-scope.md`). A static at the body's top level lives
+  on the structural class; a static directly inside a materialized named block lives on the block's
+  class.
 - The body reaches the static local by the same scoped reference it uses for any local; the backend
   resolves that reference to the per-instance member.
 - The per-instance member is a flat member on the owner class's member arena -- not a sub-struct
   grouping per callable. SystemVerilog's per-callable scoping is already settled by HIR name-binding
-  before MIR sees the program; MIR has no visibility dimension, so the callable grouping is not a
-  MIR-level fact to preserve. Modeling each static local as a plain member collapses static-local
-  storage and access onto the same paths the rest of MIR already uses for module-level signals (one
-  type of decl, one MemberAccess shape, one render path, no static-frame walker state on the
-  backend).
+  before MIR sees the program; the cross-scope dimension the LRM exposes is the addressable scope (a
+  named block, not a callable), and within one addressable scope's class MIR has no per-callable
+  visibility to preserve. Modeling each static as a plain member collapses static-local storage and
+  access onto the same paths the rest of MIR already uses for module-level signals (one type of
+  decl, one MemberAccess shape, one render path, no static-frame walker state on the backend).
 - Names are made unique **uniformly** by appending an id to every static member -- not "append only
   on collision". Sibling callables in the same owner class (`static int x;` in two processes) and
   nested blocks repeating an identifier can both claim the same source name; the suffix removes the

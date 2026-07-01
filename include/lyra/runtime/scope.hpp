@@ -80,13 +80,23 @@ class Scope {
   // string literal.
   void RegisterSignal(std::string_view name, void* address);
 
-  // Wires `child` into this scope's object-tree edge: sets `child.parent_`
-  // to `this`, places `child` in the attached-children relation, and makes
-  // it findable through `GetChild` (key derived from `child.Segment()`).
-  // One write point per child edge; the parent never re-states identity
-  // the child already holds. Called after the typed owner commits the
-  // child, so a thrown ctor leaves no half-attached scope.
+  // Wires `child` into this scope's physical containment edge: sets
+  // `child.parent_` to `this` and places `child` in the attached-children
+  // relation (used by elaboration walks, dump, ForEachChild, and the
+  // SV-visible by-name lookup which recurses through anonymous children).
+  // Called after the typed owner commits the child, so a thrown ctor
+  // leaves no half-attached scope.
   void AttachChild(Scope& child);
+
+  // Whether this scope carries a source-visible SV name. An unnamed
+  // begin/end (synthetic anonymous scope) is emitted with an empty
+  // `HierarchySegment` base name; every other scope kind gets its SV
+  // identifier as the base name. `GetChild` recurses through
+  // non-addressable children so peer by-name lookup transparently walks
+  // past them (LRM 23 hierarchical-name semantics).
+  [[nodiscard]] auto IsAddressable() const -> bool {
+    return !segment_.BaseName().empty();
+  }
 
   // Returns the address of the signal registered under `name`, or the owned
   // child registered at `name` with `indices`; nullptr if none. A cross-unit
@@ -201,10 +211,10 @@ class Scope {
   HierarchySegment segment_;
   // Borrowed; set in the constructor.
   RuntimeServices* services_ = nullptr;
-  // The single object-tree edge: every child this scope owns appears here
-  // once, with its `Segment()` carrying both the LRM display name and the
-  // by-name lookup key. Traversal walks this in deterministic attach order;
-  // by-name lookup scans it and compares each child's segment.
+  // Physical containment: every runtime child scope this object owns
+  // appears here once, in attach order. Includes anonymous scopes
+  // (unnamed begin/ends). `GetChild` scans this and recurses into
+  // anonymous children so SV-visible lookup ignores synthetic wrappers.
   std::vector<Scope*> attached_children_;
   // By-name interface this scope answers cross-unit signal queries from.
   // Filled during construction; scanned only at construction-time
@@ -229,6 +239,15 @@ class Instance : public Scope {
 // A module-local generate naming scope (`if` / `for` / `case` generate block):
 // an intra-unit owned child that crosses no compilation-unit boundary.
 class GenScope : public Scope {
+ public:
+  using Scope::Scope;
+};
+
+// A named procedural block (`begin : outer static int x; ... end`, LRM
+// 9.3.5 / 23.9) holding static-lifetime locals reachable by hierarchical
+// path (`Top.outer.x`): an intra-unit owned child like `GenScope`, separate
+// C++ type so the source kind survives backend dispatch and diagnostics.
+class ProceduralStorageScope : public Scope {
  public:
   using Scope::Scope;
 };

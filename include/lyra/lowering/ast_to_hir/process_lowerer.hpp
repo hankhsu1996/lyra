@@ -49,13 +49,16 @@ class ProcessLowerer {
   // creation rather than back-patching it at a later reference.
   void AnalyzeLifetimeExtended(const slang::ast::Statement& body);
 
-  // Composite: appends a `ProceduralVarDecl` to `body` and registers the
-  // slang-to-HIR binding for `var` in the procedural-var registry. The two
-  // halves stay atomic so no caller forgets to register a binding it later
-  // looks up.
+  // Composite: appends a `ProceduralVarDecl` to `body`, registers the
+  // slang-to-HIR binding for `var` in the procedural-var registry, and
+  // attaches the new id to the lexical scope the walk frame is currently
+  // building. The three halves stay atomic so no caller forgets to register
+  // a binding it later looks up, and no var slips out of its declaring
+  // scope's downward-ownership list.
   auto AddProceduralVar(
-      hir::ProceduralBody& body, const slang::ast::VariableSymbol& var,
-      hir::TypeId type) -> hir::ProceduralVarId;
+      const WalkFrame& frame, hir::ProceduralBody& body,
+      const slang::ast::VariableSymbol& var, hir::TypeId type)
+      -> hir::ProceduralVarId;
 
   [[nodiscard]] auto LookupProceduralVar(const slang::ast::VariableSymbol& var)
       const -> std::optional<hir::ProceduralVarId>;

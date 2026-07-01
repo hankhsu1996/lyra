@@ -271,14 +271,16 @@ auto LowerHierarchicalValue(
   if (!path) return std::unexpected(std::move(path.error()));
 
   // Downward: the head is an owned child this unit's scope declares -- an
-  // instance / instance-array member, or a generate block (LRM 27). Both are
-  // bound before any process body is lowered, so a reference resolves
-  // regardless of source order; a missing binding is a compiler-bug invariant.
+  // instance / instance-array member, a generate block (LRM 27), or a named
+  // procedural block (LRM 9.3.5 / 23.9). Each is bound before any process
+  // body is lowered, so a reference resolves regardless of source order; a
+  // missing binding is a compiler-bug invariant.
   const bool head_is_owned_child =
       head_sym.kind == slang::ast::SymbolKind::Instance ||
       head_sym.kind == slang::ast::SymbolKind::InstanceArray ||
       head_sym.kind == slang::ast::SymbolKind::GenerateBlock ||
-      head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray;
+      head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray ||
+      head_sym.kind == slang::ast::SymbolKind::StatementBlock;
   if (!head_is_owned_child) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -311,7 +313,8 @@ auto LowerHierarchicalValue(
   // unsupported here.
   const bool head_is_intra_unit =
       head_sym.kind == slang::ast::SymbolKind::GenerateBlock ||
-      head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray;
+      head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray ||
+      head_sym.kind == slang::ast::SymbolKind::StatementBlock;
   if (!head_is_intra_unit) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,

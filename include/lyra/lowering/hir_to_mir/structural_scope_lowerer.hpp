@@ -16,6 +16,7 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -289,11 +290,14 @@ class StructuralScopeLowerer {
   // `hir::DownwardHead`) to the MIR member that owns the child. `hops == 0`
   // reads this scope's own table; `hops > 0` walks the parent chain to an
   // enclosing scope, used by the sibling-of-ancestor install when the head
-  // lives outside the referrer's frame.
+  // lives outside the referrer's frame. The procedural-scope arm resolves to
+  // the companion unique-pointer member; subsequent steps follow the typed
+  // segment chain through that pointer's pointee class.
   [[nodiscard]] auto TranslateOwnedChild(
       hir::StructuralHops hops,
-      const std::variant<hir::InstanceMemberId, hir::GenerateChildRef>& child)
-      const -> mir::MemberId {
+      const std::variant<
+          hir::InstanceMemberId, hir::GenerateChildRef, hir::ProceduralScopeId>&
+          child) const -> mir::MemberId {
     return LookupOwnedChildAtHops(hops, child);
   }
 
@@ -317,8 +321,9 @@ class StructuralScopeLowerer {
  private:
   [[nodiscard]] auto LookupOwnedChildAtHops(
       hir::StructuralHops hops,
-      const std::variant<hir::InstanceMemberId, hir::GenerateChildRef>& child)
-      const -> mir::MemberId {
+      const std::variant<
+          hir::InstanceMemberId, hir::GenerateChildRef, hir::ProceduralScopeId>&
+          child) const -> mir::MemberId {
     if (hops.value == 0) {
       return std::visit(
           Overloaded{
@@ -341,6 +346,9 @@ class StructuralScopeLowerer {
                 return generate_map_[g.generate.value]
                     .by_scope_id.at(g.scope.value)
                     .var_id;
+              },
+              [&](const hir::ProceduralScopeId& s) -> mir::MemberId {
+                return scope_materialization_.Get(s).companion_member;
               },
           },
           child);
@@ -427,15 +435,16 @@ class StructuralScopeLowerer {
   std::vector<std::optional<mir::LocalRef>> loop_var_procedural_map_;
   std::vector<mir::MemberId> instance_member_map_;
   std::vector<GenerateBindings> generate_map_;
-  // Pre-declared MIR members for each callable's static-lifetime body locals.
-  // Outer vector parallels the HIR scope's subroutines / processes
-  // respectively; inner vector is indexed by HIR `ProceduralVarId.value`,
-  // nullopt for an automatic local. Populated during shape declaration so the
-  // class's member arena is settled before any body lowers against it.
-  std::vector<std::vector<std::optional<mir::MemberId>>>
-      subroutine_static_members_;
-  std::vector<std::vector<std::optional<mir::MemberId>>>
-      process_static_members_;
+  // Per-structural-scope runtime-topology table for materialized procedural
+  // storage scopes. Populated during shape declaration; consumed by the
+  // per-callable plans and by the runtime-tree construction emitter.
+  ProceduralScopeMaterializationTable scope_materialization_;
+  // Per-callable storage plan. Outer vector parallels the HIR scope's
+  // subroutines / processes arenas; each entry packages the callable's
+  // static placements together with a reference to `scope_materialization_`
+  // so peer bodies query both through the same plan handle.
+  std::vector<CallableStoragePlan> subroutine_storage_plans_;
+  std::vector<CallableStoragePlan> process_storage_plans_;
   mir::ClassId class_id_{};
   std::vector<std::unique_ptr<StructuralScopeLowerer>> children_;
 };

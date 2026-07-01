@@ -59,8 +59,8 @@ auto LowerVariableDeclStmt(
   auto type_id_or =
       proc.Module().InternType(sym.getType(), mapper.PointSpanOf(sym.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
-  const auto local_id =
-      proc.AddProceduralVar(*frame.current_procedural_body, sym, *type_id_or);
+  const auto local_id = proc.AddProceduralVar(
+      frame, *frame.current_procedural_body, sym, *type_id_or);
   std::optional<hir::ExprId> init_id;
   if (const auto* init_expr = sym.getInitializer()) {
     auto init_or = proc.LowerExpr(*init_expr, frame);

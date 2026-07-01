@@ -64,7 +64,17 @@ auto LowerSubroutineDecl(
   hir::ProceduralBody body;
   ProcessLowerer lowerer(module, sym);
   lowerer.AnalyzeLifetimeExtended(sym.getBody());
-  const WalkFrame body_frame = frame.WithProceduralBody(&body, &body.exprs);
+
+  // Open the root lexical scope accumulators for this subroutine body. The
+  // formal params, the implicit result var, and every body-tree var declared
+  // below feed into these vectors and become the root scope's direct
+  // declarations. Nested begin/end / fork / foreach scopes push their ids
+  // into the root scope's children list.
+  std::vector<hir::ProceduralVarId> root_declarations;
+  std::vector<hir::ProceduralScopeId> root_children;
+  const WalkFrame body_frame =
+      frame.WithProceduralBody(&body, &body.exprs)
+          .WithProceduralScopeAccumulators(&root_declarations, &root_children);
 
   std::vector<hir::SubroutineParam> params;
   params.reserve(sym.getArguments().size());
@@ -75,7 +85,7 @@ auto LowerSubroutineDecl(
       return std::unexpected(std::move(formal_type_or.error()));
     }
     const hir::ProceduralVarId var =
-        lowerer.AddProceduralVar(body, *formal, *formal_type_or);
+        lowerer.AddProceduralVar(body_frame, body, *formal, *formal_type_or);
     params.push_back(
         hir::SubroutineParam{
             .var = var, .direction = ParamDirectionOf(*formal)});
@@ -83,13 +93,26 @@ auto LowerSubroutineDecl(
 
   std::optional<hir::ProceduralVarId> result_var;
   if (sym.returnValVar != nullptr) {
-    result_var =
-        lowerer.AddProceduralVar(body, *sym.returnValVar, *return_type_or);
+    result_var = lowerer.AddProceduralVar(
+        body_frame, body, *sym.returnValVar, *return_type_or);
   }
 
   auto body_stmt_or = lowerer.LowerStmt(sym.getBody(), body_frame);
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
   body.root_stmt = body.stmts.Add(*std::move(body_stmt_or));
+
+  // Append the assembled root scope to the enclosing structural scope's
+  // procedural-scope arena when one is available (a class method body has
+  // no structural-scope context; its locals are placed directly on the
+  // class and the root-scope record has no consumer).
+  if (frame.current_structural_scope != nullptr) {
+    body.root_scope = frame.current_structural_scope->procedural_scopes.Add(
+        hir::ProceduralScopeDecl{
+            .kind = hir::ProceduralScopeKind::kProcessRoot,
+            .label = std::nullopt,
+            .direct_declarations = std::move(root_declarations),
+            .direct_child_scopes = std::move(root_children)});
+  }
 
   return hir::SubroutineDecl{
       .name = std::string{sym.name},

@@ -159,6 +159,11 @@ mechanism.
 - **Interface and modport reference.** An interface's externally visible surface (modport
   declarations, virtual interface targets) is shape; a body that references it reads through the
   registry.
+- **Procedural storage scope materialization** (`procedural-storage-scope.md`). A named procedural
+  block whose subtree owns hierarchy-addressable storage is a structural declaration: its class
+  identity, its statics, the parent's owning-pointer companion member, and the contained-class edge
+  are minted by the shape pass. A sibling process's body lowering reads its peer block's members
+  through a typed segment chain; the body never mints any of these.
 
 The same invariant applies to future structural concepts that admit cross-reference; new
 applications do not introduce new mechanism.

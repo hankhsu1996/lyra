@@ -152,12 +152,17 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       against the wrapper member in the constructor body (`BindVisibleChild` / `BindRoot` followed
       by zero or more `AddSuffixStep`), carrying only flat MIR primitives -- the wrapper type itself
       carries only the element type.
-- [ ] D2e -- An upward reference whose head is a named procedural block (a named `begin`/`end` or
-      `fork`/`join`, LRM 23.9). Unlike a module or generate scope, a named procedural block is not a
-      constructed object today: its static-lifetime locals live as members on the enclosing unit
-      (`docs/decisions/variable-lifetime-storage.md`), so there is no scope to climb to and no
-      by-name signal to fetch. This form needs either named procedural blocks to materialize as
-      navigable scopes or a member-name-aware resolution -- a model question deferred from D2c.
+- [x] D2e -- A hierarchical reference whose head is a named procedural block (a named `begin`/`end`,
+      LRM 9.3.5 / 23.9). A named block whose subtree owns hierarchy-addressable persistent storage
+      is a first-class structural declaration of the compilation unit: it materializes as a child
+      runtime scope on its nearest enclosing addressable scope, its static-lifetime locals live on
+      that scope's class, and the descendant case (`outer.inner.y` where `outer` owns no static of
+      its own) materializes `outer` because navigation through it is needed. Intra-unit access
+      (`outer.x` from a peer process) resolves through the typed-segment route -- the same
+      `OwnedChildBinding` infrastructure that routes instance and generate-block heads. Cross-unit
+      access (`Top.c.outer.x` from another module) resolves through the runtime by-name walk that
+      `GetChild` / `GetSignal` already provide. A named `fork`/`join` block as head is not yet
+      supported; the front-end still rejects it at construction.
 - [x] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
       Landed for downward paths through scalar instances.
 - [x] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced

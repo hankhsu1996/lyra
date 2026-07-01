@@ -33,6 +33,7 @@ enum class TypeKind {
   kScope,
   kInstance,
   kGenScope,
+  kProceduralStorageScope,
   kServices,
   kFiles,
   kDiagnostic,
@@ -241,6 +242,15 @@ struct InstanceType {
 // generate scope is matched by its block name, not a def-name.
 struct GenScopeType {
   auto operator==(const GenScopeType&) const -> bool = default;
+};
+
+// The runtime object-tree base class `lyra::runtime::ProceduralStorageScope`,
+// the concrete base a named procedural block (LRM 9.3.5 / 23.9) extends when
+// its subtree holds hierarchically-reachable static storage. A tree node
+// matched by block name like GenScopeType, but a distinct kind so backend
+// dispatch and diagnostics see the source kind directly.
+struct ProceduralStorageScopeType {
+  auto operator==(const ProceduralStorageScopeType&) const -> bool = default;
 };
 
 // The engine facade `lyra::runtime::RuntimeServices`. A callable body reaches
@@ -472,10 +482,10 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, StringViewType,
     MachineIntType, EventType, RealType, ShortRealType, RealTimeType,
     ChandleType, VoidType, ObjectType, ExternalUnitObjectType, ScopeType,
-    InstanceType, GenScopeType, ServicesType, FilesType, DiagnosticType,
-    RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
-    VectorType, TupleType, UnionType, ExternalRefType, ObservableType,
-    ResolvedType, DriverType, CallableType>;
+    InstanceType, GenScopeType, ProceduralStorageScopeType, ServicesType,
+    FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
+    PointerType, ManagedRefType, VectorType, TupleType, UnionType,
+    ExternalRefType, ObservableType, ResolvedType, DriverType, CallableType>;
 
 struct Type {
   TypeData data;
