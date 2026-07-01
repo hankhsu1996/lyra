@@ -2,9 +2,7 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdint>
 #include <expected>
-#include <format>
 #include <optional>
 #include <span>
 #include <utility>
@@ -24,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -78,12 +77,13 @@ auto IsExprRootedAtStructuralDataObject(
 // the cell, which is the captured reference rather than a re-navigation from a
 // receiver.
 auto CloneLhsSelectorChainOntoRef(
-    ClosureBuilder& closure, const mir::Block& outer_block,
-    std::uint32_t& snapshot_counter, mir::ExprId outer_id, mir::ExprId root_id,
+    ModuleLowerer& module, const WalkFrame& outer_frame,
+    ClosureBuilder& closure, mir::ExprId outer_id, mir::ExprId root_id,
     mir::ExprId captured_root) -> mir::ExprId {
   if (outer_id == root_id) {
     return captured_root;
   }
+  const mir::Block& outer_block = *outer_frame.current_block;
   mir::Block& body = closure.Body();
   const auto& outer_expr = outer_block.exprs.Get(outer_id);
   return std::visit(
@@ -98,12 +98,12 @@ auto CloneLhsSelectorChainOntoRef(
             std::vector<mir::ExprId> body_args;
             body_args.reserve(c.arguments.size());
             body_args.push_back(CloneLhsSelectorChainOntoRef(
-                closure, outer_block, snapshot_counter, c.arguments.front(),
-                root_id, captured_root));
+                module, outer_frame, closure, c.arguments.front(), root_id,
+                captured_root));
             for (std::size_t i = 1; i < c.arguments.size(); ++i) {
-              body_args.push_back(closure.CaptureByValue(
-                  c.arguments[i],
-                  std::format("_lyra_nba_arg{}", snapshot_counter++)));
+              body_args.push_back(SnapshotIntoClosure(
+                  module, outer_frame, closure, c.arguments[i],
+                  "_lyra_nba_arg"));
             }
             return body.exprs.Add(
                 mir::Expr{
@@ -115,8 +115,7 @@ auto CloneLhsSelectorChainOntoRef(
           },
           [&](const mir::TupleGetExpr& g) -> mir::ExprId {
             const mir::ExprId base = CloneLhsSelectorChainOntoRef(
-                closure, outer_block, snapshot_counter, g.tuple, root_id,
-                captured_root);
+                module, outer_frame, closure, g.tuple, root_id, captured_root);
             return body.exprs.Add(
                 mir::Expr{
                     .data = mir::TupleGetExpr{.tuple = base, .index = g.index},
@@ -124,7 +123,7 @@ auto CloneLhsSelectorChainOntoRef(
           },
           [&](const mir::UnionGetRefExpr& g) -> mir::ExprId {
             const mir::ExprId base = CloneLhsSelectorChainOntoRef(
-                closure, outer_block, snapshot_counter, g.union_value, root_id,
+                module, outer_frame, closure, g.union_value, root_id,
                 captured_root);
             return body.exprs.Add(
                 mir::Expr{
@@ -167,23 +166,22 @@ auto BuildDeferredAssignClosure(
   const mir::ExprId services_param = body.exprs.Add(
       mir::MakeLocalRefExpr(services_binding, unit.builtins.services));
 
-  const mir::ExprId root_in_outer = FindLhsRootId(outer_block, target_in_outer);
-  const mir::ExprId captured_root = closure.CaptureByValue(
-      BuildReferenceArg(
-          unit, outer_block, root_in_outer,
-          outer_block.exprs.Get(root_in_outer).type),
-      "_lyra_nba_place");
+  const mir::ExprId root_in_outer =
+      FindLhsRootId(unit, outer_block, target_in_outer);
+  const mir::ExprId place_ref = BuildReferenceArg(
+      unit, outer_block, root_in_outer,
+      outer_block.exprs.Get(root_in_outer).type);
+  const mir::ExprId captured_root =
+      SnapshotIntoClosure(module, frame, closure, place_ref, "_lyra_nba_place");
 
-  std::uint32_t snapshot_counter = 0;
   const mir::ExprId body_target = CloneLhsSelectorChainOntoRef(
-      closure, outer_block, snapshot_counter, target_in_outer, root_in_outer,
-      captured_root);
+      module, frame, closure, target_in_outer, root_in_outer, captured_root);
 
   std::vector<mir::ExprId> body_operands;
   body_operands.reserve(operands_in_outer.size());
   for (const mir::ExprId op : operands_in_outer) {
-    body_operands.push_back(closure.CaptureByValue(
-        op, std::format("_lyra_nba_arg{}", snapshot_counter++)));
+    body_operands.push_back(
+        SnapshotIntoClosure(module, frame, closure, op, "_lyra_nba_arg"));
   }
 
   const mir::ExprId effect_id = body.exprs.Add(effect_fn(

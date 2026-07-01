@@ -12,9 +12,13 @@
 namespace lyra::lowering::hir_to_mir {
 
 // Walks through container-access CallExprs and member-ref projections to the
-// LHS chain's root primary.
-[[nodiscard]] auto FindLhsRootId(const mir::Block& block, mir::ExprId lhs_id)
-    -> mir::ExprId;
+// LHS chain's root primary. A projection whose own type is already an
+// observable cell is a captured carrier (a closure-record field holding a
+// `Ref`), which is itself the root: the walk stops there rather than descending
+// through the field access as if the field were a struct member.
+[[nodiscard]] auto FindLhsRootId(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    mir::ExprId lhs_id) -> mir::ExprId;
 
 // Rebuilds the LHS chain with its root replaced by
 // `DerefExpr(CallExpr(ObservableMethod{kMutate}, [cell, services]))`. The

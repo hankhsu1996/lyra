@@ -169,12 +169,12 @@ removes.
 ```text
 1. Binding origin           which variable / parameter / receiver / synthesized entity this is;
                             stable across every body that names or forwards it.
-2. Body binding             what one callable body reads directly: an activation local, or a
-                            captured environment field of that body.
-3. Capture layout           the environment fields a closure's code requires, independent of any
-                            single construction of it.
-4. Capture initialization   for one construction of a closure value, where each field's value comes
-                            from.
+2. Body binding             what one callable body reads directly: an activation local, or a field
+                            of that body's closure record.
+3. Closure-record layout    the closure record type (named capture fields) a closure's code reads its
+                            captures from, independent of any single construction of it.
+4. Closure-record construction  for one construction of a closure value, the closure-record value
+                            whose fields initialize the environment.
 ```
 
 Layer 1 is identity; layer 2 is per-body materialization; layer 3 belongs to the callable code;
@@ -203,18 +203,20 @@ local slot is never an origin (that is the "one materialization used as identity
 What a callable body reads directly is exactly one of two things:
 
 ```text
-body binding = Local(local id) | Capture(capture id)
+body binding = Local(local id) | ClosureField(field id)
 ```
 
 - `Local` names an entry in the callable's single activation arena. A parameter is a `Local`: the
   signature is a prefix of that arena. There is no separate parameter reference kind and no second
   id space for parameters.
-- `Capture` names an entry in the callable's capture layout.
+- `ClosureField` names a field of the body's closure record, read as ordinary field access over the
+  closure receiver (the record itself). It carries a stable field id, not a physical layout
+  position.
 - The receiver is a `Local` (a receiver-role parameter at the start of the arena) when a callable is
-  invoked directly, and a `Capture` when a closure binds it. It is never a privileged slot.
+  invoked directly, and a `ClosureField` when a closure binds it. It is never a privileged slot.
 
 A reference carries no navigation distance: within a callable there are no hops (one arena); across
-a callable it is a `Capture`, resolved by forwarding.
+a callable it is a `ClosureField`, resolved by forwarding.
 
 ### Source resolution versus carrier availability
 
@@ -236,32 +238,35 @@ change: a promoted automatic variable keeps its own source origin, and is reache
 over a handle carrier whose own origin is a synthesized one. The variable's origin never becomes the
 handle's origin, so capture deduplication never sees one variable as two things.
 
-### Capture layout and capture initialization (layers 3 and 4)
+### Closure-record layout and construction (layers 3 and 4)
 
-A closure's environment splits between the code (the layout it requires) and the value (one
-construction's initializers):
+A closure's captured state splits between the code (the closure record type it reads) and the value
+(one construction of that record):
 
 ```text
-callable code . captures      : a list of capture declarations
-capture declaration           { carrier_origin, field_type }
-closure value . capture_inits : a list of capture initializers
-capture initializer           { target capture, source expression }
+callable code . closure record : the receiver's type, named capture fields { carrier_origin, type }
+closure-record field           : a field { ClosureFieldId, carrier_origin, type }
+closure value . construction   : a closure-record construction at the construction site
 ```
 
-- A captured field is **not** an activation local: it is a distinct id space, set once per closure
-  construction, whereas an activation local is created per invocation.
-- A capture declaration names the **carrier** transported across the boundary, not necessarily the
-  source variable later reached through it. Several promoted variables sharing one activation handle
-  capture that one handle once.
+- A closure-record field is **not** an activation local: it is a field of the record, set once per
+  closure construction, whereas an activation local is created per invocation.
+- A field names the **carrier** transported across the boundary, not necessarily the source variable
+  later reached through it. Several promoted variables sharing one activation handle capture that
+  one handle once.
 - Snapshot / alias / owning is the field's **type** -- a value type is a snapshot, a reference type
   aliases an enclosing cell, a shared handle owns. There is no separate capture-mode field.
+- A field's identity is its `ClosureFieldId` (keyed by the carrier origin), assigned when the
+  capture is discovered and independent of physical order. Canonical ordering fixes only the
+  physical field layout (`compiler_generated_storage.md`); the invoke body reads by field id and is
+  never rewritten to follow a layout change.
 
-**Capture-init sequencing.** A closure value's capture initializers are evaluated at the closure
-construction site, in declaration order, before the value exists. An initializer that cannot be
-evaluated safely in place -- one with a side effect, or one that must be computed exactly once at a
-specific point -- is materialized as a sequenced temporary first, and the initializer reads that
-temporary. A backend whose target does not guarantee that order at the construction site emits the
-temporaries explicitly.
+**Closure-construction sequencing.** The closure record is constructed at the closure construction
+site, before the value exists. A field source that cannot be evaluated safely in place -- one with a
+side effect, or one that must be computed exactly once at a specific point -- is materialized as a
+sequenced temporary in capture order first, and the construction reads that temporary, so the
+canonical field layout never reorders an observable evaluation. A backend whose target does not
+guarantee that order at the construction site emits the temporaries explicitly.
 
 ### Carrier and view
 
@@ -271,16 +276,19 @@ temporaries explicitly.
 - **Carrier** (per boundary): what is read at the construction site to initialize the field.
 
 The view is decided by closure-kind policy, not by lexical nesting depth and not lazily by the first
-use. Two construction paths exist:
+use. Every capture is a **forwarded capture**: while a body is lowered, a reference to an origin
+outside the body's boundary is captured automatically, and the view is the closure kind's policy
+applied to the origin's relation to the closure's construction scope. For a `fork` branch, the
+construction scope is the explicit set of the fork's own block-item declarations: an origin in that
+set is snapshotted, an enclosing origin aliases, and an enclosing origin a longer-lived body could
+outlive is promoted upstream to an owning carrier. The relation is set membership over origins,
+never a depth.
 
-- **Direct capture:** the construction site captures a specific outer value and states the view
-  itself. No relation classification is needed.
-- **Forwarded capture:** while a body is lowered, a reference to an origin outside the body's
-  boundary is captured automatically. The view is the closure kind's policy applied to the origin's
-  relation to the closure's construction scope. For a `fork` branch, the construction scope is the
-  explicit set of the fork's own block-item declarations: an origin in that set is snapshotted, an
-  enclosing origin aliases, and an enclosing origin a longer-lived body could outlive is promoted
-  upstream to an owning carrier. The relation is set membership over origins, never a depth.
+A value a deferred body must freeze at construction time but that is not a source variable -- a
+non-blocking assignment's target reference and operand snapshots, a postponed `$display`'s
+descriptor -- is first materialized as an ordinary local of the constructing body (with a
+synthesized origin) and then forwarded like any binding. There is no separate "capture a computed
+expression" path; the closure layer only ever forwards bindings.
 
 A body's lexical declaration ownership lives in the block tree (where a declaration statement sits),
 not in a stored scope id; the construction-scope set is the only additional fact a capture policy
@@ -300,17 +308,19 @@ the canonical carrier (a projection or temporary) or they are in fact distinct c
 
 ### Representation invariants
 
-1. A reference is a body binding -- a `Local` or a `Capture` of its own callable. It carries no
-   distance and never names another callable's slot.
-2. A binding origin is the cross-body key; a body's physical slot is never the key.
-3. A captured field and an activation local are different id spaces -- set-once versus
-   per-invocation.
-4. A captured field's snapshot / alias / owning nature is its type; there is no parallel
+1. A reference is a body binding -- a `Local` or a `ClosureField` of its own callable. It carries no
+   distance and never names another callable's field.
+2. A binding origin is the cross-body key and the determinant of a field's `ClosureFieldId`; a
+   body's physical field position is never the key.
+3. A closure-record field and an activation local are different spaces -- a record field set once
+   per construction versus a per-invocation local.
+4. A closure-record field's snapshot / alias / owning nature is its type; there is no parallel
    capture-mode field.
 5. A source variable's origin is invariant under promotion; promotion changes its carrier, never its
    identity.
-6. Capture initializers are sequenced at the construction site in declaration order; a non-inline
-   initializer is materialized as a sequenced temporary.
+6. Closure-record fields are evaluated at the construction site in capture order; a non-inline
+   source is materialized as a sequenced temporary, and the canonical field layout never reorders an
+   observable side effect.
 7. Capture view is decided by closure-kind policy from the origin's relation to the construction
    scope, never by lexical depth and never by first-use order.
 8. Every non-parameter local has exactly one declaration site; every reference to it is lexically
@@ -320,14 +330,19 @@ the canonical carrier (a projection or temporary) or they are in fact distinct c
 
 ### Additional forbidden shapes
 
-- A captured field represented as an activation local distinguished only by appearing in an
-  environment list. Captures are their own id space.
+- A closure-record field represented as an activation local, or a capture-read node distinct from
+  field access. A captured read is ordinary field access over the closure receiver.
+- A closure-record field's physical layout position used as the stable identity of a captured
+  binding. The identity is the origin (via its `ClosureFieldId`); the physical position is only a
+  layout representation.
+- A structural value tuple standing in for the closure environment. The environment is a nominal
+  closure record with named fields, not a positional tuple (`compiler_generated_storage.md`).
 - A source-resolution entry point that returns a direct binding in one case and a carrier or member
   access in another. Source resolution and carrier availability are distinct steps.
-- A capture-mode flag or enum beside the field type.
+- A capture-mode flag or enum beside the slot type.
 - A capture view chosen by lexical nesting depth, or by the first use encountered during traversal.
 - A promoted variable whose origin becomes its activation handle (one variable, two origins).
-- A capture initializer left as a detached side-effecting expression, relied upon to evaluate
+- An environment slot source left as a detached side-effecting expression, relied upon to evaluate
   correctly without an explicit sequencing point.
 - A stored lexical-scope id duplicating the block tree, used to decide capture policy.
 - A binding subsystem inventing a second projection or place language instead of reusing the
@@ -335,9 +350,11 @@ the canonical carrier (a projection or temporary) or they are in fact distinct c
 
 ### Reconciliation with sibling contracts
 
-- `mir.md`: the receiver is the body's first binding (`locals[0]`); the binding arena is the
-  callable's, not a per-block one. `locals[0] == self` is a codegen convention; the generic
-  invariant is that an instance callable has a receiver parameter binding.
-- `callable.md`: the environment is the closure's capture layout (its own id space), not a prefix of
-  the per-invocation parameter list. The snapshot-or-alias-by-type rule (`callable.md` invariant 5)
-  is retained and is the reason capture mode is not a separate field.
+- `mir.md`: the binding arena is the callable's, not a per-block one. The body's receiver is an
+  ordinary binding: `self` for a directly-invoked instance callable, the closure record itself for a
+  closure. A captured source-level `self` is a field of the record, distinct from the closure
+  receiver.
+- `callable.md`: the captured state is the closure record (`compiler_generated_storage.md`), a
+  per-closure-site nominal value type, not a prefix of the per-invocation parameter list and not a
+  general value product. The snapshot-or-alias-by-type rule (`callable.md` invariant 5) is retained
+  and is the reason capture mode is not a separate field.

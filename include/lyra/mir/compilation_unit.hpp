@@ -6,6 +6,8 @@
 #include "lyra/base/registry.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/closure_record.hpp"
+#include "lyra/mir/closure_record_id.hpp"
 #include "lyra/mir/deferred_check_site.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -56,6 +58,11 @@ struct CompilationUnit {
   // module declaration.
   base::Registry<Class, ClassId> classes;
   ClassId root{};
+  // Every closure record of this unit, one per closure site, reached by its
+  // identity with the same declare-then-define lifecycle as a class: the record
+  // id is minted before its body is lowered, so the closure receiver's type can
+  // name it while the invoke body captures into its fields.
+  base::Registry<ClosureRecord, ClosureRecordId> closure_records;
   std::vector<DeferredCheckSite> deferred_check_sites;
 
   CompilationUnit()
@@ -132,6 +139,19 @@ struct CompilationUnit {
 
   void DefineClass(ClassId id, Class value) {
     classes.Define(id, std::move(value));
+  }
+
+  [[nodiscard]] auto GetClosureRecord(ClosureRecordId id) const
+      -> const ClosureRecord& {
+    return closure_records.Get(id);
+  }
+
+  auto DeclareClosureRecord() -> ClosureRecordId {
+    return closure_records.Declare();
+  }
+
+  void DefineClosureRecord(ClosureRecordId id, ClosureRecord value) {
+    closure_records.Define(id, std::move(value));
   }
 
   // Backing-vector position is the id, matching TypeId / LocalId.

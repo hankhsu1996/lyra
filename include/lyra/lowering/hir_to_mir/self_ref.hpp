@@ -13,12 +13,15 @@ struct MemberRef;
 
 namespace lyra::lowering::hir_to_mir {
 
-// Makes a read of the current body's `self` binding: a `ProceduralVarRef`
-// whose hop count is the distance from the reading site back to where `self`
-// was declared. The caller adds the returned expression to the scope it is
-// composing. This is the one place the self-read shape lives -- every
-// member access, cross-unit deref, closure self-capture, and runtime-effect
-// engine handle starts from it.
+// Makes a read of the current body's `self` binding: a direct `LocalRef` in a
+// directly-invoked body, or a field access over the closure receiver when
+// `self` was captured. The receiver is an ordinary binding resolved through the
+// same capture machinery as any other; its read appends any closure-receiver
+// operand to `frame.current_block`, and the caller adds the returned expression
+// to that same block. The read is typed as `self_ptr_type`, the borrowed
+// pointer to the enclosing object. This is the one place the self-read shape
+// lives -- every member access, cross-unit deref, closure self-capture, and
+// runtime-effect engine handle starts from it.
 auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr;
 
