@@ -210,6 +210,9 @@ class MirDumper {
             [](const ScopeType&) -> std::string { return "Scope"; },
             [](const InstanceType&) -> std::string { return "Instance"; },
             [](const GenScopeType&) -> std::string { return "GenScope"; },
+            [](const ProceduralStorageScopeType&) -> std::string {
+              return "ProceduralStorageScope";
+            },
             [](const ServicesType&) -> std::string { return "Services"; },
             [](const FilesType&) -> std::string { return "Files"; },
             [](const DiagnosticType&) -> std::string { return "Diagnostic"; },

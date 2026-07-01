@@ -16,11 +16,15 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/procedural_scope.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
+#include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -845,9 +849,30 @@ void InstallCrossUnitRefs(StructuralScopeLowerer& lowerer, WalkFrame frame) {
     const mir::MemberId slot = member;
     const mir::TypeId slot_type = mir_class.members.Get(slot).type;
     mir::ExprId nav{};
-    if (down->hops.value != 0) {
+    // A procedural-storage scope head is reached through the SV-visible
+    // hierarchy projection: by-name lookup on the enclosing scope walks
+    // transparently past anonymous begin/ends. The compile-time typed
+    // segment is not usable because the scope's companion pointer lives
+    // on whichever anonymous class physically owns it, not on the
+    // structural class that the source-level reference names. Instance
+    // heads at hops > 0 remain typed (they always sit on the structural
+    // class of the referenced generate/module scope).
+    const bool head_is_procedural_scope =
+        std::holds_alternative<hir::ProceduralScopeId>(down->child);
+    if (down->hops.value != 0 && !head_is_procedural_scope) {
       nav = BuildTypedEnclosingNavValue(
           lowerer, frame, *down, cu.path, slot_type);
+    } else if (head_is_procedural_scope) {
+      const auto& scope_decl = hir_scope.procedural_scopes.Get(
+          std::get<hir::ProceduralScopeId>(down->child));
+      if (!scope_decl.label.has_value()) {
+        throw InternalError(
+            "cross-unit ref: procedural-scope head has no SV label; "
+            "peer navigation would have no name to look up");
+      }
+      nav = ctor_block.exprs.Add(BuildDownwardNavValue(
+          module, frame, *scope_decl.label, cu.path, slot_type,
+          scope_ptr_type));
     } else {
       const mir::MemberId head_var =
           lowerer.TranslateOwnedChild(hir::StructuralHops{0}, down->child);
@@ -1226,8 +1251,11 @@ void AppendOwnedChildConstruction(
       module, owner_class, arm_block, target_var, child_scope_id, ctor_args);
 
   const mir::MemberDecl& var = owner_class.members.Get(target_var);
-  const std::string& runtime_label =
-      var.source_name.empty() ? var.name : var.source_name;
+  // The runtime label is the SV-visible identifier. An anonymous scope
+  // (no `source_name`) gets an empty label; the scope's runtime base
+  // treats an empty label as non-addressable, so a peer by-name lookup
+  // walks past it and reaches the addressable descendants underneath.
+  const std::string& runtime_label = var.source_name;
   const auto& builtins = module.Unit().builtins;
   const mir::TypeId self_ptr_type = owner_class.self_pointer_type;
 
@@ -1466,10 +1494,9 @@ auto LowerCaseGenerate(
 
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(case_gen.items.size());
-  for (std::size_t i = 0; i < case_gen.items.size(); ++i) {
+  for (const auto& item : case_gen.items) {
     body_scopes.push_back(BuildGenerateArmBody(
-        lowerer.Module(), frame, gen_bindings, case_gen.items[i].scope, {},
-        std::nullopt));
+        lowerer.Module(), frame, gen_bindings, item.scope, {}, std::nullopt));
   }
 
   std::optional<mir::Block> default_scope;
@@ -1724,6 +1751,155 @@ auto StructuralScopeLowerer::DeclareShape(
   // Instance members shape: one MIR slot per child instance.
   DeclareInstanceMemberShapes(lowerer, shape);
 
+  // Procedural-storage scope plan (LRM 9.3.5 / 23.9). Every
+  // `ProceduralScopeDecl` in the HIR scope tree becomes a runtime class,
+  // regardless of kind, label, or contents. Physical containment is
+  // uniform; the SV-visible hierarchy is a projection over it, computed
+  // at lookup time: a scope with an SV label emits its label as the
+  // runtime segment and is addressable by name, while an anonymous scope
+  // emits an empty segment so peer by-name lookup walks past it
+  // transparently (LRM 23 hierarchical-name semantics). Each static lives
+  // on its own lexical scope's class -- no elevation, no
+  // lexical-vs-physical owner distinction.
+  std::vector<mir::ClassId> scope_classes(hir_scope.procedural_scopes.size());
+  std::vector<mir::ClassShape> sub_shapes(hir_scope.procedural_scopes.size());
+  for (std::size_t i = 0; i < hir_scope.procedural_scopes.size(); ++i) {
+    const auto& decl = hir_scope.procedural_scopes.Get(
+        hir::ProceduralScopeId{static_cast<std::uint32_t>(i)});
+    const mir::ClassId class_id = module.Unit().DeclareClass();
+    scope_classes[i] = class_id;
+    const std::string scope_token =
+        decl.label.has_value() ? *decl.label : std::format("anon_{}", i);
+    mir::ClassShape sub_shape;
+    sub_shape.name = std::format("{}__{}", name_, scope_token);
+    sub_shape.base = mir::ClassRef{mir::RuntimeLibraryClassRef{
+        .base_type =
+            module.Unit().types.Intern(mir::ProceduralStorageScopeType{})}};
+    const mir::TypeId sub_self_object =
+        module.Unit().types.Intern(mir::ObjectType{.class_id = class_id});
+    sub_shape.self_pointer_type = module.Unit().types.PointerTo(
+        sub_self_object, mir::PointerOwnership::kBorrowed);
+    sub_shape.time_resolution = hir_scope.time_resolution;
+    const mir::BaseContract sub_contract =
+        mir::ResolveBaseContract(module.Unit(), *sub_shape.base);
+    for (const auto& param : sub_contract.ctor_prefix) {
+      sub_shape.ctor_prefix_params.Add(param);
+    }
+    // Carry the enclosing structural scope's type aliases (typedefs declared
+    // at module / generate level) so the cpp renderer can name those types
+    // when emitting a static's slot inside this nested class. C++ enclosing-
+    // class scope lookup makes the alias usable unqualified at the use site.
+    sub_shape.type_aliases = shape.type_aliases;
+    sub_shapes[i] = std::move(sub_shape);
+  }
+
+  scope_materialization_.Resize(hir_scope.procedural_scopes.size());
+  std::vector<std::vector<std::optional<StaticStoragePlacement>>>
+      subroutine_placements(hir_scope.structural_subroutines.size());
+  std::vector<std::vector<std::optional<StaticStoragePlacement>>>
+      process_placements(hir_scope.processes.size());
+
+  const auto owner_shape_of = [&](StorageOwner owner) -> mir::ClassShape& {
+    return std::visit(
+        Overloaded{
+            [&](EnclosingClass) -> mir::ClassShape& { return shape; },
+            [&](hir::ProceduralScopeId sid) -> mir::ClassShape& {
+              return sub_shapes[sid.value];
+            }},
+        owner);
+  };
+
+  // Every scope materializes; the recursion just threads `runtime_parent`
+  // down. Statics land on their own lexical scope (no elevation).
+  const auto place =
+      [&](const auto& self_ref, const hir::ProceduralBody& body,
+          std::string_view callable_name,
+          std::vector<std::optional<StaticStoragePlacement>>& per_callable,
+          hir::ProceduralScopeId scope_id,
+          StorageOwner runtime_parent) -> void {
+    const auto& scope = hir_scope.procedural_scopes.Get(scope_id);
+    mir::ClassShape& parent_shape = owner_shape_of(runtime_parent);
+    const mir::ClassId my_class = scope_classes[scope_id.value];
+    const std::string scope_token =
+        scope.label.has_value() ? *scope.label
+                                : std::format("anon_{}", scope_id.value);
+    const mir::TypeId companion_type =
+        MakeUniqueObjectPointer(module, my_class);
+    mir::MemberDecl companion_decl{
+        .name = CompanionVarNameFor(scope_token), .type = companion_type};
+    if (scope.label.has_value()) {
+      companion_decl.source_name = *scope.label;
+    }
+    const mir::MemberId companion_id = parent_shape.members.Add(companion_decl);
+    parent_shape.contained.push_back(my_class);
+    scope_materialization_.Record(
+        scope_id, MaterializedProceduralScope{
+                      .class_id = my_class,
+                      .companion_member = companion_id,
+                      .runtime_parent = runtime_parent});
+    const StorageOwner my_owner{scope_id};
+
+    if (per_callable.size() < body.procedural_vars.size()) {
+      per_callable.resize(body.procedural_vars.size());
+    }
+    for (const auto var_id : scope.direct_declarations) {
+      const auto& v = body.procedural_vars.Get(var_id);
+      if (v.lifetime != hir::VariableLifetime::kStatic) continue;
+
+      const std::string mangled =
+          std::format("{}__{}_{}", callable_name, v.name, var_id.value);
+      const mir::TypeId type = module.TranslateType(v.type);
+      const mir::TypeId field_type = MaybeWrapObservable(module, type);
+      mir::MemberDecl member_decl{.name = mangled, .type = field_type};
+      if (scope.label.has_value()) {
+        member_decl.source_name = v.name;
+      }
+      const mir::MemberId mid =
+          sub_shapes[scope_id.value].members.Add(member_decl);
+
+      per_callable[var_id.value] =
+          StaticStoragePlacement{.owner = my_owner, .member = mid};
+    }
+
+    for (const auto child_id : scope.direct_child_scopes) {
+      self_ref(self_ref, body, callable_name, per_callable, child_id, my_owner);
+    }
+  };
+
+  for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
+    const auto& s = hir_scope.structural_subroutines.Get(
+        hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
+    place(
+        place, s.body, s.name, subroutine_placements[i], s.body.root_scope,
+        StorageOwner{EnclosingClass{}});
+  }
+  for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {
+    const auto& p =
+        hir_scope.processes.Get(hir::ProcessId{static_cast<std::uint32_t>(i)});
+    const std::string callable_name =
+        std::format("process_{}", hir_scope.structural_subroutines.size() + i);
+    place(
+        place, p.body, callable_name, process_placements[i], p.body.root_scope,
+        StorageOwner{EnclosingClass{}});
+  }
+
+  subroutine_storage_plans_.reserve(hir_scope.structural_subroutines.size());
+  for (auto& placements : subroutine_placements) {
+    subroutine_storage_plans_.emplace_back(
+        scope_materialization_, std::move(placements));
+  }
+  process_storage_plans_.reserve(hir_scope.processes.size());
+  for (auto& placements : process_placements) {
+    process_storage_plans_.emplace_back(
+        scope_materialization_, std::move(placements));
+  }
+
+  // Publish each procedural-storage scope's shape; the body sweep below
+  // builds each class's constructor against the published shape.
+  for (std::size_t i = 0; i < hir_scope.procedural_scopes.size(); ++i) {
+    module.DefineClassShape(scope_classes[i], std::move(sub_shapes[i]));
+  }
+
   module.DefineClassShape(class_id_, std::move(shape));
   return class_id_;
 }
@@ -1939,12 +2115,118 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
   }
 
+  // Build each materialized procedural-storage scope's class: copy its
+  // already-published shape into a `mir::Class`, build a constructor whose
+  // body constructs the immediate-child materialized scopes the same way an
+  // owned-child instance is constructed, and commit. This runs before any
+  // body lowers so static-init lowering against the structural constructor
+  // (which writes `self->companion->...->static = init`) reaches storage the
+  // runtime has already built. The structural constructor then appends
+  // construction calls for top-level materialized scopes below, before the
+  // subroutine and process bodies that initialize their statics.
+  for (std::size_t i = 0; i < scope_materialization_.Size(); ++i) {
+    const hir::ProceduralScopeId scope_id{static_cast<std::uint32_t>(i)};
+    const auto& entry = scope_materialization_.Get(scope_id);
+    const mir::ClassShape& sub_shape = module.GetClassShape(entry.class_id);
+    mir::Class sub_class;
+    sub_class.name = sub_shape.name;
+    sub_class.base = sub_shape.base;
+    sub_class.self_pointer_type = sub_shape.self_pointer_type;
+    sub_class.time_resolution = sub_shape.time_resolution;
+    sub_class.ctor_prefix_params = sub_shape.ctor_prefix_params;
+    sub_class.params = sub_shape.params;
+    sub_class.members = sub_shape.members;
+    sub_class.contained = sub_shape.contained;
+    sub_class.type_aliases = sub_shape.type_aliases;
+
+    mir::CallableCode sub_ctor_code;
+    CallableBindings sub_ctor_bindings(module.Unit(), sub_ctor_code);
+    const mir::LocalId sub_self_id = sub_ctor_bindings.Declare(
+        BindingOriginId::Receiver(),
+        mir::LocalDecl{.name = "self", .type = sub_shape.self_pointer_type});
+    mir::Block& sub_ctor_block = sub_ctor_code.body;
+    ScopeChainNode sub_scope_link{};
+    const WalkFrame sub_ctor_frame =
+        parent_frame.WithClass(&sub_class, sub_scope_link)
+            .WithBlock(&sub_ctor_block)
+            .WithBindings(&sub_ctor_bindings);
+    for (std::size_t j = 0; j < scope_materialization_.Size(); ++j) {
+      const hir::ProceduralScopeId child_id{static_cast<std::uint32_t>(j)};
+      const auto& child_entry = scope_materialization_.Get(child_id);
+      const auto* parent_scope =
+          std::get_if<hir::ProceduralScopeId>(&child_entry.runtime_parent);
+      if (parent_scope == nullptr || parent_scope->value != i) continue;
+      AppendOwnedChildConstruction(
+          module, sub_ctor_frame, child_entry.companion_member,
+          child_entry.class_id, {}, std::nullopt);
+    }
+    // Register each static on this procedural-storage scope as a by-name
+    // signal so a cross-compilation-unit descent (`Top.outer.x` from
+    // another unit) finds it through `GetSignal` once it has navigated to
+    // this scope by `GetChild`. Companion members are pointers to nested
+    // scopes and are registered as children via `AttachChild`, not as
+    // signals, so the pointer kinds are excluded.
+    for (std::size_t mi = 0; mi < sub_class.members.size(); ++mi) {
+      const mir::MemberId mid{static_cast<std::uint32_t>(mi)};
+      const auto& m = sub_class.members.Get(mid);
+      if (m.source_name.empty()) continue;
+      const mir::TypeKind mk = module.Unit().types.Get(m.type).Kind();
+      if (mk == mir::TypeKind::kPointer || mk == mir::TypeKind::kVector ||
+          mk == mir::TypeKind::kObject) {
+        continue;
+      }
+      const mir::ExprId sub_self = sub_ctor_block.exprs.Add(
+          MakeSelfRefExpr(sub_ctor_frame, sub_shape.self_pointer_type));
+      const mir::ExprId member_ref = sub_ctor_block.exprs.Add(
+          mir::MakeMemberAccessExpr(
+              sub_self, mir::MemberRef{.var = mid}, m.type));
+      const mir::TypeId addr_type = module.Unit().types.PointerTo(
+          m.type, mir::PointerOwnership::kBorrowed);
+      const mir::ExprId addr = sub_ctor_block.exprs.Add(
+          mir::MakeAddressOfExpr(member_ref, addr_type));
+      const mir::ExprId name_lit = sub_ctor_block.exprs.Add(
+          mir::Expr{
+              .data = mir::StringLiteral{.value = m.source_name},
+              .type = module.Unit().builtins.string});
+      const mir::ExprId reg_self = sub_ctor_block.exprs.Add(
+          MakeSelfRefExpr(sub_ctor_frame, sub_shape.self_pointer_type));
+      const mir::ExprId call = sub_ctor_block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{
+                              .target = support::BuiltinFn::kRegisterSignal},
+                      .arguments = {reg_self, name_lit, addr}},
+              .type = void_type});
+      sub_ctor_block.AppendStmt(mir::ExprStmt{.expr = call});
+    }
+    sub_ctor_code.params = {sub_self_id};
+    sub_ctor_code.result_type = void_type;
+    sub_class.constructor = std::move(sub_ctor_code);
+    module.Unit().DefineClass(entry.class_id, std::move(sub_class));
+  }
+
+  // Construct every top-level materialized procedural-storage scope in the
+  // structural constructor, before the subroutine and process bodies lower
+  // so static inits that target storage inside one of these scopes write
+  // through an already-built `self->companion->...->static` chain.
+  for (std::size_t i = 0; i < scope_materialization_.Size(); ++i) {
+    const hir::ProceduralScopeId scope_id{static_cast<std::uint32_t>(i)};
+    const auto& entry = scope_materialization_.Get(scope_id);
+    if (!std::holds_alternative<EnclosingClass>(entry.runtime_parent)) continue;
+    AppendOwnedChildConstruction(
+        module, ctor_frame, entry.companion_member, entry.class_id, {},
+        std::nullopt);
+  }
+
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
     const auto& src = hir_scope.structural_subroutines.Get(
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
     ProcessLowerer subroutine_lowerer(
         module, &lowerer, hir_scope.time_resolution, src.body, src.name,
-        mir::MethodVisibility::kInternal, ctor_frame);
+        mir::MethodVisibility::kInternal, ctor_frame,
+        subroutine_storage_plans_[i]);
     auto decl_or = subroutine_lowerer.Run(src);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId added = mir_class.methods.Add(*std::move(decl_or));
@@ -1953,18 +2235,33 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           "StructuralScopeLowerer::PopulateBodies: subroutine added out of "
           "mapped id order");
     }
+    for (const auto& pending :
+         subroutine_lowerer.TakePendingStaticInitializers()) {
+      auto integ = IntegratePendingStaticInitializer(
+          subroutine_lowerer, src.body, init_frame, pending);
+      if (!integ) return std::unexpected(std::move(integ.error()));
+    }
   }
 
-  for (const auto& p : hir_scope.processes) {
+  for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {
+    const auto& p =
+        hir_scope.processes.Get(hir::ProcessId{static_cast<std::uint32_t>(i)});
     std::string name = std::format("process_{}", mir_class.methods.size());
     ProcessLowerer process_lowerer(
         module, &lowerer, hir_scope.time_resolution, p.body, std::move(name),
-        mir::MethodVisibility::kInternal, ctor_frame);
+        mir::MethodVisibility::kInternal, ctor_frame,
+        process_storage_plans_[i]);
     auto decl_or = process_lowerer.Run(p);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
     AppendProcessRegistration(
         module, activate_frame, body, p.kind == hir::ProcessKind::kFinal);
+    for (const auto& pending :
+         process_lowerer.TakePendingStaticInitializers()) {
+      auto integ = IntegratePendingStaticInitializer(
+          process_lowerer, p.body, init_frame, pending);
+      if (!integ) return std::unexpected(std::move(integ.error()));
+    }
   }
 
   std::vector<mir::MemberId> driven_nets;

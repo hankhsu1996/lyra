@@ -91,12 +91,31 @@ auto ProcessLowerer::Run(
     const slang::ast::ProceduralBlockSymbol& proc, WalkFrame parent_frame)
     -> diag::Result<hir::Process> {
   hir::ProceduralBody body;
-  const WalkFrame frame = parent_frame.WithProceduralBody(&body, &body.exprs);
+
+  // Open the root lexical scope accumulators. Every body-tree var declared
+  // below feeds into these vectors and becomes the root scope's direct
+  // declarations; nested named blocks / forks / foreach scopes push their
+  // ids into the root scope's children list.
+  std::vector<hir::ProceduralVarId> root_declarations;
+  std::vector<hir::ProceduralScopeId> root_children;
+  const WalkFrame frame =
+      parent_frame.WithProceduralBody(&body, &body.exprs)
+          .WithProceduralScopeAccumulators(&root_declarations, &root_children);
 
   AnalyzeLifetimeExtended(proc.getBody());
   auto root_stmt = LowerStmt(proc.getBody(), frame);
   if (!root_stmt) return std::unexpected(std::move(root_stmt.error()));
   body.root_stmt = body.stmts.Add(*std::move(root_stmt));
+
+  if (parent_frame.current_structural_scope != nullptr) {
+    body.root_scope =
+        parent_frame.current_structural_scope->procedural_scopes.Add(
+            hir::ProceduralScopeDecl{
+                .kind = hir::ProceduralScopeKind::kProcessRoot,
+                .label = std::nullopt,
+                .direct_declarations = std::move(root_declarations),
+                .direct_child_scopes = std::move(root_children)});
+  }
 
   const auto& mapper = module_->SourceMapper();
   const auto span = mapper.PointSpanOf(proc.location);
@@ -127,8 +146,9 @@ auto ProcessLowerer::Run(
 }
 
 auto ProcessLowerer::AddProceduralVar(
-    hir::ProceduralBody& body, const slang::ast::VariableSymbol& var,
-    hir::TypeId type) -> hir::ProceduralVarId {
+    const WalkFrame& frame, hir::ProceduralBody& body,
+    const slang::ast::VariableSymbol& var, hir::TypeId type)
+    -> hir::ProceduralVarId {
   const hir::ProceduralVarId id = body.procedural_vars.Add(
       hir::ProceduralVarDecl{
           .name = std::string{var.name},
@@ -143,6 +163,7 @@ auto ProcessLowerer::AddProceduralVar(
         "ProcessLowerer::AddProceduralVar: procedural variable symbol "
         "already mapped");
   }
+  frame.current_scope_declarations->push_back(id);
   return id;
 }
 

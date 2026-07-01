@@ -154,20 +154,22 @@ auto LowerStructuralDataObjectRefExpr(
 auto LowerProceduralVarRefExpr(
     ProcessLowerer& process, const WalkFrame& frame,
     const hir::ProceduralVarRef& l, mir::TypeId type) -> mir::Expr {
-  const auto& binding = process.LookupProceduralVar(l.var);
-  // A static-lifetime local lives as a per-instance member on the
-  // owner class (LRM 13.3.1); the read reaches it through `self` like any
-  // member ref.
-  if (const auto* sb = std::get_if<StaticVarBinding>(&binding)) {
-    return BuildStructuralMemberAccessExpr(
-        frame, process.Module().Unit(), mir::EnclosingHops{.value = 0},
-        sb->var);
+  // Storage placement (static, LRM 13.3.1) and body-local environment
+  // (automatic / promoted) are separate authorities. Presence in the
+  // body-local environment is the authoritative signal: a body-declared
+  // static is not registered there and resolves through the storage plan,
+  // while subroutine params / output / result_var ARE registered (regardless
+  // of their slang-reported lifetime) and resolve through it.
+  const auto* binding = process.LookupProceduralVar(l.var);
+  if (binding == nullptr) {
+    return process.BuildStaticStorageAccess(
+        frame, process.LookupStaticPlacement(l.var));
   }
   // A lifetime-extended automatic (LRM 6.21) lives in a shared activation
   // object; the read / write reaches its member through the handle. The handle
   // is a carrier the resolver makes available in this body (a by-value, owning
   // copy inside a detached branch), and the promoted member projects from it.
-  if (const auto* pb = std::get_if<PromotedVarBinding>(&binding)) {
+  if (const auto* pb = std::get_if<PromotedVarBinding>(binding)) {
     const BodyBindingRef handle =
         frame.bindings->EnsureCarrier(pb->handle_origin);
     const mir::ExprId handle_ref =

@@ -12,6 +12,7 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -75,7 +76,7 @@ struct GenerateChildRef {
 // the enclosing class's owned-child binding table.
 struct DownwardHead {
   StructuralHops hops = {};
-  std::variant<InstanceMemberId, GenerateChildRef> child;
+  std::variant<InstanceMemberId, GenerateChildRef, ProceduralScopeId> child;
 };
 
 // Where an upward cross-unit reference's navigation starts (LRM 23.8 / 23.9).
@@ -212,6 +213,7 @@ struct StructuralScope {
   std::vector<PortConnection> port_connections;
   base::Arena<CrossUnitRefDecl, CrossUnitRefId> cross_unit_refs;
   base::Arena<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
+  base::Arena<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
   std::vector<TypeAliasDecl> type_aliases;
 
   [[nodiscard]] auto NextGenerateId() const -> GenerateId {

@@ -3,6 +3,7 @@
 #include <expected>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -13,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/statement/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
@@ -90,6 +92,62 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           },
       },
       stmt.data);
+}
+
+auto ProcessLowerer::BuildStaticStorageAccess(
+    const WalkFrame& frame, StaticStoragePlacement placement) const
+    -> mir::Expr {
+  mir::Block& block = *frame.current_block;
+  const mir::CompilationUnit& unit = module_->Unit();
+  const std::vector<mir::MemberId> chain =
+      storage_plan_->CompanionChainTo(placement.owner);
+  mir::ExprId receiver = block.exprs.Add(
+      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  for (const mir::MemberId step : chain) {
+    const mir::TypeId receiver_type = block.exprs.Get(receiver).type;
+    const auto* ptr =
+        std::get_if<mir::PointerType>(&unit.types.Get(receiver_type).data);
+    if (ptr == nullptr) {
+      throw InternalError(
+          "ProcessLowerer::BuildStaticStorageAccess: companion chain step "
+          "receiver is not a pointer type");
+    }
+    const auto* obj =
+        std::get_if<mir::ObjectType>(&unit.types.Get(ptr->pointee).data);
+    if (obj == nullptr) {
+      throw InternalError(
+          "ProcessLowerer::BuildStaticStorageAccess: companion chain step "
+          "receiver's pointee is not an intra-unit object type");
+    }
+    // The enclosing class is still being built when this lowering runs, so
+    // member types come from the published shape, not the not-yet-committed
+    // mir class.
+    const mir::TypeId step_type =
+        module_->GetClassShape(obj->class_id).members.Get(step).type;
+    receiver = block.exprs.Add(
+        mir::MakeMemberAccessExpr(
+            receiver, mir::MemberRef{.var = step}, step_type));
+  }
+  // Resolve the owner class id from the placement's StorageOwner: the
+  // enclosing class is the one bound to `frame.current_class`; a procedural
+  // scope owner consults the materialization table.
+  const mir::ClassId owner_class_id = std::visit(
+      Overloaded{
+          [&](EnclosingClass) -> mir::ClassId {
+            const mir::TypeId self_ty = frame.current_class->self_pointer_type;
+            const auto& pointee = unit.types.Get(
+                std::get<mir::PointerType>(unit.types.Get(self_ty).data)
+                    .pointee);
+            return std::get<mir::ObjectType>(pointee.data).class_id;
+          },
+          [&](hir::ProceduralScopeId sid) -> mir::ClassId {
+            return storage_plan_->ScopeMaterialization(sid).class_id;
+          }},
+      placement.owner);
+  const mir::TypeId field_type =
+      module_->GetClassShape(owner_class_id).members.Get(placement.member).type;
+  return mir::MakeMemberAccessExpr(
+      receiver, mir::MemberRef{.var = placement.member}, field_type);
 }
 
 namespace {

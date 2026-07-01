@@ -134,6 +134,12 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 - [object-model-storage](object-model-storage.md) -- a compilation unit owns one canonical registry
   of local nominal object declarations; identity, lexical name resolution, and backend emission
   nesting are separate relations; the lexical-tree-only storage and a second identity are rejected.
+- [procedural-storage-scope](procedural-storage-scope.md) -- HIR carries a lexical procedural scope
+  tree (downward ownership, no backrefs) alongside its statement tree; a HIR-to-MIR two-pass
+  scope-tree fold decides which named begin/ends materialize as runtime hierarchy children and where
+  each static's storage physically lives; lexical owner and physical owner are distinct so an
+  unnamed scope nested in a named one places its statics in the named scope's class without exposing
+  them to cross-unit by-name lookup.
 - [elaboration-lifecycle-phases](elaboration-lifecycle-phases.md) -- a generated constructor only
   allocates; SystemVerilog elaboration is a staged build / resolve / initialize / activate protocol,
   with connections declarative until a single resolve phase and initializers running after it;

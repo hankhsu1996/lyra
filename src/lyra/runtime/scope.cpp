@@ -50,7 +50,18 @@ auto Scope::GetSignal(std::string_view name) -> void* {
 auto Scope::GetChild(
     std::string_view name, std::span<const lyra::value::PackedArray> indices)
     -> Scope* {
+  // SV-visible child lookup. Named children match on segment name +
+  // indices; anonymous children (unnamed begin/ends emitted with an empty
+  // segment name) are transparent -- the walk recurses into them so a
+  // peer's `top.outer.x` finds `outer` regardless of how many unnamed
+  // begin/ends physically wrap it (LRM 23 hierarchical-name semantics).
   for (Scope* child : attached_children_) {
+    if (!child->IsAddressable()) {
+      if (Scope* found = child->GetChild(name, indices)) {
+        return found;
+      }
+      continue;
+    }
     const HierarchySegment& seg = child->segment_;
     if (seg.BaseName() != name) {
       continue;

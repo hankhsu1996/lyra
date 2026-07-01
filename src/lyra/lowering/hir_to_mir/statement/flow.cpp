@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/statement/flow.hpp"
 
 #include <expected>
-#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -10,16 +9,13 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/value_ref.hpp"
 
@@ -28,55 +24,22 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // LRM 13.3.1: a static-lifetime body local has per-instance storage that
-// outlives every activation of the body. Realize it as a member on the
-// callable's owner class; the init AssignExpr lands in that owner's
-// constructor body (LRM Table 6-7 variable-initialization). The body
-// declaration itself emits nothing. The mangled name carries
-// `<callable>__<source>_<hir_var_id>` so sibling callables sharing a source
-// name (`static int x;` in two processes of the same module) and nested
-// blocks repeating an identifier do not collide on the owner's member arena.
+// outlives every activation of the body. Body lowering records the
+// initializer as a pending request (var + HIR init expression + placement);
+// the dedicated initializer lowering path runs in the Initialize phase and
+// produces the AssignExpr to the placement. The body's declaration
+// statement itself emits no executable text.
 auto LowerStaticVarDeclStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    ProcessLowerer& process, std::optional<std::string> label,
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
     mir::TypeId type) -> diag::Result<mir::Stmt> {
-  auto* owner_class = frame.current_class;
-  const auto& ctor_frame = process.OwnerCtorFrame();
-  auto& ctor_block = *ctor_frame.current_block;
-  const mir::TypeId self_ptr_type = owner_class->self_pointer_type;
-
-  const std::string mangled = std::format(
-      "{}__{}_{}", process.CallableName(), hir_local.name, v.var.value);
-  const mir::MemberId static_var =
-      owner_class->members.Add(mir::MemberDecl{.name = mangled, .type = type});
-  process.MapProceduralVar(v.var, StaticVarBinding{.var = static_var});
-
-  mir::ExprId init_value{};
-  if (v.init.has_value()) {
-    auto init_or =
-        process.LowerExpr(process.HirBody().exprs.Get(*v.init), ctor_frame);
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_value = ctor_block.exprs.Add(*std::move(init_or));
-  } else {
-    init_value = ctor_block.exprs.Add(
-        BuildDefaultValueFromHir(process.Module(), ctor_frame, hir_local.type));
-  }
-
-  const mir::ExprId ctor_self_read =
-      ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type));
-  const mir::ExprId target = ctor_block.exprs.Add(
-      mir::MakeMemberAccessExpr(
-          ctor_self_read, mir::MemberRef{.var = static_var}, type));
-  // A static-lifetime local lives as a member on the owner; if its declared
-  // type is an observable cell wrapper the init must route through
-  // `Var<T>::Set` so subscribers fire on its initial value (LRM 13.3.1).
-  const mir::ExprId services_id = ctor_block.exprs.Add(
-      mir::MakeServicesCallExpr(
-          ctor_self_read, process.Module().Unit().builtins.services));
-  const mir::Expr assign_expr = BuildObservableAssignExpr(
-      process.Module().Unit(), ctor_block, services_id, target, init_value,
-      std::nullopt, type, process.Module().Unit().builtins.void_type);
-  const mir::ExprId assign = ctor_block.exprs.Add(assign_expr);
-  ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
+  process.RecordPendingStaticInitializer(
+      PendingStaticInitializer{
+          .var = v.var,
+          .hir_type = hir_local.type,
+          .init_expr = v.init,
+          .placement = process.LookupStaticPlacement(v.var),
+          .storage_type = type});
   return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
 }
 
@@ -154,7 +117,7 @@ auto LowerVarDeclStmt(
   }
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
     return LowerStaticVarDeclStmt(
-        process, frame, std::move(label), v, hir_local, type);
+        process, std::move(label), v, hir_local, type);
   }
   return LowerAutomaticVarDeclStmt(
       process, frame, std::move(label), v, hir_local, type);

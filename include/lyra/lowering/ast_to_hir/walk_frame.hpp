@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/loop_label_id.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 
@@ -110,6 +111,21 @@ struct WalkFrame {
   // foreach loop variables are also slang Iterator symbols, so the match is by
   // symbol identity. Empty outside a with-clause body.
   std::vector<ActiveIterationClause> active_iteration_clauses;
+
+  // Accumulators for the lexical procedural scope currently being built. A
+  // var-decl handler pushes its newly-minted id into the declarations
+  // vector; a nested-scope handler pushes its assembled id into the
+  // children vector. The caller that opened the scope (process root,
+  // begin/end, fork, foreach) owns the vectors and seals their contents
+  // into a `ProceduralScopeDecl` when the recursion returns.
+  //
+  // Contract: every frame that lowers procedural-body content has both
+  // accumulators set; structural-scope frames before any body opens leave
+  // them null. Handlers reached inside a body therefore dereference these
+  // unconditionally -- a null accumulator is a caller bug, not a runtime
+  // branch.
+  std::vector<hir::ProceduralVarId>* current_scope_declarations = nullptr;
+  std::vector<hir::ProceduralScopeId>* current_scope_children = nullptr;
 
   [[nodiscard]] auto Current() const -> ScopeFrameId {
     if (structural_chain.empty()) {
@@ -211,6 +227,20 @@ struct WalkFrame {
       }
     }
     return std::nullopt;
+  }
+
+  // Switches the lexical scope accumulators to the pair the caller owns for
+  // the scope it just opened. The caller appends its assembled
+  // `ProceduralScopeDecl` to the structural scope's arena after the recursion
+  // returns; the resulting id is pushed into the parent scope's accumulators
+  // by the caller, not by the frame.
+  [[nodiscard]] auto WithProceduralScopeAccumulators(
+      std::vector<hir::ProceduralVarId>* declarations,
+      std::vector<hir::ProceduralScopeId>* children) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.current_scope_declarations = declarations;
+    next.current_scope_children = children;
+    return next;
   }
 
   // Establishes `label` as the break target for the body being lowered. `used`

@@ -1,0 +1,14 @@
+id: cpp.hierarchy_named_block_nesting
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      outer internal a=7 b=13
+      Top.outer.a=7
+      Top.c.deep.d=42

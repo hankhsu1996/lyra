@@ -12,6 +12,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/inside_item.hpp"
 #include "lyra/hir/loop_label_id.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
 
@@ -42,6 +43,15 @@ struct ExprStmt {
 
 struct BlockStmt {
   std::vector<StmtId> statements;
+  // The lexical declaration scope this block introduces, when it comes from
+  // a source-level `begin ... end` (LRM 9.3.4). Present for SV-source
+  // blocks (named or unnamed); absent for compiler-synthesized statement
+  // groupings that emit as a block but introduce no SV scope (e.g., the
+  // inner wrappers a foreach lowering produces around its nested for-loops).
+  // The scope record holds the optional SV `block_identifier` and the direct
+  // declarations / child scopes the block owns; runtime addressability is a
+  // separate axis on the scope record.
+  std::optional<ProceduralScopeId> scope;
 };
 
 // LRM 9.3.2 Table 9-1: which join keyword controls when the forking process
@@ -56,11 +66,14 @@ enum class JoinMode : std::uint8_t {
 // (VarDeclStmt) -- initialized at block entry, before any branch spawns, to
 // give each branch a by-value snapshot; they precede the parallel statements in
 // the fork's scope. Each branch in `branches` is a statement run as its own
-// concurrent process; `mode` sets when the parent resumes.
+// concurrent process; `mode` sets when the parent resumes. `scope` is the
+// fork's lexical declaration scope -- distinct from the enclosing scope so
+// `locals` are owned here, not by the parent.
 struct ForkStmt {
   JoinMode mode;
   std::vector<StmtId> locals;
   std::vector<StmtId> branches;
+  ProceduralScopeId scope;
 };
 
 enum class UniquePriorityCheck : std::uint8_t {

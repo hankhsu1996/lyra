@@ -100,6 +100,7 @@ auto BuildIntegerLevel(
             .name = std::string{kLastIndexName},
             .type = int32_type,
             .lifetime = hir::VariableLifetime::kAutomatic});
+    frame.current_scope_declarations->push_back(last_var);
     setup.push_back(body.stmts.Add(
         hir::Stmt{
             .label = std::nullopt,
@@ -112,7 +113,7 @@ auto BuildIntegerLevel(
   }
 
   const hir::ProceduralVarId loop_var =
-      proc.AddProceduralVar(body, *dim.loopVar, int32_type);
+      proc.AddProceduralVar(frame, body, *dim.loopVar, int32_type);
   std::vector<hir::ForInit> init;
   init.emplace_back(hir::ForInitDecl{.var = loop_var, .init = first_id});
   const hir::ExprId cond_ref = frame.Exprs().Add(
@@ -166,7 +167,7 @@ auto BuildAssociativeLevel(
   const hir::TypeId key_type = *key_type_or;
 
   const hir::ProceduralVarId key_var =
-      proc.AddProceduralVar(body, *dim.loopVar, key_type);
+      proc.AddProceduralVar(frame, body, *dim.loopVar, key_type);
   setup.push_back(body.stmts.Add(
       hir::Stmt{
           .label = std::nullopt,
@@ -177,6 +178,7 @@ auto BuildAssociativeLevel(
           .name = std::string{kMoreFlagName},
           .type = int32_type,
           .lifetime = hir::VariableLifetime::kAutomatic});
+  frame.current_scope_declarations->push_back(more_var);
 
   auto walk_call = [&](support::BuiltinFn method) -> hir::ExprId {
     const hir::ExprId key_ref = frame.Exprs().Add(
@@ -314,7 +316,10 @@ auto BuildForeachNest(
           : body.stmts.Add(
                 hir::Stmt{
                     .label = std::nullopt,
-                    .data = hir::BlockStmt{.statements = std::move(*inner_or)},
+                    .data =
+                        hir::BlockStmt{
+                            .statements = std::move(*inner_or),
+                            .scope = std::nullopt},
                     .span = span});
 
   stmts.push_back(body.stmts.Add(
@@ -362,7 +367,8 @@ auto ProcessLowerer::LowerForeachStmt(
 
   // All dimensions skipped (`foreach (a[])`): the array reference is still
   // evaluated for side effects and the body runs once. No loop, so a break in
-  // the body is a plain innermost exit.
+  // the body is a plain innermost exit. The synthesized block carries no SV
+  // scope.
   if (levels.empty()) {
     auto array_or = proc.LowerExpr(fs.arrayRef, frame);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
@@ -377,9 +383,22 @@ auto ProcessLowerer::LowerForeachStmt(
     const auto body_stmt_id = body.stmts.Add(*std::move(body_or));
     return hir::Stmt{
         .label = std::nullopt,
-        .data = hir::BlockStmt{.statements = {array_eval_stmt, body_stmt_id}},
+        .data =
+            hir::BlockStmt{
+                .statements = {array_eval_stmt, body_stmt_id},
+                .scope = std::nullopt},
         .span = span};
   }
+
+  // The foreach loop introduces its own lexical declaration scope (LRM
+  // 12.7.3); the loop variables flow into that scope. Open accumulators
+  // here so every loop var the helpers below mint -- via
+  // `proc.AddProceduralVar` -- attaches to the foreach scope rather than
+  // the parent.
+  std::vector<hir::ProceduralVarId> foreach_declarations;
+  std::vector<hir::ProceduralScopeId> foreach_children;
+  const WalkFrame foreach_frame = frame.WithProceduralScopeAccumulators(
+      &foreach_declarations, &foreach_children);
 
   // Thread `arrayRef` into the nest only when some dimension reads it at run
   // time; a purely fixed foreach lowers to plain range loops that never touch
@@ -387,23 +406,37 @@ auto ProcessLowerer::LowerForeachStmt(
   std::optional<hir::ExprId> array;
   const slang::ast::Type* array_type = nullptr;
   if (needs_array) {
-    auto array_or = proc.LowerExpr(fs.arrayRef, frame);
+    auto array_or = proc.LowerExpr(fs.arrayRef, foreach_frame);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
-    array = frame.Exprs().Add(*std::move(array_or));
+    array = foreach_frame.Exprs().Add(*std::move(array_or));
     array_type = fs.arrayRef.type;
   }
 
   const hir::LoopLabelId foreach_label = body.AddLoopLabel();
   bool label_used = false;
   auto top = BuildForeachNest(
-      proc, fs, frame, levels, 0, array, array_type, int32_type, span,
+      proc, fs, foreach_frame, levels, 0, array, array_type, int32_type, span,
       foreach_label, &label_used);
   if (!top) return std::unexpected(std::move(top.error()));
+
+  if (frame.current_structural_scope == nullptr) {
+    throw InternalError(
+        "LowerForeachStmt: foreach has no enclosing structural scope to "
+        "register its lexical scope against");
+  }
+  const hir::ProceduralScopeId scope_id =
+      frame.current_structural_scope->procedural_scopes.Add(
+          hir::ProceduralScopeDecl{
+              .kind = hir::ProceduralScopeKind::kForEachLoop,
+              .label = std::nullopt,
+              .direct_declarations = std::move(foreach_declarations),
+              .direct_child_scopes = std::move(foreach_children)});
+  frame.current_scope_children->push_back(scope_id);
 
   // LRM 12.7.3 implicit begin-end around the foreach.
   return hir::Stmt{
       .label = std::nullopt,
-      .data = hir::BlockStmt{.statements = std::move(*top)},
+      .data = hir::BlockStmt{.statements = std::move(*top), .scope = scope_id},
       .span = span};
 }
 
