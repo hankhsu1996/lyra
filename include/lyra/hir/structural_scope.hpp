@@ -11,7 +11,6 @@
 #include "lyra/base/time.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_data_object.hpp"
@@ -164,35 +163,24 @@ struct PortConnection {
   std::vector<SensitivityEntry> sensitivity;
 };
 
-struct IfGenerate {
-  ExprId condition;
-  StructuralScopeId then_scope;
-  std::optional<StructuralScopeId> else_scope;
+// The lowered form of every generate construct (LRM 27): after frontend
+// elaboration each construct is a set of blocks with an instantiated / not
+// flag, so the lowering is one fully concrete scope per instantiated block,
+// constructed unconditionally. A loop iteration carries its hierarchy index; an
+// `if` / `case` arm or a bare block carries none. Each scope is lowered from
+// its own elaborated body -- its own selected arm, types, and slice widths, the
+// genvar folded to a constant -- never borrowed from another block and never a
+// runtime induction value or branch.
+struct ResolvedGenerateItem {
+  std::optional<std::int64_t> index;
+  StructuralScopeId scope{};
 };
-
-struct CaseGenerateItem {
-  std::vector<ExprId> labels;
-  StructuralScopeId scope;
+struct ResolvedGenerate {
+  std::vector<ResolvedGenerateItem> items;
 };
-
-struct CaseGenerate {
-  ExprId condition;
-  std::vector<CaseGenerateItem> items;
-  std::optional<StructuralScopeId> default_scope;
-};
-
-struct LoopGenerate {
-  LoopVarDeclId loop_var;
-  ExprId initial;
-  ExprId stop;
-  ExprId iter;
-  StructuralScopeId scope;
-};
-
-using GenerateData = std::variant<IfGenerate, CaseGenerate, LoopGenerate>;
 
 struct Generate {
-  GenerateData data;
+  ResolvedGenerate data;
   base::Arena<StructuralScope, StructuralScopeId> child_scopes;
 };
 
@@ -204,7 +192,6 @@ struct StructuralScope {
   TimeResolution time_resolution;
   base::Arena<StructuralDataObjectDecl, StructuralDataObjectId>
       structural_data_objects;
-  base::Arena<LoopVarDecl, LoopVarDeclId> loop_var_decls;
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Process, ProcessId> processes;
   base::Arena<ContinuousAssign, ContinuousAssignId> continuous_assigns;

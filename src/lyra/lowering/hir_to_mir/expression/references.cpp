@@ -205,27 +205,6 @@ auto LowerCrossUnitVarRefExpr(
   return mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type);
 }
 
-// A loop variable referenced at `hops == 0` is the induction variable of the
-// for-generate whose header is being lowered: its declaration sits in the same
-// scope as the reference, so the constructor reads it as the procedural
-// induction local. Every reference at `hops > 0` -- an enclosing genvar named
-// in a nested header, a body continuous assign, or a generate-control condition
-// -- resolves to the structural param the constructed child binds the genvar to
-// (LRM 27.4). The hop count alone selects the path.
-auto LowerLoopVarRefExpr(
-    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::LoopVarRef& lv, mir::TypeId type) -> mir::Expr {
-  if (lv.hops.value == 0) {
-    return mir::Expr{
-        .data = lowerer.TranslateLoopVarAsProcedural(lv.loop_var),
-        .type = type};
-  }
-  const auto loc =
-      lowerer.TranslateLoopVarAsStructuralParam(lv.hops, lv.loop_var);
-  return BuildStructuralParamAccessExpr(
-      frame, lowerer.Module().Unit(), loc.hops, loc.param);
-}
-
 // LRM 7.12.4: a with-clause iteration reference reads the named clause's
 // element or index closure parameter. The parameter is found by clause
 // identity, then resolved by the same rule as any body-local: read directly
@@ -299,10 +278,6 @@ auto LowerHirPrimaryExprProc(
                 mir::MemberRef{.var = mir::MemberId{.value = r.field_index}},
                 result_type);
           },
-          [&](const hir::LoopVarRef& lv) -> mir::Expr {
-            return LowerLoopVarRefExpr(
-                process.EnclosingScopeLowerer(), frame, lv, result_type);
-          },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
             return LowerCrossUnitVarRefExpr(
                 process.EnclosingScopeLowerer(), frame, c);
@@ -347,9 +322,6 @@ auto LowerHirPrimaryExprStructural(
             throw InternalError(
                 "LowerHirPrimaryExprStructural: HIR ClassPropertyRef does not "
                 "appear in structural expressions");
-          },
-          [&](const hir::LoopVarRef& lv) -> mir::Expr {
-            return LowerLoopVarRefExpr(lowerer, frame, lv, result_type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
             return LowerCrossUnitVarRefExpr(lowerer, frame, c);
