@@ -83,7 +83,7 @@ auto LowerPromotedVarDeclStmt(
   process.MapProceduralVar(v.var, pb);
   auto& block = *frame.current_block;
   const mir::ExprId handle_ref = block.exprs.Add(frame.bindings->MakeReadExpr(
-      frame.bindings->EnsureCarrier(pb.handle_origin)));
+      frame.bindings->EnsureCarrier(pb.handle_origin), block));
   const mir::ExprId target = block.exprs.Add(
       mir::MakeMemberAccessExpr(
           handle_ref, mir::MemberRef{.var = pb.member}, type));

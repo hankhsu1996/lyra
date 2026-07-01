@@ -1,6 +1,5 @@
 #pragma once
 
-#include "lyra/mir/capture_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/member.hpp"
 
@@ -18,16 +17,10 @@ struct MemberRef {
 // id in that callable's `locals` arena. It carries no navigation distance:
 // every local of a callable lives in one arena, so a reference within the
 // callable names the binding directly. A binding in an enclosing callable is
-// never named this way -- it crosses the boundary as a `CaptureRef`.
+// never named this way -- it crosses the boundary as a captured field, read by
+// a field access over the closure receiver (the invoke body's `locals[0]`).
 struct LocalRef {
   LocalId var{};
-};
-
-// An environment field of the enclosing callable's code, named by its id in
-// that callable's `captures` arena. The field was bound at closure-value
-// construction; the body reads the captured value or the alias it holds.
-struct CaptureRef {
-  CaptureId capture{};
 };
 
 }  // namespace lyra::mir

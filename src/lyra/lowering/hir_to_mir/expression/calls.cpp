@@ -53,7 +53,8 @@ template <ExprLowerer Lowerer>
 auto MaybeWrapObservableLhsWithMutate(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block, mir::ExprId lhs_id)
     -> mir::ExprId {
-  const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
+  const mir::ExprId root_id =
+      FindLhsRootId(lowerer.Module().Unit(), block, lhs_id);
   const bool root_is_cell = mir::IsObservableCellType(
       lowerer.Module().Unit().types.Get(block.exprs.Get(root_id).type));
   if (!root_is_cell) return lhs_id;
@@ -133,7 +134,8 @@ auto LowerAssociativeTraversal(
 
   const mir::ExprId found_id =
       body.exprs.Add(mir::MakeLocalRefExpr(found_var, result_type));
-  return BuildClosureCallExpr(*frame.current_block, closure.Build(found_id));
+  return BuildClosureCallExpr(
+      lowerer.Module().Unit(), *frame.current_block, closure.Build(found_id));
 }
 
 // Translates a HIR builtin-method ref to its MIR `Callee`. The identifier
@@ -369,7 +371,8 @@ auto LowerStructuralSubroutineCall(
       auto arg_or = lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments[i]), frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       actual_id = block.exprs.Add(*std::move(arg_or));
-      const mir::ExprId root_id = FindLhsRootId(block, actual_id);
+      const mir::ExprId root_id =
+          FindLhsRootId(lowerer.Module().Unit(), block, actual_id);
       if (root_id != actual_id) {
         actual_id =
             MaybeWrapObservableLhsWithMutate(lowerer, frame, block, actual_id);

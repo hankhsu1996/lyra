@@ -2,8 +2,6 @@
 
 #include <cstddef>
 #include <unordered_map>
-#include <utility>
-#include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/mir/type.hpp"
@@ -67,10 +65,6 @@ class TypeInterner {
   // one canonical id rather than a duplicate.
   auto CoroutineOf(TypeId payload) -> TypeId {
     return Intern(CoroutineType{.payload = payload});
-  }
-
-  auto CallableOf(std::vector<TypeId> params, TypeId result) -> TypeId {
-    return Intern(CallableType{.params = std::move(params), .result = result});
   }
 
   auto PointerTo(

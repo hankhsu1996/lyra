@@ -83,11 +83,12 @@ void OpenActivationScope(
       mir::Expr{
           .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
           .type = handle_type});
-  // The handle is a synthesized carrier owned by the box's identity, declared
-  // in this body and captured (by value, owning) by any branch that borrows a
-  // promoted member.
+  // The handle is a synthesized carrier declared in this body and captured (by
+  // value, owning) by any branch that borrows a promoted member. Its origin
+  // comes from the unit's synthesized-site allocator, the one collision-free id
+  // space every synthesized carrier shares.
   const BindingOriginId handle_origin =
-      BindingOriginId::Synthesized(box_id.value, 0);
+      BindingOriginId::Synthesized(module.NextSynthesizedSite(), 0);
   const mir::LocalId handle = frame.bindings->Declare(
       handle_origin,
       mir::LocalDecl{.name = box_name + "_h", .type = handle_type});

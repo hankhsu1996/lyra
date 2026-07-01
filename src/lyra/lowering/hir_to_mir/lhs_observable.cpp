@@ -3,6 +3,7 @@
 #include <utility>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -23,9 +24,18 @@ auto AsContainerAccessBase(const mir::Expr& expr) -> const mir::ExprId* {
 
 }  // namespace
 
-auto FindLhsRootId(const mir::Block& block, mir::ExprId lhs_id) -> mir::ExprId {
+auto FindLhsRootId(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    mir::ExprId lhs_id) -> mir::ExprId {
   while (true) {
     const auto& expr = block.exprs.Get(lhs_id);
+    // A captured carrier -- a closure-record field holding a `Ref` (or other
+    // observable cell) -- is itself the root cell, reached by a field access
+    // over the closure receiver. Stop here rather than projecting through it as
+    // if it were a struct member of an observable aggregate.
+    if (mir::IsObservableCellType(unit.types.Get(expr.type))) {
+      return lhs_id;
+    }
     // A struct member projects through a tuple component and a union member
     // through its union access; the observable root is the base, reached the
     // same way a container access reaches its receiver.
@@ -49,6 +59,17 @@ auto RewriteLhsRootWithMutate(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
     mir::ExprId services_id) -> mir::ExprId {
   const auto& expr = block.exprs.Get(lhs_id);
+  // A captured carrier (cell-typed) is the chain's leaf root: mutate it
+  // directly rather than projecting through it as a struct member.
+  if (mir::IsObservableCellType(unit.types.Get(expr.type))) {
+    const mir::TypeId value_type =
+        mir::ObservableInnerValueType(unit.types.Get(expr.type));
+    const mir::ExprId mutate_id = block.exprs.Add(
+        mir::MakeObservableMutateCallExpr(lhs_id, services_id, value_type));
+    return block.exprs.Add(
+        mir::Expr{
+            .data = mir::DerefExpr{.pointer = mutate_id}, .type = value_type});
+  }
   if (const auto* g = std::get_if<mir::TupleGetExpr>(&expr.data)) {
     mir::TupleGetExpr rewritten = *g;
     const mir::TypeId result_ty = expr.type;
@@ -74,13 +95,9 @@ auto RewriteLhsRootWithMutate(
     return block.exprs.Add(
         mir::Expr{.data = std::move(rewritten_call), .type = expr_type});
   }
-  const mir::TypeId value_type =
-      mir::ObservableInnerValueType(unit.types.Get(expr.type));
-  const mir::ExprId mutate_id = block.exprs.Add(
-      mir::MakeObservableMutateCallExpr(lhs_id, services_id, value_type));
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::DerefExpr{.pointer = mutate_id}, .type = value_type});
+  throw InternalError(
+      "RewriteLhsRootWithMutate: LHS root is neither an observable cell nor a "
+      "projection over one");
 }
 
 auto BuildObservableAssignExpr(
@@ -104,7 +121,7 @@ auto BuildObservableAssignExpr(
             : block.exprs.Get(lhs_id).type;
     rhs_id = ConvertToType(unit, block, rhs_id, dst_value_type);
   }
-  const mir::ExprId root_id = FindLhsRootId(block, lhs_id);
+  const mir::ExprId root_id = FindLhsRootId(unit, block, lhs_id);
   const bool root_is_cell =
       mir::IsObservableCellType(unit.types.Get(block.exprs.Get(root_id).type));
   if (!root_is_cell) {

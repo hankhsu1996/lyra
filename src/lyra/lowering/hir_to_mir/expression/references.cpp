@@ -172,8 +172,8 @@ auto LowerProceduralVarRefExpr(
   if (const auto* pb = std::get_if<PromotedVarBinding>(binding)) {
     const BodyBindingRef handle =
         frame.bindings->EnsureCarrier(pb->handle_origin);
-    const mir::ExprId handle_ref =
-        frame.current_block->exprs.Add(frame.bindings->MakeReadExpr(handle));
+    const mir::ExprId handle_ref = frame.current_block->exprs.Add(
+        frame.bindings->MakeReadExpr(handle, *frame.current_block));
     return mir::MakeMemberAccessExpr(
         handle_ref, mir::MemberRef{.var = pb->member}, type);
   }
@@ -183,7 +183,7 @@ auto LowerProceduralVarRefExpr(
   // type, which the dispatcher unwraps with `kGet` when it is a cell.
   const BodyBindingRef ref =
       frame.bindings->EnsureCarrier(BindingOriginId::Procedural(l.var));
-  return frame.bindings->MakeReadExpr(ref);
+  return frame.bindings->MakeReadExpr(ref, *frame.current_block);
 }
 
 auto LowerCrossUnitVarRefExpr(
@@ -219,9 +219,11 @@ auto LowerIterationBindingRefExpr(
   // -- forwarding one boundary at a time -- when the reference sits inside a
   // deeper clause's closure (LRM 7.12.4). The result type comes from the
   // resolved binding's arena, so no caller-supplied type is needed.
-  return frame.bindings->MakeReadExpr(frame.bindings->EnsureCarrier(
-      BindingOriginId::Iterator(
-          ref.clause.value, static_cast<std::uint32_t>(ref.role))));
+  return frame.bindings->MakeReadExpr(
+      frame.bindings->EnsureCarrier(
+          BindingOriginId::Iterator(
+              ref.clause.value, static_cast<std::uint32_t>(ref.role))),
+      *frame.current_block);
 }
 
 }  // namespace
