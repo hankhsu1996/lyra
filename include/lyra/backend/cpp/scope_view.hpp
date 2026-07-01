@@ -19,11 +19,12 @@ namespace lyra::backend::cpp {
 // construction pass: it accumulates nothing and owns no output, so this
 // carries only what reading a node needs -- the unit (for type and arena
 // lookups), the enclosing class chain (for object-graph navigation), and the
-// current callable code. A local or capture reference resolves directly
-// against the code's `locals` / `captures` arenas, the read-only twin of how
-// the construction-side `CallableBindings` declared them. Immutable and copied
-// on descent (`WithBlock` / `WithClass` / `WithClosure`); it grows no member
-// per concept, so it is not the forbidden growing `*Context`.
+// current callable code. A local reference resolves directly against the code's
+// `locals` arena (a captured binding is a field access over the closure
+// receiver, `locals[0]`), the read-only twin of how the construction-side
+// `CallableBindings` declared them. Immutable and copied on
+// descent (`WithBlock` / `WithClass` / `WithClosure`); it grows no member per
+// concept, so it is not the forbidden growing `*Context`.
 class ScopeView {
  public:
   static auto ForRoot(
@@ -80,13 +81,6 @@ class ScopeView {
   [[nodiscard]] auto Local(const mir::LocalRef& ref) const
       -> const mir::LocalDecl& {
     return code_->locals.Get(ref.var);
-  }
-
-  // An environment field of the current callable, named by its id in the
-  // callable's `captures` arena.
-  [[nodiscard]] auto Capture(const mir::CaptureRef& ref) const
-      -> const mir::LocalDecl& {
-    return code_->captures.Get(ref.capture);
   }
 
   [[nodiscard]] auto EnclosingClassAtHops(mir::EnclosingHops hops) const

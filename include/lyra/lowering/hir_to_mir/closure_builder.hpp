@@ -6,10 +6,12 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/closure_record.hpp"
+#include "lyra/mir/closure_record_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -18,12 +20,13 @@ class CompilationUnit;
 
 namespace lyra::lowering::hir_to_mir {
 
-// A closure under construction. A closure is a callable value: callable code (a
-// signature, a result type, a body) plus a bound environment. The builder owns
-// the code and a child binding context whose parent is the enclosing callable,
-// so a reference to an enclosing binding while the body is lowered through
-// `Frame()` becomes a captured environment field, forwarded one boundary at a
-// time. `self` is not a builder concept: a body that reaches its enclosing
+// A closure under construction. A closure is a callable value: a per-closure-
+// site nominal value record (captured fields plus one invoke body) that a
+// referencing site constructs. The builder mints the record identity up front,
+// owns the record being built and a child binding context whose parent is the
+// enclosing callable, so a reference to an enclosing binding while the body is
+// lowered through `Frame()` becomes a captured field, forwarded one boundary at
+// a time. `self` is not a builder concept: a body that reaches its enclosing
 // object's members resolves the receiver through the same capture machinery as
 // any binding, so the builder never special-cases it.
 //
@@ -36,7 +39,7 @@ namespace lyra::lowering::hir_to_mir {
 // A closure is a value; how it is invoked -- an immediately-invoked call, a
 // fork spawn, a deferred submit, a with-clause iteration -- is the referencing
 // site's concern, not the builder's. Non-movable: `Frame()` and `Bindings()`
-// hand out references into the owned code and binding context.
+// hand out references into the owned record and binding context.
 class ClosureBuilder {
  public:
   ClosureBuilder(
@@ -56,7 +59,7 @@ class ClosureBuilder {
   }
   // The body block to append statements / exprs into.
   [[nodiscard]] auto Body() -> mir::Block& {
-    return code_.body;
+    return record_.invoke.body;
   }
   // The body's binding context, for a caller that materializes a binding by
   // hand (a receiver for a deferred check, an explicit carrier).
@@ -76,21 +79,13 @@ class ClosureBuilder {
   auto AddParamAnonymous(std::string_view name, mir::TypeId type)
       -> mir::LocalId;
 
-  // Snapshots a computed outer-scope expression into the body by value:
-  // captures it as an environment field and returns the body-side read. An
-  // integer literal clones verbatim so the body still sees a literal (no field
-  // is made). Used by closures that build their environment by hand (the
-  // non-blocking-assignment place / operand snapshots).
-  auto CaptureByValue(mir::ExprId outer_id, std::string_view name)
-      -> mir::ExprId;
-
-  // Closes the body with `return result`, assembles the environment, and yields
-  // the closure value typed as the result expression. Single-use.
+  // Closes the body with `return result`, finalizes the record, and yields the
+  // closure value typed as its record type. Single-use.
   [[nodiscard]] auto Build(mir::ExprId result) -> mir::Expr;
-  // Closes a fork-branch body with `co_return` and yields the coroutine-typed
-  // closure value. Single-use.
+  // Closes a fork-branch body with `co_return` and yields the closure value.
+  // Single-use.
   [[nodiscard]] auto BuildCoroutine() -> mir::Expr;
-  // Yields a void-typed closure whose body is already self-contained (no result
+  // Yields a closure whose body is already self-contained (no result
   // expression). Single-use.
   [[nodiscard]] auto BuildVoid() -> mir::Expr;
 
@@ -99,7 +94,8 @@ class ClosureBuilder {
 
   mir::CompilationUnit* unit_;
   mir::Block* outer_;
-  mir::CallableCode code_;
+  mir::ClosureRecord record_;
+  mir::ClosureRecordId record_id_;
   CallableBindings bindings_;
   WalkFrame frame_;
   std::vector<mir::LocalId> invocation_params_;
@@ -107,8 +103,10 @@ class ClosureBuilder {
 
 // Builds the immediately-invoked call of `closure` (the IIFE shape): adds the
 // closure expression to `block` and returns a `CallExpr` over an `Indirect`
-// callee referencing it, with no arguments. The call's type is the closure's
-// result type.
-auto BuildClosureCallExpr(mir::Block& block, mir::Expr closure) -> mir::Expr;
+// callee referencing it, with no arguments. The call's result type comes from
+// the closure record's invoke.
+auto BuildClosureCallExpr(
+    mir::CompilationUnit& unit, mir::Block& block, mir::Expr closure)
+    -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -1,60 +1,43 @@
 #pragma once
 
-#include <memory>
 #include <vector>
 
-#include "lyra/mir/capture_id.hpp"
+#include "lyra/mir/closure_record_id.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/member.hpp"
 
 namespace lyra::mir {
 
-struct CallableCode;
-
-// One initializer of a closure value's environment: at construction the code's
-// capture field `target` (a `CaptureId` in the code's `captures` arena) is set
-// to the value of `source`, an expression evaluated in the constructing body.
-// Snapshot or alias is decided by the capture field's type, not a separate
-// kind: a value-typed field owns a snapshot; a reference-typed field aliases an
-// enclosing cell (`source` constructs the reference, LRM 6.21), so the body's
-// reads / writes route through the live cell. The receiver `self`, when a
-// closure binds it, is an ordinary capture initializer, not a privileged slot.
-struct CaptureInit {
-  CaptureId target{};
-  ExprId source{};
+// One field of a closure record's construction: which field (`target`, a stable
+// `MemberId`) receives which value (`value`). The value is a pure read of an
+// already-materialized capture -- a side-effecting capture source is sequenced
+// into a local before the closure is constructed, so the order of these entries
+// is a physical-layout order (canonical, by binding origin), independent of the
+// order the sources were evaluated in.
+struct FieldInit {
+  MemberId target;
+  ExprId value;
 };
 
-// A callable value: callable code plus its bound environment. The environment
-// is the list of capture initializers, one per field the code's `captures`
-// arena declares; the code's per-invocation `params` (a with-clause `item` /
-// `index`, LRM 7.12.4) are supplied by the referencing site at each call.
+// A closure value expression: the construction of a per-closure-site nominal
+// value record. `record` names the declaration (its fields and its one invoke
+// body) in the unit's closure-record registry; `field_inits` supplies each
+// captured field's value in canonical layout order. The `Expr::type` is the
+// `ClosureRecordType` naming `record`.
 //
-// Closures are synthesized exclusively by HIR-to-MIR lowering. No SystemVerilog
-// source construct produces one directly; the environment, the code's captures
-// and parameters, and the body statements are all compiler-generated.
+// This node is only the construction; the invoke body lives on the record, not
+// here. Closures are synthesized exclusively by HIR-to-MIR lowering -- no
+// SystemVerilog source construct produces one directly.
 //
-// A reference inside the body is a body-local binding -- a `LocalRef` (an
-// activation local / parameter) or a `CaptureRef` (an environment field). Outer
-// state reaches the body only as a captured field; the body never climbs out of
-// its own callable to an enclosing one.
-//
-// A backend realizes the value from its code and environment: a synchronous
-// closure as a capture-clause lambda whose captures are the bound fields, a
-// coroutine closure (a fork branch, LRM 9.3.2) as a stateless lambda whose
-// fields pass as frame-copied parameters so nothing dangles when the spawned
-// coroutine outlives the referencing site. The result type is
-// `code.result_type`; how the closure is invoked -- called at a fork site,
-// submitted as a deferred effect, iterated by a with-clause -- lives at the
-// referencing site, not on the value.
+// A backend realizes the value from the record's fields and this construction:
+// the C++ backend as a lambda whose captures are the record's fields (`[field =
+// init]`), a coroutine closure passing those fields as frame-copied parameters
+// supplied by an immediate call so nothing dangles once a spawned branch
+// outlives the construction site. The capture list is derived solely from the
+// record's fields and layout, never re-inferred from the body.
 struct ClosureExpr {
-  std::unique_ptr<CallableCode> code;
-  std::vector<CaptureInit> capture_inits;
-
-  ClosureExpr();
-  ~ClosureExpr();
-  ClosureExpr(const ClosureExpr&);
-  auto operator=(const ClosureExpr&) -> ClosureExpr&;
-  ClosureExpr(ClosureExpr&&) noexcept;
-  auto operator=(ClosureExpr&&) noexcept -> ClosureExpr&;
+  ClosureRecordId record{};
+  std::vector<FieldInit> field_inits;
 };
 
 }  // namespace lyra::mir

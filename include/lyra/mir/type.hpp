@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/closure_record_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -49,7 +50,7 @@ enum class TypeKind {
   kObservable,
   kResolved,
   kDriver,
-  kCallable,
+  kClosureRecord,
 };
 
 enum class BitAtom {
@@ -324,17 +325,18 @@ struct CoroutineType {
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
-// The type of a callable value: its signature -- the per-invocation parameter
-// types and the result type. A closure expression carries this type. It states
-// the call interface a referencing site uses; the bound environment is not part
-// of it and stays inside the value. The result type is the call protocol (a
-// CoroutineType for a suspending callable, a value type or Void otherwise), the
-// same protocol a directly-invoked callable's result type carries.
-struct CallableType {
-  std::vector<TypeId> params;
-  TypeId result;
+// The type of a closure value: the per-closure-site nominal value record it
+// constructs, named by its unit-wide identity. A closure expression carries
+// this type. The record's fields (the captured bindings) and its invoke body
+// live in the declaration the unit's closure-record registry resolves the id
+// to; the type names only the identity, so two closure sites are distinct types
+// even with identical field shapes. Value copy / move semantics like any value
+// type. Directly callable: a call resolves its signature from the record's
+// invoke, so no separate erased callable type is needed to invoke a closure.
+struct ClosureRecordType {
+  ClosureRecordId record_id;
 
-  auto operator==(const CallableType&) const -> bool = default;
+  auto operator==(const ClosureRecordType&) const -> bool = default;
 };
 
 // The write capability a reference or borrow grants its holder (the
@@ -485,7 +487,8 @@ using TypeData = std::variant<
     InstanceType, GenScopeType, ProceduralStorageScopeType, ServicesType,
     FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
     PointerType, ManagedRefType, VectorType, TupleType, UnionType,
-    ExternalRefType, ObservableType, ResolvedType, DriverType, CallableType>;
+    ExternalRefType, ObservableType, ResolvedType, DriverType,
+    ClosureRecordType>;
 
 struct Type {
   TypeData data;

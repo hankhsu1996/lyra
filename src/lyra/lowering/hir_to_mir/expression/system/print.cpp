@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -114,12 +115,12 @@ auto LowerStrobeCall(
 
   std::optional<mir::ExprId> body_user_descriptor;
   if (outer_user_descriptor.has_value()) {
-    body_user_descriptor =
-        closure.CaptureByValue(*outer_user_descriptor, "descriptor");
+    body_user_descriptor = SnapshotIntoClosure(
+        process.Module(), frame, closure, *outer_user_descriptor, "descriptor");
   }
   if (outer_cancellation.has_value()) {
-    const mir::ExprId cancellation =
-        closure.CaptureByValue(*outer_cancellation, "cancellation");
+    const mir::ExprId cancellation = SnapshotIntoClosure(
+        process.Module(), frame, closure, *outer_cancellation, "cancellation");
     const mir::ExprId is_cancelled = body.exprs.Add(
         mir::Expr{
             .data =

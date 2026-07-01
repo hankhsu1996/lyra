@@ -38,7 +38,7 @@ Read top to bottom on first pass:
 18. `binding_and_capture.md` -- the lexical reference axis: logical binding identity, per-body
     materialization, closure capture forwarding, carrier vs view
 19. `compiler_generated_storage.md` -- compiler-generated storage on the value/reference spine: the
-    closure environment as a value tuple, the activation frame as reference storage, capture forms
+    closure as a nominal value record, the activation frame as reference storage, capture forms
 20. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes each
     route segment by visibility (typed for layout-owned, SDK for opaque)
 21. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
@@ -54,38 +54,38 @@ Read top to bottom on first pass:
 
 If you are looking for a concept, this table points to the canonical doc.
 
-| Concept                                                                                  | Canonical doc                   |
-| ---------------------------------------------------------------------------------------- | ------------------------------- |
-| Primary optimization target; non-negotiable design constraints                           | `north_star.md`                 |
-| Pipeline (HIR -> MIR -> LIR -> LLVM IR); compile-time vs runtime split                   | `compiler_overview.md`          |
-| Compilation unit; class-level artifacts; instance records                                | `compilation_unit_model.md`     |
-| Constructor vs simulation execution contexts; structural vs process                      | `runtime_model.md`              |
-| Storage and binding vs construction; type-driven member walk                             | `runtime_model.md`              |
-| Elaboration phases (build / resolve / seal / initialize / activate); ctor scope          | `elaboration_lifecycle.md`      |
-| Generate as constructor-time logic; object graph shape                                   | `hierarchy_and_generate.md`     |
-| Instance array as a data type; multiplicity vs generate axes                             | `hierarchy_and_generate.md`     |
-| Reference routes; per-segment classification by layout visibility; sealed endpoints      | `reference_resolution.md`       |
-| Net value as the resolution of driver contributions; net vs variable; drivers            | `net_resolution.md`             |
-| Logical binding identity; per-body materialization; capture forwarding; carrier/view     | `binding_and_capture.md`        |
-| Per-unit artifact emission; cross-unit realization via the SDK; no wiring                | `emission_model.md`             |
-| Per-node within-artifact render; type mapping vs value emission                          | `backend_contract.md`           |
-| Parameter values, specialization keys, per-specialization artifacts                      | `specialization_model.md`       |
-| Identity rules; ownership; forbidden identity shapes                                     | `identity_and_ownership.md`     |
-| Lowering permissions (what each lowering may and may not do)                             | `lowering_boundaries.md`        |
-| Lowering pass organization (facts / registry / builder / walk frame)                     | `lowering_organization.md`      |
-| HIR shape (statements, expressions, primaries)                                           | `hir.md`                        |
-| MIR shape (objects, members, callables)                                                  | `mir.md`                        |
-| Member and type model; object types; owning pointer; vector wrapper                      | `mir.md`                        |
-| Callable model; code vs value; captures; references as a field type                      | `callable.md`                   |
-| Closure environment as value tuple; activation frame; capture forms; callable value type | `compiler_generated_storage.md` |
-| Object model; nominal object types; inheritance; dispatch; handles                       | `object_model.md`               |
-| Object lifetime; managed reclamation; tracing GC; activation frames                      | `object_lifetime.md`            |
-| LIR shape (CFG, basic blocks, storage)                                                   | `lir.md`                        |
-| Activation; execution instance; completion slot; cancellation domain                     | `activation.md`                 |
-| Stratified scheduler; regions; suspension protocol; NBA / closure submit                 | `scheduling.md`                 |
-| Incremental compilation; query-based caching                                             | `incremental_build.md`          |
-| Locating/bundling the C++ runtime; run output contract                                   | `runtime_distribution.md`       |
-| Test categories; suite layout; expectation forms                                         | `testing_strategy.md`           |
+| Concept                                                                                 | Canonical doc                   |
+| --------------------------------------------------------------------------------------- | ------------------------------- |
+| Primary optimization target; non-negotiable design constraints                          | `north_star.md`                 |
+| Pipeline (HIR -> MIR -> LIR -> LLVM IR); compile-time vs runtime split                  | `compiler_overview.md`          |
+| Compilation unit; class-level artifacts; instance records                               | `compilation_unit_model.md`     |
+| Constructor vs simulation execution contexts; structural vs process                     | `runtime_model.md`              |
+| Storage and binding vs construction; type-driven member walk                            | `runtime_model.md`              |
+| Elaboration phases (build / resolve / seal / initialize / activate); ctor scope         | `elaboration_lifecycle.md`      |
+| Generate as constructor-time logic; object graph shape                                  | `hierarchy_and_generate.md`     |
+| Instance array as a data type; multiplicity vs generate axes                            | `hierarchy_and_generate.md`     |
+| Reference routes; per-segment classification by layout visibility; sealed endpoints     | `reference_resolution.md`       |
+| Net value as the resolution of driver contributions; net vs variable; drivers           | `net_resolution.md`             |
+| Logical binding identity; per-body materialization; capture forwarding; carrier/view    | `binding_and_capture.md`        |
+| Per-unit artifact emission; cross-unit realization via the SDK; no wiring               | `emission_model.md`             |
+| Per-node within-artifact render; type mapping vs value emission                         | `backend_contract.md`           |
+| Parameter values, specialization keys, per-specialization artifacts                     | `specialization_model.md`       |
+| Identity rules; ownership; forbidden identity shapes                                    | `identity_and_ownership.md`     |
+| Lowering permissions (what each lowering may and may not do)                            | `lowering_boundaries.md`        |
+| Lowering pass organization (facts / registry / builder / walk frame)                    | `lowering_organization.md`      |
+| HIR shape (statements, expressions, primaries)                                          | `hir.md`                        |
+| MIR shape (objects, members, callables)                                                 | `mir.md`                        |
+| Member and type model; object types; owning pointer; vector wrapper                     | `mir.md`                        |
+| Callable model; code vs value; captures; references as a field type                     | `callable.md`                   |
+| Closure as a nominal value record; activation frame; capture forms; callable value type | `compiler_generated_storage.md` |
+| Object model; nominal object types; inheritance; dispatch; handles                      | `object_model.md`               |
+| Object lifetime; managed reclamation; tracing GC; activation frames                     | `object_lifetime.md`            |
+| LIR shape (CFG, basic blocks, storage)                                                  | `lir.md`                        |
+| Activation; execution instance; completion slot; cancellation domain                    | `activation.md`                 |
+| Stratified scheduler; regions; suspension protocol; NBA / closure submit                | `scheduling.md`                 |
+| Incremental compilation; query-based caching                                            | `incremental_build.md`          |
+| Locating/bundling the C++ runtime; run output contract                                  | `runtime_distribution.md`       |
+| Test categories; suite layout; expectation forms                                        | `testing_strategy.md`           |
 
 These docs are the contracts. For the trade-off records behind them -- rejected alternatives and
 load-bearing invariants, grouped by subject -- see the Index in

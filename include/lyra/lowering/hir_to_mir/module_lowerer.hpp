@@ -114,6 +114,18 @@ class ModuleLowerer {
   [[nodiscard]] auto NextGenerateScopeName(std::string_view arm_tag)
       -> std::string;
 
+  // Mints a fresh owner-site id for a synthesized binding origin -- a carrier a
+  // lowering creates that has no source-level variable (an activation handle, a
+  // non-blocking-assignment snapshot). The id only has to be unit-unique and
+  // deterministic so the carrier's `BindingOriginId::Synthesized` is a stable,
+  // collision-free key across every synthesizer in the unit; a monotonic count
+  // over the deterministic lowering walk provides that (never a global
+  // cross-unit counter, so identity stays stable under incremental / parallel
+  // compilation).
+  [[nodiscard]] auto NextSynthesizedSite() -> std::uint32_t {
+    return next_synthesized_site_++;
+  }
+
   // Posts a class's structural shape; the shape is committed once and is
   // read back during peer-body lowering.
   void DefineClassShape(mir::ClassId id, mir::ClassShape shape) {
@@ -150,6 +162,7 @@ class ModuleLowerer {
   std::vector<mir::ClassId> class_map_;
   std::vector<mir::TypeId> class_object_type_map_;
   std::uint32_t next_generate_scope_name_ = 0;
+  std::uint32_t next_synthesized_site_ = 0;
   // Class shapes published during the declare pass and read during peer-body
   // lowering. Lives only on the lowerer; the finished compilation unit holds
   // the only authoritative class representation.

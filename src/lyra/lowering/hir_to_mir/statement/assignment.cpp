@@ -328,7 +328,7 @@ auto LowerSubroutineCallWithWritebacks(
       auto arg_or = process.LowerLhsExpr(hir_arg, wrapper_frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       mir::ExprId actual_id = wrapper.exprs.Add(*std::move(arg_or));
-      const mir::ExprId root_id = FindLhsRootId(wrapper, actual_id);
+      const mir::ExprId root_id = FindLhsRootId(unit, wrapper, actual_id);
       const bool root_is_cell = mir::IsObservableCellType(
           unit.types.Get(wrapper.exprs.Get(root_id).type));
       if (root_is_cell && root_id != actual_id) {

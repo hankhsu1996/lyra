@@ -153,9 +153,10 @@ struct Stmt {
 // scopes) plus the ordered execution sequence at this brace level
 // (`root_stmts`). `ExprId`, `StmtId`, and `BlockId` are scope-local: they
 // resolve against the Block that introduces them. Bindings are not block-local:
-// a `LocalRef` / `CaptureRef` names a binding in the enclosing callable's
-// arena, so a declaration statement placed in a nested block registers its
-// binding in the callable, not in the block.
+// a `LocalRef` names a binding in the enclosing callable's `locals` arena (a
+// captured binding is a field access over the closure receiver), so a
+// declaration statement placed in a nested block registers its binding in the
+// callable, not in the block.
 struct Block {
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Stmt, StmtId> stmts;

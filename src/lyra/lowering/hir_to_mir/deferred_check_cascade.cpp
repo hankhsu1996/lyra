@@ -97,13 +97,24 @@ auto VerdictFor(hir::UniquePriorityCheck check, std::size_t branch_count)
   throw InternalError("VerdictFor: unknown HIR UniquePriorityCheck");
 }
 
+// A predicate snapshot bound for capture: the wrapper local holding the value
+// frozen at check time, plus the synthesized origin a deferred closure forwards
+// it through.
+struct SnapshotBinding {
+  mir::LocalId local;
+  BindingOriginId origin;
+};
+
 auto SnapshotPredicate(
-    const ModuleLowerer& module, WalkFrame frame, mir::Block& wrapper,
+    ModuleLowerer& module, WalkFrame frame, mir::Block& wrapper,
     std::size_t index, mir::TypeId predicate_type,
-    mir::ExprId predicate_expr_id) -> mir::LocalId {
-  return SnapshotExprToLocal(
+    mir::ExprId predicate_expr_id) -> SnapshotBinding {
+  const BindingOriginId origin =
+      BindingOriginId::Synthesized(module.NextSynthesizedSite(), 0);
+  const mir::LocalId local = SnapshotExprToLocal(
       module, frame, wrapper, std::format("_lyra_unique_cond_{}", index),
-      predicate_type, predicate_expr_id);
+      predicate_type, predicate_expr_id, origin);
+  return {.local = local, .origin = origin};
 }
 
 auto BuildDiagnosticThenScope(
@@ -134,7 +145,7 @@ auto BuildDiagnosticThenScope(
   // `self` is the closure body's captured receiver; this then-scope is a block
   // of that same body, so the read names the capture directly.
   const mir::ExprId self_read =
-      block.exprs.Add(bindings.MakeReadExpr(self_ref));
+      block.exprs.Add(bindings.MakeReadExpr(self_ref, block));
   const mir::ExprId services = block.exprs.Add(
       mir::MakeServicesCallExpr(self_read, unit.builtins.services));
 
@@ -175,9 +186,9 @@ auto BuildDiagnosticThenScope(
 }
 
 auto BuildUniqueCheckClosure(
-    ModuleLowerer& module, const WalkFrame& wrapper_frame, mir::Block& wrapper,
+    ModuleLowerer& module, const WalkFrame& wrapper_frame,
     hir::UniquePriorityCheck check,
-    const std::vector<mir::LocalId>& snapshot_vars, std::string origin)
+    const std::vector<SnapshotBinding>& snapshot_vars, std::string origin)
     -> mir::Expr {
   ClosureBuilder closure(module.Unit(), wrapper_frame);
   mir::Block& body = closure.Body();
@@ -188,12 +199,10 @@ auto BuildUniqueCheckClosure(
 
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
-  for (std::size_t i = 0; i < snapshot_vars.size(); ++i) {
-    const mir::ExprId outer_read_id =
-        wrapper.exprs.Add(wrapper_frame.bindings->MakeReadExpr(
-            BodyBindingRef{.ref = snapshot_vars[i]}));
-    inner_reads.push_back(closure.CaptureByValue(
-        outer_read_id, std::format("_lyra_unique_bind_{}", i)));
+  for (const SnapshotBinding& snap : snapshot_vars) {
+    const BodyBindingRef ref = closure.Bindings().EnsureCarrier(snap.origin);
+    inner_reads.push_back(
+        body.exprs.Add(closure.Bindings().MakeReadExpr(ref, body)));
   }
 
   const mir::LocalId count_var = closure.Bindings().DeclareAnonymous(
@@ -285,7 +294,7 @@ auto BuildDeferredCheckCascade(
   // every read names them directly with no nesting bookkeeping.
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
-  std::vector<mir::LocalId> snapshot_vars;
+  std::vector<SnapshotBinding> snapshot_vars;
   snapshot_vars.reserve(branches.size());
   for (std::size_t i = 0; i < branches.size(); ++i) {
     const mir::TypeId predicate_type =
@@ -296,7 +305,7 @@ auto BuildDeferredCheckCascade(
   }
 
   mir::Expr closure = BuildUniqueCheckClosure(
-      module, wrapper_frame, wrapper, check, snapshot_vars,
+      module, wrapper_frame, check, snapshot_vars,
       FormatRuntimeOriginString(span, module.SourceManager()));
   const mir::ExprId closure_expr_id = wrapper.exprs.Add(std::move(closure));
 
@@ -324,7 +333,7 @@ auto BuildDeferredCheckCascade(
   for (std::size_t i = branches.size(); i-- > 1;) {
     mir::Block level_block;
     const mir::ExprId cond_read = level_block.exprs.Add(
-        mir::MakeLocalRefExpr(snapshot_vars[i], int32_type));
+        mir::MakeLocalRefExpr(snapshot_vars[i].local, int32_type));
 
     const mir::BlockId body_scope_id =
         level_block.child_scopes.Add(std::move(branches[i].body));
@@ -342,8 +351,8 @@ auto BuildDeferredCheckCascade(
   }
 
   if (!branches.empty()) {
-    const mir::ExprId cond_read0 =
-        wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_vars[0], int32_type));
+    const mir::ExprId cond_read0 = wrapper.exprs.Add(
+        mir::MakeLocalRefExpr(snapshot_vars[0].local, int32_type));
 
     const mir::BlockId body0_id =
         wrapper.child_scopes.Add(std::move(branches[0].body));

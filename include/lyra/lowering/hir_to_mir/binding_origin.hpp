@@ -8,10 +8,10 @@ namespace lyra::lowering::hir_to_mir {
 
 // The cross-body identity of a capturable binding: the stable key under which a
 // binding is deduplicated in a body and forwarded across callable boundaries.
-// It is independent of any one body's physical slot (a `LocalId` /
-// `CaptureId`), so the same origin matches in the declaring body and in every
-// closure that captures it. The receiver is not a distinct kind of binding --
-// it is the receiver-role parameter, identified by `Receiver()`.
+// It is independent of any one body's physical slot (a `LocalId` or a
+// closure-record field), so the same origin matches in the declaring body and
+// in every closure that captures it. The receiver is not a distinct kind of
+// binding -- it is the receiver-role parameter, identified by `Receiver()`.
 struct BindingOriginId {
   enum class Kind : std::uint8_t {
     kReceiver,

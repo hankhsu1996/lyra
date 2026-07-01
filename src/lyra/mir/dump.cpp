@@ -14,7 +14,6 @@
 #include "lyra/mir/base_contract.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/capture_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
@@ -239,15 +238,8 @@ class MirDumper {
               return std::format(
                   "Coroutine(payload=Type[{}])", c.payload.value);
             },
-            [](const CallableType& c) -> std::string {
-              std::string params;
-              for (std::size_t i = 0; i < c.params.size(); ++i) {
-                if (i != 0) params += ", ";
-                params += std::format("Type[{}]", c.params[i].value);
-              }
-              return std::format(
-                  "Callable(params=[{}], result=Type[{}])", params,
-                  c.result.value);
+            [](const ClosureRecordType& c) -> std::string {
+              return std::format("ClosureRecord[{}]", c.record_id.value);
             },
             [](const RefType& r) -> std::string {
               return std::format(
@@ -558,11 +550,6 @@ class MirDumper {
               return std::format(
                   "LocalRef[var={}] \"{}\"", r.var.value, var.name);
             },
-            [this](const CaptureRef& r) -> std::string {
-              const auto& field = code_->captures.Get(r.capture);
-              return std::format(
-                  "CaptureRef[capture={}] \"{}\"", r.capture.value, field.name);
-            },
             [](const UnaryExpr& u) -> std::string {
               return std::format(
                   "UnaryExpr op={} operand=Expr[{}]", FormatUnaryOp(u.op),
@@ -629,9 +616,8 @@ class MirDumper {
             },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
-                  "ClosureExpr params={} captures={}",
-                  cl.code == nullptr ? 0 : cl.code->params.size(),
-                  cl.capture_inits.size());
+                  "ClosureExpr record=ClosureRecord[{}] field_inits={}",
+                  cl.record.value, cl.field_inits.size());
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -799,10 +785,12 @@ class MirDumper {
     Dedent();
   }
 
-  // A callable owns its binding arenas: every activation local lives in
-  // `locals`, every closure environment field in `captures`. Dump both, then
-  // the body block, with `code_` set so `LocalRef` / `CaptureRef` reads resolve
-  // against this callable's arenas.
+  // A callable owns its binding arena: every activation local and parameter
+  // lives in `locals` (a closure's `locals[0]` is its receiver, a borrow of the
+  // closure record, and a captured read is a field access over it). Dump the
+  // locals, then
+  // the body block, with `code_` set so `LocalRef` reads resolve against this
+  // callable's arena.
   void DumpCallableBody(const CallableCode& code) {
     const CallableCode* saved = code_;
     code_ = &code;
@@ -814,18 +802,6 @@ class MirDumper {
         Line(
             std::format(
                 "Local[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
-      }
-      Dedent();
-    }
-    if (!code.captures.empty()) {
-      Line("Captures:");
-      Indent();
-      for (std::size_t i = 0; i < code.captures.size(); ++i) {
-        const auto& v =
-            code.captures.Get(CaptureId{static_cast<std::uint32_t>(i)});
-        Line(
-            std::format(
-                "Capture[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
       }
       Dedent();
     }
@@ -843,7 +819,7 @@ class MirDumper {
         const auto& expr = scope.exprs.Get(id);
         if (const auto* cl = std::get_if<ClosureExpr>(&expr.data)) {
           Indent();
-          DumpClosureExpr(*cl, scope);
+          DumpClosureExpr(*cl);
           Dedent();
         }
       }
@@ -970,12 +946,51 @@ class MirDumper {
     Dedent();
   }
 
-  void DumpClosureExpr(const ClosureExpr& closure, const Block& enclosing) {
-    if (closure.code == nullptr) {
-      Line("code: <null>");
-      return;
+  void DumpClosureExpr(const ClosureExpr& closure) {
+    const ClosureRecord& record = unit_->GetClosureRecord(closure.record);
+    Line(std::format("record: ClosureRecord[{}]", closure.record.value));
+
+    if (record.fields.empty()) {
+      Line("fields: (none)");
+    } else {
+      Line("fields:");
+      Indent();
+      for (std::size_t i = 0; i < record.fields.size(); ++i) {
+        const MemberDecl& field =
+            record.fields.Get(MemberId{static_cast<std::uint32_t>(i)});
+        Line(
+            std::format(
+                "Member[{}] {} : {}", i, field.name,
+                FormatType(unit_->types.Get(field.type))));
+      }
+      Dedent();
     }
-    const std::vector<LocalId>& params = closure.code->params;
+
+    if (!record.layout.empty()) {
+      std::string order;
+      for (std::size_t i = 0; i < record.layout.size(); ++i) {
+        if (i != 0) order += ", ";
+        order += std::format("Member[{}]", record.layout[i].value);
+      }
+      Line(std::format("layout: [{}]", order));
+    }
+
+    if (closure.field_inits.empty()) {
+      Line("field_inits: (none)");
+    } else {
+      // Each initializer's value expr lives in the enclosing block and is
+      // dumped there with the other exprs; reference it by id.
+      Line("field_inits:");
+      Indent();
+      for (const FieldInit& init : closure.field_inits) {
+        Line(
+            std::format(
+                "Member[{}] = Expr[{}]", init.target.value, init.value.value));
+      }
+      Dedent();
+    }
+
+    const std::vector<LocalId>& params = record.invoke.params;
     if (params.empty()) {
       Line("params: (none)");
     } else {
@@ -986,36 +1001,10 @@ class MirDumper {
       }
       Dedent();
     }
-    // The capture initializers' `source` expressions live in the enclosing
-    // block, so resolve them against `code_` as it stands now (the enclosing
-    // callable), before `DumpCallableBody` swaps `code_` to the closure code.
-    if (closure.capture_inits.empty()) {
-      Line("captures: (none)");
-    } else {
-      Line("captures:");
-      Indent();
-      for (std::size_t i = 0; i < closure.capture_inits.size(); ++i) {
-        DumpCaptureInit(i, closure.capture_inits[i], enclosing);
-      }
-      Dedent();
-    }
+
     Line("body:");
     Indent();
-    DumpCallableBody(*closure.code);
-    Dedent();
-  }
-
-  void DumpCaptureInit(
-      std::size_t index, const CaptureInit& init, const Block& enclosing) {
-    Line(
-        std::format(
-            "[{}] CaptureInit target=CaptureId{{{}}} source=Expr[{}]", index,
-            init.target.value, init.source.value));
-    Indent();
-    Line(
-        std::format(
-            "Expr[{}] {}", init.source.value,
-            FormatExpr(enclosing, init.source)));
+    DumpCallableBody(record.invoke);
     Dedent();
   }
 

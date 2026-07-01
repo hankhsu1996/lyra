@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <variant>
 
-#include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -18,19 +17,14 @@ auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr {
   // The receiver is an ordinary binding: resolve it as the body-local carrier
   // for the receiver origin (a parameter in a directly-invoked body, a captured
-  // field in a closure), forwarded across closure boundaries by the resolver.
+  // field in a closure), forwarded across closure boundaries by the resolver,
+  // then read through the uniform binding-read path. The read is typed as the
+  // enclosing object's borrowed pointer.
   const BodyBindingRef self =
       frame.bindings->EnsureCarrier(BindingOriginId::Receiver());
-  return std::visit(
-      Overloaded{
-          [&](mir::LocalId id) -> mir::Expr {
-            return mir::MakeLocalRefExpr(id, self_ptr_type);
-          },
-          [&](mir::CaptureId id) -> mir::Expr {
-            return mir::MakeCaptureRefExpr(id, self_ptr_type);
-          },
-      },
-      self.ref);
+  mir::Expr read = frame.bindings->MakeReadExpr(self, *frame.current_block);
+  read.type = self_ptr_type;
+  return read;
 }
 
 auto BuildEnclosingScopeReceiver(

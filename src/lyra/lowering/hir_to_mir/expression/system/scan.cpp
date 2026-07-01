@@ -319,7 +319,8 @@ auto LowerScanSystemSubroutineCall(
 
   const mir::ExprId count_id =
       body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
-  return BuildClosureCallExpr(*frame.current_block, closure.Build(count_id));
+  return BuildClosureCallExpr(
+      unit, *frame.current_block, closure.Build(count_id));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

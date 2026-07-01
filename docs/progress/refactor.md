@@ -702,30 +702,54 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 - [ ] R52 -- Collapse the closure environment and the activation frame onto MIR's value/reference
       spine. The design round this entry once held is resolved: the contract is
       `../architecture/compiler_generated_storage.md` and the trade-offs are
-      `../decisions/closure-environment-and-activation-frame.md`. The resolution: a closure
-      environment is a value `TupleType` (not a closure-only capture universe, not an object); the
-      callable value gains a first-class type with a concrete level and an erased `Callable<Sig>`
-      level; and the activation frame is a thin reference-storage specialization sharing one
-      substrate with the nominal object rather than being a baseless `mir::Class`. The
-      value/reference spine is the top split -- a single root over value tuples and reference
-      storage is explicitly not built. Staged cuts, each its own review:
+      `../decisions/closure-environment-and-activation-frame.md`. The resolution: a closure is a
+      per-closure-site nominal value record (named capture fields plus one invoke body -- not a
+      general tuple, not an object); the callable value has a concrete record level and an erased
+      `Callable<Sig>` level with an explicit erasure; and the activation frame is a thin
+      reference-storage specialization sharing one substrate with the nominal object rather than
+      being a baseless `mir::Class`. The value/reference spine is the top split -- a single root
+      over value records and reference storage is explicitly not built. Staged cuts, each its own
+      review:
   - [ ] R52a -- First-class callable value type. A closure's MIR type stops being its call result
-        type; MIR gains a concrete closure value type and an erased `Callable<Sig>` with an explicit
-        erasure boundary carrying invoke / ownership / copy contracts. Realizes the first-class
-        callable type `../decisions/unified-callable-model.md` committed to.
+        type. This cut first introduced a signature-only callable type as that first-class type;
+        R52b corrects the direction -- the concrete per-site record is the callable value and is
+        directly callable, so the signature-only type is removed there, and the erased
+        `Callable<Sig>` with its explicit erasure returns only when a heterogeneous consumer
+        requires it. Realizes the first-class callable type `../decisions/unified-callable-model.md`
+        committed to.
 
-  - [ ] R52b -- The closure environment is a value `TupleType`. The closure-only capture-storage IR
-        (`CaptureId` / `CaptureRef` / capture-init) retires; a captured read is a tuple-slot
-        projection whose slot is assigned deterministically from the binding origin, so dumps stay
-        stable and forwarding / dedup keep keying off the origin. `binding_and_capture.md` identity
-        and forwarding are unchanged; only the materialized layout representation changes.
+  - [ ] R52b -- The closure is a per-closure-site nominal value record. The closure-only
+        capture-storage IR (`CaptureId` / `CaptureRef` / capture-init) and the interim value-tuple
+        environment both retire; a captured read is ordinary field access over the closure receiver
+        by a stable field id keyed from the binding origin, so the invoke body is never rebuilt when
+        the physical field layout is canonicalized. All field access -- object member and closure
+        capture alike -- routes through one field-access resolution, so no per-receiver-kind branch
+        is scattered across consumers. The record is directly callable: a call resolves its
+        signature from the record's invoke, and the signature-only callable type an earlier cut
+        introduced is removed here as dead surface (it had a producer but no consumer). The invoke
+        receiver is a read-only borrow of the record -- value / move semantics and receiver
+        mutability are independent axes, so read-only is this cut's invoke contract, not a permanent
+        property of the category. A closure value's field initializers are pure reads of
+        already-materialized captures, so a side-effecting capture source is sequenced before
+        construction and evaluation order stays independent of layout order. The C++ backend
+        realizes the record as a lambda whose captures are derived solely from the record's fields
+        and layout; the runtime's coroutine and callable consumer shapes are backend realization,
+        not part of the closure model. `binding_and_capture.md` identity and forwarding are
+        unchanged. This cut reuses the existing field vocabulary; renaming it and extracting the
+        shared substrate is deferred to R52c. Supersedes the earlier value-`TupleType` form of this
+        cut (an intermediate state now being migrated to the record).
 
   - [ ] R52c -- The activation frame splits out of `mir::Class`. The promotion box stops being a
         baseless `mir::Class`; `mir::Class` and the frame are refactored onto one reference-storage
         substrate (identity-bearing slots, construction / destruction), the frame the thin
         specialization (shared ownership, no methods / dispatch / lifecycle), the object the rich
         one. Honors `object_model.md` invariant 1 (no second object IR). "Activation" stays the
-        runtime execution instance; the storage owner is the activation frame.
+        runtime execution instance; the storage owner is the activation frame. This is also where
+        the narrow shared field-storage substrate (field declaration, field id, field access, layout
+        finalization) is extracted for the object, the frame, and the closure record together, and
+        the field-access vocabulary is renamed from member to field -- deferred to here because only
+        now are all three field-bearing categories concrete, so the abstraction is validated rather
+        than imagined.
 
   - [ ] R52d -- Generalize the HIR-to-MIR capture / lifetime policy. The three capture forms
         (snapshot value, live-place alias `Ref<T>`, retained frame `Shared<frame>` plus a slot
