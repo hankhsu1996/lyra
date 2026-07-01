@@ -349,6 +349,15 @@ auto OrderRebasedEndpoints(
     const ModuleLowerer& module, mir::Block& block, mir::ExprId a,
     mir::ExprId b) -> RangeLoHi {
   const mir::TypeId off_type = block.exprs.Get(a).type;
+  // The two endpoints can carry different integral types -- a genvar-derived
+  // bound is four-state while a constant bound is two-state -- and this
+  // synthesized ordering both compares and selects between them. Reconcile the
+  // second endpoint to the first's type; for a source-level operator slang
+  // inserts this conversion, but this comparison is synthesized.
+  if (block.exprs.Get(b).type != off_type) {
+    b = block.exprs.Add(
+        BuildValueConversion(module.Unit(), block, b, off_type));
+  }
   const mir::ExprId le = block.exprs.Add(
       mir::Expr{
           .data =

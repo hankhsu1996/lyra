@@ -16,7 +16,6 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -50,15 +49,6 @@ struct SubroutineBinding {
 using SubroutineBindings =
     std::unordered_map<const slang::ast::SubroutineSymbol*, SubroutineBinding>;
 
-struct LoopVarBinding {
-  ScopeFrameId home_frame{};
-  hir::LoopVarDeclId loop_var_id{};
-  hir::TypeId type{};
-};
-
-using LoopVarBindings =
-    std::unordered_map<const slang::ast::ValueSymbol*, LoopVarBinding>;
-
 // A downward reference's leading component names an owned child this scope
 // declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
 // generate block (`g[1].x`, LRM 27). The child's slang symbol maps to the
@@ -71,16 +61,6 @@ struct OwnedChildBinding {
 
 using OwnedChildBindings =
     std::unordered_map<const slang::ast::Symbol*, OwnedChildBinding>;
-
-// A loop-generate body lowering carries forward the loop variable's binding
-// from the parent so the body's references compute correct hops up to its
-// home scope. `home_frame` is the parent's frame, not the body's.
-struct ScopeEntryLoopVarBinding {
-  const slang::ast::ValueSymbol* symbol = nullptr;
-  ScopeFrameId home_frame{};
-  hir::LoopVarDeclId loop_var{};
-  hir::TypeId type{};
-};
 
 // Shared lowering-pass facts threaded into every ModuleLowerer. SourceMapper
 // translates slang source locations; SensitivityAnalyzer is shared across
@@ -184,12 +164,6 @@ class ModuleLowerer {
       const slang::ast::SubroutineSymbol& sym) const
       -> std::optional<SubroutineBinding>;
 
-  void MapLoopVarBinding(
-      const slang::ast::ValueSymbol& sym, ScopeFrameId home_frame,
-      hir::LoopVarDeclId id, hir::TypeId type);
-  [[nodiscard]] auto LookupLoopVarBinding(const slang::ast::ValueSymbol& sym)
-      const -> std::optional<LoopVarBinding>;
-
   void MapOwnedChildBinding(
       const slang::ast::Symbol& child, ScopeFrameId home_frame,
       hir::DownwardHead head);
@@ -251,7 +225,6 @@ class ModuleLowerer {
   std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
   StructuralDataObjectBindings structural_data_object_bindings_;
   SubroutineBindings subroutine_bindings_;
-  LoopVarBindings loop_var_bindings_;
   OwnedChildBindings owned_child_bindings_;
   // Dedup by (home_frame, target): the slot id is an index within a scope's
   // own `cross_unit_refs`, so two scopes referencing the same member each need

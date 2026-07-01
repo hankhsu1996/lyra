@@ -154,10 +154,6 @@ auto ValidateAssignableImpl(
         return reject("assignment target must be a variable reference");
       }
       const auto& var = sym.as<slang::ast::VariableSymbol>();
-      if (module.LookupLoopVarBinding(var).has_value()) {
-        return reject(
-            "generate loop variable is not a legal assignment target");
-      }
       if (!procedural_context) {
         // LRM 10.3: continuous-assign target must resolve to a structural var.
         if (!module.LookupStructuralDataObjectBinding(var).has_value()) {

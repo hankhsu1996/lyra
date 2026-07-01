@@ -1,8 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -12,7 +10,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -20,10 +17,8 @@
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/member.hpp"
-#include "lyra/mir/param.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -37,23 +32,6 @@ struct ChildStructuralScopeBinding {
 // installation during constructor lowering, not stored on the pass object.
 struct GenerateBindings {
   std::vector<ChildStructuralScopeBinding> by_scope_id;
-};
-
-// One structural parameter the child scope receives at construction. The
-// `param` is the MIR decl installed on the child scope; `source_loop_var`
-// records the HIR loop variable (if any) that maps to it. Generate-for child
-// scopes use this today.
-struct ScopeEntryStructuralParamBinding {
-  mir::ParamDecl param;
-  hir::LoopVarDeclId source_loop_var = {};
-};
-
-// A located structural param: the enclosing-scope distance to the scope that
-// owns it and the param's id on that scope. The reading site turns it into a
-// receiver-addressed `mir::ParamRef`.
-struct StructuralParamLocation {
-  mir::EnclosingHops hops = {};
-  mir::ParamId param = {};
 };
 
 // The MIR slot a HIR cross-unit ref resolves to: a member ref to the slot
@@ -85,11 +63,8 @@ class StructuralScopeLowerer {
 
   // Mints this class's identity, builds its structural shape, publishes the
   // shape so peer body lowering can query it, and recurses to declare every
-  // descendant scope's shape. `entry_bindings` are the structural params
-  // injected by an enclosing for-generate iteration.
-  auto DeclareShape(
-      std::span<const ScopeEntryStructuralParamBinding> entry_bindings = {})
-      -> diag::Result<mir::ClassId>;
+  // descendant scope's shape.
+  auto DeclareShape() -> diag::Result<mir::ClassId>;
 
   // Lowers every body and every install statement against the already-
   // published shape, recurses into descendants, and commits the composed
@@ -177,67 +152,6 @@ class StructuralScopeLowerer {
       hir::StructuralHops hops, hir::StructuralDataObjectId hir_id) const
       -> mir::MemberId {
     return LookupStructuralDataObjectAtHops(hops, hir_id);
-  }
-
-  void MapLoopVarAsStructuralParam(
-      hir::LoopVarDeclId hir_id, mir::ParamId mir_id) {
-    if (hir_id.value >= structural_param_map_.size()) {
-      structural_param_map_.resize(hir_id.value + 1);
-    }
-    if (structural_param_map_[hir_id.value].has_value()) {
-      throw InternalError(
-          "StructuralScopeLowerer::MapLoopVarAsStructuralParam: HIR "
-          "loop var already mapped");
-    }
-    structural_param_map_[hir_id.value] = mir_id;
-  }
-
-  // For-generate header procedural-var registry (LRM 27.5). HIR places the
-  // `LoopVarDecl` in the for-generate's parent scope; the constructor body
-  // lowering binds it to a procedural-var ref via this table so header
-  // expressions (init / stop / iter) resolve to the constructor induction var.
-  // The child-owned `StructuralParamDecl` path is separate; see
-  // `MapLoopVarAsStructuralParam`.
-  void MapLoopVarAsProcedural(hir::LoopVarDeclId hir_id, mir::LocalRef ref) {
-    if (hir_id.value >= loop_var_procedural_map_.size()) {
-      loop_var_procedural_map_.resize(hir_id.value + 1);
-    }
-    if (loop_var_procedural_map_[hir_id.value].has_value()) {
-      throw InternalError(
-          "StructuralScopeLowerer::MapLoopVarAsProcedural: HIR loop var "
-          "already mapped");
-    }
-    loop_var_procedural_map_[hir_id.value] = ref;
-  }
-  [[nodiscard]] auto TranslateLoopVarAsProcedural(
-      hir::LoopVarDeclId hir_id) const -> mir::LocalRef {
-    if (hir_id.value >= loop_var_procedural_map_.size() ||
-        !loop_var_procedural_map_[hir_id.value].has_value()) {
-      throw InternalError(
-          "StructuralScopeLowerer::TranslateLoopVarAsProcedural: unmapped "
-          "HIR loop var");
-    }
-    return *loop_var_procedural_map_[hir_id.value];
-  }
-
-  // HIR places `LoopVarDecl` in the for-generate's parent scope; MIR re-homes
-  // the same value into the constructed child scope. MIR hops = HIR hops - 1.
-  // The caller turns the located (hops, param) into a receiver-addressed read
-  // via `BuildStructuralParamAccessExpr`.
-  [[nodiscard]] auto TranslateLoopVarAsStructuralParam(
-      hir::StructuralHops hir_hops, hir::LoopVarDeclId hir_id) const
-      -> StructuralParamLocation {
-    if (hir_hops.value == 0) {
-      throw InternalError(
-          "StructuralScopeLowerer::TranslateLoopVarAsStructuralParam: "
-          "HIR hops=0 cannot resolve to a structural param (the param is "
-          "child-owned in MIR; header expressions must use the procedural "
-          "induction var path)");
-    }
-    const mir::EnclosingHops mir_hops{.value = hir_hops.value - 1};
-    return StructuralParamLocation{
-        .hops = mir_hops,
-        .param = LookupStructuralParamAtMirHops(mir_hops, hir_id)};
   }
 
   // Records the MIR slot a HIR owned-child reference resolves to. An instance
@@ -383,27 +297,6 @@ class StructuralScopeLowerer {
         hir::StructuralHops{hops.value - 1}, hir_id);
   }
 
-  [[nodiscard]] auto LookupStructuralParamAtMirHops(
-      mir::EnclosingHops mir_hops, hir::LoopVarDeclId hir_id) const
-      -> mir::ParamId {
-    if (mir_hops.value == 0) {
-      if (hir_id.value >= structural_param_map_.size() ||
-          !structural_param_map_[hir_id.value].has_value()) {
-        throw InternalError(
-            "StructuralScopeLowerer::TranslateLoopVarAsStructuralParam: "
-            "unmapped HIR loop var");
-      }
-      return *structural_param_map_[hir_id.value];
-    }
-    if (parent_ == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::TranslateLoopVarAsStructuralParam: "
-          "hops exceed scope chain depth");
-    }
-    return parent_->LookupStructuralParamAtMirHops(
-        mir::EnclosingHops{.value = mir_hops.value - 1}, hir_id);
-  }
-
   [[nodiscard]] auto LookupStructuralSubroutineAtHops(
       hir::StructuralHops hops, hir::StructuralSubroutineId hir_id) const
       -> mir::MethodId {
@@ -429,10 +322,8 @@ class StructuralScopeLowerer {
   std::string name_;
   const hir::StructuralScope* hir_scope_;
   std::vector<mir::MemberId> structural_data_object_map_;
-  std::vector<std::optional<mir::ParamId>> structural_param_map_;
   std::vector<mir::MethodId> structural_subroutine_map_;
   std::vector<CrossUnitRefMeta> cross_unit_ref_targets_;
-  std::vector<std::optional<mir::LocalRef>> loop_var_procedural_map_;
   std::vector<mir::MemberId> instance_member_map_;
   std::vector<GenerateBindings> generate_map_;
   // Per-structural-scope runtime-topology table for materialized procedural

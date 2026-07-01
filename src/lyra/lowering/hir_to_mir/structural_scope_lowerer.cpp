@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -22,7 +21,6 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -90,78 +88,23 @@ struct GenerateChildSpec {
   hir::StructuralScopeId scope_id;
   const hir::StructuralScope* scope;
   std::string scope_name;
-  bool is_repeated;
-  std::vector<ScopeEntryStructuralParamBinding> entry_bindings;
 };
 
+// Each instantiated block is its own concrete scalar child (its own class),
+// distinguished on the hierarchy only by any index it carries; the genvar is
+// folded into the body, so there is no runtime structural-param binding.
 auto EnumerateGenerateChildSpecs(
-    const hir::Generate& gen, const hir::StructuralScope& enclosing_scope,
-    ModuleLowerer& module) -> std::vector<GenerateChildSpec> {
+    const hir::Generate& gen, ModuleLowerer& module)
+    -> std::vector<GenerateChildSpec> {
   std::vector<GenerateChildSpec> specs;
-  std::visit(
-      Overloaded{
-          [&](const hir::IfGenerate& if_gen) {
-            const auto& then_scope = gen.child_scopes.Get(if_gen.then_scope);
-            specs.push_back(
-                {.scope_id = if_gen.then_scope,
-                 .scope = &then_scope,
-                 .scope_name = module.NextGenerateScopeName("then"),
-                 .is_repeated = false,
-                 .entry_bindings = {}});
-            if (if_gen.else_scope.has_value()) {
-              const auto& else_scope = gen.child_scopes.Get(*if_gen.else_scope);
-              specs.push_back(
-                  {.scope_id = *if_gen.else_scope,
-                   .scope = &else_scope,
-                   .scope_name = module.NextGenerateScopeName("else"),
-                   .is_repeated = false,
-                   .entry_bindings = {}});
-            }
-          },
-          [&](const hir::CaseGenerate& case_gen) {
-            for (std::size_t k = 0; k < case_gen.items.size(); ++k) {
-              const auto& item_scope =
-                  gen.child_scopes.Get(case_gen.items[k].scope);
-              specs.push_back(
-                  {.scope_id = case_gen.items[k].scope,
-                   .scope = &item_scope,
-                   .scope_name =
-                       module.NextGenerateScopeName(std::format("case{}", k)),
-                   .is_repeated = false,
-                   .entry_bindings = {}});
-            }
-            if (case_gen.default_scope.has_value()) {
-              const auto& default_scope =
-                  gen.child_scopes.Get(*case_gen.default_scope);
-              specs.push_back(
-                  {.scope_id = *case_gen.default_scope,
-                   .scope = &default_scope,
-                   .scope_name = module.NextGenerateScopeName("default"),
-                   .is_repeated = false,
-                   .entry_bindings = {}});
-            }
-          },
-          [&](const hir::LoopGenerate& loop_gen) {
-            const auto& loop_scope = gen.child_scopes.Get(loop_gen.scope);
-            const auto& var_decl =
-                enclosing_scope.loop_var_decls.Get(loop_gen.loop_var);
-            std::vector<ScopeEntryStructuralParamBinding> bindings;
-            bindings.push_back(
-                ScopeEntryStructuralParamBinding{
-                    .param =
-                        mir::ParamDecl{
-                            .name = var_decl.name,
-                            .type = module.TranslateType(var_decl.type)},
-                    .source_loop_var = loop_gen.loop_var});
-            specs.push_back(
-                {.scope_id = loop_gen.scope,
-                 .scope = &loop_scope,
-                 .scope_name = module.NextGenerateScopeName("loop"),
-                 .is_repeated = true,
-                 .entry_bindings = std::move(bindings)});
-          },
-      },
-      gen.data);
+  specs.reserve(gen.data.items.size());
+  for (const auto& item : gen.data.items) {
+    const auto& item_scope = gen.child_scopes.Get(item.scope);
+    specs.push_back(
+        {.scope_id = item.scope,
+         .scope = &item_scope,
+         .scope_name = module.NextGenerateScopeName("gen")});
+  }
   return specs;
 }
 
@@ -1293,9 +1236,9 @@ void AppendOwnedChildConstruction(
   // Build the child's structural identity once and pass it as the child's
   // own ctor argument. The child holds onto it from the moment its
   // constructor returns; %m, by-name lookup, and debug traces all read
-  // from that single source. A scalar member yields an empty index list;
-  // a vector member yields a one-entry list with the iteration's induction
-  // value; a multi-dim member would extend it per axis.
+  // from that single source. The index list carries the caller-provided
+  // hierarchy index when there is one -- a generated scope's constant index --
+  // and is empty otherwise; a multi-dim member would extend it per axis.
   std::vector<mir::ExprId> index_elems;
   if (array_index.has_value()) {
     index_elems.push_back(*array_index);
@@ -1404,222 +1347,43 @@ void AppendOwnedChildConstruction(
   arm_block.AppendStmt(mir::ExprStmt{.expr = attach_call_id});
 }
 
-// The induction var is a body-local of the constructor; the for-stmt body is a
-// child block of that same callable, so a read names the var directly.
-auto MakeForBodyInductionVarArg(mir::LocalId induction_var_id, mir::TypeId type)
-    -> mir::Expr {
-  return mir::MakeLocalRefExpr(induction_var_id, type);
-}
-
-// Builds the body block of a single generate arm. Each arm constructs one
-// owned-child instance (scalar for `if` / `case` generate, one element of the
-// member-vector per iteration for `for` generate) and records it on the parent
-// for by-name lookup. The arm body is a child block of the constructor
-// callable; its `self` read resolves through the callable's receiver binding,
-// independent of how deep the control-flow scaffold nests it. The optional
-// `array_index_arg` populates the runtime index slot for a vector member; for
-// a scalar member it is `nullopt` (the registered index list is empty).
-auto BuildGenerateArmBody(
-    ModuleLowerer& module, WalkFrame frame,
-    const GenerateBindings& gen_bindings, hir::StructuralScopeId arm_scope_id,
-    std::vector<mir::Expr> args, std::optional<mir::Expr> array_index_arg)
-    -> mir::Block {
-  const auto& binding = gen_bindings.by_scope_id.at(arm_scope_id.value);
-
-  mir::Block arm_block;
-  const WalkFrame arm_frame = frame.WithBlock(&arm_block);
-
-  std::vector<mir::ExprId> arg_ids;
-  arg_ids.reserve(args.size());
-  for (auto& arg : args) {
-    arg_ids.push_back(arm_block.exprs.Add(std::move(arg)));
-  }
-  std::optional<mir::ExprId> array_index_id;
-  if (array_index_arg.has_value()) {
-    array_index_id = arm_block.exprs.Add(std::move(*array_index_arg));
-  }
-
-  AppendOwnedChildConstruction(
-      module, arm_frame, binding.var_id, binding.scope_id, std::move(arg_ids),
-      array_index_id);
-  return arm_block;
-}
-
-auto LowerIfGenerate(
+// The correctness baseline for every generate construct: construct each
+// instantiated block's own concrete scalar child directly (no runtime branch or
+// loop), each carrying any constant hierarchy index it has. The genvar is
+// folded into each body, so no induction-variable argument is threaded.
+auto LowerResolvedGenerate(
     StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const GenerateBindings& gen_bindings, const hir::IfGenerate& if_gen)
+    const GenerateBindings& gen_bindings, const hir::ResolvedGenerate& resolved)
     -> diag::Result<mir::Stmt> {
-  const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
   mir::Block& block = *frame.current_block;
+  const mir::TypeId int32_type = lowerer.Module().Unit().builtins.int32;
 
-  auto cond_or =
-      lowerer.LowerExpr(enclosing_scope.exprs.Get(if_gen.condition), frame);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
-
-  const mir::BlockId then_id = block.child_scopes.Add(BuildGenerateArmBody(
-      lowerer.Module(), frame, gen_bindings, if_gen.then_scope, {},
-      std::nullopt));
-
-  std::optional<mir::BlockId> else_id;
-  if (if_gen.else_scope.has_value()) {
-    else_id = block.child_scopes.Add(BuildGenerateArmBody(
-        lowerer.Module(), frame, gen_bindings, *if_gen.else_scope, {},
-        std::nullopt));
+  mir::Block body;
+  const WalkFrame body_frame = frame.WithBlock(&body);
+  for (const auto& item : resolved.items) {
+    const auto& binding = gen_bindings.by_scope_id.at(item.scope.value);
+    std::optional<mir::ExprId> index_id;
+    if (item.index.has_value()) {
+      index_id = body.exprs.Add(mir::MakeInt32Literal(int32_type, *item.index));
+    }
+    AppendOwnedChildConstruction(
+        lowerer.Module(), body_frame, binding.var_id, binding.scope_id, {},
+        index_id);
   }
-
+  const mir::BlockId body_id = block.child_scopes.Add(std::move(body));
   return mir::Stmt{
-      .label = std::nullopt,
-      .data = mir::IfStmt{
-          .condition = cond_id, .then_scope = then_id, .else_scope = else_id}};
-}
-
-auto LowerCaseGenerate(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const GenerateBindings& gen_bindings, const hir::CaseGenerate& case_gen)
-    -> diag::Result<mir::Stmt> {
-  const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
-  const mir::TypeId bit_type = lowerer.Module().Unit().builtins.bit1;
-
-  mir::Block wrapper_block;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper_block);
-
-  auto cond_or = lowerer.LowerExpr(
-      enclosing_scope.exprs.Get(case_gen.condition), wrapper_frame);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_expr_id = wrapper_block.exprs.Add(*std::move(cond_or));
-
-  const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(lowerer.Module(), wrapper_frame, cond_expr_id);
-
-  std::vector<mir::Block> body_scopes;
-  body_scopes.reserve(case_gen.items.size());
-  for (const auto& item : case_gen.items) {
-    body_scopes.push_back(BuildGenerateArmBody(
-        lowerer.Module(), frame, gen_bindings, item.scope, {}, std::nullopt));
-  }
-
-  std::optional<mir::Block> default_scope;
-  if (case_gen.default_scope.has_value()) {
-    default_scope = BuildGenerateArmBody(
-        lowerer.Module(), frame, gen_bindings, *case_gen.default_scope, {},
-        std::nullopt);
-  }
-
-  auto build_predicate =
-      [&](WalkFrame enc_frame,
-          std::size_t item_idx) -> diag::Result<mir::ExprId> {
-    return BuildEqualityChain(
-        enc_frame, snapshot, bit_type, mir::BinaryOp::kEquality,
-        case_gen.items[item_idx].labels.size(),
-        [&](WalkFrame label_frame,
-            std::size_t li) -> diag::Result<mir::ExprId> {
-          auto lab_or = lowerer.LowerExpr(
-              enclosing_scope.exprs.Get(case_gen.items[item_idx].labels[li]),
-              label_frame);
-          if (!lab_or) {
-            return std::unexpected(std::move(lab_or.error()));
-          }
-          return label_frame.current_block->exprs.Add(*std::move(lab_or));
-        },
-        lowerer.Module().Unit());
-  };
-
-  return BuildCaseCascade(
-      frame, std::move(wrapper_block), std::nullopt, case_gen.items.size(),
-      std::move(body_scopes), std::move(default_scope), build_predicate);
-}
-
-auto LowerLoopGenerate(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const GenerateBindings& gen_bindings, const hir::LoopGenerate& loop)
-    -> diag::Result<mir::Stmt> {
-  const hir::StructuralScope& enclosing_scope = lowerer.HirScope();
-  mir::Block& block = *frame.current_block;
-
-  const auto& var_decl = enclosing_scope.loop_var_decls.Get(loop.loop_var);
-  const mir::TypeId genvar_type = lowerer.Module().TranslateType(var_decl.type);
-
-  const mir::LocalId loop_local_id = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = var_decl.name, .type = genvar_type});
-  const mir::LocalRef loop_local{.var = loop_local_id};
-
-  lowerer.MapLoopVarAsProcedural(loop.loop_var, loop_local);
-
-  auto init_or =
-      lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.initial), frame);
-  if (!init_or) return std::unexpected(std::move(init_or.error()));
-  const mir::ExprId init_id = block.exprs.Add(*std::move(init_or));
-
-  auto cond_or = lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.stop), frame);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
-
-  // HIR carries the iter as the next-value expression for the loop variable;
-  // the loop semantic (this lowering) owns the actual write back.
-  auto step_value_or =
-      lowerer.LowerExpr(enclosing_scope.exprs.Get(loop.iter), frame);
-  if (!step_value_or) {
-    return std::unexpected(std::move(step_value_or.error()));
-  }
-  const mir::TypeId step_type = (*step_value_or).type;
-  const mir::ExprId step_value_id = block.exprs.Add(*std::move(step_value_or));
-  const mir::ExprId step_target_id =
-      block.exprs.Add(mir::Expr{.data = loop_local, .type = genvar_type});
-  const mir::ExprId step_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::AssignExpr{.target = step_target_id, .value = step_value_id},
-          .type = step_type});
-
-  // The induction variable feeds two slots: as a structural-param ctor arg
-  // (so each generated child binds its `genvar` per LRM 27.4) and as the
-  // index entry the child's `HierarchySegment` carries (so a hierarchical
-  // lookup `c[i]` reaches the same slot). Build two fresh reads so each
-  // consumer reaches the loop local through its own MIR node.
-  std::vector<mir::Expr> body_args;
-  body_args.push_back(MakeForBodyInductionVarArg(loop_local_id, genvar_type));
-  mir::Expr array_index_arg =
-      MakeForBodyInductionVarArg(loop_local_id, genvar_type);
-
-  const mir::BlockId loop_scope_id =
-      block.child_scopes.Add(BuildGenerateArmBody(
-          lowerer.Module(), frame, gen_bindings, loop.scope,
-          std::move(body_args), std::move(array_index_arg)));
-
-  return mir::Stmt{
-      .label = std::nullopt,
-      .data = mir::ForStmt{
-          .init = {mir::ForInitDecl{
-              .induction_var = loop_local_id, .init = init_id}},
-          .condition = cond_id,
-          .step = {step_id},
-          .scope = loop_scope_id}};
+      .label = std::nullopt, .data = mir::BlockStmt{.scope = body_id}};
 }
 
 auto LowerGenerateAsStmt(
     StructuralScopeLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
     const GenerateBindings& gen_bindings) -> diag::Result<mir::Stmt> {
-  return std::visit(
-      Overloaded{
-          [&](const hir::IfGenerate& if_gen) {
-            return LowerIfGenerate(lowerer, frame, gen_bindings, if_gen);
-          },
-          [&](const hir::CaseGenerate& case_gen) {
-            return LowerCaseGenerate(lowerer, frame, gen_bindings, case_gen);
-          },
-          [&](const hir::LoopGenerate& loop) {
-            return LowerLoopGenerate(lowerer, frame, gen_bindings, loop);
-          },
-      },
-      gen.data);
+  return LowerResolvedGenerate(lowerer, frame, gen_bindings, gen.data);
 }
 
 }  // namespace
 
-auto StructuralScopeLowerer::DeclareShape(
-    std::span<const ScopeEntryStructuralParamBinding> entry_bindings)
-    -> diag::Result<mir::ClassId> {
+auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   ModuleLowerer& module = *module_;
   const hir::StructuralScope& hir_scope = *hir_scope_;
   StructuralScopeLowerer& lowerer = *this;
@@ -1655,11 +1419,6 @@ auto StructuralScopeLowerer::DeclareShape(
     shape.type_aliases.push_back(
         mir::TypeAliasDecl{
             .name = alias.name, .target = module.TranslateType(alias.target)});
-  }
-
-  for (const auto& binding : entry_bindings) {
-    const mir::ParamId mir_id = shape.params.Add(binding.param);
-    lowerer.MapLoopVarAsStructuralParam(binding.source_loop_var, mir_id);
   }
 
   for (std::size_t i = 0; i < hir_scope.structural_data_objects.size(); ++i) {
@@ -1715,23 +1474,19 @@ auto StructuralScopeLowerer::DeclareShape(
     GenerateBindings gen_bindings;
     gen_bindings.by_scope_id.resize(gen.child_scopes.size());
 
-    auto specs = EnumerateGenerateChildSpecs(gen, hir_scope, module);
+    auto specs = EnumerateGenerateChildSpecs(gen, module);
     for (auto& spec : specs) {
       const auto companion_name = CompanionVarNameFor(spec.scope_name);
       CheckNoNameCollision(shape, spec.scope_name, companion_name);
 
       auto child = std::make_unique<StructuralScopeLowerer>(
           module, &lowerer, std::move(spec.scope_name), *spec.scope);
-      auto child_r = child->DeclareShape(spec.entry_bindings);
+      auto child_r = child->DeclareShape();
       if (!child_r) return std::unexpected(std::move(child_r.error()));
 
       const mir::ClassId child_id = *child_r;
       shape.contained.push_back(child_id);
-      mir::TypeId var_type = MakeUniqueObjectPointer(module, child_id);
-      if (spec.is_repeated) {
-        var_type =
-            module.Unit().types.Intern(mir::VectorType{.element = var_type});
-      }
+      const mir::TypeId var_type = MakeUniqueObjectPointer(module, child_id);
       const mir::MemberId var_id = shape.members.Add(
           mir::MemberDecl{
               .name = companion_name,

@@ -28,16 +28,18 @@ document conflicts with a North Star principle, the lower-level document is wron
    the loop at the cost of inflating another beyond budget is rejected.
 2. **Compile per unit; elaborate at runtime.** The compile-time scope is the compilation unit
    (module, package, interface), not the elaborated instance graph. Generate constructs (`if`,
-   `for`, `case`) are constructor-time logic executed by the runtime to build the object graph at
-   time zero; they are not compile-time expansion. Compile-time artifacts are class-level and shared
-   across every instance; per-instance data (parameter values, wiring, hierarchical position) flows
-   in at runtime construction. Compile-time work scales with the count of distinct unit
-   specializations, not with instance count.
-3. **Incremental and parallel compilation are first-class architectural constraints.** The
+   `for`, `case`) are constructor-time logic the runtime executes to build the object graph at time
+   zero. Compile-time artifacts are class-level and shared across every instance; per-instance data
+   (parameter values, wiring, hierarchical position) flows in at runtime construction. Compile-time
+   work scales with the count of distinct unit specializations, not with instance count.
+3. **Correctness is independent of optimization.** The compiler produces correct output for every
+   accepted program; the per-unit sharing of invariant 2 is admitted only when behavior-preserving,
+   and a correct program is never rejected because an optimization cannot be applied.
+4. **Incremental and parallel compilation are first-class architectural constraints.** The
    architecture is shaped from the start to support partial recompilation and concurrent compilation
    of independent work. These are not optimizations added later; they constrain every lower-level
    decision.
-4. **The compiler is organized around independently compilable units with explicit dependencies.**
+5. **The compiler is organized around independently compilable units with explicit dependencies.**
    Work decomposes into units that compile in isolation. Every cross-unit interaction is an
    explicitly declared dependency. Implicit shared state between units is rejected.
 
@@ -52,10 +54,12 @@ document conflicts with a North Star principle, the lower-level document is wron
 
 - A design that improves one stage of the iteration loop at the cost of inflating another beyond the
   overall turnaround budget.
-- Compile-time work that scales with instance count rather than with unit specialization count.
-- A pipeline shape where a frontend-elaborated instance graph drives compile-time work.
-- Treating generate constructs as a compile-time expansion mechanism rather than constructor-time
-  logic.
+- Letting per-instance compile-time work become the steady state, or foreclosing the per-unit shared
+  form.
+- Making the frontend-elaborated instance graph the compilation model, or the authority for unit or
+  specialization identity.
+- Making an optimization a correctness precondition: rejecting or mis-lowering a correct program
+  because it cannot be shared.
 - Hidden or implicit cross-unit dependencies that break incremental or parallel compilation.
 - Architectural choices that force global serialization of otherwise independent compilation work.
 - Implicit shared semantic state between compilation units.
