@@ -47,8 +47,8 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
   for (const auto& top : tops) {
     // A `$root`-anchored absolute path descends from the root by name, so
     // the root answers GetChild for each top under its segment (LRM 23.6).
-    // AttachChild reads the top's own Segment() -- the base name set when
-    // main constructed it -- and uses that as the lookup key.
+    // AttachChild wires physical containment; SV-visible lookup on
+    // `$root` recurses through the attached-children relation.
     root_->AttachChild(*top.scope);
   }
   // Link every top before any phase runs, so an upward climb during resolution

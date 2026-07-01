@@ -1,0 +1,14 @@
+id: cpp.hierarchy_named_block_head
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      intra outer.x=7 outer.inner.y=13
+      x=7 y=13
+      after write x=100

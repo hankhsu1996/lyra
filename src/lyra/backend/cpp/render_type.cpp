@@ -128,6 +128,9 @@ auto RenderTypeAsCpp(
           [](const mir::GenScopeType&) -> std::string {
             return std::string{"lyra::runtime::GenScope"};
           },
+          [](const mir::ProceduralStorageScopeType&) -> std::string {
+            return std::string{"lyra::runtime::ProceduralStorageScope"};
+          },
           [](const mir::ServicesType&) -> std::string {
             return std::string{"lyra::runtime::RuntimeServices&"};
           },
