@@ -68,17 +68,6 @@ auto BuildStructuralMemberAccessExpr(
       receiver, mir::MemberRef{.var = var}, field_type);
 }
 
-auto BuildStructuralParamAccessExpr(
-    const WalkFrame& frame, const mir::CompilationUnit& unit,
-    mir::EnclosingHops hops, mir::ParamId param) -> mir::Expr {
-  const mir::TypeId field_type =
-      frame.EnclosingClassAtHops(hops).params.Get(param).type;
-  const mir::ExprId receiver = BuildEnclosingScopeReceiver(frame, unit, hops);
-  return mir::Expr{
-      .data = mir::ParamRef{.receiver = receiver, .param = param},
-      .type = field_type};
-}
-
 auto BuildReferenceArg(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId {

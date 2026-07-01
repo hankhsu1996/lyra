@@ -410,10 +410,6 @@ class HirDumper {
             [](const ClassPropertyRef& r) -> std::string {
               return std::format("ClassProperty[{}]", r.field_index);
             },
-            [](const LoopVarRef& r) -> std::string {
-              return std::format(
-                  "LoopVar[{}](hops={})", r.loop_var.value, r.hops.value);
-            },
             [](const CrossUnitVarRef& r) -> std::string {
               return std::format("CrossUnitRef[{}]", r.id.value);
             },
@@ -873,13 +869,6 @@ class HirDumper {
               "StructuralDataObject[{}] \"{}\" : Type[{}]{}", i, v.name,
               v.type.value, suffix));
     }
-    for (std::size_t i = 0; i < s.loop_var_decls.size(); ++i) {
-      const auto& lv =
-          s.loop_var_decls.Get(LoopVarDeclId{static_cast<std::uint32_t>(i)});
-      Line(
-          std::format(
-              "LoopVarDecl[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
-    }
     for (std::size_t i = 0; i < s.structural_subroutines.size(); ++i) {
       DumpSubroutine(
           "StructuralSubroutine", i,
@@ -905,7 +894,7 @@ class HirDumper {
       DumpContinuousAssign(ca);
     }
     for (const auto& g : s.generates) {
-      DumpGenerate(s, g);
+      DumpGenerate(g);
     }
     for (std::size_t i = 0; i < s.instance_members.size(); ++i) {
       const auto& im = s.instance_members.Get(
@@ -1464,80 +1453,18 @@ class HirDumper {
         s.data);
   }
 
-  void DumpIfGenerateNode(
-      const StructuralScope& owner, const Generate& g, const IfGenerate& ig) {
-    Line(
-        std::format(
-            "Generate IfGenerate cond={}",
-            FormatScopeExpr(owner, ig.condition)));
+  void DumpGenerate(const Generate& g) {
+    Line(std::format("Generate items={}", g.data.items.size()));
     Indent();
-    Line("then_scope:");
-    Indent();
-    DumpScope(g.child_scopes.Get(ig.then_scope));
-    Dedent();
-    if (ig.else_scope.has_value()) {
-      Line("else_scope:");
-      Indent();
-      DumpScope(g.child_scopes.Get(*ig.else_scope));
-      Dedent();
-    } else {
-      Line("else_scope: <none>");
-    }
-    Dedent();
-  }
-
-  void DumpCaseGenerateNode(
-      const StructuralScope& owner, const Generate& g, const CaseGenerate& cg) {
-    Line(
-        std::format(
-            "Generate CaseGenerate cond={}",
-            FormatScopeExpr(owner, cg.condition)));
-    Indent();
-    for (std::size_t i = 0; i < cg.items.size(); ++i) {
-      const auto& item = cg.items[i];
-      std::string labels;
-      for (std::size_t j = 0; j < item.labels.size(); ++j) {
-        if (j != 0) labels += ", ";
-        labels += FormatScopeExpr(owner, item.labels[j]);
-      }
-      Line(std::format("item[{}] labels=[{}]", i, labels));
+    for (const auto& item : g.data.items) {
+      const std::string idx =
+          item.index.has_value() ? std::format("[{}]", *item.index) : "[-]";
+      Line(std::format("{}:", idx));
       Indent();
       DumpScope(g.child_scopes.Get(item.scope));
       Dedent();
     }
-    if (cg.default_scope.has_value()) {
-      Line("default_scope:");
-      Indent();
-      DumpScope(g.child_scopes.Get(*cg.default_scope));
-      Dedent();
-    } else {
-      Line("default_scope: <none>");
-    }
     Dedent();
-  }
-
-  void DumpLoopGenerateNode(const Generate& g, const LoopGenerate& lg) {
-    Line(
-        std::format(
-            "Generate LoopGenerate loop_var=LoopVar[{}] initial=Expr[{}] "
-            "stop=Expr[{}] iter=Expr[{}]",
-            lg.loop_var.value, lg.initial.value, lg.stop.value, lg.iter.value));
-    Indent();
-    Line("scope:");
-    Indent();
-    DumpScope(g.child_scopes.Get(lg.scope));
-    Dedent();
-    Dedent();
-  }
-
-  void DumpGenerate(const StructuralScope& owner, const Generate& g) {
-    std::visit(
-        Overloaded{
-            [&](const IfGenerate& ig) { DumpIfGenerateNode(owner, g, ig); },
-            [&](const CaseGenerate& cg) { DumpCaseGenerateNode(owner, g, cg); },
-            [&](const LoopGenerate& lg) { DumpLoopGenerateNode(g, lg); },
-        },
-        g.data);
   }
 
   std::string out_;

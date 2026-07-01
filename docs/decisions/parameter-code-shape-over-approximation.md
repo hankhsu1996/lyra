@@ -76,6 +76,12 @@ parameter is treated as code-shape-affecting. Parameter values are resolved at c
 classification axis exists; the specialization key conservatively includes every parameter. This
 folded shape is the intended state, not a transitional one.
 
+This over-approximation is the concrete correctness baseline of `specialization_model.md`: every
+distinct binding is its own concrete artifact, which is always correct. Parameter classification and
+constructor-input threading are the deferred **sharing optimization** over that baseline -- the same
+posture `generate-concrete-witness-lowering.md` takes for generate bodies (concrete witness first,
+proven sharing second).
+
 Two constraints bind going forward, so that deferring the optimization does not dig a hole:
 
 1. **Storage stays forward-compatible.** Instance multiplicity is the vector wrapper with the count

@@ -5,7 +5,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -28,7 +27,6 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -41,32 +39,11 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-namespace {
-
-auto IsCaseConstruct(
-    const std::vector<const slang::ast::GenerateBlockSymbol*>& siblings)
-    -> bool {
-  for (const auto* block : siblings) {
-    switch (block->branchKind) {
-      case slang::ast::GenerateBranchKind::CaseItem:
-      case slang::ast::GenerateBranchKind::CaseDefault:
-        return true;
-      default:
-        break;
-    }
-  }
-  return false;
-}
-
-}  // namespace
-
 StructuralScopeLowerer::StructuralScopeLowerer(
-    ModuleLowerer& module, const slang::ast::Scope& slang_scope,
-    std::vector<ScopeEntryLoopVarBinding> entry_loop_var_bindings)
+    ModuleLowerer& module, const slang::ast::Scope& slang_scope)
     : module_(&module),
       slang_scope_(&slang_scope),
-      frame_(module.NextScopeFrameId()),
-      entry_loop_var_bindings_(std::move(entry_loop_var_bindings)) {
+      frame_(module.NextScopeFrameId()) {
   // A `ref` / `const ref` port's internal variable aliases the connected
   // variable rather than owning storage (LRM 23.3.3.2); record which of this
   // body's variables those are so their members lower to a reference type. Only
@@ -110,17 +87,6 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   const WalkFrame frame =
       parent_frame.WithStructuralFrame(frame_, &scope, &scope.exprs);
   scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
-  // Apply any loop-generate entry bindings (loop-generate body inherits the
-  // loop var from its parent's frame so body refs compute correct hops up).
-  for (const auto& binding : entry_loop_var_bindings_) {
-    if (binding.symbol == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::Run: null scope-entry loop-var "
-          "binding symbol");
-    }
-    module_->MapLoopVarBinding(
-        *binding.symbol, binding.home_frame, binding.loop_var, binding.type);
-  }
 
   // Forward-declare every subroutine's binding before lowering any body so a
   // call resolves regardless of source order: direct self-recursion, mutual
@@ -156,19 +122,12 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // continuous assign resolves a downward reference into a generate block it
   // textually precedes -- declarations are scope-wide (LRM 27), the same
   // reason instances are bound in the pre-pass above.
-  std::unordered_set<std::uint32_t> consumed_construct_indices;
   for (const auto& member : slang_scope_->members()) {
     if (member.kind == slang::ast::SymbolKind::Instance ||
         member.kind == slang::ast::SymbolKind::InstanceArray ||
         member.kind == slang::ast::SymbolKind::ProceduralBlock ||
         member.kind == slang::ast::SymbolKind::ContinuousAssign) {
       continue;
-    }
-    if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
-      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
-      if (!consumed_construct_indices.insert(block.constructIndex).second) {
-        continue;
-      }
     }
     auto r = PopulateMember(member, frame);
     if (!r) return std::unexpected(std::move(r.error()));
@@ -216,10 +175,10 @@ auto StructuralScopeLowerer::PopulateMember(
       return PopulateContinuousAssignMember(
           member.as<slang::ast::ContinuousAssignSymbol>(), frame);
     case slang::ast::SymbolKind::GenerateBlockArray:
-      return PopulateLoopGenerateMember(
+      return PopulateGenerateArrayMember(
           member.as<slang::ast::GenerateBlockArraySymbol>(), frame);
     case slang::ast::SymbolKind::GenerateBlock:
-      return PopulateIfOrCaseGenerateMember(
+      return PopulateGenerateBlockMember(
           member.as<slang::ast::GenerateBlockSymbol>(), frame);
     default:
       return {};
@@ -383,31 +342,25 @@ auto StructuralScopeLowerer::PopulateContinuousAssignMember(
   return {};
 }
 
-auto StructuralScopeLowerer::PopulateLoopGenerateMember(
+auto StructuralScopeLowerer::PopulateGenerateArrayMember(
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
     -> diag::Result<void> {
-  auto g = BuildLoopGenerate(array, frame);
+  auto g = BuildResolvedGenerateFromArray(array, frame);
   if (!g) return std::unexpected(std::move(g.error()));
   frame.current_structural_scope->generates.Add(*std::move(g));
   return {};
 }
 
-auto StructuralScopeLowerer::PopulateIfOrCaseGenerateMember(
+auto StructuralScopeLowerer::PopulateGenerateBlockMember(
     const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
     -> diag::Result<void> {
-  // slang assigns constructIndex per direct generate construct in the
-  // containing scope (Scope.cpp:927-1033): incremented after each construct,
-  // shared across siblings of one if/case generate.
-  std::vector<const slang::ast::GenerateBlockSymbol*> siblings;
-  for (const auto& candidate : slang_scope_->members()) {
-    if (candidate.kind != slang::ast::SymbolKind::GenerateBlock) continue;
-    const auto& sibling = candidate.as<slang::ast::GenerateBlockSymbol>();
-    if (sibling.constructIndex == block.constructIndex) {
-      siblings.push_back(&sibling);
-    }
+  // Every generate block is resolved at elaboration: an `if` / `case` arm not
+  // selected for this scope carries no runtime object (LRM 27.5), so only an
+  // instantiated block is lowered, as its own concrete scope.
+  if (block.isUninstantiated) {
+    return {};
   }
-  auto g = IsCaseConstruct(siblings) ? BuildCaseGenerate(siblings, frame)
-                                     : BuildIfGenerate(siblings, frame);
+  auto g = BuildResolvedGenerateFromBlock(block, frame);
   if (!g) return std::unexpected(std::move(g.error()));
   frame.current_structural_scope->generates.Add(*std::move(g));
   return {};

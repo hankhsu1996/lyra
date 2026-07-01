@@ -101,28 +101,6 @@ auto ModuleLowerer::LookupSubroutineBinding(
   return it->second;
 }
 
-void ModuleLowerer::MapLoopVarBinding(
-    const slang::ast::ValueSymbol& sym, ScopeFrameId home_frame,
-    hir::LoopVarDeclId id, hir::TypeId type) {
-  const auto [_, inserted] = loop_var_bindings_.emplace(
-      &sym, LoopVarBinding{
-                .home_frame = home_frame, .loop_var_id = id, .type = type});
-  if (!inserted) {
-    throw InternalError(
-        "ModuleLowerer::MapLoopVarBinding: loop variable symbol already "
-        "mapped");
-  }
-}
-
-auto ModuleLowerer::LookupLoopVarBinding(
-    const slang::ast::ValueSymbol& sym) const -> std::optional<LoopVarBinding> {
-  const auto it = loop_var_bindings_.find(&sym);
-  if (it == loop_var_bindings_.end()) {
-    return std::nullopt;
-  }
-  return it->second;
-}
-
 void ModuleLowerer::MapOwnedChildBinding(
     const slang::ast::Symbol& child, ScopeFrameId home_frame,
     hir::DownwardHead head) {

@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <variant>
 
-#include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -50,13 +49,6 @@ struct ClassPropertyRef {
   std::uint32_t field_index;
 
   auto operator==(const ClassPropertyRef&) const -> bool = default;
-};
-
-struct LoopVarRef {
-  StructuralHops hops;
-  LoopVarDeclId loop_var;
-
-  auto operator==(const LoopVarRef&) const -> bool = default;
 };
 
 // A reference to a `with`-clause iteration value (LRM 7.12.4), named by the

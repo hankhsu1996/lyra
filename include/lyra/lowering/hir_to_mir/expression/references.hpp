@@ -20,9 +20,7 @@ auto LowerHirPrimaryExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::Primary& p,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
-// Structural-context primary lowering. Reads `frame.loop_var_mode` for the
-// `LoopVarRef` arm to choose between procedural-induction and
-// structural-param resolution.
+// Structural-context primary lowering.
 auto LowerHirPrimaryExprStructural(
     const StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::Primary& p, mir::TypeId result_type) -> diag::Result<mir::Expr>;

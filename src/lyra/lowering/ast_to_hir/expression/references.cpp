@@ -95,22 +95,6 @@ auto LowerNamedValueProc(
         *type_id, span);
   }
 
-  if (sym.kind == slang::ast::SymbolKind::Variable ||
-      sym.kind == slang::ast::SymbolKind::Parameter) {
-    const auto& value_sym = sym.as<slang::ast::ValueSymbol>();
-    if (auto loop_binding = module.LookupLoopVarBinding(value_sym)) {
-      const auto hops = frame.HopsTo(loop_binding->home_frame);
-      if (!hops.has_value()) {
-        throw InternalError(
-            "LowerNamedValueProc: loop-var binding home frame is not on the "
-            "current scope stack");
-      }
-      return hir::MakeRefExpr(
-          hir::LoopVarRef{.hops = *hops, .loop_var = loop_binding->loop_var_id},
-          loop_binding->type, span);
-    }
-  }
-
   if (sym.kind == slang::ast::SymbolKind::Parameter) {
     auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
@@ -342,21 +326,6 @@ auto LowerNamedValueStructural(
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return MakeEnumValueExpr(
         sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
-  }
-  if (sym.kind == slang::ast::SymbolKind::Variable ||
-      sym.kind == slang::ast::SymbolKind::Parameter) {
-    const auto& value_sym = sym.as<slang::ast::ValueSymbol>();
-    if (auto loop_binding = module.LookupLoopVarBinding(value_sym)) {
-      const auto hops = frame.HopsTo(loop_binding->home_frame);
-      if (!hops.has_value()) {
-        throw InternalError(
-            "LowerNamedValueStructural: loop-var binding home frame is not on "
-            "the current scope stack");
-      }
-      return hir::MakeRefExpr(
-          hir::LoopVarRef{.hops = *hops, .loop_var = loop_binding->loop_var_id},
-          loop_binding->type, span);
-    }
   }
   if (sym.kind == slang::ast::SymbolKind::Parameter) {
     auto type_id = module.InternType(*named.type, span);

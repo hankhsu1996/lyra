@@ -1,9 +1,7 @@
 #pragma once
 
 #include <optional>
-#include <span>
 #include <unordered_map>
-#include <vector>
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
@@ -37,8 +35,7 @@ namespace lyra::lowering::ast_to_hir {
 class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
-      ModuleLowerer& module, const slang::ast::Scope& slang_scope,
-      std::vector<ScopeEntryLoopVarBinding> entry_loop_var_bindings = {});
+      ModuleLowerer& module, const slang::ast::Scope& slang_scope);
 
   // Stack-allocates the output `hir::StructuralScope`, walks every member of
   // `slang_scope_` into it, and returns it. `parent_frame` is the caller's walk
@@ -89,10 +86,10 @@ class StructuralScopeLowerer {
   auto PopulateContinuousAssignMember(
       const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
       -> diag::Result<void>;
-  auto PopulateLoopGenerateMember(
+  auto PopulateGenerateArrayMember(
       const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
       -> diag::Result<void>;
-  auto PopulateIfOrCaseGenerateMember(
+  auto PopulateGenerateBlockMember(
       const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateInstanceMember(
@@ -107,21 +104,17 @@ class StructuralScopeLowerer {
   auto LowerContinuousAssign(
       const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
       -> diag::Result<hir::ContinuousAssign>;
-  auto BuildIfGenerate(
-      std::span<const slang::ast::GenerateBlockSymbol* const> siblings,
-      WalkFrame frame) -> diag::Result<hir::Generate>;
-  auto BuildCaseGenerate(
-      std::span<const slang::ast::GenerateBlockSymbol* const> siblings,
-      WalkFrame frame) -> diag::Result<hir::Generate>;
-  auto BuildLoopGenerate(
+  auto BuildResolvedGenerateFromArray(
       const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
+      -> diag::Result<hir::Generate>;
+  auto BuildResolvedGenerateFromBlock(
+      const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
       -> diag::Result<hir::Generate>;
 
   // Facts.
   ModuleLowerer* module_;
   const slang::ast::Scope* slang_scope_;
   ScopeFrameId frame_;
-  std::vector<ScopeEntryLoopVarBinding> entry_loop_var_bindings_;
   // The internal variables of this body's `ref` / `const ref` ports, keyed by
   // symbol; built once at construction from the module body's port list, empty
   // for a scope (generate block) that declares no ports.
