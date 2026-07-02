@@ -12,7 +12,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/extern_up.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
@@ -123,14 +122,11 @@ auto Scope::HierarchicalPath() const -> lyra::value::String {
 
 void Scope::Resolve() {
   // The whole tree is constructed before resolution runs, so every ancestor and
-  // the full parent chain exist when an ExternUp member relocates by climbing,
-  // and every child exists when this scope binds a child's `ref` port. The walk
-  // is top-down, so a parent binds a child's reference before the child (or its
-  // own children) forwards it onward.
+  // the full parent chain exist when this scope's `ResolveState` walks the
+  // route of each cross-instance reference it owns. The walk is top-down, so a
+  // parent binds a child's `ref` port before the child (or its own children)
+  // forwards it onward.
   ResolveState();
-  for (ExternBase* member : externs_) {
-    member->Relocate();
-  }
   ForEachChild([](Scope& child) { child.Resolve(); });
 }
 
@@ -142,10 +138,6 @@ void Scope::Initialize() {
 void Scope::Activate() {
   CreateProcesses();
   ForEachChild([](Scope& child) { child.Activate(); });
-}
-
-void Scope::RegisterExtern(ExternBase* member) {
-  externs_.push_back(member);
 }
 
 auto Scope::ResolveVisibleChild(

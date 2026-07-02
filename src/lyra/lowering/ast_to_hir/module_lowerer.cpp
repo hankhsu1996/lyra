@@ -151,7 +151,7 @@ auto TargetNetType(const slang::ast::ValueSymbol& target)
 
 auto ModuleLowerer::MapOrGetCrossUnitRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
+    hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
     hir::TypeId type) -> hir::CrossUnitRefId {
   auto& frame_dedup = cross_unit_ref_dedup_[slot_owner_frame];
   if (const auto it = frame_dedup.find(&target); it != frame_dedup.end()) {
@@ -196,7 +196,7 @@ auto ModuleLowerer::TakeCrossUnitRefsForFrame(ScopeFrameId slot_owner_frame)
 
 auto ModuleLowerer::MakeCrossUnitMemberRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
+    hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
     hir::TypeId type, diag::SourceSpan span) -> hir::Expr {
   const hir::CrossUnitRefId slot = MapOrGetCrossUnitRef(
       target, slot_owner_frame, std::move(head), std::move(path), type);

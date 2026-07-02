@@ -347,7 +347,6 @@ auto RenderScopeHeaderFile(
   out += "#include <vector>\n";
   out += "#include \"lyra/runtime/coroutine.hpp\"\n";
   out += "#include \"lyra/runtime/delay.hpp\"\n";
-  out += "#include \"lyra/runtime/extern_up.hpp\"\n";
   out += "#include \"lyra/runtime/file_table.hpp\"\n";
   out += "#include \"lyra/runtime/finish.hpp\"\n";
   out += "#include \"lyra/runtime/fork.hpp\"\n";

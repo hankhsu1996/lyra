@@ -94,7 +94,6 @@ auto Type::Kind() const -> TypeKind {
           [](const VectorType&) { return TypeKind::kVector; },
           [](const TupleType&) { return TypeKind::kTuple; },
           [](const UnionType&) { return TypeKind::kUnion; },
-          [](const ExternalRefType&) { return TypeKind::kExternalRef; },
           [](const ObservableType&) { return TypeKind::kObservable; },
           [](const ResolvedType&) { return TypeKind::kResolved; },
           [](const DriverType&) { return TypeKind::kDriver; },
@@ -157,7 +156,6 @@ auto AsUniquePointee(const CompilationUnit& unit, TypeId type)
 
 auto IsObservableCellType(const Type& ty) -> bool {
   return std::holds_alternative<ObservableType>(ty.data) ||
-         std::holds_alternative<ExternalRefType>(ty.data) ||
          std::holds_alternative<RefType>(ty.data) ||
          std::holds_alternative<ResolvedType>(ty.data);
 }
@@ -165,9 +163,6 @@ auto IsObservableCellType(const Type& ty) -> bool {
 auto ObservableInnerValueType(const Type& ty) -> TypeId {
   if (const auto* ob = std::get_if<ObservableType>(&ty.data)) {
     return ob->value;
-  }
-  if (const auto* er = std::get_if<ExternalRefType>(&ty.data)) {
-    return er->element;
   }
   if (const auto* rf = std::get_if<RefType>(&ty.data)) {
     return rf->pointee;

@@ -46,7 +46,6 @@ enum class TypeKind {
   kVector,
   kTuple,
   kUnion,
-  kExternalRef,
   kObservable,
   kResolved,
   kDriver,
@@ -464,21 +463,6 @@ struct DriverType {
   auto operator==(const DriverType&) const -> bool = default;
 };
 
-// An upward cross-unit reference's storage type: a wrapper around `element`
-// that the runtime relocates at the bind step. The wrapper exposes its
-// per-reference state (the climb shape, the descent path, the leaf signal
-// name) through method calls (`BindRoot`, `BindVisibleChild`); MIR carries
-// no per-reference data in the type itself. The construction state is
-// emitted in the constructor body as ordinary `CallExpr` against one of
-// those methods, with `StringLiteral` / `ArrayLiteralExpr` primitives for
-// the arguments. The type carries only the classification (this member is an
-// upward extern reference of `element`).
-struct ExternalRefType {
-  TypeId element;
-
-  auto operator==(const ExternalRefType&) const -> bool = default;
-};
-
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, WildcardIndexType, StringType, StringViewType,
@@ -487,8 +471,7 @@ using TypeData = std::variant<
     InstanceType, GenScopeType, ProceduralStorageScopeType, ServicesType,
     FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
     PointerType, ManagedRefType, VectorType, TupleType, UnionType,
-    ExternalRefType, ObservableType, ResolvedType, DriverType,
-    ClosureRecordType>;
+    ObservableType, ResolvedType, DriverType, ClosureRecordType>;
 
 struct Type {
   TypeData data;
@@ -521,12 +504,11 @@ using ChildScope = std::variant<GenerateScopeChild, ModuleInstanceChild>;
     -> std::optional<ChildScope>;
 
 // True for storage forms that expose the observable-cell surface
-// (`Get` / `Set` / `Mutate`): the explicit `ObservableType` wrapper and the
-// intrinsic `ExternalRefType` (upward hierarchical reference).
+// (`Get` / `Set` / `Mutate`): the `ObservableType` wrapper, a `RefType`
+// procedural reference, and a net's `ResolvedType` cell.
 [[nodiscard]] auto IsObservableCellType(const Type& ty) -> bool;
 
-// The inner value type of an observable storage wrapper -- the `value` of
-// an `ObservableType`, the `element` of an `ExternalRefType`.
+// The inner value type of an observable storage wrapper.
 [[nodiscard]] auto ObservableInnerValueType(const Type& ty) -> TypeId;
 
 }  // namespace lyra::mir

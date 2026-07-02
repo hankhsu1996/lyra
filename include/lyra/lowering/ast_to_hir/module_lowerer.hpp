@@ -178,7 +178,7 @@ class ModuleLowerer {
   // frame; for every other shape the slot owner is also the head's owner.
   auto MapOrGetCrossUnitRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
+      hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
       hir::TypeId type) -> hir::CrossUnitRefId;
   auto TakeCrossUnitRefsForFrame(ScopeFrameId slot_owner_frame)
       -> std::vector<hir::CrossUnitRefDecl>;
@@ -197,7 +197,7 @@ class ModuleLowerer {
   // slot (see `MapOrGetCrossUnitRef`).
   auto MakeCrossUnitMemberRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
+      hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
       hir::TypeId type, diag::SourceSpan span) -> hir::Expr;
 
   // Translates slang-side reads to HIR SensitivityEntries via this module's

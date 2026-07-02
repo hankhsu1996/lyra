@@ -36,12 +36,10 @@ Two HIR-to-MIR lowering sites are immediately reshaped to use the new primitive:
    render path stops prepending `&`.
 
 2. **Sensitivity wait leaves** -- the leaf carries an explicit observable-pointer expression chosen
-   by lowering, one of three shapes by the leaf's MIR type:
+   by lowering, one of two shapes by the leaf's MIR type:
    - Plain value member (`ObservableType<T>`): `AddressOfExpr(MemberAccess(self, member))`.
    - Borrowed-pointer slot (`PointerType{kBorrowed}`, the cross-unit-ref case): bare `MemberAccess`
-     -- the slot already holds the pointer.
-   - `ExternalRefType` member: `CallExpr(BuiltinFn::kAsObservable, [MemberAccess(self, member)])` --
-     the runtime resolves the upward reference to its current observable.
+     -- the slot already holds the sealed pointer.
 
 The render-side type-kind dispatch (`RenderSensitivityRefPtr`) disappears. Render walks the
 expression tree the lowering already shaped.
@@ -104,10 +102,9 @@ structural fact explicit.
   canonicalization); the LIR / LLVM backend emits a GEP-style pointer computation. Both reach the
   same emitted shape mechanically.
 
-- The sensitivity-leaf type-kind switch (`RenderSensitivityRefPtr`) is gone. The three
-  observable-pointer shapes (`AddressOf(MemberAccess)`, bare `MemberAccess`,
-  `Call(kAsObservable, ...)`) are chosen at lowering, stored as an `ExprId` on `SensitivityRead`,
-  and rendered through the ordinary expression path.
+- The sensitivity-leaf type-kind switch (`RenderSensitivityRefPtr`) is gone. The two
+  observable-pointer shapes (`AddressOf(MemberAccess)`, bare `MemberAccess`) are chosen at lowering,
+  stored as an `ExprId` on `SensitivityRead`, and rendered through the ordinary expression path.
 
 - A future audit of the `RuntimeNavCallee::kGetSignal` `void*` -> `static_cast<Var<T>*>` injection
   is now scoped: the right fix is to make the runtime API return the typed pointer (eliminating the

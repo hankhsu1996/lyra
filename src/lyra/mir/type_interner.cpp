@@ -105,8 +105,6 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           }
         } else if constexpr (std::is_same_v<T, ObservableType>) {
           HashId(seed, t.value);
-        } else if constexpr (std::is_same_v<T, ExternalRefType>) {
-          HashId(seed, t.element);
         } else if constexpr (std::is_same_v<T, ResolvedType>) {
           HashId(seed, t.value);
         } else if constexpr (std::is_same_v<T, DriverType>) {

@@ -213,23 +213,16 @@ enum class BuiltinFn : std::uint16_t {
   // termination as a fatal error so the engine returns a non-zero exit code.
   kFinish,
   kFatalFinish,
-  // Resolves an `ExternUp<T>` member into a borrowed pointer to the
-  // observable cell it currently refers to. Used by sensitivity-leaf
-  // lowering so the wait expression carries an explicit observable handle
-  // rather than letting the backend derive one from the member's type.
-  kAsObservable,
-  // Per-reference initialization of an `ExternUp<T>` member. `kBindRoot`
-  // installs the `$root` anchor and the leaf signal name; `kBindVisibleChild`
-  // installs the canonical-name climb start (head name + head indices) and
-  // the leaf signal. `kAddSuffixStep` appends one descent step
-  // (`name, indices`) below the anchor; emitted once per intermediate hop in
-  // the descent path, in left-to-right order. All three are instance methods
-  // on the member; their arguments are flat MIR primitives (string literals,
-  // integer-array literals, self ref) so MIR carries the per-reference
-  // symbol without learning the wrapper's internal anchor shape.
-  kBindVisibleChild,
-  kBindRoot,
-  kAddSuffixStep,
+  // Ancestor-scope resolution for a hierarchical reference whose route starts
+  // above the referrer (LRM 23.6 / 23.8). Called once per reference in the
+  // resolve phase against the referrer's own scope handle (`args[0]`).
+  // `kResolveRoot` climbs to the parent-less `$root` anchor; the descent
+  // suffix (`kGetChild` / `kGetSignal`) starts strictly below it.
+  // `kResolveVisibleChild` walks the enclosing chain and matches a child by
+  // its canonical instance name and per-axis index (`args[1]`, `args[2]`);
+  // the descent suffix starts below the matched child.
+  kResolveRoot,
+  kResolveVisibleChild,
   // By-name scope navigation: a constructor walks a sibling unit's
   // interface, looks up an owned child by name (and per-dimension index),
   // looks up a signal by name, or attaches a freshly-built child into its

@@ -137,10 +137,10 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 }
 
 // Reach the storage cell of a member: `MemberAccess(self, member)`.
-// `Expr.type` is the var's declared MIR type -- a wrapper
-// (`ObservableType` / `ExternalRefType`) for observable storage, the plain
-// value type otherwise. The dispatcher decides whether to wrap the result
-// in an `ObservableMethod{kGet}` call to unwrap to a value.
+// `Expr.type` is the var's declared MIR type -- an `ObservableType` wrapper
+// for observable storage, the plain value type otherwise. The dispatcher
+// decides whether to wrap the result in an `ObservableMethod{kGet}` call to
+// unwrap to a value.
 auto LowerStructuralDataObjectRefExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::StructuralDataObjectRef& m) -> mir::Expr {
@@ -194,15 +194,15 @@ auto LowerCrossUnitVarRefExpr(
   const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
   const mir::ExprId self_ref =
       frame.current_block->exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
-  const auto* ptr = std::get_if<mir::PointerType>(
-      &lowerer.Module().Unit().types.Get(meta.slot_type).data);
-  if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
-    const mir::ExprId pointer = frame.current_block->exprs.Add(
-        mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type));
-    return mir::Expr{
-        .data = mir::DerefExpr{.pointer = pointer}, .type = ptr->pointee};
-  }
-  return mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type);
+  // Every cross-unit reference slot is a borrowed pointer to the target's
+  // observable cell, filled once in the resolve phase; the read dereferences
+  // that pointer to reach the cell.
+  const auto& ptr = std::get<mir::PointerType>(
+      lowerer.Module().Unit().types.Get(meta.slot_type).data);
+  const mir::ExprId pointer = frame.current_block->exprs.Add(
+      mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type));
+  return mir::Expr{
+      .data = mir::DerefExpr{.pointer = pointer}, .type = ptr.pointee};
 }
 
 // LRM 7.12.4: a with-clause iteration reference reads the named clause's

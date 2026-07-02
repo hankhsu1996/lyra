@@ -25,7 +25,6 @@
 #include "lyra/runtime/diagnostic.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/engine.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/event.hpp"              // IWYU pragma: keep
-#include "lyra/runtime/extern_up.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/file_table.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/finish.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/fork.hpp"               // IWYU pragma: keep
