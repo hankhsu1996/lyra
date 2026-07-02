@@ -221,11 +221,6 @@ auto RenderTypeAsCpp(
             }
             return std::format("lyra::value::Union<{}>", inners);
           },
-          [&](const mir::ExternalRefType& e) -> std::string {
-            return std::format(
-                "lyra::runtime::ExternUp<{}>",
-                RenderTypeAsCpp(unit, owner_class, e.element));
-          },
           [&](const mir::ObservableType& o) -> std::string {
             return std::format(
                 "lyra::runtime::Var<{}>",

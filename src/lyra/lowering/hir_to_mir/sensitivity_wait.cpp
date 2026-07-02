@@ -17,7 +17,6 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/value_ref.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -39,10 +38,11 @@ auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
 
 // Selects the observable-pointer expression for one sensitivity leaf, given
 // the lowered MIR member ref and its slot type. Adds the chosen expression
-// (and any sub-expressions it needs) to `block` and returns its id. The
-// three cases mirror the runtime's three storage shapes for an observable:
-// upward-ref slot (needs `AsObservable` resolution), pre-resolved borrowed
-// pointer (already an observable*), and a directly owned cell (address-of).
+// (and any sub-expressions it needs) to `block` and returns its id. The two
+// cases mirror the runtime's two storage shapes for an observable: a
+// pre-resolved borrowed pointer (a cross-unit reference slot filled in the
+// resolve phase, or another sealed pointer already at hand) is used as-is,
+// and a directly owned cell wraps under `AddressOfExpr`.
 auto BuildObservablePtrExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     mir::EnclosingHops hops, mir::MemberId var) -> mir::ExprId {
@@ -51,18 +51,6 @@ auto BuildObservablePtrExpr(
   const mir::ExprId member_access_id =
       block.exprs.Add(BuildStructuralMemberAccessExpr(frame, unit, hops, var));
   const auto& field_type_data = unit.types.Get(field_type).data;
-
-  if (std::holds_alternative<mir::ExternalRefType>(field_type_data)) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kAsObservable},
-                    .arguments = {member_access_id}},
-            .type = field_type});
-  }
 
   if (const auto* ptr = std::get_if<mir::PointerType>(&field_type_data);
       ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {

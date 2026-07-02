@@ -18,7 +18,6 @@
 namespace lyra::runtime {
 
 class RuntimeServices;
-class ExternBase;
 
 // Returned by a scope that declares no timescale of its own (the synthetic
 // `$root`). The engine's design-global precision minimum ignores it, so a
@@ -125,11 +124,6 @@ class Scope {
   // suffix is strictly below `$root`.
   [[nodiscard]] auto ResolveRoot() -> Scope*;
 
-  // A wrapper-typed cross-unit member registers itself here at its bind call;
-  // the resolve phase relocates all registered members once the whole tree
-  // exists.
-  void RegisterExtern(ExternBase* member);
-
   // The scope's declared time precision as a power of ten (LRM Table 20-2).
   // A scope that declares a timescale overrides this; the base returns the
   // unspecified sentinel. The engine takes the minimum across the tree to fix
@@ -139,16 +133,24 @@ class Scope {
   }
 
   // The post-construction elaboration phases, each a top-down walk over the
-  // whole subtree. Services and structure are already wired in the constructor;
-  // these install behavior that needs the whole tree to exist. The engine runs
-  // them in order across the design: every scope resolves, then every scope
-  // initializes, then every scope activates.
+  // whole subtree. Services and structure are already wired in the
+  // constructor; these install behavior that needs the whole tree to exist.
+  // The engine drives them in order across the whole design -- every scope
+  // resolves, then every scope initializes, then every scope activates -- and
+  // the boundary between phases is a global barrier: no scope's Initialize
+  // observes any Resolve mid-flight, and no Activate runs before every scope
+  // has initialized.
   //
-  // Resolve relocates registered `ExternUp` members (cross-tree references) and
-  // attaches cross-instance drivers. Initialize runs variable initializers and
-  // seeds driver contributions, after every reference across the design is
-  // resolved, so an initializer observes connected and bound values. Activate
-  // creates this scope's processes, after initialization.
+  // Resolve executes every cross-instance route the scope owns, filling each
+  // borrowed-pointer slot with the target's sealed endpoint (an observable
+  // cell for a variable / net reference, an alias for a `ref` port), and
+  // attaches cross-instance drivers. The frontend has already proved every
+  // route has a determinate target, so Resolve is total: an unfilled route or
+  // type mismatch is a compiler-invariant violation and surfaces at Resolve,
+  // not deferred to a hot-path read. Initialize runs variable initializers
+  // and seeds driver contributions; every reference across the design is
+  // sealed before it starts, so an initializer observes only connected and
+  // bound values. Activate creates this scope's processes.
   void Resolve();
   void Initialize();
   void Activate();
@@ -223,10 +225,6 @@ class Scope {
   std::vector<std::unique_ptr<RuntimeProcess>> processes_;
   // Empty std::function == clean slot; no parallel dirty bitmap needed.
   std::vector<std::function<void()>> observed_pending_;
-  // Non-owning links to this scope's ExternUp members; relocated in the resolve
-  // phase once the whole tree exists. The members are owned by the derived
-  // class.
-  std::vector<ExternBase*> externs_;
 };
 
 // A module / interface / program instance: an owned child built from another

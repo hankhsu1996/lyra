@@ -1,6 +1,6 @@
 // An upward hierarchical reference written inside a generate block resolves the
-// same as one in the module body: its ExternUp member rides the generate-scope
-// class and climbs that object's own parent chain at Bind (LRM 23.8). Covers a
+// same as one in the module body: its cross-unit reference slot rides the
+// generate-scope class and its route runs at resolve time (LRM 23.8). Covers a
 // conditional block, a loop block, several blocks referencing the same ancestor
 // signal (each gets its own slot in its own scope), and an upward write.
 module Leaf;

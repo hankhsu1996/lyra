@@ -147,11 +147,7 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       through `<sibling_label>.<member>` resolves through this path; sibling-of-grandparent at any
       depth resolves through the same path. The frontend canonicalizes the head's identity (LRM 23.9
       instance-name precedence applies at slang's resolution step), so the runtime walks to the
-      canonical scope by name. The per-reference plan (which climb shape, the canonical head name
-      plus any indices, the descent suffix, the leaf signal) emits as ordinary `CallExpr` statements
-      against the wrapper member in the constructor body (`BindVisibleChild` / `BindRoot` followed
-      by zero or more `AddSuffixStep`), carrying only flat MIR primitives -- the wrapper type itself
-      carries only the element type.
+      canonical scope by name.
 - [x] D2e -- A hierarchical reference whose head is a named procedural block (a named `begin`/`end`,
       LRM 9.3.5 / 23.9). A named block whose subtree owns hierarchy-addressable persistent storage
       is a first-class structural declaration of the compilation unit: it materializes as a child

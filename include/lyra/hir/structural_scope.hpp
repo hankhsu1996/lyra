@@ -43,17 +43,18 @@ struct InstanceMemberId {
       -> std::strong_ordering = default;
 };
 
-// One step of a cross-unit reference's downward navigation past the head: a
-// named member (`->name`) or an instance-array index (`[index]`). A dotted path
-// is a sequence of these; `m.l.x` is two member hops, `c[1].x` is an index hop
-// then a member hop.
-struct MemberHop {
+// One segment of a cross-unit reference's downward navigation past the head:
+// a named member (`.name`) with the per-dimension indices selecting an array
+// element on that name (`[i][j]`), if any. `m.l.x` is three segments each
+// with empty indices; `c[1].x` is `[{c, [1]}, {x, []}]`. Indices are always
+// attached to the segment they select on -- there is no orphan index step
+// separable from its name.
+struct PathSegment {
   std::string name;
+  std::vector<std::uint32_t> indices;
+
+  auto operator==(const PathSegment&) const -> bool = default;
 };
-struct IndexHop {
-  std::uint32_t index;
-};
-using PathStep = std::variant<MemberHop, IndexHop>;
 
 // Where a cross-unit reference starts its navigation. A downward reference
 // reaches into an owned child the referrer's own scope declares -- an
@@ -72,10 +73,13 @@ struct GenerateChildRef {
 // unit -- e.g. one generate block reading a signal in a sibling generate
 // block of their common ancestor. `child` identifies the head as one of
 // the owning scope's HIR-level identities; the install resolves it through
-// the enclosing class's owned-child binding table.
+// the enclosing class's owned-child binding table. `head_indices` selects an
+// element when the head is an instance / generate array; empty for a scalar
+// head.
 struct DownwardHead {
   StructuralHops hops = {};
   std::variant<InstanceMemberId, GenerateChildRef, ProceduralScopeId> child;
+  std::vector<std::uint32_t> head_indices;
 };
 
 // Where an upward cross-unit reference's navigation starts (LRM 23.8 / 23.9).
@@ -98,19 +102,21 @@ struct UpwardNamedHead {
 using CrossUnitRefHead =
     std::variant<DownwardHead, UpwardRootHead, UpwardNamedHead>;
 
-// A cross-unit reference resolved once at construction. `head` is where
-// navigation starts; `path` carries the shared navigation from the head down to
-// the referenced leaf, by name across the unit boundary; `type` is the
-// slang-resolved leaf data type. `target_net_type` is the target's net type
-// when the target is a net (LRM 6.7: the net type fixes how drivers resolve and
-// the undriven value), or empty when the target is a variable. Together they
-// determine the producer's actual cell -- a resolved net of that net type, or a
-// variable's observable cell -- which the realized cross-unit cell must match
-// so a read reaches the right access protocol. The slot is read / written /
-// observed through one stored direct reference.
+// A cross-unit reference resolved once, in the resolve phase after the
+// object tree is fully built. `head` is where navigation starts; `path`
+// carries the shared navigation from the head down to the referenced leaf,
+// one segment per named step (each with its own per-axis indices, if any);
+// `type` is the slang-resolved leaf data type. `target_net_type` is the
+// target's net type when the target is a net (LRM 6.7: the net type fixes
+// how drivers resolve and the undriven value), or empty when the target is
+// a variable. Together they determine the producer's actual cell -- a
+// resolved net of that net type, or a variable's observable cell -- which
+// the realized cross-unit cell must match so a read reaches the right
+// access protocol. The slot is read / written / observed through one
+// stored direct reference.
 struct CrossUnitRefDecl {
   CrossUnitRefHead head;
-  std::vector<PathStep> path;
+  std::vector<PathSegment> path;
   TypeId type;
   std::optional<NetType> target_net_type;
 };
@@ -141,7 +147,7 @@ struct PortCellEndpoint {
 };
 struct PortAliasEndpoint {
   CrossUnitRefHead head;
-  std::vector<PathStep> path;
+  std::vector<PathSegment> path;
   TypeId type;
 };
 using PortEndpoint = std::variant<PortCellEndpoint, PortAliasEndpoint>;

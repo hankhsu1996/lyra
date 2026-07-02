@@ -35,18 +35,20 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
       span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message));
 }
 
-// Records one instance's port connections as HIR. The instance is reached from
-// its owning scope by `head` then `index_prefix` (empty for a scalar instance,
-// one `IndexHop` per dimension for an array element); each port appends its own
-// member hop, so a connection is recorded the same way whether the instance
-// stands alone or sits at `c[i][j]` in an array. The child port is held as one
-// cross-unit reference and the connection verbatim with its direction;
-// HIR-to-MIR realizes it (LRM 23.3.3).
+// Records one instance's port connections as HIR. The instance is reached
+// from its owning scope by `head` with `element_indices` selecting the
+// element when the head is an instance array (empty for a scalar); each
+// port becomes one descent segment on the head, so a connection is recorded
+// the same way whether the instance stands alone or sits at `c[i][j]` in
+// an array. The child port is held as one cross-unit reference and the
+// connection verbatim with its direction; HIR-to-MIR realizes it
+// (LRM 23.3.3).
 auto ConnectElementPorts(
     StructuralScopeLowerer& scope, ModuleLowerer& module,
     const slang::ast::InstanceSymbol& inst, hir::DownwardHead head,
-    ScopeFrameId home_frame, const std::vector<hir::PathStep>& index_prefix,
+    ScopeFrameId home_frame, std::vector<std::uint32_t> element_indices,
     WalkFrame frame) -> diag::Result<void> {
+  head.head_indices = std::move(element_indices);
   const auto span = module.SourceMapper().PointSpanOf(inst.location);
 
   for (const auto* conn : inst.getPortConnections()) {
@@ -111,8 +113,9 @@ auto ConnectElementPorts(
       }
     }
 
-    std::vector<hir::PathStep> path = index_prefix;
-    path.emplace_back(hir::MemberHop{std::string{internal->name}});
+    std::vector<hir::PathSegment> path;
+    path.push_back(
+        hir::PathSegment{.name = std::string{internal->name}, .indices = {}});
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent cross-unit reference; a `ref` port is bound once in the
     // resolve phase, so it keeps only the by-name reach.
@@ -202,19 +205,19 @@ auto ConnectElementPorts(
   return {};
 }
 
-// Walks an instance array's elements, extending `index_prefix` by one
-// `IndexHop` per dimension, and records each leaf element's port connections.
-// slang distributes the connection per element (LRM 23.3.3.5), so each element
+// Walks an instance array's elements, extending `index_prefix` by one index
+// per dimension, and records each leaf element's port connections. slang
+// distributes the connection per element (LRM 23.3.3.5), so each element
 // carries its own already index-matched connection expressions; this only
 // routes each to the right cell.
 auto ConnectArrayElements(
     StructuralScopeLowerer& scope, ModuleLowerer& module,
     const slang::ast::InstanceArraySymbol& array, hir::DownwardHead head,
-    ScopeFrameId home_frame, const std::vector<hir::PathStep>& index_prefix,
+    ScopeFrameId home_frame, const std::vector<std::uint32_t>& index_prefix,
     WalkFrame frame) -> diag::Result<void> {
   for (std::uint32_t i = 0; i < array.elements.size(); ++i) {
-    std::vector<hir::PathStep> element_prefix = index_prefix;
-    element_prefix.emplace_back(hir::IndexHop{i});
+    std::vector<std::uint32_t> element_prefix = index_prefix;
+    element_prefix.push_back(i);
     const auto* element = array.elements[i];
     if (element->kind == slang::ast::SymbolKind::InstanceArray) {
       auto r = ConnectArrayElements(
@@ -225,7 +228,7 @@ auto ConnectArrayElements(
     }
     auto r = ConnectElementPorts(
         scope, module, element->as<slang::ast::InstanceSymbol>(), head,
-        home_frame, element_prefix, frame);
+        home_frame, std::move(element_prefix), frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
   return {};
