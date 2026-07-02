@@ -337,9 +337,22 @@ auto RenderCastExpr(
 // and a field id to a rendered field, so a new receiver kind is added here, not
 // at every access site.
 struct FieldAccess {
-  std::string_view name;
+  std::string name;
   bool through_receiver;
 };
+
+// The C++ name of a closure capture, distinct from the field's source name. A
+// capture is realized as a lambda capture and shares the lambda's scope with
+// the closure's per-invocation parameters and body locals, so its name must not
+// collide with a parameter -- a nested clause may capture an enclosing iterator
+// whose source name matches this closure's own iterator parameter -- nor with
+// another capture of the same source name. The field id disambiguates: it is
+// unique within the record and is a shape no source-level name carries. This
+// stays in the backend so the MIR field name remains the plain source name.
+auto ClosureCaptureCppName(
+    const mir::ClosureRecord& record, mir::MemberId member) -> std::string {
+  return std::format("{}_c{}", record.fields.Get(member).name, member.value);
+}
 
 auto ResolveFieldAccess(const ScopeView& view, const mir::MemberAccessExpr& m)
     -> FieldAccess {
@@ -362,10 +375,8 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::MemberAccessExpr& m)
   const auto& pointee_data = view.Unit().types.Get(pointee).data;
   if (const auto* rec = std::get_if<mir::ClosureRecordType>(&pointee_data)) {
     return FieldAccess{
-        .name = view.Unit()
-                    .GetClosureRecord(rec->record_id)
-                    .fields.Get(m.member.var)
-                    .name,
+        .name = ClosureCaptureCppName(
+            view.Unit().GetClosureRecord(rec->record_id), m.member.var),
         .through_receiver = false};
   }
   return FieldAccess{
@@ -386,7 +397,7 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::MemberAccessExpr& m) -> std::string {
             const FieldAccess field = ResolveFieldAccess(view, m);
             if (!field.through_receiver) {
-              return std::string(field.name);
+              return field.name;
             }
             return std::format(
                 "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);
@@ -583,7 +594,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& closure)
       const mir::MemberDecl& field = record.fields.Get(member);
       params_text += std::format(
           "{} {}", RenderTypeAsCpp(view.Unit(), view.Class(), field.type),
-          field.name);
+          ClosureCaptureCppName(record, member));
       args_text +=
           RenderExpr(view, view.Expr(closure.field_inits[member.value].value));
       first = false;
@@ -596,9 +607,8 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& closure)
   bool first_capture = true;
   for (const mir::MemberId member : record.layout) {
     if (!first_capture) captures_text += ", ";
-    const mir::MemberDecl& field = record.fields.Get(member);
     captures_text += std::format(
-        "{} = {}", field.name,
+        "{} = {}", ClosureCaptureCppName(record, member),
         RenderExpr(view, view.Expr(closure.field_inits[member.value].value)));
     first_capture = false;
   }
@@ -825,7 +835,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::MemberAccessExpr& m) -> std::string {
             const FieldAccess field = ResolveFieldAccess(view, m);
             if (!field.through_receiver) {
-              return std::string(field.name);
+              return field.name;
             }
             return std::format(
                 "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);

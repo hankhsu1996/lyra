@@ -68,7 +68,7 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   // construction site (a block of the parent), then add a captured field here.
   const BodyBindingRef parent_ref = parent_->EnsureCarrier(origin);
   const mir::TypeId parent_type = parent_->TypeOf(parent_ref);
-  const std::string base_name = parent_->NameOf(parent_ref);
+  const std::string name = parent_->NameOf(parent_ref);
   const mir::ExprId read = capture_site_->exprs.Add(
       parent_->MakeReadExpr(parent_ref, *capture_site_));
 
@@ -79,16 +79,8 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
     field_type = capture_site_->exprs.Get(source).type;
   }
 
-  // The field's C++ name shares the lambda's scope with the per-invocation
-  // parameters and body locals, so it must not collide with them: a nested
-  // clause can capture an enclosing iterator whose source name (e.g. `index`)
-  // matches this closure's own auto-declared iterator parameter. Suffix the
-  // source name with the field id -- unique within the record, and a shape no
-  // parameter carries -- so the capture and the parameter stay distinct.
-  const auto field_index = static_cast<std::uint32_t>(record_->fields.size());
-  std::string field_name = base_name + "_c" + std::to_string(field_index);
-  const mir::MemberId member = record_->fields.Add(
-      mir::MemberDecl{.name = std::move(field_name), .type = field_type});
+  const mir::MemberId member =
+      record_->fields.Add(mir::MemberDecl{.name = name, .type = field_type});
   captures_.push_back(CaptureEntry{.key = origin, .source = source});
   const BodyBindingRef result{.ref = member};
   available_.insert_or_assign(origin, result);
