@@ -45,13 +45,13 @@ the statement shape is uniform either way. The `mir::MemberDecl.initializer` fie
 member declaration carries name and type only.**
 
 Vars whose type has no value-assignment semantics -- owned children (pointer, vector), object
-companions, upward references (`ExternalRefType`), and named events -- do not receive an init
-statement. Their declaration shape itself fixes the field at construction:
+companions, cross-instance reference slots (borrowed pointers filled in Resolve), and named events
+-- do not receive an init statement. Their declaration shape itself fixes the field at construction:
 
 - Pointer / vector / object / external-unit-object fields default to their C++ default (null
   pointer, empty container).
-- An `ExternalRefType` field is constructed at the declaration site with the symbol payload
-  (ancestor, by-name tail, leaf signal) and relocates at Bind.
+- A cross-instance reference slot is a borrowed pointer left null at construction and filled in the
+  Resolve phase by the route the reference names (`hierarchical-reference-routing.md`).
 - A `NamedEvent` field is default-constructed; the event identity is fixed for the lifetime of the
   scope and never reassigned.
 
@@ -91,12 +91,10 @@ For an assignment statement in the constructor body to work, the C++ runtime mus
 that were previously deferred:
 
 1. **`Var<T>::Set` needs a valid `RuntimeServices` reference.** Previously `Scope::services_` was
-   null until `Engine::BindDesign` ran, so a constructor-body `Set` threw
-   `Scope::Services: scope not bound`. The constructor now takes `RuntimeServices& services` as a
-   third parameter and wires `services_` at construction. `Scope::Bind` no longer takes a services
-   argument; it only relocates `ExternUp` members, creates processes, and recurses. The generated
-   host `main.cpp` reflects this: `Engine` is constructed first, then each top instance receives
-   `engine.Services()` at construction.
+   null until the tree bound, so a constructor-body `Set` threw `Scope::Services: scope not bound`.
+   The constructor now takes `RuntimeServices& services` as a third parameter and wires `services_`
+   at construction. The generated host `main.cpp` reflects this: `Engine` is constructed first, then
+   each top instance receives `engine.Services()` at construction.
 2. **`Var<T>` must be default-constructible.** A `Var<PackedArray> a{};` value-initializes the inner
    `T` through `T value_{}`. `PackedArray`, `UnpackedArray<T>`, and `DynamicArray<T>` gain default
    constructors that produce a 0-bit unestablished shape; the cell installs its declared type at
@@ -119,12 +117,12 @@ the constructor function, with no NSDMI analogue.
 
 ### Why filter non-assignable types out of the init statement
 
-Owned children, upward references, and named events have no value-assignment operation:
+Owned children, cross-instance reference slots, and named events have no value-assignment operation:
 
 - An owned child is constructed by `ConstructExternalUnitStmt` or generate-construction stmts later
   in `root_stmts`, with its own arguments.
-- An `ExternalRefType` is constructed at the declaration site with symbol arguments that have no
-  value-assignment counterpart.
+- A cross-instance reference slot is a borrowed pointer written once by the resolve-phase route
+  code, never through `AssignExpr` in the constructor.
 - A `NamedEvent` is non-copyable and non-movable by design (LRM 15.5; the runtime takes pointers
   into the event object); assigning over it would require a copy/move operator the type does not
   provide.
@@ -133,7 +131,7 @@ The HIR-side declaration for these types is the equivalent of "this field exists
 construction-time identity"; there is no later "set its value" semantic to encode. Emitting an
 `AssignExpr` for them would either fail to compile (events) or invent a no-op write (containers,
 pointers). The filter is structural: any var whose MIR type is in the set
-`{Pointer, Vector, ExternalRef, Object, ExternalUnitObject, Event}` does not get an init statement.
+`{Pointer, Vector, Object, ExternalUnitObject, Event}` does not get an init statement.
 
 ## Rejected alternatives
 

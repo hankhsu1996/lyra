@@ -293,9 +293,6 @@ class MirDumper {
               }
               return std::format("Union(elems=[{}])", elements);
             },
-            [](const ExternalRefType& e) -> std::string {
-              return std::format("ExternalRef(elem=Type[{}])", e.element.value);
-            },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);
             },

@@ -13,11 +13,11 @@ class StructuralScopeLowerer;
 // Materialises a mir::SensitivityWaitStmt from a HIR sensitivity entry list.
 // Lowering picks the observable-pointer expression per leaf so the backend
 // renders one stored expression rather than re-deriving the shape from the
-// leaf's type: a plain member becomes an `AddressOf(MemberAccess(...))`; a
-// borrowed-pointer slot (cross-unit referent) is the bare `MemberAccess`; an
-// upward `ExternalRef` member becomes a `Call(kAsObservable, ...)`. The
-// single convergence point for always_comb / always_latch (LRM 9.2.2.2.1)
-// and `@*` (LRM 9.4.2.2).
+// leaf's type: a plain member becomes an `AddressOf(MemberAccess(...))`, and
+// a borrowed-pointer slot (a cross-unit reference sealed in the resolve
+// phase, or another sealed pointer) is the bare `MemberAccess`. The single
+// convergence point for always_comb / always_latch (LRM 9.2.2.2.1) and `@*`
+// (LRM 9.4.2.2).
 auto MakeSensitivityWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer,

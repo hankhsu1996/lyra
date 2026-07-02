@@ -177,21 +177,28 @@ auto LowerHierarchicalValue(
   // head, path.back() is `target`, and each name selector is the resolved
   // symbol's canonical name. Carrying those selectors verbatim into the HIR
   // descent makes the runtime by-name navigation hit each scope by the same
-  // key the parent registered under.
+  // key the parent registered under. Index selectors on the head itself are
+  // extracted by the caller (into the head struct's `head_indices`) before
+  // `build_path` runs, so every path segment here starts with a name selector.
   const auto build_path =
       [&](std::span<const slang::ast::HierarchicalReference::Element> steps)
-      -> diag::Result<std::vector<hir::PathStep>> {
-    std::vector<hir::PathStep> path;
+      -> diag::Result<std::vector<hir::PathSegment>> {
+    std::vector<hir::PathSegment> path;
     path.reserve(steps.size());
     for (const auto& step : steps) {
       if (std::holds_alternative<std::string_view>(step.selector)) {
-        path.emplace_back(
-            hir::MemberHop{
-                std::string{std::get<std::string_view>(step.selector)}});
+        path.push_back(
+            hir::PathSegment{
+                .name = std::string{std::get<std::string_view>(step.selector)},
+                .indices = {}});
       } else if (std::holds_alternative<std::int32_t>(step.selector)) {
-        path.emplace_back(
-            hir::IndexHop{static_cast<std::uint32_t>(
-                std::get<std::int32_t>(step.selector))});
+        if (path.empty()) {
+          throw InternalError(
+              "build_path: index selector precedes any named segment; head "
+              "indices must be extracted by the caller before invoking");
+        }
+        path.back().indices.push_back(
+            static_cast<std::uint32_t>(std::get<std::int32_t>(step.selector)));
       } else {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -200,6 +207,23 @@ auto LowerHierarchicalValue(
       }
     }
     return path;
+  };
+
+  // Consumes the run of index selectors that immediately follows the head
+  // element; each such index selects a per-dimension element on the head
+  // itself (e.g. `g[2]` when `g` is an instance / generate array).
+  const auto extract_head_indices =
+      [](std::span<const slang::ast::HierarchicalReference::Element>&
+             suffix_steps) -> std::vector<std::uint32_t> {
+    std::vector<std::uint32_t> indices;
+    while (!suffix_steps.empty() && std::holds_alternative<std::int32_t>(
+                                        suffix_steps.front().selector)) {
+      indices.push_back(
+          static_cast<std::uint32_t>(
+              std::get<std::int32_t>(suffix_steps.front().selector)));
+      suffix_steps = suffix_steps.subspan(1);
+    }
+    return indices;
   };
 
   if (ref.isUpward()) {
@@ -211,31 +235,20 @@ auto LowerHierarchicalValue(
     // structural class that owns this member, including for references
     // written inside a generate block.
     hir::CrossUnitRefHead anchor;
-    std::span<const slang::ast::HierarchicalReference::Element> suffix_steps;
+    std::span<const slang::ast::HierarchicalReference::Element> suffix_steps =
+        ref.path.subspan(1);
     switch (head_sym.kind) {
       case slang::ast::SymbolKind::Instance:
       case slang::ast::SymbolKind::GenerateBlock: {
-        // Gather the head's per-dimension indices from the index selectors
-        // immediately following `path[0]`; the next name selector marks the
-        // start of the descent suffix.
-        hir::UpwardNamedHead named{
-            .head_name = std::string{head_sym.name}, .head_indices = {}};
-        std::size_t suffix_start = 1;
-        while (suffix_start < ref.path.size() &&
-               std::holds_alternative<std::int32_t>(
-                   ref.path[suffix_start].selector)) {
-          named.head_indices.push_back(
-              static_cast<std::uint32_t>(
-                  std::get<std::int32_t>(ref.path[suffix_start].selector)));
-          ++suffix_start;
-        }
-        anchor = std::move(named);
-        suffix_steps = ref.path.subspan(suffix_start);
+        std::vector<std::uint32_t> head_indices =
+            extract_head_indices(suffix_steps);
+        anchor = hir::UpwardNamedHead{
+            .head_name = std::string{head_sym.name},
+            .head_indices = std::move(head_indices)};
         break;
       }
       case slang::ast::SymbolKind::Root:
         anchor = hir::UpwardRootHead{};
-        suffix_steps = ref.path.subspan(1);
         break;
       default:
         return diag::Fail(
@@ -251,7 +264,10 @@ auto LowerHierarchicalValue(
         span);
   }
 
-  auto path = build_path(ref.path.subspan(1));
+  std::span<const slang::ast::HierarchicalReference::Element> suffix_steps =
+      ref.path.subspan(1);
+  std::vector<std::uint32_t> head_indices = extract_head_indices(suffix_steps);
+  auto path = build_path(suffix_steps);
   if (!path) return std::unexpected(std::move(path.error()));
 
   // Downward: the head is an owned child this unit's scope declares -- an
@@ -283,9 +299,11 @@ auto LowerHierarchicalValue(
         "on the current scope stack");
   }
   if (hops->value == 0) {
+    hir::DownwardHead head_at_home = binding->head;
+    head_at_home.head_indices = std::move(head_indices);
     return module.MakeCrossUnitMemberRef(
-        var, binding->home_frame, binding->head, std::move(*path), *type_id,
-        span);
+        var, binding->home_frame, std::move(head_at_home), std::move(*path),
+        *type_id, span);
   }
 
   // Sibling-of-ancestor: the head sits in an enclosing scope of the referrer.
@@ -307,6 +325,7 @@ auto LowerHierarchicalValue(
   }
   hir::DownwardHead enclosing_head = binding->head;
   enclosing_head.hops = *hops;
+  enclosing_head.head_indices = std::move(head_indices);
   return module.MakeCrossUnitMemberRef(
       var, frame.Current(), std::move(enclosing_head), std::move(*path),
       *type_id, span);

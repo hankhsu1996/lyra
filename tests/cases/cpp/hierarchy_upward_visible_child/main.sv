@@ -4,8 +4,8 @@
 //
 //   - Shallow sibling generate, slang-upward (block `a` reads `b.bx == 7`).
 //     `a` is declared before `b`, so slang's lexical resolution walks out
-//     to find `b`; the install rides the upward path (runtime climb-by-
-//     name through `ExternUp`).
+//     to find `b`; the install runs at resolve time and reaches the sibling
+//     scope through the runtime SDK's visible-child climb.
 //
 //   - Shallow sibling generate, slang-downward (block `b` reads
 //     `a.ax == 33`). `a` is already visible at `b`'s lexical resolution,

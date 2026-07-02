@@ -387,13 +387,15 @@ void EmitInstanceMemberConstruction(
   }
 }
 
-// Allocates one MIR member per cross-unit reference. Upward references take
-// the wrapper-typed ExternUp form whose per-reference state lands as ordinary
-// `CallExpr` statements in the constructor body. Downward references take a
-// borrowed-pointer slot the constructor fills by navigating from `self` once
-// the children are built. Both run before bodies so reads resolve to the
-// member; both record their MIR read target as a StructuralDataObjectRef to
-// that member, in HIR slot order.
+// Allocates one MIR member per cross-unit reference. Every reference -- upward
+// or downward, `$root`-anchored or named -- takes the same borrowed-pointer
+// slot: the pointee matches the producer's actual storage cell so a read or
+// drive reaches the right access protocol. A net producer owns a resolved
+// cell (`ResolvedType`); any other value-storage signal is wrapped in
+// `ObservableType` at its declaration so a write fires subscribers. The
+// cross-unit pointer must point at that same cell -- otherwise the C++
+// types mismatch. The route that fills each slot runs in the resolve phase,
+// after the whole object tree exists.
 void DeclareCrossUnitRefSlots(
     StructuralScopeLowerer& lowerer, mir::ClassShape& shape) {
   ModuleLowerer& module = lowerer.Module();
@@ -401,119 +403,27 @@ void DeclareCrossUnitRefSlots(
   std::uint32_t slot_index = 0;
   for (const auto& cu : hir_scope.cross_unit_refs) {
     std::string member_name = "xref" + std::to_string(slot_index++);
-    const bool is_upward =
-        std::holds_alternative<hir::UpwardRootHead>(cu.head) ||
-        std::holds_alternative<hir::UpwardNamedHead>(cu.head);
-    if (is_upward) {
-      if (cu.target_net_type.has_value()) {
+    if (cu.target_net_type.has_value()) {
+      const bool is_upward =
+          std::holds_alternative<hir::UpwardRootHead>(cu.head) ||
+          std::holds_alternative<hir::UpwardNamedHead>(cu.head);
+      if (is_upward) {
         throw InternalError(
             "DeclareCrossUnitRefSlots: an upward cross-unit reference to a net "
             "is not yet supported");
       }
-      // The member's type carries only the wrapped element; the
-      // per-reference navigation plan is emitted as ordinary `CallExpr`
-      // statements in the constructor body when the bind sweep runs.
-      const mir::TypeId leaf = module.TranslateType(cu.type);
-      const mir::TypeId ext_type =
-          module.Unit().types.Intern(mir::ExternalRefType{.element = leaf});
-      const mir::MemberId var = shape.members.Add(
-          mir::MemberDecl{.name = std::move(member_name), .type = ext_type});
-      lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = var}, ext_type);
-    } else {
-      // The pointee matches the producer's actual storage cell so a read or
-      // drive reaches the right access protocol. A net producer owns a resolved
-      // cell (`ResolvedType`); any other value-storage signal is wrapped in
-      // `ObservableType` at its declaration so a write fires subscribers. The
-      // cross-unit pointer must point at that same cell -- otherwise the C++
-      // types mismatch.
-      const mir::TypeId value = module.TranslateType(cu.type);
-      const mir::TypeId leaf =
-          cu.target_net_type.has_value()
-              ? module.Unit().types.Intern(mir::ResolvedType{.value = value})
-              : MaybeWrapObservable(module, value);
-      const mir::TypeId slot_type =
-          module.Unit().types.PointerTo(leaf, mir::PointerOwnership::kBorrowed);
-      const mir::MemberId slot = shape.members.Add(
-          mir::MemberDecl{.name = std::move(member_name), .type = slot_type});
-      lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = slot}, slot_type);
     }
+    const mir::TypeId value = module.TranslateType(cu.type);
+    const mir::TypeId leaf =
+        cu.target_net_type.has_value()
+            ? module.Unit().types.Intern(mir::ResolvedType{.value = value})
+            : MaybeWrapObservable(module, value);
+    const mir::TypeId slot_type =
+        module.Unit().types.PointerTo(leaf, mir::PointerOwnership::kBorrowed);
+    const mir::MemberId slot = shape.members.Add(
+        mir::MemberDecl{.name = std::move(member_name), .type = slot_type});
+    lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = slot}, slot_type);
   }
-}
-
-// Builds the resolve value for a downward reference: a chain of generic
-// navigation calls from the enclosing scope. The owned-child head and each
-// crossed member open a `GetChild(name, indices)`; the leaf signal is a
-// `GetSignal(name)` whose result type is the slot's borrowed-pointer cell type,
-// so render casts the untyped storage pointer mechanically. Per-dimension array
-// indices are ordinary integer-literal arguments, never bundled with the name.
-auto BuildDownwardNavValue(
-    ModuleLowerer& module, WalkFrame frame, const std::string& head_name,
-    const std::vector<hir::PathStep>& path, mir::TypeId slot_type,
-    mir::TypeId scope_ptr_type) -> mir::Expr {
-  mir::Block& ctor_block = *frame.current_block;
-  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
-  struct NavHop {
-    std::string name;
-    std::vector<mir::ExprId> indices;
-  };
-  std::vector<NavHop> hops;
-  hops.push_back(NavHop{.name = head_name, .indices = {}});
-  for (const auto& step : path) {
-    if (const auto* member = std::get_if<hir::MemberHop>(&step)) {
-      hops.push_back(NavHop{.name = member->name, .indices = {}});
-    } else {
-      const std::uint32_t index = std::get<hir::IndexHop>(step).index;
-      hops.back().indices.push_back(ctor_block.exprs.Add(
-          mir::MakeInt32Literal(
-              module.Unit().builtins.int32, static_cast<std::int64_t>(index))));
-    }
-  }
-  if (hops.size() < 2) {
-    throw InternalError(
-        "BuildDownwardNavValue: downward reference has no leaf signal past its "
-        "owned child");
-  }
-
-  const auto& builtins = module.Unit().builtins;
-  const auto string_literal = [&](const std::string& s) -> mir::ExprId {
-    return ctor_block.exprs.Add(
-        mir::Expr{
-            .data = mir::StringLiteral{.value = s}, .type = builtins.string});
-  };
-
-  mir::ExprId cur = ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
-  for (std::size_t i = 0; i + 1 < hops.size(); ++i) {
-    const mir::TypeId indices_type = module.Unit().types.Intern(
-        mir::UnpackedArrayType{
-            .element_type = builtins.int32, .size = hops[i].indices.size()});
-    const mir::ExprId indices_id = ctor_block.exprs.Add(
-        mir::Expr{
-            .data = mir::ArrayLiteralExpr{.elements = hops[i].indices},
-            .type = indices_type});
-    cur = ctor_block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{.target = support::BuiltinFn::kGetChild},
-                    .arguments =
-                        {cur, string_literal(hops[i].name), indices_id}},
-            .type = scope_ptr_type});
-  }
-  const mir::TypeId void_ptr_type = module.Unit().types.PointerTo(
-      builtins.void_type, mir::PointerOwnership::kBorrowed);
-  const mir::ExprId get_signal_id = ctor_block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kGetSignal},
-                  .arguments = {cur, string_literal(hops.back().name)}},
-          .type = void_ptr_type});
-  // Pointer-to-pointer reinterpret of the void* slot to the typed pointer
-  // the call site expects -- the one true MIR cast (`static_cast<T>(...)`).
-  return mir::Expr{
-      .data = mir::CastExpr{.operand = get_signal_id}, .type = slot_type};
 }
 
 // Linear search for a member by its source name (or by the synthesized name
@@ -534,115 +444,62 @@ auto FindMemberByName(const mir::ClassShape& shape, std::string_view name)
   return std::nullopt;
 }
 
-// Builds the resolve value for an intra-unit sibling-of-ancestor reference.
-// The install climbs `down.hops` parent edges (`kParent` calls cast to the
-// enclosing class's typed pointer) and then composes a chain of typed
-// `MemberAccess` through the head and each descent step. Every receiver in
-// the chain is a pointer (`Top*` -> `Pointer<unique, gen_a>` -> ...), so
-// the C++ render emits `->` for every hop and the chain never needs an
-// explicit `DerefExpr` between steps; the leaf `MemberAccess` yields the
-// observable cell field whose address goes into the slot.
+// A route runs from its origin (the referrer's `self`) to the referenced
+// leaf. Its receiver at each step is either **typed** -- known to point at
+// a class this artifact owns, so descent takes a typed `MemberAccessExpr`
+// on the receiver's class shape -- or **opaque**, a runtime `Scope*` reached
+// through the SDK.
 //
-// The parent cast is sound because the structural-containment relation
-// built at HIR-to-MIR proves the receiver's N-th runtime parent is exactly
-// that enclosing specialization. The same invariant grounds the typed
-// enclosing access used for bare-name reads through `StructuralDataObjectRef`;
-// this path extends it one `MemberAccess` further.
-auto BuildTypedEnclosingNavValue(
-    const StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const hir::DownwardHead& down, const std::vector<hir::PathStep>& path,
-    mir::TypeId slot_type) -> mir::ExprId {
-  ModuleLowerer& module = lowerer.Module();
-  mir::Block& ctor_block = *frame.current_block;
-  const mir::EnclosingHops mir_hops{.value = down.hops.value};
-  const mir::ExprId typed_enclosing =
-      BuildEnclosingScopeReceiver(frame, module.Unit(), mir_hops);
-  const mir::Class& enclosing_cls = frame.EnclosingClassAtHops(mir_hops);
-  const mir::MemberId head_member =
-      lowerer.TranslateOwnedChild(down.hops, down.child);
-  const mir::TypeId head_field_type =
-      enclosing_cls.members.Get(head_member).type;
-  mir::ExprId receiver = ctor_block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::MemberAccessExpr{
-                  .receiver = typed_enclosing,
-                  .member = mir::MemberRef{.var = head_member}},
-          .type = head_field_type});
-  const auto* head_ptr_ty = std::get_if<mir::PointerType>(
-      &module.Unit().types.Get(head_field_type).data);
-  if (head_ptr_ty == nullptr) {
-    throw InternalError(
-        "BuildTypedEnclosingNavValue: head member is not a pointer type");
+// Layout visibility is the semantic classification: a segment whose source
+// and target classes are both owned by this artifact is layout-visible.
+// Emission strategy is separate: an indexed hop on a layout-visible segment
+// falls back to the SDK `GetChild(name, indices)` because MIR does not yet
+// carry a typed vector-index primitive, but the receiver is immediately
+// downcast back through `PointerCastExpr` to the target's typed class so
+// subsequent layout-visible segments stay typed. Only a segment that
+// crosses into another compilation unit's body switches the route to
+// opaque for good.
+struct RouteReceiver {
+  mir::ExprId expr;
+  // When set, the receiver points at this class's instance. When null the
+  // receiver is a runtime `Scope*` and every following step goes through
+  // the SDK.
+  const mir::ClassShape* shape;
+};
+
+// Extracts the target class of a member whose type is a pointer /
+// unique-pointer to an intra-unit object, whether directly or through one
+// or more vector wrappers (`vector<unique_ptr<T>>` for an instance array,
+// or the plain pointer for a scalar child). Returns nullopt for pointees
+// that leave this artifact (`ExternalUnitObjectType`).
+auto ClassBehindOwnedChildMember(
+    const mir::CompilationUnit& unit, mir::TypeId member_type)
+    -> std::optional<mir::ClassId> {
+  mir::TypeId leaf = member_type;
+  while (const auto* vec =
+             std::get_if<mir::VectorType>(&unit.types.Get(leaf).data)) {
+    leaf = vec->element;
   }
-  const auto* head_obj_ty = std::get_if<mir::ObjectType>(
-      &module.Unit().types.Get(head_ptr_ty->pointee).data);
-  if (head_obj_ty == nullptr) {
-    throw InternalError(
-        "BuildTypedEnclosingNavValue: head pointee is not an intra-unit "
-        "object type");
+  const auto* ptr = std::get_if<mir::PointerType>(&unit.types.Get(leaf).data);
+  if (ptr == nullptr) return std::nullopt;
+  const auto& pointee = unit.types.Get(ptr->pointee).data;
+  if (const auto* obj = std::get_if<mir::ObjectType>(&pointee)) {
+    return obj->class_id;
   }
-  // Peer shape queries read the published shape store, not the unit's class
-  // registry, which is not yet fully populated during body lowering.
-  const mir::ClassShape* current_shape =
-      &module.GetClassShape(head_obj_ty->class_id);
-  for (std::size_t i = 0; i < path.size(); ++i) {
-    const auto& step = path[i];
-    const auto* mh = std::get_if<hir::MemberHop>(&step);
-    if (mh == nullptr) {
-      throw InternalError(
-          "BuildTypedEnclosingNavValue: index hop in typed intra-unit descent "
-          "is not yet supported");
-    }
-    const auto step_member = FindMemberByName(*current_shape, mh->name);
-    if (!step_member.has_value()) {
-      throw InternalError(
-          "BuildTypedEnclosingNavValue: descent step member not found");
-    }
-    const mir::TypeId step_type = current_shape->members.Get(*step_member).type;
-    receiver = ctor_block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::MemberAccessExpr{
-                    .receiver = receiver,
-                    .member = mir::MemberRef{.var = *step_member}},
-            .type = step_type});
-    if (i + 1 == path.size()) {
-      break;
-    }
-    const auto* step_ptr_ty =
-        std::get_if<mir::PointerType>(&module.Unit().types.Get(step_type).data);
-    if (step_ptr_ty == nullptr) {
-      throw InternalError(
-          "BuildTypedEnclosingNavValue: intermediate descent step is not a "
-          "pointer to an instance");
-    }
-    const auto* step_obj_ty = std::get_if<mir::ObjectType>(
-        &module.Unit().types.Get(step_ptr_ty->pointee).data);
-    if (step_obj_ty == nullptr) {
-      throw InternalError(
-          "BuildTypedEnclosingNavValue: intermediate descent into a non-"
-          "object type");
-    }
-    current_shape = &module.GetClassShape(step_obj_ty->class_id);
-  }
-  return ctor_block.exprs.Add(
-      mir::Expr{
-          .data = mir::AddressOfExpr{.operand = receiver}, .type = slot_type});
+  return std::nullopt;
 }
 
-// Builds an `UnpackedArray<int32, N>` literal expression holding one element
-// per supplied index. Used as the per-step indices argument to the runtime
-// bind / suffix-step methods; an empty index list still produces a typed
-// zero-element array so the call's signature is uniform.
-auto BuildIndicesArrayExpr(
+// Builds one `PackedArray[]` value carrying every per-axis index for a
+// single hop; the runtime SDK's `GetChild` / `ResolveVisibleChild` accept
+// it as a `std::span<PackedArray>`.
+auto BuildIndicesLiteral(
     ModuleLowerer& module, mir::Block& block,
     std::span<const std::uint32_t> indices) -> mir::ExprId {
   const auto& builtins = module.Unit().builtins;
-  std::vector<mir::ExprId> index_exprs;
-  index_exprs.reserve(indices.size());
+  std::vector<mir::ExprId> ids;
+  ids.reserve(indices.size());
   for (const std::uint32_t idx : indices) {
-    index_exprs.push_back(block.exprs.Add(
+    ids.push_back(block.exprs.Add(
         mir::MakeInt32Literal(builtins.int32, static_cast<std::int64_t>(idx))));
   }
   const mir::TypeId indices_type = module.Unit().types.Intern(
@@ -650,195 +507,363 @@ auto BuildIndicesArrayExpr(
           .element_type = builtins.int32, .size = indices.size()});
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(index_exprs)},
+          .data = mir::ArrayLiteralExpr{.elements = std::move(ids)},
           .type = indices_type});
 }
 
-// Emits one `CallExpr` statement against the ExternUp member: the receiver
-// is `self->member`, the callee is the named builtin method, the arguments
-// run through the ordinary primitive forms (string literal, indices array
-// literal, self ref). Used for the bind and per-suffix-step calls.
-void AppendExternUpMethodCall(
-    ModuleLowerer& module, WalkFrame frame, mir::MemberId extern_member,
-    support::BuiltinFn method, std::vector<mir::ExprId> arguments) {
-  mir::Block& block = *frame.current_block;
-  mir::Class& mir_class = *frame.current_class;
-  const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
-  const mir::TypeId void_type = module.Unit().builtins.void_type;
-
-  const mir::ExprId self_ref =
-      block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
-  const mir::TypeId receiver_type = mir_class.members.Get(extern_member).type;
-  std::vector<mir::ExprId> args;
-  args.reserve(arguments.size() + 1);
-  args.push_back(block.exprs.Add(
+auto BuildStringLiteral(
+    ModuleLowerer& module, mir::Block& block, const std::string& s)
+    -> mir::ExprId {
+  return block.exprs.Add(
       mir::Expr{
-          .data =
-              mir::MemberAccessExpr{
-                  .receiver = self_ref,
-                  .member = mir::MemberRef{.var = extern_member}},
-          .type = receiver_type}));
-  for (const mir::ExprId arg : arguments) {
-    args.push_back(arg);
-  }
-  const mir::ExprId call = block.exprs.Add(
+          .data = mir::StringLiteral{.value = s},
+          .type = module.Unit().builtins.string});
+}
+
+// Reaches a layout-visible child by name+indices as an SDK GetChild
+// (emission fallback for indexed vector access) and re-tags the result
+// back to the target's typed class pointer via `PointerCastExpr`. The
+// segment stays classified as layout-visible; only the emission takes
+// the SDK detour.
+auto SdkChildAsTyped(
+    ModuleLowerer& module, mir::Block& block, mir::ExprId receiver,
+    const std::string& name, std::span<const std::uint32_t> indices,
+    mir::ClassId target_class_id) -> RouteReceiver {
+  auto& unit = module.Unit();
+  const mir::TypeId scope_ptr_type = unit.builtins.scope_ptr;
+  const mir::ExprId raw = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = method},
-                  .arguments = std::move(args)},
-          .type = void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = call});
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kGetChild},
+                  .arguments =
+                      {receiver, BuildStringLiteral(module, block, name),
+                       BuildIndicesLiteral(module, block, indices)}},
+          .type = scope_ptr_type});
+  const mir::ClassShape& target_shape = module.GetClassShape(target_class_id);
+  const mir::TypeId typed_ptr = unit.types.PointerTo(
+      unit.types.Intern(mir::ObjectType{.class_id = target_class_id}),
+      mir::PointerOwnership::kBorrowed);
+  const mir::ExprId typed = block.exprs.Add(
+      mir::Expr{
+          .data = mir::PointerCastExpr{.operand = raw}, .type = typed_ptr});
+  return RouteReceiver{.expr = typed, .shape = &target_shape};
 }
 
-// `path_after_anchor` excludes the anchor (the `$root` token for a root
-// anchor; the named head and any per-dimension indices attached to it for a
-// named anchor) and ends with the leaf signal. The leaf step must carry no
-// indices -- array selection on a cross-unit-ref leaf is an expression-level
-// access, not part of the descent -- enforced as a compiler invariant.
-void AppendExternUpBinding(
-    ModuleLowerer& module, WalkFrame frame, mir::MemberId member,
-    std::span<const hir::PathStep> path_after_anchor,
-    support::BuiltinFn bind_callee,
-    std::vector<mir::ExprId> bind_args_before_signal) {
+auto SdkChildOpaque(
+    ModuleLowerer& module, mir::Block& block, mir::ExprId receiver,
+    const std::string& name, std::span<const std::uint32_t> indices)
+    -> RouteReceiver {
+  const mir::TypeId scope_ptr_type = module.Unit().builtins.scope_ptr;
+  const mir::ExprId step = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kGetChild},
+                  .arguments =
+                      {receiver, BuildStringLiteral(module, block, name),
+                       BuildIndicesLiteral(module, block, indices)}},
+          .type = scope_ptr_type});
+  return RouteReceiver{.expr = step, .shape = nullptr};
+}
+
+// Establishes the route's starting receiver from the head, applying any
+// head indices when the head is an array element. The returned receiver is
+// typed whenever the head's target class is owned by this artifact.
+auto BuildRouteAnchor(
+    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const hir::CrossUnitRefHead& head) -> RouteReceiver {
+  ModuleLowerer& module = lowerer.Module();
+  auto& unit = module.Unit();
   mir::Block& block = *frame.current_block;
-  const auto& builtins = module.Unit().builtins;
-  const auto string_literal = [&](std::string s) -> mir::ExprId {
+  const mir::TypeId scope_ptr_type = unit.builtins.scope_ptr;
+
+  if (const auto* dh = std::get_if<hir::DownwardHead>(&head)) {
+    const mir::EnclosingHops hops{.value = dh->hops.value};
+    const mir::ExprId enclosing_self =
+        BuildEnclosingScopeReceiver(frame, unit, hops);
+
+    if (std::holds_alternative<hir::ProceduralScopeId>(dh->child)) {
+      // A named procedural block's companion pointer lives on some
+      // anonymous wrapper class, not on the enclosing structural class
+      // shape, so no typed member on the enclosing class names it; the SV
+      // reference names the block by label instead. The runtime `GetChild`
+      // walk recurses past anonymous begin/ends so the label is reached
+      // transparently, and the descent is opaque from this hop on.
+      const auto& scope_decl = lowerer.HirScope().procedural_scopes.Get(
+          std::get<hir::ProceduralScopeId>(dh->child));
+      if (!scope_decl.label.has_value()) {
+        throw InternalError(
+            "BuildRouteAnchor: procedural-scope head has no SV label");
+      }
+      if (!dh->head_indices.empty()) {
+        throw InternalError(
+            "BuildRouteAnchor: a procedural-scope head cannot be indexed");
+      }
+      return SdkChildOpaque(
+          module, block, enclosing_self, *scope_decl.label, {});
+    }
+
+    const mir::Class& enclosing_cls = frame.EnclosingClassAtHops(hops);
+    const mir::MemberId head_member =
+        lowerer.TranslateOwnedChild(dh->hops, dh->child);
+    const auto& head_decl = enclosing_cls.members.Get(head_member);
+    const mir::TypeId head_field_type = head_decl.type;
+
+    if (!dh->head_indices.empty()) {
+      // The head is an array element. Classification stays layout-visible
+      // when the artifact owns the target class; emission uses the SDK
+      // `GetChild(name, indices)` and downcasts back to typed so the rest
+      // of the route can continue typed. Otherwise the route goes opaque.
+      const std::string head_name = head_decl.source_name.empty()
+                                        ? head_decl.name
+                                        : head_decl.source_name;
+      const std::optional<mir::ClassId> target =
+          ClassBehindOwnedChildMember(unit, head_field_type);
+      if (target.has_value()) {
+        return SdkChildAsTyped(
+            module, block, enclosing_self, head_name, dh->head_indices,
+            *target);
+      }
+      return SdkChildOpaque(
+          module, block, enclosing_self, head_name, dh->head_indices);
+    }
+
+    const mir::ExprId head_access = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::MemberAccessExpr{
+                    .receiver = enclosing_self,
+                    .member = mir::MemberRef{.var = head_member}},
+            .type = head_field_type});
+    const auto* head_ptr =
+        std::get_if<mir::PointerType>(&unit.types.Get(head_field_type).data);
+    if (head_ptr == nullptr) {
+      throw InternalError(
+          "BuildRouteAnchor: head member is not a pointer type");
+    }
+    const auto& pointee_data = unit.types.Get(head_ptr->pointee).data;
+    if (const auto* obj = std::get_if<mir::ObjectType>(&pointee_data)) {
+      return RouteReceiver{
+          .expr = head_access, .shape = &module.GetClassShape(obj->class_id)};
+    }
+    if (std::holds_alternative<mir::ExternalUnitObjectType>(pointee_data)) {
+      // Head is typed but the target lives in another compilation unit;
+      // every step from here is opaque.
+      return RouteReceiver{.expr = head_access, .shape = nullptr};
+    }
+    throw InternalError(
+        "BuildRouteAnchor: downward head pointee is not an object type");
+  }
+
+  if (std::holds_alternative<hir::UpwardRootHead>(head)) {
+    // `$root` is a runtime shell scope with no MIR-owned class shape; the
+    // climb goes through the runtime SDK.
+    const mir::ExprId self_ref = block.exprs.Add(
+        MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+    const mir::ExprId root = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{.target = support::BuiltinFn::kResolveRoot},
+                    .arguments = {self_ref}},
+            .type = scope_ptr_type});
+    return RouteReceiver{.expr = root, .shape = nullptr};
+  }
+
+  const auto& un = std::get<hir::UpwardNamedHead>(head);
+  // The visible-child climb walks the parent chain by name (LRM 23.8);
+  // the ancestor's class is not statically known to the referrer, so the
+  // climb runs through the runtime SDK.
+  const mir::ExprId self_ref = block.exprs.Add(
+      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId matched = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kResolveVisibleChild},
+                  .arguments =
+                      {self_ref,
+                       BuildStringLiteral(module, block, un.head_name),
+                       BuildIndicesLiteral(module, block, un.head_indices)}},
+          .type = scope_ptr_type});
+  return RouteReceiver{.expr = matched, .shape = nullptr};
+}
+
+// Descends one intermediate segment from `receiver`. A layout-visible
+// segment without indices takes a typed `MemberAccessExpr`; a layout-visible
+// segment with indices takes the SDK GetChild fallback and re-tags to the
+// target's typed class. A segment that reaches into another compilation
+// unit's body switches the route to opaque, and every subsequent segment
+// stays opaque via `GetChild(name, indices)`.
+auto AppendRouteSegment(
+    StructuralScopeLowerer& lowerer, mir::Block& block,
+    const RouteReceiver& receiver, const hir::PathSegment& segment)
+    -> RouteReceiver {
+  ModuleLowerer& module = lowerer.Module();
+  auto& unit = module.Unit();
+
+  if (receiver.shape == nullptr) {
+    return SdkChildOpaque(
+        module, block, receiver.expr, segment.name, segment.indices);
+  }
+
+  const auto step_member = FindMemberByName(*receiver.shape, segment.name);
+  if (!step_member.has_value()) {
+    throw InternalError(
+        "AppendRouteSegment: descent step '" + segment.name +
+        "' not found in typed class shape");
+  }
+  const mir::TypeId step_type = receiver.shape->members.Get(*step_member).type;
+
+  if (segment.indices.empty()) {
+    const mir::ExprId step_access = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::MemberAccessExpr{
+                    .receiver = receiver.expr,
+                    .member = mir::MemberRef{.var = *step_member}},
+            .type = step_type});
+    const auto* step_ptr =
+        std::get_if<mir::PointerType>(&unit.types.Get(step_type).data);
+    if (step_ptr == nullptr) {
+      throw InternalError(
+          "AppendRouteSegment: intermediate typed step is not a pointer");
+    }
+    const auto& pointee_data = unit.types.Get(step_ptr->pointee).data;
+    if (const auto* obj = std::get_if<mir::ObjectType>(&pointee_data)) {
+      return RouteReceiver{
+          .expr = step_access, .shape = &module.GetClassShape(obj->class_id)};
+    }
+    if (std::holds_alternative<mir::ExternalUnitObjectType>(pointee_data)) {
+      return RouteReceiver{.expr = step_access, .shape = nullptr};
+    }
+    throw InternalError(
+        "AppendRouteSegment: intermediate typed step pointee is not an "
+        "object type");
+  }
+
+  // Indexed segment: emission fallback via SDK GetChild, then downcast to
+  // the target's typed class if the artifact owns it. Classification
+  // remains layout-visible so the following segment can stay typed.
+  const std::optional<mir::ClassId> target =
+      ClassBehindOwnedChildMember(unit, step_type);
+  if (target.has_value()) {
+    return SdkChildAsTyped(
+        module, block, receiver.expr, segment.name, segment.indices, *target);
+  }
+  return SdkChildOpaque(
+      module, block, receiver.expr, segment.name, segment.indices);
+}
+
+// Materializes the leaf signal reach as the borrowed-pointer value the slot
+// takes: `AddressOf` of the typed member access when the receiver is typed,
+// or a `CastExpr` of `GetSignal`'s `void*` when the receiver is opaque.
+auto MaterializeLeaf(
+    StructuralScopeLowerer& lowerer, mir::Block& block,
+    const RouteReceiver& receiver, const hir::PathSegment& leaf,
+    mir::TypeId slot_type) -> mir::ExprId {
+  ModuleLowerer& module = lowerer.Module();
+  auto& unit = module.Unit();
+
+  if (!leaf.indices.empty()) {
+    throw InternalError(
+        "MaterializeLeaf: leaf signal step carries indices; array selection "
+        "on a cross-unit-ref leaf belongs to an expression-level access, not "
+        "the descent");
+  }
+
+  if (receiver.shape != nullptr) {
+    const auto member = FindMemberByName(*receiver.shape, leaf.name);
+    if (!member.has_value()) {
+      throw InternalError(
+          "MaterializeLeaf: leaf signal '" + leaf.name +
+          "' not found in typed class shape");
+    }
+    const mir::TypeId member_type = receiver.shape->members.Get(*member).type;
+    const mir::ExprId access = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::MemberAccessExpr{
+                    .receiver = receiver.expr,
+                    .member = mir::MemberRef{.var = *member}},
+            .type = member_type});
     return block.exprs.Add(
         mir::Expr{
-            .data = mir::StringLiteral{.value = std::move(s)},
-            .type = builtins.string});
-  };
-
-  struct DescentStep {
-    std::string name;
-    std::vector<std::uint32_t> indices;
-  };
-  std::vector<DescentStep> steps;
-  for (const auto& step : path_after_anchor) {
-    if (const auto* m = std::get_if<hir::MemberHop>(&step)) {
-      steps.push_back(DescentStep{.name = m->name, .indices = {}});
-    } else {
-      steps.back().indices.push_back(std::get<hir::IndexHop>(step).index);
-    }
+            .data = mir::AddressOfExpr{.operand = access}, .type = slot_type});
   }
-  if (!steps.back().indices.empty()) {
-    throw InternalError(
-        "AppendExternUpBinding: leaf signal step carries indices; "
-        "array selection on a cross-unit-ref leaf belongs to an "
-        "expression-level access, not the descent");
-  }
-  std::string signal = std::move(steps.back().name);
-  steps.pop_back();
 
-  bind_args_before_signal.push_back(string_literal(std::move(signal)));
-  AppendExternUpMethodCall(
-      module, frame, member, bind_callee, std::move(bind_args_before_signal));
-
-  for (const auto& step : steps) {
-    AppendExternUpMethodCall(
-        module, frame, member, support::BuiltinFn::kAddSuffixStep,
-        {string_literal(step.name),
-         BuildIndicesArrayExpr(module, block, step.indices)});
-  }
+  const mir::TypeId void_ptr_type = unit.types.PointerTo(
+      unit.builtins.void_type, mir::PointerOwnership::kBorrowed);
+  const mir::ExprId raw = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kGetSignal},
+                  .arguments =
+                      {receiver.expr,
+                       BuildStringLiteral(module, block, leaf.name)}},
+          .type = void_ptr_type});
+  return block.exprs.Add(
+      mir::Expr{.data = mir::CastExpr{.operand = raw}, .type = slot_type});
 }
 
-// A downward slot resolves in the constructor by navigating from the enclosing
-// scope after the children are built: an ordinary assignment of the navigation
-// value into the borrowed-pointer slot. An upward ExternUp member's
-// per-reference plan emits as a `BindVisibleChild` or `BindRoot` call against
-// the member, followed by one `AddSuffixStep` call per descent step -- ordinary
-// `CallExpr` carrying flat MIR primitives, so the backend renders them
-// uniformly with every other call.
-void InstallCrossUnitRefs(StructuralScopeLowerer& lowerer, WalkFrame frame) {
-  mir::Class& mir_class = *frame.current_class;
-  mir::Block& ctor_block = *frame.current_block;
+// Composes the resolve-phase pointer value that fills a cross-unit
+// reference slot: anchor from the head, walk the descent segments, and
+// materialize the leaf. The result flows into the ordinary assignment the
+// caller emits into the resolve block.
+auto BuildRouteValue(
+    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const hir::CrossUnitRefHead& head,
+    const std::vector<hir::PathSegment>& path, mir::TypeId slot_type)
+    -> mir::ExprId {
+  if (path.empty()) {
+    throw InternalError("BuildRouteValue: route has no leaf signal");
+  }
+  mir::Block& block = *frame.current_block;
+  RouteReceiver receiver = BuildRouteAnchor(lowerer, frame, head);
+  for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+    receiver = AppendRouteSegment(lowerer, block, receiver, path[i]);
+  }
+  return MaterializeLeaf(lowerer, block, receiver, path.back(), slot_type);
+}
+
+// Each cross-unit reference resolves in the resolve phase: the top-down
+// walk over the fully-constructed object tree runs each route, filling the
+// scope's `xref_N` slot with a borrowed pointer to the target's observable
+// cell. Every route lands as an ordinary `AssignExpr` on the slot member.
+void InstallCrossUnitRefs(
+    StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame) {
+  mir::Class& mir_class = *resolve_frame.current_class;
+  mir::Block& resolve_block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  ModuleLowerer& module = lowerer.Module();
-  const auto& builtins = module.Unit().builtins;
-  const mir::TypeId scope_ptr_type = builtins.scope_ptr;
-  const auto string_literal = [&](const std::string& s) -> mir::ExprId {
-    return ctor_block.exprs.Add(
-        mir::Expr{
-            .data = mir::StringLiteral{.value = s}, .type = builtins.string});
-  };
   for (std::size_t ci = 0; ci < hir_scope.cross_unit_refs.size(); ++ci) {
     const hir::CrossUnitRefId hir_id{static_cast<std::uint32_t>(ci)};
     const auto& cu = hir_scope.cross_unit_refs.Get(hir_id);
-    const mir::MemberId member = lowerer.CrossUnitRefTarget(hir_id).target.var;
-    if (std::holds_alternative<hir::UpwardRootHead>(cu.head)) {
-      const mir::ExprId origin_self = ctor_block.exprs.Add(
-          MakeSelfRefExpr(frame, mir_class.self_pointer_type));
-      AppendExternUpBinding(
-          module, frame, member, cu.path, support::BuiltinFn::kBindRoot,
-          {origin_self});
-      continue;
-    }
-    if (const auto* up_named = std::get_if<hir::UpwardNamedHead>(&cu.head)) {
-      const mir::ExprId origin_self = ctor_block.exprs.Add(
-          MakeSelfRefExpr(frame, mir_class.self_pointer_type));
-      const mir::ExprId head_name = string_literal(up_named->head_name);
-      const mir::ExprId head_indices =
-          BuildIndicesArrayExpr(module, ctor_block, up_named->head_indices);
-      AppendExternUpBinding(
-          module, frame, member, cu.path, support::BuiltinFn::kBindVisibleChild,
-          {origin_self, head_name, head_indices});
-      continue;
-    }
-    const auto* down = std::get_if<hir::DownwardHead>(&cu.head);
-    if (down == nullptr) {
-      continue;
-    }
-    const mir::MemberId slot = member;
+    const mir::MemberId slot = lowerer.CrossUnitRefTarget(hir_id).target.var;
     const mir::TypeId slot_type = mir_class.members.Get(slot).type;
-    mir::ExprId nav{};
-    // A procedural-storage scope head is reached through the SV-visible
-    // hierarchy projection: by-name lookup on the enclosing scope walks
-    // transparently past anonymous begin/ends. The compile-time typed
-    // segment is not usable because the scope's companion pointer lives
-    // on whichever anonymous class physically owns it, not on the
-    // structural class that the source-level reference names. Instance
-    // heads at hops > 0 remain typed (they always sit on the structural
-    // class of the referenced generate/module scope).
-    const bool head_is_procedural_scope =
-        std::holds_alternative<hir::ProceduralScopeId>(down->child);
-    if (down->hops.value != 0 && !head_is_procedural_scope) {
-      nav = BuildTypedEnclosingNavValue(
-          lowerer, frame, *down, cu.path, slot_type);
-    } else if (head_is_procedural_scope) {
-      const auto& scope_decl = hir_scope.procedural_scopes.Get(
-          std::get<hir::ProceduralScopeId>(down->child));
-      if (!scope_decl.label.has_value()) {
-        throw InternalError(
-            "cross-unit ref: procedural-scope head has no SV label; "
-            "peer navigation would have no name to look up");
-      }
-      nav = ctor_block.exprs.Add(BuildDownwardNavValue(
-          module, frame, *scope_decl.label, cu.path, slot_type,
-          scope_ptr_type));
-    } else {
-      const mir::MemberId head_var =
-          lowerer.TranslateOwnedChild(hir::StructuralHops{0}, down->child);
-      const auto& head = mir_class.members.Get(head_var);
-      const std::string head_name =
-          head.source_name.empty() ? head.name : head.source_name;
-      nav = ctor_block.exprs.Add(BuildDownwardNavValue(
-          module, frame, head_name, cu.path, slot_type, scope_ptr_type));
-    }
-    const mir::ExprId self_for_target = ctor_block.exprs.Add(
-        MakeSelfRefExpr(frame, mir_class.self_pointer_type));
-    const mir::ExprId target = ctor_block.exprs.Add(
+    const mir::ExprId nav =
+        BuildRouteValue(lowerer, resolve_frame, cu.head, cu.path, slot_type);
+    const mir::ExprId self_for_target = resolve_block.exprs.Add(
+        MakeSelfRefExpr(resolve_frame, mir_class.self_pointer_type));
+    const mir::ExprId target = resolve_block.exprs.Add(
         mir::Expr{
             .data =
                 mir::MemberAccessExpr{
                     .receiver = self_for_target,
                     .member = mir::MemberRef{.var = slot}},
             .type = slot_type});
-    const mir::ExprId assign = ctor_block.exprs.Add(
+    const mir::ExprId assign = resolve_block.exprs.Add(
         mir::Expr{
             .data = mir::AssignExpr{.target = target, .value = nav},
             .type = slot_type});
-    ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
+    resolve_block.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 }
 
@@ -904,7 +929,6 @@ auto InstallPortConnections(
   mir::Block& resolve_block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   ModuleLowerer& module = lowerer.Module();
-  const mir::TypeId scope_ptr_type = module.Unit().builtins.scope_ptr;
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
   std::size_t net_port_index = 0;
   for (const auto& pc : hir_scope.port_connections) {
@@ -913,27 +937,18 @@ auto InstallPortConnections(
       // the resolve phase: navigate the owned child by name to its reference
       // member and store a reference to the peer's cell into it.
       const auto& alias = std::get<hir::PortAliasEndpoint>(pc.endpoint);
-      const auto* down = std::get_if<hir::DownwardHead>(&alias.head);
-      if (down == nullptr) {
+      if (!std::holds_alternative<hir::DownwardHead>(alias.head)) {
         throw InternalError(
             "InstallPortConnections: a ref port reaches its child downward");
       }
-      const mir::MemberId head_var =
-          lowerer.TranslateOwnedChild(hir::StructuralHops{0}, down->child);
-      const auto& head_member = mir_class.members.Get(head_var);
-      const std::string head_name = head_member.source_name.empty()
-                                        ? head_member.name
-                                        : head_member.source_name;
-
       const mir::TypeId value_type = module.TranslateType(alias.type);
       const mir::TypeId ref_type = module.Unit().types.Intern(
           mir::RefType{
               .pointee = value_type, .mutability = mir::Mutability::kMutable});
       const mir::TypeId slot_type = module.Unit().types.PointerTo(
           ref_type, mir::PointerOwnership::kBorrowed);
-      const mir::ExprId nav = resolve_block.exprs.Add(BuildDownwardNavValue(
-          module, resolve_frame, head_name, alias.path, slot_type,
-          scope_ptr_type));
+      const mir::ExprId nav = BuildRouteValue(
+          lowerer, resolve_frame, alias.head, alias.path, slot_type);
       const mir::ExprId target = resolve_block.exprs.Add(
           mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
 
@@ -1744,18 +1759,17 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const bool is_reference = var != nullptr && var->reference.has_value();
     const mir::TypeKind var_kind =
         module.Unit().types.Get(mir_value_type).Kind();
-    // Owned children (pointer / vector / object), resolution slots, upward
-    // refs, and named events have no "value assignment" -- their declaration
-    // shape itself fixes the field at construction. A net takes none either:
-    // its value is produced by its drivers, seeded when each driver updates in
-    // the initialize phase. Value-typed variables (integral, string, real,
-    // unpacked / dynamic array) receive an LRM 10.5 initialization statement,
-    // run in the initialize phase after the tree's references resolve, not in
-    // the constructor.
+    // Owned children (pointer / vector / object), cross-instance reference
+    // slots (borrowed pointers filled in the resolve phase), and named events
+    // have no "value assignment" -- their declaration shape itself fixes the
+    // field at construction. A net takes none either: its value is produced by
+    // its drivers, seeded when each driver updates in the initialize phase.
+    // Value-typed variables (integral, string, real, unpacked / dynamic array)
+    // receive an LRM 10.5 initialization statement, run in the initialize
+    // phase after the tree's references resolve, not in the constructor.
     const bool is_assignable_value =
         !is_reference && !is_net && var_kind != mir::TypeKind::kPointer &&
         var_kind != mir::TypeKind::kVector &&
-        var_kind != mir::TypeKind::kExternalRef &&
         var_kind != mir::TypeKind::kObject &&
         var_kind != mir::TypeKind::kExternalUnitObject &&
         var_kind != mir::TypeKind::kEvent;
@@ -1842,7 +1856,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // signals.
     const bool is_signal = var_kind != mir::TypeKind::kPointer &&
                            var_kind != mir::TypeKind::kVector &&
-                           var_kind != mir::TypeKind::kExternalRef &&
                            var_kind != mir::TypeKind::kObject &&
                            var_kind != mir::TypeKind::kExternalUnitObject;
     if (is_signal) {
@@ -2087,7 +2100,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   }
 
   EmitInstanceMemberConstruction(lowerer, ctor_frame);
-  InstallCrossUnitRefs(lowerer, ctor_frame);
+  InstallCrossUnitRefs(lowerer, resolve_frame);
   auto port_conn_r = InstallPortConnections(
       lowerer, ctor_frame, resolve_frame, init_frame, activate_frame);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
