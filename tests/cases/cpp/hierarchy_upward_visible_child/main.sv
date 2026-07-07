@@ -23,6 +23,13 @@
 //     name. `reader` (declared before foo_a/foo_b so the references are
 //     forward, upward) reads `foo_a.v == 11` and `foo_b.v == 99`; a
 //     def-name-based climb would collapse both onto the same Foo.
+//
+//   - Indexed loop-generate iterations reading each other. `ring[i].own` reads
+//     its own `ring[i].v` -- the constant index selects the same heterogeneous
+//     member; `ring[i].fwd` reads `ring[(i+1)%3].v`, a wrap that includes a
+//     forward read of a later-built sibling, which resolves only because the
+//     reference binds after the whole tree is built. Asserting the self and
+//     forward routes separately keeps a coincidental total from hiding either.
 module Foo;
   int v;
 endmodule
@@ -60,6 +67,14 @@ module Top;
   Foo foo_a();
   Foo foo_b();
 
+  for (genvar i = 0; i < 3; i = i + 1) begin : ring
+    int v = (i + 1) * 4;
+    int own;
+    int fwd;
+    always_comb own = ring[i].v;
+    always_comb fwd = ring[(i + 1) % 3].v;
+  end
+
   initial begin
     b.bx = 7;
     a.ax = 33;
@@ -67,8 +82,10 @@ module Top;
     foo_a.v = 11;
     foo_b.v = 99;
     #1;
-    $display("up=%0d down=%0d deep=%0d a=%0d b_inst=%0d",
+    $display("up=%0d down=%0d deep=%0d a=%0d b_inst=%0d own=%0d,%0d,%0d fwd=%0d,%0d,%0d",
              a.from_b, b.from_a, mid.leaf.from_top_my_foo,
-             reader.from_a, reader.from_b);
+             reader.from_a, reader.from_b,
+             ring[0].own, ring[1].own, ring[2].own,
+             ring[0].fwd, ring[1].fwd, ring[2].fwd);
   end
 endmodule
