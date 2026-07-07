@@ -52,14 +52,13 @@ auto BuildEnclosingScopeReceiver(
           .type = frame.EnclosingClassAtHops(hops).self_pointer_type});
 }
 
-auto BuildStructuralMemberAccessExpr(
+auto BuildStructuralFieldAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
-    mir::EnclosingHops hops, mir::MemberId var) -> mir::Expr {
+    mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr {
   const mir::TypeId field_type =
-      frame.EnclosingClassAtHops(hops).members.Get(var).type;
+      frame.EnclosingClassAtHops(hops).fields.Get(var).type;
   const mir::ExprId receiver = BuildEnclosingScopeReceiver(frame, unit, hops);
-  return mir::MakeMemberAccessExpr(
-      receiver, mir::MemberRef{.var = var}, field_type);
+  return mir::MakeFieldAccessExpr(receiver, var, field_type);
 }
 
 auto BuildReferenceArg(

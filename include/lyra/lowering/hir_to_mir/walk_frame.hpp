@@ -20,7 +20,7 @@ class CallableBindings;
 // one node per class opened during traversal. This is the construction-side
 // half of the shared walk position: the rendering fold's read-only
 // `ScopeView` resolves the same (hops, var) reference by climbing its own
-// parent link, so both reach the same `mir::MemberDecl`.
+// parent link, so both reach the same `mir::FieldDecl`.
 struct ScopeChainNode {
   const mir::Class* cls;
   const ScopeChainNode* parent;

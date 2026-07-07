@@ -7,7 +7,8 @@
 #include <vector>
 
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/closure_record_id.hpp"
+#include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -49,7 +50,8 @@ enum class TypeKind {
   kObservable,
   kResolved,
   kDriver,
-  kClosureRecord,
+  kStruct,
+  kClosure,
 };
 
 enum class BitAtom {
@@ -324,18 +326,31 @@ struct CoroutineType {
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
-// The type of a closure value: the per-closure-site nominal value record it
-// constructs, named by its unit-wide identity. A closure expression carries
-// this type. The record's fields (the captured bindings) and its invoke body
-// live in the declaration the unit's closure-record registry resolves the id
-// to; the type names only the identity, so two closure sites are distinct types
-// even with identical field shapes. Value copy / move semantics like any value
-// type. Directly callable: a call resolves its signature from the record's
-// invoke, so no separate erased callable type is needed to invoke a closure.
-struct ClosureRecordType {
-  ClosureRecordId record_id;
+// A compiler-generated nominal struct type, named by its unit-wide identity;
+// the unit's struct registry resolves the id to the declaration (its fields).
+// A value of this type is a plain aggregate reached by field access. It is a
+// value aggregate: reference semantics, when needed (a promoted automatic
+// scope), come from a `Shared<StructType>` wrapper, not from the type itself.
+// A separate id space from the class registry: a generated struct is not a
+// nominal object (no base, no dispatch, no lifecycle).
+struct StructType {
+  StructId struct_id;
 
-  auto operator==(const ClosureRecordType&) const -> bool = default;
+  auto operator==(const StructType&) const -> bool = default;
+};
+
+// The type of a closure value: an anonymous concrete callable value, named by
+// its unit-wide identity; the unit's closure registry resolves the id to the
+// declaration (its capture fields and one invoke body). Distinct per closure
+// site, so two closures of the same signature but different captures are
+// different types. Callable directly: a call resolves its signature from the
+// declaration's invoke. A separate category from `StructType` (a closure is not
+// storage: it has an invoke, no name, and no pointee role) sharing only the
+// field substrate.
+struct ClosureType {
+  ClosureId closure_id;
+
+  auto operator==(const ClosureType&) const -> bool = default;
 };
 
 // The write capability a reference or borrow grants its holder (the
@@ -471,7 +486,7 @@ using TypeData = std::variant<
     InstanceType, GenScopeType, ProceduralStorageScopeType, ServicesType,
     FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
     PointerType, ManagedRefType, VectorType, TupleType, UnionType,
-    ObservableType, ResolvedType, DriverType, ClosureRecordType>;
+    ObservableType, ResolvedType, DriverType, StructType, ClosureType>;
 
 struct Type {
   TypeData data;

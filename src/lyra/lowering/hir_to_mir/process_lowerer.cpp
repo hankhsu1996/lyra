@@ -99,11 +99,11 @@ auto ProcessLowerer::BuildStaticStorageAccess(
     -> mir::Expr {
   mir::Block& block = *frame.current_block;
   const mir::CompilationUnit& unit = module_->Unit();
-  const std::vector<mir::MemberId> chain =
+  const std::vector<mir::FieldId> chain =
       storage_plan_->CompanionChainTo(placement.owner);
   mir::ExprId receiver = block.exprs.Add(
       MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-  for (const mir::MemberId step : chain) {
+  for (const mir::FieldId step : chain) {
     const mir::TypeId receiver_type = block.exprs.Get(receiver).type;
     const auto* ptr =
         std::get_if<mir::PointerType>(&unit.types.Get(receiver_type).data);
@@ -123,10 +123,9 @@ auto ProcessLowerer::BuildStaticStorageAccess(
     // member types come from the published shape, not the not-yet-committed
     // mir class.
     const mir::TypeId step_type =
-        module_->GetClassShape(obj->class_id).members.Get(step).type;
-    receiver = block.exprs.Add(
-        mir::MakeMemberAccessExpr(
-            receiver, mir::MemberRef{.var = step}, step_type));
+        module_->GetClassShape(obj->class_id).fields.Get(step).type;
+    receiver =
+        block.exprs.Add(mir::MakeFieldAccessExpr(receiver, step, step_type));
   }
   // Resolve the owner class id from the placement's StorageOwner: the
   // enclosing class is the one bound to `frame.current_class`; a procedural
@@ -145,9 +144,8 @@ auto ProcessLowerer::BuildStaticStorageAccess(
           }},
       placement.owner);
   const mir::TypeId field_type =
-      module_->GetClassShape(owner_class_id).members.Get(placement.member).type;
-  return mir::MakeMemberAccessExpr(
-      receiver, mir::MemberRef{.var = placement.member}, field_type);
+      module_->GetClassShape(owner_class_id).fields.Get(placement.field).type;
+  return mir::MakeFieldAccessExpr(receiver, placement.field, field_type);
 }
 
 namespace {

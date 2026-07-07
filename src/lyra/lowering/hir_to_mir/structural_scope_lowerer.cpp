@@ -34,8 +34,8 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -75,7 +75,7 @@ auto CompanionVarNameFor(std::string_view child_scope_name) -> std::string {
 void CheckNoNameCollision(
     const mir::ClassShape& owner_shape, std::string_view child_scope_name,
     std::string_view companion_var_name) {
-  for (const auto& v : owner_shape.members) {
+  for (const auto& v : owner_shape.fields) {
     if (v.name == companion_var_name || v.name == child_scope_name) {
       throw InternalError(
           "child class or companion var name collides with an existing "
@@ -317,11 +317,11 @@ void EmitExternalUnitDimLevel(
 // `vector::back()` chain at each nesting level so the register call can reach
 // the just-emplaced child.
 void AppendExternalUnitConstruction(
-    ModuleLowerer& module, const WalkFrame& frame, mir::MemberId target,
+    ModuleLowerer& module, const WalkFrame& frame, mir::FieldId target,
     const std::string& runtime_label, std::span<const std::uint32_t> dims) {
   mir::Block& block = *frame.current_block;
   const mir::Class& owner_class = *frame.current_class;
-  const mir::MemberDecl& var = owner_class.members.Get(target);
+  const mir::FieldDecl& var = owner_class.fields.Get(target);
   const mir::TypeId self_ptr_type = owner_class.self_pointer_type;
 
   // Peel the vector layers off the member type to land on the leaf
@@ -339,9 +339,8 @@ void AppendExternalUnitConstruction(
 
   const mir::ExprId self_id =
       block.exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
-  const mir::ExprId chain_id = block.exprs.Add(
-      mir::MakeMemberAccessExpr(
-          self_id, mir::MemberRef{.var = target}, var.type));
+  const mir::ExprId chain_id =
+      block.exprs.Add(mir::MakeFieldAccessExpr(self_id, target, var.type));
   std::vector<mir::ExprId> indices;
   EmitExternalUnitDimLevel(
       module, frame, self_id, runtime_label, leaf_pointer_type, chain_id,
@@ -357,7 +356,7 @@ void DeclareInstanceMemberShapes(
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   std::uint32_t next_index = 0;
   for (const auto& im : hir_scope.instance_members) {
-    for (const auto& v : shape.members) {
+    for (const auto& v : shape.fields) {
       if (v.name == im.instance_name) {
         throw InternalError(
             "instance member name collides with an existing member "
@@ -366,21 +365,21 @@ void DeclareInstanceMemberShapes(
     }
     const mir::TypeId var_type = MakeExternalUnitMemberType(
         lowerer.Module(), im.target_unit, im.array_dims.size());
-    const mir::MemberId var_id = shape.members.Add(
-        mir::MemberDecl{.name = im.instance_name, .type = var_type});
+    const mir::FieldId var_id = shape.fields.Add(
+        mir::FieldDecl{.name = im.instance_name, .type = var_type});
     lowerer.MapInstanceMember(hir::InstanceMemberId{next_index++}, var_id);
   }
 }
 
 // Emits the constructor-body construction call for each instance member,
-// reading the MemberId through the HIR-to-MIR map populated when the shape
+// reading the FieldId through the HIR-to-MIR map populated when the shape
 // was declared.
 void EmitInstanceMemberConstruction(
     StructuralScopeLowerer& lowerer, WalkFrame frame) {
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   std::uint32_t next_index = 0;
   for (const auto& im : hir_scope.instance_members) {
-    const mir::MemberId var_id =
+    const mir::FieldId var_id =
         lowerer.TranslateInstanceMember(hir::InstanceMemberId{next_index++});
     AppendExternalUnitConstruction(
         lowerer.Module(), frame, var_id, im.instance_name, im.array_dims);
@@ -420,9 +419,9 @@ void DeclareCrossUnitRefSlots(
             : MaybeWrapObservable(module, value);
     const mir::TypeId slot_type =
         module.Unit().types.PointerTo(leaf, mir::PointerOwnership::kBorrowed);
-    const mir::MemberId slot = shape.members.Add(
-        mir::MemberDecl{.name = std::move(member_name), .type = slot_type});
-    lowerer.AddCrossUnitRefTarget(mir::MemberRef{.var = slot}, slot_type);
+    const mir::FieldId slot = shape.fields.Add(
+        mir::FieldDecl{.name = std::move(member_name), .type = slot_type});
+    lowerer.AddCrossUnitRefTarget(slot, slot_type);
   }
 }
 
@@ -431,11 +430,11 @@ void DeclareCrossUnitRefSlots(
 // that O(N) at construction time is irrelevant. The within-class name is
 // unique by the structural-scope lowering's allocation rule, so this is a
 // deterministic lookup despite the linear scan.
-auto FindMemberByName(const mir::ClassShape& shape, std::string_view name)
-    -> std::optional<mir::MemberId> {
-  for (std::size_t i = 0; i < shape.members.size(); ++i) {
-    const mir::MemberId id{static_cast<std::uint32_t>(i)};
-    const auto& m = shape.members.Get(id);
+auto FindFieldByName(const mir::ClassShape& shape, std::string_view name)
+    -> std::optional<mir::FieldId> {
+  for (std::size_t i = 0; i < shape.fields.size(); ++i) {
+    const mir::FieldId id{static_cast<std::uint32_t>(i)};
+    const auto& m = shape.fields.Get(id);
     const std::string_view key = m.source_name.empty() ? m.name : m.source_name;
     if (key == name) {
       return id;
@@ -446,7 +445,7 @@ auto FindMemberByName(const mir::ClassShape& shape, std::string_view name)
 
 // A route runs from its origin (the referrer's `self`) to the referenced
 // leaf. Its receiver at each step is either **typed** -- known to point at
-// a class this artifact owns, so descent takes a typed `MemberAccessExpr`
+// a class this artifact owns, so descent takes a typed `FieldAccessExpr`
 // on the receiver's class shape -- or **opaque**, a runtime `Scope*` reached
 // through the SDK.
 //
@@ -607,9 +606,9 @@ auto BuildRouteAnchor(
     }
 
     const mir::Class& enclosing_cls = frame.EnclosingClassAtHops(hops);
-    const mir::MemberId head_member =
+    const mir::FieldId head_field =
         lowerer.TranslateOwnedChild(dh->hops, dh->child);
-    const auto& head_decl = enclosing_cls.members.Get(head_member);
+    const auto& head_decl = enclosing_cls.fields.Get(head_field);
     const mir::TypeId head_field_type = head_decl.type;
 
     if (!dh->head_indices.empty()) {
@@ -634,9 +633,8 @@ auto BuildRouteAnchor(
     const mir::ExprId head_access = block.exprs.Add(
         mir::Expr{
             .data =
-                mir::MemberAccessExpr{
-                    .receiver = enclosing_self,
-                    .member = mir::MemberRef{.var = head_member}},
+                mir::FieldAccessExpr{
+                    .receiver = enclosing_self, .field = head_field},
             .type = head_field_type});
     const auto* head_ptr =
         std::get_if<mir::PointerType>(&unit.types.Get(head_field_type).data);
@@ -696,7 +694,7 @@ auto BuildRouteAnchor(
 }
 
 // Descends one intermediate segment from `receiver`. A layout-visible
-// segment without indices takes a typed `MemberAccessExpr`; a layout-visible
+// segment without indices takes a typed `FieldAccessExpr`; a layout-visible
 // segment with indices takes the SDK GetChild fallback and re-tags to the
 // target's typed class. A segment that reaches into another compilation
 // unit's body switches the route to opaque, and every subsequent segment
@@ -713,21 +711,20 @@ auto AppendRouteSegment(
         module, block, receiver.expr, segment.name, segment.indices);
   }
 
-  const auto step_member = FindMemberByName(*receiver.shape, segment.name);
-  if (!step_member.has_value()) {
+  const auto step_field = FindFieldByName(*receiver.shape, segment.name);
+  if (!step_field.has_value()) {
     throw InternalError(
         "AppendRouteSegment: descent step '" + segment.name +
         "' not found in typed class shape");
   }
-  const mir::TypeId step_type = receiver.shape->members.Get(*step_member).type;
+  const mir::TypeId step_type = receiver.shape->fields.Get(*step_field).type;
 
   if (segment.indices.empty()) {
     const mir::ExprId step_access = block.exprs.Add(
         mir::Expr{
             .data =
-                mir::MemberAccessExpr{
-                    .receiver = receiver.expr,
-                    .member = mir::MemberRef{.var = *step_member}},
+                mir::FieldAccessExpr{
+                    .receiver = receiver.expr, .field = *step_field},
             .type = step_type});
     const auto* step_ptr =
         std::get_if<mir::PointerType>(&unit.types.Get(step_type).data);
@@ -779,19 +776,18 @@ auto MaterializeLeaf(
   }
 
   if (receiver.shape != nullptr) {
-    const auto member = FindMemberByName(*receiver.shape, leaf.name);
+    const auto member = FindFieldByName(*receiver.shape, leaf.name);
     if (!member.has_value()) {
       throw InternalError(
           "MaterializeLeaf: leaf signal '" + leaf.name +
           "' not found in typed class shape");
     }
-    const mir::TypeId member_type = receiver.shape->members.Get(*member).type;
+    const mir::TypeId member_type = receiver.shape->fields.Get(*member).type;
     const mir::ExprId access = block.exprs.Add(
         mir::Expr{
             .data =
-                mir::MemberAccessExpr{
-                    .receiver = receiver.expr,
-                    .member = mir::MemberRef{.var = *member}},
+                mir::FieldAccessExpr{
+                    .receiver = receiver.expr, .field = *member},
             .type = member_type});
     return block.exprs.Add(
         mir::Expr{
@@ -846,8 +842,8 @@ void InstallCrossUnitRefs(
   for (std::size_t ci = 0; ci < hir_scope.cross_unit_refs.size(); ++ci) {
     const hir::CrossUnitRefId hir_id{static_cast<std::uint32_t>(ci)};
     const auto& cu = hir_scope.cross_unit_refs.Get(hir_id);
-    const mir::MemberId slot = lowerer.CrossUnitRefTarget(hir_id).target.var;
-    const mir::TypeId slot_type = mir_class.members.Get(slot).type;
+    const mir::FieldId slot = lowerer.CrossUnitRefTarget(hir_id).target;
+    const mir::TypeId slot_type = mir_class.fields.Get(slot).type;
     const mir::ExprId nav =
         BuildRouteValue(lowerer, resolve_frame, cu.head, cu.path, slot_type);
     const mir::ExprId self_for_target = resolve_block.exprs.Add(
@@ -855,9 +851,8 @@ void InstallCrossUnitRefs(
     const mir::ExprId target = resolve_block.exprs.Add(
         mir::Expr{
             .data =
-                mir::MemberAccessExpr{
-                    .receiver = self_for_target,
-                    .member = mir::MemberRef{.var = slot}},
+                mir::FieldAccessExpr{
+                    .receiver = self_for_target, .field = slot},
             .type = slot_type});
     const mir::ExprId assign = resolve_block.exprs.Add(
         mir::Expr{
@@ -912,7 +907,7 @@ auto AttachNetDriver(
 
 auto ContinuousAssignNetTarget(
     const StructuralScopeLowerer& lowerer, const mir::Class& mir_class,
-    const hir::ContinuousAssign& ca) -> std::optional<mir::MemberId>;
+    const hir::ContinuousAssign& ca) -> std::optional<mir::FieldId>;
 
 // Realizes each port connection (LRM 23.3.3). An input or output port is the
 // implied continuous assignment between the two cells, materialized as the same
@@ -1021,14 +1016,13 @@ auto InstallPortConnections(
         if (!r) return std::unexpected(std::move(r.error()));
       }
     } else if (
-        const auto net_member =
+        const auto net_field =
             ContinuousAssignNetTarget(lowerer, mir_class, assign)) {
-      const mir::TypeId net_type = mir_class.members.Get(*net_member).type;
+      const mir::TypeId net_type = mir_class.fields.Get(*net_field).type;
       const mir::ExprId net_self = resolve_block.exprs.Add(
           MakeSelfRefExpr(resolve_frame, self_ptr_type));
       const mir::ExprId net_access = resolve_block.exprs.Add(
-          mir::MakeMemberAccessExpr(
-              net_self, mir::MemberRef{.var = *net_member}, net_type));
+          mir::MakeFieldAccessExpr(net_self, *net_field, net_type));
       auto r = attach_sink_driver(net_access, assign.rhs);
       if (!r) return std::unexpected(std::move(r.error()));
     }
@@ -1070,16 +1064,16 @@ auto AsOwnedGenerateChildClassId(
 // write, not a driver).
 auto ContinuousAssignNetTarget(
     const StructuralScopeLowerer& lowerer, const mir::Class& mir_class,
-    const hir::ContinuousAssign& ca) -> std::optional<mir::MemberId> {
+    const hir::ContinuousAssign& ca) -> std::optional<mir::FieldId> {
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const auto* prim =
       std::get_if<hir::PrimaryExpr>(&hir_scope.exprs.Get(ca.lhs).data);
   if (prim == nullptr) return std::nullopt;
   const auto* ref = std::get_if<hir::StructuralDataObjectRef>(&prim->data);
   if (ref == nullptr) return std::nullopt;
-  const mir::MemberId target =
+  const mir::FieldId target =
       lowerer.TranslateStructuralDataObject(ref->hops, ref->var);
-  const mir::TypeId target_type = mir_class.members.Get(target).type;
+  const mir::TypeId target_type = mir_class.fields.Get(target).type;
   if (!std::holds_alternative<mir::ResolvedType>(
           lowerer.Module().Unit().types.Get(target_type).data)) {
     return std::nullopt;
@@ -1107,16 +1101,15 @@ auto AttachNetDriver(
 
   const mir::TypeId driver_type =
       module.Unit().types.Intern(mir::DriverType{.value = value_type});
-  const mir::MemberId driver_member = mir_class.members.Add(
-      mir::MemberDecl{.name = driver_name, .type = driver_type});
+  const mir::FieldId driver_field = mir_class.fields.Add(
+      mir::FieldDecl{.name = driver_name, .type = driver_type});
 
   const mir::ExprId attach = resolve_block.exprs.Add(
       mir::MakeNetAttachDriverCallExpr(net_access, driver_type));
   const mir::ExprId resolve_self =
       resolve_block.exprs.Add(MakeSelfRefExpr(resolve_frame, self_ptr_type));
   const mir::ExprId driver_lhs = resolve_block.exprs.Add(
-      mir::MakeMemberAccessExpr(
-          resolve_self, mir::MemberRef{.var = driver_member}, driver_type));
+      mir::MakeFieldAccessExpr(resolve_self, driver_field, driver_type));
   const mir::ExprId attach_assign = resolve_block.exprs.Add(
       mir::Expr{
           .data = mir::AssignExpr{.target = driver_lhs, .value = attach},
@@ -1134,8 +1127,7 @@ auto AttachNetDriver(
   const mir::ExprId seed_services = init_block.exprs.Add(
       mir::MakeServicesCallExpr(init_self(), module.Unit().builtins.services));
   const mir::ExprId seed_driver = init_block.exprs.Add(
-      mir::MakeMemberAccessExpr(
-          init_self(), mir::MemberRef{.var = driver_member}, driver_type));
+      mir::MakeFieldAccessExpr(init_self(), driver_field, driver_type));
   const mir::ExprId seed_update = init_block.exprs.Add(
       mir::MakeNetDriverUpdateCallExpr(
           seed_driver, seed_services, seed_value,
@@ -1144,12 +1136,12 @@ auto AttachNetDriver(
       mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = seed_update}});
 
-  return NetDriver{.driver_member = driver_member, .driver_type = driver_type};
+  return NetDriver{.driver_field = driver_field, .driver_type = driver_type};
 }
 
 void ValidateOwnedChildConstruction(
     ModuleLowerer& module, const mir::Class& owner_class,
-    const mir::Block& block, mir::MemberId target_var,
+    const mir::Block& block, mir::FieldId target_var,
     mir::ClassId child_scope_id, std::span<const mir::ExprId> ctor_args) {
   if (std::ranges::find(owner_class.contained, child_scope_id) ==
       owner_class.contained.end()) {
@@ -1157,12 +1149,12 @@ void ValidateOwnedChildConstruction(
         "owned-child construction: child scope is not a direct child of the "
         "enclosing class");
   }
-  if (target_var.value >= owner_class.members.size()) {
+  if (target_var.value >= owner_class.fields.size()) {
     throw InternalError(
         "owned-child construction: target is out of range in the enclosing "
         "class");
   }
-  const auto& var = owner_class.members.Get(target_var);
+  const auto& var = owner_class.fields.Get(target_var);
   const auto target_class_id =
       AsOwnedGenerateChildClassId(module.Unit(), var.type);
   const auto& child_scope_shape = module.GetClassShape(child_scope_id);
@@ -1200,7 +1192,7 @@ void ValidateOwnedChildConstruction(
 // and carry the constructor's bindings so a `self` read resolves to the
 // receiver binding.
 void AppendOwnedChildConstruction(
-    ModuleLowerer& module, const WalkFrame& arm_frame, mir::MemberId target_var,
+    ModuleLowerer& module, const WalkFrame& arm_frame, mir::FieldId target_var,
     mir::ClassId child_scope_id, std::vector<mir::ExprId> ctor_args,
     std::optional<mir::ExprId> array_index) {
   mir::Block& arm_block = *arm_frame.current_block;
@@ -1208,7 +1200,7 @@ void AppendOwnedChildConstruction(
   ValidateOwnedChildConstruction(
       module, owner_class, arm_block, target_var, child_scope_id, ctor_args);
 
-  const mir::MemberDecl& var = owner_class.members.Get(target_var);
+  const mir::FieldDecl& var = owner_class.fields.Get(target_var);
   // The runtime label is the SV-visible identifier. An anonymous scope
   // (no `source_name`) gets an empty label; the scope's runtime base
   // treats an empty label as non-addressable, so a peer by-name lookup
@@ -1294,8 +1286,7 @@ void AppendOwnedChildConstruction(
   // implicit pointer; the slot stores either the unique pointer directly
   // (scalar) or the storage vector (vector member).
   const mir::ExprId member_access_id = arm_block.exprs.Add(
-      mir::MakeMemberAccessExpr(
-          self_read(), mir::MemberRef{.var = target_var}, var.type));
+      mir::MakeFieldAccessExpr(self_read(), target_var, var.type));
 
   // The child reference we hand to `AttachChild` is `*self->member` for a
   // scalar slot and `*self->member.back()` for a vector slot (the vector
@@ -1319,8 +1310,7 @@ void AppendOwnedChildConstruction(
     // Re-read the member; the back-element call yields a reference to the
     // most-recently-pushed unique pointer.
     const mir::ExprId vector_access_id = arm_block.exprs.Add(
-        mir::MakeMemberAccessExpr(
-            self_read(), mir::MemberRef{.var = target_var}, var.type));
+        mir::MakeFieldAccessExpr(self_read(), target_var, var.type));
     const mir::ExprId back_call_id = arm_block.exprs.Add(
         mir::Expr{
             .data =
@@ -1343,8 +1333,7 @@ void AppendOwnedChildConstruction(
     arm_block.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
     const mir::ExprId scalar_access_id = arm_block.exprs.Add(
-        mir::MakeMemberAccessExpr(
-            self_read(), mir::MemberRef{.var = target_var}, var.type));
+        mir::MakeFieldAccessExpr(self_read(), target_var, var.type));
     child_ref_id = arm_block.exprs.Add(
         mir::Expr{
             .data = mir::DerefExpr{.pointer = scalar_access_id},
@@ -1463,8 +1452,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       }
       return MaybeWrapObservable(module, mir_value_type);
     }();
-    const mir::MemberId mir_id = shape.members.Add(
-        mir::MemberDecl{.name = d.name, .type = mir_field_type});
+    const mir::FieldId mir_id = shape.fields.Add(
+        mir::FieldDecl{.name = d.name, .type = mir_field_type});
     lowerer.MapStructuralDataObject(hir_id, mir_id);
   }
 
@@ -1502,8 +1491,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       const mir::ClassId child_id = *child_r;
       shape.contained.push_back(child_id);
       const mir::TypeId var_type = MakeUniqueObjectPointer(module, child_id);
-      const mir::MemberId var_id = shape.members.Add(
-          mir::MemberDecl{
+      const mir::FieldId var_id = shape.fields.Add(
+          mir::FieldDecl{
               .name = companion_name,
               .source_name = spec.scope->source_name,
               .type = var_type});
@@ -1595,17 +1584,17 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                                 : std::format("anon_{}", scope_id.value);
     const mir::TypeId companion_type =
         MakeUniqueObjectPointer(module, my_class);
-    mir::MemberDecl companion_decl{
+    mir::FieldDecl companion_decl{
         .name = CompanionVarNameFor(scope_token), .type = companion_type};
     if (scope.label.has_value()) {
       companion_decl.source_name = *scope.label;
     }
-    const mir::MemberId companion_id = parent_shape.members.Add(companion_decl);
+    const mir::FieldId companion_id = parent_shape.fields.Add(companion_decl);
     parent_shape.contained.push_back(my_class);
     scope_materialization_.Record(
         scope_id, MaterializedProceduralScope{
                       .class_id = my_class,
-                      .companion_member = companion_id,
+                      .companion_field = companion_id,
                       .runtime_parent = runtime_parent});
     const StorageOwner my_owner{scope_id};
 
@@ -1620,15 +1609,15 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
           std::format("{}__{}_{}", callable_name, v.name, var_id.value);
       const mir::TypeId type = module.TranslateType(v.type);
       const mir::TypeId field_type = MaybeWrapObservable(module, type);
-      mir::MemberDecl member_decl{.name = mangled, .type = field_type};
+      mir::FieldDecl field_decl{.name = mangled, .type = field_type};
       if (scope.label.has_value()) {
-        member_decl.source_name = v.name;
+        field_decl.source_name = v.name;
       }
-      const mir::MemberId mid =
-          sub_shapes[scope_id.value].members.Add(member_decl);
+      const mir::FieldId mid =
+          sub_shapes[scope_id.value].fields.Add(field_decl);
 
       per_callable[var_id.value] =
-          StaticStoragePlacement{.owner = my_owner, .member = mid};
+          StaticStoragePlacement{.owner = my_owner, .field = mid};
     }
 
     for (const auto child_id : scope.direct_child_scopes) {
@@ -1688,7 +1677,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   mir_class.time_resolution = shape.time_resolution;
   mir_class.ctor_prefix_params = shape.ctor_prefix_params;
   mir_class.params = shape.params;
-  mir_class.members = shape.members;
+  mir_class.fields = shape.fields;
   mir_class.contained = shape.contained;
   mir_class.type_aliases = shape.type_aliases;
 
@@ -1750,9 +1739,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   for (std::size_t i = 0; i < hir_scope.structural_data_objects.size(); ++i) {
     const hir::StructuralDataObjectId hir_id{static_cast<std::uint32_t>(i)};
     const auto& d = hir_scope.structural_data_objects.Get(hir_id);
-    const mir::MemberId mir_id =
+    const mir::FieldId mir_id =
         lowerer.TranslateStructuralDataObject(hir::StructuralHops{0}, hir_id);
-    const mir::TypeId mir_field_type = mir_class.members.Get(mir_id).type;
+    const mir::TypeId mir_field_type = mir_class.fields.Get(mir_id).type;
     const mir::TypeId mir_value_type = module.TranslateType(d.type);
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
     const bool is_net = var == nullptr;
@@ -1775,8 +1764,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         var_kind != mir::TypeKind::kEvent;
     if (is_assignable_value) {
       const mir::ExprId init_target = initialize_block.exprs.Add(
-          mir::MakeMemberAccessExpr(
-              init_self_read(), mir::MemberRef{.var = mir_id}, mir_field_type));
+          mir::MakeFieldAccessExpr(init_self_read(), mir_id, mir_field_type));
       const auto append_stmt = [&](mir::Expr expr) {
         initialize_block.AppendStmt(
             mir::Stmt{
@@ -1837,8 +1825,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // uninitialized cell. Drivers, attached at Resolve, update it from there.
     if (is_net) {
       const mir::ExprId net_target = ctor_block.exprs.Add(
-          mir::MakeMemberAccessExpr(
-              self_read(), mir::MemberRef{.var = mir_id}, mir_field_type));
+          mir::MakeFieldAccessExpr(self_read(), mir_id, mir_field_type));
       const mir::ExprId prototype = ctor_block.exprs.Add(
           BuildDefaultValueFromHir(module, ctor_frame, d.type));
       ctor_block.AppendStmt(
@@ -1860,8 +1847,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                            var_kind != mir::TypeKind::kExternalUnitObject;
     if (is_signal) {
       const mir::ExprId var_ref = ctor_block.exprs.Add(
-          mir::MakeMemberAccessExpr(
-              self_read(), mir::MemberRef{.var = mir_id}, mir_field_type));
+          mir::MakeFieldAccessExpr(self_read(), mir_id, mir_field_type));
       const mir::TypeId var_ptr_type = module.Unit().types.PointerTo(
           mir_field_type, mir::PointerOwnership::kBorrowed);
       const mir::ExprId addr_id =
@@ -1903,7 +1889,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     sub_class.time_resolution = sub_shape.time_resolution;
     sub_class.ctor_prefix_params = sub_shape.ctor_prefix_params;
     sub_class.params = sub_shape.params;
-    sub_class.members = sub_shape.members;
+    sub_class.fields = sub_shape.fields;
     sub_class.contained = sub_shape.contained;
     sub_class.type_aliases = sub_shape.type_aliases;
 
@@ -1925,7 +1911,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           std::get_if<hir::ProceduralScopeId>(&child_entry.runtime_parent);
       if (parent_scope == nullptr || parent_scope->value != i) continue;
       AppendOwnedChildConstruction(
-          module, sub_ctor_frame, child_entry.companion_member,
+          module, sub_ctor_frame, child_entry.companion_field,
           child_entry.class_id, {}, std::nullopt);
     }
     // Register each static on this procedural-storage scope as a by-name
@@ -1934,9 +1920,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // this scope by `GetChild`. Companion members are pointers to nested
     // scopes and are registered as children via `AttachChild`, not as
     // signals, so the pointer kinds are excluded.
-    for (std::size_t mi = 0; mi < sub_class.members.size(); ++mi) {
-      const mir::MemberId mid{static_cast<std::uint32_t>(mi)};
-      const auto& m = sub_class.members.Get(mid);
+    for (std::size_t mi = 0; mi < sub_class.fields.size(); ++mi) {
+      const mir::FieldId mid{static_cast<std::uint32_t>(mi)};
+      const auto& m = sub_class.fields.Get(mid);
       if (m.source_name.empty()) continue;
       const mir::TypeKind mk = module.Unit().types.Get(m.type).Kind();
       if (mk == mir::TypeKind::kPointer || mk == mir::TypeKind::kVector ||
@@ -1946,8 +1932,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::ExprId sub_self = sub_ctor_block.exprs.Add(
           MakeSelfRefExpr(sub_ctor_frame, sub_shape.self_pointer_type));
       const mir::ExprId member_ref = sub_ctor_block.exprs.Add(
-          mir::MakeMemberAccessExpr(
-              sub_self, mir::MemberRef{.var = mid}, m.type));
+          mir::MakeFieldAccessExpr(sub_self, mid, m.type));
       const mir::TypeId addr_type = module.Unit().types.PointerTo(
           m.type, mir::PointerOwnership::kBorrowed);
       const mir::ExprId addr = sub_ctor_block.exprs.Add(
@@ -1984,7 +1969,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const auto& entry = scope_materialization_.Get(scope_id);
     if (!std::holds_alternative<EnclosingClass>(entry.runtime_parent)) continue;
     AppendOwnedChildConstruction(
-        module, ctor_frame, entry.companion_member, entry.class_id, {},
+        module, ctor_frame, entry.companion_field, entry.class_id, {},
         std::nullopt);
   }
 
@@ -2032,40 +2017,39 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
   }
 
-  std::vector<mir::MemberId> driven_nets;
+  std::vector<mir::FieldId> driven_nets;
   for (const auto& ca : hir_scope.continuous_assigns) {
     // A continuous assignment to a net is a driver (LRM 6.5): it attaches a
     // driver slot at Resolve, seeds it at Initialize, and the activation
     // process updates it. A variable target keeps the direct continuous-assign
     // write.
     std::optional<NetDriver> net_driver;
-    if (const auto net_member =
+    if (const auto net_field =
             ContinuousAssignNetTarget(lowerer, mir_class, ca)) {
       // A net carries one driver; a second driver on the same net is rejected
       // at lowering rather than left to fail at runtime.
       const bool already_driven = std::ranges::any_of(
           driven_nets,
-          [&](mir::MemberId m) { return m.value == net_member->value; });
+          [&](mir::FieldId m) { return m.value == net_field->value; });
       if (already_driven) {
         return diag::Fail(
             ca.span, diag::DiagCode::kUnsupportedContinuousAssignForm,
             "a net with more than one driver is not yet supported");
       }
-      driven_nets.push_back(*net_member);
+      driven_nets.push_back(*net_field);
       // The net cell is a local member; its resolve-phase lvalue is a member
       // access off `self`.
       mir::Block& resolve_block = *resolve_frame.current_block;
-      const mir::TypeId net_type = mir_class.members.Get(*net_member).type;
+      const mir::TypeId net_type = mir_class.fields.Get(*net_field).type;
       const mir::TypeId value_type =
           std::get<mir::ResolvedType>(module.Unit().types.Get(net_type).data)
               .value;
       const mir::ExprId net_self = resolve_block.exprs.Add(
           MakeSelfRefExpr(resolve_frame, self_ptr_type));
       const mir::ExprId net_access = resolve_block.exprs.Add(
-          mir::MakeMemberAccessExpr(
-              net_self, mir::MemberRef{.var = *net_member}, net_type));
+          mir::MakeFieldAccessExpr(net_self, *net_field, net_type));
       const std::string driver_name =
-          std::format("{}__driver", mir_class.members.Get(*net_member).name);
+          std::format("{}__driver", mir_class.fields.Get(*net_field).name);
       auto driver_or = AttachNetDriver(
           lowerer, mir_class, net_access, value_type, driver_name, ca.rhs,
           resolve_frame, init_frame, self_ptr_type);

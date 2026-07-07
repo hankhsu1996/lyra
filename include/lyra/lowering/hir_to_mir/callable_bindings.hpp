@@ -7,16 +7,16 @@
 #include <vector>
 
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
-#include "lyra/mir/closure.hpp"
+#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
 class CompilationUnit;
 struct CallableCode;
-struct ClosureRecord;
+struct ClosureDecl;
 struct Block;
 }  // namespace lyra::mir
 
@@ -34,13 +34,12 @@ enum class CaptureView : std::uint8_t {
 
 // What a callable body reads directly: an activation local / parameter of this
 // callable (a `LocalId` in its `locals` arena), or a captured field of the
-// closure record this body belongs to (a `MemberId` in the record's `fields`
-// arena). A reference is one or the other, never disguised. The field id is
-// assigned when the capture is discovered and is stable: the invoke body reads
-// by it and is never rewritten when the record's physical field layout is
-// canonicalized.
+// closure this body belongs to (a `FieldId` in the closure's `fields` arena). A
+// reference is one or the other, never disguised. The field id is assigned when
+// the capture is discovered and is stable: the invoke body reads by it and is
+// never rewritten when the closure's physical field layout is canonicalized.
 struct BodyBindingRef {
-  std::variant<mir::LocalId, mir::MemberId> ref;
+  std::variant<mir::LocalId, mir::FieldId> ref;
 };
 
 // The per-body capture policy: how this body views each origin it captures. The
@@ -68,10 +67,10 @@ struct CapturePolicy {
 // The binding-resolution context for one callable body. It owns no IR of its
 // own; it writes bindings into the callable code being built and, for a
 // closure, reads capture sources into the parent's construction-site block and
-// captured fields into the closure record. A reference resolves within this one
-// body (a `LocalRef` against `locals`, or a field access over the closure
-// receiver); a binding declared in an enclosing body reaches this one only by
-// capture, forwarded one boundary at a time along the lexical parent.
+// captured fields into the closure declaration. A reference resolves within
+// this one body (a `LocalRef` against `locals`, or a field access over the
+// closure receiver); a binding declared in an enclosing body reaches this one
+// only by capture, forwarded one boundary at a time along the lexical parent.
 //
 // This is not a block scope: a block governs declaration placement, visibility,
 // and cleanup ordering, never reference resolution.
@@ -85,13 +84,13 @@ class CallableBindings {
 
   // A closure body: bindings it does not declare are captured from `parent`,
   // their sources read into `capture_site` (a block of the parent) and their
-  // fields added to `record`, with the snapshot-vs-alias view chosen by
-  // `policy`. The closure receiver -- a read-only borrow of `record`, typed
-  // from `record_id` -- is materialized here as the body's `locals[0]`; a
-  // captured read is a field access over it.
+  // fields added to the closure declaration `decl`, with the snapshot-vs-alias
+  // view chosen by `policy`. The closure receiver -- a read-only borrow of the
+  // closure, typed from `closure_id` -- is materialized here as the body's
+  // `locals[0]`; a captured read is a field access over it.
   CallableBindings(
-      mir::CompilationUnit& unit, mir::ClosureRecord& record,
-      mir::ClosureRecordId record_id, CallableBindings& parent,
+      mir::CompilationUnit& unit, mir::ClosureDecl& decl,
+      mir::ClosureId closure_id, CallableBindings& parent,
       mir::Block& capture_site, CapturePolicy policy);
 
   CallableBindings(const CallableBindings&) = delete;
@@ -122,7 +121,7 @@ class CallableBindings {
       -> mir::Expr;
   [[nodiscard]] auto TypeOf(BodyBindingRef ref) const -> mir::TypeId;
 
-  // Freeze the capture set: compute the record's canonical field layout (by
+  // Freeze the capture set: compute the closure's canonical field order (by
   // binding origin), and return the closure's field initializers keyed by field
   // id. The invoke body is untouched -- it already reads each capture by its
   // stable field id. Closure bodies only.
@@ -138,7 +137,7 @@ class CallableBindings {
 
   mir::CompilationUnit* unit_;
   mir::CallableCode* code_;
-  mir::ClosureRecord* record_ = nullptr;
+  mir::ClosureDecl* closure_decl_ = nullptr;
   CallableBindings* parent_ = nullptr;
   mir::Block* capture_site_ = nullptr;
   CapturePolicy policy_;

@@ -8,10 +8,10 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::backend::cpp {
 

@@ -2,249 +2,197 @@
 
 ## Purpose
 
-This doc owns the storage shape of the two compiler-synthesized entities that carry state: the
-**closure record** a closure value is, and the **activation frame** that owns a callable's automatic
-locals. Neither is a nominal SystemVerilog object (`object_model.md`) and neither is loose program
-data (`mir.md`'s value-type system). They are the storage the lowering generates so a deferred or
-concurrent body can reach the state it needs and so an automatic local can outlive the execution
-that created it.
+This doc owns the storage shape of the compiler-synthesized state that a lowering generates so a
+deferred or concurrent body can reach the state it needs and so an automatic local can outlive the
+execution that created it. Two source constructs produce that state, and they are **two different
+kinds of thing** that share a field vocabulary:
 
-MIR's type system has one deliberate top-level split: value types versus reference types. This doc
-places both compiler-generated entities on that split and keeps them there:
+- a **closure** -- an anonymous, concrete callable value: capture fields plus one invoke body;
+- a **promoted automatic scope** -- named shared storage that owns a callable's lifetime-extended
+  automatic locals (the lowering role historically called the "activation frame").
 
-> A closure is a **value** record. An activation frame is **reference** storage with identity. They
-> sit on opposite sides of the value/reference spine and are never the same shape.
+Neither is a nominal SystemVerilog object (`object_model.md`) and neither is loose program data
+(`mir.md`'s value-type system).
 
-The conceptual peers are the same as the rest of MIR: a closure is a value that bundles captured
-state with a call operation (a C++ lambda closure object, a Rust anonymous closure struct), and a
-frame is the activation record that owns a call's locals (the stack frame a language promotes to the
-heap when a closure outlives it).
+> There are **two nominal categories**, not one. A closure is a **`ClosureType`** (an anonymous
+> concrete callable value); a promoted scope is a **`StructType`** (a named generic aggregate)
+> reached through a `Shared<>` wrapper. They share **only** the field substrate -- `FieldDecl`,
+> `FieldId`, `FieldAccess`, `FieldInit`, `CallableCode` -- and share no type identity, declaration,
+> construction node, or target realization.
+
+An earlier model fused both into one `StructType` distinguished by an `optional invoke`. That
+optional was a role discriminator: every consumer that touched the type re-derived whether it held a
+closure or a scope, and the realization split (anonymous callable vs named storage) became a
+conditional carried through LIR and the backend. Splitting the categories makes each fact
+type-level.
 
 ## Owns
 
-- The **closure record**: a per-closure-site nominal value type carrying named capture fields plus
-  exactly one invoke body, copied by value like any value.
-- The two type levels of a callable value: the **concrete closure record** (carrying its exact
-  capture fields) and the **erased `Callable<Sig>`**, and the explicit erasure boundary between
-  them.
-- The three **capture forms** -- snapshot, live-place alias, retained-frame -- and the rule that the
-  form is carried by the captured field's type.
-- The three-layer identity of a captured field: capture key, closure-record field id, and physical
-  field layout, kept distinct.
-- The **activation frame**: identity-bearing reference storage that owns a callable's automatic
-  locals, and its shared-ownership retention model.
-- The **field-storage vocabulary** (field declaration, field id, field access, layout finalization)
-  that the closure record, the activation frame, and the nominal object share.
+- The **`ClosureType`** category: an anonymous concrete callable value, `ClosureType{ClosureId}`,
+  whose declaration (`ClosureDecl`) carries capture fields plus exactly one invoke body. Two
+  closures of the same signature but different captures are different `ClosureType`s.
+- The **`StructType`** category as used for a promoted scope: a named generic aggregate,
+  `StructType{StructId}`, whose declaration carries fields and no invoke, reached through
+  `Shared<>`. In this cut a `StructType` is compiler-generated only; it is not yet a source-level
+  user-declarable aggregate feature.
+- The three **capture forms** -- snapshot, live-place alias, retained scope -- and the rule that the
+  form is carried by the captured field's type, not by a separate capture-mode axis.
+- The separate relations over a captured field: its **capture key** (which binding), its **field
+  id** (identity within the declaration, what the invoke body reads), its **field order** (a
+  deterministic declaration / emission listing), and the **initializer evaluation order** at the
+  construction site -- each kept distinct from the others and from physical layout.
+- The **field-storage vocabulary** shared by the closure, the scope struct, and the nominal object.
 
 ## Does Not Own
 
-- Which binding a reference names, per-body materialization, and capture forwarding across closure
-  boundaries. That is the lexical axis, owned by `binding_and_capture.md`. This doc owns the storage
-  shape the captured fields land in; that doc owns which origin fills each field and how it is
-  forwarded.
+- Which binding a reference names, per-body materialization, and capture forwarding. That is the
+  lexical axis, owned by `binding_and_capture.md`.
 - The callable concept -- code versus value, the signature, the result type as call protocol. That
-  is `callable.md`. This doc owns the captured-state half of a closure value and the value's type
-  levels.
-- The nominal object model -- methods, inheritance, dispatch, lifecycle, managed handles. That is
-  `object_model.md`. The activation frame shares the object's reference-storage substrate but is not
-  a nominal object, and the closure record is not an object at all.
-- The value-type system, including the tuple as the one general heterogeneous product type. That is
-  `mir.md`. A closure record is not a general product; it reuses field vocabulary, not the tuple.
-- The runtime execution instance -- the process / task / fork activation, its scheduler token, and
-  its completion slot. That is `activation.md`. This doc owns the frame storage an execution
-  instance owns or refers to, never the execution instance itself.
-- Which capture form a SystemVerilog construct requires (snapshot a loop variable, alias a `ref`,
-  retain a frame for a detached branch). That is HIR-to-MIR capture / lifetime policy
-  (`lowering_boundaries.md`); this doc owns only the resulting storage facts.
-- Physical placement -- a flat stack frame, an inline coroutine frame, a heap allocation, a
-  shared-owned record, physical field order -- and the realization of retention (intrusive refcount,
-  runtime handle). Those are LIR and backend concerns.
+  is `callable.md`. This doc owns the captured-state half of a closure.
+- The nominal object model -- methods, inheritance, dispatch, lifecycle, managed handles
+  (`object_model.md`). The object shares the field vocabulary and nothing else with these
+  categories.
+- The value-type system, including the tuple as the one structural product and the struct as the one
+  named aggregate (`mir.md`).
+- The runtime execution instance (`activation.md`). "Activation frame" is a lowering role name for a
+  `Shared<StructType>`, not the execution instance.
+- Which capture form a SystemVerilog construct requires. That is HIR-to-MIR capture / lifetime
+  policy.
+- **Target realization.** Whether a `ClosureType` is realized as an anonymous C++ lambda and a scope
+  `StructType` as a named nested `struct` is the backend's choice. This doc owns the semantic shape,
+  not its emitted form. Physical placement, physical field offsets, and retention realization are
+  LIR and backend concerns.
 
 ## Core Invariants
 
-1. **A closure value is a nominal value record.** A closure site declares a unique
-   `ClosureRecordType`: named capture fields plus exactly one invoke body, value copy / move
-   semantics, no inheritance, no dispatch, no heap requirement, no managed / GC handle, no
-   source-visible identity. _Consequence: a closure carries its captured state by value, like a C++
-   lambda closure object or a Rust closure struct; there is no closure-specific storage universe and
-   no structural tuple standing in for the environment._
+Stated positively: each fixes one rule, and what is allowed or forbidden follows from it.
 
-2. **A captured read is field access over the closure receiver.** A body reads a capture through
-   ordinary field access on its closure receiver, by a stable field id -- not through a
-   closure-specific reference node, a closure-specific id space, or a positional tuple projection.
-   _Consequence: the capture-only `CaptureId` / `CaptureRef` / capture-init shapes do not exist, and
-   neither does a `tuple_get` over an environment tuple; a captured read is the same field-access
-   primitive an object member read uses._
+1. **A closure is a `ClosureType`; a promoted scope is a `StructType`.** They are two nominal
+   categories. A `ClosureDecl` is capture fields plus exactly one invoke body; a scope `StructDecl`
+   is fields and no invoke. There is no fused type and no `is_closure` / `is_frame` discriminator.
 
-3. **A captured field is a snapshot, a live-place alias, or a retained frame -- by its type.** A
-   value-typed field is a snapshot taken at construction; a `RefType` field is a live alias of an
-   observable cell (not a raw borrowed pointer, `reference-as-data-type.md`); a
-   `Shared<ActivationFrame>` field plus a field projection is a retained frame. _Consequence:
-   snapshot-versus-alias-versus-retain is the field's type, never a separate capture-mode axis
-   (`callable.md` invariant 5); owner retention and place aliasing are different dimensions, not two
-   spellings of one._
+2. **The two categories share only the field substrate.** `FieldDecl`, `FieldId`, `FieldAccess`,
+   `FieldInit`, and `CallableCode` are shared; type identity, declaration, construction node, and
+   target realization are not. The shared vocabulary is narrow, so `object_model.md`'s
+   single-object-IR rule stands and no universal `Record` type appears.
 
-4. **A captured field's identity is not its physical layout position.** Three layers stay distinct:
-   the **capture key** (a binding origin, `binding_and_capture.md`) identifies which binding is
-   captured; the **closure-record field id** identifies the field within the record and is what the
-   invoke body reads; the **physical field layout** is a representation a backend lowers to. The
-   field id is assigned when the capture is discovered and is independent of physical order.
-   _Consequence: the invoke body is emitted once, reading a capture by its stable field id;
-   canonical ordering fixes only the physical layout (dump, generated-source field order,
-   destruction order, any future ABI key) and never rewrites the body._ A fourth concept stays
-   distinct from all three: the **initializer evaluation order** at the construction site. A field
-   initializer is a pure read of an already-materialized capture value -- a capture source with an
-   observable evaluation effect is sequenced into a local before the record is constructed -- so the
-   physical layout order the initializers are emitted in is independent of the order the sources
-   were evaluated in.
+3. **A closure's invoke reads captures through a read-only receiver.** The receiver in this cut is a
+   `Borrowed<ClosureType>` (the invoke body's `locals[0]`); a captured read is field access over it.
+   A write to captured state is a write through a captured `RefType` or through a captured
+   `Shared<StructType>` field, never a write to the capture slot itself.
 
-5. **The concrete record is directly callable; the erased level is a distinct, later addition.**
-   Callability is a property resolved from the concrete callee type: a call reads its signature from
-   the record's invoke, so a closure needs no separate callable type to be invoked. The concrete
-   `ClosureRecordType` carrying the exact capture fields is the default and the only callable type
-   that exists until a heterogeneous collection of callables (a region's deferred-effect queue)
-   requires the erased `Callable<Sig>` -- which is then introduced together with its explicit
-   erasure operation and a real consumer, never as a signature-only type no value inhabits.
-   _Consequence: ownership and placement never become hidden magic (there is no implicit erasure),
-   and the type system grows no dead erased surface ahead of its consumer._
+4. **Value-versus-reference for a scope is the wrapper, not a bespoke type.** A scope is a plain
+   `StructType` reached through a `Shared<>` handle; the reference semantics are the ordinary MIR
+   wrapper. A closure is reached by value / invoked in place. Neither needs a reference-aggregate
+   type category of its own.
 
-6. **An erased `Callable<Sig>` carries a complete contract.** It states an invoke entry, an
-   ownership / destruction contract for its held record, and a copy / move contract. _Consequence: a
-   backend realizes the erased callable from a stated contract, not from a convention it invents._
+5. **A captured field is a snapshot, a live-place alias, or a retained scope -- by its type.** A
+   value-typed field is a snapshot; a `RefType` field is a live alias of an observable cell
+   (`reference-as-data-type.md`); a `Shared<StructType>` field is a retained scope. The capture form
+   is the field's type, never a separate axis.
 
-7. **A closure record is not a general value product, and not a nominal object.** It is a
-   compiler-generated, opaque, concrete callable type: one unique type per closure site (not
-   structurally interned), exactly one entrypoint (no method lookup, overload, inheritance, or
-   dispatch), field access only inside the compiler-generated invoke body and lowering (no
-   source-level construction or destructuring). _Consequence: `TupleType` remains the only general
-   heterogeneous value product (`mir.md`), and `mir::Class` remains the only nominal object; the
-   closure record breaks neither invariant._
+6. **A captured field's identity is not its emission order and not its physical layout.** The
+   **field id** (assigned at capture discovery) is what the invoke body reads. **field_order** is a
+   deterministic declaration / emission listing over the fields; **physical offsets** belong to LIR.
+   The invoke body reads by stable field id and is never rewritten to follow a layout change.
 
-8. **Every automatic local belongs to exactly one activation frame, which is its semantic owner.**
-   Where the frame is placed -- a flat stack frame, an inline coroutine frame, a heap allocation, a
-   shared-owned record -- is not a source-semantic fact. _Consequence: a non-retained frame keeps
-   the ordinary, optimized placement; only a frame that something retains is materialized as
-   shared-owned storage._
+7. **field_order and initializer evaluation order are independent.** field_order orders the fields
+   for declaration / emission; a closure construction's `field_inits` carries the source-semantic
+   evaluation order (a side-effecting source is a sequenced temporary first). Neither derives from
+   the other, and reordering by field_order must never change initializer evaluation order.
 
-9. **An activation frame is identity-bearing reference storage, retained per-frame.** It is reached
-   through a pointer, never copied by value, and is not a value record and not a nominal object.
-   Work that may outlive the owning execution retains the whole frame through a
-   `Shared<ActivationFrame>` handle. _Consequence: an escaped automatic local is never individually
-   boxed; the work retains the frame that already owns it (`lifetime-extended-automatic-scope.md`),
-   and one retained handle is both the access path and the lifetime guarantee._
+8. **Every automatic local belongs to exactly one scope struct, its semantic owner.** Placement --
+   flat stack frame, inline coroutine frame, heap allocation, shared-owned record -- is not
+   source-semantic. Only a scope something retains is materialized as shared-owned storage, retained
+   whole through a `Shared<>` handle. An escaped automatic local is never individually boxed.
 
-10. **The closure record, the activation frame, and the nominal object share one field-storage
-    vocabulary, not one type.** They share field declaration, field id, field access, and layout
-    finalization. They remain three distinct semantic categories -- a value record with one body
-    (closure), thin reference storage with no behavior (frame), and a reference object with methods
-    / dispatch / inheritance (`object_model.md`, which the frame specializes). _Consequence: there
-    is no universal `Record` IR and no `mir::Class` with `is_closure` / `is_frame` flags; the shared
-    vocabulary is narrow, and `object_model.md` invariant 1 (no second object IR) stands._
+9. **A scope struct's identity and its emission nesting are separate stored relations.** Identity is
+   the `StructId` in the unit's struct registry. Emission nesting is an explicit list on the nesting
+   class, parallel to its child-class containment list: lowering records a scope struct on the class
+   whose body opens it. A backend that nests emits each struct by iterating that list -- a
+   mechanical per-node render, never a walk over the body tree or a payload-driven guess at a
+   construction's shape (`backend_contract.md` forbids exactly that). The relation is not on the
+   generic `CallableCode` -- a plain function carries no generated-storage list; it is on the class,
+   the emission unit.
 
-11. **Compiler-generated retained frames and SystemVerilog class handles are distinct reference
-    regimes.** A retained frame uses deterministic shared ownership (`PointerType{kShared}`, an
-    acyclic DAG by construction); an SV class handle uses the managed, precisely-traced reference
-    (`object-model.md`). _Consequence: a frame is never reached through the managed handle and a
-    class handle is never reached through the shared one._
+10. **Compiler-generated retained scopes and SystemVerilog class handles are distinct reference
+    regimes.** A retained scope uses deterministic shared ownership (`PointerType{kShared}`, an
+    acyclic DAG by construction); an SV class handle uses the managed, precisely-traced reference. A
+    scope is never reached through the managed handle and a class handle is never reached through
+    the shared one.
+
+A later addition, when a real consumer requires it: an **`ErasedCallableType<Sig>`** for a
+heterogeneous collection of closures of one signature. It is introduced with its explicit erasure
+operation and its complete contract (invoke, ownership / destruction, copy / move), never through
+implicit erasure of a concrete `ClosureType`.
 
 ## Boundary to Adjacent Layers
 
-- **`mir.md`** owns the value/reference type system and the reference wrappers (`PointerType` with
-  `kShared` / `kBorrowed` / `kUnique`, `RefType`, the managed reference), and `TupleType` as the one
-  general value product. This doc composes them: a closure record is a value type with fields; a
-  retained-frame field is a `Shared<ActivationFrame>`; an alias field is a `RefType`.
-- **`callable.md`** owns the callable concept and the receiver rule. This doc owns the closure
-  record's captured fields and the two value type levels; the receiver of a closure body is the
-  closure record itself, reached as an ordinary receiver binding.
+- **`mir.md`** owns the value/reference wrappers and the four nominal categories. This doc composes
+  them: a closure is a `ClosureType`; a retained-scope field is a `Shared<StructType>`; an alias
+  field is a `RefType`.
+- **`callable.md`** owns the callable concept and the receiver rule. This doc owns the closure's
+  captured fields; the closure body's receiver is the `ClosureType` value itself.
 - **`binding_and_capture.md`** owns origin identity and capture forwarding. This doc states that the
-  captured state it materializes is a closure record whose fields are keyed by those origins; the
-  snapshot / alias / retain view is the field's type.
-- **`object_model.md`** owns the nominal object. This doc states that the object and the activation
-  frame share one reference-storage substrate, that the frame is the thin specialization without the
-  object's behavior, and that the closure record is not an object -- it only shares field
-  vocabulary.
-- **`activation.md`** owns the runtime execution instance. This doc owns the frame storage an
-  execution instance owns or refers to; the execution instance is not the frame.
-- **HIR-to-MIR** decides which capture form each source construct and binding requires and emits the
-  corresponding field type; the storage facts this doc owns are its output. LIR and the backend
-  decide physical placement (including physical field order) and realize retention.
+  captured state is a `ClosureDecl` whose fields are keyed by those origins.
+- **`object_model.md`** owns the nominal object. This doc states that the object shares only the
+  field vocabulary with these categories.
+- **`activation.md`** owns the runtime execution instance; "activation frame" here is a role name
+  for a `Shared<StructType>`.
+- **HIR-to-MIR** decides the capture form per source construct; LIR and the backend decide physical
+  placement and target realization (lambda, functor, payload-plus-code-pointer).
 
 ## Forbidden Shapes
 
-- A closure-specific capture id space, or a capture-read node distinct from field access. Captures
-  are closure-record fields read by field access. (Invariant 2.)
-- A structural value tuple standing in for the closure environment, with captures as positional
-  slots. Captures are named record fields; the closure record is not a `TupleType`. (Invariant 1,
+Each follows from an invariant above.
+
+- One fused type for closure and scope, or a `StructType` with an `optional invoke` / `is_closure`
+  flag. (Invariant 1.)
+- A universal `Record<Storage, Behavior>` type, or sharing beyond the field substrate. (Invariant
   2.)
-- A closure-record field's physical layout position used as its identity. The identity is the field
-  id (keyed by the binding origin); the ordinal is its representation. (Invariant 4.)
-- A canonical-ordering pass that rewrites the invoke body. Ordering fixes only physical layout; the
-  body reads by stable field id. (Invariant 4.)
-- A second general value-product type minted for closure environments, or a closure record usable as
-  a general product (freely constructed, destructured, or substituted for a tuple). (Invariant 7,
-  `mir.md`.)
-- `RefType` described or used as a plain borrowed pointer. It is the observable-cell reference and
-  routes a write through the cell's update path. (Invariant 3, `reference-as-data-type.md`.)
-- Per-variable boxing of an escaped automatic local. The owning frame is retained as a whole.
-  (Invariant 9.)
-- A closure record modeled as a `mir::Class`, or an activation frame modeled as a `mir::Class` or as
-  a value record. (Invariant 1, 7, 9.)
-- A universal `Record` IR, or a `mir::Class` carrying `is_closure` / `is_frame` classification
-  flags, fusing the three categories into one type. The shared vocabulary is narrow. (Invariant 10.)
-- Implicit erasure of a concrete closure record to `Callable<Sig>`. Erasure is an explicit
-  operation. (Invariant 5.)
-- An activation frame reached through the managed (traced) reference, or an SV class handle reached
-  through the shared frame reference. (Invariant 11.)
-- Naming the storage owner of automatic locals an "activation". The activation is the runtime
-  execution instance (`activation.md`); the storage owner is the activation frame.
+- A closure capture written as a write to the capture slot rather than through a captured `RefType`
+  / `Shared<StructType>`. (Invariant 3.)
+- A reference-aggregate type category minted for the scope; reference is the wrapper. (Invariant 4.)
+- A closure-specific capture id space, a capture-read node distinct from field access, or a
+  positional tuple standing in for the environment. (Invariant 2, 5.)
+- A field's emission-order position or physical offset used as its identity, or a canonical-ordering
+  pass that rewrites the invoke body, or field_order used to reorder initializer evaluation.
+  (Invariant 6, 7.)
+- A backend deriving a struct's emission nesting by walking the body tree or guessing a
+  construction's shape from a node's payload, or the emission-nesting list stored on `CallableCode`
+  rather than the nesting class. (Invariant 9.)
+- A scope reached through the managed reference, or a class handle reached through the shared
+  reference. (Invariant 10.)
+- "`ClosureType` is a lambda" written as a MIR invariant. The lambda is one backend's realization;
+  the invariant is capture-fields-plus-invoke.
 
 ## Notes / Examples
 
-A fork branch that reads an enclosing local and the enclosing object, in single-line lowered form:
+A fork branch that reads a lifetime-extended local and the enclosing object, in single-line lowered
+form. `x` outlives the frame, so it lives in a scope `StructType` reached through a shared handle;
+the branch is a closure capturing that handle and the object pointer.
 
 ```text
 SV (inside a method M):
-  int x = 5;
-  fork  $display(x); use(this.field);  join_none
+  int x = 5;               // lifetime-extended: a scope StructType, reached via Shared<>
+  fork  #1 out <= x;  join_none
 
-closure record   : Closure_k { captured_self: M*, captured_x: int }   // per-site nominal value type
-invoke body      : field_access(closure_receiver, field_of(x))        // by stable field id
-member access     : member_access( deref( field_access(closure_receiver, field_of(self)) ), <member> )
-construct value  : Closure_k{ captured_self = read self, captured_x = read x }
-closure value type: concrete Closure_k; erase-> Callable< () -> Coroutine<void> >
+scope     : StructType M__scope0 { x: int }                  // named aggregate, reached via Shared<>
+closure   : ClosureType C_k { self: M*, scope: Shared<M__scope0> } + invoke
+invoke    : field_access(closure_receiver, field_of(scope)) then ... -> read scope.x through the handle
 ```
 
-Two receivers, kept distinct:
+The current C++ backend realizes the scope as `struct M__scope0 {...}` + `shared_ptr` and the
+closure as an anonymous lambda immediately invoked with `(self, scope)`. That is this backend's
+realization, not the MIR definition.
+
+The three capture forms differ only by field type:
 
 ```text
-closure receiver  = the Closure_k value itself (the invoke body's receiver)
-captured self     = Closure_k.captured_self    (an ordinary field, the source-level `self`)
+snapshot capture : field type = int                  // a value taken at construction
+live-place alias : field type = Ref<logic>           // an observable-cell alias
+retained scope   : field type = Shared<M__scope0>    // retain the owner; read scope.x through it
 ```
 
-The same body's three capture forms differ only by field type:
-
-```text
-snapshot capture     : field type = int                        // a value
-live-place alias     : field type = Ref<logic>                 // an observable-cell alias
-retained-frame       : field type = Shared<ActivationFrame>    // retain the owner; read frame.slot(x)
-```
-
-A closure submitted to a heterogeneous region queue is erased at the submit site:
-
-```text
-concrete Closure_k  --[ explicit erase ]-->  Callable< () -> void >
-```
-
-The queue holds `Callable< () -> void >` values of identical signature and differing concrete
-records; each erased value carries its invoke, ownership / destruction, and copy / move contract.
-
-A detached branch that must keep an enclosing automatic local alive does not box the local. It
-retains the frame that owns it, held as a `Shared<ActivationFrame>` field of the closure record:
-
-```text
-Closure_k { retained_frame: Shared<ActivationFrame>, ... }
-read x = member_access( deref( field_access(closure_receiver, field_of(retained_frame)) ), slot_of(x) )
-```
-
-The frame stays alive while any holder retains its handle, and dies when the last handle drops --
-deterministic shared ownership, distinct from the traced reclamation an SV class handle uses.
+A closure submitted to a heterogeneous region queue is erased at the submit site once that consumer
+exists: `concrete ClosureType C_k --[ explicit erase ]--> ErasedCallableType< () -> void >`.

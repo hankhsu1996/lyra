@@ -8,7 +8,6 @@
 namespace lyra::mir {
 class CompilationUnit;
 struct Block;
-struct MemberRef;
 }  // namespace lyra::mir
 
 namespace lyra::lowering::hir_to_mir {
@@ -20,7 +19,7 @@ namespace lyra::lowering::hir_to_mir {
 // operand to `frame.current_block`, and the caller adds the returned expression
 // to that same block. The read is typed as `self_ptr_type`, the borrowed
 // pointer to the enclosing object. This is the one place the self-read shape
-// lives -- every member access, cross-unit deref, closure self-capture, and
+// lives -- every field access, cross-unit deref, closure self-capture, and
 // runtime-effect engine handle starts from it.
 auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr;
@@ -31,23 +30,23 @@ auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
 // navigating up the object tree `hops` times through the runtime
 // `Scope::Parent()` handle and casting to the enclosing class. The cast is
 // sound because the reference is intra-unit -- the unit owns the enclosing
-// class's layout. Shared by a structural member access and a call to a
+// class's layout. Shared by a structural field access and a call to a
 // subroutine declared in an enclosing scope.
 auto BuildEnclosingScopeReceiver(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops) -> mir::ExprId;
 
 // Builds a read of a structural var through the current body's `self`:
-// `MemberAccess(self, member)`. The result type is the var's declared MIR
+// `FieldAccess(self, field)`. The result type is the var's declared MIR
 // storage type, read from the enclosing scope reached by `hops` (a wrapper
 // type for observable storage, the value type otherwise) -- a fact that lives
 // only in the MIR scope, not in HIR, so it is read here rather than passed
 // down. Serves both a structural-var reference and a static-lifetime local
 // promoted to a per-instance structural var (LRM 13.3.1), which reach their
 // storage identically.
-auto BuildStructuralMemberAccessExpr(
+auto BuildStructuralFieldAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
-    mir::EnclosingHops hops, mir::MemberId var) -> mir::Expr;
+    mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr;
 
 // Constructs a reference to the cell `cell` denotes (LRM 13.5.2): adds a
 // reference-construction `CallExpr` to `block` whose result type is a

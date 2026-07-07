@@ -41,8 +41,7 @@ auto IsExprRootedAtStructuralDataObject(
   const auto& expr = block.exprs.Get(expr_id);
   return std::visit(
       Overloaded{
-          [](const mir::MemberRef&) { return true; },
-          [](const mir::MemberAccessExpr&) { return true; },
+          [](const mir::FieldAccessExpr&) { return true; },
           [](const mir::LocalRef&) { return false; },
           [&](const mir::TupleGetExpr& g) {
             return IsExprRootedAtStructuralDataObject(block, g.tuple);

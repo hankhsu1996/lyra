@@ -21,11 +21,11 @@ struct ParamDecl {
 };
 
 // A read of a constructor-bound structural param (a generate `genvar` per LRM
-// 27.4), addressed like a member field: `receiver` is the scope object that
-// owns the param -- `self` for a same-scope read, an enclosing-scope object
-// reached by climbing the object tree for a cross-scope read -- and `param`
-// names the field on that object. The climb is baked into `receiver`, parallel
-// to `MemberAccessExpr`, so the read needs no enclosing-hop count of its own.
+// 27.4), addressed like a field: `receiver` is the scope object that owns the
+// param -- `self` for a same-scope read, an enclosing-scope object reached by
+// climbing the object tree for a cross-scope read -- and `param` names the
+// field on that object. The climb is baked into `receiver`, parallel to
+// `FieldAccessExpr`, so the read needs no enclosing-hop count of its own.
 struct ParamRef {
   ExprId receiver = {};
   ParamId param = {};

@@ -116,6 +116,9 @@ auto RenderTypeAsCpp(
           [&unit](const mir::ObjectType& o) -> std::string {
             return unit.GetClass(o.class_id).name;
           },
+          [&unit](const mir::StructType& s) -> std::string {
+            return unit.GetStruct(s.struct_id).name;
+          },
           [](const mir::ExternalUnitObjectType& e) -> std::string {
             return e.unit_name;
           },
@@ -238,7 +241,7 @@ auto RenderTypeAsCpp(
           },
           [](const auto&) -> std::string {
             throw InternalError(
-                "RenderTypeAsCpp: unsupported MIR type for current C++ render "
+                "RenderTypeAsCpp: MIR type not yet supported in C++ render "
                 "cut");
           },
       },
