@@ -82,8 +82,10 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.kind)));
         } else if constexpr (std::is_same_v<T, CoroutineType>) {
           HashId(seed, t.payload);
-        } else if constexpr (std::is_same_v<T, ClosureRecordType>) {
-          HashField(seed, t.record_id.value);
+        } else if constexpr (std::is_same_v<T, ClosureType>) {
+          HashField(seed, t.closure_id.value);
+        } else if constexpr (std::is_same_v<T, StructType>) {
+          HashField(seed, t.struct_id.value);
         } else if constexpr (std::is_same_v<T, RefType>) {
           HashId(seed, t.pointee);
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.mutability)));

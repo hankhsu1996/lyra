@@ -22,8 +22,8 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -43,9 +43,10 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       .time_resolution = {},
       .ctor_prefix_params = {},
       .params = {},
-      .members = {},
+      .fields = {},
       .constructor = {},
       .contained = {},
+      .structs = {},
       .methods = {},
       .type_aliases = {}};
 
@@ -66,15 +67,14 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   // plain assignment through `self`, not an observable `Set`.
   for (const auto& field : hir_class.fields) {
     const mir::TypeId field_type = module.TranslateType(field.type);
-    const mir::MemberId member_id = mir_class.members.Add(
-        mir::MemberDecl{.name = field.name, .type = field_type});
+    const mir::FieldId field_id = mir_class.fields.Add(
+        mir::FieldDecl{.name = field.name, .type = field_type});
     const mir::ExprId default_id = ctor_block.exprs.Add(
         BuildDefaultValueFromHir(module, frame, field.type));
     const mir::ExprId self_ref =
         ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_pointer_type));
     const mir::ExprId target = ctor_block.exprs.Add(
-        mir::MakeMemberAccessExpr(
-            self_ref, mir::MemberRef{.var = member_id}, field_type));
+        mir::MakeFieldAccessExpr(self_ref, field_id, field_type));
     const mir::ExprId assign = ctor_block.exprs.Add(
         mir::MakeAssignExpr(target, default_id, field_type));
     ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
@@ -86,7 +86,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   // 13.3.1); an SV class has no named-procedural-block hierarchy, so every
   // static lives directly on the enclosing SV class. The mangled name
   // (`<method>__<source>_<hir_id>`) keeps sibling methods that reuse a
-  // source identifier from colliding on the member arena; the `hir_id`
+  // source identifier from colliding on the field arena; the `hir_id`
   // suffix distinguishes nested-block reuses too.
   //
   // The materialization table is empty because there are no procedural-
@@ -107,10 +107,10 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       const std::string mangled =
           std::format("{}__{}_{}", method.name, v.name, j);
       const mir::TypeId type = module.TranslateType(v.type);
-      const mir::MemberId mid =
-          mir_class.members.Add(mir::MemberDecl{.name = mangled, .type = type});
+      const mir::FieldId mid =
+          mir_class.fields.Add(mir::FieldDecl{.name = mangled, .type = type});
       placements[j] = StaticStoragePlacement{
-          .owner = StorageOwner{EnclosingClass{}}, .member = mid};
+          .owner = StorageOwner{EnclosingClass{}}, .field = mid};
     }
     method_plans.emplace_back(method_scopes, std::move(placements));
   }

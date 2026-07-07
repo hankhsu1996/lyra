@@ -43,8 +43,17 @@ what the construct means.
   for a member that owns a child, of its child-scope kind and cardinality.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
-  named); two composing wrappers, owning pointer and vector; and the tuple, a heterogeneous product
-  of component types (the generic-language product type, distinct from the homogeneous vector).
+  named); two composing wrappers, owning pointer and vector; and four nominal / structural
+  categories that share one **field substrate** (`FieldDecl`, `FieldId`, `FieldAccess`) but stay
+  distinct types: the **tuple**, the one structural heterogeneous product (positional,
+  shape-interned); the **struct**, a nominal named field-bearing aggregate (declaration identity,
+  named fields), used for a compiler-generated promoted automatic scope reached through a `Shared<>`
+  wrapper; the **closure**, an anonymous concrete callable value (capture fields plus one invoke
+  body, a distinct type per site); and the **object** (`mir::Class`), the rich nominal object with
+  methods and dispatch. Structural versus nominal, and storage versus callable, are the ordinary
+  generic-language distinctions (C++/Rust/LLVM carry them). "Activation frame" is a lowering role
+  name for a `Shared<>` scope struct, not a type category; a closure is not a struct-with-invoke but
+  its own callable-value category.
 - Callables: one concept -- callable code (a signature plus an internal body or an external symbol)
   and a callable value (code plus a bound environment). Every callable body's first binding is
   `self`, a pointer to the enclosing class; the body reaches every value it needs through its

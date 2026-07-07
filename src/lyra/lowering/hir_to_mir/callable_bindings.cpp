@@ -12,32 +12,31 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/closure.hpp"
-#include "lyra/mir/closure_record.hpp"
+#include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 CallableBindings::CallableBindings(
-    mir::CompilationUnit& unit, mir::ClosureRecord& record,
-    mir::ClosureRecordId record_id, CallableBindings& parent,
+    mir::CompilationUnit& unit, mir::ClosureDecl& decl,
+    mir::ClosureId closure_id, CallableBindings& parent,
     mir::Block& capture_site, CapturePolicy policy)
     : unit_(&unit),
-      code_(&record.invoke),
-      record_(&record),
+      code_(&decl.invoke),
+      closure_decl_(&decl),
       parent_(&parent),
       capture_site_(&capture_site),
       policy_(std::move(policy)) {
   // The closure receiver is the invoke body's `locals[0]`: a read-only borrow
-  // of the record. A captured read is a field access over it, resolved through
-  // the record id so the pointee names this record's field set.
-  const mir::TypeId record_value =
-      unit.types.Intern(mir::ClosureRecordType{.record_id = record_id});
+  // of the closure. A captured read is a field access over it, resolved through
+  // the closure id so the pointee names this closure's field set.
+  const mir::TypeId closure_value =
+      unit.types.Intern(mir::ClosureType{.closure_id = closure_id});
   self_ptr_type_ = unit.types.PointerTo(
-      record_value, mir::PointerOwnership::kBorrowed,
+      closure_value, mir::PointerOwnership::kBorrowed,
       mir::Mutability::kReadOnly);
   self_local_ =
       code_->locals.Add(mir::LocalDecl{.name = "self", .type = self_ptr_type_});
@@ -68,7 +67,7 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   // construction site (a block of the parent), then add a captured field here.
   const BodyBindingRef parent_ref = parent_->EnsureCarrier(origin);
   const mir::TypeId parent_type = parent_->TypeOf(parent_ref);
-  const std::string base_name = parent_->NameOf(parent_ref);
+  const std::string name = parent_->NameOf(parent_ref);
   const mir::ExprId read = capture_site_->exprs.Add(
       parent_->MakeReadExpr(parent_ref, *capture_site_));
 
@@ -79,18 +78,10 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
     field_type = capture_site_->exprs.Get(source).type;
   }
 
-  // The field's C++ name shares the lambda's scope with the per-invocation
-  // parameters and body locals, so it must not collide with them: a nested
-  // clause can capture an enclosing iterator whose source name (e.g. `index`)
-  // matches this closure's own auto-declared iterator parameter. Suffix the
-  // source name with the field id -- unique within the record, and a shape no
-  // parameter carries -- so the capture and the parameter stay distinct.
-  const auto field_index = static_cast<std::uint32_t>(record_->fields.size());
-  std::string field_name = base_name + "_c" + std::to_string(field_index);
-  const mir::MemberId member = record_->fields.Add(
-      mir::MemberDecl{.name = std::move(field_name), .type = field_type});
+  const mir::FieldId field = closure_decl_->fields.Add(
+      mir::FieldDecl{.name = name, .type = field_type});
   captures_.push_back(CaptureEntry{.key = origin, .source = source});
-  const BodyBindingRef result{.ref = member};
+  const BodyBindingRef result{.ref = field};
   available_.insert_or_assign(origin, result);
   return result;
 }
@@ -102,12 +93,12 @@ auto CallableBindings::MakeReadExpr(BodyBindingRef ref, mir::Block& block) const
           [&](mir::LocalId id) -> mir::Expr {
             return mir::MakeLocalRefExpr(id, code_->locals.Get(id).type);
           },
-          [&](mir::MemberId member) -> mir::Expr {
-            const mir::TypeId field_type = record_->fields.Get(member).type;
+          [&](mir::FieldId field) -> mir::Expr {
+            const mir::TypeId field_type =
+                closure_decl_->fields.Get(field).type;
             const mir::ExprId receiver = block.exprs.Add(
                 mir::MakeLocalRefExpr(self_local_, self_ptr_type_));
-            return mir::MakeMemberAccessExpr(
-                receiver, mir::MemberRef{.var = member}, field_type);
+            return mir::MakeFieldAccessExpr(receiver, field, field_type);
           },
       },
       ref.ref);
@@ -117,8 +108,8 @@ auto CallableBindings::TypeOf(BodyBindingRef ref) const -> mir::TypeId {
   return std::visit(
       Overloaded{
           [&](mir::LocalId id) { return code_->locals.Get(id).type; },
-          [&](mir::MemberId member) {
-            return record_->fields.Get(member).type;
+          [&](mir::FieldId field) {
+            return closure_decl_->fields.Get(field).type;
           },
       },
       ref.ref);
@@ -130,8 +121,8 @@ auto CallableBindings::NameOf(BodyBindingRef ref) const -> const std::string& {
           [&](mir::LocalId id) -> const std::string& {
             return code_->locals.Get(id).name;
           },
-          [&](mir::MemberId member) -> const std::string& {
-            return record_->fields.Get(member).name;
+          [&](mir::FieldId field) -> const std::string& {
+            return closure_decl_->fields.Get(field).name;
           },
       },
       ref.ref);
@@ -140,18 +131,19 @@ auto CallableBindings::NameOf(BodyBindingRef ref) const -> const std::string& {
 auto CallableBindings::Finalize() -> std::vector<mir::FieldInit> {
   const std::size_t count = captures_.size();
 
-  // Canonical physical layout: field ids ordered by their binding origin. This
-  // fixes only the record's field order (dump, generated-source order,
-  // destruction); the invoke body reads by stable field id, so it is untouched.
-  std::vector<mir::MemberId> layout;
-  layout.reserve(count);
+  // Canonical field order: field ids ordered by their binding origin. This is
+  // the deterministic emission order (capture clause, dump), independent of the
+  // order captures were discovered; the invoke body reads by stable field id,
+  // so it is untouched. Not a physical layout -- offsets belong to LIR.
+  std::vector<mir::FieldId> order;
+  order.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    layout.push_back(mir::MemberId{static_cast<std::uint32_t>(i)});
+    order.push_back(mir::FieldId{static_cast<std::uint32_t>(i)});
   }
-  std::ranges::stable_sort(layout, [&](mir::MemberId a, mir::MemberId b) {
+  std::ranges::stable_sort(order, [&](mir::FieldId a, mir::FieldId b) {
     return captures_[a.value].key < captures_[b.value].key;
   });
-  record_->layout = std::move(layout);
+  closure_decl_->field_order = std::move(order);
 
   // Field initializers keyed by field id (discovery order). Each is a pure read
   // of an already-materialized capture source, so their construction order is
@@ -161,7 +153,7 @@ auto CallableBindings::Finalize() -> std::vector<mir::FieldInit> {
   for (std::size_t i = 0; i < count; ++i) {
     inits.push_back(
         mir::FieldInit{
-            .target = mir::MemberId{static_cast<std::uint32_t>(i)},
+            .target = mir::FieldId{static_cast<std::uint32_t>(i)},
             .value = captures_[i].source});
   }
   return inits;

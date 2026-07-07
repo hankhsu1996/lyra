@@ -8,6 +8,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -17,9 +18,10 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -27,12 +29,11 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // LRM 6.21: a block declaring automatic locals a detached fork branch borrows
-// and can outlive lifts the whole borrowed set into one shared activation
-// object. Synthesize a plain box class holding those locals as members,
-// allocate it at block entry through a handle (a shared pointer), and record
-// each promoted var's slot so its declaration and references reach
-// `handle->member`. The branch keeps the activation alive by holding a by-value
-// copy of the handle.
+// and can outlive lifts the whole borrowed set into one shared promoted scope
+// (the "activation frame" role). Synthesize a struct holding those locals as
+// fields, allocate it at block entry through a shared handle, and record each
+// promoted var's field so its declaration and references reach `handle->field`.
+// The branch keeps the scope alive by holding a by-value copy of the handle.
 void OpenActivationScope(
     ProcessLowerer& process, const WalkFrame& frame, const hir::BlockStmt& b) {
   const hir::ProceduralBody& body = process.HirBody();
@@ -49,49 +50,55 @@ void OpenActivationScope(
 
   ModuleLowerer& module = process.Module();
   mir::CompilationUnit& unit = module.Unit();
-  mir::Class& owner = *process.OwnerCtorFrame().current_class;
 
-  // Build the box fully, then append it (the class arena is append-only).
-  const std::string box_name = std::string(process.CallableName()) + "__act" +
-                               std::to_string(owner.contained.size());
-  const mir::ClassId box_id = unit.DeclareClass();
-  mir::Class box;
-  box.name = box_name;
-  box.base = std::nullopt;
-  box.time_resolution = owner.time_resolution;
-  std::vector<mir::MemberId> members;
-  members.reserve(promoted.size());
+  // The escaping scope's locals are promoted into a compiler-generated struct
+  // whose identity lives in the unit's struct registry; its emission nesting is
+  // recorded separately on the enclosing class below.
+  const std::string struct_name = std::string(process.CallableName()) +
+                                  "__scope" +
+                                  std::to_string(unit.structs.size());
+  mir::StructDecl struct_decl;
+  struct_decl.name = struct_name;
+  std::vector<mir::FieldId> fields;
+  fields.reserve(promoted.size());
   for (const hir::ProceduralVarId v : promoted) {
     const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(v);
-    members.push_back(box.members.Add(
-        mir::MemberDecl{
+    fields.push_back(struct_decl.fields.Add(
+        mir::FieldDecl{
             .name = decl.name, .type = module.TranslateType(decl.type)}));
   }
-  const mir::TypeId box_object =
-      unit.types.Intern(mir::ObjectType{.class_id = box_id});
-  box.self_pointer_type =
-      unit.types.PointerTo(box_object, mir::PointerOwnership::kBorrowed);
-  unit.DefineClass(box_id, std::move(box));
-  owner.contained.push_back(box_id);
+  const mir::StructId struct_id = unit.AddStruct(std::move(struct_decl));
+  // The struct is nested in the class whose body opens this scope -- its
+  // emission host. Record the nesting on the class explicitly, parallel to the
+  // child-class `contained` list, so a backend emits it by iteration, never by
+  // walking the body tree.
+  if (frame.current_class == nullptr) {
+    throw InternalError(
+        "OpenActivationScope: promoted scope opened outside any class");
+  }
+  frame.current_class->structs.push_back(struct_id);
+  const mir::TypeId struct_type =
+      unit.types.Intern(mir::StructType{.struct_id = struct_id});
 
-  // The handle: a shared pointer to the box, allocated by make_shared. Declared
-  // first in the scope, before the promoted locals it stands in for.
+  // The handle: a shared pointer to the generated struct, allocated by
+  // make_shared. Declared first in the scope, before the promoted locals it
+  // stands in for.
   const mir::TypeId handle_type =
-      unit.types.PointerTo(box_object, mir::PointerOwnership::kShared);
+      unit.types.PointerTo(struct_type, mir::PointerOwnership::kShared);
   mir::Block& block = *frame.current_block;
   const mir::ExprId init = block.exprs.Add(
       mir::Expr{
           .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
           .type = handle_type});
   // The handle is a synthesized carrier declared in this body and captured (by
-  // value, owning) by any branch that borrows a promoted member. Its origin
+  // value, owning) by any branch that borrows a promoted field. Its origin
   // comes from the unit's synthesized-site allocator, the one collision-free id
   // space every synthesized carrier shares.
   const BindingOriginId handle_origin =
       BindingOriginId::Synthesized(module.NextSynthesizedSite(), 0);
   const mir::LocalId handle = frame.bindings->Declare(
       handle_origin,
-      mir::LocalDecl{.name = box_name + "_h", .type = handle_type});
+      mir::LocalDecl{.name = struct_name + "_h", .type = handle_type});
   block.AppendStmt(mir::LocalDeclStmt{.target = handle, .init = init});
 
   for (std::size_t i = 0; i < promoted.size(); ++i) {
@@ -99,7 +106,7 @@ void OpenActivationScope(
         promoted[i], PromotedVarBinding{
                          .handle_origin = handle_origin,
                          .handle_type = handle_type,
-                         .member = members[i]});
+                         .field = fields[i]});
   }
 }
 

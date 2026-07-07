@@ -11,7 +11,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -32,12 +32,12 @@ struct EnclosingClass {
 using StorageOwner = std::variant<EnclosingClass, hir::ProceduralScopeId>;
 
 // One materialized procedural-storage scope. It is a runtime hierarchy child
-// of its runtime parent, reachable through `companion_member` on the
+// of its runtime parent, reachable through `companion_field` on the
 // parent's class. `runtime_parent` is the immediate lexical parent
 // (another procedural scope, or the enclosing structural class).
 struct MaterializedProceduralScope {
   mir::ClassId class_id{};
-  mir::MemberId companion_member{};
+  mir::FieldId companion_field{};
   StorageOwner runtime_parent;
 };
 
@@ -47,13 +47,13 @@ struct MaterializedProceduralScope {
 // named scope's).
 struct StaticStoragePlacement {
   StorageOwner owner;
-  mir::MemberId member;
+  mir::FieldId field;
 };
 
 // Registry of materialized procedural-storage scopes for one structural
 // scope. Every `ProceduralScopeDecl` materializes, indexed by HIR
 // `ProceduralScopeId`. Walks from any `StorageOwner` to the body's
-// enclosing class assemble the companion-member chain consumers use to
+// enclosing class assemble the companion-field chain consumers use to
 // project storage from `self`.
 class ProceduralScopeMaterializationTable {
  public:
@@ -82,15 +82,15 @@ class ProceduralScopeMaterializationTable {
     return by_scope_id_.size();
   }
 
-  // The companion-member path from the body's enclosing class `self` down
+  // The companion-field path from the body's enclosing class `self` down
   // to `owner`. Empty when owner is the enclosing class; one entry per
   // intervening materialized procedural scope otherwise.
   [[nodiscard]] auto CompanionChainTo(StorageOwner owner) const
-      -> std::vector<mir::MemberId> {
-    std::vector<mir::MemberId> chain;
+      -> std::vector<mir::FieldId> {
+    std::vector<mir::FieldId> chain;
     while (const auto* scope_id = std::get_if<hir::ProceduralScopeId>(&owner)) {
       const auto& entry = Get(*scope_id);
-      chain.push_back(entry.companion_member);
+      chain.push_back(entry.companion_field);
       owner = entry.runtime_parent;
     }
     // Reverse so the chain reads outermost-first (enclosing self toward
@@ -146,7 +146,7 @@ class CallableStoragePlan {
   }
 
   [[nodiscard]] auto CompanionChainTo(StorageOwner owner) const
-      -> std::vector<mir::MemberId> {
+      -> std::vector<mir::FieldId> {
     return scopes_->CompanionChainTo(owner);
   }
 

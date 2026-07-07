@@ -337,17 +337,45 @@ auto RenderCastExpr(
 // and a field id to a rendered field, so a new receiver kind is added here, not
 // at every access site.
 struct FieldAccess {
-  std::string_view name;
+  std::string name;
   bool through_receiver;
 };
 
-auto ResolveFieldAccess(const ScopeView& view, const mir::MemberAccessExpr& m)
+// The C++ name of a closure capture, distinct from the field's source name. A
+// capture is realized as a lambda capture and shares the lambda's scope with
+// the closure's per-invocation parameters and body locals, so its name must not
+// collide with a parameter -- a nested clause may capture an enclosing iterator
+// whose source name matches this closure's own iterator parameter -- nor with
+// another capture of the same source name. The field id disambiguates: it is
+// unique within the closure and is a shape no source-level name carries. This
+// stays in the backend so the MIR field name remains the plain source name.
+auto ClosureCaptureCppName(const mir::ClosureDecl& decl, mir::FieldId field)
+    -> std::string {
+  return std::format("{}_c{}", decl.fields.Get(field).name, field.value);
+}
+
+// The field name for a reference-storage receiver -- a class instance or a
+// promoted scope. Both are reference storage reached through the receiver, so a
+// field access is one shape (`recv->field`); they differ only in which field
+// list the pointee type names.
+auto ReferenceStorageFieldName(
+    const ScopeView& view, mir::TypeId pointee, mir::FieldId field)
+    -> std::string_view {
+  const auto& data = view.Unit().types.Get(pointee).data;
+  if (const auto* s = std::get_if<mir::StructType>(&data)) {
+    return view.Unit().GetStruct(s->struct_id).fields.Get(field).name;
+  }
+  return view.ClassByObjectType(pointee).fields.Get(field).name;
+}
+
+auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
     -> FieldAccess {
   const mir::TypeId recv_type = view.Expr(m.receiver).type;
   const auto& recv_data = view.Unit().types.Get(recv_type).data;
-  // The receiver reaches its record either through a borrowed pointer (a scope
-  // `self`, a closure receiver) or a managed reference (a class handle); both
-  // name the record type as their pointee.
+  // The receiver reaches its field-bearing value through a borrowed pointer (a
+  // class `self`, a closure receiver), a shared handle (a promoted scope), or a
+  // managed reference (a class handle); all name the field-bearing type as
+  // pointee.
   mir::TypeId pointee{};
   if (const auto* ptr = std::get_if<mir::PointerType>(&recv_data)) {
     pointee = ptr->pointee;
@@ -360,16 +388,19 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::MemberAccessExpr& m)
         "managed reference");
   }
   const auto& pointee_data = view.Unit().types.Get(pointee).data;
-  if (const auto* rec = std::get_if<mir::ClosureRecordType>(&pointee_data)) {
+  // A closure captures its fields into a lambda whose captures are in scope, so
+  // a read over the closure receiver (a borrow of the `ClosureType`) is the
+  // bare capture name, not a receiver dereference. Every other field-bearing
+  // receiver -- a promoted scope through its shared handle, a class self -- is
+  // ordinary `recv->field`.
+  if (const auto* c = std::get_if<mir::ClosureType>(&pointee_data)) {
     return FieldAccess{
-        .name = view.Unit()
-                    .GetClosureRecord(rec->record_id)
-                    .fields.Get(m.member.var)
-                    .name,
+        .name = ClosureCaptureCppName(
+            view.Unit().GetClosure(c->closure_id), m.field),
         .through_receiver = false};
   }
   return FieldAccess{
-      .name = view.ClassByObjectType(pointee).members.Get(m.member.var).name,
+      .name = std::string(ReferenceStorageFieldName(view, pointee, m.field)),
       .through_receiver = true};
 }
 
@@ -383,10 +414,10 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
     -> std::string {
   return std::visit(
       Overloaded{
-          [&](const mir::MemberAccessExpr& m) -> std::string {
+          [&](const mir::FieldAccessExpr& m) -> std::string {
             const FieldAccess field = ResolveFieldAccess(view, m);
             if (!field.through_receiver) {
-              return std::string(field.name);
+              return field.name;
             }
             return std::format(
                 "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);
@@ -437,7 +468,7 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
 namespace {
 
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
-  return std::holds_alternative<mir::MemberAccessExpr>(expr.data) ||
+  return std::holds_alternative<mir::FieldAccessExpr>(expr.data) ||
          std::holds_alternative<mir::DerefExpr>(expr.data) ||
          std::holds_alternative<mir::LocalRef>(expr.data);
 }
@@ -539,25 +570,43 @@ auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
       bind.name);
 }
 
-// A closure renders as a lambda whose captured fields are the closure record's
-// fields, in the record's canonical layout order. A captured read in the body
-// resolves to the bare field name (an in-scope lambda binding), so the capture
-// clause and the body agree by construction. The capture list is derived solely
-// from the record's fields and layout and this construction's field
-// initializers -- never re-inferred from the body. A synchronous closure
-// captures each field by value (`[name = init]`) and renders the record's
-// per-invocation `params` as lambda parameters. A coroutine closure (result
+// A struct value renders as C++ aggregate initialization, one designated
+// initializer per field in the construction's listed evaluation order:
+// `StructName{.x = a, .y = b}`.
+auto RenderStructConstructExpr(
+    const ScopeView& view, const mir::StructConstructExpr& construct)
+    -> std::string {
+  const mir::StructDecl& decl = view.Unit().GetStruct(construct.struct_id);
+  std::string inits;
+  bool first = true;
+  for (const mir::FieldInit& init : construct.field_inits) {
+    if (!first) inits += ", ";
+    inits += std::format(
+        ".{} = {}", decl.fields.Get(init.target).name,
+        RenderExpr(view, view.Expr(init.value)));
+    first = false;
+  }
+  return std::format("{}{{{}}}", decl.name, inits);
+}
+
+// A closure renders as a lambda whose captured fields are the closure's fields,
+// in field order. A captured read in the body resolves to the bare field name
+// (an in-scope lambda binding), so the capture clause and the body agree by
+// construction. The capture list is derived solely from the closure's fields
+// and field order and this construction's field initializers -- never
+// re-inferred from the body. A synchronous closure captures each field by value
+// (`[name = init]`) and renders the closure's per-invocation `params` as lambda
+// parameters. A coroutine closure (result
 // type `Coroutine`) is a stateless lambda whose captured fields pass as
 // frame-copied parameters supplied by an immediate call -- a capturing
 // coroutine lambda would dangle once the spawned branch outlives the
 // referencing site. The clause never contains `[this]`, `[=]`, or `[&]`: each
 // entry is a by-value field, and an alias field is a `Ref<T>`, not a hidden C++
 // reference.
-auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& closure)
+auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
     -> std::string {
-  const mir::ClosureRecord& record =
-      view.Unit().GetClosureRecord(closure.record);
-  const mir::CallableCode& code = record.invoke;
+  const mir::ClosureDecl& decl = view.Unit().GetClosure(construct.closure);
+  const mir::CallableCode& code = decl.invoke;
 
   const std::string return_clause = std::format(
       " -> {}", RenderTypeAsCpp(view.Unit(), view.Class(), code.result_type));
@@ -575,17 +624,17 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& closure)
     std::string params_text;
     std::string args_text;
     bool first = true;
-    for (const mir::MemberId member : record.layout) {
+    for (const mir::FieldId field_id : decl.field_order) {
       if (!first) {
         params_text += ", ";
         args_text += ", ";
       }
-      const mir::MemberDecl& field = record.fields.Get(member);
+      const mir::FieldDecl& field = decl.fields.Get(field_id);
       params_text += std::format(
           "{} {}", RenderTypeAsCpp(view.Unit(), view.Class(), field.type),
-          field.name);
-      args_text +=
-          RenderExpr(view, view.Expr(closure.field_inits[member.value].value));
+          ClosureCaptureCppName(decl, field_id));
+      args_text += RenderExpr(
+          view, view.Expr(construct.field_inits[field_id.value].value));
       first = false;
     }
     return std::format(
@@ -594,12 +643,12 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& closure)
 
   std::string captures_text;
   bool first_capture = true;
-  for (const mir::MemberId member : record.layout) {
+  for (const mir::FieldId field_id : decl.field_order) {
     if (!first_capture) captures_text += ", ";
-    const mir::MemberDecl& field = record.fields.Get(member);
     captures_text += std::format(
-        "{} = {}", field.name,
-        RenderExpr(view, view.Expr(closure.field_inits[member.value].value)));
+        "{} = {}", ClosureCaptureCppName(decl, field_id),
+        RenderExpr(
+            view, view.Expr(construct.field_inits[field_id.value].value)));
     first_capture = false;
   }
 
@@ -822,13 +871,16 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::PointerCastExpr& c) -> std::string {
             return RenderPointerCastExpr(view, c, expr.type);
           },
-          [&](const mir::MemberAccessExpr& m) -> std::string {
+          [&](const mir::FieldAccessExpr& m) -> std::string {
             const FieldAccess field = ResolveFieldAccess(view, m);
             if (!field.through_receiver) {
-              return std::string(field.name);
+              return field.name;
             }
             return std::format(
                 "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);
+          },
+          [&](const mir::StructConstructExpr& sc) -> std::string {
+            return RenderStructConstructExpr(view, sc);
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);

@@ -16,7 +16,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -37,7 +36,7 @@ auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
 }
 
 // Selects the observable-pointer expression for one sensitivity leaf, given
-// the lowered MIR member ref and its slot type. Adds the chosen expression
+// the lowered MIR field ref and its slot type. Adds the chosen expression
 // (and any sub-expressions it needs) to `block` and returns its id. The two
 // cases mirror the runtime's two storage shapes for an observable: a
 // pre-resolved borrowed pointer (a cross-unit reference slot filled in the
@@ -45,21 +44,21 @@ auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
 // and a directly owned cell wraps under `AddressOfExpr`.
 auto BuildObservablePtrExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    mir::EnclosingHops hops, mir::MemberId var) -> mir::ExprId {
+    mir::EnclosingHops hops, mir::FieldId var) -> mir::ExprId {
   const mir::TypeId field_type =
-      frame.EnclosingClassAtHops(hops).members.Get(var).type;
-  const mir::ExprId member_access_id =
-      block.exprs.Add(BuildStructuralMemberAccessExpr(frame, unit, hops, var));
+      frame.EnclosingClassAtHops(hops).fields.Get(var).type;
+  const mir::ExprId field_access_id =
+      block.exprs.Add(BuildStructuralFieldAccessExpr(frame, unit, hops, var));
   const auto& field_type_data = unit.types.Get(field_type).data;
 
   if (const auto* ptr = std::get_if<mir::PointerType>(&field_type_data);
       ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
-    return member_access_id;
+    return field_access_id;
   }
 
   const mir::TypeId ptr_type =
       unit.types.PointerTo(field_type, mir::PointerOwnership::kBorrowed);
-  return block.exprs.Add(mir::MakeAddressOfExpr(member_access_id, ptr_type));
+  return block.exprs.Add(mir::MakeAddressOfExpr(field_access_id, ptr_type));
 }
 
 }  // namespace
@@ -75,16 +74,16 @@ auto MakeSensitivityWaitStmt(
     const auto [hops, var] = std::visit(
         Overloaded{
             [&](const hir::StructuralDataObjectRef& r)
-                -> std::pair<mir::EnclosingHops, mir::MemberId> {
+                -> std::pair<mir::EnclosingHops, mir::FieldId> {
               return {
                   mir::EnclosingHops{.value = r.hops.value},
                   lowerer.TranslateStructuralDataObject(r.hops, r.var)};
             },
             [&](const hir::CrossUnitVarRef& r)
-                -> std::pair<mir::EnclosingHops, mir::MemberId> {
+                -> std::pair<mir::EnclosingHops, mir::FieldId> {
               return {
                   mir::EnclosingHops{.value = 0},
-                  lowerer.CrossUnitRefTarget(r.id).target.var};
+                  lowerer.CrossUnitRefTarget(r.id).target};
             },
         },
         entry.ref);

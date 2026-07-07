@@ -18,13 +18,13 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/field.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 struct ChildStructuralScopeBinding {
   mir::ClassId scope_id;
-  mir::MemberId var_id;
+  mir::FieldId var_id;
 };
 
 // The owned-child-scope bindings for a single `hir::Generate`, indexed by
@@ -34,11 +34,11 @@ struct GenerateBindings {
   std::vector<ChildStructuralScopeBinding> by_scope_id;
 };
 
-// The MIR slot a HIR cross-unit ref resolves to: a member ref to the slot
-// bundled with the slot's MIR type, so a body reader decides whether the read
+// The MIR slot a HIR cross-unit ref resolves to: the slot's field id bundled
+// with the slot's MIR type, so a body reader decides whether the read
 // dereferences without re-touching the owning scope.
 struct CrossUnitRefMeta {
-  mir::MemberRef target = {};
+  mir::FieldId target = {};
   mir::TypeId slot_type = {};
 };
 
@@ -128,9 +128,9 @@ class StructuralScopeLowerer {
         hir::StructuralHops{.value = hops.value - 1}, id);
   }
 
-  void AddCrossUnitRefTarget(mir::MemberRef target, mir::TypeId slot_type) {
+  void AddCrossUnitRefTarget(mir::FieldId target, mir::TypeId slot_type) {
     cross_unit_ref_targets_.push_back(
-        CrossUnitRefMeta{.target = std::move(target), .slot_type = slot_type});
+        CrossUnitRefMeta{.target = target, .slot_type = slot_type});
   }
 
   [[nodiscard]] auto CrossUnitRefTarget(hir::CrossUnitRefId hir_id) const
@@ -139,7 +139,7 @@ class StructuralScopeLowerer {
   }
 
   void MapStructuralDataObject(
-      hir::StructuralDataObjectId hir_id, mir::MemberId mir_id) {
+      hir::StructuralDataObjectId hir_id, mir::FieldId mir_id) {
     if (hir_id.value != structural_data_object_map_.size()) {
       throw InternalError(
           "StructuralScopeLowerer::MapStructuralDataObject: HIR structural "
@@ -150,17 +150,17 @@ class StructuralScopeLowerer {
 
   [[nodiscard]] auto TranslateStructuralDataObject(
       hir::StructuralHops hops, hir::StructuralDataObjectId hir_id) const
-      -> mir::MemberId {
+      -> mir::FieldId {
     return LookupStructuralDataObjectAtHops(hops, hir_id);
   }
 
   // Records the MIR slot a HIR owned-child reference resolves to. An instance
-  // member maps to one `mir::MemberId`; a generate maps to a per-arm table
-  // (`GenerateBindings`) so that a `GenerateChildRef` picks the arm's member.
+  // member maps to one `mir::FieldId`; a generate maps to a per-arm table
+  // (`GenerateBindings`) so that a `GenerateChildRef` picks the arm's field.
   // Callers register in HIR-id order during scope materialization; a nested
   // scope reads them back through the parent chain when it needs to resolve
   // a head that lives in an enclosing scope.
-  void MapInstanceMember(hir::InstanceMemberId hir_id, mir::MemberId mir_id) {
+  void MapInstanceMember(hir::InstanceMemberId hir_id, mir::FieldId mir_id) {
     if (hir_id.value != instance_member_map_.size()) {
       throw InternalError(
           "StructuralScopeLowerer::MapInstanceMember: HIR instance members "
@@ -171,7 +171,7 @@ class StructuralScopeLowerer {
   }
 
   [[nodiscard]] auto TranslateInstanceMember(hir::InstanceMemberId hir_id) const
-      -> mir::MemberId {
+      -> mir::FieldId {
     if (hir_id.value >= instance_member_map_.size()) {
       throw InternalError(
           "StructuralScopeLowerer::TranslateInstanceMember: unmapped HIR "
@@ -201,7 +201,7 @@ class StructuralScopeLowerer {
   }
 
   // Resolves an owned-child reference (the `child` field of a
-  // `hir::DownwardHead`) to the MIR member that owns the child. `hops == 0`
+  // `hir::DownwardHead`) to the MIR field that owns the child. `hops == 0`
   // reads this scope's own table; `hops > 0` walks the parent chain to an
   // enclosing scope, used by the sibling-of-ancestor install when the head
   // lives outside the referrer's frame. The procedural-scope arm resolves to
@@ -211,7 +211,7 @@ class StructuralScopeLowerer {
       hir::StructuralHops hops,
       const std::variant<
           hir::InstanceMemberId, hir::GenerateChildRef, hir::ProceduralScopeId>&
-          child) const -> mir::MemberId {
+          child) const -> mir::FieldId {
     return LookupOwnedChildAtHops(hops, child);
   }
 
@@ -237,11 +237,11 @@ class StructuralScopeLowerer {
       hir::StructuralHops hops,
       const std::variant<
           hir::InstanceMemberId, hir::GenerateChildRef, hir::ProceduralScopeId>&
-          child) const -> mir::MemberId {
+          child) const -> mir::FieldId {
     if (hops.value == 0) {
       return std::visit(
           Overloaded{
-              [&](const hir::InstanceMemberId& id) -> mir::MemberId {
+              [&](const hir::InstanceMemberId& id) -> mir::FieldId {
                 if (id.value >= instance_member_map_.size()) {
                   throw InternalError(
                       "StructuralScopeLowerer::TranslateOwnedChild: unmapped "
@@ -250,7 +250,7 @@ class StructuralScopeLowerer {
                 }
                 return instance_member_map_[id.value];
               },
-              [&](const hir::GenerateChildRef& g) -> mir::MemberId {
+              [&](const hir::GenerateChildRef& g) -> mir::FieldId {
                 if (g.generate.value >= generate_map_.size()) {
                   throw InternalError(
                       "StructuralScopeLowerer::TranslateOwnedChild: unmapped "
@@ -261,8 +261,8 @@ class StructuralScopeLowerer {
                     .by_scope_id.at(g.scope.value)
                     .var_id;
               },
-              [&](const hir::ProceduralScopeId& s) -> mir::MemberId {
-                return scope_materialization_.Get(s).companion_member;
+              [&](const hir::ProceduralScopeId& s) -> mir::FieldId {
+                return scope_materialization_.Get(s).companion_field;
               },
           },
           child);
@@ -278,7 +278,7 @@ class StructuralScopeLowerer {
 
   [[nodiscard]] auto LookupStructuralDataObjectAtHops(
       hir::StructuralHops hops, hir::StructuralDataObjectId hir_id) const
-      -> mir::MemberId {
+      -> mir::FieldId {
     if (hops.value == 0) {
       if (hir_id.value >= structural_data_object_map_.size()) {
         throw InternalError(
@@ -321,10 +321,10 @@ class StructuralScopeLowerer {
   const StructuralScopeLowerer* parent_;
   std::string name_;
   const hir::StructuralScope* hir_scope_;
-  std::vector<mir::MemberId> structural_data_object_map_;
+  std::vector<mir::FieldId> structural_data_object_map_;
   std::vector<mir::MethodId> structural_subroutine_map_;
   std::vector<CrossUnitRefMeta> cross_unit_ref_targets_;
-  std::vector<mir::MemberId> instance_member_map_;
+  std::vector<mir::FieldId> instance_member_map_;
   std::vector<GenerateBindings> generate_map_;
   // Per-structural-scope runtime-topology table for materialized procedural
   // storage scopes. Populated during shape declaration; consumed by the

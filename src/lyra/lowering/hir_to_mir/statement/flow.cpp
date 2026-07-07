@@ -17,7 +17,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -70,10 +69,10 @@ auto LowerAutomaticVarDeclStmt(
       .data = mir::LocalDeclStmt{.target = local_id, .init = init_value}};
 }
 
-// A lifetime-extended automatic (LRM 6.21) is a member of the scope's shared
-// activation object; its declaration assigns the initial value into that member
-// through the handle (`handle->member = init`) rather than into a frame local.
-// The slot was recorded when the activation scope opened; consume it here, in
+// A lifetime-extended automatic (LRM 6.21) is a field of the scope's shared
+// activation frame; its declaration assigns the initial value into that field
+// through the handle (`handle->field = init`) rather than into a plain local.
+// The field was recorded when the activation scope opened; consume it here, in
 // HIR id order, to register the binding its references resolve through.
 auto LowerPromotedVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
@@ -84,9 +83,8 @@ auto LowerPromotedVarDeclStmt(
   auto& block = *frame.current_block;
   const mir::ExprId handle_ref = block.exprs.Add(frame.bindings->MakeReadExpr(
       frame.bindings->EnsureCarrier(pb.handle_origin), block));
-  const mir::ExprId target = block.exprs.Add(
-      mir::MakeMemberAccessExpr(
-          handle_ref, mir::MemberRef{.var = pb.member}, type));
+  const mir::ExprId target =
+      block.exprs.Add(mir::MakeFieldAccessExpr(handle_ref, pb.field, type));
   mir::ExprId init_value{};
   if (v.init.has_value()) {
     auto init_or =

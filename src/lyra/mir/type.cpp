@@ -97,7 +97,8 @@ auto Type::Kind() const -> TypeKind {
           [](const ObservableType&) { return TypeKind::kObservable; },
           [](const ResolvedType&) { return TypeKind::kResolved; },
           [](const DriverType&) { return TypeKind::kDriver; },
-          [](const ClosureRecordType&) { return TypeKind::kClosureRecord; },
+          [](const StructType&) { return TypeKind::kStruct; },
+          [](const ClosureType&) { return TypeKind::kClosure; },
       },
       data);
 }

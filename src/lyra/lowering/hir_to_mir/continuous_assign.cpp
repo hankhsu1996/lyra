@@ -73,9 +73,8 @@ auto LowerContinuousAssign(
     const mir::ExprId driver_self = body_block.exprs.Add(
         MakeSelfRefExpr(body_frame, frame.current_class->self_pointer_type));
     const mir::ExprId driver_access = body_block.exprs.Add(
-        mir::MakeMemberAccessExpr(
-            driver_self, mir::MemberRef{.var = net_driver->driver_member},
-            net_driver->driver_type));
+        mir::MakeFieldAccessExpr(
+            driver_self, net_driver->driver_field, net_driver->driver_type));
     effect_id = body_block.exprs.Add(
         mir::MakeNetDriverUpdateCallExpr(
             driver_access, body_services_id, rhs_id,

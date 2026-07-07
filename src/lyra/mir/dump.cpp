@@ -19,8 +19,8 @@
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -67,6 +67,30 @@ class MirDumper {
       DumpClass(id, cls);
     }
     Dedent();
+    if (unit.structs.size() > 0) {
+      Line("Structs:");
+      Indent();
+      for (std::size_t i = 0; i < unit.structs.size(); ++i) {
+        const StructId sid{static_cast<std::uint32_t>(i)};
+        if (!unit.structs.IsDefined(sid)) {
+          continue;
+        }
+        DumpStruct(sid, unit.GetStruct(sid));
+      }
+      Dedent();
+    }
+    if (unit.closures.size() > 0) {
+      Line("Closures:");
+      Indent();
+      for (std::size_t i = 0; i < unit.closures.size(); ++i) {
+        const ClosureId cid{static_cast<std::uint32_t>(i)};
+        if (!unit.closures.IsDefined(cid)) {
+          continue;
+        }
+        DumpClosure(cid, unit.GetClosure(cid));
+      }
+      Dedent();
+    }
     Dedent();
     return std::move(out_);
   }
@@ -238,8 +262,11 @@ class MirDumper {
               return std::format(
                   "Coroutine(payload=Type[{}])", c.payload.value);
             },
-            [](const ClosureRecordType& c) -> std::string {
-              return std::format("ClosureRecord[{}]", c.record_id.value);
+            [](const StructType& s) -> std::string {
+              return std::format("Struct[{}]", s.struct_id.value);
+            },
+            [](const ClosureType& c) -> std::string {
+              return std::format("Closure[{}]", c.closure_id.value);
             },
             [](const RefType& r) -> std::string {
               return std::format(
@@ -603,18 +630,23 @@ class MirDumper {
               return std::format(
                   "CallExpr callee={} args=[{}]", FormatCallee(c.callee), args);
             },
-            [](const MemberAccessExpr& m) -> std::string {
+            [](const FieldAccessExpr& m) -> std::string {
               return std::format(
-                  "MemberAccessExpr receiver=Expr[{}] var=Member[{}]",
-                  m.receiver.value, m.member.var.value);
+                  "FieldAccessExpr receiver=Expr[{}] field=Field[{}]",
+                  m.receiver.value, m.field.value);
             },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
             },
+            [](const StructConstructExpr& sc) -> std::string {
+              return std::format(
+                  "StructConstructExpr struct=Struct[{}] field_inits={}",
+                  sc.struct_id.value, sc.field_inits.size());
+            },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
-                  "ClosureExpr record=ClosureRecord[{}] field_inits={}",
-                  cl.record.value, cl.field_inits.size());
+                  "ClosureExpr closure=Closure[{}] field_inits={}",
+                  cl.closure.value, cl.field_inits.size());
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -713,16 +745,9 @@ class MirDumper {
       Dedent();
     }
 
-    Line("Members:");
+    Line("Fields:");
     Indent();
-    for (std::size_t i = 0; i < s.members.size(); ++i) {
-      const auto& v = s.members.Get(MemberId{static_cast<std::uint32_t>(i)});
-      const std::string as =
-          v.source_name.empty() ? "" : std::format(" as \"{}\"", v.source_name);
-      Line(
-          std::format(
-              "[{}] \"{}\"{} : {}", i, v.name, as, FormatVarType(v.type)));
-    }
+    DumpFieldList(s.fields);
     Dedent();
 
     Line("Methods:");
@@ -739,6 +764,49 @@ class MirDumper {
 
     Dedent();
     scope_stack_.pop_back();
+  }
+
+  void DumpFieldList(const base::Arena<FieldDecl, FieldId>& fields) {
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+      const auto& v = fields.Get(FieldId{static_cast<std::uint32_t>(i)});
+      const std::string as =
+          v.source_name.empty() ? "" : std::format(" as \"{}\"", v.source_name);
+      Line(
+          std::format(
+              "[{}] \"{}\"{} : {}", i, v.name, as, FormatVarType(v.type)));
+    }
+  }
+
+  void DumpStruct(StructId id, const StructDecl& decl) {
+    Line(std::format("Struct \"{}\" (#{})", decl.name, id.value));
+    Indent();
+    Line("Fields:");
+    Indent();
+    DumpFieldList(decl.fields);
+    Dedent();
+    Dedent();
+  }
+
+  void DumpClosure(ClosureId id, const ClosureDecl& decl) {
+    Line(std::format("Closure (#{})", id.value));
+    Indent();
+    Line("Captures:");
+    Indent();
+    DumpFieldList(decl.fields);
+    Dedent();
+    if (!decl.field_order.empty()) {
+      std::string order;
+      for (std::size_t i = 0; i < decl.field_order.size(); ++i) {
+        if (i != 0) order += ", ";
+        order += std::format("Field[{}]", decl.field_order[i].value);
+      }
+      Line(std::format("FieldOrder: [{}]", order));
+    }
+    Line("Invoke:");
+    Indent();
+    DumpCallableBody(decl.invoke);
+    Dedent();
+    Dedent();
   }
 
   void DumpMethod(const MethodDecl& d, std::size_t index) {
@@ -784,10 +852,9 @@ class MirDumper {
 
   // A callable owns its binding arena: every activation local and parameter
   // lives in `locals` (a closure's `locals[0]` is its receiver, a borrow of the
-  // closure record, and a captured read is a field access over it). Dump the
-  // locals, then
-  // the body block, with `code_` set so `LocalRef` reads resolve against this
-  // callable's arena.
+  // closure, and a captured read is a field access over it). Dump the locals,
+  // then the body block, with `code_` set so `LocalRef` reads resolve against
+  // this callable's arena.
   void DumpCallableBody(const CallableCode& code) {
     const CallableCode* saved = code_;
     code_ = &code;
@@ -814,6 +881,11 @@ class MirDumper {
         const ExprId id{static_cast<std::uint32_t>(i)};
         Line(std::format("Expr[{}] {}", i, FormatExpr(scope, id)));
         const auto& expr = scope.exprs.Get(id);
+        if (const auto* sc = std::get_if<StructConstructExpr>(&expr.data)) {
+          Indent();
+          DumpStructConstructExpr(*sc);
+          Dedent();
+        }
         if (const auto* cl = std::get_if<ClosureExpr>(&expr.data)) {
           Indent();
           DumpClosureExpr(*cl);
@@ -943,66 +1015,31 @@ class MirDumper {
     Dedent();
   }
 
-  void DumpClosureExpr(const ClosureExpr& closure) {
-    const ClosureRecord& record = unit_->GetClosureRecord(closure.record);
-    Line(std::format("record: ClosureRecord[{}]", closure.record.value));
-
-    if (record.fields.empty()) {
-      Line("fields: (none)");
-    } else {
-      Line("fields:");
-      Indent();
-      for (std::size_t i = 0; i < record.fields.size(); ++i) {
-        const MemberDecl& field =
-            record.fields.Get(MemberId{static_cast<std::uint32_t>(i)});
-        Line(
-            std::format(
-                "Member[{}] {} : {}", i, field.name,
-                FormatType(unit_->types.Get(field.type))));
-      }
-      Dedent();
-    }
-
-    if (!record.layout.empty()) {
-      std::string order;
-      for (std::size_t i = 0; i < record.layout.size(); ++i) {
-        if (i != 0) order += ", ";
-        order += std::format("Member[{}]", record.layout[i].value);
-      }
-      Line(std::format("layout: [{}]", order));
-    }
-
-    if (closure.field_inits.empty()) {
+  void DumpFieldInits(const std::vector<FieldInit>& field_inits) {
+    if (field_inits.empty()) {
       Line("field_inits: (none)");
-    } else {
-      // Each initializer's value expr lives in the enclosing block and is
-      // dumped there with the other exprs; reference it by id.
-      Line("field_inits:");
-      Indent();
-      for (const FieldInit& init : closure.field_inits) {
-        Line(
-            std::format(
-                "Member[{}] = Expr[{}]", init.target.value, init.value.value));
-      }
-      Dedent();
+      return;
     }
-
-    const std::vector<LocalId>& params = record.invoke.params;
-    if (params.empty()) {
-      Line("params: (none)");
-    } else {
-      Line("params:");
-      Indent();
-      for (std::size_t i = 0; i < params.size(); ++i) {
-        Line(std::format("[{}] Param LocalId{{{}}}", i, params[i].value));
-      }
-      Dedent();
-    }
-
-    Line("body:");
+    // Each initializer's value expr lives in the enclosing block and is dumped
+    // there with the other exprs; reference it by id.
+    Line("field_inits:");
     Indent();
-    DumpCallableBody(record.invoke);
+    for (const FieldInit& init : field_inits) {
+      Line(
+          std::format(
+              "Field[{}] = Expr[{}]", init.target.value, init.value.value));
+    }
     Dedent();
+  }
+
+  void DumpStructConstructExpr(const StructConstructExpr& construct) {
+    Line(std::format("struct: Struct[{}]", construct.struct_id.value));
+    DumpFieldInits(construct.field_inits);
+  }
+
+  void DumpClosureExpr(const ClosureExpr& construct) {
+    Line(std::format("closure: Closure[{}]", construct.closure.value));
+    DumpFieldInits(construct.field_inits);
   }
 
   void DumpRuntimePrintItem(

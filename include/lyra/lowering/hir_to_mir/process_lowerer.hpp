@@ -22,8 +22,8 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -40,13 +40,13 @@ struct AutomaticVarBinding {
 
 // LRM 6.21: an automatic local a detached fork branch borrows and can
 // outlive is lifted into a shared activation object. Its reads / writes
-// reach a member of that object through a shared-pointer handle; a branch
+// reach a field of that object through a shared-pointer handle; a branch
 // captures the handle by value to keep the activation alive across the
 // declaring frame's return.
 struct PromotedVarBinding {
   BindingOriginId handle_origin;
   mir::TypeId handle_type;
-  mir::MemberId member;
+  mir::FieldId field;
 };
 
 // Body-local environment binding for one HIR procedural var: an in-frame
@@ -212,11 +212,11 @@ class ProcessLowerer {
     return &*bindings_[hir_id.value];
   }
 
-  // An activation scope is opened at block entry -- the box and its handle are
-  // built then -- but a promoted var's binding must register in HIR id order at
-  // its declaration like any other. The block-entry pass records the slot here;
-  // the declaration consumes it (`TakePendingActivation`) and registers the
-  // binding in order.
+  // An activation scope is opened at block entry -- the scope struct and its
+  // handle are built then -- but a promoted var's binding must register in HIR
+  // id order at its declaration like any other. The block-entry pass records
+  // the slot here; the declaration consumes it (`TakePendingActivation`) and
+  // registers the binding in order.
   void RecordPendingActivation(
       hir::ProceduralVarId hir_id, PromotedVarBinding binding) {
     pending_activation_.insert_or_assign(hir_id, binding);
@@ -238,7 +238,7 @@ class ProcessLowerer {
   // The synthesized identifier for the callable being lowered (e.g.
   // `"process_3"`, or a method's user-given name). Used as the produced
   // method's name and as a prefix for any per-callable artifact the body
-  // emits (e.g. a lifetime-extended activation box).
+  // emits (e.g. a lifetime-extended activation scope).
   [[nodiscard]] auto CallableName() const -> std::string_view {
     return callable_name_;
   }
@@ -303,7 +303,7 @@ class ProcessLowerer {
   // local's storage from the current frame's `self`: starts at the
   // enclosing class pointer, walks the placement's companion chain (queried
   // from the procedural-scope materialization table), and ends with a
-  // MemberAccess to the storage member. The expr's type is the storage
+  // FieldAccess to the storage field. The expr's type is the storage
   // field's type read from the owner class's published shape, so an
   // observable-wrapped static returns a wrapper Expr the caller routes
   // through the cell protocol or uses as a write target.

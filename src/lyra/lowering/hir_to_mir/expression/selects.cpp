@@ -799,9 +799,8 @@ auto LowerHirMemberAccessExpr(
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-    return mir::MakeMemberAccessExpr(
-        base_id, mir::MemberRef{.var = mir::MemberId{sel.field_index}},
-        result_type);
+    return mir::MakeFieldAccessExpr(
+        base_id, mir::FieldId{sel.field_index}, result_type);
   }
   // LRM 7.2: an unpacked struct lowers to a generic product (`TupleType`);
   // member access is a positional projection by declaration-order index.
@@ -916,9 +915,8 @@ auto LowerHirMemberAccessExprLhs(
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-    return mir::MakeMemberAccessExpr(
-        base_id, mir::MemberRef{.var = mir::MemberId{sel.field_index}},
-        result_type);
+    return mir::MakeFieldAccessExpr(
+        base_id, mir::FieldId{sel.field_index}, result_type);
   }
   // LRM 7.2: an unpacked-struct member write is a positional projection by
   // index over the base place. The observable root's write routes through the
