@@ -6,11 +6,13 @@
 #include "lyra/base/registry.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/closure_record.hpp"
-#include "lyra/mir/closure_record_id.hpp"
+#include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/deferred_check_site.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/struct_decl.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_interner.hpp"
 
@@ -58,11 +60,16 @@ struct CompilationUnit {
   // module declaration.
   base::Registry<Class, ClassId> classes;
   ClassId root{};
-  // Every closure record of this unit, one per closure site, reached by its
-  // identity with the same declare-then-define lifecycle as a class: the record
-  // id is minted before its body is lowered, so the closure receiver's type can
-  // name it while the invoke body captures into its fields.
-  base::Registry<ClosureRecord, ClosureRecordId> closure_records;
+  // Every compiler-generated nominal struct of this unit -- a promoted
+  // automatic scope's storage. Its `StructId` is the struct's type identity; a
+  // backend derives the C++ emission host from the struct's lexical synthesis
+  // site.
+  base::Registry<StructDecl, StructId> structs;
+  // Every closure of this unit, one per closure site -- an anonymous concrete
+  // callable value (capture fields plus one invoke). Its `ClosureId` is the
+  // closure's type identity, in a separate registry from `structs`: a closure
+  // is its own callable-value category, not a struct.
+  base::Registry<ClosureDecl, ClosureId> closures;
   std::vector<DeferredCheckSite> deferred_check_sites;
 
   CompilationUnit()
@@ -141,17 +148,28 @@ struct CompilationUnit {
     classes.Define(id, std::move(value));
   }
 
-  [[nodiscard]] auto GetClosureRecord(ClosureRecordId id) const
-      -> const ClosureRecord& {
-    return closure_records.Get(id);
+  [[nodiscard]] auto GetStruct(StructId id) const -> const StructDecl& {
+    return structs.Get(id);
   }
 
-  auto DeclareClosureRecord() -> ClosureRecordId {
-    return closure_records.Declare();
+  auto AddStruct(StructDecl value) -> StructId {
+    const StructId id = structs.Declare();
+    structs.Define(id, std::move(value));
+    return id;
   }
 
-  void DefineClosureRecord(ClosureRecordId id, ClosureRecord value) {
-    closure_records.Define(id, std::move(value));
+  [[nodiscard]] auto GetClosure(ClosureId id) const -> const ClosureDecl& {
+    return closures.Get(id);
+  }
+
+  // Mint a closure id before its declaration is built, so the closure's
+  // receiver type can name it while the invoke body captures into its fields.
+  auto DeclareClosure() -> ClosureId {
+    return closures.Declare();
+  }
+
+  void DefineClosure(ClosureId id, ClosureDecl value) {
+    closures.Define(id, std::move(value));
   }
 
   // Backing-vector position is the id, matching TypeId / LocalId.

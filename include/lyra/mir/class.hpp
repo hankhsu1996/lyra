@@ -9,9 +9,10 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/param.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_alias.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -28,7 +29,7 @@ struct ClassShape {
   TimeResolution time_resolution;
   base::Arena<ParamDecl, ParamId> ctor_prefix_params;
   base::Arena<ParamDecl, ParamId> params;
-  base::Arena<MemberDecl, MemberId> members;
+  base::Arena<FieldDecl, FieldId> fields;
   std::vector<ClassId> contained;
   std::vector<TypeAliasDecl> type_aliases;
 };
@@ -60,7 +61,7 @@ struct Class {
   // (a genvar binding, an upward-class param). Each renders as a ctor
   // param after the prefix list and as a `field(param)` mem-init entry.
   base::Arena<ParamDecl, ParamId> params;
-  base::Arena<MemberDecl, MemberId> members;
+  base::Arena<FieldDecl, FieldId> fields;
   // Construction logic, run when the object is allocated. A callable like any
   // other: `params[0]` is the receiver `self`, body locals live in its `locals`
   // arena. The backend's C++ constructor is the allocation shell that kicks
@@ -71,6 +72,13 @@ struct Class {
   // construction order. Ownership of the declarations is the unit's registry;
   // this is the containment relation over those identities.
   std::vector<ClassId> contained;
+  // The compiler-generated structs this class nests -- a promoted automatic
+  // scope synthesized while lowering one of this class's bodies (its own, or a
+  // closure emitted inline within it). Each names a `StructId` in the unit's
+  // struct registry; this is the emission-nesting relation over those
+  // identities, parallel to `contained`. A backend that nests emits each struct
+  // inside this class by iterating this list -- no walk over the body tree.
+  std::vector<StructId> structs;
   base::Arena<MethodDecl, MethodId> methods;
   std::vector<TypeAliasDecl> type_aliases;
 

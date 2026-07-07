@@ -69,6 +69,13 @@ forked, submitted, or otherwise invoked later by a site that does not supply the
 is the same axis the call-shape unification draws between a direct named-symbol callee and an
 indirect computed-callable callee.
 
+The concrete callable-value type realized so far is the **`ClosureType`**
+(`closure-environment-and-activation-frame.md`): an anonymous concrete callable value carrying its
+capture fields and one invoke body. It is one concrete callable-value producer, not the only
+conceivable one (a bound-method value or a function item could be others), so the concept keeps the
+name "closure." The erased level is `ErasedCallableType<Sig>`, reached through an explicit erasure
+where a heterogeneous collection of one signature genuinely requires it.
+
 `self` as `captures[0]` is removed: `self` is a code-level parameter that a callable value _binds_
 into its environment when needed. Whether a bound `self` is realized as a passed parameter (a
 directly-spawned process, whose instance outlives every invocation) or a by-value captured field (a

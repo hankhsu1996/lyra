@@ -1,17 +1,8 @@
 #pragma once
 
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/member.hpp"
 
 namespace lyra::mir {
-
-// A member of a class, named by its class-local id. The class a member access
-// reaches is determined by the access's receiver (the member belongs to the
-// receiver's class), not carried here -- a reference names the member, not its
-// owner.
-struct MemberRef {
-  MemberId var{};
-};
 
 // An activation local or parameter of the enclosing callable, named by its
 // id in that callable's `locals` arena. It carries no navigation distance:

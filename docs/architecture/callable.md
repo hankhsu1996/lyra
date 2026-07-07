@@ -168,21 +168,23 @@ to snapshot. SystemVerilog is value-semantic, so a captured snapshot (a value-ty
 default and an alias (a reference-typed field) is the explicit case used when a body must share
 mutable storage with its environment.
 
-A closure value is a nominal value record (`compiler_generated_storage.md`): a per-closure-site type
-of named capture fields plus one invoke body, copied by value -- the MIR equivalent of a C++ lambda
-closure object. A backend realizes it as that closure object -- the C++ backend as a lambda whose
-fields are the captures (`[field = <init>]`, never `[&name]`, `[=]`, or `[this]`), the capture list
-derived solely from the record's fields, the body reading each capture as ordinary field access. A
-reference-typed field renders as an owned reference value, not a hidden C++ reference: a `[&name]`
-reference dangles once the value outlives the captured variable's frame -- which a fork-branch
-coroutine and a deferred-effect closure routinely do -- and the reference wrapper routes a write
-through the cell's update-event path, which a bare `T&` would bypass. A coroutine closure passes the
-captured fields as frame-copied parameters rather than captures, so they are copied into the
-coroutine frame before the spawned branch can outlive the construction site.
+A closure value is an anonymous concrete callable value (`compiler_generated_storage.md`): a
+per-closure-site `ClosureType` of named capture fields plus one invoke body, copied by value -- the
+MIR equivalent of a C++ lambda closure object. A backend realizes it as that closure object -- the
+C++ backend as a lambda whose fields are the captures (`[field = <init>]`, never `[&name]`, `[=]`,
+or `[this]`), the capture list derived solely from the closure's fields, the body reading each
+capture as ordinary field access. A reference-typed field renders as an owned reference value, not a
+hidden C++ reference: a `[&name]` reference dangles once the value outlives the captured variable's
+frame -- which a fork-branch coroutine and a deferred-effect closure routinely do -- and the
+reference wrapper routes a write through the cell's update-event path, which a bare `T&` would
+bypass. A coroutine closure passes the captured fields as frame-copied parameters rather than
+captures, so they are copied into the coroutine frame before the spawned branch can outlive the
+construction site.
 
 The runtime shapes a backend hands closures to -- a C++ coroutine object for a fork branch, a
 `std::function` for a deferred effect -- are that backend's realization, not part of the closure
-model. The model states only that a closure is a value record with an invoke; an async start copies
-that record into execution-owned storage before the started work can outlive the construction site.
-A backend is free to realize this differently (a named closure struct, a coroutine promise) as long
-as it derives the closure's shape from the record and preserves that copy-before-escape.
+model. The model states only that a closure is a callable value with captures and an invoke; an
+async start copies that record into execution-owned storage before the started work can outlive the
+construction site. A backend is free to realize this differently (a named closure struct, a
+coroutine promise) as long as it derives the closure's shape from the record and preserves that
+copy-before-escape.

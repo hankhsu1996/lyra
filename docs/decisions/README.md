@@ -68,11 +68,11 @@ the detail lives in the entry itself.
 - [unified-callable-model](unified-callable-model.md) -- one callable concept: callable code vs
   callable value (code + bound environment). Target model; not yet built.
 - [closure-environment-and-activation-frame](closure-environment-and-activation-frame.md) -- a
-  closure is a per-closure-site nominal value record (named capture fields plus one invoke body --
-  not a general tuple, not an object); the callable value has a concrete record level and an erased
-  `Callable<Sig>` level with an explicit erasure; the activation frame is a thin reference-storage
-  specialization sharing one substrate with the nominal object, not a baseless `mir::Class`. Target
-  model; not yet built.
+  closure (`ClosureType`, an anonymous concrete callable value: captures plus one invoke) and a
+  promoted automatic scope (`StructType` reached via `Shared<>`, fields only, no invoke) are two
+  distinct nominal categories sharing only the field substrate, not one fused type with an optional
+  invoke; the callable value has a concrete `ClosureType` level and an erased
+  `ErasedCallableType<Sig>` level with an explicit erasure.
 - [builtin-call-identity](builtin-call-identity.md) -- built-in method calls carry a flat
   closed-namespace identifier (`support::BuiltinFn`) shared by HIR and MIR.
 - [address-of-primitive](address-of-primitive.md) -- MIR carries an explicit place-to-pointer

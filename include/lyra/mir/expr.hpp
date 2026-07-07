@@ -12,10 +12,11 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/method_id.hpp"
 #include "lyra/mir/param.hpp"
+#include "lyra/mir/struct_construct.hpp"
 #include "lyra/mir/unary_op.hpp"
-#include "lyra/mir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
@@ -203,13 +204,14 @@ struct PointerCastExpr {
   ExprId operand;
 };
 
-// Class-member access through an explicit receiver expression. `receiver`
-// evaluates to a class-instance value (typically `LocalRef(self)`);
-// `member` names which member of the receiver's class to reach. The
-// receiver is explicit -- a backend never asks "what is the current receiver?".
-struct MemberAccessExpr {
+// Field access through an explicit receiver expression. `receiver` evaluates to
+// a field-bearing value reached by pointer -- a class instance, a closure, or a
+// promoted-scope handle (typically `LocalRef(self)` or a shared handle);
+// `field` names which field of the receiver's aggregate to reach. The receiver
+// is explicit -- a backend never asks "what is the current receiver?".
+struct FieldAccessExpr {
   ExprId receiver;
-  MemberRef member;
+  FieldId field;
 };
 
 // LRM 11.4.12 concatenation of packed or string operands, joined directly into
@@ -320,9 +322,9 @@ using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     HostIntLiteral, ParamRef, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
-    PointerCastExpr, CastExpr, MemberAccessExpr, ClosureExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr,
-    UnionExpr, UnionGetExpr, UnionGetRefExpr>;
+    PointerCastExpr, CastExpr, FieldAccessExpr, StructConstructExpr,
+    ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
+    AwaitExpr, TupleGetExpr, UnionExpr, UnionGetExpr, UnionGetRefExpr>;
 
 struct Expr {
   ExprData data;
@@ -333,10 +335,10 @@ struct Expr {
   return Expr{.data = LocalRef{.var = var}, .type = type};
 }
 
-[[nodiscard]] inline auto MakeMemberAccessExpr(
-    ExprId receiver, MemberRef member, TypeId type) -> Expr {
+[[nodiscard]] inline auto MakeFieldAccessExpr(
+    ExprId receiver, FieldId field, TypeId type) -> Expr {
   return Expr{
-      .data = MemberAccessExpr{.receiver = receiver, .member = member},
+      .data = FieldAccessExpr{.receiver = receiver, .field = field},
       .type = type};
 }
 

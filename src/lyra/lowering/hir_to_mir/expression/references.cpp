@@ -136,7 +136,7 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
   return mir::Expr{.data = mir::RealLiteral{.value = r.value}, .type = type};
 }
 
-// Reach the storage cell of a member: `MemberAccess(self, member)`.
+// Reach the storage cell of a field: `FieldAccess(self, field)`.
 // `Expr.type` is the var's declared MIR type -- an `ObservableType` wrapper
 // for observable storage, the plain value type otherwise. The dispatcher
 // decides whether to wrap the result in an `ObservableMethod{kGet}` call to
@@ -144,9 +144,8 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 auto LowerStructuralDataObjectRefExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::StructuralDataObjectRef& m) -> mir::Expr {
-  const mir::MemberId var =
-      lowerer.TranslateStructuralDataObject(m.hops, m.var);
-  return BuildStructuralMemberAccessExpr(
+  const mir::FieldId var = lowerer.TranslateStructuralDataObject(m.hops, m.var);
+  return BuildStructuralFieldAccessExpr(
       frame, lowerer.Module().Unit(), mir::EnclosingHops{.value = m.hops.value},
       var);
 }
@@ -166,16 +165,15 @@ auto LowerProceduralVarRefExpr(
         frame, process.LookupStaticPlacement(l.var));
   }
   // A lifetime-extended automatic (LRM 6.21) lives in a shared activation
-  // object; the read / write reaches its member through the handle. The handle
+  // frame; the read / write reaches its field through the handle. The handle
   // is a carrier the resolver makes available in this body (a by-value, owning
-  // copy inside a detached branch), and the promoted member projects from it.
+  // copy inside a detached branch), and the promoted field projects from it.
   if (const auto* pb = std::get_if<PromotedVarBinding>(binding)) {
     const BodyBindingRef handle =
         frame.bindings->EnsureCarrier(pb->handle_origin);
     const mir::ExprId handle_ref = frame.current_block->exprs.Add(
         frame.bindings->MakeReadExpr(handle, *frame.current_block));
-    return mir::MakeMemberAccessExpr(
-        handle_ref, mir::MemberRef{.var = pb->member}, type);
+    return mir::MakeFieldAccessExpr(handle_ref, pb->field, type);
   }
   // An ordinary automatic local: resolve its carrier in this body -- a direct
   // local in the declaring body, a captured field in a closure -- and read it.
@@ -190,7 +188,7 @@ auto LowerCrossUnitVarRefExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::CrossUnitVarRef& c) -> mir::Expr {
   const auto& meta = lowerer.CrossUnitRefTarget(c.id);
-  const mir::MemberRef target = meta.target;
+  const mir::FieldId target = meta.target;
   const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
   const mir::ExprId self_ref =
       frame.current_block->exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
@@ -200,7 +198,7 @@ auto LowerCrossUnitVarRefExpr(
   const auto& ptr = std::get<mir::PointerType>(
       lowerer.Module().Unit().types.Get(meta.slot_type).data);
   const mir::ExprId pointer = frame.current_block->exprs.Add(
-      mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type));
+      mir::MakeFieldAccessExpr(self_ref, target, meta.slot_type));
   return mir::Expr{
       .data = mir::DerefExpr{.pointer = pointer}, .type = ptr.pointee};
 }
@@ -275,10 +273,8 @@ auto LowerHirPrimaryExprProc(
                 frame.current_class->self_pointer_type;
             const mir::ExprId self_ref = frame.current_block->exprs.Add(
                 MakeSelfRefExpr(frame, self_type));
-            return mir::MakeMemberAccessExpr(
-                self_ref,
-                mir::MemberRef{.var = mir::MemberId{.value = r.field_index}},
-                result_type);
+            return mir::MakeFieldAccessExpr(
+                self_ref, mir::FieldId{.value = r.field_index}, result_type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
             return LowerCrossUnitVarRefExpr(

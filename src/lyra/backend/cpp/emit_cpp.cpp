@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <variant>
@@ -18,7 +19,7 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/param.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -26,18 +27,32 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-// A member declaration is (name, type): the type carries the target storage
-// form, the name the source identifier. Per-member construction state -- a
+// A field declaration is (name, type): the type carries the target storage
+// form, the name the source identifier. Per-field construction state -- a
 // cell's declared representation, its initial value -- arrives as ordinary MIR
 // statements in the constructor body; render never composes it here from type
 // payload. The field value-initializes; an integral cell's declared
 // representation is established by its first store.
 auto RenderField(
-    const ScopeView& ctor_view, const mir::MemberDecl& var, std::size_t indent)
+    const ScopeView& ctor_view, const mir::FieldDecl& field, std::size_t indent)
     -> std::string {
   const auto& unit = ctor_view.Unit();
-  const std::string type = RenderTypeAsCpp(unit, ctor_view.Class(), var.type);
-  return std::format("{}{} {}{{}};\n", Indent(indent), type, var.name);
+  const std::string type = RenderTypeAsCpp(unit, ctor_view.Class(), field.type);
+  return std::format("{}{} {}{{}};\n", Indent(indent), type, field.name);
+}
+
+// The value-init field declarations of any field-bearing storage -- a class's
+// fields, a promoted scope's fields. Shared so a generated struct carries no
+// field-emission of its own; it feeds the same declarations a class does.
+auto RenderFieldList(
+    const ScopeView& view,
+    const base::Arena<mir::FieldDecl, mir::FieldId>& fields, std::size_t indent)
+    -> std::string {
+  std::string out;
+  for (const auto& field : fields) {
+    out += RenderField(view, field, indent);
+  }
+  return out;
 }
 
 auto RenderParamField(
@@ -159,12 +174,11 @@ auto RenderConstructor(
     const std::string& base_class, std::size_t indent) -> std::string {
   // The render iterates every ctor entry in MIR-stated order without
   // switching on what each type means: ctor_prefix_params forward to the
-  // base by name, structural params bind to same-named member fields.
+  // base by name, structural params bind to same-named fields.
   // Each type goes through the single RenderTypeAsCpp dispatch, so the
   // C++ form of every type lives in exactly one place. Base forwarding is
   // plain pass-through (no std::move) -- C++ may copy a HierarchySegment
   // once at construction, which the iteration-time budget can absorb.
-  // The follow-up that retires this interim is tracked under R51.
   const auto& unit = scope_view.Unit();
   const auto render_typed_name = [&](mir::TypeId type, std::string_view name) {
     return std::format("{} {}", RenderTypeAsCpp(unit, s, type), name);
@@ -210,7 +224,7 @@ auto RenderConstructor(
   // The C++ constructor is the one shape that is not an ordinary method:
   // it has no result type and runs a member-init list before its body, so
   // it cannot run a virtual override during construction. It is an
-  // allocation shell that forwards to the base and the field members, then
+  // allocation shell that forwards to the base and the fields, then
   // kicks off the body -- a static worker over `self`, the same shape
   // every method uses. An empty body needs no kickoff.
   if (s.constructor.body.root_stmts.empty()) {
@@ -233,6 +247,20 @@ auto VisibilityKeyword(mir::MethodVisibility visibility) -> std::string_view {
       return "private";
   }
   throw InternalError("VisibilityKeyword: unknown MethodVisibility");
+}
+
+// A compiler-generated struct emits as a plain struct of value-init fields. It
+// is nested in its host class purely as a C++ emission placement -- so a
+// field's enum type resolves against that class's type aliases -- not as a
+// claim that the class owns it (the declaring body may be a closure). Storage
+// only: no base, no constructor, no methods.
+auto RenderStruct(
+    const ScopeView& view, const mir::StructDecl& decl, std::size_t indent)
+    -> std::string {
+  std::string out = Indent(indent) + "struct " + decl.name + " {\n";
+  out += RenderFieldList(view, decl.fields, indent + 1);
+  out += Indent(indent) + "};\n";
+  return out;
 }
 
 auto RenderScopeAsClass(
@@ -267,6 +295,13 @@ auto RenderScopeAsClass(
     out += "\n";
   }
 
+  for (const mir::StructId sid : s.structs) {
+    out += RenderStruct(this_anchor, unit.GetStruct(sid), indent + 1);
+  }
+  if (!s.structs.empty()) {
+    out += "\n";
+  }
+
   // A tree node forwards to its runtime base; a plain object (a class) has no
   // base but still runs its constructor body to initialize its members. Either
   // way the constructor is emitted when there is a base to forward to or a body
@@ -280,18 +315,16 @@ auto RenderScopeAsClass(
 
   // Members follow the constructor and methods. They are public so cross-unit
   // references can reach them directly.
-  if (!s.params.empty() || !s.members.empty()) {
+  if (!s.params.empty() || !s.fields.empty()) {
     out += "\n";
   }
   for (const auto& p : s.params) {
     out += RenderParamField(unit, s, p, indent + 1);
   }
-  if (!s.params.empty() && !s.members.empty()) {
+  if (!s.params.empty() && !s.fields.empty()) {
     out += "\n";
   }
-  for (const auto& v : s.members) {
-    out += RenderField(this_anchor, v, indent + 1);
-  }
+  out += RenderFieldList(this_anchor, s.fields, indent + 1);
 
   if (s.methods.empty()) {
     out += std::format("{}}};\n", Indent(indent));
