@@ -3,14 +3,33 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/mir_to_lir/lower.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
+
+namespace {
+
+// A unit's definition metadata is a source-level fact known once elaboration
+// fixes the unit's root scope: its def name is the root's name, its precision
+// the root's declared resolution. Derived from MIR here, so the executable body
+// downstream never carries these source-language concepts.
+auto BuildUnitMetadata(const mir::CompilationUnit& unit)
+    -> ElaboratedUnitMetadata {
+  const mir::Class& root = unit.GetClass(unit.root);
+  return ElaboratedUnitMetadata{
+      .def_name = root.name,
+      .time_precision_power = root.time_resolution.precision_power};
+}
+
+}  // namespace
 
 auto Compile(
     const frontend::CompilationInput& input, diag::DiagnosticSink& sink,
@@ -35,36 +54,73 @@ auto Compile(
   }
 
   lowering::ast_to_hir::SensitivityAnalyzer sensitivity_analyzer;
-  auto hir = lowering::ast_to_hir::LowerCompilation(
-      lowering::ast_to_hir::LowerCompilationFacts(
-          *result.artifacts.parse->compilation,
-          result.artifacts.parse->source_mapper, sensitivity_analyzer,
-          input.disable_assertions));
-  if (!hir) {
-    sink.Report(std::move(hir.error()));
-    return result;
-  }
-  result.artifacts.hir_units = std::move(*hir);
+  const lowering::ast_to_hir::LowerCompilationFacts facts(
+      *result.artifacts.parse->compilation,
+      result.artifacts.parse->source_mapper, sensitivity_analyzer,
+      input.disable_assertions);
   result.artifacts.top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(
       *result.artifacts.parse->compilation);
 
-  if (stop_after == StopAfter::kHir) {
+  // Each unit runs its whole lowering pipeline (HIR -> MIR -> LIR) as an
+  // independent vertical: a unit reads only its own body and the shared
+  // frontend, never another unit's lowered artifacts.
+  const bool want_mir = stop_after >= StopAfter::kMir;
+  const bool want_lir = stop_after >= StopAfter::kLir;
+  if (auto ok = lowering::ast_to_hir::RejectDpiExports(facts); !ok) {
+    sink.Report(std::move(ok.error()));
     return result;
   }
+  const auto bodies = lowering::ast_to_hir::CollectUnitBodies(facts);
 
-  std::vector<mir::CompilationUnit> units;
-  units.reserve(result.artifacts.hir_units->size());
-  for (const auto& hir_unit : *result.artifacts.hir_units) {
-    lowering::hir_to_mir::ModuleLowerer module(
-        hir_unit, result.artifacts.parse->diag_sources);
-    auto unit_or = module.Run();
-    if (!unit_or) {
-      sink.Report(std::move(unit_or.error()));
+  std::vector<hir::ModuleUnit> hir_units;
+  std::vector<mir::CompilationUnit> mir_units;
+  std::vector<lir::CompilationUnit> lir_units;
+  std::vector<ElaboratedUnitMetadata> unit_metadata;
+  hir_units.reserve(bodies.size());
+  mir_units.reserve(bodies.size());
+  lir_units.reserve(bodies.size());
+  unit_metadata.reserve(bodies.size());
+
+  for (const auto* body : bodies) {
+    auto hir_or = lowering::ast_to_hir::LowerUnit(facts, *body);
+    if (!hir_or) {
+      sink.Report(std::move(hir_or.error()));
       return result;
     }
-    units.push_back(*std::move(unit_or));
+    hir_units.push_back(*std::move(hir_or));
+    if (!want_mir) {
+      continue;
+    }
+
+    lowering::hir_to_mir::ModuleLowerer module(
+        hir_units.back(), result.artifacts.parse->diag_sources);
+    auto mir_or = module.Run();
+    if (!mir_or) {
+      sink.Report(std::move(mir_or.error()));
+      return result;
+    }
+    mir_units.push_back(*std::move(mir_or));
+    if (!want_lir) {
+      continue;
+    }
+
+    auto lir_or = lowering::mir_to_lir::LowerUnit(mir_units.back());
+    if (!lir_or) {
+      sink.Report(std::move(lir_or.error()));
+      return result;
+    }
+    lir_units.push_back(*std::move(lir_or));
+    unit_metadata.push_back(BuildUnitMetadata(mir_units.back()));
   }
-  result.artifacts.mir_units = std::move(units);
+
+  result.artifacts.hir_units = std::move(hir_units);
+  if (want_mir) {
+    result.artifacts.mir_units = std::move(mir_units);
+  }
+  if (want_lir) {
+    result.artifacts.lir_units = std::move(lir_units);
+    result.artifacts.unit_metadata = std::move(unit_metadata);
+  }
 
   return result;
 }

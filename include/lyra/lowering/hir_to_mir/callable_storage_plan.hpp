@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -31,13 +32,21 @@ struct EnclosingClass {
 // (LRM 9.3.5 / 23.9) identified by its HIR id.
 using StorageOwner = std::variant<EnclosingClass, hir::ProceduralScopeId>;
 
-// One materialized procedural-storage scope. It is a runtime hierarchy child
-// of its runtime parent, reachable through `companion_field` on the
-// parent's class. `runtime_parent` is the immediate lexical parent
-// (another procedural scope, or the enclosing structural class).
+// One materialized procedural-storage scope: a named begin/end (LRM 23.9)
+// whose subtree owns hierarchy-addressable static storage. The runtime object
+// tree owns its lifetime; the parent also keeps a borrowed typed handle to it
+// in `companion_field` -- a member on the runtime parent's class, the one
+// intra-unit access projects through (`self -> companion -> x`).
+// `runtime_parent` is the nearest materialized addressable ancestor (another
+// materialized procedural scope, or the enclosing structural class). `label` is
+// the SV block label, the by-name key a cross-unit descent uses. A
+// non-materialized scope's table entry has `materialized == false`; consumers
+// skip it.
 struct MaterializedProceduralScope {
+  bool materialized = false;
   mir::ClassId class_id{};
   mir::FieldId companion_field{};
+  std::string label;
   StorageOwner runtime_parent;
 };
 
@@ -82,9 +91,11 @@ class ProceduralScopeMaterializationTable {
     return by_scope_id_.size();
   }
 
-  // The companion-field path from the body's enclosing class `self` down
-  // to `owner`. Empty when owner is the enclosing class; one entry per
-  // intervening materialized procedural scope otherwise.
+  // The companion-field path from the body's enclosing class `self` down to
+  // `owner`: one borrowed-handle member per intervening materialized procedural
+  // scope. Empty when owner is the enclosing class. Consumers walk it
+  // outermost-first, projecting through each typed companion member -- the
+  // intra-unit typed segment.
   [[nodiscard]] auto CompanionChainTo(StorageOwner owner) const
       -> std::vector<mir::FieldId> {
     std::vector<mir::FieldId> chain;
@@ -93,8 +104,6 @@ class ProceduralScopeMaterializationTable {
       chain.push_back(entry.companion_field);
       owner = entry.runtime_parent;
     }
-    // Reverse so the chain reads outermost-first (enclosing self toward
-    // owner) -- the order consumers walk when projecting through `self`.
     std::ranges::reverse(chain);
     return chain;
   }

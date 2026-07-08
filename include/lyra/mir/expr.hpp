@@ -15,6 +15,7 @@
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/method_id.hpp"
 #include "lyra/mir/param.hpp"
+#include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/struct_construct.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -318,13 +319,31 @@ struct UnionGetRefExpr {
   std::size_t index;
 };
 
+// A value that is a reference to a named callable of this class -- a plain
+// function pointer whose type is the callable's signature. Realized by taking
+// the callable's address (`&Class::name`). Used to install a lifecycle entry or
+// its ABI adapter into a unit's runtime definition as a bare function value,
+// with no wrapper object -- the generic-language "function as a value".
+struct FunctionRef {
+  MethodId callable;
+};
+
+// A place naming one of this class's static constants (`Class::name`), the data
+// dual of `FunctionRef`. `Expr::type` is the constant's type; as a place it is
+// read in an rvalue context or has its address taken via `AddressOfExpr` (how
+// the constructor passes its generated-behavior constant to the runtime base).
+struct StaticConstantRef {
+  StaticConstantId constant;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     HostIntLiteral, ParamRef, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
     PointerCastExpr, CastExpr, FieldAccessExpr, StructConstructExpr,
     ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
-    AwaitExpr, TupleGetExpr, UnionExpr, UnionGetExpr, UnionGetRefExpr>;
+    AwaitExpr, TupleGetExpr, UnionExpr, UnionGetExpr, UnionGetRefExpr,
+    FunctionRef, StaticConstantRef>;
 
 struct Expr {
   ExprData data;

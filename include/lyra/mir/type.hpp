@@ -343,6 +343,18 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // The owner of a child threads this into the child's constructor as a
   // single packaged value.
   kHierarchySegment,
+  // The runtime records a scope's generated behavior is stated in: a scope's
+  // `lyra::runtime::ScopeProgram` (constant metadata plus lifecycle entries), a
+  // design unit's `lyra::runtime::UnitDefinition` (root program plus construct
+  // entry), the `lyra::runtime::ScopeMetadata` inside a program, its
+  // `lyra::runtime::AbiStringRef` def-name, and the `lyra::runtime::ScopeEntry`
+  // function-pointer an entry field holds. HIR-to-MIR builds a unit's
+  // definition as an ordinary constructed value of these types.
+  kScopeProgram,
+  kUnitDefinition,
+  kScopeMetadata,
+  kAbiStringRef,
+  kScopeEntry,
 };
 
 struct RuntimeLibraryType {

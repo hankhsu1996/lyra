@@ -10,6 +10,7 @@
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -17,7 +18,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/base_contract.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/param.hpp"
@@ -77,47 +77,12 @@ auto RenderMethodParam(
   return std::format("{} {}", RenderTypeAsCpp(unit, s, param.type), param.name);
 }
 
-// The C++ name of a runtime-base virtual. The mapping from the resolved
-// override reference to the emitted token lives only here, so the override
-// relation stays a declaration reference everywhere else.
-auto RuntimeVirtualName(mir::RuntimeMethod method) -> std::string_view {
-  switch (method) {
-    case mir::RuntimeMethod::kResolve:
-      return "ResolveState";
-    case mir::RuntimeMethod::kInitialize:
-      return "InitializeState";
-    case mir::RuntimeMethod::kActivate:
-      return "CreateProcesses";
-    case mir::RuntimeMethod::kTimePrecisionPower:
-      return "TimePrecisionPower";
-    case mir::RuntimeMethod::kDefName:
-      return "DefName";
-  }
-  throw InternalError("RuntimeVirtualName: unknown RuntimeMethod");
-}
-
-// Whether a method's receiver is a read-only borrow (an immutable `&self`),
-// read off `self`'s own parameter type. The C++ override shim is `const`
-// exactly when its receiver is read-only.
-auto ReceiverIsReadOnly(
-    const mir::CompilationUnit& unit, const mir::MethodDecl& m) -> bool {
-  if (m.code.params.empty()) {
-    return false;
-  }
-  const auto& self_type =
-      unit.types.Get(m.code.locals.Get(m.code.params[0]).type).data;
-  const auto* ptr = std::get_if<mir::PointerType>(&self_type);
-  return ptr != nullptr && ptr->mutability == mir::Mutability::kReadOnly;
-}
-
 // The one renderer for every callable body. A body renders uniformly as a
 // static function over the explicit receiver `self`: the result type (whose
 // `void` and coroutine cases are ordinary types, handled in `RenderTypeAsCpp`),
 // the name, every parameter (`self` is `params[0]`, rendered like any other),
 // and the body (a plain statement render, including any `co_return` that is
-// itself a body statement). A method that overrides a runtime-base hook also
-// emits the thin virtual shim the engine dispatches through; it forwards to the
-// static body over `this`, the same plumbing the constructor uses for `init`.
+// itself a body statement).
 auto RenderMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::MethodDecl& m, std::size_t indent)
@@ -139,19 +104,6 @@ auto RenderMethod(
   out += std::format("{}{} {{\n", Indent(indent), sig);
   out += RenderBlockStatements(body_view, indent + 1);
   out += std::format("{}}}\n", Indent(indent));
-  if (m.overrides.has_value()) {
-    const std::string_view hook = std::visit(
-        [](const mir::RuntimeLibraryMethodRef& ref) {
-          return RuntimeVirtualName(ref.method);
-        },
-        *m.overrides);
-    // A void hook discards; a value hook returns. `return <void-expr>;` is
-    // legal in a void function, so the same forward serves both with no branch.
-    // The shim is `const` exactly when its receiver is a read-only borrow.
-    out += std::format(
-        "{}{} {}(){} override {{ return {}(this); }}\n", Indent(indent), ret,
-        hook, ReceiverIsReadOnly(unit, m) ? " const" : "", m.name);
-  }
   return out;
 }
 
@@ -179,6 +131,10 @@ auto RenderConstructor(
   // C++ form of every type lives in exactly one place. Base forwarding is
   // plain pass-through (no std::move) -- C++ may copy a HierarchySegment
   // once at construction, which the iteration-time budget can absorb.
+  //
+  // The base's trailing arguments (a tree node forwards the address of its
+  // generated-behavior constant) arrive as ordinary MIR expressions in
+  // `base_init`, translated in order after the prefix params.
   const auto& unit = scope_view.Unit();
   const auto render_typed_name = [&](mir::TypeId type, std::string_view name) {
     return std::format("{} {}", RenderTypeAsCpp(unit, s, type), name);
@@ -188,7 +144,7 @@ auto RenderConstructor(
   std::vector<std::string> base_forwards;
   std::vector<std::string> field_inits;
   sig_args.reserve(s.ctor_prefix_params.size() + s.params.size());
-  base_forwards.reserve(s.ctor_prefix_params.size());
+  base_forwards.reserve(s.ctor_prefix_params.size() + s.base_init.size());
   field_inits.reserve(s.params.size());
 
   for (std::size_t i = 0; i < s.ctor_prefix_params.size(); ++i) {
@@ -196,6 +152,9 @@ auto RenderConstructor(
         s.ctor_prefix_params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
     sig_args.push_back(render_typed_name(p.type, p.name));
     base_forwards.push_back(p.name);
+  }
+  for (const mir::ExprId arg : s.base_init) {
+    base_forwards.push_back(RenderExpr(scope_view, scope_view.Expr(arg)));
   }
   for (std::size_t i = 0; i < s.params.size(); ++i) {
     const auto& p = s.params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
@@ -223,8 +182,8 @@ auto RenderConstructor(
 
   // The C++ constructor is the one shape that is not an ordinary method:
   // it has no result type and runs a member-init list before its body, so
-  // it cannot run a virtual override during construction. It is an
-  // allocation shell that forwards to the base and the fields, then
+  // it is not a lifecycle entry -- construction precedes elaboration. It is an
+  // allocation shell that forwards to the base and the field members, then
   // kicks off the body -- a static worker over `self`, the same shape
   // every method uses. An empty body needs no kickoff.
   if (s.constructor.body.root_stmts.empty()) {
@@ -261,6 +220,21 @@ auto RenderStruct(
   out += RenderFieldList(view, decl.fields, indent + 1);
   out += Indent(indent) + "};\n";
   return out;
+}
+
+// A class-level static constant, declared as a static member whose initializer
+// is the translated value expression. A runtime scope's generated-behavior
+// record is one such constant; the constructor forwards its address to the
+// base.
+auto RenderStaticConstant(
+    const ScopeView& parent_view, const mir::Class& s,
+    const mir::StaticConstantDecl& c, std::size_t indent) -> std::string {
+  const ScopeView view =
+      parent_view.WithClass(s, s.constructor).WithBlock(c.body);
+  return std::format(
+      "\n{0}static constexpr {1} {2} = {3};\n", Indent(indent),
+      RenderTypeAsCpp(parent_view.Unit(), s, c.type), c.name,
+      RenderExpr(view, view.Expr(c.value)));
 }
 
 auto RenderScopeAsClass(
@@ -326,11 +300,6 @@ auto RenderScopeAsClass(
   }
   out += RenderFieldList(this_anchor, s.fields, indent + 1);
 
-  if (s.methods.empty()) {
-    out += std::format("{}}};\n", Indent(indent));
-    return out;
-  }
-
   // Each method declares its access -- a class instance method is the object's
   // public callable surface, a scope's processes and lifecycle hooks are
   // internal -- and the access specifier follows that stated visibility,
@@ -344,6 +313,12 @@ auto RenderScopeAsClass(
     }
     out += "\n";
     out += RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
+  }
+
+  // The class's static constants (a tree node's generated-behavior record among
+  // them), each emitted as a static member.
+  for (const mir::StaticConstantDecl& c : s.static_constants) {
+    out += RenderStaticConstant(this_anchor, s, c, indent + 1);
   }
 
   out += std::format("{}}};\n", Indent(indent));
@@ -474,9 +449,11 @@ auto RenderScopeHeaderFile(
 
 auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   std::string out;
+  out += "#include <memory>\n";
   out += "#include <vector>\n";
   out += "\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";
+  out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
   for (const auto& top : tops) {
     out += std::format(
@@ -485,27 +462,24 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   out += "\n";
   out += "auto main() -> int {\n";
   out += "  lyra::runtime::Engine engine;\n";
-  for (std::size_t i = 0; i < tops.size(); ++i) {
+  out += "  std::vector<std::unique_ptr<lyra::runtime::Scope>> tops;\n";
+  for (const auto& top : tops) {
     // A top instance's structural identity is fixed at this construction
     // site: the segment carries the top's source name with no per-dimension
-    // indices, which $root then reads back when binding the design. The
-    // segment type name comes from the canonical RenderTypeAsCpp mapping
-    // so this harness file does not repeat a type literal already owned
-    // by MIR's builtin TypeId table.
-    const auto& unit = *tops[i].unit;
+    // indices, which $root reads back when binding the design. The segment
+    // type name comes from the canonical RenderTypeAsCpp mapping so this
+    // harness file does not repeat a type literal already owned by MIR's
+    // builtin TypeId table. The root owns each top; construction hands it over.
+    const auto& unit = *top.unit;
     const auto& top_class = unit.GetClass(unit.root);
     const std::string segment_cpp =
         RenderTypeAsCpp(unit, top_class, unit.builtins.hierarchy_segment);
     out += std::format(
-        "  {0} top{1}{{nullptr, {2}{{\"{3}\", {{}}}}, engine.Services()}};\n",
-        top_class.name, i, segment_cpp, tops[i].name);
+        "  tops.push_back(std::make_unique<{0}>(nullptr, {1}{{\"{2}\", {{}}}}, "
+        "engine.Services()));\n",
+        top_class.name, segment_cpp, top.name);
   }
-  out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
-  for (std::size_t i = 0; i < tops.size(); ++i) {
-    out += std::format("      {{&top{}}},\n", i);
-  }
-  out += "  };\n";
-  out += "  engine.BindDesign(tops);\n";
+  out += "  engine.BindDesign(std::move(tops));\n";
   out += "  return lyra::runtime::RunSimulation(engine);\n";
   out += "}\n";
   return out;

@@ -17,6 +17,14 @@ CompileFlags:
 Diagnostics:
   ClangTidy:
     FastCheckFilter: Strict
+    # clangd does not honor readability-identifier-naming's *IgnoredRegexp
+    # options, so in the editor it false-positives on every externally
+    # mandated name the .clang-tidy config exempts (the C++ std-container and
+    # coroutine hooks -- begin/end/data/size/await_*/... -- and the generated
+    # module's `lyra_rt_*` C ABI entries). The CLI clang-tidy that CI runs does
+    # honor those exemptions, so the check stays enforced there; it is only
+    # removed from the editor path, where it can only mislead.
+    Remove: readability-identifier-naming
 
 # Disable inlay hints for designators to avoid JSON key indexing.
 InlayHints:

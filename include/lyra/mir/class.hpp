@@ -9,14 +9,30 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/param.hpp"
+#include "lyra/mir/static_constant_id.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_alias.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
+
+// A class-level static constant: a named immutable value the class owns with
+// static storage, built once at compile time from `value` (the root of the
+// expression tree `body` owns; its `stmts` are empty, only `exprs` is used).
+// The data dual of a static method. A runtime scope's generated-behavior record
+// (its `ScopeProgram`, or `UnitDefinition` for a unit instance) is one such
+// constant; the constructor hands its address to the runtime base.
+struct StaticConstantDecl {
+  std::string name;
+  TypeId type;
+  Block body;
+  ExprId value;
+};
 
 // The structural portion of a class declaration: the fields a peer needs to
 // read about a class while its own body is being lowered. Each field has the
@@ -80,6 +96,17 @@ struct Class {
   // inside this class by iterating this list -- no walk over the body tree.
   std::vector<StructId> structs;
   base::Arena<MethodDecl, MethodId> methods;
+  // The class-level static constants this class owns, emitted as static
+  // members. A runtime scope's generated-behavior record is one such constant;
+  // the constructor forwards its address to the runtime base through
+  // `base_init`.
+  base::Arena<StaticConstantDecl, StaticConstantId> static_constants;
+  // The base-constructor arguments beyond the forwarded prefix params, as
+  // ordinary MIR expressions the backend translates in order (their expression
+  // tree lives in `constructor.body.exprs`). A runtime tree node passes the
+  // address of its generated-behavior constant here; a plain object passes
+  // none.
+  std::vector<ExprId> base_init;
   std::vector<TypeAliasDecl> type_aliases;
 
   void AddTypeAlias(TypeAliasDecl decl) {

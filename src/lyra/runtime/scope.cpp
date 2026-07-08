@@ -12,23 +12,37 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 
 namespace lyra::runtime {
 
-Scope::Scope(Scope* parent, HierarchySegment segment, RuntimeServices& services)
-    : parent_(parent), segment_(std::move(segment)), services_(&services) {
+// The default scope-program entry: a scope with no work for a lifecycle phase
+// keeps this no-op, which ignores the scope it is handed.
+// NOLINTNEXTLINE(readability-named-parameter)
+void ScopeNoOp(Scope*) {
 }
 
-void Scope::AttachChild(Scope& child) {
-  child.parent_ = this;
-  attached_children_.push_back(&child);
+Scope::Scope(
+    Scope* parent, HierarchySegment segment, RuntimeServices& services,
+    const ScopeProgram* program)
+    : parent_(parent),
+      segment_(std::move(segment)),
+      services_(&services),
+      program_(program) {
+}
+
+auto Scope::AddOwnedChild(std::unique_ptr<Scope> child) -> Scope* {
+  child->parent_ = this;
+  Scope* handle = child.get();
+  attached_children_.push_back(std::move(child));
+  return handle;
 }
 
 void Scope::ForEachChild(const ChildVisitor& fn) {
-  for (Scope* child : attached_children_) {
+  for (const auto& child : attached_children_) {
     fn(*child);
   }
 }
@@ -54,7 +68,7 @@ auto Scope::GetChild(
   // segment name) are transparent -- the walk recurses into them so a
   // peer's `top.outer.x` finds `outer` regardless of how many unnamed
   // begin/ends physically wrap it (LRM 23 hierarchical-name semantics).
-  for (Scope* child : attached_children_) {
+  for (const auto& child : attached_children_) {
     if (!child->IsAddressable()) {
       if (Scope* found = child->GetChild(name, indices)) {
         return found;
@@ -77,7 +91,7 @@ auto Scope::GetChild(
       }
     }
     if (matched) {
-      return child;
+      return child.get();
     }
   }
   return nullptr;
@@ -126,17 +140,26 @@ void Scope::Resolve() {
   // route of each cross-instance reference it owns. The walk is top-down, so a
   // parent binds a child's `ref` port before the child (or its own children)
   // forwards it onward.
-  ResolveState();
+  {
+    GeneratedCallScope call;
+    program_->resolve_state(this);
+  }
   ForEachChild([](Scope& child) { child.Resolve(); });
 }
 
 void Scope::Initialize() {
-  InitializeState();
+  {
+    GeneratedCallScope call;
+    program_->initialize_state(this);
+  }
   ForEachChild([](Scope& child) { child.Initialize(); });
 }
 
 void Scope::Activate() {
-  CreateProcesses();
+  {
+    GeneratedCallScope call;
+    program_->create_processes(this);
+  }
   ForEachChild([](Scope& child) { child.Activate(); });
 }
 

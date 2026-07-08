@@ -1,4 +1,3 @@
-#include <expected>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -42,70 +41,43 @@ struct UnitCollector
   }
 };
 
-// Per-compilation lowerer: walks the top instances, dedups to one canonical
-// body per distinct unit, and constructs one ModuleLowerer per unit. Runs
-// once via Run(); file-local because no driver consumer needs to see it.
-class CompilationLowerer {
- public:
-  explicit CompilationLowerer(const LowerCompilationFacts& facts)
-      : facts_(facts),
-        unit_facts_(
-            facts.SourceMapper(), facts.Sensitivity(),
-            facts.DisableAssertions()) {
-  }
-
-  auto Run() -> diag::Result<std::vector<hir::ModuleUnit>> {
-    if (auto ok = RejectDpiExports(); !ok) {
-      return std::unexpected(std::move(ok.error()));
-    }
-    const auto unit_bodies = CollectUnits();
-    std::vector<hir::ModuleUnit> units;
-    units.reserve(unit_bodies.size());
-    for (const auto* body : unit_bodies) {
-      ModuleLowerer module(unit_facts_, *body);
-      auto unit_or = module.Run();
-      if (!unit_or) return std::unexpected(std::move(unit_or.error()));
-      units.push_back(*std::move(unit_or));
-    }
-    return units;
-  }
-
- private:
-  // A DPI-C export (LRM 35.5) makes an SV subroutine callable from C. Lyra
-  // emits no C-export ABI, so an exported subroutine cannot be honored;
-  // rejecting it is what keeps it from lowering as an ordinary subroutine that
-  // silently drops the export contract. slang collects exports only from
-  // elaborated scopes, so every entry belongs to the design under compilation.
-  auto RejectDpiExports() -> diag::Result<void> {
-    for (const auto& dpi : facts_.Compilation().getDPIExports()) {
-      if (dpi.subroutine == nullptr) continue;
-      return diag::Fail(
-          facts_.SourceMapper().PointSpanOf(dpi.subroutine->location),
-          diag::DiagCode::kUnsupportedDpi,
-          "DPI-C export of a subroutine is not yet supported");
-    }
-    return {};
-  }
-
-  auto CollectUnits() -> std::vector<const slang::ast::InstanceBodySymbol*> {
-    const auto& root = facts_.Compilation().getRoot();
-    UnitCollector collector;
-    for (const auto* top : root.topInstances) {
-      top->visit(collector);
-    }
-    return std::move(collector.order);
-  }
-
-  LowerCompilationFacts facts_;
-  LoweringFacts unit_facts_;
-};
-
 }  // namespace
 
-auto LowerCompilation(const LowerCompilationFacts& facts)
-    -> diag::Result<std::vector<hir::ModuleUnit>> {
-  CompilationLowerer lowerer(facts);
-  return lowerer.Run();
+// A DPI-C export (LRM 35.5) makes an SV subroutine callable from C. Lyra emits
+// no C-export ABI, so an exported subroutine cannot be honored; rejecting it is
+// what keeps it from lowering as an ordinary subroutine that silently drops the
+// export contract. slang collects exports only from elaborated scopes, so every
+// entry belongs to the design under compilation.
+auto RejectDpiExports(const LowerCompilationFacts& facts)
+    -> diag::Result<void> {
+  for (const auto& dpi : facts.Compilation().getDPIExports()) {
+    if (dpi.subroutine == nullptr) continue;
+    return diag::Fail(
+        facts.SourceMapper().PointSpanOf(dpi.subroutine->location),
+        diag::DiagCode::kUnsupportedDpi,
+        "DPI-C export of a subroutine is not yet supported");
+  }
+  return {};
+}
+
+auto CollectUnitBodies(const LowerCompilationFacts& facts)
+    -> std::vector<const slang::ast::InstanceBodySymbol*> {
+  const auto& root = facts.Compilation().getRoot();
+  UnitCollector collector;
+  for (const auto* top : root.topInstances) {
+    top->visit(collector);
+  }
+  return std::move(collector.order);
+}
+
+auto LowerUnit(
+    const LowerCompilationFacts& facts,
+    const slang::ast::InstanceBodySymbol& body)
+    -> diag::Result<hir::ModuleUnit> {
+  const LoweringFacts unit_facts(
+      facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
+  ModuleLowerer module(unit_facts, body);
+  return module.Run();
 }
 
 auto TopLevelUnitNames(slang::ast::Compilation& compilation)

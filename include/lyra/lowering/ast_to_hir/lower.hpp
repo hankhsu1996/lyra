@@ -10,6 +10,10 @@
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 
+namespace slang::ast {
+class InstanceBodySymbol;
+}  // namespace slang::ast
+
 namespace lyra::lowering::ast_to_hir {
 
 // Driver-supplied facts threaded into AST-to-HIR lowering. `Compilation&` is
@@ -50,11 +54,24 @@ class LowerCompilationFacts {
   bool disable_assertions_;
 };
 
-// Lowers the top-level blocks and, transitively, every unit they instantiate.
-// The result is a superset of the tops: a unit reached only through
-// instantiation is compiled but is not itself a top.
-auto LowerCompilation(const LowerCompilationFacts& facts)
-    -> diag::Result<std::vector<hir::ModuleUnit>>;
+// The distinct unit bodies reachable from the tops, deduped to one canonical
+// body per specialization -- the work-list for per-unit lowering. A module
+// instantiated many times appears once; the descent is transitive, so a unit
+// reached only through instantiation is included though it is not a top.
+auto CollectUnitBodies(const LowerCompilationFacts& facts)
+    -> std::vector<const slang::ast::InstanceBodySymbol*>;
+
+// Rejects a design that exports a subroutine over DPI-C (LRM 35.5): Lyra emits
+// no C-export ABI, so the export contract cannot be honored. Runs once per
+// compilation, before any unit lowers.
+auto RejectDpiExports(const LowerCompilationFacts& facts) -> diag::Result<void>;
+
+// Lowers one unit body to its HIR. Independent of every other unit: it reads
+// only this body and the shared frontend, so units may be lowered in any order.
+auto LowerUnit(
+    const LowerCompilationFacts& facts,
+    const slang::ast::InstanceBodySymbol& body)
+    -> diag::Result<hir::ModuleUnit>;
 
 // A top-level block is an auto-promoted, uninstantiated module. These names
 // are a subset of the compiled units: a unit reached only through

@@ -159,6 +159,16 @@ auto RenderTypeAsCpp(
                 return std::string{"lyra::value::TimeFormat"};
               case mir::RuntimeLibraryKind::kHierarchySegment:
                 return std::string{"lyra::runtime::HierarchySegment"};
+              case mir::RuntimeLibraryKind::kScopeProgram:
+                return std::string{"lyra::runtime::ScopeProgram"};
+              case mir::RuntimeLibraryKind::kUnitDefinition:
+                return std::string{"lyra::runtime::UnitDefinition"};
+              case mir::RuntimeLibraryKind::kScopeMetadata:
+                return std::string{"lyra::runtime::ScopeMetadata"};
+              case mir::RuntimeLibraryKind::kAbiStringRef:
+                return std::string{"lyra::runtime::AbiStringRef"};
+              case mir::RuntimeLibraryKind::kScopeEntry:
+                return std::string{"lyra::runtime::ScopeEntry"};
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },

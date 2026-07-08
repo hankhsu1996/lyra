@@ -48,6 +48,8 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       .contained = {},
       .structs = {},
       .methods = {},
+      .static_constants = {},
+      .base_init = {},
       .type_aliases = {}};
 
   mir::CallableCode ctor_code;
