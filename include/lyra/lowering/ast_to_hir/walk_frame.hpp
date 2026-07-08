@@ -23,6 +23,7 @@ struct ProceduralBody;
 
 namespace slang::ast {
 class Symbol;
+class Scope;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -66,6 +67,16 @@ struct WalkFrame {
   // by ModuleLowerer when a scope is entered. Used to compute structural
   // hops: HopsTo(target) walks back to find target in the chain.
   std::vector<ScopeFrameId> structural_chain;
+
+  // The reader's position in slang's elaborated hierarchy: the slang scope of
+  // the innermost structural scope on the chain. The structural_chain gives
+  // hops only within this compilation unit; this locates the reader in the
+  // whole-design hierarchy (across unit boundaries at the InstanceBody
+  // transition), so a reference route to any target -- including one that
+  // climbs out of this unit -- is computed as a reader-to-target relationship
+  // rather than reclassified from a lexical form. Null before the root scope
+  // is entered.
+  const slang::ast::Scope* reader_scope = nullptr;
 
   // The current expression write target: the expr arena every expression
   // handler appends lowered sub-expressions into, regardless of procedural or
@@ -166,10 +177,12 @@ struct WalkFrame {
   // passed by the caller (which holds the complete scope type) so this header
   // stays free of the HIR scope definition.
   [[nodiscard]] auto WithStructuralFrame(
-      ScopeFrameId child_frame, hir::StructuralScope* scope,
+      ScopeFrameId child_frame, const slang::ast::Scope* slang_scope,
+      hir::StructuralScope* scope,
       base::Arena<hir::Expr, hir::ExprId>* exprs) const -> WalkFrame {
     WalkFrame next = *this;
     next.structural_chain.push_back(child_frame);
+    next.reader_scope = slang_scope;
     next.current_structural_scope = scope;
     next.current_exprs = exprs;
     return next;

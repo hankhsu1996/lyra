@@ -1,11 +1,11 @@
-id: cpp.hierarchy_xunit_read
+id: cpp.always_comb_function_read_in_generate
 tags: [cpp_run]
 input:
   command: [run, cpp]
   project: false
-  top: Top
+  top: Test
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "r=42 rw=5\n"
+  variables:
+    obs: 9

@@ -1,11 +1,11 @@
-id: cpp.hierarchy_xunit_read
+id: cpp.always_comb_nonlocal_sensitivity
 tags: [cpp_run]
 input:
   command: [run, cpp]
   project: false
-  top: Top
+  top: Test
   files: [main.sv]
 expect:
   exit: 0
   stdout:
-    exact: "r=42 rw=5\n"
+    exact: "p=4 q=3 fn_a=1 fn_c=2\n"
