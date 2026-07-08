@@ -676,9 +676,9 @@ class HirDumper {
                       [&](const RangeConstantBounds& b) -> std::string {
                         return std::format(
                             "RangeSelectExpr base=Expr[{}] kind=Constant "
-                            "msb=Expr[{}] lsb=Expr[{}]",
-                            sel.base_value.value, b.msb_expr.value,
-                            b.lsb_expr.value);
+                            "left=Expr[{}] right=Expr[{}]",
+                            sel.base_value.value, b.left_bound.value,
+                            b.right_bound.value);
                       },
                       [&](const RangeIndexedUpBounds& b) -> std::string {
                         return std::format(

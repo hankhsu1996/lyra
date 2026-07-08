@@ -18,6 +18,7 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/slice_selector.hpp"
 
 namespace lyra::value {
 
@@ -220,20 +221,39 @@ class Queue {
     return shield_.DiscardTarget();
   }
 
-  // LRM 7.10.1 queue slice `q[lo:hi]`. An x/z bound, or `lo > hi` after
-  // clamping, yields the empty queue. `lo` clamps up to 0 and `hi` clamps down
-  // to the last index (`q[a:b]` with `a < 0` is `q[0:b]`, with `b > $` is
-  // `q[a:$]`). The result carries this queue's element shape, seeded from the
-  // shield's default.
-  [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
-      -> Queue {
+  // LRM 7.10.1 queue slice. `form` selects the source shape from `(anchor,
+  // extent)`: a constant `q[a:b]` is `anchor = a`, `extent = b`; an indexed
+  // `q[base+:w]` is `anchor = base`, `extent = w`, growing upward; `q[base-:w]`
+  // grows downward. The `base +/- (w - 1)` bound is computed here in the wide
+  // int64 domain, never synthesized at lowering. An x/z bound, or `lo > hi`
+  // after clamping, yields the empty queue; `lo` clamps up to 0 and `hi` down
+  // to the last index. The result carries this queue's element shape. `form` is
+  // the shared `value::SliceForm` (`slice_selector.hpp`).
+  [[nodiscard]] auto Slice(
+      const PackedArray& anchor, const PackedArray& extent,
+      const PackedArray& form) const -> Queue {
     Queue out(shield_.Default());
-    if (lo.HasUnknown() || hi.HasUnknown() || data_.empty()) {
+    if (anchor.HasUnknown() || extent.HasUnknown() || data_.empty()) {
       return out;
     }
-    const std::int64_t a = std::max<std::int64_t>(lo.ToInt64(), 0);
+    const std::int64_t an = anchor.ToInt64();
+    const std::int64_t ex = extent.ToInt64();
+    std::int64_t lo = an;
+    std::int64_t hi = ex;
+    switch (static_cast<SliceForm>(form.ToInt64())) {
+      case SliceForm::kIndexedUp:
+        hi = an + ex - 1;
+        break;
+      case SliceForm::kIndexedDown:
+        lo = an - ex + 1;
+        hi = an;
+        break;
+      case SliceForm::kConstant:
+        break;
+    }
+    const std::int64_t a = std::max<std::int64_t>(lo, 0);
     const auto last = static_cast<std::int64_t>(data_.size()) - 1;
-    const std::int64_t b = std::min<std::int64_t>(hi.ToInt64(), last);
+    const std::int64_t b = std::min<std::int64_t>(hi, last);
     for (std::int64_t i = a; i <= b; ++i) {
       out.data_.push_back(data_[static_cast<std::size_t>(i)]);
     }
@@ -529,7 +549,10 @@ struct Formatter<Queue<T>> {
 static_assert(LyraValue<Queue<PackedArray>>);
 static_assert(Sized<Queue<PackedArray>>);
 static_assert(Indexable<Queue<PackedArray>>);
-static_assert(Sliceable<Queue<PackedArray>>);
+// A queue's `Slice(anchor, extent, form)` is dynamic-width -- the runtime
+// derives the element count from the bounds (LRM 7.10.1) -- not the fixed-width
+// `(anchor, count, shift)` contract `Sliceable` names, so despite the matching
+// arity it carries its own `Slice` rather than claiming that concept.
 static_assert(Ownable<Queue<PackedArray>>);
 static_assert(Defaultable<Queue<PackedArray>>);
 static_assert(Sortable<Queue<PackedArray>>);

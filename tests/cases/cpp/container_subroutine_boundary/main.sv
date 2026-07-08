@@ -39,10 +39,28 @@ module Top;
     m[key] = v;
   endfunction
 
+  // A fixed unpacked array with a non-trivial declared range across the
+  // subroutine boundary: the automatic-local `t` (a plain value, no cell) and
+  // the copy-out formal `a` each resolve their selects against their own
+  // declared range, not a range carried by the value.
+  function automatic int ua_local();
+    int t[1:3];
+    t[1] = 40;
+    t[3] = 60;
+    return t[1] + t[3];
+  endfunction
+
+  function automatic void fill_ua(output int a[2:4]);
+    a[2] = 11;
+    a[3] = 22;
+    a[4] = 33;
+  endfunction
+
   qi_t qv;
   dai_t dav;
   as_t amap;
   qi_t sq;
+  int uav[2:4];
 
   int sum_rt;
   int da0_rt;
@@ -57,6 +75,9 @@ module Top;
   int lookup_rt;
   int bump_existing_rt;
   int bump_new_rt;
+  int ua_local_rt;
+  int uav2_rt;
+  int uav4_rt;
 
   initial begin
     qv.push_back(1);
@@ -92,5 +113,10 @@ module Top;
     bump(amap, "gamma", 300);
     bump_existing_rt = amap["alpha"];
     bump_new_rt = amap["gamma"];
+
+    ua_local_rt = ua_local();
+    fill_ua(uav);
+    uav2_rt = uav[2];
+    uav4_rt = uav[4];
   end
 endmodule

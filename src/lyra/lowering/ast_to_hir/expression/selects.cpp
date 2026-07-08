@@ -138,7 +138,7 @@ auto LowerRangeSelectExpr(
     switch (sel.getSelectionKind()) {
       case slang::ast::RangeSelectionKind::Simple:
         return hir::RangeConstantBounds{
-            .msb_expr = left_id, .lsb_expr = right_id};
+            .left_bound = left_id, .right_bound = right_id};
       case slang::ast::RangeSelectionKind::IndexedUp:
         return hir::RangeIndexedUpBounds{
             .base_index = left_id, .width = right_id};

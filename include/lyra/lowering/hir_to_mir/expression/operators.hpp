@@ -29,11 +29,13 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 // `BuiltinFn` realization on the receiver value type; real / string
 // comparison and logical operators wrap in `kFromBool` (with `BoolCastExpr`
 // around the operands for the logical family); the rest produce a native
-// `BinaryExpr` for the backend to render mechanically. Shared between
-// `LowerHirBinaryExpr` and the case-cascade builder so every site that
-// produces a binary operator goes through one lift.
+// `BinaryExpr` for the backend to render mechanically. The single producer of a
+// binary operator, so it is also the one place that guarantees a word-parallel
+// operator's operands share a storage domain (LRM 11.6.1), inserting the
+// reconciling conversion any synthesized site would otherwise have to remember.
+// `unit` is mutable because reconciling may intern the operands' common type.
 auto BuildMirBinaryExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
     -> mir::Expr;
 

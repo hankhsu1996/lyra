@@ -123,36 +123,42 @@ Unpacked array support follows these invariants:
    inner `UnpackedArrayType` whose element is `int`. One IR layer per declared dimension. AST -> HIR
    consumes slang's nested `FixedSizeUnpackedArrayType` 1:1.
 
-2. **Backend cpp renders each unpacked type layer as `lyra::value::UnpackedArray<T>`.**
+2. **Backend cpp renders each unpacked type layer as `lyra::value::UnpackedArray<T>`.** _(Amended by
+   [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md): the value is an ordinal-only
+   payload and does NOT carry a declared range; the range is a fact of the receiver's static type,
+   materialized at the select as a MIR operand. The original "the value carries its declared range"
+   is superseded.)_
 
    `mir::UnpackedArrayType { dim, element_type }` -> `lyra::value::UnpackedArray<` +
-   `render(element_type)` + `>`. The wrapper owns a private `std::vector<T>` and exposes a surface
-   symmetric with `PackedArray` -- element access by position, slice, `operator==` and `CaseEqual`
-   returning a 1-bit `PackedArray` -- so the substrate-asymmetric operations (equality with X / Z
-   propagation, range selectors, observability hooks) live behind a single uniform method surface.
-   LRM 7.4.5 invalid-index handling lives in the wrapper too: positional access returns `T&` (or
-   `const T&` from the const overload); on an invalid index the returned reference is to the
-   wrapper's shield slot, restored to canonical state via `T::ResetToDefault` immediately before
-   being handed out so any prior OOB write is erased. Element-level compound semantics live on
-   `PackedArray` directly -- the wrapper carries no per-T forwarder. The write-side slice
-   (`SliceRef`) returns a write-through proxy whose destructor scatters back into the receiver's
-   storage; slice reads on partially-OOB positions handle the in-range and OOB elements per-element
-   rather than at slice granularity, matching the packed array's per-bit OOB treatment in
-   bit-extract and slice-assign. See `docs/decisions/runtime-shape-and-default-value.md` for the
-   shield contract.
+   `render(element_type)` + `>`. The wrapper owns a private `std::vector<T>` plus its declared
+   `UnpackedRange`, seeded at construction alongside the element default, and exposes a surface
+   symmetric with `PackedArray` -- element and slice access by source-declared coordinate,
+   `operator==` and `CaseEqual` returning a 1-bit `PackedArray` -- so the substrate-asymmetric
+   operations (equality with X / Z propagation, range selectors, observability hooks) live behind a
+   single uniform method surface. Element and slice access take a source-level index and resolve it
+   to a storage position against the wrapper's own range (see
+   `docs/decisions/selector-coordinate-resolution.md`); the storage position is internal and never a
+   public argument. LRM 7.4.5 invalid-index handling lives in the wrapper: an index outside the
+   declared range or bearing X / Z returns a reference to the shield slot, restored to canonical
+   state via `T::ResetToDefault` before being handed out so any prior OOB write is erased.
+   Element-level compound semantics live on `PackedArray` directly -- the wrapper carries no per-T
+   forwarder. The write-side slice (`SliceRef`) returns a write-through proxy whose destructor
+   scatters back into the receiver's storage; slice reads on partially-OOB positions handle in-range
+   and OOB elements per-element, matching the packed array's per-bit OOB treatment. See
+   `docs/decisions/runtime-shape-and-default-value.md` for the shield contract.
 
-3. **Default initialization emits a `ConstructExpr` whose first positional argument is the
-   canonical-default element and whose second is an `ArrayLiteralExpr` rendered as
-   `std::array<T, N>{...}`.**
+3. **Default initialization emits a `ConstructExpr` whose arguments are the declared range, the
+   canonical-default element, and an `ArrayLiteralExpr` rendered as `std::array<T, N>{...}`.**
 
    `default_value.cpp` synthesises an `ArrayLiteralExpr` populated with per-element defaults; the
-   backend wraps it in `ConstructExpr` so the wrapper's `(T canonical_default, std::span<const T>)`
-   constructor receives both the canonical-default seed for `oob_slot_` and the initial elements.
-   The `std::array<T, N>` rvalue produced by the element list implicitly converts to the ctor's
-   `std::span<const T>` parameter. For `int arr[3]`:
+   backend wraps it in `ConstructExpr` so the wrapper's constructor receives the declared range
+   (from the type's `dim`), the canonical-default seed for the shield slot, and the initial
+   elements. The `std::array<T, N>` rvalue produced by the element list implicitly converts to the
+   ctor's `std::span<const T>` parameter. For `int arr[1:3]`:
 
    ```cpp
    lyra::value::UnpackedArray<lyra::value::PackedArray> arr(
+       lyra::value::UnpackedRange{1, 3},
        lyra::value::PackedArray::Int(0),
        std::array<lyra::value::PackedArray, 3>{
            lyra::value::PackedArray::Int(0),
@@ -160,9 +166,9 @@ Unpacked array support follows these invariants:
            lyra::value::PackedArray::Int(0)});
    ```
 
-   Multi-dim composes through the nested element type with the same shape at every layer. The same
-   element-list shape applies to `DynamicArray<T>` -- the only thing that varies is the outer
-   container type.
+   Multi-dim composes through the nested element type with the same shape at every layer.
+   `DynamicArray<T>` uses the same element-list shape without the range argument -- a dynamic array
+   is declared zero-based, so its coordinate system is the identity.
 
 4. **`'{...}` is a first-class IR expression -- `hir::ArrayLiteral` / `mir::ArrayLiteral` --
    rendered as `std::array<T, N>{...}`.**

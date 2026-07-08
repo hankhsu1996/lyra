@@ -117,13 +117,52 @@ struct EnumType {
 // existing `TupleType`, not a distinct variant; an unpacked union (overlapping
 // member storage) is a separate representation problem.
 
-// MIR tracks unpacked arrays as plain C++ vectors: element type plus a
-// non-zero element count. The SV declared range (`[left:right]`, descending
-// or with a non-zero base) is resolved at the HIR-to-MIR boundary -- the
-// index translation lives inside ElementSelectExpr.index, not on the type.
+// One declared unpacked dimension, `[left:right]`. Element order runs
+// left-to-right (LRM 7.6), so the leftmost element (index `left`) is storage
+// ordinal 0. Distinct from `PackedRange`, whose ordinal counts from the right
+// (least-significant) end.
+struct UnpackedRange {
+  std::int64_t left;
+  std::int64_t right;
+
+  [[nodiscard]] auto ElementCount() const -> std::uint64_t {
+    // A declared range spans `|left - right| + 1` elements and is never empty.
+    // The synthetic zero-based empty list `[0:-1]` is the one exception -- it
+    // stands in for a zero-length compiler-internal array that a real SV range
+    // cannot express. No real declared range is `[0:-1]`.
+    if (left == 0 && right == -1) {
+      return 0;
+    }
+    return static_cast<std::uint64_t>(
+               left < right ? right - left : left - right) +
+           1U;
+  }
+  [[nodiscard]] auto IsAscending() const -> bool {
+    return left <= right;
+  }
+
+  // The declared range of a compiler-internal zero-based array of `count`
+  // elements, `[0 : count - 1]`. An empty list is `[0:-1]`.
+  [[nodiscard]] static auto ZeroBased(std::uint64_t count) -> UnpackedRange {
+    return UnpackedRange{
+        .left = 0, .right = static_cast<std::int64_t>(count) - 1};
+  }
+
+  auto operator==(const UnpackedRange&) const -> bool = default;
+};
+
+// An unpacked array is an element type plus its declared range. The range is
+// the array's coordinate system: element and range selection resolve a source
+// index against it. The range lives on the type, not the runtime value -- the
+// backend value is ordinal-only payload and selection passes the range as an
+// operand sourced from this type.
 struct UnpackedArrayType {
   TypeId element_type;
-  std::uint64_t size;
+  UnpackedRange dim;
+
+  [[nodiscard]] auto Size() const -> std::uint64_t {
+    return dim.ElementCount();
+  }
 
   auto operator==(const UnpackedArrayType&) const -> bool = default;
 };

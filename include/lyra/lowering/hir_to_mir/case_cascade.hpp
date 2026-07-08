@@ -48,7 +48,7 @@ template <typename LabelLowerer>
 auto BuildEqualityChain(
     WalkFrame frame, CaseSnapshotRefs snapshot, mir::TypeId bit_type,
     mir::BinaryOp compare_op, std::size_t label_count,
-    LabelLowerer&& lower_label, const mir::CompilationUnit& unit)
+    LabelLowerer&& lower_label, mir::CompilationUnit& unit)
     -> diag::Result<mir::ExprId> {
   auto& enc_scope = *frame.current_block;
   std::optional<mir::ExprId> acc;

@@ -137,41 +137,69 @@ concept AssocIndexable = requires(T& t, const K& key) {
   { t.ElementRef(key) };
 };
 
-// Sliceable: extract a sub-window via two integer arguments. Conforming
-// containers: PackedArray, DynamicArray, UnpackedArray, Queue. The shape is
-// uniformly `Slice(PackedArray, PackedArray)`, but the two arguments mean
-// different things per container's LRM contract:
+// Sliceable: extract a fixed-width sub-window (LRM 7.4.5 / 11.5.2). Conforming
+// containers: PackedArray, DynamicArray, UnpackedArray. The shape is
+// `Slice(anchor, count, shift)`:
 //
-// - Queue (LRM 7.10.1): `(lo, hi)` inclusive bounds. The result size is
-//   `hi - lo + 1` clamped against the queue's runtime size; X/Z on either
-//   bound yields an empty queue.
-// - PackedArray / DynamicArray / UnpackedArray (LRM 7.4.5 / 11.5.2):
-//   `(offset, count)`. The result size is the type-fixed `count`; an X/Z
-//   offset canonical-fills the count-wide window. The width MUST flow as a
-//   separate argument because SV semantics canonical-fill at the
-//   type-determined width even when the offset carries X/Z, and that width
-//   is not derivable from `(lo, hi)` alone.
+// - `anchor` is the SV-declared endpoint the slice hangs from; the container
+//   rebases it against its own declared range.
+// - `count` is the type-fixed result width (LRM 7.4.5). It flows separately
+//   because SV canonical-fills at the type-determined width even when the
+//   anchor carries X/Z, and that width is not otherwise recoverable.
+// - `shift` is how far below the rebased anchor the low end sits: zero for a
+//   constant range or an indexed part-select growing toward the MSB, `count-1`
+//   for one growing toward the LSB (LRM 11.5.1).
 //
-// Bare `Slice` returns the value form (an owned snapshot, materialised via
-// gather); a separate `SliceableRef` concept covers the reference form.
-// String's LRM-named sibling is `Substr(i, j)` (LRM 6.16.8); it uses the
-// queue's `(lo, hi)` shape and does not claim Sliceable (the method name
-// differs per LRM 6.16.8).
+// An X/Z anchor canonical-fills the count-wide window. Bare `Slice` returns the
+// value form (an owned snapshot); `SliceableRef` covers the reference form.
+// A queue's slice is dynamic-width, derived from its bounds (LRM 7.10.1), and a
+// string slices by `Substr(i, j)` (LRM 6.16.8); neither is this fixed-width
+// contract, so neither claims Sliceable.
 template <typename T>
-concept Sliceable =
-    requires(const T& t, const PackedArray& p1, const PackedArray& p2) {
-      { t.Slice(p1, p2) };
-    };
+concept Sliceable = requires(
+    const T& t, const PackedArray& p1, const PackedArray& p2,
+    const PackedArray& p3) {
+  { t.Slice(p1, p2, p3) };
+};
 
 // SliceableRef: the reference-form counterpart of `Sliceable`. `SliceRef`
 // returns a write-through proxy that, on `operator=`, scatters the value
 // back into the receiver's storage. Queue does not satisfy this protocol
 // because LRM 7.10 does not define a write-side queue slice.
 template <typename T>
-concept SliceableRef =
-    requires(T& t, const PackedArray& p1, const PackedArray& p2) {
-      { t.SliceRef(p1, p2) };
-    };
+concept SliceableRef = requires(
+    T& t, const PackedArray& p1, const PackedArray& p2, const PackedArray& p3) {
+  { t.SliceRef(p1, p2, p3) };
+};
+
+// The unpacked family supplies its declared coordinate range at the select as a
+// `[left:right]` operand pair sourced from the receiver's static type, rather
+// than carrying it in the value. PackedArray self-describes (its dims are
+// storage representation) and a dynamic array is zero-based, so both stay on
+// `Indexable` / `Sliceable`; the
+// unpacked value pins the range-carrying shape instead.
+template <typename T>
+concept RangedIndexable = requires(
+    T& t, const PackedArray& pos, const PackedArray& left,
+    const PackedArray& right) {
+  { t.Element(pos, left, right) };
+  { t.ElementRef(pos, left, right) };
+};
+
+template <typename T>
+concept RangedSliceable = requires(
+    const T& t, const PackedArray& a, const PackedArray& b,
+    const PackedArray& form, const PackedArray& left,
+    const PackedArray& right) {
+  { t.Slice(a, b, form, left, right) };
+};
+
+template <typename T>
+concept RangedSliceableRef = requires(
+    T& t, const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& left, const PackedArray& right) {
+  { t.SliceRef(a, b, form, left, right) };
+};
 
 // Ownable: materialise a borrowed view into an owning value. Models Rust's
 // `ToOwned` trait -- the result is the owning sibling type (a ref view

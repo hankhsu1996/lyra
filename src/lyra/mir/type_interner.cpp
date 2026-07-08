@@ -60,7 +60,8 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           }
         } else if constexpr (std::is_same_v<T, UnpackedArrayType>) {
           HashId(seed, t.element_type);
-          HashField(seed, t.size);
+          HashField(seed, t.dim.left);
+          HashField(seed, t.dim.right);
         } else if constexpr (std::is_same_v<T, DynamicArrayType>) {
           HashId(seed, t.element_type);
         } else if constexpr (std::is_same_v<T, QueueType>) {

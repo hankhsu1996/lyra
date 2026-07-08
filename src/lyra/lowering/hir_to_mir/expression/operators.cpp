@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 
+#include <algorithm>
 #include <expected>
 #include <utility>
 #include <variant>
@@ -316,7 +317,7 @@ auto BuildMirUnaryExpr(
 }
 
 auto BuildMirBinaryExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
     -> mir::Expr {
   const auto& lhs_ty = unit.types.Get(block.exprs.Get(lhs_id).type);

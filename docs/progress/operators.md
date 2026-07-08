@@ -18,7 +18,7 @@ All items closed; operator surface in scope is complete.
 
 ## Sub-Steps
 
-The numeric IDs (W1..W12) imply execution order; where a cut is independent the text says so.
+The numeric IDs (W1..W14) imply execution order; where a cut is independent the text says so.
 
 ### Membership and equality
 
@@ -53,6 +53,14 @@ merged node.
 - [x] W6 -- Selector lvalue (write side, including NBA + selector). LRM 11.5.1 write rules
       (fully-OOB no-op, partial-OOB only in-range bits, X / Z position no-op) all hold. Closes
       `datatypes/packed/indexed_part_select` for the write half.
+- [x] W14 -- A selector whose bound or index comes from a differently typed expression reads
+      correctly: a range-select `v[$bits(t)-1:1]` mixing a 4-state and a 2-state bound, or a
+      bit-select on a non-zero-based range with a 4-state index. The selector lowering carries only
+      the source-level selection; the selected value resolves a source coordinate to a storage
+      position in its own wide, X/Z-preserving domain (decisions/selector-coordinate-resolution.md),
+      so no coordinate arithmetic is synthesized on the selector's own -- possibly narrow, possibly
+      four-state -- type, and no runtime comparison between the two bounds is emitted. Unblocks
+      `$bits` in a part-select bound (`query-functions.md` Q1) and the `ibex_top` parity reduction.
 
 ### Construction
 

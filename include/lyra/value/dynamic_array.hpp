@@ -17,6 +17,7 @@
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
+#include "lyra/value/slice_selector.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::value {
@@ -127,24 +128,27 @@ class DynamicArray {
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
-  // LRM 7.4.5 / 7.4.6 contiguous-range selector. A dynamic array slices the
-  // same way an unpacked array does. Partial-OOB positions and an x / z
-  // offset yield the canonical default at the type-fixed count's width;
-  // see `concepts.hpp` for the `Sliceable` protocol shape.
+  // LRM 7.4.5 / 7.4.6 contiguous-range selector. A dynamic array is zero-based,
+  // so the source index is the storage ordinal (identity rebase); the slice
+  // result is a fixed-size unpacked array over `[base : base + count - 1]`.
+  // Partial-OOB positions and an x / z selector yield the canonical default at
+  // the type-fixed count's width; see `concepts.hpp` for the `Sliceable` shape.
   [[nodiscard]] auto Slice(
-      const PackedArray& offset, const PackedArray& count_pa) const
+      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
       -> UnpackedArray<T> {
-    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
+    const SliceWindow win = ResolveSliceWindow(a, b, form);
     return UnpackedArray<T>(
         shield_.Default(),
-        detail::ArraySliceGather(data_, shield_.Default(), offset, count));
+        detail::ArraySliceGather(
+            data_, shield_.Default(), win.base, win.count, win.base_known));
   }
 
   [[nodiscard]] auto SliceRef(
-      const PackedArray& offset, const PackedArray& count_pa)
+      const PackedArray& a, const PackedArray& b, const PackedArray& form)
       -> ArraySliceRef<T> {
-    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
-    return ArraySliceRef<T>{data_, shield_.Default(), offset, count};
+    const SliceWindow win = ResolveSliceWindow(a, b, form);
+    return ArraySliceRef<T>{
+        data_, shield_.Default(), win.base, win.count, win.base_known};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality. Runtime size mismatch yields
@@ -342,8 +346,8 @@ class DynamicArray {
   }
 
  private:
-  // The LRM 7.12 entry stream (decision: array-manipulation-entry-stream): a
-  // lazy view pairing each element with its ordinal index, in storage order.
+  // The LRM 7.12 entry stream: a lazy view pairing each element with its
+  // ordinal index, in storage order.
   [[nodiscard]] auto Entries() const {
     return std::views::enumerate(data_) |
            std::views::transform([](auto&& pair) {
@@ -358,6 +362,42 @@ class DynamicArray {
     const auto v = idx.ToInt64();
     return v < 0 || static_cast<std::uint64_t>(v) >=
                         static_cast<std::uint64_t>(data_.size());
+  }
+
+  // The zero-based declared range of a `count`-element slice at ordinal `base`.
+  struct SliceWindow {
+    std::int64_t base;
+    std::uint32_t count;
+    bool base_known;
+  };
+
+  // A dynamic array is zero-based, so a source coordinate is its own ordinal.
+  // Resolve the raw range selector `(a, b, form)` to the ordinal window: a
+  // constant range passes its two endpoints, an indexed part-select its base
+  // and (constant) width with the direction in `form`.
+  [[nodiscard]] auto ResolveSliceWindow(
+      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+      -> SliceWindow {
+    const std::int64_t base_coord = a.ToInt64();
+    const std::int64_t extent = b.ToInt64();
+    std::int64_t other = extent;
+    switch (static_cast<SliceForm>(form.ToInt64())) {
+      case SliceForm::kIndexedUp:
+        other = base_coord + extent - 1;
+        break;
+      case SliceForm::kIndexedDown:
+        other = base_coord - extent + 1;
+        break;
+      case SliceForm::kConstant:
+        break;
+    }
+    const std::int64_t lo = base_coord < other ? base_coord : other;
+    const std::int64_t span =
+        base_coord < other ? other - base_coord : base_coord - other;
+    return SliceWindow{
+        .base = lo,
+        .count = static_cast<std::uint32_t>(span + 1),
+        .base_known = !a.HasUnknown()};
   }
 
   detail::OobShield<T> shield_;

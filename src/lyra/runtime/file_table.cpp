@@ -571,7 +571,6 @@ auto ReadUnpackedImpl(
   }
   if (dest.RawSize() == 0U) return MakeInt(0);
 
-  const bool ascending = declared_left <= declared_right;
   const auto lowest_sv = std::min(declared_left, declared_right);
   const auto highest_sv = std::max(declared_left, declared_right);
   // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EBADF
@@ -613,11 +612,13 @@ auto ReadUnpackedImpl(
     auto effective = std::span<const char>(buf).first(got_this);
     auto elem_value = value::PackedArray::FromBytes(
         effective, element_width, elem_signed, elem_four_state);
+    // Write by source-declared index; the declared range `[left:right]` is the
+    // receiver's static-type coordinate system, passed as select operands.
     const std::int64_t sv_index = start_sv + static_cast<std::int64_t>(k);
-    const std::int64_t storage_idx =
-        ascending ? (sv_index - declared_left) : (declared_left - sv_index);
     dest.ElementRef(
-        value::PackedArray::Int(static_cast<std::int32_t>(storage_idx))) =
+        value::PackedArray::Int(static_cast<std::int32_t>(sv_index)),
+        value::PackedArray::Int(static_cast<std::int32_t>(declared_left)),
+        value::PackedArray::Int(static_cast<std::int32_t>(declared_right))) =
         std::move(elem_value);
     total_bytes += got_this;
     if (got_this < bytes_per_elem) break;

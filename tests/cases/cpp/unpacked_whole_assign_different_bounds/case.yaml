@@ -9,3 +9,7 @@ expect:
   exit: 0
   variables:
     a: [11, 22, 33, 44, 55, 66, 77, 88]
+    hi: 11
+    lo: 88
+    nx: 99
+    ny: 7

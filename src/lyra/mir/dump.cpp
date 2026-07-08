@@ -185,8 +185,8 @@ class MirDumper {
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
-                  "UnpackedArray(elem=Type[{}], size={})", u.element_type.value,
-                  u.size);
+                  "UnpackedArray(elem=Type[{}], dim=[{}:{}])",
+                  u.element_type.value, u.dim.left, u.dim.right);
             },
             [](const DynamicArrayType& d) -> std::string {
               return std::format(
