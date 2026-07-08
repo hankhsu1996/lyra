@@ -598,15 +598,16 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       landing. Every comment in `src/` and `include/` now states the code's own contract; no
       `docs/`, decision-doc name, or "invariant N" back-references remain.
 
-- [ ] R45 -- Unify MIR's call shape. Today `mir::Callee` is a 6-arm `std::variant` (`MethodRef` /
+- [x] R45 -- Unify MIR's call shape. `mir::Callee` is a 3-arm
+      `std::variant<Direct, Indirect,     Construct>`; the former 6-arm split (`MethodRef` /
       `BuiltinFnCallee` / `BuiltinStaticCallee` / `FreeFnCallee` / `ClosureRef` /
-      `ConstructorCallee`); the first four are the same generic-language concept "a direct call to a
-      named symbol" -- instance method, type-static, free function are not three call kinds, just
-      three signature / qualifier shapes of one direct invocation, the way Rust sugars
-      `Vec::push(&mut v, x)` to `v.push(x)`. The arm split lets `mir.md` invariant 10 ("a node field
-      that no backend's realization reads, or that restates what the node's structural context
+      `ConstructorCallee`) collapsed because the first four were the same generic-language concept
+      "a direct call to a named symbol" -- instance method, type-static, free function are not three
+      call kinds, just three signature / qualifier shapes of one direct invocation, the way Rust
+      sugars `Vec::push(&mut v, x)` to `v.push(x)`. The arm split let `mir.md` invariant 10 ("a node
+      field that no backend's realization reads, or that restates what the node's structural context
       already fixes") be violated -- the LLVM backend's realization does not consult the arm; for
-      the C++ backend, instance-form / free-form is a per-id render fact, not structure. Target:
+      the C++ backend, instance-form / free-form is a per-id render fact, not structure. Landed as:
       `Callee = variant<Direct, Indirect, Construct>`, where
       `Direct { target, qualification: optional<ScopeQualifier> }`. `target` is the symbol identity
       (`variant<MethodId, BuiltinFn>` today; R49 unifies into one `CallableId`). `ScopeQualifier`
@@ -667,20 +668,13 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       object model, then putting SystemVerilog classes on it -- is tracked in `object-model.md`. The
       design gate this entry held over SV classes and over R8's virtual-dispatch facet is lifted.
 
-- [ ] R48 -- Let an object type name its class directly, so emit resolves the owning class in O(1)
-      instead of searching. A member or method reference names only its class-local id; the class it
-      belongs to is the receiver's class, which the backend recovers by matching the receiver's
-      `ObjectType` against every class reachable from the render position (current class, its nested
-      classes, the enclosing chain) -- a linear search per access. `ObjectType` carries only a name
-      string today; giving it a unit-unique class identity would make the receiver-to-class step a
-      direct lookup and delete the search entirely. **Blocker**: class identity is parent-local --
-      each scope owns its nested classes in its own arena, and a class's self object type is built
-      before the class is appended -- so a unit-wide class id needs a flat unit-level class table or
-      an equivalent identity assigned before layout. Correctness is unaffected (the search is
-      sound); this is an emit-time resolution cleanup that also removes the one remaining place the
-      backend re-derives information the lowering already had. **Trigger**: standalone; pairs
-      naturally with R45's call-shape work, which also moves per-symbol resolution off the reference
-      node.
+- [x] R48 -- An object type names its class directly, so emit resolves the owning class in O(1).
+      `ObjectType` carries a unit-unique `ClassId`, and the backend recovers a member / method
+      reference's owning class by a direct `unit.GetClass(class_id)` lookup rather than matching the
+      receiver's `ObjectType` against every class reachable from the render position. The flat
+      unit-level class table this needed exists (class identity is assigned into the unit registry),
+      so the former linear search per access -- the one remaining place the backend re-derived
+      information the lowering already had -- is gone.
 
 - [ ] R51 -- Close R45's last asymmetry: a class constructor should be a `mir::MethodDecl` resolved
       through `Construct` like any other callable, not a separate `CallableCode` field on the side.
@@ -706,15 +700,17 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 - [ ] R52 -- Collapse the closure environment and the activation frame onto MIR's value/reference
       spine. The design round this entry once held is resolved: the contract is
       `../architecture/compiler_generated_storage.md` and the trade-offs are
-      `../decisions/closure-environment-and-activation-frame.md`. The resolution: a closure is a
-      per-closure-site nominal value record (named capture fields plus one invoke body -- not a
-      general tuple, not an object); the callable value has a concrete record level and an erased
-      `Callable<Sig>` level with an explicit erasure; and the activation frame is a thin
-      reference-storage specialization sharing one substrate with the nominal object rather than
-      being a baseless `mir::Class`. The value/reference spine is the top split -- a single root
-      over value records and reference storage is explicitly not built. Staged cuts, each its own
-      review:
-  - [ ] R52a -- First-class callable value type. A closure's MIR type stops being its call result
+      `../decisions/closure-environment-and-activation-frame.md`. The resolution: a closure and a
+      promoted scope are two distinct nominal categories sharing only the field substrate -- the
+      closure is an anonymous concrete callable value (`ClosureType`: capture fields plus one invoke
+      body), the promoted scope a named aggregate reached through `Shared<>` (`StructType`: fields,
+      no invoke); the callable value additionally has an erased `Callable<Sig>` level reached
+      through an explicit erasure, introduced only with a heterogeneous consumer. Neither category
+      is a `mir::Class` -- `mir::Class` stays the one object IR, and the frame is a plain
+      `StructType`, not a `mir::Class` specialization. The value/reference spine is the top split --
+      a single root over value records and reference storage is explicitly not built. Staged cuts,
+      each its own review:
+  - [x] R52a -- First-class callable value type. A closure's MIR type stops being its call result
         type. This cut first introduced a signature-only callable type as that first-class type;
         R52b corrects the direction -- the concrete per-site record is the callable value and is
         directly callable, so the signature-only type is removed there, and the erased
@@ -722,7 +718,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         requires it. Realizes the first-class callable type `../decisions/unified-callable-model.md`
         committed to.
 
-  - [ ] R52b -- The closure is a per-closure-site nominal value record. The closure-only
+  - [x] R52b -- The closure is a per-closure-site nominal value record. The closure-only
         capture-storage IR (`CaptureId` / `CaptureRef` / capture-init) and the interim value-tuple
         environment both retire; a captured read is ordinary field access over the closure receiver
         by a stable field id keyed from the binding origin, so the invoke body is never rebuilt when
@@ -743,23 +739,37 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         shared substrate is deferred to R52c. Supersedes the earlier value-`TupleType` form of this
         cut (an intermediate state now being migrated to the record).
 
-  - [ ] R52c -- The activation frame splits out of `mir::Class`. The promotion box stops being a
-        baseless `mir::Class`; `mir::Class` and the frame are refactored onto one reference-storage
-        substrate (identity-bearing slots, construction / destruction), the frame the thin
-        specialization (shared ownership, no methods / dispatch / lifecycle), the object the rich
-        one. Honors `object_model.md` invariant 1 (no second object IR). "Activation" stays the
-        runtime execution instance; the storage owner is the activation frame. This is also where
-        the narrow shared field-storage substrate (field declaration, field id, field access, layout
-        finalization) is extracted for the object, the frame, and the closure record together, and
-        the field-access vocabulary is renamed from member to field -- deferred to here because only
-        now are all three field-bearing categories concrete, so the abstraction is validated rather
-        than imagined.
+  - [x] R52c -- The activation frame splits out of `mir::Class`, and closure and scope are pinned as
+        two distinct nominal categories. The promotion box stops being a baseless `mir::Class` and
+        becomes a plain `StructType` (fields, no invoke) reached through `Shared<>`; the closure is
+        a separate `ClosureType` (capture fields plus one invoke body). Neither is a `mir::Class` --
+        `mir::Class` stays the one object IR (`object_model.md` invariant 1), and the two categories
+        share only the field substrate, not a class base. This is where the narrow shared
+        field-storage substrate (field declaration, field id, field access, field init) is extracted
+        for the object, the frame, and the closure together, and the field-access vocabulary is
+        renamed from member to field -- done here because only now are all three field-bearing
+        categories concrete, so the abstraction is validated rather than imagined. A scope struct's
+        emission nesting is an explicit list on the nesting class (`mir::Class.structs`), iterated
+        mechanically by a nesting backend.
 
-  - [ ] R52d -- Generalize the HIR-to-MIR capture / lifetime policy. The three capture forms
-        (snapshot value, live-place alias `Ref<T>`, retained frame `Shared<frame>` plus a slot
-        projection) extend beyond fork to deferred scheduling, coroutine suspension, `ref` formals,
-        observable-cell identity, and storage class; a snapshot is a source semantic or a proven
-        equivalence, never a guessed optimization.
+  - [ ] R52d -- Generalize the HIR-to-MIR capture / lifetime policy -- gated on a new escaping
+        construct, not doable now. The three capture forms (snapshot value, live-place alias
+        `Ref<T>`, retained frame `Shared<StructType>` plus a slot projection) are already chosen per
+        site from its source semantics, and no generic "deferred means snapshot" default exists: a
+        fork-detached branch snapshots its own block-item locals and retains an escaping enclosing
+        automatic through a promoted shared scope (LRM 6.21); a postponed `$strobe` aliases its live
+        cells and reads them at postponed fire (LRM 21.2); a non-blocking assignment snapshots its
+        right-hand value at submit (LRM 10.4.2). The one fork-shaped part is the escape / promotion
+        trigger -- which automatic must be retained -- and that is correct for every construct
+        lowered today: a fork-detached branch is the only legal capture that both aliases an
+        enclosing automatic and can outlive its owner scope. The frontend rejects an automatic in a
+        traced (`$strobe` / `$monitor`) context; a non-blocking assignment snapshots rather than
+        aliases; a suspended coroutine keeps its own frame; assertions are not yet lowered.
+        Generalizing the trigger beyond fork is therefore gated on a new legal construct that both
+        aliases an automatic and outlives its owner scope (a coroutine-based process handle, a DPI
+        callback, a class-held process) -- introduced with that construct, never ahead of one. Keep:
+        capture form carried by field type, whole-scope promotion, per-site lowering, and
+        copy-before-escape for snapshots.
 
     **Interacts with**: R47 (object model), R51 (a class with a body), R8 (callable model).
 

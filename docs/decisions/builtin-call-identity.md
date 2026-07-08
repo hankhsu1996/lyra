@@ -198,8 +198,10 @@ applicable. No render-side special case for any entry.
 
 - One closed-namespace enum (`support::BuiltinFn`) names every built-in runtime entry. The two
   layers (HIR, MIR) and every backend reference the same identity.
-- HIR-to-MIR's built-in method translation is near-identity: it inspects the id to decide
-  `BuiltinFnCallee` vs `BuiltinStaticCallee` vs `FreeFnCallee` and passes the id through.
+- HIR-to-MIR's built-in method translation is near-identity: it passes the `BuiltinFn` id through as
+  `Direct::target` and sets `Direct::qualification` only for a type-static builtin; the instance /
+  static / free distinction is read from the id and its signature at render, not carried as a Callee
+  arm.
 - AST-to-HIR keeps its receiver-type dispatch. The per-receiver name tables return
   `support::BuiltinFn` directly. Adding a new receiver type (e.g. user-defined class methods) is a
   new name table, not a new HIR-level enum or variant arm.

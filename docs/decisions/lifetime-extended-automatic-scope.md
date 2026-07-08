@@ -140,6 +140,14 @@ consumer.
 - Only a scope with a detached borrowed descendant is promoted; the common path keeps frame locals,
   so ordinary procedural code is unchanged. A read or write in a promoted scope carries one pointer
   indirection.
+- A detached fork branch is the only lowered construct that both aliases an enclosing automatic and
+  can outlive its owner scope, so this promotion trigger is complete, not partial. The other
+  deferred and concurrent forms do not reach the case: a traced (`$strobe` / `$monitor`) context has
+  the frontend reject an automatic operand, a non-blocking assignment snapshots its right-hand value
+  rather than aliasing a cell, and a suspended coroutine retains its own frame. The trigger extends
+  per-construct only when a new form that both aliases an automatic and outlives its scope is
+  lowered -- a coroutine-based process handle, a DPI callback, a class-held process -- and is
+  introduced with that construct, not ahead of one.
 - Backend proof obligations the mechanism must satisfy: every reference to a promoted local -- read,
   write, reference-construction, and member / index projection -- resolves to member access through
   the activation handle (`handle->local`), not a bare name; in the declaring scope the handle is a
