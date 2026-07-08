@@ -94,11 +94,23 @@ full support.
 
 ### Localized / long tail
 
-- [ ] **Hierarchical / cross-unit reference to a parameter** (reaching a sub-instance's parameter
-      through a dotted path, e.g. the `mhpmcounter` accessor in the DPI block).
-- [ ] **Cross-unit reference resolved through a generate-instantiated child scope** -- a reference
-      that descends into or out of a module instance created inside a generate block (ibex_ex_block
-      instantiates its multiplier and divider this way). Today it aborts during lowering.
+- [x] **Hierarchical / cross-unit reference to a parameter or enum constant** -- reaching a
+      sub-instance's `localparam` or enum value through a dotted path (the `MHPMCounterNum` accessor
+      in the DPI block). A hierarchically reached compile-time constant resolves to its value
+      independent of the path, matching a same-scope reference to the same constant.
+- [ ] **DPI-C import and export** -- `import "DPI-C"` binds an SV subroutine name to a foreign C
+      implementation and `export "DPI-C"` exposes an SV subroutine to C (LRM 35.4, 35.5). Lyra emits
+      no C ABI, so both are rejected with a diagnostic rather than silently lowered (a DPI import
+      would otherwise become an empty subroutine returning a default on every call). This is the
+      current full-top frontier: `ibex_simple_system` exports `mhpmcounter_num` / `mhpmcounter_get`
+      to the Verilator C++ testbench -- unneeded by the pure-SV `ibex_simple_system_tb` run, but the
+      unmodified source still declares them.
+- [ ] **Hierarchical reference reaching a module instance from a nested generate scope** -- a dotted
+      reference, written inside a conditional or loop generate block, that descends into a module
+      instance owned by an enclosing scope (the RVFI trap logic in `ibex_core`,
+      `id_stage_i.controller_i.exc_req_d` inside `gen_rvfi_no_wb_stage`; `ibex_ex_block` reaches its
+      generate-instantiated multiplier and divider the same way). Reached once DPI export above is
+      handled or elided.
 - [ ] **`$value$plusargs`** -- runtime plusarg query (ibex_tracer reads the trace-enable plusarg).
 - [ ] **A procedural statement form in ibex_cs_registers** -- one unsupported statement shape,
       recorded for follow-up once isolated.

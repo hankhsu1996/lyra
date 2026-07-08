@@ -11,6 +11,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -55,6 +56,17 @@ auto LowerSubroutineDecl(
     ModuleLowerer& module, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame) -> diag::Result<hir::SubroutineDecl> {
   const auto& mapper = module.SourceMapper();
+
+  // A DPI-C import (LRM 35.4) binds an SV subroutine name to a foreign C
+  // implementation, so the subroutine has no SV body Lyra can execute.
+  // Rejecting it prevents lowering the empty shell as an ordinary subroutine
+  // that would silently return a default value on every call.
+  if (sym.flags.has(slang::ast::MethodFlags::DPIImport)) {
+    return diag::Fail(
+        mapper.PointSpanOf(sym.location), diag::DiagCode::kUnsupportedDpi,
+        "DPI-C import of a subroutine is not yet supported");
+  }
+
   auto return_type_or =
       module.InternType(sym.getReturnType(), mapper.PointSpanOf(sym.location));
   if (!return_type_or) {

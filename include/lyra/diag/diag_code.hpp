@@ -34,6 +34,7 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedSubroutineArgument,
   kUnsupportedForkJoinForm,
   kUnsupportedClassFeature,
+  kUnsupportedDpi,
 
   kErrorDelayValueOutOfRange,
   kErrorCaseEqualityOnRealOperand,

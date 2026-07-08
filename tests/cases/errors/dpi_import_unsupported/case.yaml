@@ -1,0 +1,18 @@
+id: errors.dpi_import_unsupported
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "main.sv:2:"
+      - "unsupported:"
+      - "DPI-C import of a subroutine is not yet supported"
+    not_contains:
+      - "internal error"
+      - "\x1b["

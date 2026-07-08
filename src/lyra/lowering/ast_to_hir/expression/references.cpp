@@ -34,6 +34,143 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// What a value reference to a symbol lowers to, independent of whether the
+// reference is written by simple name or by a hierarchical path (LRM 6, 8.4,
+// 23.6). A parameter or enum value is a compile-time constant whose value does
+// not depend on the path used to reach it; a variable or net binds to a runtime
+// storage cell; a class property reaches the invoking object's field. One
+// classification serves every reference-lowering entry so a symbol cannot be
+// read as a constant through one syntax and rejected through another.
+enum class Referent {
+  kParameterConstant,
+  kEnumConstant,
+  kClassProperty,
+  kVariableStorage,
+  kNetStorage,
+  kUnsupported,
+};
+
+// Total over slang's symbol kinds with no `default`: a kind that ought to lower
+// to a real referent must not hide in a catch-all and surface as a spurious
+// "unsupported" -- the failure mode that let a hierarchically reached parameter
+// read as an unsupported reference. Listing every kind forces a deliberate
+// classification of each (a plausible referent like a specparam is a conscious
+// entry, not a silent omission), and a kind added by a future slang release
+// fails to compile until it is classified here.
+auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
+  using slang::ast::SymbolKind;
+  switch (sym.kind) {
+    case SymbolKind::Parameter:
+      return Referent::kParameterConstant;
+    case SymbolKind::EnumValue:
+      return Referent::kEnumConstant;
+    case SymbolKind::ClassProperty:
+      return Referent::kClassProperty;
+    case SymbolKind::Variable:
+    case SymbolKind::FormalArgument:
+    case SymbolKind::Iterator:
+      return Referent::kVariableStorage;
+    case SymbolKind::Net:
+      return Referent::kNetStorage;
+    case SymbolKind::Unknown:
+    case SymbolKind::Root:
+    case SymbolKind::Definition:
+    case SymbolKind::CompilationUnit:
+    case SymbolKind::DeferredMember:
+    case SymbolKind::TransparentMember:
+    case SymbolKind::EmptyMember:
+    case SymbolKind::PredefinedIntegerType:
+    case SymbolKind::ScalarType:
+    case SymbolKind::FloatingType:
+    case SymbolKind::EnumType:
+    case SymbolKind::PackedArrayType:
+    case SymbolKind::FixedSizeUnpackedArrayType:
+    case SymbolKind::DynamicArrayType:
+    case SymbolKind::DPIOpenArrayType:
+    case SymbolKind::AssociativeArrayType:
+    case SymbolKind::QueueType:
+    case SymbolKind::PackedStructType:
+    case SymbolKind::UnpackedStructType:
+    case SymbolKind::PackedUnionType:
+    case SymbolKind::UnpackedUnionType:
+    case SymbolKind::ClassType:
+    case SymbolKind::CovergroupType:
+    case SymbolKind::VoidType:
+    case SymbolKind::NullType:
+    case SymbolKind::CHandleType:
+    case SymbolKind::StringType:
+    case SymbolKind::EventType:
+    case SymbolKind::UnboundedType:
+    case SymbolKind::TypeRefType:
+    case SymbolKind::UntypedType:
+    case SymbolKind::SequenceType:
+    case SymbolKind::PropertyType:
+    case SymbolKind::VirtualInterfaceType:
+    case SymbolKind::TypeAlias:
+    case SymbolKind::ErrorType:
+    case SymbolKind::ForwardingTypedef:
+    case SymbolKind::NetType:
+    case SymbolKind::TypeParameter:
+    case SymbolKind::Port:
+    case SymbolKind::MultiPort:
+    case SymbolKind::InterfacePort:
+    case SymbolKind::Modport:
+    case SymbolKind::ModportPort:
+    case SymbolKind::ModportClocking:
+    case SymbolKind::Instance:
+    case SymbolKind::InstanceBody:
+    case SymbolKind::InstanceArray:
+    case SymbolKind::Package:
+    case SymbolKind::ExplicitImport:
+    case SymbolKind::WildcardImport:
+    case SymbolKind::Attribute:
+    case SymbolKind::Genvar:
+    case SymbolKind::GenerateBlock:
+    case SymbolKind::GenerateBlockArray:
+    case SymbolKind::ProceduralBlock:
+    case SymbolKind::StatementBlock:
+    case SymbolKind::Field:
+    case SymbolKind::Subroutine:
+    case SymbolKind::ContinuousAssign:
+    case SymbolKind::ElabSystemTask:
+    case SymbolKind::GenericClassDef:
+    case SymbolKind::MethodPrototype:
+    case SymbolKind::UninstantiatedDef:
+    case SymbolKind::PatternVar:
+    case SymbolKind::ConstraintBlock:
+    case SymbolKind::DefParam:
+    case SymbolKind::Specparam:
+    case SymbolKind::Primitive:
+    case SymbolKind::PrimitivePort:
+    case SymbolKind::PrimitiveInstance:
+    case SymbolKind::SpecifyBlock:
+    case SymbolKind::Sequence:
+    case SymbolKind::Property:
+    case SymbolKind::AssertionPort:
+    case SymbolKind::ClockingBlock:
+    case SymbolKind::ClockVar:
+    case SymbolKind::LocalAssertionVar:
+    case SymbolKind::LetDecl:
+    case SymbolKind::Checker:
+    case SymbolKind::CheckerInstance:
+    case SymbolKind::CheckerInstanceBody:
+    case SymbolKind::RandSeqProduction:
+    case SymbolKind::CovergroupBody:
+    case SymbolKind::Coverpoint:
+    case SymbolKind::CoverCross:
+    case SymbolKind::CoverCrossBody:
+    case SymbolKind::CoverageBin:
+    case SymbolKind::TimingPath:
+    case SymbolKind::PulseStyle:
+    case SymbolKind::SystemTimingCheck:
+    case SymbolKind::AnonymousProgram:
+    case SymbolKind::NetAlias:
+    case SymbolKind::ConfigBlock:
+      return Referent::kUnsupported;
+  }
+  throw InternalError("ClassifyReferent: unknown slang SymbolKind");
+}
+
 auto MakeEnumValueExpr(
     const slang::ast::EnumValueSymbol& sym, hir::TypeId type,
     diag::SourceSpan span) -> hir::Expr {
@@ -42,6 +179,48 @@ auto MakeEnumValueExpr(
     throw InternalError("MakeEnumValueExpr: enum value is not integral");
   }
   return MakeIntegralLiteralExpr(cv.integer(), type, span);
+}
+
+auto MakeParameterConstantExpr(
+    ModuleLowerer& module, WalkFrame frame, const slang::ast::Symbol& sym,
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = module.InternType(type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return MakeConstantValueExpr(
+      module.Unit(), frame, sym.as<slang::ast::ParameterSymbol>().getValue(),
+      *type_id, span);
+}
+
+auto MakeEnumConstantExpr(
+    ModuleLowerer& module, const slang::ast::Symbol& sym,
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = module.InternType(type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return MakeEnumValueExpr(
+      sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+}
+
+// A static data object (LRM 6.21) reached through the structural scope, by the
+// hop distance from the referrer's frame to the frame that owns it.
+auto BindStructuralDataObject(
+    ModuleLowerer& module, WalkFrame frame, const slang::ast::ValueSymbol& sym,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  const auto binding = module.LookupStructuralDataObjectBinding(sym);
+  if (!binding.has_value()) {
+    throw InternalError(
+        "BindStructuralDataObject: value was not bound during scope lowering");
+  }
+  const auto hops = frame.HopsTo(binding->home_frame);
+  if (!hops.has_value()) {
+    throw InternalError(
+        "BindStructuralDataObject: value home frame is not on the current "
+        "scope stack");
+  }
+  return hir::MakeRefExpr(
+      hir::StructuralDataObjectRef{.hops = *hops, .var = binding->var_id},
+      binding->type, span);
 }
 
 // LRM 7.12.4: a reference to an array-method `with`-clause iteration element
@@ -61,6 +240,19 @@ auto MakeIterationElementRefExpr(
       *type_id, span);
 }
 
+auto MakeClassPropertyRefExpr(
+    ModuleLowerer& module, const slang::ast::Symbol& sym,
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = module.InternType(type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::MakeRefExpr(
+      hir::ClassPropertyRef{
+          .field_index =
+              ClassPropertyIndex(sym.as<slang::ast::ClassPropertySymbol>())},
+      *type_id, span);
+}
+
 }  // namespace
 
 auto LowerNamedValueProc(
@@ -75,70 +267,41 @@ auto LowerNamedValueProc(
     return MakeIterationElementRefExpr(module, named, *clause, span);
   }
 
-  if (sym.kind == slang::ast::SymbolKind::EnumValue) {
-    auto type_id = module.InternType(*named.type, span);
-    if (!type_id) return std::unexpected(std::move(type_id.error()));
-    return MakeEnumValueExpr(
-        sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
-  }
-
-  // Inside an instance method, a class property named without an explicit
-  // handle (LRM 8.4) reaches the invoking object through the method's receiver,
-  // so it lowers to a receiver-relative property reference, not a body local.
-  if (sym.kind == slang::ast::SymbolKind::ClassProperty) {
-    auto type_id = module.InternType(*named.type, span);
-    if (!type_id) return std::unexpected(std::move(type_id.error()));
-    return hir::MakeRefExpr(
-        hir::ClassPropertyRef{
-            .field_index =
-                ClassPropertyIndex(sym.as<slang::ast::ClassPropertySymbol>())},
-        *type_id, span);
-  }
-
-  if (sym.kind == slang::ast::SymbolKind::Parameter) {
-    auto type_id = module.InternType(*named.type, span);
-    if (!type_id) return std::unexpected(std::move(type_id.error()));
-    return MakeConstantValueExpr(
-        module.Unit(), frame, sym.as<slang::ast::ParameterSymbol>().getValue(),
-        *type_id, span);
-  }
-
-  // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
-  // VariableSymbol subclasses and route through the same procedural-var
-  // binding as ordinary body locals.
-  // A net (LRM 6.5) is always a structural signal; the variable family may
-  // also be a procedural body local, so try that binding for them first. A net
-  // never has a procedural binding.
-  if (sym.kind == slang::ast::SymbolKind::Variable ||
-      sym.kind == slang::ast::SymbolKind::FormalArgument ||
-      sym.kind == slang::ast::SymbolKind::Iterator) {
-    const auto& var = sym.as<slang::ast::VariableSymbol>();
-    if (auto local = proc.LookupProceduralVar(var)) {
-      const hir::TypeId type =
-          frame.current_procedural_body->procedural_vars.Get(*local).type;
-      return hir::MakeRefExpr(hir::ProceduralVarRef{.var = *local}, type, span);
+  switch (ClassifyReferent(sym)) {
+    case Referent::kParameterConstant:
+      return MakeParameterConstantExpr(module, frame, sym, *named.type, span);
+    case Referent::kEnumConstant:
+      return MakeEnumConstantExpr(module, sym, *named.type, span);
+    // Inside an instance method, a class property named without an explicit
+    // handle (LRM 8.4) reaches the invoking object through the method's
+    // receiver, so it lowers to a receiver-relative property reference.
+    case Referent::kClassProperty:
+      return MakeClassPropertyRefExpr(module, sym, *named.type, span);
+    // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
+    // variable-family symbols; each binds to procedural-var storage when the
+    // enclosing process declares it, otherwise to the static data object of the
+    // same name reached through the structural scope.
+    case Referent::kVariableStorage: {
+      const auto& var = sym.as<slang::ast::VariableSymbol>();
+      if (auto local = proc.LookupProceduralVar(var)) {
+        const hir::TypeId type =
+            frame.current_procedural_body->procedural_vars.Get(*local).type;
+        return hir::MakeRefExpr(
+            hir::ProceduralVarRef{.var = *local}, type, span);
+      }
+      return BindStructuralDataObject(
+          module, frame, sym.as<slang::ast::ValueSymbol>(), span);
     }
-  } else if (sym.kind != slang::ast::SymbolKind::Net) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
-        "reference to non-variable declaration is not supported");
+    // A net (LRM 6.5) is always a structural signal, never a procedural local.
+    case Referent::kNetStorage:
+      return BindStructuralDataObject(
+          module, frame, sym.as<slang::ast::ValueSymbol>(), span);
+    case Referent::kUnsupported:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
+          "reference to non-variable declaration is not supported");
   }
-
-  const auto binding = module.LookupStructuralDataObjectBinding(
-      sym.as<slang::ast::ValueSymbol>());
-  if (!binding.has_value()) {
-    throw InternalError(
-        "LowerNamedValueProc: value was not bound during scope lowering");
-  }
-  const auto hops = frame.HopsTo(binding->home_frame);
-  if (!hops.has_value()) {
-    throw InternalError(
-        "LowerNamedValueProc: variable home frame is not on the current scope "
-        "stack");
-  }
-  return hir::MakeRefExpr(
-      hir::StructuralDataObjectRef{.hops = *hops, .var = binding->var_id},
-      binding->type, span);
+  throw InternalError("LowerNamedValueProc: unknown Referent");
 }
 
 // LRM 23.6 hierarchical reference. A downward path is rooted in a local
@@ -160,11 +323,28 @@ auto LowerHierarchicalValue(
   }
 
   const auto& target = hve.symbol;
-  if (target.kind != slang::ast::SymbolKind::Variable) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "cross-unit reference to a non-variable declaration is not yet "
-        "supported");
+  switch (ClassifyReferent(target)) {
+    // A hierarchically reached constant folds to its value; the path is not
+    // navigated because the value is fixed at elaboration.
+    case Referent::kParameterConstant:
+      return MakeParameterConstantExpr(module, frame, target, *hve.type, span);
+    case Referent::kEnumConstant:
+      return MakeEnumConstantExpr(module, target, *hve.type, span);
+    case Referent::kClassProperty:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "hierarchical reference to a class property is not yet supported");
+    case Referent::kNetStorage:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "hierarchical reference to a net is not yet supported");
+    case Referent::kUnsupported:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "hierarchical reference to this declaration kind is not yet "
+          "supported");
+    case Referent::kVariableStorage:
+      break;
   }
 
   auto type_id = module.InternType(*hve.type, span);
@@ -340,41 +520,25 @@ auto LowerNamedValueStructural(
   if (auto clause = frame.FindIterationClause(sym)) {
     return MakeIterationElementRefExpr(module, named, *clause, span);
   }
-  if (sym.kind == slang::ast::SymbolKind::EnumValue) {
-    auto type_id = module.InternType(*named.type, span);
-    if (!type_id) return std::unexpected(std::move(type_id.error()));
-    return MakeEnumValueExpr(
-        sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+  switch (ClassifyReferent(sym)) {
+    case Referent::kParameterConstant:
+      return MakeParameterConstantExpr(module, frame, sym, *named.type, span);
+    case Referent::kEnumConstant:
+      return MakeEnumConstantExpr(module, sym, *named.type, span);
+    case Referent::kVariableStorage:
+    case Referent::kNetStorage:
+      return BindStructuralDataObject(
+          module, frame, sym.as<slang::ast::ValueSymbol>(), span);
+    // A class property has no structural (non-procedural) meaning: it is only
+    // reachable through a method receiver, so outside a method it is rejected
+    // alongside the genuinely unsupported kinds.
+    case Referent::kClassProperty:
+    case Referent::kUnsupported:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
+          "reference to non-variable declaration is not supported");
   }
-  if (sym.kind == slang::ast::SymbolKind::Parameter) {
-    auto type_id = module.InternType(*named.type, span);
-    if (!type_id) return std::unexpected(std::move(type_id.error()));
-    return MakeConstantValueExpr(
-        module.Unit(), frame, sym.as<slang::ast::ParameterSymbol>().getValue(),
-        *type_id, span);
-  }
-  if (sym.kind != slang::ast::SymbolKind::Variable &&
-      sym.kind != slang::ast::SymbolKind::Net) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
-        "reference to non-variable declaration is not supported");
-  }
-  const auto binding = module.LookupStructuralDataObjectBinding(
-      sym.as<slang::ast::ValueSymbol>());
-  if (!binding.has_value()) {
-    throw InternalError(
-        "LowerNamedValueStructural: value was not bound during scope "
-        "lowering");
-  }
-  const auto hops = frame.HopsTo(binding->home_frame);
-  if (!hops.has_value()) {
-    throw InternalError(
-        "LowerNamedValueStructural: variable home frame is not on the current "
-        "scope stack");
-  }
-  return hir::MakeRefExpr(
-      hir::StructuralDataObjectRef{.hops = *hops, .var = binding->var_id},
-      binding->type, span);
+  throw InternalError("LowerNamedValueStructural: unknown Referent");
 }
 
 }  // namespace lyra::lowering::ast_to_hir
