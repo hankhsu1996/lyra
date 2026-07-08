@@ -126,6 +126,10 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_class_feature"}},
+    std::pair{
+        DiagCode::kUnsupportedDpi,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported, .name = "unsupported_dpi"}},
 
     std::pair{
         DiagCode::kErrorDelayValueOutOfRange,
