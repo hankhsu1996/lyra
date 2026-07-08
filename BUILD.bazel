@@ -241,6 +241,35 @@ cc_library(
 )
 
 cc_library(
+    name = "unit_metadata",
+    hdrs = ["include/lyra/compiler/unit_metadata.hpp"],
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "jit",
+    srcs = glob(["src/lyra/jit/*.cpp"]),
+    hdrs = glob(["include/lyra/jit/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":backend_llvm",
+        ":lir",
+        ":runtime",
+        ":unit_metadata",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:OrcJIT",
+        "@llvm-project//llvm:OrcTargetProcess",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:X86AsmParser",
+        "@llvm-project//llvm:X86CodeGen",
+    ],
+)
+
+cc_library(
     name = "compiler",
     srcs = ["src/lyra/compiler/compile.cpp"],
     hdrs = ["include/lyra/compiler/compile.hpp"],
@@ -257,6 +286,7 @@ cc_library(
         ":mir",
         ":mir_to_lir",
         ":support",
+        ":unit_metadata",
     ],
 )
 
@@ -293,6 +323,7 @@ cc_binary(
         ":cpp_runtime",
         ":runtime_headers",
     ],
+    linkopts = ["-rdynamic"],
     visibility = ["//visibility:public"],
     deps = [
         ":backend_llvm",
@@ -301,9 +332,11 @@ cc_binary(
         ":driver",
         ":frontend",
         ":hir",
+        ":jit",
         ":lir",
         ":mir",
         ":support",
+        ":unit_metadata",
         "@argparse",
         "@fmt",
     ],

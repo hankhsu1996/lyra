@@ -46,9 +46,11 @@ CheckOptions:
   # interface names (begin/end/data/size/...) are lowercase by language and
   # library contract -- range-based for needs begin/end, std::span and the std
   # algorithms need data/size -- so they are exempt from CamelCase just like the
-  # coroutine hooks.
+  # coroutine hooks. `lyra_rt_*` are the generated module's C ABI entry points:
+  # their spelling is fixed by the ABI the emitted code calls, the same kind of
+  # external contract as the coroutine hooks.
   - key: readability-identifier-naming.FunctionIgnoredRegexp
-    value: "(to_json|from_json|parse|format|handle|await_ready|await_suspend|await_resume|get_return_object|initial_suspend|final_suspend|return_void|return_value|yield_value|unhandled_exception|begin|end|cbegin|cend|data|size|empty|front|back|push_back|pop_back|emplace_back)(_(\\w)+)?"
+    value: "(to_json|from_json|parse|format|handle|await_ready|await_suspend|await_resume|get_return_object|initial_suspend|final_suspend|return_void|return_value|yield_value|unhandled_exception|begin|end|cbegin|cend|data|size|empty|front|back|push_back|pop_back|emplace_back|lyra_rt_\\w+)(_(\\w)+)?"
   - key: readability-identifier-naming.StructIgnoredRegexp
     value: "^promise_type$"
   - key: readability-identifier-naming.GlobalConstantCase

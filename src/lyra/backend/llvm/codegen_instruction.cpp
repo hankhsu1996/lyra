@@ -121,14 +121,17 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
         llvm::IntegerType::get(module_->Context(), machine->bit_width), value,
         is_signed);
   }
+  const bool is_four_state =
+      constant.value.state_kind == lir::IntegralStateKind::kFourState;
   auto* i64_ty = llvm::Type::getInt64Ty(module_->Context());
+  auto* i1_ty = llvm::Type::getInt1Ty(module_->Context());
   return builder_.CreateCall(
       module_->Runtime().PackedConst(),
       {llvm::ConstantInt::get(i64_ty, value),
        llvm::ConstantInt::get(
            llvm::Type::getInt32Ty(module_->Context()), constant.value.width),
-       llvm::ConstantInt::get(
-           llvm::Type::getInt1Ty(module_->Context()), is_signed ? 1 : 0)});
+       llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0),
+       llvm::ConstantInt::get(i1_ty, is_four_state ? 1 : 0)});
 }
 
 // A string literal materializes as its native constant bytes; the owning

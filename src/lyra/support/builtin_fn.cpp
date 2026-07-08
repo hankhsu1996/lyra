@@ -21,7 +21,6 @@ auto IsMutatingBuiltinFn(BuiltinFn id) -> bool {
     case BuiltinFn::kPopBack:
     case BuiltinFn::kPushFront:
     case BuiltinFn::kPushBack:
-    case BuiltinFn::kVectorEmplace:
       return true;
     default:
       return false;
@@ -301,16 +300,12 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "resolve_visible_child";
     case BuiltinFn::kRegisterSignal:
       return "register_signal";
-    case BuiltinFn::kAttachChild:
-      return "attach_child";
+    case BuiltinFn::kAddOwnedChild:
+      return "add_owned_child";
     case BuiltinFn::kGetSignal:
       return "get_signal";
     case BuiltinFn::kGetChild:
       return "get_child";
-    case BuiltinFn::kVectorEmplace:
-      return "vector_emplace";
-    case BuiltinFn::kVectorBack:
-      return "vector_back";
     case BuiltinFn::kForkWaitAll:
       return "fork_wait_all";
     case BuiltinFn::kForkWaitFirst:

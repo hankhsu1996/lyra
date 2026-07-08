@@ -192,6 +192,11 @@ constexpr std::array kEntries{
         DiagCode::kHostBuildFailed,
         DiagCodeInfo{
             .kind = DiagKind::kHostError, .name = "host_build_failed"}},
+    std::pair{
+        DiagCode::kHostBackendUnimplemented,
+        DiagCodeInfo{
+            .kind = DiagKind::kHostError,
+            .name = "host_backend_unimplemented"}},
 
     std::pair{
         DiagCode::kWarningPedantic,

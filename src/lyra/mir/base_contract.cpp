@@ -17,7 +17,8 @@ auto ResolveBaseContract(const CompilationUnit& unit, const ClassRef& base)
   return BaseContract{
       .renderable = runtime_base.base_type,
       .is_runtime_tree_node = true,
-      .exposes_def_name = is_instance,
+      .representation = is_instance ? ScopeRepresentationKind::kUnitInstance
+                                    : ScopeRepresentationKind::kGenerateScope,
       .ctor_prefix = {
           ParamDecl{.name = "parent", .type = builtins.scope_ptr},
           ParamDecl{.name = "segment", .type = builtins.hierarchy_segment},

@@ -54,6 +54,17 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
       out of scope. The intermediate concise-constructor form above is superseded when this lands.
 - [ ] An expression is parenthesized only where operator precedence requires it; an outermost
       expression carries no enclosing parentheses.
+- [ ] The design's top-level entry -- constructing each top-level unit and binding the assembled
+      hierarchy so the simulation can run -- is a mechanical rendering of ordinary generated
+      behavior, shared by every backend, not a hand-fabricated harness. Today the ahead-of-time path
+      composes it as bespoke target text that names the runtime driver surface directly, and the
+      in-process path re-implements the same construct-and-bind sequence on its own -- the one place
+      a backend invents structure instead of translating it (a render-contract gap; see
+      `../architecture/backend_contract.md`). Direction: express the construct-and-bind sequence as
+      generated behavior lowered like any other, so both backends render it through the same path;
+      only the thin outer entry-point shell (a compiled program's entry point, the in-process
+      driver) stays target-specific and merely invokes it. A self-contained follow-up, not part of
+      the current change set.
 
 ## Out of Scope
 

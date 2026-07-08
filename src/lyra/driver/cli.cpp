@@ -28,6 +28,7 @@
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/dump.hpp"
+#include "lyra/jit/executor.hpp"
 #include "lyra/lir/dump.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/support/subprocess.hpp"
@@ -45,6 +46,11 @@ enum class CommandKind {
   kCacheClear,
 };
 
+// How `run` executes the design. The C++ backend emits a C++ project and builds
+// it; the LLVM backends share one emitted module and differ only in how they
+// run it (in-process ORC JIT, ahead-of-time native compile, or the `lli` tool).
+enum class Backend { kCpp, kJit, kAot, kLli };
+
 struct ParsedArgs {
   CommandKind cmd = CommandKind::kEmitCpp;
   bool no_project = false;
@@ -52,6 +58,7 @@ struct ParsedArgs {
   bool force_color = false;
   bool format = false;
   bool no_pch = false;
+  Backend backend = Backend::kCpp;
   std::string pch_cache_dir;
   lyra::frontend::CompilationInput input;
   std::string out_dir;
@@ -174,6 +181,10 @@ auto ParseArgs(int argc, char** argv)
   argparse::ArgumentParser run_cmd("run");
   AddCompilationFlags(run_cmd);
   add_pch_flags(run_cmd);
+  run_cmd.add_argument("--backend")
+      .help("execution backend: cpp (default), jit, aot, or lli")
+      .default_value(std::string("cpp"))
+      .choices("cpp", "jit", "aot", "lli");
 
   argparse::ArgumentParser cache_cmd("cache");
   argparse::ArgumentParser cache_clear_cmd("clear");
@@ -244,6 +255,16 @@ auto ParseArgs(int argc, char** argv)
     BindCompilationFlags(run_cmd, out);
     out.no_pch = run_cmd.get<bool>("--no-pch");
     out.pch_cache_dir = run_cmd.get<std::string>("--pch-cache-dir");
+    const auto backend = run_cmd.get<std::string>("--backend");
+    if (backend == "jit") {
+      out.backend = Backend::kJit;
+    } else if (backend == "aot") {
+      out.backend = Backend::kAot;
+    } else if (backend == "lli") {
+      out.backend = Backend::kLli;
+    } else {
+      out.backend = Backend::kCpp;
+    }
   } else if (program.is_subcommand_used("cache")) {
     if (cache_cmd.is_subcommand_used("clear")) {
       out.cmd = CommandKind::kCacheClear;
@@ -351,6 +372,10 @@ auto main(int argc, char** argv) -> int {
         case CommandKind::kDumpLir:
         case CommandKind::kDumpLlvm:
           return lyra::compiler::StopAfter::kLir;
+        case CommandKind::kRun:
+          return args.backend == Backend::kCpp
+                     ? lyra::compiler::StopAfter::kMir
+                     : lyra::compiler::StopAfter::kLir;
         default:
           return lyra::compiler::StopAfter::kMir;
       }
@@ -473,29 +498,50 @@ auto main(int argc, char** argv) -> int {
         fmt::print("compiled: {}\n", built->string());
         return 0;
       }
-      case CommandKind::kRun: {
-        auto runtime = resolve_runtime();
-        if (!runtime) {
-          return 1;
+      case CommandKind::kRun:
+        switch (args.backend) {
+          case Backend::kJit: {
+            const auto& lir_units = *result.artifacts.lir_units;
+            const auto& unit_metadata = *result.artifacts.unit_metadata;
+            int exit_code = 0;
+            for (std::size_t i = 0; i < lir_units.size(); ++i) {
+              exit_code = lyra::jit::Execute(lir_units[i], unit_metadata[i]);
+            }
+            return exit_code;
+          }
+          case Backend::kAot:
+          case Backend::kLli:
+            report(
+                lyra::diag::Make(
+                    lyra::diag::DiagCode::kHostBackendUnimplemented,
+                    "this execution backend is not yet implemented"));
+            return 1;
+          case Backend::kCpp: {
+            auto runtime = resolve_runtime();
+            if (!runtime) {
+              return 1;
+            }
+            auto tmp_or = lyra::support::MakeTempDir();
+            if (!tmp_or) {
+              report(
+                  lyra::diag::Make(
+                      lyra::diag::DiagCode::kHostIoError,
+                      std::move(tmp_or.error())));
+              return 1;
+            }
+            const auto& units = *result.artifacts.mir_units;
+            const auto tops =
+                build_tops(units, result.artifacts.top_unit_names);
+            auto exit_code = lyra::driver::RunInPlace(
+                *runtime, units, tops, *tmp_or, args.format, pch_opts);
+            if (!exit_code) {
+              report(std::move(exit_code.error()), mgr);
+              return 1;
+            }
+            return *exit_code;
+          }
         }
-        auto tmp_or = lyra::support::MakeTempDir();
-        if (!tmp_or) {
-          report(
-              lyra::diag::Make(
-                  lyra::diag::DiagCode::kHostIoError,
-                  std::move(tmp_or.error())));
-          return 1;
-        }
-        const auto& units = *result.artifacts.mir_units;
-        const auto tops = build_tops(units, result.artifacts.top_unit_names);
-        auto exit_code = lyra::driver::RunInPlace(
-            *runtime, units, tops, *tmp_or, args.format, pch_opts);
-        if (!exit_code) {
-          report(std::move(exit_code.error()), mgr);
-          return 1;
-        }
-        return *exit_code;
-      }
+        break;
       case CommandKind::kDumpHir:
       case CommandKind::kCacheClear:
         break;

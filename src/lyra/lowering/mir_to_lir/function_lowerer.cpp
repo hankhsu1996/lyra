@@ -78,15 +78,13 @@ auto LowerCallTarget(
 }  // namespace
 
 FunctionLowerer::FunctionLowerer(
-    UnitLowerer& unit, const mir::Block& body, std::vector<mir::LocalId> params,
-    std::string name, mir::TypeId result_type, lir::ClassId current_class)
+    UnitLowerer& unit, const mir::CallableCode& code, std::string name,
+    lir::ClassId current_class)
     : unit_(&unit),
-      body_(&body),
-      params_(std::move(params)),
+      code_(&code),
       name_(std::move(name)),
-      result_type_(result_type),
       current_class_(current_class),
-      local_to_value_(body.vars.size(), std::nullopt) {
+      local_to_value_(code.locals.size(), std::nullopt) {
 }
 
 auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
@@ -94,12 +92,12 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // A coroutine-bodied callable lowers to its step body, which returns void;
   // the coroutine value is a closure built where the callable is referenced.
   fn_.result_type = std::holds_alternative<mir::CoroutineType>(
-                        unit_->Mir().types.Get(result_type_).data)
+                        unit_->Mir().types.Get(code_->result_type).data)
                         ? unit_->TranslateType(unit_->Mir().builtins.void_type)
-                        : unit_->TranslateType(result_type_);
+                        : unit_->TranslateType(code_->result_type);
 
-  for (const mir::LocalId param : params_) {
-    const mir::LocalDecl& decl = body_->vars.Get(param);
+  for (const mir::LocalId param : code_->params) {
+    const mir::LocalDecl& decl = code_->locals.Get(param);
     const lir::ValueId value = fn_.values.Add(
         lir::Local{
             .name = decl.name,
@@ -109,8 +107,8 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     local_to_value_[param.value] = value;
   }
 
-  for (const mir::StmtId sid : body_->root_stmts) {
-    auto lowered = LowerStmtInto(body_->stmts.Get(sid));
+  for (const mir::StmtId sid : code_->body.root_stmts) {
+    auto lowered = LowerStmtInto(code_->body.stmts.Get(sid));
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
@@ -160,7 +158,7 @@ auto FunctionLowerer::LowerStmtInto(const mir::Stmt& stmt)
 }
 
 auto FunctionLowerer::LowerExpr(mir::ExprId id) -> diag::Result<lir::Operand> {
-  const mir::Expr& expr = body_->exprs.Get(id);
+  const mir::Expr& expr = code_->body.exprs.Get(id);
   const mir::TypeId type = expr.type;
   return std::visit(
       Overloaded{
@@ -174,12 +172,6 @@ auto FunctionLowerer::LowerExpr(mir::ExprId id) -> diag::Result<lir::Operand> {
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Operand> {
-            if (ref.hops.value != 0) {
-              return diag::Fail(
-                  diag::DiagCode::kUnsupportedExpressionForm,
-                  "mir_to_lir: non-local variable reference is not yet "
-                  "lowerable to LIR");
-            }
             const std::optional<lir::ValueId> value =
                 local_to_value_[ref.var.value];
             if (!value.has_value()) {
@@ -258,6 +250,12 @@ auto FunctionLowerer::LowerExpr(mir::ExprId id) -> diag::Result<lir::Operand> {
             return Emit(
                 unit_->TranslateType(type),
                 lir::AggregateInstr{.elements = std::move(elements)});
+          },
+          [&](const mir::PointerCastExpr& c) -> diag::Result<lir::Operand> {
+            // A borrowed-pointer reinterpretation is identity in the
+            // opaque-handle ABI: every pointer crosses as the same handle, so
+            // the cast lowers to its operand unchanged.
+            return LowerExpr(c.operand);
           },
           [](const auto&) -> diag::Result<lir::Operand> {
             return diag::Fail(

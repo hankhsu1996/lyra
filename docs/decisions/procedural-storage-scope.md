@@ -139,7 +139,25 @@ the runtime by-name walk is used only across compilation-unit boundaries. Proced
 share routing mechanism with the other structural-child kinds; the distinction is the head's
 `TypeKind`, not the resolution path.
 
+### D8. Ownership is the runtime tree; the companion is navigation only
+
+A materialized child scope's lifetime is owned by the runtime object tree: the parent's runtime
+scope holds the child as an owning member, built through the one owned-child construction form. The
+companion on the parent's generated class is a **borrowed** typed handle to that child -- a
+layout-visible navigation endpoint for the typed segment (D7), filled at construction from the value
+the runtime's owned-child construction returns. Ownership (the runtime tree) and navigation (the
+companion) are separate concerns: the companion never owns the child and never carries the child's
+lifetime. The same split holds for an instance and a scalar generate-block child; each keeps a
+borrowed companion for its scalar layout-visible head while the runtime tree owns the child. An
+array element (a generate-for iteration, an instance array) keeps no companion and is reached by an
+indexed by-name child lookup downcast to the child's typed class.
+
 ## Forbidden shapes
+
+- A companion that owns the child (an owning pointer, a lifetime-carrying member). The companion is
+  a borrowed navigation handle; the runtime object tree owns the child's lifetime. An owning
+  companion re-couples navigation to ownership and reintroduces a member the runtime tree must not
+  duplicate.
 
 - A `ProceduralVarDecl` carrying a declaring-scope pointer back to its enclosing scope. The downward
   ownership in the scope tree is the canonical fact; a backref is a cache that drifts.

@@ -115,6 +115,7 @@ struct ExternalUnitObjectType {
 struct ScopeType {};
 struct InstanceType {};
 struct GenScopeType {};
+struct ProceduralStorageScopeType {};
 struct ServicesType {};
 struct FilesType {};
 struct DiagnosticType {};
@@ -154,8 +155,16 @@ struct UnionType {
   std::vector<TypeId> elements;
 };
 
-struct ExternalRefType {
-  TypeId element;
+// The sealed endpoint of a cross-instance reference -- a resolution node
+// wrapping the referenced value type.
+struct ResolvedType {
+  TypeId value;
+};
+
+// The write capability for a net: a handle to one of a resolution node's driver
+// slots.
+struct DriverType {
+  TypeId value;
 };
 
 struct ObservableType {
@@ -167,9 +176,10 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, StringViewType,
     MachineIntType, EventType, RealType, ShortRealType, RealTimeType,
     ChandleType, VoidType, ObjectType, ExternalUnitObjectType, ScopeType,
-    InstanceType, GenScopeType, ServicesType, FilesType, DiagnosticType,
-    RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
-    VectorType, TupleType, UnionType, ExternalRefType, ObservableType>;
+    InstanceType, GenScopeType, ProceduralStorageScopeType, ServicesType,
+    FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
+    PointerType, ManagedRefType, VectorType, TupleType, UnionType, ResolvedType,
+    DriverType, ObservableType>;
 
 struct Type {
   TypeData data;

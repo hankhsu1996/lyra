@@ -12,17 +12,13 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
 class RuntimeServices;
-
-// Returned by a scope that declares no timescale of its own (the synthetic
-// `$root`). The engine's design-global precision minimum ignores it, so a
-// purely structural node does not pull the simulation tick finer.
-inline constexpr std::int8_t kUnspecifiedTimePrecisionPower = 127;
 
 // A node in the one canonical object tree. Every constructed SystemVerilog
 // scope -- a module instance, a generate block, the implicit `$root` -- is a
@@ -34,7 +30,9 @@ class Scope {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
-  Scope(Scope* parent, HierarchySegment segment, RuntimeServices& services);
+  Scope(
+      Scope* parent, HierarchySegment segment, RuntimeServices& services,
+      const ScopeProgram* program);
   virtual ~Scope() = default;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
@@ -69,8 +67,8 @@ class Scope {
   // surfaces; the upward by-name climb consults `Name()` only, since slang
   // canonicalizes every head identity to a resolved symbol's name before the
   // lowering encodes the anchor.
-  [[nodiscard]] virtual auto DefName() const -> std::string_view {
-    return {};
+  [[nodiscard]] auto DefName() const -> std::string_view {
+    return {program_->metadata.def_name.data, program_->metadata.def_name.size};
   }
 
   // Records, during construction, the address of a signal this scope owns
@@ -85,7 +83,7 @@ class Scope {
   // SV-visible by-name lookup which recurses through anonymous children).
   // Called after the typed owner commits the child, so a thrown ctor
   // leaves no half-attached scope.
-  void AttachChild(Scope& child);
+  auto AddOwnedChild(std::unique_ptr<Scope> child) -> Scope*;
 
   // Whether this scope carries a source-visible SV name. An unnamed
   // begin/end (synthetic anonymous scope) is emitted with an empty
@@ -124,12 +122,12 @@ class Scope {
   // suffix is strictly below `$root`.
   [[nodiscard]] auto ResolveRoot() -> Scope*;
 
-  // The scope's declared time precision as a power of ten (LRM Table 20-2).
-  // A scope that declares a timescale overrides this; the base returns the
+  // The scope's declared time precision as a power of ten (LRM Table 20-2),
+  // read from its metadata; a scope with no timescale of its own reports the
   // unspecified sentinel. The engine takes the minimum across the tree to fix
   // the design-global precision (LRM 3.14.3).
-  [[nodiscard]] virtual auto TimePrecisionPower() const -> std::int8_t {
-    return kUnspecifiedTimePrecisionPower;
+  [[nodiscard]] auto TimePrecisionPower() const -> std::int8_t {
+    return program_->metadata.time_precision_power;
   }
 
   // The post-construction elaboration phases, each a top-down walk over the
@@ -173,6 +171,20 @@ class Scope {
     }
   }
 
+  // The generated-runtime ABI surface: a non-C++ backend recovers this scope's
+  // services and process-registration surface from an opaque self handle here.
+  // The C++ backend reaches the protected forms directly from its class-member
+  // bodies and does not use these.
+  [[nodiscard]] auto AbiServices() -> RuntimeServices& {
+    return Services();
+  }
+  void AbiRegisterInitial(Coroutine<void> coroutine) {
+    RegisterInitial(std::move(coroutine));
+  }
+  void AbiRegisterFinal(Coroutine<void> coroutine) {
+    RegisterFinal(std::move(coroutine));
+  }
+
  protected:
   // Reached by the emitted `CreateProcesses` body to bind a process coroutine
   // to this scope's startup (`RegisterInitial`, LRM 9.2) or shutdown
@@ -187,23 +199,6 @@ class Scope {
   [[nodiscard]] auto Services() -> RuntimeServices&;
 
  private:
-  // A scope with no cross-instance bindings does none; only scopes that bind a
-  // child's reference (a `ref` port) override this. Called in the resolve
-  // phase, once the whole tree is constructed.
-  virtual void ResolveState() {
-  }
-
-  // A scope with no variable initializers runs none; only scopes with
-  // initializers override this. Called in the initialize phase, after the whole
-  // tree has resolved its references.
-  virtual void InitializeState() {
-  }
-
-  // A scope with no processes creates none; only scopes with processes
-  // override this.
-  virtual void CreateProcesses() {
-  }
-
   struct SignalEntry {
     std::string_view name;
     void* address;
@@ -213,11 +208,13 @@ class Scope {
   HierarchySegment segment_;
   // Borrowed; set in the constructor.
   RuntimeServices* services_ = nullptr;
+  // Borrowed. The scope's generated behavior, set at construction.
+  const ScopeProgram* program_ = nullptr;
   // Physical containment: every runtime child scope this object owns
   // appears here once, in attach order. Includes anonymous scopes
   // (unnamed begin/ends). `GetChild` scans this and recurses into
   // anonymous children so SV-visible lookup ignores synthetic wrappers.
-  std::vector<Scope*> attached_children_;
+  std::vector<std::unique_ptr<Scope>> attached_children_;
   // By-name interface this scope answers cross-unit signal queries from.
   // Filled during construction; scanned only at construction-time
   // resolution, never on the simulation path.
@@ -228,14 +225,28 @@ class Scope {
 };
 
 // A module / interface / program instance: an owned child built from another
-// compilation unit, reached across the unit boundary.
+// compilation unit, reached across the unit boundary. It carries the unit
+// definition; its scope program and metadata come from that definition.
 class Instance : public Scope {
  public:
-  using Scope::Scope;
+  Instance(
+      Scope* parent, HierarchySegment segment, RuntimeServices& services,
+      const UnitDefinition* definition)
+      : Scope(parent, std::move(segment), services, &definition->root),
+        definition_(definition) {
+  }
+
+  [[nodiscard]] auto Definition() const -> const UnitDefinition* {
+    return definition_;
+  }
+
+ private:
+  const UnitDefinition* definition_;
 };
 
 // A module-local generate naming scope (`if` / `for` / `case` generate block):
-// an intra-unit owned child that crosses no compilation-unit boundary.
+// an intra-unit owned child that crosses no compilation-unit boundary. It
+// carries its own scope program and no unit metadata.
 class GenScope : public Scope {
  public:
   using Scope::Scope;

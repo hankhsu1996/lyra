@@ -122,6 +122,17 @@ the detail lives in the entry itself.
   and sensitivity extraction; Lyra translates resolved facts to executable route and endpoint
   capability; sensitivity uses the correct per-consumer slang surface and never reclassifies from
   `ValueSymbol + global table + HopsTo`.
+- [generated-behavior-boundary](generated-behavior-boundary.md) -- generated behavior reaches the
+  runtime through an explicit, backend-neutral per-specialization unit definition (native lifecycle
+  entries + a method dispatch table + constant metadata), not a backend-language object ABI; the C++
+  subclass / vtable and a per-backend adapter are rejected as the boundary. Lifecycle and SV-virtual
+  dispatch share a representation but are separate concepts; the definition holds the schema, never
+  instance values.
+- [jit-value-realization](jit-value-realization.md) -- the JIT represents every runtime value as an
+  opaque handle into the runtime library (the baseline realization), and a `GeneratedCallScope` owns
+  the transient values one generated entry creates -- the JIT counterpart of C++ stack/RAII.
+  Physical-layout / in-frame value lowering is a later optimization, not a correctness prerequisite;
+  cross-suspension and managed-value lifetime is out of scope for the call scope.
 
 ### Compile-time model and specialization
 

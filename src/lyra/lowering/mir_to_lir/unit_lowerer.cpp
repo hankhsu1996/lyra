@@ -13,7 +13,6 @@
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
-#include "lyra/mir/local.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -37,6 +36,11 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       out_.root = added;
     }
   }
+  // A type reached during lowering had no LIR mirror; surface it now, once the
+  // whole unit has been walked, rather than from the non-failing translator.
+  if (type_error_.has_value()) {
+    return std::unexpected(std::move(*type_error_));
+  }
   return std::move(out_);
 }
 
@@ -48,10 +52,8 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
     out.base = LowerBase(*cls.base);
   }
 
-  auto constructor = FunctionLowerer(
-                         *this, cls.constructor_block, {mir::LocalId{0}},
-                         "constructor", mir_->builtins.void_type, class_id)
-                         .Run();
+  auto constructor =
+      FunctionLowerer(*this, cls.constructor, "constructor", class_id).Run();
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
   }
@@ -60,10 +62,7 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
   for (std::size_t i = 0; i < cls.methods.size(); ++i) {
     const mir::MethodDecl& method =
         cls.methods.Get(mir::MethodId{static_cast<std::uint32_t>(i)});
-    auto fn = FunctionLowerer(
-                  *this, method.code.body, method.code.params, method.name,
-                  method.code.result_type, class_id)
-                  .Run();
+    auto fn = FunctionLowerer(*this, method.code, method.name, class_id).Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }

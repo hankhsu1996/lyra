@@ -9,12 +9,10 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/local.hpp"
-#include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
-struct Block;
 struct Stmt;
 }  // namespace lyra::mir
 
@@ -27,9 +25,8 @@ namespace lyra::lowering::mir_to_lir {
 class FunctionLowerer {
  public:
   FunctionLowerer(
-      UnitLowerer& unit, const mir::Block& body,
-      std::vector<mir::LocalId> params, std::string name,
-      mir::TypeId result_type, lir::ClassId current_class);
+      UnitLowerer& unit, const mir::CallableCode& code, std::string name,
+      lir::ClassId current_class);
 
   auto Run() -> diag::Result<lir::Function>;
 
@@ -39,10 +36,8 @@ class FunctionLowerer {
   auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
 
   UnitLowerer* unit_;
-  const mir::Block* body_;
-  std::vector<mir::LocalId> params_;
+  const mir::CallableCode* code_;
   std::string name_;
-  mir::TypeId result_type_;
   lir::ClassId current_class_;
   lir::Function fn_;
   lir::BasicBlock block_;

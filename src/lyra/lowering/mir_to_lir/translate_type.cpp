@@ -1,8 +1,11 @@
+#include <format>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
@@ -85,6 +88,15 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
       return lir::RuntimeLibraryKind::kTimeFormat;
     case mir::RuntimeLibraryKind::kHierarchySegment:
       return lir::RuntimeLibraryKind::kHierarchySegment;
+    case mir::RuntimeLibraryKind::kScopeProgram:
+    case mir::RuntimeLibraryKind::kUnitDefinition:
+    case mir::RuntimeLibraryKind::kScopeMetadata:
+    case mir::RuntimeLibraryKind::kAbiStringRef:
+    case mir::RuntimeLibraryKind::kScopeEntry:
+      throw InternalError(
+          "TranslateRuntimeLibraryKind: a unit-definition record type is a "
+          "compile-time constant consumed by the backend directly and does not "
+          "flow through MIR-to-LIR");
   }
   throw InternalError(
       "TranslateRuntimeLibraryKind: unknown RuntimeLibraryKind");
@@ -136,7 +148,7 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [&](const mir::UnpackedArrayType& ua) -> lir::TypeData {
             return lir::TypeData{lir::UnpackedArrayType{
                 .element_type = TranslateType(ua.element_type),
-                .size = ua.size}};
+                .size = ua.Size()}};
           },
           [&](const mir::DynamicArrayType& da) -> lir::TypeData {
             return lir::TypeData{lir::DynamicArrayType{
@@ -201,6 +213,9 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [](const mir::GenScopeType&) -> lir::TypeData {
             return lir::TypeData{lir::GenScopeType{}};
           },
+          [](const mir::ProceduralStorageScopeType&) -> lir::TypeData {
+            return lir::TypeData{lir::ProceduralStorageScopeType{}};
+          },
           [](const mir::ServicesType&) -> lir::TypeData {
             return lir::TypeData{lir::ServicesType{}};
           },
@@ -255,15 +270,35 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
             return lir::TypeData{
                 lir::UnionType{.elements = std::move(elements)}};
           },
-          [&](const mir::ExternalRefType& er) -> lir::TypeData {
+          [&](const mir::ResolvedType& r) -> lir::TypeData {
             return lir::TypeData{
-                lir::ExternalRefType{.element = TranslateType(er.element)}};
+                lir::ResolvedType{.value = TranslateType(r.value)}};
+          },
+          [&](const mir::DriverType& d) -> lir::TypeData {
+            return lir::TypeData{
+                lir::DriverType{.value = TranslateType(d.value)}};
           },
           [&](const mir::ObservableType& ob) -> lir::TypeData {
             return lir::TypeData{
                 lir::ObservableType{.value = TranslateType(ob.value)}};
+          },
+          [&](const mir::StructType&) -> lir::TypeData {
+            return RecordUnsupportedType("a nominal struct");
+          },
+          [&](const mir::ClosureType&) -> lir::TypeData {
+            return RecordUnsupportedType("a closure");
           }},
       ty.data);
+}
+
+auto UnitLowerer::RecordUnsupportedType(std::string_view what)
+    -> lir::TypeData {
+  if (!type_error_.has_value()) {
+    type_error_ = diag::Make(
+        diag::DiagCode::kUnsupportedTypeKind,
+        std::format("mir_to_lir: {} is not yet lowerable to LIR", what));
+  }
+  return lir::TypeData{lir::VoidType{}};
 }
 
 }  // namespace lyra::lowering::mir_to_lir

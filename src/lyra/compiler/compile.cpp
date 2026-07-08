@@ -3,15 +3,33 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/mir_to_lir/lower.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
+
+namespace {
+
+// A unit's definition metadata is a source-level fact known once elaboration
+// fixes the unit's root scope: its def name is the root's name, its precision
+// the root's declared resolution. Derived from MIR here, so the executable body
+// downstream never carries these source-language concepts.
+auto BuildUnitMetadata(const mir::CompilationUnit& unit)
+    -> ElaboratedUnitMetadata {
+  const mir::Class& root = unit.GetClass(unit.root);
+  return ElaboratedUnitMetadata{
+      .def_name = root.name,
+      .time_precision_power = root.time_resolution.precision_power};
+}
+
+}  // namespace
 
 auto Compile(
     const frontend::CompilationInput& input, diag::DiagnosticSink& sink,
@@ -57,9 +75,11 @@ auto Compile(
   std::vector<hir::ModuleUnit> hir_units;
   std::vector<mir::CompilationUnit> mir_units;
   std::vector<lir::CompilationUnit> lir_units;
+  std::vector<ElaboratedUnitMetadata> unit_metadata;
   hir_units.reserve(bodies.size());
   mir_units.reserve(bodies.size());
   lir_units.reserve(bodies.size());
+  unit_metadata.reserve(bodies.size());
 
   for (const auto* body : bodies) {
     auto hir_or = lowering::ast_to_hir::LowerUnit(facts, *body);
@@ -90,6 +110,7 @@ auto Compile(
       return result;
     }
     lir_units.push_back(*std::move(lir_or));
+    unit_metadata.push_back(BuildUnitMetadata(mir_units.back()));
   }
 
   result.artifacts.hir_units = std::move(hir_units);
@@ -98,6 +119,7 @@ auto Compile(
   }
   if (want_lir) {
     result.artifacts.lir_units = std::move(lir_units);
+    result.artifacts.unit_metadata = std::move(unit_metadata);
   }
 
   return result;

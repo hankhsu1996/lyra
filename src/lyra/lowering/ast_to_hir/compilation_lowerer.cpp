@@ -48,7 +48,8 @@ struct UnitCollector
 // what keeps it from lowering as an ordinary subroutine that silently drops the
 // export contract. slang collects exports only from elaborated scopes, so every
 // entry belongs to the design under compilation.
-auto RejectDpiExports(const LowerCompilationFacts& facts) -> diag::Result<void> {
+auto RejectDpiExports(const LowerCompilationFacts& facts)
+    -> diag::Result<void> {
   for (const auto& dpi : facts.Compilation().getDPIExports()) {
     if (dpi.subroutine == nullptr) continue;
     return diag::Fail(

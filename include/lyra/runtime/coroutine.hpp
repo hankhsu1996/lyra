@@ -31,7 +31,11 @@ struct PromiseBase {
   std::function<void()> on_complete;
   std::coroutine_handle<> self;
 
-  static auto initial_suspend() noexcept -> std::suspend_always {
+  // A promise protocol hook is an instance customization point by contract, so
+  // it stays a member even when an implementation reads no promise state; the
+  // convert-to-static check is a false positive here.
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  auto initial_suspend() noexcept -> std::suspend_always {
     return {};
   }
 
@@ -41,7 +45,11 @@ struct PromiseBase {
   // engine sees `done()`.
   struct FinalAwaiter {
     PromiseBase* promise;
-    [[nodiscard]] static auto await_ready() noexcept -> bool {
+    // A coroutine awaiter hook is an instance customization point by contract,
+    // so it stays a member even when an implementation reads no awaiter state;
+    // the convert-to-static check is a false positive here.
+    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+    [[nodiscard]] auto await_ready() const noexcept -> bool {
       return false;
     }
     // NOLINTNEXTLINE(readability-named-parameter)
@@ -55,7 +63,8 @@ struct PromiseBase {
       }
       return std::noop_coroutine();
     }
-    static void await_resume() noexcept {
+    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+    void await_resume() const noexcept {
     }
   };
   auto final_suspend() noexcept -> FinalAwaiter {
