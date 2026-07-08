@@ -223,24 +223,20 @@ class ModuleLowerer {
       const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
       -> std::vector<hir::SensitivityEntry>;
 
- private:
-  // Resolves one read target to the reader-relative access form: a typed climb
-  // when the target sits directly on an enclosing scope, otherwise a routed
-  // reference whose head and descent are reconstructed from the target's
-  // elaborated owner chain. Returns nullopt when the target is unreachable
-  // (a form not yet supported).
-  [[nodiscard]] auto TranslateReadTarget(
+  // The one route translator for every reference consumer -- value read, value
+  // write, and change observation. From the reader's elaborated position
+  // (`frame.reader_scope` and its unit-local chain) and the target symbol it
+  // computes the reader-relative route and classifies each segment by layout
+  // visibility: a typed enclosing climb when the target is a this-unit
+  // structural data object, a typed downward head when the head's class this
+  // unit emits, and a by-name head where the route crosses the compilation-unit
+  // boundary. Returns nullopt when the target is not an addressable signal or
+  // its form is not yet supported.
+  [[nodiscard]] auto TranslateReferenceRoute(
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
-      -> std::optional<hir::SensitivityRef>;
+      -> std::optional<hir::ReferenceRoute>;
 
-  // The cross-unit slot the body already resolved for `target` in `frame`, if
-  // any. An upward reference to an ancestor unit is reached by name across that
-  // unit's boundary (an opaque segment); the reader-relative downward
-  // reconstruction does not apply, so the observation reuses the body's slot.
-  [[nodiscard]] auto LookupCrossUnitRef(
-      ScopeFrameId frame, const slang::ast::ValueSymbol& target) const
-      -> std::optional<hir::CrossUnitRefId>;
-
+ private:
   // Facts.
   LoweringFacts facts_;
   const slang::ast::InstanceBodySymbol* body_;

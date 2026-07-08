@@ -423,7 +423,7 @@ class HirDumper {
         p);
   }
 
-  static auto FormatSensitivityRef(const SensitivityRef& ref) -> std::string {
+  static auto FormatReferenceRoute(const ReferenceRoute& ref) -> std::string {
     return std::visit(
         Overloaded{
             [](const StructuralDataObjectRef& r) -> std::string {
@@ -482,7 +482,7 @@ class HirDumper {
                   if (j != 0) out += ", ";
                   const auto& r = e.triggers[i].sensitivity_list[j];
                   out += std::format(
-                      "{{{} bits={} edge={}}}", FormatSensitivityRef(r.ref),
+                      "{{{} bits={} edge={}}}", FormatReferenceRoute(r.ref),
                       FormatFootprint(r.footprint),
                       FormatEventEdge(r.edge_kind));
                 }
@@ -497,7 +497,7 @@ class HirDumper {
                 if (i != 0) out += ", ";
                 const auto& r = ie.sensitivity_list[i];
                 out += std::format(
-                    "{{{} bits={} edge={}}}", FormatSensitivityRef(r.ref),
+                    "{{{} bits={} edge={}}}", FormatReferenceRoute(r.ref),
                     FormatFootprint(r.footprint), FormatEventEdge(r.edge_kind));
               }
               out += "]";
@@ -1006,7 +1006,7 @@ class HirDumper {
       for (const auto& r : p.implicit_sensitivity_list) {
         Line(
             std::format(
-                "{} bits={}", FormatSensitivityRef(r.ref),
+                "{} bits={}", FormatReferenceRoute(r.ref),
                 FormatFootprint(r.footprint)));
       }
       Dedent();
@@ -1058,7 +1058,7 @@ class HirDumper {
       for (const auto& r : ca.sensitivity_list) {
         Line(
             std::format(
-                "{} bits={}", FormatSensitivityRef(r.ref),
+                "{} bits={}", FormatReferenceRoute(r.ref),
                 FormatFootprint(r.footprint)));
       }
       Dedent();
@@ -1434,7 +1434,7 @@ class HirDumper {
                 if (i != 0) sens += ", ";
                 const auto& r = w.sensitivity_list[i];
                 sens += std::format(
-                    "{{{} bits={}}}", FormatSensitivityRef(r.ref),
+                    "{{{} bits={}}}", FormatReferenceRoute(r.ref),
                     FormatFootprint(r.footprint));
               }
               sens += "]";

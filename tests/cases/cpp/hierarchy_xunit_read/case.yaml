@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: "r=42\n"
+    exact: "r=42 rw=5\n"

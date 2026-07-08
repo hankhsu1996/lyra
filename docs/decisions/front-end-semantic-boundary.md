@@ -133,25 +133,24 @@ one translation; they must not each re-derive it.
 
 - The order-dependent stale-value defect and the function-body-read defect are both closed by moving
   to the correct front-end surfaces and refusing to reclassify from degraded information.
-- Sensitivity no longer decides whether to keep a dependency, or how to reach it, from the CU-global
-  table's membership plus a `HopsTo`, and neither the value read nor the observation classifies its
-  route by slang's lexical up/down. A compilation-unit declaration pass (D3,
-  `declarations-before-bodies.md`) registers a generate's owned-child identity before any body
-  lowers, so both operations route a cross-scope target by layout visibility from its elaborated
-  position -- a typed climb-and-descent while the segments stay in this unit, a by-name segment only
-  across a unit boundary -- independent of the order the target and referrer appear in source. The
-  observation supplies its own route for a dependency the reader's body never resolved (a signal
-  read only inside a called function) and otherwise reuses the endpoint the body produced.
-- Two gaps remain before this boundary is fully realized. The value read and the observation are
-  built by two routines that duplicate the layout-visibility routing rather than one shared
-  translation. And the declaration pass covers generate identities; instance and named-block
-  identities are still registered during the body pass, so a forward cross-scope reference to one of
-  those is not yet order-independent. Consolidating the routing onto one translation over every
-  addressable identity is the remaining step.
-- Whether value access and change observation ultimately share one bound runtime endpoint (and
-  whether an enclosing reference binds a per-instance handle rather than re-navigating the parent
-  chain on the hot path) is a later endpoint-capability decision, constrained by this boundary but
-  not settled here.
+- Value read, value write, and change observation reach a target through one route translator (D3),
+  keyed on the reader's elaborated position and the target symbol. Neither re-derives the route, and
+  no route depends on which consumer lowers first or on cross-unit-slot dedup. The translator
+  classifies each segment by layout visibility from the target's elaborated position -- a typed
+  enclosing climb or typed downward head while the segments stay in this unit, a by-name head where
+  the route crosses the compilation-unit boundary -- so enclosing, downward-child, sibling,
+  cross-module, and upward-out-of-unit references all route the same way, independent of the order
+  the target and referrer appear in source. The reader is located in the elaborated hierarchy
+  through its enclosing structural scope, so a read nested in a procedural block or a fork branch
+  routes from that scope. slang's resolved reference path is provenance only, never a second routing
+  authority.
+- Two items remain before the boundary is fully realized. A named procedural block's identity is
+  still assigned during the body pass -- it shares an arena populated by statement traversal, with
+  no source-order position the declaration pass can predict -- so a forward cross-scope reference to
+  a named block is not yet order-independent. And whether value access and change observation share
+  one bound runtime endpoint -- and whether an enclosing reference binds a per-instance handle
+  rather than re-navigating the parent chain on the hot path -- is the endpoint-capability half of
+  the boundary, constrained by it but not settled here.
 
 ## Relation to existing decisions
 
