@@ -415,11 +415,11 @@ class PackedArray {
   [[nodiscard]] auto ElementRef(const PackedArray& idx) -> PackedArrayRef;
   [[nodiscard]] auto Element(const PackedArray& idx) const -> PackedArray;
   [[nodiscard]] auto SliceRef(
-      const PackedArray& offset_in_outer_elements,
-      const PackedArray& count_in_outer_elements) -> PackedArrayRef;
+      const PackedArray& a, const PackedArray& b, const PackedArray& form)
+      -> PackedArrayRef;
   [[nodiscard]] auto Slice(
-      const PackedArray& offset_in_outer_elements,
-      const PackedArray& count_in_outer_elements) const -> PackedArray;
+      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+      -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;
@@ -620,8 +620,8 @@ class PackedArrayRef {
   // units; the proxy scales internally based on `dims_`.
   [[nodiscard]] auto ElementRef(const PackedArray& idx) const -> PackedArrayRef;
   [[nodiscard]] auto SliceRef(
-      const PackedArray& offset_in_outer_elements,
-      const PackedArray& count_in_outer_elements) const -> PackedArrayRef;
+      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+      -> PackedArrayRef;
 
  private:
   PackedArray* root_;

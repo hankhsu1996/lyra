@@ -106,11 +106,12 @@ full support.
       (and element-selected) in an expression. An unpacked struct or union constant is still
       blocked, but on unpacked-struct / union _type_ support rather than on constant
       materialization.
-- [ ] **Reduction operator over a `$bits`-derived part-select in a continuous assign** -- a
+- [x] **Reduction operator over a `$bits`-derived part-select in a continuous assign** -- a
       structural (continuous-assign) right-hand side that applies a reduction operator to a
       part-select whose width comes from `$bits` (the `ibex_top` parity check,
-      `assign unused = ^busy_q[$bits(mubi_t)-1:1]`). This is `ibex_top`'s first stop once its
-      children lower.
+      `assign unused = ^busy_q[$bits(mubi_t)-1:1]`). `$bits` lowers to an elaboration constant
+      (`query-functions.md` Q1) and the mixed-domain part-select bound reads correctly
+      (`operators.md` W14).
 - [ ] Further structural-expression forms surfaced as later passes get deeper (recorded here as
       discovery continues).
 

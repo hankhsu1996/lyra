@@ -192,12 +192,11 @@ auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
             return mir::UnionType{.elements = std::move(elements)};
           },
           [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
-            const std::int64_t span = (src.dim.left >= src.dim.right)
-                                          ? (src.dim.left - src.dim.right)
-                                          : (src.dim.right - src.dim.left);
             return mir::UnpackedArrayType{
                 .element_type = TranslateType(src.element_type),
-                .size = static_cast<std::uint64_t>(span) + 1U,
+                .dim =
+                    mir::UnpackedRange{
+                        .left = src.dim.left, .right = src.dim.right},
             };
           },
           [&](const hir::DynamicArrayType& src) -> mir::TypeData {

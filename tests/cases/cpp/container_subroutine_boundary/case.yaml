@@ -21,3 +21,6 @@ expect:
     lookup_rt: 200
     bump_existing_rt: 111
     bump_new_rt: 300
+    ua_local_rt: 100
+    uav2_rt: 11
+    uav4_rt: 33

@@ -175,7 +175,8 @@ void EmitExternalUnitDimLevel(
     // dim chain (empty for a scalar instance).
     const mir::TypeId indices_type = module.Unit().types.Intern(
         mir::UnpackedArrayType{
-            .element_type = builtins.int32, .size = indices.size()});
+            .element_type = builtins.int32,
+            .dim = mir::UnpackedRange::ZeroBased(indices.size())});
     const mir::ExprId indices_id = block.exprs.Add(
         mir::Expr{
             .data = mir::ArrayLiteralExpr{.elements = indices},
@@ -503,7 +504,8 @@ auto BuildIndicesLiteral(
   }
   const mir::TypeId indices_type = module.Unit().types.Intern(
       mir::UnpackedArrayType{
-          .element_type = builtins.int32, .size = indices.size()});
+          .element_type = builtins.int32,
+          .dim = mir::UnpackedRange::ZeroBased(indices.size())});
   return block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(ids)},
@@ -1252,7 +1254,8 @@ void AppendOwnedChildConstruction(
   }
   const mir::TypeId indices_type = module.Unit().types.Intern(
       mir::UnpackedArrayType{
-          .element_type = builtins.int32, .size = index_elems.size()});
+          .element_type = builtins.int32,
+          .dim = mir::UnpackedRange::ZeroBased(index_elems.size())});
   const mir::ExprId indices_id = arm_block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(index_elems)},

@@ -340,7 +340,8 @@ auto BuildPrintItemsArray(
   }
   const mir::TypeId array_type = unit.types.Intern(
       mir::UnpackedArrayType{
-          .element_type = unit.builtins.print_item, .size = items.size()});
+          .element_type = unit.builtins.print_item,
+          .dim = mir::UnpackedRange::ZeroBased(items.size())});
   return mir::Expr{
       .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
       .type = array_type};

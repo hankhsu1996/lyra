@@ -19,11 +19,13 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
+#include <slang/numeric/SVInt.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
@@ -74,6 +76,32 @@ auto ClassMethodIndex(const slang::ast::SubroutineSymbol& method)
   throw InternalError("ClassMethodIndex: method not found in its class");
 }
 
+// `$bits` of a fixed-size operand is the bit count of its type (LRM 20.6.2),
+// folded to an integer constant here; the operand is never evaluated. A
+// dynamically sized value operand is a runtime query of the current bit count
+// and is not yet supported (a dynamically sized type operand is rejected
+// earlier by the frontend).
+auto LowerBitsQuery(
+    ModuleLowerer& module, WalkFrame frame,
+    const slang::ast::CallExpression& call, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  const slang::ast::Type& operand_type = *call.arguments()[0]->type;
+  if (!operand_type.isFixedSize()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "$bits of a dynamically sized value is not yet supported");
+  }
+  auto type_id = module.InternType(*call.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  // slang types `$bits` as `integer` (4-state); coerce the bit count to that
+  // type so the folded constant's state domain matches its declared type rather
+  // than the 2-state value it is built from.
+  const slang::ConstantValue width = call.type->coerceValue(
+      slang::ConstantValue{
+          slang::SVInt(32, operand_type.getBitstreamWidth(), true)});
+  return MakeConstantValueExpr(module.Unit(), frame, width, *type_id, span);
+}
+
 }  // namespace
 
 template <ExprLowerer Lowerer>
@@ -81,6 +109,19 @@ auto LowerCallExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto& module = lowerer.Module();
+
+  // A query whose operand may be a type is resolved before the argument loop: a
+  // `DataType` operand has no value form and cannot be lowered as one. `$bits`
+  // is the first such function (LRM 20.6.2).
+  if (call.isSystemCall()) {
+    const auto& info =
+        std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
+    if (info.subroutine != nullptr &&
+        info.subroutine->knownNameId == slang::parsing::KnownSystemName::Bits) {
+      return LowerBitsQuery(module, frame, call, span);
+    }
+  }
+
   std::vector<std::optional<hir::ExprId>> arg_ids;
   arg_ids.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;

@@ -190,8 +190,8 @@ auto BuildDefaultValueExpr(
           },
           [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
             std::vector<mir::ExprId> elements;
-            elements.reserve(ua.size);
-            for (std::uint64_t i = 0; i < ua.size; ++i) {
+            elements.reserve(ua.Size());
+            for (std::uint64_t i = 0; i < ua.Size(); ++i) {
               elements.push_back(block.exprs.Add(
                   BuildDefaultValueExpr(module, frame, ua.element_type)));
             }
@@ -437,7 +437,7 @@ auto BuildAssociativeConstructionCall(
   const mir::TypeId entries_type = module.Unit().types.Intern(
       mir::UnpackedArrayType{
           .element_type = tuple_type,
-          .size = static_cast<std::uint64_t>(tuple_ids.size())});
+          .dim = mir::UnpackedRange::ZeroBased(tuple_ids.size())});
   const mir::ExprId entries_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(tuple_ids)},

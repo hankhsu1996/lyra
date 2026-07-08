@@ -206,6 +206,13 @@ auto BuildValueConversion(
         unit, operand_id, support::BuiltinFn::kFromPackedArray);
   }
 
+  // Unpacked -> unpacked: assignment requires equivalent element types and the
+  // same element count (LRM 7.6), so the element representation already matches
+  // and a whole-array store is a plain ordinal-payload copy. The declared range
+  // is a fact of the destination's static type consulted only at selection, not
+  // payload that a store must conform -- so this falls through to the identity
+  // path, no conversion node.
+
   // Queue -> queue: assignment requires equivalent element types (LRM 7.10), so
   // the element representation already matches and only the LRM 7.10.5 bound
   // can differ. Conform the source's contents to the destination's bound, which
