@@ -1,0 +1,12 @@
+id: cpp.continuous_assign_generate_outer_lhs
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    out: 42
+    seen_w: 43
