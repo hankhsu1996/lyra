@@ -24,19 +24,16 @@ struct RuntimeLibraryClassRef {
 // only producer is a runtime-library base.
 using ClassRef = std::variant<RuntimeLibraryClassRef>;
 
-// A virtual the runtime base declares and a derived object may override.
-// `kResolve` / `kInitialize` / `kActivate` are the post-construction lifecycle
-// phases the engine invokes (binding cross-instance references, running
-// variable initializers, registering processes). `kTimePrecisionPower` and
-// `kDefName` are constant-property accessors a tree node overrides to report
-// its time precision (LRM 3.14.2) and, for a module instance, its def-name
-// (LRM 23.8).
+// A lifecycle hook the runtime base declares and a derived object may override.
+// `kResolve` / `kInitialize` / `kActivate` are the post-construction phases the
+// engine invokes (binding cross-instance references, running variable
+// initializers, registering processes). Constant properties -- time precision
+// (LRM 3.14.2) and def-name (LRM 23.8) -- are not hooks: they are immutable
+// scope metadata read as data, not generated bodies.
 enum class RuntimeMethod : std::uint8_t {
   kResolve,
   kInitialize,
   kActivate,
-  kTimePrecisionPower,
-  kDefName,
 };
 
 // A reference to a runtime-library method.

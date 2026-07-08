@@ -6,7 +6,6 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <span>
 #include <utility>
 #include <vector>
 
@@ -45,12 +44,6 @@ struct EngineOptions {
 
 [[nodiscard]] auto DefaultEngineOptions() -> EngineOptions;
 
-// One top-level block to install under $root. The scope object the emitted
-// program constructs for it already carries its instance name.
-struct TopBinding {
-  Scope* scope;
-};
-
 class Engine {
  public:
   Engine();
@@ -64,7 +57,7 @@ class Engine {
   auto operator=(Engine&&) -> Engine& = delete;
   ~Engine() = default;
 
-  void BindDesign(std::span<const TopBinding> tops);
+  void BindDesign(std::vector<std::unique_ptr<Scope>> tops);
   auto Run() -> int;
 
   auto Stream() -> StreamDispatcher& {

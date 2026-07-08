@@ -255,6 +255,16 @@ class MirDumper {
                   return "RuntimeLibrary(TimeFormat)";
                 case RuntimeLibraryKind::kHierarchySegment:
                   return "RuntimeLibrary(HierarchySegment)";
+                case RuntimeLibraryKind::kScopeProgram:
+                  return "RuntimeLibrary(ScopeProgram)";
+                case RuntimeLibraryKind::kUnitDefinition:
+                  return "RuntimeLibrary(UnitDefinition)";
+                case RuntimeLibraryKind::kScopeMetadata:
+                  return "RuntimeLibrary(ScopeMetadata)";
+                case RuntimeLibraryKind::kAbiStringRef:
+                  return "RuntimeLibrary(AbiStringRef)";
+                case RuntimeLibraryKind::kScopeEntry:
+                  return "RuntimeLibrary(ScopeEntry)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
@@ -643,6 +653,15 @@ class MirDumper {
                   "StructConstructExpr struct=Struct[{}] field_inits={}",
                   sc.struct_id.value, sc.field_inits.size());
             },
+            [](const FunctionRef& fr) -> std::string {
+              return std::format(
+                  "FunctionRef callable=Method[{}]", fr.callable.value);
+            },
+            [](const StaticConstantRef& r) -> std::string {
+              return std::format(
+                  "StaticConstantRef constant=StaticConstant[{}]",
+                  r.constant.value);
+            },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
                   "ClosureExpr closure=Closure[{}] field_inits={}",
@@ -830,12 +849,6 @@ class MirDumper {
           break;
         case RuntimeMethod::kActivate:
           target = "Activate";
-          break;
-        case RuntimeMethod::kTimePrecisionPower:
-          target = "TimePrecisionPower";
-          break;
-        case RuntimeMethod::kDefName:
-          target = "DefName";
           break;
       }
       Line(std::format("Overrides: {}", target));

@@ -159,7 +159,12 @@ binding pushes the answer up to one place that every backend just reads.
   (process / method bodies become free functions friended into the class). Plausible but breaks the
   natural C++ class-membership model that scheduler / runtime already use to reach instance methods
   through `Scope*` polymorphism. Static methods give the same explicit-receiver shape without losing
-  class membership.
+  class membership. (This rejection's `Scope*`-polymorphism premise is revisited by
+  [generated-behavior-boundary](generated-behavior-boundary.md): the runtime reaches generated
+  behavior through a backend-neutral unit definition rather than `Scope*` virtual dispatch, so class
+  membership is not required for dispatch. The explicit-`self` static-body shape this decision fixes
+  is retained there; whether a body is emitted on the class is a backend-private realization
+  detail.)
 
 - **`self` as a closure parameter, supplied at invocation via `std::bind_front` at every deferred
   submit site.** The literal "every callable receives self the same way" path: closures get an

@@ -99,6 +99,11 @@ auto ProcessLowerer::BuildStaticStorageAccess(
     -> mir::Expr {
   mir::Block& block = *frame.current_block;
   const mir::CompilationUnit& unit = module_->Unit();
+
+  // Intra-unit access is a typed segment: descend from the body's `self`
+  // through each intervening materialized scope's borrowed companion member,
+  // then project the static cell. A static whose physical owner is the
+  // enclosing class has an empty chain and is reached directly on `self`.
   const std::vector<mir::FieldId> chain =
       storage_plan_->CompanionChainTo(placement.owner);
   mir::ExprId receiver = block.exprs.Add(
@@ -127,9 +132,9 @@ auto ProcessLowerer::BuildStaticStorageAccess(
     receiver =
         block.exprs.Add(mir::MakeFieldAccessExpr(receiver, step, step_type));
   }
-  // Resolve the owner class id from the placement's StorageOwner: the
-  // enclosing class is the one bound to `frame.current_class`; a procedural
-  // scope owner consults the materialization table.
+  // Resolve the owner class id from the placement's StorageOwner: the enclosing
+  // class is the one bound to `frame.current_class`; a procedural scope owner
+  // consults the materialization table.
   const mir::ClassId owner_class_id = std::visit(
       Overloaded{
           [&](EnclosingClass) -> mir::ClassId {

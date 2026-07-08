@@ -6,7 +6,6 @@
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -37,19 +36,23 @@ Engine::Engine(EngineOptions options)
       diagnostic_(std::move(options.diagnostic_sink)) {
 }
 
-void Engine::BindDesign(std::span<const TopBinding> tops) {
+void Engine::BindDesign(std::vector<std::unique_ptr<Scope>> tops) {
   if (bound_) {
     throw InternalError("Engine::BindDesign called more than once");
   }
   bound_ = true;
+  // The synthetic `$root` has no generated behavior; its program is all no-op.
+  static constexpr ScopeProgram kRootProgram{};
   root_ = std::make_unique<Scope>(
-      nullptr, HierarchySegment{"$root", {}}, services_);
-  for (const auto& top : tops) {
-    // A `$root`-anchored absolute path descends from the root by name, so
-    // the root answers GetChild for each top under its segment (LRM 23.6).
-    // AttachChild wires physical containment; SV-visible lookup on
-    // `$root` recurses through the attached-children relation.
-    root_->AttachChild(*top.scope);
+      nullptr, HierarchySegment{"$root", {}}, services_, &kRootProgram);
+  std::vector<Scope*> top_handles;
+  top_handles.reserve(tops.size());
+  for (auto& top : tops) {
+    // The root owns every top: a `$root`-anchored absolute path descends from
+    // the root by name (LRM 23.6), and SV-visible lookup on `$root` recurses
+    // through the owned-children relation. The returned handle drives the
+    // per-top phases below without re-borrowing the owning collection.
+    top_handles.push_back(root_->AddOwnedChild(std::move(top)));
   }
   // Link every top before any phase runs, so an upward climb during resolution
   // sees the whole tree (the root and all sibling tops already exist). The
@@ -57,14 +60,14 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
   // across the design, then initialize every scope's variables (so an
   // initializer observes resolved references), then activate every scope's
   // processes (so processes start only after all initialization).
-  for (const auto& top : tops) {
-    top.scope->Resolve();
+  for (Scope* top : top_handles) {
+    top->Resolve();
   }
-  for (const auto& top : tops) {
-    top.scope->Initialize();
+  for (Scope* top : top_handles) {
+    top->Initialize();
   }
-  for (const auto& top : tops) {
-    top.scope->Activate();
+  for (Scope* top : top_handles) {
+    top->Activate();
   }
 }
 

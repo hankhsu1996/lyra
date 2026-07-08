@@ -138,6 +138,19 @@ cc_library(
 )
 
 cc_library(
+    name = "lir",
+    srcs = glob(["src/lyra/lir/*.cpp"]),
+    hdrs = glob(["include/lyra/lir/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":mir",
+        ":support",
+    ],
+)
+
+cc_library(
     name = "frontend",
     srcs = glob(["src/lyra/frontend/*.cpp"]),
     hdrs = glob(["include/lyra/frontend/*.hpp"]),
@@ -185,6 +198,21 @@ cc_library(
 )
 
 cc_library(
+    name = "mir_to_lir",
+    srcs = glob(["src/lyra/lowering/mir_to_lir/**/*.cpp"]),
+    hdrs = glob(["include/lyra/lowering/mir_to_lir/**/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":diag",
+        ":lir",
+        ":mir",
+        ":support",
+    ],
+)
+
+cc_library(
     name = "backend_cpp",
     srcs = glob(["src/lyra/backend/cpp/*.cpp"]),
     hdrs = glob(["include/lyra/backend/cpp/*.hpp"]),
@@ -194,6 +222,50 @@ cc_library(
     deps = [
         ":mir",
         ":support",
+    ],
+)
+
+cc_library(
+    name = "backend_llvm",
+    srcs = glob(["src/lyra/backend/llvm/*.cpp"]),
+    hdrs = glob(["include/lyra/backend/llvm/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lir",
+        ":support",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
+    name = "unit_metadata",
+    hdrs = ["include/lyra/compiler/unit_metadata.hpp"],
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "jit",
+    srcs = glob(["src/lyra/jit/*.cpp"]),
+    hdrs = glob(["include/lyra/jit/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":backend_llvm",
+        ":lir",
+        ":runtime",
+        ":unit_metadata",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:OrcJIT",
+        "@llvm-project//llvm:OrcTargetProcess",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:X86AsmParser",
+        "@llvm-project//llvm:X86CodeGen",
     ],
 )
 
@@ -210,8 +282,11 @@ cc_library(
         ":frontend",
         ":hir",
         ":hir_to_mir",
+        ":lir",
         ":mir",
+        ":mir_to_lir",
         ":support",
+        ":unit_metadata",
     ],
 )
 
@@ -248,15 +323,20 @@ cc_binary(
         ":cpp_runtime",
         ":runtime_headers",
     ],
+    linkopts = ["-rdynamic"],
     visibility = ["//visibility:public"],
     deps = [
+        ":backend_llvm",
         ":compiler",
         ":diag",
         ":driver",
         ":frontend",
         ":hir",
+        ":jit",
+        ":lir",
         ":mir",
         ":support",
+        ":unit_metadata",
         "@argparse",
         "@fmt",
     ],

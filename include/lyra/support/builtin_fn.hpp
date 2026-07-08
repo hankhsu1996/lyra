@@ -223,31 +223,18 @@ enum class BuiltinFn : std::uint16_t {
   // the descent suffix starts below the matched child.
   kResolveRoot,
   kResolveVisibleChild,
-  // By-name scope navigation: a constructor walks a sibling unit's
-  // interface, looks up an owned child by name (and per-dimension index),
-  // looks up a signal by name, or attaches a freshly-built child into its
-  // parent. All four are instance methods on the scope handle (`args[0]`).
-  // `kRegisterSignal` and `kGetSignal` carry the signal name as a regular
-  // argument. `kGetChild` carries the lookup name and per-axis index array.
-  // `kAttachChild` carries only the borrowed reference to the already-built
-  // child -- the child's own `Segment()` supplies both the by-name lookup
+  // The scope handle's runtime ABI, reached on `args[0]`. A constructor
+  // registers a signal by name, looks a signal or child up by name, or hands
+  // a freshly-built child to its parent to own. `kRegisterSignal` and
+  // `kGetSignal` carry the signal name as a regular argument; `kGetChild`
+  // carries the lookup name and per-axis index array. `kAddOwnedChild`
+  // consumes the built child (a unique pointer) and returns the parent-owned
+  // handle -- the child's own `Segment()` supplies both the by-name lookup
   // key and the LRM display form, so the parent never re-states them.
   kRegisterSignal,
-  kAttachChild,
+  kAddOwnedChild,
   kGetSignal,
   kGetChild,
-  // C++ `std::vector` operations exposed to MIR so the constructor
-  // lowering carries the vector growth and back-element reach as explicit
-  // calls rather than letting the backend string-inject them. `kVectorEmplace`
-  // appends a value to a vector member (`vec.push_back(value)`); `kVectorBack`
-  // yields a reference to the most-recently-pushed element (`vec.back()`).
-  // Distinct from `kPushBack` (LRM 7.10 queue method) so each entry pins
-  // one receiver type with no dispatch at render. (`std::make_unique<T>` is
-  // the constructor of `unique_ptr<T>` rather than a free function -- it
-  // rides through `Construct` so the result type drives the
-  // `make_unique<T>` emit, no special builtin id needed.)
-  kVectorEmplace,
-  kVectorBack,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
   // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
   // for `join` (resume after the last branch), `kForkWaitFirst` for

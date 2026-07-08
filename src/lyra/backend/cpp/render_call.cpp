@@ -228,8 +228,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "ResolveVisibleChild";
     case support::BuiltinFn::kRegisterSignal:
       return "RegisterSignal";
-    case support::BuiltinFn::kAttachChild:
-      return "AttachChild";
+    case support::BuiltinFn::kAddOwnedChild:
+      return "AddOwnedChild";
     case support::BuiltinFn::kGetSignal:
       return "GetSignal";
     case support::BuiltinFn::kGetChild:
@@ -238,10 +238,6 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "RegisterInitial";
     case support::BuiltinFn::kRegisterFinal:
       return "RegisterFinal";
-    case support::BuiltinFn::kVectorEmplace:
-      return "push_back";
-    case support::BuiltinFn::kVectorBack:
-      return "back";
     case support::BuiltinFn::kForkWaitAll:
       return "ForkWaitAll";
     case support::BuiltinFn::kForkWaitFirst:
