@@ -1,9 +1,11 @@
 module Leaf;
+  localparam int W = 12;
+  typedef enum int {Red = 3, Green = 9} color_e;
   int x;
 endmodule
 
 module Top;
-  int a, b, c, d;
+  int a, b, c, d, e, f;
   initial begin
     g[2].u.x = 207;
     #1;
@@ -11,7 +13,9 @@ module Top;
     b = g[2].u.x;
     c = bk.v;
     d = bp.w;
-    $display("%0d %0d %0d %0d", a, b, c, d);
+    e = g[0].u.W;
+    f = g[0].u.Green;
+    $display("%0d %0d %0d %0d %0d %0d", a, b, c, d, e, f);
   end
   genvar i;
   generate

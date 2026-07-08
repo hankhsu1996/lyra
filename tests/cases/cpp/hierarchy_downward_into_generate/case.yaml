@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: "11 207 42 5\n"
+    exact: "11 207 42 5 12 9\n"
