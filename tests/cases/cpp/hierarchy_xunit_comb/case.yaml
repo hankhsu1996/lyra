@@ -9,6 +9,6 @@ expect:
   exit: 0
   stdout:
     exact: |
-      r=14
-      r=107
-      r=300
+      r=14 r_assign=14
+      r=107 r_assign=107
+      r=300 r_assign=300

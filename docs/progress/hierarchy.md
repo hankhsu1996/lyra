@@ -194,12 +194,6 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       only after the whole object tree exists, so a sibling not yet constructed when the referrer's
       own construction runs still resolves; no instance is dereferenced across the boundary during
       construction. The intra-unit, indexed extension of the sibling reads in D2d.
-- [ ] D9 -- A continuous assignment whose right-hand side reads a cross-instance signal that is
-      itself continuously driven does not re-evaluate when that source settles: it captures the
-      source's pre-settle value once and never updates. The reference resolves to the correct target
-      and reads it, so the gap is the missing reactive subscription on a dynamically-driven
-      cross-instance source, not the routing. This bounds what D4 covers -- a directly-driven source
-      re-triggers; an assign-driven cross-instance source may not.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 
