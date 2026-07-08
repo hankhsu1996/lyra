@@ -228,20 +228,23 @@ auto ModuleLowerer::TranslateSensitivityReads(
     const std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint =
         read_type.isIntegral() && !read_type.isEnum() ? read.footprint
                                                       : std::nullopt;
+    // Reachability decides the access form. An enclosing structural object (the
+    // reader's own scope or an ancestor) is reached by typed navigation; a
+    // target not on the reader's enclosing chain -- a sibling or child scope in
+    // this unit, or another unit -- is reached through the reference resolved
+    // for the body. A failed enclosing lookup therefore routes the read, never
+    // drops it, so the result does not depend on which scope lowered first.
     if (const auto binding = LookupStructuralDataObjectBinding(*value)) {
-      const auto hops = frame.HopsTo(binding->home_frame);
-      if (!hops.has_value()) continue;
-      out.push_back(
-          hir::SensitivityEntry{
-              .ref =
-                  hir::StructuralDataObjectRef{
-                      .hops = *hops, .var = binding->var_id},
-              .footprint = footprint});
-      continue;
+      if (const auto hops = frame.HopsTo(binding->home_frame)) {
+        out.push_back(
+            hir::SensitivityEntry{
+                .ref =
+                    hir::StructuralDataObjectRef{
+                        .hops = *hops, .var = binding->var_id},
+                .footprint = footprint});
+        continue;
+      }
     }
-    // A read of a cross-unit member resolves to the slot that body lowering
-    // created for it; subscribing through the slot is what makes always_comb
-    // re-trigger on a child's signal.
     if (const auto slot = LookupCrossUnitRef(frame.Current(), *value)) {
       out.push_back(
           hir::SensitivityEntry{

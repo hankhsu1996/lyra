@@ -118,6 +118,10 @@ the detail lives in the entry itself.
   allocates; elaboration is a staged build / resolve / initialize / activate protocol.
 - [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
   driver slots and capability-handle drivers, validated at a Seal barrier; single-driver is N=1.
+- [front-end-semantic-boundary](front-end-semantic-boundary.md) -- slang owns semantic resolution
+  and sensitivity extraction; Lyra translates resolved facts to executable route and endpoint
+  capability; sensitivity uses the correct per-consumer slang surface and never reclassifies from
+  `ValueSymbol + global table + HopsTo`.
 
 ### Compile-time model and specialization
 
