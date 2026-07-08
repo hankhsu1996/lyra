@@ -14,3 +14,5 @@ expect:
     result_at_t1: 0
     result_after_a_change: 7
     result_after_b_change: 15
+    # A change to the cross-scope signal g.v (5 + 10 + 20) also wakes the block.
+    result_after_xscope_change: 35

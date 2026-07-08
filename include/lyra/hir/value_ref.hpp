@@ -62,9 +62,11 @@ struct IterationBindingRef {
   auto operator==(const IterationBindingRef&) const -> bool = default;
 };
 
-// A sensitivity leaf observes either a this-unit structural data object or a
-// cross-unit member; both resolve to a stored `Observable` the scheduler
-// subscribes to.
-using SensitivityRef = std::variant<StructuralDataObjectRef, CrossUnitVarRef>;
+// A reader-relative route to a referenced value: either a this-unit structural
+// data object reached by a typed enclosing climb, or a cross-unit member
+// reached through a resolved slot. One route serves every consumer of the
+// reference -- value read, value write, and change observation -- so the name
+// is neutral to the consumer, not owned by sensitivity.
+using ReferenceRoute = std::variant<StructuralDataObjectRef, CrossUnitVarRef>;
 
 }  // namespace lyra::hir

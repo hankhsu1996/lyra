@@ -17,6 +17,7 @@ class Expression;
 class Statement;
 class Symbol;
 class ValueSymbol;
+class ProceduralBlockSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -66,6 +67,16 @@ class SensitivityAnalyzer {
       const slang::ast::Symbol& containing_symbol)
       -> const std::vector<SensitivityRead>&;
 
+  // The effective sensitivity of an `always_comb` / `always_latch` procedure
+  // (LRM 9.2.2.2.1, 9.2.2.3): the reads that wake it, including reads inside
+  // any function it calls, with locally-declared symbols and self-driven bit
+  // ranges already excluded. This is the procedure-level surface, distinct from
+  // the raw read set of a single node, which reflects only call arguments
+  // across a function boundary (the `always @*` rule).
+  [[nodiscard]] auto AnalyzeProcedureSensitivity(
+      const slang::ast::ProceduralBlockSymbol& proc)
+      -> const std::vector<SensitivityRead>&;
+
  private:
   std::unique_ptr<slang::analysis::AnalysisManager> manager_;
   std::unique_ptr<slang::analysis::AnalysisContext> context_;
@@ -74,6 +85,9 @@ class SensitivityAnalyzer {
       expression_cache_;
   std::unordered_map<const slang::ast::Statement*, std::vector<SensitivityRead>>
       statement_cache_;
+  std::unordered_map<
+      const slang::ast::ProceduralBlockSymbol*, std::vector<SensitivityRead>>
+      procedure_cache_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

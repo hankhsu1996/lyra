@@ -201,7 +201,7 @@ enum class EventEdge : std::uint8_t {
 // event control `@(posedge ...)` / `@(negedge ...)` / `@(edge ...)` set the
 // per-leaf edge.
 struct SensitivityEntry {
-  SensitivityRef ref;
+  ReferenceRoute ref;
   std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
   EventEdge edge_kind = EventEdge::kAnyChange;
 };

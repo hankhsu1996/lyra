@@ -1,13 +1,11 @@
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
-#include <algorithm>
 #include <expected>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -46,33 +44,6 @@ auto FromSlangProceduralBlockKind(slang::ast::ProceduralBlockKind kind)
   }
   throw InternalError(
       "FromSlangProceduralBlockKind: unknown ProceduralBlockKind");
-}
-
-// LRM 9.2.2.2.1: a symbol is local to `proc` if it is an automatic-lifetime
-// variable, or if it is declared inside one of `proc`'s statement blocks.
-// `ProceduralBlockSymbol` itself is not a `Scope`, so its statement blocks
-// hang off the surrounding scope -- we walk the symbol's parent-scope chain
-// up to the outermost `StatementBlockSymbol` and check whether that block is
-// one of `proc.getBlocks()`.
-auto IsLocalTo(
-    const slang::ast::ValueSymbol& sym,
-    const slang::ast::ProceduralBlockSymbol& proc) -> bool {
-  if (const auto* var = sym.as_if<slang::ast::VariableSymbol>();
-      var != nullptr &&
-      var->lifetime == slang::ast::VariableLifetime::Automatic) {
-    return true;
-  }
-  const slang::ast::Scope* scope = sym.getParentScope();
-  const slang::ast::StatementBlockSymbol* root_block = nullptr;
-  while (scope != nullptr &&
-         scope->asSymbol().kind == slang::ast::SymbolKind::StatementBlock) {
-    root_block = &scope->asSymbol().as<slang::ast::StatementBlockSymbol>();
-    scope = root_block->getParentScope();
-  }
-  if (root_block == nullptr) return false;
-  const auto blocks = proc.getBlocks();
-  return std::ranges::any_of(
-      blocks, [&](const auto* block) { return block == root_block; });
 }
 
 }  // namespace
@@ -128,19 +99,12 @@ auto ProcessLowerer::Run(
       .implicit_sensitivity_list = {}};
   if (kind == hir::ProcessKind::kAlwaysComb ||
       kind == hir::ProcessKind::kAlwaysLatch) {
-    // LRM 9.2.2.2.1: implicit sensitivity is a property of the always_comb /
-    // always_latch procedure itself (no `@*` token in source). Compute the
-    // procedure-body read set excluding locals.
-    const auto& raw = module_->Sensitivity().AnalyzeReads(proc.getBody(), proc);
-    std::vector<SensitivityRead> filtered;
-    filtered.reserve(raw.size());
-    for (const auto& read : raw) {
-      if (!IsLocalTo(*read.symbol, proc)) {
-        filtered.push_back(read);
-      }
-    }
-    out.implicit_sensitivity_list =
-        module_->TranslateSensitivityReads(filtered, frame);
+    // LRM 9.2.2.2.1 / 9.2.2.3: an always_comb / always_latch wakes on the reads
+    // of its whole procedure, including reads inside any function it calls --
+    // the procedure-level sensitivity, not the raw read set of the body node,
+    // which reflects only call arguments across a function boundary.
+    out.implicit_sensitivity_list = module_->TranslateSensitivityReads(
+        module_->Sensitivity().AnalyzeProcedureSensitivity(proc), frame);
   }
   return out;
 }

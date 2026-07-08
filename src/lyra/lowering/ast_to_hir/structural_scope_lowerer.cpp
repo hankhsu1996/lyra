@@ -3,10 +3,8 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
@@ -30,6 +28,7 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
@@ -43,7 +42,7 @@ StructuralScopeLowerer::StructuralScopeLowerer(
     ModuleLowerer& module, const slang::ast::Scope& slang_scope)
     : module_(&module),
       slang_scope_(&slang_scope),
-      frame_(module.NextScopeFrameId()) {
+      frame_(module.LookupScopeFrame(slang_scope)) {
   // A `ref` / `const ref` port's internal variable aliases the connected
   // variable rather than owning storage (LRM 23.3.3.2); record which of this
   // body's variables those are so their members lower to a reference type. Only
@@ -84,8 +83,8 @@ auto StructuralScopeLowerer::ReferenceBindingFor(
 auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     -> diag::Result<hir::StructuralScope> {
   hir::StructuralScope scope;
-  const WalkFrame frame =
-      parent_frame.WithStructuralFrame(frame_, &scope, &scope.exprs);
+  const WalkFrame frame = parent_frame.WithStructuralFrame(
+      frame_, slang_scope_, &scope, &scope.exprs);
   scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
 
   // Forward-declare every subroutine's binding before lowering any body so a
@@ -101,10 +100,11 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     }
   }
 
-  // Instance members are lowered ahead of process bodies so a downward
-  // cross-unit reference (`c.x`) resolves its leading `c` even when the
-  // referencing process precedes the instance in source order (declarations
-  // are scope-wide).
+  // Instance member decls are built ahead of the port-connection synthesis
+  // below, which reads them to wire each connection. The owned-child binding a
+  // reference resolves through is established earlier still, by the whole-unit
+  // declaration pass, so this population order is a decl-availability concern,
+  // not a reference-resolution one.
   for (const auto& member : slang_scope_->members()) {
     if (member.kind == slang::ast::SymbolKind::Instance) {
       auto r = PopulateInstanceMember(
@@ -369,47 +369,26 @@ auto StructuralScopeLowerer::PopulateGenerateBlockMember(
 auto StructuralScopeLowerer::PopulateInstanceMember(
     const slang::ast::InstanceSymbol& inst, WalkFrame frame)
     -> diag::Result<void> {
-  const hir::InstanceMemberId member_id =
-      frame.current_structural_scope->instance_members.Add(
-          hir::InstanceMemberDecl{
-              .instance_name = std::string{inst.name},
-              .target_unit = SpecializationName(inst),
-              .array_dims = {}});
-  // A downward cross-unit reference (`c.x`) resolves the leading `c` to
-  // this member; the binding lets process-body lowering find it regardless
-  // of source order.
-  module_->MapOwnedChildBinding(
-      inst, frame_, hir::DownwardHead{.child = member_id});
+  frame.current_structural_scope->instance_members.Add(
+      hir::InstanceMemberDecl{
+          .instance_name = std::string{inst.name},
+          .target_unit = SpecializationName(inst),
+          .array_dims = {}});
   return {};
 }
 
 auto StructuralScopeLowerer::PopulateInstanceArrayMember(
     const slang::ast::InstanceArraySymbol& array, WalkFrame frame)
     -> diag::Result<void> {
-  // Each nested InstanceArray level contributes one dimension; the descent
-  // bottoms out at the per-element instance, which names the target unit.
-  // A zero-element level (`Child c[0:-1]`, LRM 23.3.2) has no element to
-  // descend into or to name the unit from and constructs nothing, so it
-  // contributes no member.
-  std::vector<std::uint32_t> dims;
-  const slang::ast::Symbol* level = &array;
-  while (level->kind == slang::ast::SymbolKind::InstanceArray) {
-    const auto& arr = level->as<slang::ast::InstanceArraySymbol>();
-    if (arr.elements.empty()) {
-      return {};
-    }
-    dims.push_back(static_cast<std::uint32_t>(arr.elements.size()));
-    level = arr.elements.front();
+  auto shape = ResolveInstanceArrayShape(array);
+  if (!shape) {
+    return {};
   }
-  const auto& leaf = level->as<slang::ast::InstanceSymbol>();
-  const hir::InstanceMemberId member_id =
-      frame.current_structural_scope->instance_members.Add(
-          hir::InstanceMemberDecl{
-              .instance_name = std::string{array.name},
-              .target_unit = SpecializationName(leaf),
-              .array_dims = std::move(dims)});
-  module_->MapOwnedChildBinding(
-      array, frame_, hir::DownwardHead{.child = member_id});
+  frame.current_structural_scope->instance_members.Add(
+      hir::InstanceMemberDecl{
+          .instance_name = std::string{array.name},
+          .target_unit = SpecializationName(*shape->leaf),
+          .array_dims = std::move(shape->dims)});
   return {};
 }
 

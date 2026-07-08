@@ -180,19 +180,19 @@ auto LowerTimedStmt(
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
   auto timing = LowerTimingControl(proc, frame, ts.timing, span);
   if (!timing) return std::unexpected(std::move(timing.error()));
-  // LRM 9.4.2.2: `@*` watches every read in the controlled body. Analyze
-  // the body statement directly; the TimingControl shell came back empty
-  // from LowerTimingControl.
+  auto inner_stmt = proc.LowerStmt(ts.stmt, frame);
+  if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
+  const hir::StmtId inner_id =
+      frame.current_procedural_body->stmts.Add(*std::move(inner_stmt));
+  // LRM 9.4.2.2: `@*` watches every read in the controlled body. Inferred after
+  // the body lowers so a read's cross-unit reference is already resolved when
+  // its subscription is built.
   if (auto* ie = std::get_if<hir::ImplicitEventControl>(&*timing)) {
     const auto& reads = proc.Module().Sensitivity().AnalyzeReads(
         ts.stmt, proc.ContainingSymbol());
     ie->sensitivity_list =
         proc.Module().TranslateSensitivityReads(reads, frame);
   }
-  auto inner_stmt = proc.LowerStmt(ts.stmt, frame);
-  if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
-  const hir::StmtId inner_id =
-      frame.current_procedural_body->stmts.Add(*std::move(inner_stmt));
   return hir::Stmt{
       .label = std::nullopt,
       .data = hir::TimedStmt{.timing = *std::move(timing), .stmt = inner_id},

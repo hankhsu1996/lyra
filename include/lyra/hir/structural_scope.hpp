@@ -79,7 +79,7 @@ struct GenerateChildRef {
 struct DownwardHead {
   StructuralHops hops = {};
   std::variant<InstanceMemberId, GenerateChildRef, ProceduralScopeId> child;
-  std::vector<std::uint32_t> head_indices;
+  std::vector<std::uint32_t> head_indices = {};
 };
 
 // Where an upward cross-unit reference's navigation starts (LRM 23.8 / 23.9).

@@ -773,6 +773,38 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 
     **Interacts with**: R47 (object model), R51 (a class with a body), R8 (callable model).
 
+- [ ] R53 -- Finish the front-end reference / sensitivity translation boundary
+      (`../decisions/front-end-semantic-boundary.md`). The correctness repairs and the move to route
+      cross-scope references by layout visibility (order-independent, from a whole-unit declaration
+      pass) have landed. Three items remain before the boundary is fully realized:
+  - [x] R53a -- One route translation for every reference consumer. Value read, value write, and
+        change observation (including a dependency read only inside a called function) route through
+        one translator keyed on the reader's elaborated position and the target symbol; each segment
+        is classified by layout visibility, so enclosing, downward-child, sibling, cross-module, and
+        upward-out-of-unit references all resolve the same way with no dependence on lowering order
+        or cross-unit-slot dedup. The reader's elaborated position is recovered from its enclosing
+        structural scope, so a read nested in a procedural block or fork branch routes from that
+        scope. The frontend's resolved reference path is provenance only, not a routing authority.
+  - [ ] R53b -- The declaration pass covers every addressable identity. Generate and instance
+        identities are registered before any body lowers, so a forward cross-scope reference to them
+        is order-independent. A named procedural block's identity is still assigned while its body
+        lowers -- it shares an arena populated by statement traversal, with no source-order position
+        the declaration pass can predict -- so a forward cross-scope reference to a named block is
+        not yet order-independent. Give the named block a declaration-time identity so the invariant
+        holds for it too.
+  - [ ] R53c -- Endpoint binding. Whether a value read, a value write, and a change observation of
+        one target ultimately share one bound runtime endpoint -- and whether an enclosing reference
+        binds a per-instance handle rather than re-navigating the parent chain on the hot path -- is
+        the endpoint-capability half of the boundary, constrained by it but not settled. The
+        endpoint binds from the target's semantic kind (variable / net / `ref` / port) narrowed by
+        the footprint. A port connection is the other construct that reaches a cross-unit cell: it
+        constructs its child-cell reference and, for a `ref` port, its alias, independently of the
+        one route translator, because the alias binds from the raw navigation recipe rather than a
+        resolved slot -- exactly the port / `ref` endpoint-capability question this entry settles,
+        so that construction unifies here rather than in the route-translation cut. **Blocker**:
+        none identified; pairs with the endpoint-capability decisions
+        (`../decisions/net-driver-resolution.md`, `../decisions/reference-as-data-type.md`).
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

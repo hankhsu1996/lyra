@@ -92,10 +92,10 @@ class StructuralScopeLowerer {
   auto PopulateGenerateBlockMember(
       const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
       -> diag::Result<void>;
-  auto PopulateInstanceMember(
+  static auto PopulateInstanceMember(
       const slang::ast::InstanceSymbol& inst, WalkFrame frame)
       -> diag::Result<void>;
-  auto PopulateInstanceArrayMember(
+  static auto PopulateInstanceArrayMember(
       const slang::ast::InstanceArraySymbol& array, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulatePortConnections(
