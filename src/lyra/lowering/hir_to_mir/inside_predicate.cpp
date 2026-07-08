@@ -21,7 +21,7 @@ auto BuildHirInsideItemPredicate(
     -> diag::Result<mir::ExprId> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
-  const auto& unit = lowerer.Module().Unit();
+  auto& unit = lowerer.Module().Unit();
   auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(hir_exprs.Get(id), frame);
     if (!lowered) {

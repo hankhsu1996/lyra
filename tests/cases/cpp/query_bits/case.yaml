@@ -13,3 +13,6 @@ expect:
     bits_struct_rt: 4
     bits_enum_rt: 2
     bits_2d_rt: 16
+    slice_rt: 5
+    red_rt: 0
+    ca_red: 0

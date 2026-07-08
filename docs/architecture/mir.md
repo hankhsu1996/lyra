@@ -76,6 +76,8 @@ what the construct means.
 
 - Control-flow graphs, basic blocks, branches, or phi nodes.
 - Storage placement, offsets, or memory layout.
+- The resolution of a selector's declared coordinate to a storage position -- the declared-range
+  rebase. A select carries the source-level selector; the selected value resolves the coordinate.
 - Scheduling, dirty tracking, or wakeup filtering.
 - The frontend's symbol or string identity. MIR carries only MIR's own ids.
 - SystemVerilog source-level syntactic sugar. Sugar collapses to MIR's primitives at HIR-to-MIR.
@@ -200,6 +202,11 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
 - Basic blocks, successor lists, or phi nodes in MIR nodes. (MIR is not the machine-execution
   model.)
 - Storage offsets, byte layouts, or alignment data in MIR nodes. (Storage placement belongs to LIR.)
+- A select whose selector is a resolved storage position rather than the source-level coordinate: a
+  lowering that rebases a declared index against the container's range (`i - left`, `left - i`, an
+  indexed-part-select width offset) and hands MIR the resulting position. The rebase is a storage
+  computation the selected value owns; a select carries the source selector. (Coordinate resolution
+  is the value's, not a synthesized MIR operator's.)
 - A secondary hierarchy or identity system that shadows MIR ids (coordinate tuples, ordinals, symbol
   paths used as identity). (Identity is owned by the layer; programming languages do not have two
   parallel name systems for the same thing.)

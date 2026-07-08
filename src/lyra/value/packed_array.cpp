@@ -17,6 +17,7 @@
 #include "lyra/value/packed_convert.hpp"
 #include "lyra/value/packed_internal.hpp"
 #include "lyra/value/packed_reduction.hpp"
+#include "lyra/value/slice_selector.hpp"
 
 namespace lyra::value {
 
@@ -1449,6 +1450,25 @@ struct PackedSelection {
   std::vector<PackedRange> dims;
 };
 
+// Maps a declared-coordinate index onto the outer dimension's zero-based
+// position (LRM 11.5.1): a descending range subtracts its right (least-
+// significant) endpoint, an ascending range subtracts the index from it. The
+// arithmetic runs in the canonical 64-bit offset domain, so a caller's index of
+// any width and state domain composes without a storage-domain clash, and an
+// x / z index propagates to an out-of-range offset that reads the element's
+// default. A descending zero-based range is the identity.
+auto RebaseToZeroBased(const PackedArray& idx, const PackedRange& outer)
+    -> PackedArray {
+  const auto canon = Canonicalize(idx);
+  const bool descending = outer.left >= outer.right;
+  if (descending && outer.right == 0) {
+    return canon;
+  }
+  const auto right = PackedArray::FromInt(
+      outer.right, kOffsetBitWidth, kOffsetSigned, kOffsetFourState);
+  return descending ? canon - right : right - canon;
+}
+
 // Scales an outer-element position to a flat-bit offset. One outer element is
 // `element_bw` bits; when that is 1 (selecting the innermost dimension), the
 // position is already a bit offset. X/Z in the position propagates.
@@ -1467,19 +1487,70 @@ auto ResolveElement(
     std::uint64_t source_bit_width, std::span<const PackedRange> source_dims,
     const PackedArray& idx) -> PackedSelection {
   const auto element_bw = OuterElementBitWidth(source_bit_width, source_dims);
+  const auto zero_based = RebaseToZeroBased(idx, source_dims.front());
   return PackedSelection{
-      .bit_offset = ScaledOuterOffset(idx, element_bw),
+      .bit_offset = ScaledOuterOffset(zero_based, element_bw),
       .dims = PopOuterDim(source_dims)};
 }
 
+// `anchor` is the SV-declared endpoint the slice hangs from; `shift` is how
+// many outer elements the low end sits below its rebased position. A constant
+// range and an indexed part-select whose width grows toward the MSB pass `shift
+// == 0` (the anchor rebases straight to the low end); an indexed part-select
+// growing toward the LSB passes `shift == count - 1`, so the anchor rebases to
+// the high end and the low end is `count - 1` below it (LRM 11.5.1). The
+// subtraction runs in the canonical offset domain, so an anchor of any width or
+// state domain composes and an x / z anchor propagates to an out-of-range read.
 auto ResolveSlice(
     std::uint64_t source_bit_width, std::span<const PackedRange> source_dims,
-    const PackedArray& offset_in_outer_elements, std::uint32_t count)
+    const PackedArray& anchor, std::uint32_t count, const PackedArray& shift)
     -> PackedSelection {
   const auto element_bw = OuterElementBitWidth(source_bit_width, source_dims);
+  const auto low =
+      RebaseToZeroBased(anchor, source_dims.front()) - Canonicalize(shift);
   return PackedSelection{
-      .bit_offset = ScaledOuterOffset(offset_in_outer_elements, element_bw),
+      .bit_offset = ScaledOuterOffset(low, element_bw),
       .dims = ReplaceOuterDimCount(source_dims, count)};
+}
+
+struct RawRangeSelector {
+  PackedArray anchor;
+  std::uint32_t count;
+  PackedArray shift;
+};
+
+// Derive the (low-endpoint anchor, count, shift) the bit-level `ResolveSlice`
+// consumes from a raw range selector `(a, b, form)` and the outer dim's
+// orientation. A constant range `[l:r]` gives the oriented-low endpoint and the
+// element count; an indexed part-select's base and width give the anchor and a
+// direction-dependent shift (LRM 11.5.1). No coordinate is rebased here --
+// `ResolveSlice` rebases in the value's own X/Z-aware domain.
+auto ResolveRawRangeSelector(
+    const PackedRange& outer, const PackedArray& a, const PackedArray& b,
+    const PackedArray& form) -> RawRangeSelector {
+  const bool descending = outer.left >= outer.right;
+  if (static_cast<SliceForm>(form.ToInt64()) == SliceForm::kConstant) {
+    const std::int64_t l = a.ToInt64();
+    const std::int64_t r = b.ToInt64();
+    const std::int64_t lo_endpoint = l < r ? l : r;
+    const std::int64_t hi_endpoint = l < r ? r : l;
+    const std::int64_t low = descending ? lo_endpoint : hi_endpoint;
+    const auto count =
+        static_cast<std::uint32_t>((hi_endpoint - lo_endpoint) + 1);
+    return RawRangeSelector{
+        .anchor = PackedArray::Int(static_cast<std::int32_t>(low)),
+        .count = count,
+        .shift = PackedArray::Int(0)};
+  }
+  const auto count = static_cast<std::uint32_t>(b.ToInt64());
+  const bool extend_up = (static_cast<SliceForm>(form.ToInt64()) ==
+                          SliceForm::kIndexedUp) == descending;
+  const std::int64_t shift =
+      extend_up ? 0 : static_cast<std::int64_t>(count) - 1;
+  return RawRangeSelector{
+      .anchor = a,
+      .count = count,
+      .shift = PackedArray::Int(static_cast<std::int32_t>(shift))};
 }
 
 }  // namespace
@@ -1495,22 +1566,20 @@ auto PackedArray::Element(const PackedArray& idx) const -> PackedArray {
 }
 
 auto PackedArray::SliceRef(
-    const PackedArray& offset_in_outer_elements,
-    const PackedArray& count_in_outer_elements) -> PackedArrayRef {
-  const auto count =
-      static_cast<std::uint32_t>(count_in_outer_elements.ToInt64());
+    const PackedArray& a, const PackedArray& b, const PackedArray& form)
+    -> PackedArrayRef {
+  const auto raw = ResolveRawRangeSelector(type_.dims.front(), a, b, form);
   auto sel = ResolveSlice(
-      type_.bit_width, type_.dims, offset_in_outer_elements, count);
+      type_.bit_width, type_.dims, raw.anchor, raw.count, raw.shift);
   return PackedArrayRef{*this, sel.bit_offset, std::move(sel.dims)};
 }
 
 auto PackedArray::Slice(
-    const PackedArray& offset_in_outer_elements,
-    const PackedArray& count_in_outer_elements) const -> PackedArray {
-  const auto count =
-      static_cast<std::uint32_t>(count_in_outer_elements.ToInt64());
+    const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+    -> PackedArray {
+  const auto raw = ResolveRawRangeSelector(type_.dims.front(), a, b, form);
   auto sel = ResolveSlice(
-      type_.bit_width, type_.dims, offset_in_outer_elements, count);
+      type_.bit_width, type_.dims, raw.anchor, raw.count, raw.shift);
   return ExtractBits(sel.bit_offset, sel.dims);
 }
 
@@ -1540,11 +1609,10 @@ auto PackedArrayRef::ElementRef(const PackedArray& idx) const
 }
 
 auto PackedArrayRef::SliceRef(
-    const PackedArray& offset_in_outer_elements,
-    const PackedArray& count_in_outer_elements) const -> PackedArrayRef {
-  const auto count =
-      static_cast<std::uint32_t>(count_in_outer_elements.ToInt64());
-  auto sel = ResolveSlice(bit_width_, dims_, offset_in_outer_elements, count);
+    const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+    -> PackedArrayRef {
+  const auto raw = ResolveRawRangeSelector(dims_.front(), a, b, form);
+  auto sel = ResolveSlice(bit_width_, dims_, raw.anchor, raw.count, raw.shift);
   return PackedArrayRef{
       *root_, bit_offset_ + sel.bit_offset, std::move(sel.dims)};
 }

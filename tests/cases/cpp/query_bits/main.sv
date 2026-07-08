@@ -15,6 +15,14 @@ module Top;
   int bits_enum_rt;
   int bits_2d_rt;
 
+  // `$bits` used as a part-select bound: the `$bits`-derived high bound is
+  // `integer` (4-state), the literal low bound is `int` (2-state), so the
+  // endpoint-ordering comparison must reconcile the two domains.
+  logic [2:0] slice_rt;
+  logic red_rt;
+  logic ca_red;
+  assign ca_red = ^q[$bits(mubi_t)-1:1];
+
   initial begin
     q = 4'b1010;
     bits_type_rt = $bits(mubi_t);
@@ -22,5 +30,7 @@ module Top;
     bits_struct_rt = $bits(sp_t);
     bits_enum_rt = $bits(e_t);
     bits_2d_rt = $bits(m2d);
+    slice_rt = q[$bits(mubi_t)-1:1];
+    red_rt = ^q[$bits(mubi_t)-1:1];
   end
 endmodule

@@ -67,6 +67,10 @@ whole-value assignment is the defect this split exists to prevent.
 
 ## Cross-references
 
+- [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- for the unpacked/container
+  family the semantic store is realized as a plain ordinal-payload copy: the payload carries no
+  declared range, so nothing needs conforming at the boundary and the `ConformRange` step is
+  removed. The store-preserves-the-destination-type principle is unchanged.
 - [integral-representation](integral-representation.md) -- the fat-integral representation this
   generalizes.
 - [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- the container default

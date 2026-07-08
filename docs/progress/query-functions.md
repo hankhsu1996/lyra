@@ -31,11 +31,10 @@ every operand, dynamic included.
 
 ## Sub-steps
 
-- [ ] Q1 -- `$bits` of a type or a fixed-size value, as an elaboration-time constant (LRM 20.6.2).
+- [x] Q1 -- `$bits` of a type or a fixed-size value, as an elaboration-time constant (LRM 20.6.2).
       The operand is not evaluated; the result is the bit count of the operand's type, usable
-      wherever an integer constant is. Unblocks the `ibex_top` reduction over a `$bits`-derived
-      part-select tracked in `ibex.md`. Used as a part-select bound it lowers and emits, but aborts
-      at runtime until the mixed-state range-bound fix lands (`operators.md` W14).
+      wherever an integer constant is, including as a part-select bound. Unblocks the `ibex_top`
+      reduction over a `$bits`-derived part-select tracked in `ibex.md`.
 - [ ] Q2 -- The array query functions on a fixed-size dimension, as elaboration-time constants (LRM
       20.7): `$left`, `$right`, `$low`, `$high`, `$increment`, `$size`, with the optional constant
       dimension argument, plus `$dimensions` and `$unpacked_dimensions` for every type. Covers

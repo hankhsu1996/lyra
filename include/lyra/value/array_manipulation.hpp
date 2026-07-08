@@ -271,21 +271,23 @@ auto ArraySortByKey(Seq& data, F key, Compare cmp) -> void {
   }
 }
 
-// LRM 7.4.5 contiguous-range gather. The slice is `count` elements starting at
-// `offset`; an out-of-range position yields `canonical` and an x / z offset
-// (an invalid position) makes the whole result canonical. The flat vector is
-// wrapped by the caller as a fixed-size unpacked array.
+// LRM 7.4.5 contiguous-range gather. `base` is the already-resolved zero-based
+// storage ordinal of the low element; the caller rebases the source selector
+// against its coordinate system before calling. The slice is `count` elements
+// from `base`; an out-of-range position yields `canonical`, and a selector the
+// caller could not resolve (`!anchor_known`, an x / z selector) makes the whole
+// result canonical. The flat vector is wrapped by the caller as a fixed-size
+// unpacked array.
 template <typename T>
 [[nodiscard]] auto ArraySliceGather(
-    const std::vector<T>& data, const T& canonical, const PackedArray& offset,
-    std::uint32_t count) -> std::vector<T> {
+    const std::vector<T>& data, const T& canonical, std::int64_t base,
+    std::uint32_t count, bool anchor_known) -> std::vector<T> {
   std::vector<T> result;
-  if (offset.HasUnknown()) {
+  if (!anchor_known) {
     result.assign(count, canonical);
     return result;
   }
   result.reserve(count);
-  const auto base = offset.ToInt64();
   const auto size = static_cast<std::int64_t>(data.size());
   for (std::uint32_t i = 0; i < count; ++i) {
     const auto pos = base + static_cast<std::int64_t>(i);
@@ -296,17 +298,17 @@ template <typename T>
   return result;
 }
 
-// LRM 7.6 + 7.4.5 whole-slice scatter. Each of the `count` values lands at
-// `offset + i`; an out-of-range position is skipped and an x / z offset
-// performs no operation, matching the invalid-index write contract.
+// LRM 7.6 + 7.4.5 whole-slice scatter. Each of the `count` values lands at the
+// resolved ordinal `base + i`; an out-of-range position is skipped and an
+// unresolved selector (`!anchor_known`) performs no operation, matching the
+// invalid-index write contract.
 template <typename T>
 auto ArraySliceScatter(
-    std::vector<T>& data, const PackedArray& offset, std::uint32_t count,
-    const std::vector<T>& values) -> void {
-  if (offset.HasUnknown()) {
+    std::vector<T>& data, std::int64_t base, std::uint32_t count,
+    const std::vector<T>& values, bool anchor_known) -> void {
+  if (!anchor_known) {
     return;
   }
-  const auto base = offset.ToInt64();
   const auto size = static_cast<std::int64_t>(data.size());
   for (std::uint32_t i = 0; i < count; ++i) {
     const auto pos = base + static_cast<std::int64_t>(i);

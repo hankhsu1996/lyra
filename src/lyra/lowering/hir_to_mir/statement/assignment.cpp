@@ -138,6 +138,10 @@ auto LowerDestructuringAssign(
         mir::MakeInt32Literal(
             process.Module().Unit().builtins.int32,
             static_cast<std::int64_t>(w)));
+    // `temp[offset +: w]`: a raw indexed-up part-select (`value::SliceForm`
+    // `kIndexedUp` == 1); the snapshot value resolves the bit window itself.
+    const mir::ExprId form_id = wrapper.exprs.Add(
+        mir::MakeInt32Literal(process.Module().Unit().builtins.int32, 1));
     const mir::ExprId temp_ref =
         wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
     const mir::TypeId slice_type = process.Module().Unit().types.Intern(
@@ -152,7 +156,7 @@ auto LowerDestructuringAssign(
             .data =
                 mir::CallExpr{
                     .callee = mir::Direct{.target = support::BuiltinFn::kSlice},
-                    .arguments = {temp_ref, offset_id, count_id}},
+                    .arguments = {temp_ref, offset_id, count_id, form_id}},
             .type = slice_type});
     const mir::ExprId slice_id = wrapper.exprs.Add(
         mir::Expr{

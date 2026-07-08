@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -16,6 +17,7 @@
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
+#include "lyra/value/slice_selector.hpp"
 
 namespace lyra::value {
 
@@ -24,17 +26,40 @@ class UnpackedArray;
 template <typename T>
 class ArraySliceRef;
 
+// The declared range of one unpacked dimension, the array's coordinate system.
+// Element order runs left-to-right (LRM 7.6), so the leftmost element (index
+// `left`) is storage ordinal 0. `ToOrdinal` maps a source-declared index onto
+// the storage ordinal; `FromOrdinal` is its inverse. Unlike a packed bit range,
+// the ordinal counts from the left, not the least-significant end.
+struct UnpackedRange {
+  std::int64_t left;
+  std::int64_t right;
+
+  [[nodiscard]] auto IsAscending() const -> bool {
+    return left <= right;
+  }
+  [[nodiscard]] auto ToOrdinal(std::int64_t sv) const -> std::int64_t {
+    return IsAscending() ? sv - left : left - sv;
+  }
+  [[nodiscard]] auto FromOrdinal(std::int64_t ordinal) const -> std::int64_t {
+    return IsAscending() ? ordinal + left : left - ordinal;
+  }
+};
+
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2). One C++ container layer
 // per declared unpacked dimension; multi-dim composes as
 // `UnpackedArray<UnpackedArray<...>>`. Mirrors `PackedArray`'s surface for
-// every op that crosses the SV / C++ boundary: `Element(const PackedArray&)`
-// for indexed access (no `operator[]`), `Slice(offset, count)` for the LRM
-// 7.4.5 contiguous-range selector, and `operator==` / `CaseEqual` returning a
-// 1-bit `PackedArray` so equality on aggregates propagates through the same
+// every op that crosses the SV / C++ boundary: `Element` / `Slice` for indexed
+// and range access (no `operator[]`), and `operator==` / `CaseEqual` returning
+// a 1-bit `PackedArray` so equality on aggregates propagates through the same
 // value-type the integral surface uses.
 //
-// The element default and the invalid-index discard target are carried by an
-// `OobShield`.
+// The payload is ordinal-only: it does not carry a declared range. The declared
+// coordinate range is a fact of the receiver's static type, passed to element
+// and slice access as a `[left:right]` operand pair against which the source
+// index resolves to a storage ordinal. Whole-array movement is ordinal-wise and
+// range-agnostic. The element default and the invalid-index discard target are
+// carried by an `OobShield`.
 template <typename T>
 class UnpackedArray {
  public:
@@ -46,18 +71,19 @@ class UnpackedArray {
   // variable initialization).
   UnpackedArray() = default;
 
-  // Empty container with the shield seeded. Internal use only -- SV fixed-size
-  // arrays are always non-empty; this form serves `Slice` and similar paths
-  // that build a fresh `UnpackedArray` element-by-element.
+  // Empty container with the shield seeded. Internal use only -- a fresh
+  // `UnpackedArray` that a `Slice` fills element-by-element. The payload is
+  // ordinal-only; a declared range is a fact of the receiver's static type, not
+  // of the value.
   explicit UnpackedArray(T element_default)
       : shield_(std::move(element_default)) {
   }
 
-  // Element-list construction: shield seeded, plus the explicit initial
-  // elements (LRM 10.9 assignment pattern lowering). The element list is taken
-  // as a span so the emit side can hand in a `std::array<T, N>{...}` literal
-  // whose self-determined type is unambiguous, rather than relying on
-  // context-dependent braced-init binding.
+  // Shield + element-list construction: the seeded shield and the explicit
+  // initial elements (LRM 10.9 assignment pattern lowering). The element list
+  // is taken as a span so the emit side can hand in a `std::array<T, N>{...}`
+  // literal whose self-determined type is unambiguous; the element count sizes
+  // the payload.
   UnpackedArray(T element_default, std::span<const T> init)
       : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
@@ -103,41 +129,53 @@ class UnpackedArray {
     }
   }
 
-  // LRM 7.4.5: an invalid-index write lands on the shield's discard target.
-  [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
-    if (IsInvalidIndex(idx)) {
+  // LRM 7.4.5: an invalid-index write lands on the shield's discard target. The
+  // declared range `[left:right]` comes from the receiver's static type as a
+  // select operand.
+  [[nodiscard]] auto ElementRef(
+      const PackedArray& sv_index, const PackedArray& left,
+      const PackedArray& right) -> T& {
+    const auto ordinal = ResolveOrdinal(sv_index, left, right);
+    if (!ordinal) {
       return shield_.DiscardTarget();
     }
-    return data_[static_cast<std::size_t>(idx.ToInt64())];
+    return data_[*ordinal];
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
   // 7-1).
-  [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
-    if (IsInvalidIndex(idx)) {
+  [[nodiscard]] auto Element(
+      const PackedArray& sv_index, const PackedArray& left,
+      const PackedArray& right) const -> const T& {
+    const auto ordinal = ResolveOrdinal(sv_index, left, right);
+    if (!ordinal) {
       return shield_.Default();
     }
-    return data_[static_cast<std::size_t>(idx.ToInt64())];
+    return data_[*ordinal];
   }
 
-  // LRM 7.4.5 contiguous-range selector. Partial-OOB positions yield the
-  // canonical default; X / Z offset yields a wholly-default sub-array at
-  // the type-fixed count's width. See `concepts.hpp` for the `Sliceable`
-  // protocol shape.
+  // LRM 7.4.5 contiguous-range selector. The raw selector `(a, b, form)` is
+  // resolved to the storage-ordinal window against the receiver's declared
+  // `[left:right]` range; a partial-OOB position yields the canonical default
+  // and an X/Z base yields a wholly-default sub-array. The result is
+  // ordinal-only payload.
   [[nodiscard]] auto Slice(
-      const PackedArray& offset, const PackedArray& count_pa) const
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& left, const PackedArray& right) const
       -> UnpackedArray {
-    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
+    const SliceWindow win = ResolveSliceWindow(a, b, form, left, right);
     return UnpackedArray(
         shield_.Default(),
-        detail::ArraySliceGather(data_, shield_.Default(), offset, count));
+        detail::ArraySliceGather(
+            data_, shield_.Default(), win.base, win.count, win.base_known));
   }
 
   [[nodiscard]] auto SliceRef(
-      const PackedArray& offset, const PackedArray& count_pa)
-      -> ArraySliceRef<T> {
-    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
-    return ArraySliceRef<T>{data_, shield_.Default(), offset, count};
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& left, const PackedArray& right) -> ArraySliceRef<T> {
+    const SliceWindow win = ResolveSliceWindow(a, b, form, left, right);
+    return ArraySliceRef<T>{
+        data_, shield_.Default(), win.base, win.count, win.base_known};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality / case-equality. Slang's binding
@@ -302,7 +340,7 @@ class UnpackedArray {
         std::move(proto), detail::ArrayUniqueIndex(Entries(), std::move(key)));
   }
 
-  // LRM 7.12.5 projection into a same-range fixed unpacked array; `proto` seeds
+  // LRM 7.12.5 projection into a same-size fixed unpacked array; `proto` seeds
   // the result element type's canonical default (producer-supplied, since the
   // result element type may differ from this array's).
   template <typename F, typename U>
@@ -312,8 +350,8 @@ class UnpackedArray {
   }
 
  private:
-  // The LRM 7.12 entry stream (decision: array-manipulation-entry-stream): a
-  // lazy view pairing each element with its ordinal index, in declared order.
+  // The LRM 7.12 entry stream: a lazy view pairing each element with its
+  // ordinal index, in declared order.
   [[nodiscard]] auto Entries() const {
     return std::views::enumerate(data_) |
            std::views::transform([](auto&& pair) {
@@ -323,11 +361,61 @@ class UnpackedArray {
            });
   }
 
-  [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
-    if (idx.HasUnknown()) return true;
-    const auto v = idx.ToInt64();
-    return v < 0 || static_cast<std::uint64_t>(v) >=
-                        static_cast<std::uint64_t>(data_.size());
+  // LRM 7.4.5: resolve a source-declared index to a storage ordinal against the
+  // declared range. An X / Z index, or one outside the range, is an invalid
+  // access -- `nullopt`, the read-default / write-discard path.
+  [[nodiscard]] auto ResolveOrdinal(
+      const PackedArray& sv_index, const PackedArray& left,
+      const PackedArray& right) const -> std::optional<std::size_t> {
+    if (sv_index.HasUnknown()) {
+      return std::nullopt;
+    }
+    const UnpackedRange range{.left = left.ToInt64(), .right = right.ToInt64()};
+    const std::int64_t ordinal = range.ToOrdinal(sv_index.ToInt64());
+    if (ordinal < 0 || static_cast<std::uint64_t>(ordinal) >= data_.size()) {
+      return std::nullopt;
+    }
+    return static_cast<std::size_t>(ordinal);
+  }
+
+  struct SliceWindow {
+    std::int64_t base;
+    std::uint32_t count;
+    bool base_known;
+  };
+
+  // Resolve a raw range selector to the storage-ordinal window. `(a, b)` are
+  // source coordinates -- a constant range's two declared endpoints, or an
+  // indexed part-select's base and (constant) width -- and `form` says which.
+  // The receiver's declared range `[left:right]` comes from its static type as
+  // a select operand. The low ordinal and the count fall out of the two source
+  // endpoints rebased against that range; only the base coordinate `a` can
+  // carry a runtime X / Z.
+  [[nodiscard]] auto ResolveSliceWindow(
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& left, const PackedArray& right) const -> SliceWindow {
+    const std::int64_t base_coord = a.ToInt64();
+    const std::int64_t extent = b.ToInt64();
+    std::int64_t other = extent;
+    switch (static_cast<SliceForm>(form.ToInt64())) {
+      case SliceForm::kIndexedUp:
+        other = base_coord + extent - 1;
+        break;
+      case SliceForm::kIndexedDown:
+        other = base_coord - extent + 1;
+        break;
+      case SliceForm::kConstant:
+        break;
+    }
+    const UnpackedRange range{.left = left.ToInt64(), .right = right.ToInt64()};
+    const std::int64_t o1 = range.ToOrdinal(base_coord);
+    const std::int64_t o2 = range.ToOrdinal(other);
+    const std::int64_t lo = o1 < o2 ? o1 : o2;
+    const std::int64_t span = o1 < o2 ? o2 - o1 : o1 - o2;
+    return SliceWindow{
+        .base = lo,
+        .count = static_cast<std::uint32_t>(span + 1),
+        .base_known = !a.HasUnknown()};
   }
 
   detail::OobShield<T> shield_;
@@ -338,20 +426,23 @@ class UnpackedArray {
 
 // LRM 7.6: an assignment to an unpacked slice is a single assignment to the
 // entire slice. The proxy aliases the source storage (a non-owning pointer to
-// its element vector) plus the (offset, count) window, so a fixed-size unpacked
-// array and a dynamic array share one slice-write surface. X / Z offset makes
-// `ToOwned()` a wholly-default sub-array and `operator=` a no-op; partial-OOB
-// behaves per-element. Move-only so the proxy cannot outlive what it aliases.
+// its element vector) plus the resolved (base ordinal, count) window, so a
+// fixed-size unpacked array and a dynamic array share one slice-write surface.
+// An unresolved selector makes `ToOwned()` a wholly-default sub-array and
+// `operator=` a no-op; partial-OOB behaves per-element. The materialized owned
+// value is ordinal-only payload (no range). Move-only so the proxy cannot
+// outlive what it aliases.
 template <typename T>
 class ArraySliceRef {
  public:
   ArraySliceRef(
-      std::vector<T>& data, T canonical, PackedArray offset,
-      std::uint32_t count)
+      std::vector<T>& data, T canonical, std::int64_t base, std::uint32_t count,
+      bool anchor_known)
       : data_(&data),
         canonical_(std::move(canonical)),
-        offset_(std::move(offset)),
-        count_(count) {
+        base_(base),
+        count_(count),
+        anchor_known_(anchor_known) {
   }
   ArraySliceRef(const ArraySliceRef&) = delete;
   auto operator=(const ArraySliceRef&) -> ArraySliceRef& = delete;
@@ -361,20 +452,22 @@ class ArraySliceRef {
 
   [[nodiscard]] auto ToOwned() const -> UnpackedArray<T> {
     return UnpackedArray<T>(
-        canonical_,
-        detail::ArraySliceGather(*data_, canonical_, offset_, count_));
+        canonical_, detail::ArraySliceGather(
+                        *data_, canonical_, base_, count_, anchor_known_));
   }
 
   auto operator=(const UnpackedArray<T>& value) -> ArraySliceRef& {
-    detail::ArraySliceScatter(*data_, offset_, count_, value.data_);
+    detail::ArraySliceScatter(
+        *data_, base_, count_, value.data_, anchor_known_);
     return *this;
   }
 
  private:
   std::vector<T>* data_;
   T canonical_;
-  PackedArray offset_;
+  std::int64_t base_;
   std::uint32_t count_;
+  bool anchor_known_;
 };
 
 // LRM 21.2.1.6 aggregate format. Per the per-type Formatter trait the
@@ -403,9 +496,9 @@ struct Formatter<UnpackedArray<T>> {
 
 static_assert(LyraValue<UnpackedArray<PackedArray>>);
 static_assert(Sized<UnpackedArray<PackedArray>>);
-static_assert(Indexable<UnpackedArray<PackedArray>>);
-static_assert(Sliceable<UnpackedArray<PackedArray>>);
-static_assert(SliceableRef<UnpackedArray<PackedArray>>);
+static_assert(RangedIndexable<UnpackedArray<PackedArray>>);
+static_assert(RangedSliceable<UnpackedArray<PackedArray>>);
+static_assert(RangedSliceableRef<UnpackedArray<PackedArray>>);
 static_assert(Ownable<UnpackedArray<PackedArray>>);
 static_assert(Defaultable<UnpackedArray<PackedArray>>);
 static_assert(Sortable<UnpackedArray<PackedArray>>);
