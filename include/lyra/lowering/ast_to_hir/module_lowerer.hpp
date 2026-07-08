@@ -25,6 +25,7 @@
 namespace slang::ast {
 class Expression;
 class ClassType;
+class Scope;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -183,6 +184,20 @@ class ModuleLowerer {
   auto TakeCrossUnitRefsForFrame(ScopeFrameId slot_owner_frame)
       -> std::vector<hir::CrossUnitRefDecl>;
 
+  // The compilation-unit structural declaration pass (LRM 27, 23.6): before any
+  // executable body lowers, walk the whole unit's scope tree, assign each
+  // addressable scope its frame, and register every owned-child head (instance,
+  // generate block, generate array). A body or sensitivity read resolves an
+  // owned child regardless of which sibling scope lowered first. Registers no
+  // executable HIR.
+  void DeclareStructuralIdentities(const slang::ast::Scope& scope);
+
+  // The frame assigned to `scope` by the declaration pass. Every scope a
+  // structural lowerer is built for was assigned one, so absence is a
+  // compiler-bug invariant.
+  [[nodiscard]] auto LookupScopeFrame(const slang::ast::Scope& scope) const
+      -> ScopeFrameId;
+
   // Frame minting for scope entry.
   [[nodiscard]] auto NextScopeFrameId() -> ScopeFrameId;
 
@@ -200,15 +215,28 @@ class ModuleLowerer {
       hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
       hir::TypeId type, diag::SourceSpan span) -> hir::Expr;
 
-  // Translates slang-side reads to HIR SensitivityEntries via this module's
-  // binding tables, using the current walk frame to compute hops.
+  // Translates slang-side reads to HIR SensitivityEntries. Each read resolves
+  // to the same reader-relative route the reader would use to reach the target,
+  // derived from the target's elaborated position -- not reclassified from a
+  // global table lookup.
   [[nodiscard]] auto TranslateSensitivityReads(
-      const std::vector<SensitivityRead>& reads, const WalkFrame& frame) const
+      const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
       -> std::vector<hir::SensitivityEntry>;
 
  private:
-  // Cross-unit ref dedup lookup. Private: TranslateSensitivityReads is the
-  // only caller; external code uses MapOrGetCrossUnitRef.
+  // Resolves one read target to the reader-relative access form: a typed climb
+  // when the target sits directly on an enclosing scope, otherwise a routed
+  // reference whose head and descent are reconstructed from the target's
+  // elaborated owner chain. Returns nullopt when the target is unreachable
+  // (a form not yet supported).
+  [[nodiscard]] auto TranslateReadTarget(
+      const WalkFrame& frame, const slang::ast::ValueSymbol& value)
+      -> std::optional<hir::SensitivityRef>;
+
+  // The cross-unit slot the body already resolved for `target` in `frame`, if
+  // any. An upward reference to an ancestor unit is reached by name across that
+  // unit's boundary (an opaque segment); the reader-relative downward
+  // reconstruction does not apply, so the observation reuses the body's slot.
   [[nodiscard]] auto LookupCrossUnitRef(
       ScopeFrameId frame, const slang::ast::ValueSymbol& target) const
       -> std::optional<hir::CrossUnitRefId>;
@@ -226,6 +254,7 @@ class ModuleLowerer {
   StructuralDataObjectBindings structural_data_object_bindings_;
   SubroutineBindings subroutine_bindings_;
   OwnedChildBindings owned_child_bindings_;
+  std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
   // Dedup by (home_frame, target): the slot id is an index within a scope's
   // own `cross_unit_refs`, so two scopes referencing the same member each need
   // their own slot.

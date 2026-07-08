@@ -406,109 +406,64 @@ auto LowerHierarchicalValue(
     return indices;
   };
 
-  if (ref.isUpward()) {
-    // The named arm carries the canonical head name plus any per-dimension
-    // index that immediately follows it in `ref.path` (e.g. `bank[2].x`); the
-    // root arm carries no key. The suffix is `ref.path` strictly past the
-    // head element(s). Synthesizing the extern member on the referrer's own
-    // structural scope keeps the lexical lookup origin coincident with the
-    // structural class that owns this member, including for references
-    // written inside a generate block.
-    hir::CrossUnitRefHead anchor;
-    std::span<const slang::ast::HierarchicalReference::Element> suffix_steps =
-        ref.path.subspan(1);
-    switch (head_sym.kind) {
-      case slang::ast::SymbolKind::Instance:
-      case slang::ast::SymbolKind::GenerateBlock: {
-        std::vector<std::uint32_t> head_indices =
-            extract_head_indices(suffix_steps);
-        anchor = hir::UpwardNamedHead{
-            .head_name = std::string{head_sym.name},
-            .head_indices = std::move(head_indices)};
-        break;
-      }
-      case slang::ast::SymbolKind::Root:
-        anchor = hir::UpwardRootHead{};
-        break;
-      default:
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedExpressionForm,
-            "upward hierarchical reference whose head is not a module "
-            "instance, "
-            "a named generate block, or $root is not yet supported");
-    }
-    auto path = build_path(suffix_steps);
-    if (!path) return std::unexpected(std::move(path.error()));
-    return module.MakeCrossUnitMemberRef(
-        var, frame.Current(), std::move(anchor), std::move(*path), *type_id,
-        span);
-  }
-
   std::span<const slang::ast::HierarchicalReference::Element> suffix_steps =
       ref.path.subspan(1);
   std::vector<std::uint32_t> head_indices = extract_head_indices(suffix_steps);
   auto path = build_path(suffix_steps);
   if (!path) return std::unexpected(std::move(path.error()));
 
-  // Downward: the head is an owned child this unit's scope declares -- an
-  // instance / instance-array member, a generate block (LRM 27), or a named
-  // procedural block (LRM 9.3.5 / 23.9). Each is bound before any process
-  // body is lowered, so a reference resolves regardless of source order; a
-  // missing binding is a compiler-bug invariant.
-  const bool head_is_owned_child =
-      head_sym.kind == slang::ast::SymbolKind::Instance ||
-      head_sym.kind == slang::ast::SymbolKind::InstanceArray ||
-      head_sym.kind == slang::ast::SymbolKind::GenerateBlock ||
-      head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray ||
-      head_sym.kind == slang::ast::SymbolKind::StatementBlock;
-  if (!head_is_owned_child) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "hierarchical reference through this scope kind is not yet supported");
-  }
+  // Route by segment layout visibility (LRM 23.6), not slang's lexical up/down
+  // classification. A head that is an owned child of an enclosing scope in this
+  // unit -- a generate block reachable by a typed climb, or any owned child in
+  // the referrer's own scope -- takes the typed downward route, regardless of
+  // the order the child and the referrer appear in source. A head this unit
+  // does not own (an ancestor-unit instance, `$root`, or an owned module
+  // instance reached from a nested generate whose body is another unit) is
+  // reached by name across the boundary.
   const auto binding = module.LookupOwnedChildBinding(head_sym);
-  if (!binding.has_value()) {
-    throw InternalError(
-        "LowerHierarchicalValue: downward owned-child head has no binding");
-  }
-
-  const auto hops = frame.HopsTo(binding->home_frame);
-  if (!hops.has_value()) {
-    throw InternalError(
-        "LowerHierarchicalValue: downward owned-child head's home frame is not "
-        "on the current scope stack");
-  }
-  if (hops->value == 0) {
-    hir::DownwardHead head_at_home = binding->head;
-    head_at_home.head_indices = std::move(head_indices);
-    return module.MakeCrossUnitMemberRef(
-        var, binding->home_frame, std::move(head_at_home), std::move(*path),
-        *type_id, span);
-  }
-
-  // Sibling-of-ancestor: the head sits in an enclosing scope of the referrer.
-  // For an intra-unit owned child (a generate block; its layout is part of
-  // this unit's emitted artifact) the install climbs the runtime parent edge
-  // and composes a typed downward MemberAccess chain on the enclosing class.
-  // A module-instance head with `hops > 0` would require a hybrid typed-climb
-  // / by-name-descent because the instance's body is in another unit;
-  // unsupported here.
   const bool head_is_intra_unit =
       head_sym.kind == slang::ast::SymbolKind::GenerateBlock ||
       head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray ||
       head_sym.kind == slang::ast::SymbolKind::StatementBlock;
-  if (!head_is_intra_unit) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "hierarchical reference reaching an owned module instance from a "
-        "nested generate scope is not yet supported");
+  std::optional<hir::StructuralHops> down_hops;
+  if (binding.has_value()) {
+    if (const auto hops = frame.HopsTo(binding->home_frame);
+        hops.has_value() && (hops->value == 0 || head_is_intra_unit)) {
+      down_hops = hops;
+    }
   }
-  hir::DownwardHead enclosing_head = binding->head;
-  enclosing_head.hops = *hops;
-  enclosing_head.head_indices = std::move(head_indices);
+
+  if (!down_hops.has_value()) {
+    hir::CrossUnitRefHead anchor;
+    switch (head_sym.kind) {
+      case slang::ast::SymbolKind::Instance:
+      case slang::ast::SymbolKind::InstanceArray:
+      case slang::ast::SymbolKind::GenerateBlock:
+        anchor = hir::UpwardNamedHead{
+            .head_name = std::string{head_sym.name},
+            .head_indices = std::move(head_indices)};
+        break;
+      case slang::ast::SymbolKind::Root:
+        anchor = hir::UpwardRootHead{};
+        break;
+      default:
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "hierarchical reference whose head is not a module instance, a "
+            "named generate block, or $root is not yet supported");
+    }
+    return module.MakeCrossUnitMemberRef(
+        var, frame.Current(), std::move(anchor), std::move(*path), *type_id,
+        span);
+  }
+
+  hir::DownwardHead head = binding->head;
+  head.hops = *down_hops;
+  head.head_indices = std::move(head_indices);
+  const ScopeFrameId slot_owner =
+      down_hops->value == 0 ? binding->home_frame : frame.Current();
   return module.MakeCrossUnitMemberRef(
-      var, frame.Current(), std::move(enclosing_head), std::move(*path),
-      *type_id, span);
+      var, slot_owner, std::move(head), std::move(*path), *type_id, span);
 }
 
 auto LowerNamedValueStructural(

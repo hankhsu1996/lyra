@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <expected>
 #include <map>
@@ -10,13 +11,16 @@
 #include <vector>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/NetType.h>
 #include <slang/ast/types/Type.h>
+#include <slang/numeric/SVInt.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -38,6 +42,7 @@ ModuleLowerer::ModuleLowerer(
 
 auto ModuleLowerer::Run() -> diag::Result<hir::ModuleUnit> {
   WalkFrame frame;
+  DeclareStructuralIdentities(*body_);
   StructuralScopeLowerer root(*this, *body_);
   auto root_scope_or = root.Run(frame);
   if (!root_scope_or) {
@@ -53,6 +58,53 @@ auto ModuleLowerer::NextScopeFrameId() -> ScopeFrameId {
 
 auto ModuleLowerer::NextWithClauseId() -> hir::WithClauseId {
   return hir::WithClauseId{.value = next_with_clause_++};
+}
+
+void ModuleLowerer::DeclareStructuralIdentities(
+    const slang::ast::Scope& scope) {
+  const ScopeFrameId frame = NextScopeFrameId();
+  scope_frames_.emplace(&scope, frame);
+  // A generate id is the source-order position of the generate among this
+  // scope's instantiated generates, matching the arena index the body pass
+  // assigns; an uninstantiated `if` / `case` arm carries no runtime object
+  // (LRM 27.5) and consumes no id.
+  std::uint32_t generate_count = 0;
+  for (const auto& member : scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
+      if (block.isUninstantiated) continue;
+      MapOwnedChildBinding(
+          block, frame,
+          hir::DownwardHead{
+              .child = hir::GenerateChildRef{
+                  .generate = hir::GenerateId{generate_count++},
+                  .scope = hir::StructuralScopeId{0}}});
+      DeclareStructuralIdentities(block);
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
+      if (array.entries.empty()) continue;
+      MapOwnedChildBinding(
+          array, frame,
+          hir::DownwardHead{
+              .child = hir::GenerateChildRef{
+                  .generate = hir::GenerateId{generate_count++},
+                  .scope = hir::StructuralScopeId{0}}});
+      for (const auto* entry : array.entries) {
+        DeclareStructuralIdentities(*entry);
+      }
+    }
+  }
+}
+
+auto ModuleLowerer::LookupScopeFrame(const slang::ast::Scope& scope) const
+    -> ScopeFrameId {
+  const auto it = scope_frames_.find(&scope);
+  if (it == scope_frames_.end()) {
+    throw InternalError(
+        "ModuleLowerer::LookupScopeFrame: scope frame was not declared before "
+        "body lowering");
+  }
+  return it->second;
 }
 
 void ModuleLowerer::MapStructuralDataObjectBinding(
@@ -207,8 +259,97 @@ auto ModuleLowerer::MakeCrossUnitMemberRef(
   };
 }
 
+auto ModuleLowerer::TranslateReadTarget(
+    const WalkFrame& frame, const slang::ast::ValueSymbol& value)
+    -> std::optional<hir::SensitivityRef> {
+  // Only an observable structural signal -- a variable or a net -- is a
+  // sensitivity target. A genvar or parameter read folds to an elaboration
+  // constant that cannot change, so it is never observed.
+  if (value.kind != slang::ast::SymbolKind::Variable &&
+      value.kind != slang::ast::SymbolKind::Net) {
+    return std::nullopt;
+  }
+  // Pure enclosing lexical access: the target sits directly on the reader's own
+  // scope or an ancestor, reached by a typed climb of `hops` parent edges.
+  if (const auto binding = LookupStructuralDataObjectBinding(value)) {
+    if (const auto hops = frame.HopsTo(binding->home_frame)) {
+      return hir::SensitivityRef{
+          hir::StructuralDataObjectRef{.hops = *hops, .var = binding->var_id}};
+    }
+  }
+
+  // Otherwise reconstruct the reader-relative route from the target's
+  // elaborated position. Walking up its owner chain, the head is the first
+  // scope owned by an ancestor of the reader (the child of the deepest common
+  // scope) and the scopes below it form the descent. A generate-loop iteration
+  // or an instance-array element is addressed as an index on its array member,
+  // which is the registered owned child.
+  const auto type =
+      InternType(value.getType(), SourceMapper().PointSpanOf(value.location));
+  if (!type) return std::nullopt;
+
+  std::vector<hir::PathSegment> descent;
+  descent.push_back(
+      hir::PathSegment{.name = std::string{value.name}, .indices = {}});
+  const slang::ast::Scope* scope = value.getHierarchicalParent();
+  while (scope != nullptr) {
+    const slang::ast::Symbol* owned = &scope->asSymbol();
+    const slang::ast::Scope* next = owned->getHierarchicalParent();
+    std::vector<std::uint32_t> indices;
+    // Resolve the addressable owned child this hierarchy step corresponds to,
+    // and its per-dimension indices when it is an array element. Crossing a
+    // unit boundary, the instance member -- not its body -- is the owned child;
+    // a generate-loop iteration or instance-array element is indexed on its
+    // enclosing array member, which is the registered child.
+    if (owned->kind == slang::ast::SymbolKind::InstanceBody) {
+      const auto* inst =
+          owned->as<slang::ast::InstanceBodySymbol>().parentInstance;
+      if (inst == nullptr) return std::nullopt;
+      if (inst->arrayPath.empty()) {
+        owned = inst;
+      } else {
+        indices.assign(inst->arrayPath.begin(), inst->arrayPath.end());
+        owned = &inst->getParentScope()->asSymbol();
+      }
+      next = owned->getHierarchicalParent();
+    } else if (const auto* gb = owned->as_if<slang::ast::GenerateBlockSymbol>();
+               gb != nullptr && gb->getArrayIndex() != nullptr) {
+      indices.push_back(
+          static_cast<std::uint32_t>(
+              gb->getArrayIndex()->as<std::int64_t>().value_or(0)));
+      owned = &owned->getHierarchicalParent()->asSymbol();
+      next = owned->getHierarchicalParent();
+    }
+    if (const auto obinding = LookupOwnedChildBinding(*owned)) {
+      if (const auto hops = frame.HopsTo(obinding->home_frame)) {
+        hir::DownwardHead head = obinding->head;
+        head.hops = *hops;
+        head.head_indices = std::move(indices);
+        std::ranges::reverse(descent);
+        const ScopeFrameId slot_owner =
+            hops->value == 0 ? obinding->home_frame : frame.Current();
+        const hir::CrossUnitRefId id = MapOrGetCrossUnitRef(
+            value, slot_owner, hir::CrossUnitRefHead{std::move(head)},
+            std::move(descent), *type);
+        return hir::SensitivityRef{hir::CrossUnitVarRef{.id = id}};
+      }
+    }
+    descent.push_back(
+        hir::PathSegment{
+            .name = std::string{owned->name}, .indices = std::move(indices)});
+    scope = next;
+  }
+  // No reader-relative downward route: an upward reference climbs out to an
+  // ancestor unit, reached by name across the boundary and already resolved by
+  // the body.
+  if (const auto slot = LookupCrossUnitRef(frame.Current(), value)) {
+    return hir::SensitivityRef{hir::CrossUnitVarRef{.id = *slot}};
+  }
+  return std::nullopt;
+}
+
 auto ModuleLowerer::TranslateSensitivityReads(
-    const std::vector<SensitivityRead>& reads, const WalkFrame& frame) const
+    const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
     -> std::vector<hir::SensitivityEntry> {
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
@@ -228,28 +369,10 @@ auto ModuleLowerer::TranslateSensitivityReads(
     const std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint =
         read_type.isIntegral() && !read_type.isEnum() ? read.footprint
                                                       : std::nullopt;
-    // Reachability decides the access form. An enclosing structural object (the
-    // reader's own scope or an ancestor) is reached by typed navigation; a
-    // target not on the reader's enclosing chain -- a sibling or child scope in
-    // this unit, or another unit -- is reached through the reference resolved
-    // for the body. A failed enclosing lookup therefore routes the read, never
-    // drops it, so the result does not depend on which scope lowered first.
-    if (const auto binding = LookupStructuralDataObjectBinding(*value)) {
-      if (const auto hops = frame.HopsTo(binding->home_frame)) {
-        out.push_back(
-            hir::SensitivityEntry{
-                .ref =
-                    hir::StructuralDataObjectRef{
-                        .hops = *hops, .var = binding->var_id},
-                .footprint = footprint});
-        continue;
-      }
-    }
-    if (const auto slot = LookupCrossUnitRef(frame.Current(), *value)) {
+    if (auto ref = TranslateReadTarget(frame, *value)) {
       out.push_back(
           hir::SensitivityEntry{
-              .ref = hir::CrossUnitVarRef{.id = *slot},
-              .footprint = footprint});
+              .ref = *std::move(ref), .footprint = footprint});
     }
   }
   return out;

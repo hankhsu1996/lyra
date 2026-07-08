@@ -43,7 +43,7 @@ StructuralScopeLowerer::StructuralScopeLowerer(
     ModuleLowerer& module, const slang::ast::Scope& slang_scope)
     : module_(&module),
       slang_scope_(&slang_scope),
-      frame_(module.NextScopeFrameId()) {
+      frame_(module.LookupScopeFrame(slang_scope)) {
   // A `ref` / `const ref` port's internal variable aliases the connected
   // variable rather than owning storage (LRM 23.3.3.2); record which of this
   // body's variables those are so their members lower to a reference type. Only
