@@ -183,6 +183,29 @@ auto ModuleLowerer::LookupSubroutineBinding(
   return it->second;
 }
 
+void ModuleLowerer::MapForeignImportBinding(
+    const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
+    hir::ForeignImportId import_id) {
+  const auto [_, inserted] = foreign_import_bindings_.emplace(
+      &sym,
+      ForeignImportBinding{.owner_frame = owner_frame, .import_id = import_id});
+  if (!inserted) {
+    throw InternalError(
+        "ModuleLowerer::MapForeignImportBinding: DPI import symbol already "
+        "mapped");
+  }
+}
+
+auto ModuleLowerer::LookupForeignImportBinding(
+    const slang::ast::SubroutineSymbol& sym) const
+    -> std::optional<ForeignImportBinding> {
+  const auto it = foreign_import_bindings_.find(&sym);
+  if (it == foreign_import_bindings_.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
 void ModuleLowerer::MapOwnedChildBinding(
     const slang::ast::Symbol& child, ScopeFrameId home_frame,
     hir::DownwardHead head) {

@@ -552,6 +552,13 @@ class HirDumper {
               return std::format(
                   "BuiltinFn \"{}\"", support::BuiltinFnName(b.method));
             },
+            [this](const ForeignImportRef& f) -> std::string {
+              const auto& owner = ResolveScope(f.hops);
+              const auto& decl = owner.foreign_imports.Get(f.id);
+              return std::format(
+                  "ForeignImport[{}](hops={}) \"{}\"", f.id.value, f.hops.value,
+                  decl.name);
+            },
         },
         callee);
   }
@@ -875,6 +882,11 @@ class HirDumper {
           s.structural_subroutines.Get(
               StructuralSubroutineId{static_cast<std::uint32_t>(i)}));
     }
+    for (std::size_t i = 0; i < s.foreign_imports.size(); ++i) {
+      DumpForeignImport(
+          i, s.foreign_imports.Get(
+                 ForeignImportId{static_cast<std::uint32_t>(i)}));
+    }
     if (!s.exprs.empty()) {
       Line("Exprs:");
       Indent();
@@ -959,6 +971,45 @@ class HirDumper {
     }
     DumpProceduralBody(d.body);
     Dedent();
+  }
+
+  void DumpForeignImport(std::size_t index, const ForeignImportDecl& fi) {
+    Line(
+        std::format(
+            "ForeignImport[{}] function \"{}\" c_name=\"{}\"{} ret={}", index,
+            fi.name, fi.foreign_name, fi.is_pure ? " pure" : "",
+            FormatDpiAbiClass(fi.ret_abi)));
+    Indent();
+    for (std::size_t i = 0; i < fi.params.size(); ++i) {
+      Line(
+          std::format(
+              "Param[{}] {} : Type[{}]", i, FormatDpiAbiClass(fi.params[i].abi),
+              fi.params[i].sv_type.value));
+    }
+    Dedent();
+  }
+
+  [[nodiscard]] static auto FormatDpiAbiClass(support::DpiAbiClass abi)
+      -> std::string_view {
+    switch (abi) {
+      case support::DpiAbiClass::kVoid:
+        return "void";
+      case support::DpiAbiClass::kBit:
+        return "bit";
+      case support::DpiAbiClass::kByte:
+        return "byte";
+      case support::DpiAbiClass::kShortInt:
+        return "shortint";
+      case support::DpiAbiClass::kInt:
+        return "int";
+      case support::DpiAbiClass::kLongInt:
+        return "longint";
+      case support::DpiAbiClass::kReal:
+        return "real";
+      case support::DpiAbiClass::kString:
+        return "string";
+    }
+    throw InternalError("FormatDpiAbiClass: unknown support::DpiAbiClass");
   }
 
   [[nodiscard]] static auto FormatParamDirection(ParamDirection dir)

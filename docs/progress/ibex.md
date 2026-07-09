@@ -104,7 +104,8 @@ full support.
       would otherwise become an empty subroutine returning a default on every call). This is the
       current full-top frontier: `ibex_simple_system` exports `mhpmcounter_num` / `mhpmcounter_get`
       to the Verilator C++ testbench -- unneeded by the pure-SV `ibex_simple_system_tb` run, but the
-      unmodified source still declares them.
+      unmodified source still declares them. Real support is tracked in `dpi.md`; the module-scoped
+      export here is its D4a.
 - [ ] **Hierarchical reference reaching a module instance from a nested generate scope** -- a dotted
       reference, written inside a conditional or loop generate block, that descends into a module
       instance owned by an enclosing scope (the RVFI trap logic in `ibex_core`,
