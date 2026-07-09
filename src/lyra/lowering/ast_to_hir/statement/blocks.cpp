@@ -188,10 +188,9 @@ auto LowerBlockStmt(
   // pair, then sealed into a `ProceduralScopeDecl` and appended to the
   // enclosing structural scope's arena when the body walk returns -- the
   // arena is append-only, so the scope must be assembled before its first
-  // `Add`. A named scope is also registered as a runtime-addressable
-  // owned child so a reference whose leading component slang resolves to
-  // this block's symbol can route through the same head-binding machinery
-  // that instance and generate heads use.
+  // `Add`. A named block's hierarchical-reference head identity (LRM 23.9) is
+  // registered in the compilation-unit declaration pass, before any body
+  // lowers; the body pass grows no structural identity.
   std::optional<std::string> label;
   if (block.blockSymbol != nullptr && !block.blockSymbol->name.empty()) {
     label = std::string{block.blockSymbol->name};
@@ -233,12 +232,6 @@ auto LowerBlockStmt(
               .direct_child_scopes = std::move(nested_children)});
 
   frame.current_scope_children->push_back(scope_id);
-
-  if (label.has_value() && block.blockSymbol != nullptr) {
-    proc.Module().MapOwnedChildBinding(
-        *block.blockSymbol, frame.Current(),
-        hir::DownwardHead{.child = scope_id});
-  }
 
   return hir::Stmt{
       .label = std::nullopt,

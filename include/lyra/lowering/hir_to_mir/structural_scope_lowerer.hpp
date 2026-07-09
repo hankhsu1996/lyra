@@ -195,14 +195,16 @@ class StructuralScopeLowerer {
   // Resolves an owned-child reference (the `child` field of a
   // `hir::DownwardHead`) to how the route reaches it: its label, the parent's
   // borrowed companion handle when scalar, and its intra-unit target class when
-  // the artifact owns the child's body. `hops == 0` reads this scope's own
+  // the artifact owns the child's body. A named-block head carries only its SV
+  // label; its companion and target class are recovered from the materialized
+  // procedural scope the label names. `hops == 0` reads this scope's own
   // tables; `hops > 0` walks the parent chain to an enclosing scope, used by
   // the sibling-of-ancestor install when the head lives outside the referrer's
   // frame.
   [[nodiscard]] auto TranslateOwnedChild(
       hir::StructuralHops hops,
       const std::variant<
-          hir::InstanceMemberId, hir::GenerateChildRef, hir::ProceduralScopeId>&
+          hir::InstanceMemberId, hir::GenerateChildRef, hir::NamedBlockRef>&
           child) const -> OwnedChildAnchor {
     return LookupOwnedChildAnchorAtHops(hops, child);
   }
@@ -247,7 +249,7 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto LookupOwnedChildAnchorAtHops(
       hir::StructuralHops hops,
       const std::variant<
-          hir::InstanceMemberId, hir::GenerateChildRef, hir::ProceduralScopeId>&
+          hir::InstanceMemberId, hir::GenerateChildRef, hir::NamedBlockRef>&
           child) const -> OwnedChildAnchor {
     if (hops.value == 0) {
       return std::visit(
@@ -276,8 +278,8 @@ class StructuralScopeLowerer {
                     .companion = b.companion,
                     .target = b.scope_id};
               },
-              [&](const hir::ProceduralScopeId& s) -> OwnedChildAnchor {
-                const auto& e = scope_materialization_.Get(s);
+              [&](const hir::NamedBlockRef& nb) -> OwnedChildAnchor {
+                const auto& e = scope_materialization_.FindHead(nb.label);
                 return OwnedChildAnchor{
                     .label = e.label,
                     .companion = e.companion_field,

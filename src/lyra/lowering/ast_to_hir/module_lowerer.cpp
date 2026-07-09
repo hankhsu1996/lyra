@@ -66,12 +66,17 @@ void ModuleLowerer::DeclareStructuralIdentities(
     const slang::ast::Scope& scope) {
   const ScopeFrameId frame = NextScopeFrameId();
   scope_frames_.emplace(&scope, frame);
-  // Each owned-child id is the source-order position of that child among its
-  // own kind in this scope, matching the arena index the body pass assigns.
-  // A generate id counts instantiated generates -- an uninstantiated `if` /
-  // `case` arm carries no runtime object (LRM 27.5) and consumes no id. An
-  // instance-member id counts instances and non-empty instance arrays -- a
-  // zero-element array (LRM 23.3.2) constructs nothing and consumes no id.
+  // A generate or instance owned-child id is the source-order position of that
+  // child among its own kind in this scope, matching the arena index the body
+  // pass assigns. A generate id counts instantiated generates -- an
+  // uninstantiated `if` / `case` arm carries no runtime object (LRM 27.5) and
+  // consumes no id. An instance-member id counts instances and non-empty
+  // instance arrays -- a zero-element array (LRM 23.3.2) constructs nothing and
+  // consumes no id. A named procedural block (LRM 9.3.5 / 23.9) is keyed by its
+  // SV label instead of a position, so it needs no counter; slang exposes it as
+  // a direct scope member (unnamed begin/ends are transparent), and a reference
+  // heads at it only from the structural scope that owns it, never at a deeper
+  // named block nested inside it.
   std::uint32_t generate_count = 0;
   std::uint32_t instance_count = 0;
   for (const auto& member : scope.members()) {
@@ -110,6 +115,13 @@ void ModuleLowerer::DeclareStructuralIdentities(
       MapOwnedChildBinding(
           member, frame,
           hir::DownwardHead{.child = hir::InstanceMemberId{instance_count++}});
+    } else if (member.kind == slang::ast::SymbolKind::StatementBlock) {
+      const auto& block = member.as<slang::ast::StatementBlockSymbol>();
+      if (block.name.empty()) continue;
+      MapOwnedChildBinding(
+          block, frame,
+          hir::DownwardHead{
+              .child = hir::NamedBlockRef{.label = std::string{block.name}}});
     }
   }
 }
@@ -348,12 +360,14 @@ auto ModuleLowerer::TranslateReferenceRoute(
     // scope directly exposes, not the inner one.
     if (next != nullptr && reader_ancestors.contains(next)) {
       std::ranges::reverse(descent);
-      // Typed climb when this unit's own layout reaches the head: at hops 0 a
-      // member of the reader's own class, or at any depth a head whose class
-      // this unit emits (a generate block / array, a named block). An instance
-      // head at hops > 0 is excluded -- crossing an instance body crosses into
-      // another compilation unit, so the climb cannot stay typed and the head
-      // is reached by name.
+      // A head whose owning scope this unit emits routes as a downward head:
+      // the enclosing climb stays typed, and the head step is a typed member of
+      // the enclosing class. A generate block / array names that member
+      // directly; a named block (LRM 23.9) names it by the block's SV label,
+      // from which HIR-to-MIR recovers the materialized scope's companion. An
+      // instance head at hops > 0 is excluded -- crossing an instance body
+      // crosses into another compilation unit, so the climb cannot stay typed
+      // and the head is reached by name.
       const bool head_is_intra_unit =
           owned->kind == slang::ast::SymbolKind::GenerateBlock ||
           owned->kind == slang::ast::SymbolKind::GenerateBlockArray ||
@@ -372,6 +386,13 @@ auto ModuleLowerer::TranslateReferenceRoute(
           return hir::ReferenceRoute{hir::CrossUnitVarRef{.id = id}};
         }
       }
+      // No owned-child binding: this unit does not declare the head, so it
+      // lives in an ancestor compilation unit (an upward reference climbs out
+      // through the reader's own instance to reach it). A generate block or a
+      // named block in that other unit is reached by name across the boundary,
+      // the same as an instance head. When this unit does own the head the
+      // typed branch above always takes it -- a missing companion or
+      // materialization then surfaces downstream, never a silent by-name.
       const hir::CrossUnitRefId id = MapOrGetCrossUnitRef(
           value, frame.Current(),
           hir::CrossUnitRefHead{hir::UpwardNamedHead{
