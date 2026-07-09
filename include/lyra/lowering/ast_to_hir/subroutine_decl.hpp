@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -22,5 +23,14 @@ class ModuleLowerer;
 auto LowerSubroutineDecl(
     ModuleLowerer& module, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame) -> diag::Result<hir::SubroutineDecl>;
+
+// Lowers a slang `import "DPI-C"` subroutine (LRM 35.4) into a bodyless
+// hir::ForeignImportDecl: the resolved foreign name, the pure property, and the
+// ABI projection of its signature. Distinct from LowerSubroutineDecl because a
+// DPI import has no SV body; the caller records the result in the scope's
+// `foreign_imports` arena, never in its subroutine arena.
+auto LowerForeignImport(
+    ModuleLowerer& module, const slang::ast::SubroutineSymbol& sym)
+    -> diag::Result<hir::ForeignImportDecl>;
 
 }  // namespace lyra::lowering::ast_to_hir

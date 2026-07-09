@@ -50,6 +50,18 @@ struct SubroutineBinding {
 using SubroutineBindings =
     std::unordered_map<const slang::ast::SubroutineSymbol*, SubroutineBinding>;
 
+// A DPI-C import call resolves to the scope that declares the import, reached
+// through `owner_frame`, and to the import's `foreign_imports` id. A separate
+// binding space from SubroutineBinding: an import is a bodyless external
+// callable, not a body-bearing structural subroutine.
+struct ForeignImportBinding {
+  ScopeFrameId owner_frame{};
+  hir::ForeignImportId import_id{};
+};
+
+using ForeignImportBindings = std::unordered_map<
+    const slang::ast::SubroutineSymbol*, ForeignImportBinding>;
+
 // A downward reference's leading component names an owned child this scope
 // declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
 // generate block (`g[1].x`, LRM 27). The child's slang symbol maps to the
@@ -165,6 +177,13 @@ class ModuleLowerer {
       const slang::ast::SubroutineSymbol& sym) const
       -> std::optional<SubroutineBinding>;
 
+  void MapForeignImportBinding(
+      const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
+      hir::ForeignImportId import_id);
+  [[nodiscard]] auto LookupForeignImportBinding(
+      const slang::ast::SubroutineSymbol& sym) const
+      -> std::optional<ForeignImportBinding>;
+
   void MapOwnedChildBinding(
       const slang::ast::Symbol& child, ScopeFrameId home_frame,
       hir::DownwardHead head);
@@ -249,6 +268,7 @@ class ModuleLowerer {
   std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
   StructuralDataObjectBindings structural_data_object_bindings_;
   SubroutineBindings subroutine_bindings_;
+  ForeignImportBindings foreign_import_bindings_;
   OwnedChildBindings owned_child_bindings_;
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
   // Dedup by (home_frame, target): the slot id is an index within a scope's

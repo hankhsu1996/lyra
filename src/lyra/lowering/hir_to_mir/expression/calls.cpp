@@ -611,6 +611,11 @@ auto LowerHirCallExpr(
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);
           },
+          [&](const hir::ForeignImportRef&) -> diag::Result<mir::Expr> {
+            return diag::Fail(
+                span, diag::DiagCode::kUnsupportedDpi,
+                "a call to a DPI-C import is not yet supported");
+          },
       },
       c.callee);
 }

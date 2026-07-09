@@ -11,6 +11,8 @@
 #include "lyra/base/time.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/foreign_import.hpp"
+#include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_data_object.hpp"
@@ -219,7 +221,11 @@ struct StructuralScope {
   base::Arena<InstanceMemberDecl, InstanceMemberId> instance_members;
   std::vector<PortConnection> port_connections;
   base::Arena<CrossUnitRefDecl, CrossUnitRefId> cross_unit_refs;
+  // Body-bearing SV subroutines only. A bodyless DPI-C import never enters this
+  // arena; it lives in `foreign_imports` (invariant relied on by the
+  // per-subroutine body lowering, which assumes every entry here has a body).
   base::Arena<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
+  base::Arena<ForeignImportDecl, ForeignImportId> foreign_imports;
   base::Arena<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
   std::vector<TypeAliasDecl> type_aliases;
 

@@ -92,11 +92,16 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // recursion, and forward references (LRM 13.4.2). Ids are sequential in
   // source order and match the index `PopulateSubroutineMember` will write to.
   std::uint32_t reserved_subroutine_id = 0;
+  std::uint32_t reserved_foreign_import_id = 0;
   for (const auto& member : slang_scope_->members()) {
-    if (member.kind == slang::ast::SymbolKind::Subroutine) {
+    if (member.kind != slang::ast::SymbolKind::Subroutine) continue;
+    const auto& sub = member.as<slang::ast::SubroutineSymbol>();
+    if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
+      module_->MapForeignImportBinding(
+          sub, frame_, hir::ForeignImportId{reserved_foreign_import_id++});
+    } else {
       module_->MapSubroutineBinding(
-          member.as<slang::ast::SubroutineSymbol>(), frame_,
-          hir::StructuralSubroutineId{reserved_subroutine_id++});
+          sub, frame_, hir::StructuralSubroutineId{reserved_subroutine_id++});
     }
   }
 
@@ -165,9 +170,13 @@ auto StructuralScopeLowerer::PopulateMember(
           member.as<slang::ast::VariableSymbol>(), frame);
     case slang::ast::SymbolKind::Net:
       return PopulateNetMember(member.as<slang::ast::NetSymbol>(), frame);
-    case slang::ast::SymbolKind::Subroutine:
-      return PopulateSubroutineMember(
-          member.as<slang::ast::SubroutineSymbol>(), frame);
+    case slang::ast::SymbolKind::Subroutine: {
+      const auto& sub = member.as<slang::ast::SubroutineSymbol>();
+      if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
+        return PopulateForeignImportMember(sub, frame);
+      }
+      return PopulateSubroutineMember(sub, frame);
+    }
     case slang::ast::SymbolKind::ProceduralBlock:
       return PopulateProceduralBlockMember(
           member.as<slang::ast::ProceduralBlockSymbol>(), frame);
@@ -312,6 +321,26 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   }
   frame.current_structural_scope->structural_subroutines.Add(
       *std::move(decl_or));
+  return {};
+}
+
+auto StructuralScopeLowerer::PopulateForeignImportMember(
+    const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
+    -> diag::Result<void> {
+  auto decl_or = LowerForeignImport(*module_, sym);
+  if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+
+  const auto binding = module_->LookupForeignImportBinding(sym);
+  if (!binding.has_value() ||
+      binding->import_id.value !=
+          static_cast<std::uint32_t>(
+              frame.current_structural_scope->foreign_imports.size())) {
+    throw InternalError(
+        "StructuralScopeLowerer::PopulateForeignImportMember: DPI import added "
+        "out of reserved order; the reserve pass must run first in the same "
+        "order");
+  }
+  frame.current_structural_scope->foreign_imports.Add(*std::move(decl_or));
   return {};
 }
 
