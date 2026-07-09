@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "lyra/compiler/unit_metadata.hpp"
@@ -13,6 +14,13 @@
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
+
+// The name of the synthesized design-root unit. Its constructor elaborates the
+// design -- it builds the top-level units as its owned children -- so the host
+// constructs this one unit and the runtime walks the tree it builds. A leading
+// `$` keeps it distinct from every source unit (an SV identifier cannot begin
+// with `$`); a backend maps it to a target-language identifier when emitting.
+inline constexpr std::string_view kDesignRootUnitName = "$root";
 
 enum class StopAfter : std::uint8_t { kParse, kHir, kMir, kLir };
 
@@ -25,6 +33,11 @@ struct CompileArtifacts {
   std::optional<frontend::ParseResult> parse;
   std::optional<std::vector<hir::ModuleUnit>> hir_units;
   std::optional<std::vector<mir::CompilationUnit>> mir_units;
+  // The synthesized design-root unit, present exactly when `mir_units` is. Its
+  // constructor elaborates the design by building the top-level units as its
+  // owned children. It is a compiler output distinct from the source units, so
+  // the host constructs it directly rather than searching the source set.
+  std::optional<mir::CompilationUnit> root_unit;
   // Each LIR unit borrows the same-index MIR unit above for types and metadata,
   // so `lir_units` must not outlive `mir_units`. A vector move keeps the MIR
   // elements at their addresses, so the borrow survives moving these artifacts.
