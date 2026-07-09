@@ -9,6 +9,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_call.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
@@ -428,7 +429,8 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::StaticConstantRef& r) -> std::string {
             const mir::Class& cls = view.Class();
             return std::format(
-                "{}::{}", cls.name, cls.static_constants.Get(r.constant).name);
+                "{}::{}", ToCppName(cls.name),
+                cls.static_constants.Get(r.constant).name);
           },
           // HIR-to-MIR lowers an LHS selector chain to write-form nodes -- a
           // container-access `CallExpr` with a write callee (per
@@ -890,12 +892,14 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::FunctionRef& fr) -> std::string {
             const mir::Class& cls = view.Class();
             return std::format(
-                "&{}::{}", cls.name, cls.methods.Get(fr.callable).name);
+                "&{}::{}", ToCppName(cls.name),
+                cls.methods.Get(fr.callable).name);
           },
           [&](const mir::StaticConstantRef& r) -> std::string {
             const mir::Class& cls = view.Class();
             return std::format(
-                "{}::{}", cls.name, cls.static_constants.Get(r.constant).name);
+                "{}::{}", ToCppName(cls.name),
+                cls.static_constants.Get(r.constant).name);
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);

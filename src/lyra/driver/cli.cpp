@@ -14,7 +14,6 @@
 
 #include <fmt/core.h>
 
-#include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/compile.hpp"
@@ -443,23 +442,12 @@ auto main(int argc, char** argv) -> int {
       return *loc_or;
     };
 
-    auto build_tops = [](const std::vector<lyra::mir::CompilationUnit>& units,
-                         const std::vector<std::string>& top_names) {
-      std::vector<lyra::backend::cpp::TopInstance> tops;
-      for (const auto& unit : units) {
-        const auto& top_class = unit.GetClass(unit.root);
-        if (std::ranges::find(top_names, top_class.name) != top_names.end()) {
-          tops.push_back({.name = top_class.name, .unit = &unit});
-        }
-      }
-      return tops;
-    };
-
     switch (args.cmd) {
       case CommandKind::kDumpMir:
         for (const auto& unit : *result.artifacts.mir_units) {
           fmt::print("{}", lyra::mir::DumpMir(unit));
         }
+        fmt::print("{}", lyra::mir::DumpMir(*result.artifacts.root_unit));
         return 0;
       case CommandKind::kDumpLir:
         for (const auto& unit : *result.artifacts.lir_units) {
@@ -479,9 +467,9 @@ auto main(int argc, char** argv) -> int {
         }
         const std::filesystem::path dir = args.out_dir;
         const auto& units = *result.artifacts.mir_units;
-        const auto tops = build_tops(units, result.artifacts.top_unit_names);
+        const auto& root = *result.artifacts.root_unit;
         auto assembled = lyra::driver::AssembleProject(
-            *runtime, units, tops, dir, args.format);
+            *runtime, units, root, dir, args.format);
         if (!assembled) {
           report(std::move(assembled.error()), mgr);
           return 1;
@@ -496,9 +484,9 @@ auto main(int argc, char** argv) -> int {
         }
         const std::filesystem::path dir = args.out_dir;
         const auto& units = *result.artifacts.mir_units;
-        const auto tops = build_tops(units, result.artifacts.top_unit_names);
+        const auto& root = *result.artifacts.root_unit;
         auto assembled = lyra::driver::AssembleProject(
-            *runtime, units, tops, dir, args.format);
+            *runtime, units, root, dir, args.format);
         if (!assembled) {
           report(std::move(assembled.error()), mgr);
           return 1;
@@ -516,8 +504,18 @@ auto main(int argc, char** argv) -> int {
           case Backend::kJit: {
             const auto& lir_units = *result.artifacts.lir_units;
             const auto& unit_metadata = *result.artifacts.unit_metadata;
+            const auto& top_names = result.artifacts.top_unit_names;
+            // The JIT constructs each top unit directly (it does not yet lower
+            // the synthesized design-root unit's cross-unit construction), so
+            // it runs only the top-level units, skipping `$root` and
+            // submodules.
             int exit_code = 0;
             for (std::size_t i = 0; i < lir_units.size(); ++i) {
+              const auto& name =
+                  lir_units[i].classes.Get(lir_units[i].root).name;
+              if (std::ranges::find(top_names, name) == top_names.end()) {
+                continue;
+              }
               exit_code = lyra::jit::Execute(lir_units[i], unit_metadata[i]);
             }
             return exit_code;
@@ -543,10 +541,9 @@ auto main(int argc, char** argv) -> int {
               return 1;
             }
             const auto& units = *result.artifacts.mir_units;
-            const auto tops =
-                build_tops(units, result.artifacts.top_unit_names);
+            const auto& root = *result.artifacts.root_unit;
             auto exit_code = lyra::driver::RunInPlace(
-                *runtime, units, tops, *tmp_or, args.format, pch_opts,
+                *runtime, units, root, *tmp_or, args.format, pch_opts,
                 args.plusargs);
             if (!exit_code) {
               report(std::move(exit_code.error()), mgr);

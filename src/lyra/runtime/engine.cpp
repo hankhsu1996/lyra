@@ -38,39 +38,22 @@ Engine::Engine(EngineOptions options)
       plusargs_(std::move(options.plusargs)) {
 }
 
-void Engine::BindDesign(std::vector<std::unique_ptr<Scope>> tops) {
+void Engine::BindDesign(std::unique_ptr<Scope> root) {
   if (bound_) {
     throw InternalError("Engine::BindDesign called more than once");
   }
   bound_ = true;
-  // The synthetic `$root` has no generated behavior; its program is all no-op.
-  static constexpr ScopeProgram kRootProgram{};
-  root_ = std::make_unique<Scope>(
-      nullptr, HierarchySegment{"$root", {}}, services_, &kRootProgram);
-  std::vector<Scope*> top_handles;
-  top_handles.reserve(tops.size());
-  for (auto& top : tops) {
-    // The root owns every top: a `$root`-anchored absolute path descends from
-    // the root by name (LRM 23.6), and SV-visible lookup on `$root` recurses
-    // through the owned-children relation. The returned handle drives the
-    // per-top phases below without re-borrowing the owning collection.
-    top_handles.push_back(root_->AddOwnedChild(std::move(top)));
-  }
-  // Link every top before any phase runs, so an upward climb during resolution
-  // sees the whole tree (the root and all sibling tops already exist). The
-  // phases run design-wide in order: resolve every reference and attachment
-  // across the design, then initialize every scope's variables (so an
-  // initializer observes resolved references), then activate every scope's
-  // processes (so processes start only after all initialization).
-  for (Scope* top : top_handles) {
-    top->Resolve();
-  }
-  for (Scope* top : top_handles) {
-    top->Initialize();
-  }
-  for (Scope* top : top_handles) {
-    top->Activate();
-  }
+  root_ = std::move(root);
+  // The whole tree already exists: the generated `$root` constructor built the
+  // top-level units as its owned children, and each child built its own
+  // subtree. Each phase is one top-down walk from the root that recurses
+  // through the owned-children relation, so the design-wide barrier holds --
+  // every scope resolves before any initializes, and every scope initializes
+  // before any activates (an upward climb during resolution already sees the
+  // whole tree, and an initializer observes only resolved references).
+  root_->Resolve();
+  root_->Initialize();
+  root_->Activate();
 }
 
 auto Engine::Run() -> int {

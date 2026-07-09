@@ -5,6 +5,7 @@
 #include <string>
 #include <variant>
 
+#include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class.hpp"
@@ -114,13 +115,13 @@ auto RenderTypeAsCpp(
             return "lyra::value::WildcardKey";
           },
           [&unit](const mir::ObjectType& o) -> std::string {
-            return unit.GetClass(o.class_id).name;
+            return ToCppName(unit.GetClass(o.class_id).name);
           },
           [&unit](const mir::StructType& s) -> std::string {
             return unit.GetStruct(s.struct_id).name;
           },
           [](const mir::ExternalUnitObjectType& e) -> std::string {
-            return e.unit_name;
+            return ToCppName(e.unit_name);
           },
           [](const mir::ScopeType&) -> std::string {
             return std::string{"lyra::runtime::Scope"};
