@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/plusargs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/print.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/scan.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
@@ -314,6 +315,11 @@ auto LowerSystemSubroutineCall(
           [&](const support::PrintTimescaleSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
             return LowerPrintTimescaleSystemSubroutineCall(process, frame);
+          },
+          [&](const support::PlusargsSystemSubroutineInfo& plusargs)
+              -> diag::Result<mir::Expr> {
+            return LowerPlusargsSystemSubroutineCall(
+                process, frame, call, plusargs);
           },
       },
       desc.semantic);

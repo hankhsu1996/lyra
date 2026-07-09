@@ -111,7 +111,12 @@ full support.
       `id_stage_i.controller_i.exc_req_d` inside `gen_rvfi_no_wb_stage`; `ibex_ex_block` reaches its
       generate-instantiated multiplier and divider the same way). Reached once DPI export above is
       handled or elided.
-- [ ] **`$value$plusargs`** -- runtime plusarg query (ibex_tracer reads the trace-enable plusarg).
+- [ ] **`$value$plusargs` / `$test$plusargs`** -- runtime plusarg query (LRM 21.6). The language
+      surface lowers and executes: `$test$plusargs` probes for a prefix, `$value$plusargs` parses
+      the matched plusarg's remainder under `%d` / `%o` / `%h` / `%x` / `%b` / `%s`. The
+      host-to-simulation plusargs source is still empty, so every query returns 0 and `ibex_tracer`
+      behaves as if no trace-enable plusarg was supplied; wiring the host command line into the
+      simulation is what unlocks a real match.
 - [ ] **A procedural statement form in ibex_cs_registers** -- one unsupported statement shape,
       recorded for follow-up once isolated.
 - [x] **Constant of an unpacked array type** -- an elaboration-time `localparam` array referenced

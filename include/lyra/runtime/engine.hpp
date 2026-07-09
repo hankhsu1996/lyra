@@ -13,6 +13,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/scope.hpp"
@@ -165,7 +166,8 @@ class Engine {
   StreamDispatcher stream_;
   DiagnosticDispatcher diagnostic_;
   FileTable files_{stream_};
-  RuntimeServices services_{stream_, diagnostic_, files_, *this};
+  PlusArgsSource plusargs_;
+  RuntimeServices services_{stream_, diagnostic_, files_, plusargs_, *this};
   std::unique_ptr<Scope> root_;
   // Processes created during simulation (fork-join branches), owned for their
   // dynamic lifetime. Each is dropped in RunProcess when it completes; static

@@ -147,12 +147,22 @@ struct TimeFormatSystemSubroutineInfo {};
 // precision. Only the no-argument (current scope) form is modeled.
 struct PrintTimescaleSystemSubroutineInfo {};
 
+// LRM 21.6 command-line plusargs: `$test$plusargs` tests whether any plusarg
+// starts with the user-supplied prefix; `$value$plusargs` also converts the
+// matching plusarg's remainder per the format specifier and writes it to the
+// output lvalue. The kind axis is what the HIR-to-MIR dispatcher branches on
+// to pick the runtime helper.
+enum class PlusargsKind : std::uint8_t { kTest, kValue };
+struct PlusargsSystemSubroutineInfo {
+  PlusargsKind kind;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
     ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
     TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
-    PrintTimescaleSystemSubroutineInfo>;
+    PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -828,6 +838,24 @@ inline constexpr std::array kSystemSubroutines = {
             DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitFatal},
         .suspends = true,
     },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{54},
+        .name = "$test$plusargs",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic = PlusargsSystemSubroutineInfo{.kind = PlusargsKind::kTest},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{55},
+        .name = "$value$plusargs",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic = PlusargsSystemSubroutineInfo{.kind = PlusargsKind::kValue},
+    },
 };
 
 }  // namespace detail
@@ -880,6 +908,11 @@ inline constexpr std::array kSystemSubroutines = {
 [[nodiscard]] inline auto GetTimeInfo(const SystemSubroutineDesc& desc)
     -> const TimeSystemSubroutineInfo* {
   return std::get_if<TimeSystemSubroutineInfo>(&desc.semantic);
+}
+
+[[nodiscard]] inline auto GetPlusargsInfo(const SystemSubroutineDesc& desc)
+    -> const PlusargsSystemSubroutineInfo* {
+  return std::get_if<PlusargsSystemSubroutineInfo>(&desc.semantic);
 }
 
 }  // namespace lyra::support
