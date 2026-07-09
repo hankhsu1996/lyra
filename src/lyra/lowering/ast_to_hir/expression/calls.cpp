@@ -509,6 +509,34 @@ auto LowerCallExpr(
     };
   }
 
+  // A DPI-C import is a bodyless external callable, bound in a separate space
+  // from body-bearing subroutines. Resolve it to a ForeignImportRef; its ABI
+  // and foreign name were classified once at declaration and are not re-derived
+  // here.
+  if (const auto import_binding = module.LookupForeignImportBinding(*sym)) {
+    const auto import_hops = frame.HopsTo(import_binding->owner_frame);
+    if (!import_hops.has_value()) {
+      throw InternalError(
+          "AST->HIR call: DPI import owner frame is not on the current scope "
+          "stack");
+    }
+    auto import_result_type = module.InternType(*call.type, span);
+    if (!import_result_type) {
+      return std::unexpected(std::move(import_result_type.error()));
+    }
+    return hir::Expr{
+        .type = *import_result_type,
+        .data =
+            hir::CallExpr{
+                .callee =
+                    hir::ForeignImportRef{
+                        .hops = *import_hops, .id = import_binding->import_id},
+                .arguments = std::move(arg_ids),
+            },
+        .span = span,
+    };
+  }
+
   const auto binding = module.LookupSubroutineBinding(*sym);
   if (!binding.has_value()) {
     throw InternalError(

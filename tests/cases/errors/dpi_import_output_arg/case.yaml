@@ -1,4 +1,4 @@
-id: errors.dpi_import_unsupported
+id: errors.dpi_import_output_arg
 tags: [errors, diag]
 input:
   command: [emit, cpp]
@@ -10,9 +10,9 @@ expect:
   exit: 1
   stderr:
     contains:
-      - "main.sv:5:"
+      - "main.sv:2:"
       - "unsupported:"
-      - "a call to a DPI-C import is not yet supported"
+      - "DPI-C output/inout argument is not yet supported"
     not_contains:
       - "internal error"
       - "\x1b["
