@@ -25,7 +25,8 @@ namespace lyra::runtime {
 auto DefaultEngineOptions() -> EngineOptions {
   return EngineOptions{
       .stream_sink = [](std::string_view text) { std::cout << text; },
-      .diagnostic_sink = [](std::string_view text) { std::cerr << text; }};
+      .diagnostic_sink = [](std::string_view text) { std::cerr << text; },
+      .plusargs = {}};
 }
 
 Engine::Engine() : Engine(DefaultEngineOptions()) {
@@ -33,7 +34,8 @@ Engine::Engine() : Engine(DefaultEngineOptions()) {
 
 Engine::Engine(EngineOptions options)
     : stream_(std::move(options.stream_sink)),
-      diagnostic_(std::move(options.diagnostic_sink)) {
+      diagnostic_(std::move(options.diagnostic_sink)),
+      plusargs_(std::move(options.plusargs)) {
 }
 
 void Engine::BindDesign(std::vector<std::unique_ptr<Scope>> tops) {

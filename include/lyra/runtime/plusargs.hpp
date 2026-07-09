@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/value/packed_array.hpp"
@@ -17,6 +18,11 @@ class RuntimeServices;
 // so a match compares directly against the user-supplied prefix.
 class PlusArgsSource {
  public:
+  PlusArgsSource() = default;
+  explicit PlusArgsSource(std::vector<std::string> tokens)
+      : tokens_(std::move(tokens)) {
+  }
+
   // Returns the remainder (the portion after `prefix`) of the first stored
   // token whose content starts with `prefix`, or nullopt if none match. The
   // tokens are searched in the order given, matching LRM 21.6.

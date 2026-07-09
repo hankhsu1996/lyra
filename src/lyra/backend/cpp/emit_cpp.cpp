@@ -450,6 +450,9 @@ auto RenderScopeHeaderFile(
 auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   std::string out;
   out += "#include <memory>\n";
+  out += "#include <string>\n";
+  out += "#include <string_view>\n";
+  out += "#include <utility>\n";
   out += "#include <vector>\n";
   out += "\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";
@@ -460,8 +463,20 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
         "#include \"{}.hpp\"\n", top.unit->GetClass(top.unit->root).name);
   }
   out += "\n";
-  out += "auto main() -> int {\n";
-  out += "  lyra::runtime::Engine engine;\n";
+  // LRM 21.6: `+`-prefixed argv entries are plusargs; the runtime stores them
+  // with the `+` stripped so a match compares against the user-supplied
+  // prefix directly.
+  out += "auto main(int argc, char** argv) -> int {\n";
+  out += "  std::vector<std::string> plusargs;\n";
+  out += "  for (int i = 1; i < argc; ++i) {\n";
+  out += "    const std::string_view arg{argv[i]};\n";
+  out += "    if (arg.starts_with(\"+\")) {\n";
+  out += "      plusargs.emplace_back(arg.substr(1));\n";
+  out += "    }\n";
+  out += "  }\n";
+  out += "  auto options = lyra::runtime::DefaultEngineOptions();\n";
+  out += "  options.plusargs = std::move(plusargs);\n";
+  out += "  lyra::runtime::Engine engine{std::move(options)};\n";
   out += "  std::vector<std::unique_ptr<lyra::runtime::Scope>> tops;\n";
   for (const auto& top : tops) {
     // A top instance's structural identity is fixed at this construction
