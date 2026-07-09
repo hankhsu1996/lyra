@@ -144,13 +144,16 @@ one translation; they must not each re-derive it.
   through its enclosing structural scope, so a read nested in a procedural block or a fork branch
   routes from that scope. slang's resolved reference path is provenance only, never a second routing
   authority.
-- Two items remain before the boundary is fully realized. A named procedural block's identity is
-  still assigned during the body pass -- it shares an arena populated by statement traversal, with
-  no source-order position the declaration pass can predict -- so a forward cross-scope reference to
-  a named block is not yet order-independent. And whether value access and change observation share
-  one bound runtime endpoint -- and whether an enclosing reference binds a per-instance handle
-  rather than re-navigating the parent chain on the hot path -- is the endpoint-capability half of
-  the boundary, constrained by it but not settled here.
+- Every addressable structural identity, including a named procedural block's, is registered by the
+  compilation-unit declaration pass before any body lowers. A named block's head identity is its SV
+  label, registered directly from the elaborated scope members, so a forward cross-scope reference
+  to it routes independently of declaration order like every other head kind. Its intra-unit access
+  is a typed layout-visible segment: the enclosing climb reaches the materialized scope's companion,
+  which HIR-to-MIR recovers from the label.
+- One item remains before the boundary is fully realized. Whether value access and change
+  observation share one bound runtime endpoint -- and whether an enclosing reference binds a
+  per-instance handle rather than re-navigating the parent chain on the hot path -- is the
+  endpoint-capability half of the boundary, constrained by it but not settled here.
 
 ## Relation to existing decisions
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -85,6 +86,27 @@ class ProceduralScopeMaterializationTable {
           "ProceduralScopeMaterializationTable::Get: scope id out of range");
     }
     return by_scope_id_[scope.value];
+  }
+
+  // The materialized head named block this structural scope directly owns with
+  // SV label `label`. A named-block hierarchical head (LRM 23.9) is a direct
+  // child of the structural scope, so its runtime parent is the enclosing
+  // class; a nested block sharing the label is reached by descent, never as a
+  // head, and is excluded. A head that a reference reaches owns addressable
+  // storage and therefore materializes, so absence is a compiler-bug invariant.
+  [[nodiscard]] auto FindHead(std::string_view label) const
+      -> const MaterializedProceduralScope& {
+    for (const auto& entry : by_scope_id_) {
+      if (entry.materialized &&
+          std::holds_alternative<EnclosingClass>(entry.runtime_parent) &&
+          entry.label == label) {
+        return entry;
+      }
+    }
+    throw InternalError(
+        "ProceduralScopeMaterializationTable::FindHead: no materialized head "
+        "named block with label '" +
+        std::string(label) + "'");
   }
 
   [[nodiscard]] auto Size() const -> std::size_t {
