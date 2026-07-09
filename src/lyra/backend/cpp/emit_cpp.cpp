@@ -449,49 +449,44 @@ auto RenderScopeHeaderFile(
 }
 
 auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
-  std::string out;
-  out += "#include <memory>\n";
-  out += "#include <string>\n";
-  out += "#include <string_view>\n";
-  out += "#include <utility>\n";
-  out += "#include <vector>\n";
-  out += "\n";
-  out += "#include \"lyra/runtime/engine.hpp\"\n";
-  out += "#include \"lyra/runtime/scope.hpp\"\n";
-  out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
   const auto& root_class = root.GetClass(root.root);
   const std::string root_cpp_name = ToCppName(root_class.name);
-  out += std::format("#include \"{}.hpp\"\n", root_cpp_name);
-  out += "\n";
-  // The host constructs the design-root unit and hands it to the engine. The
-  // root's constructor elaborates the design -- it builds the top-level units
-  // as its owned children -- so this harness invokes generated behavior rather
-  // than composing the object tree itself. The engine then walks the built
-  // tree. The segment carries the root's `$root` display name with no
-  // per-dimension indices; its type literal comes from the canonical
-  // RenderTypeAsCpp mapping, so this file does not repeat a type name MIR owns.
-  // LRM 21.6: `+`-prefixed argv entries are plusargs; the runtime stores them
-  // with the `+` stripped so a match compares against the user-supplied prefix
-  // directly.
-  out += "auto main(int argc, char** argv) -> int {\n";
-  out += "  std::vector<std::string> plusargs;\n";
-  out += "  for (int i = 1; i < argc; ++i) {\n";
-  out += "    const std::string_view arg{argv[i]};\n";
-  out += "    if (arg.starts_with(\"+\")) {\n";
-  out += "      plusargs.emplace_back(arg.substr(1));\n";
-  out += "    }\n";
-  out += "  }\n";
-  out += "  auto options = lyra::runtime::DefaultEngineOptions();\n";
-  out += "  options.plusargs = std::move(plusargs);\n";
-  out += "  lyra::runtime::Engine engine{std::move(options)};\n";
   const std::string segment_cpp =
       RenderTypeAsCpp(root, root_class, root.builtins.hierarchy_segment);
+
+  // Every invariant host-boundary concern -- argv parsing, engine
+  // construction, bind, scheduler drive, exception mapping -- lives in
+  // `RunDesignHost`. The emitter contributes only the C++ call that
+  // allocates `$root`: the concrete root class, its constructor arguments
+  // (parent, hierarchy segment, services). That call is composed here from
+  // MIR-known parts (the root class name, the hierarchy-segment type)
+  // rather than rendered from a single MIR/LIR root-construct artifact --
+  // allocation is realized per backend (a JIT backend allocates a generic
+  // runtime object; the C++ backend allocates its concrete class), so this
+  // shim carries the C++ form. `main` is a one-line hand-off; a new
+  // host-boundary concept is added to `RunDesignHost` in runtime C++,
+  // never to this shim.
+  std::string out;
+  out += "#include <memory>\n";
+  out += "\n";
+  out += "#include \"lyra/runtime/scope.hpp\"\n";
+  out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
+  out += std::format("#include \"{}.hpp\"\n", root_cpp_name);
+  out += "\n";
+  out += "namespace {\n";
+  out += "\n";
+  out += "auto BuildRoot(lyra::runtime::RuntimeServices& services)\n";
+  out += "    -> std::unique_ptr<lyra::runtime::Scope> {\n";
   out += std::format(
-      "  auto root = std::make_unique<{0}>(nullptr, {1}{{\"{2}\", {{}}}}, "
-      "engine.Services());\n",
+      "  return std::make_unique<{0}>(nullptr, {1}{{\"{2}\", {{}}}}, "
+      "services);\n",
       root_cpp_name, segment_cpp, root_class.name);
-  out += "  engine.BindDesign(std::move(root));\n";
-  out += "  return lyra::runtime::RunSimulation(engine);\n";
+  out += "}\n";
+  out += "\n";
+  out += "}  // namespace\n";
+  out += "\n";
+  out += "auto main(int argc, char** argv) -> int {\n";
+  out += "  return lyra::runtime::RunDesignHost(argc, argv, &BuildRoot);\n";
   out += "}\n";
   return out;
 }
