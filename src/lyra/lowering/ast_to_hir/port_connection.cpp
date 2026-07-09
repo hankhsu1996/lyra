@@ -117,11 +117,11 @@ auto ConnectElementPorts(
     path.push_back(
         hir::PathSegment{.name = std::string{internal->name}, .indices = {}});
     // An input/output port reads the child cell during simulation, so it holds
-    // a persistent cross-unit reference; a `ref` port is bound once in the
-    // resolve phase, so it keeps only the by-name reach.
+    // a persistent routed reference; a `ref` port is bound once in the resolve
+    // phase, so it keeps only the by-name reach.
     const auto cell_endpoint = [&]() -> hir::PortEndpoint {
       return hir::PortCellEndpoint{
-          .cell = frame.Exprs().Add(module.MakeCrossUnitMemberRef(
+          .cell = frame.Exprs().Add(module.MakeRoutedMemberRef(
               *internal, home_frame, head, path, *type_id, span))};
     };
 

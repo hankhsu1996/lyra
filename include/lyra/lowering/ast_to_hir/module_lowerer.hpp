@@ -190,18 +190,19 @@ class ModuleLowerer {
   [[nodiscard]] auto LookupOwnedChildBinding(const slang::ast::Symbol& child)
       const -> std::optional<OwnedChildBinding>;
 
-  // Cross-unit reference dedup. `slot_owner_frame` is the frame whose
-  // `cross_unit_refs` arena holds the slot -- the scope whose MIR class
-  // receives the slot member and whose constructor body installs it. For an
-  // intra-unit sibling-of-ancestor reference (`DownwardHead.hops > 0`) the
-  // slot owner is the referrer's frame while the head lives in an enclosing
-  // frame; for every other shape the slot owner is also the head's owner.
-  auto MapOrGetCrossUnitRef(
+  // Routed reference dedup. `slot_owner_frame` is the frame whose `routed_refs`
+  // arena holds the slot -- the scope whose MIR class receives the endpoint
+  // member and whose resolve body installs it. For an intra-unit reference that
+  // reaches an enclosing ancestor or a sibling-of-ancestor head the slot owner
+  // is the referrer's frame while the head lives in an enclosing frame; for a
+  // downward head in the referrer's own scope the slot owner is also the head's
+  // owner.
+  auto MapOrGetRoutedRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
-      hir::TypeId type) -> hir::CrossUnitRefId;
-  auto TakeCrossUnitRefsForFrame(ScopeFrameId slot_owner_frame)
-      -> std::vector<hir::CrossUnitRefDecl>;
+      hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
+      hir::TypeId type) -> hir::RoutedRefId;
+  auto TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
+      -> std::vector<hir::RoutedRefDecl>;
 
   // The compilation-unit structural declaration pass (LRM 27, 23.6): before any
   // executable body lowers, walk the whole unit's scope tree, assign each
@@ -226,12 +227,12 @@ class ModuleLowerer {
   [[nodiscard]] auto NextWithClauseId() -> hir::WithClauseId;
 
   // Builds a HIR Expr referring to a leaf reached by navigating `path` down
-  // from `head`. `target` is the leaf value symbol (cross-unit dedup key);
-  // `slot_owner_frame` is the frame whose `cross_unit_refs` arena holds the
-  // slot (see `MapOrGetCrossUnitRef`).
-  auto MakeCrossUnitMemberRef(
+  // from `head`. `target` is the leaf value symbol (routed-ref dedup key);
+  // `slot_owner_frame` is the frame whose `routed_refs` arena holds the slot
+  // (see `MapOrGetRoutedRef`).
+  auto MakeRoutedMemberRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
+      hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
       hir::TypeId type, diag::SourceSpan span) -> hir::Expr;
 
   // Translates slang-side reads to HIR SensitivityEntries. Each read resolves
@@ -246,9 +247,10 @@ class ModuleLowerer {
   // write, and change observation. From the reader's elaborated position
   // (`frame.reader_scope` and its unit-local chain) and the target symbol it
   // computes the reader-relative route and classifies each segment by layout
-  // visibility: a typed enclosing climb when the target is a this-unit
-  // structural data object, a typed downward head when the head's class this
-  // unit emits, and a by-name head where the route crosses the compilation-unit
+  // visibility: a direct member when the target sits on the reader's own scope,
+  // a routed reference otherwise -- a typed enclosing climb to a this-unit
+  // ancestor member, a typed downward head when the head's class this unit
+  // emits, or a by-name head where the route crosses the compilation-unit
   // boundary. Returns nullopt when the target is not an addressable signal or
   // its form is not yet supported.
   [[nodiscard]] auto TranslateReferenceRoute(
@@ -272,14 +274,13 @@ class ModuleLowerer {
   OwnedChildBindings owned_child_bindings_;
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
   // Dedup by (home_frame, target): the slot id is an index within a scope's
-  // own `cross_unit_refs`, so two scopes referencing the same member each need
+  // own `routed_refs`, so two scopes referencing the same member each need
   // their own slot.
   std::map<
       ScopeFrameId,
-      std::unordered_map<const slang::ast::ValueSymbol*, hir::CrossUnitRefId>>
-      cross_unit_ref_dedup_;
-  std::map<ScopeFrameId, std::vector<hir::CrossUnitRefDecl>>
-      cross_unit_refs_by_frame_;
+      std::unordered_map<const slang::ast::ValueSymbol*, hir::RoutedRefId>>
+      routed_ref_dedup_;
+  std::map<ScopeFrameId, std::vector<hir::RoutedRefDecl>> routed_refs_by_frame_;
   std::uint32_t next_scope_frame_ = 0;
   std::uint32_t next_with_clause_ = 0;
 };

@@ -2,20 +2,15 @@
 
 #include <cstdint>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -35,32 +30,6 @@ auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
   throw InternalError("LowerEventEdge: unknown hir::EventEdge value");
 }
 
-// Selects the observable-pointer expression for one sensitivity leaf, given
-// the lowered MIR field ref and its slot type. Adds the chosen expression
-// (and any sub-expressions it needs) to `block` and returns its id. The two
-// cases mirror the runtime's two storage shapes for an observable: a
-// pre-resolved borrowed pointer (a cross-unit reference slot filled in the
-// resolve phase, or another sealed pointer already at hand) is used as-is,
-// and a directly owned cell wraps under `AddressOfExpr`.
-auto BuildObservablePtrExpr(
-    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    mir::EnclosingHops hops, mir::FieldId var) -> mir::ExprId {
-  const mir::TypeId field_type =
-      frame.EnclosingClassAtHops(hops).fields.Get(var).type;
-  const mir::ExprId field_access_id =
-      block.exprs.Add(BuildStructuralFieldAccessExpr(frame, unit, hops, var));
-  const auto& field_type_data = unit.types.Get(field_type).data;
-
-  if (const auto* ptr = std::get_if<mir::PointerType>(&field_type_data);
-      ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
-    return field_access_id;
-  }
-
-  const mir::TypeId ptr_type =
-      unit.types.PointerTo(field_type, mir::PointerOwnership::kBorrowed);
-  return block.exprs.Add(mir::MakeAddressOfExpr(field_access_id, ptr_type));
-}
-
 }  // namespace
 
 auto MakeSensitivityWaitStmt(
@@ -71,24 +40,8 @@ auto MakeSensitivityWaitStmt(
   std::vector<mir::SensitivityRead> reads;
   reads.reserve(sensitivity_list.size());
   for (const auto& entry : sensitivity_list) {
-    const auto [hops, var] = std::visit(
-        Overloaded{
-            [&](const hir::StructuralDataObjectRef& r)
-                -> std::pair<mir::EnclosingHops, mir::FieldId> {
-              return {
-                  mir::EnclosingHops{.value = r.hops.value},
-                  lowerer.TranslateStructuralDataObject(r.hops, r.var)};
-            },
-            [&](const hir::CrossUnitVarRef& r)
-                -> std::pair<mir::EnclosingHops, mir::FieldId> {
-              return {
-                  mir::EnclosingHops{.value = 0},
-                  lowerer.CrossUnitRefTarget(r.id).target};
-            },
-        },
-        entry.ref);
-    const mir::ExprId observable_ptr_id =
-        BuildObservablePtrExpr(target_block, frame, unit, hops, var);
+    const mir::ExprId observable_ptr_id = EndpointObservablePtr(
+        target_block, frame, unit, BindEndpoint(lowerer, frame, entry.ref));
     // LRM 9.4.2 / 9.4.2.2 / 9.4.3: a bit-addressed footprint becomes
     // `(lsb, hi - lsb + 1)`; a whole-signal read (no footprint) is encoded
     // as width 0 (the any-change form at the runtime trigger).

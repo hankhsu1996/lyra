@@ -262,21 +262,21 @@ void EmitInstanceMemberConstruction(
 // cross-unit pointer must point at that same cell -- otherwise the C++
 // types mismatch. The route that fills each slot runs in the resolve phase,
 // after the whole object tree exists.
-void DeclareCrossUnitRefSlots(
+void DeclareRoutedRefSlots(
     StructuralScopeLowerer& lowerer, mir::ClassShape& shape) {
   ModuleLowerer& module = lowerer.Module();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   std::uint32_t slot_index = 0;
-  for (const auto& cu : hir_scope.cross_unit_refs) {
-    std::string member_name = "xref" + std::to_string(slot_index++);
+  for (const auto& cu : hir_scope.routed_refs) {
+    std::string member_name = "ep" + std::to_string(slot_index++);
     if (cu.target_net_type.has_value()) {
       const bool is_upward =
           std::holds_alternative<hir::UpwardRootHead>(cu.head) ||
           std::holds_alternative<hir::UpwardNamedHead>(cu.head);
       if (is_upward) {
         throw InternalError(
-            "DeclareCrossUnitRefSlots: an upward cross-unit reference to a net "
-            "is not yet supported");
+            "DeclareRoutedRefSlots: an upward routed reference to a net is not "
+            "yet supported");
       }
     }
     const mir::TypeId value = module.TranslateType(cu.type);
@@ -288,7 +288,7 @@ void DeclareCrossUnitRefSlots(
         module.Unit().types.PointerTo(leaf, mir::PointerOwnership::kBorrowed);
     const mir::FieldId slot = shape.fields.Add(
         mir::FieldDecl{.name = std::move(member_name), .type = slot_type});
-    lowerer.AddCrossUnitRefTarget(slot, slot_type);
+    lowerer.AddRoutedRefTarget(slot, slot_type);
   }
 }
 
@@ -438,11 +438,24 @@ auto SdkChildOpaque(
 // there. `$root` and the visible-child climb are opaque runtime-SDK reaches.
 auto BuildRouteAnchor(
     StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::CrossUnitRefHead& head) -> RouteReceiver {
+    const hir::RoutedRefHead& head) -> RouteReceiver {
   ModuleLowerer& module = lowerer.Module();
   auto& unit = module.Unit();
   mir::Block& block = *frame.current_block;
   const mir::TypeId scope_ptr_type = unit.builtins.scope_ptr;
+
+  // An enclosing head climbs `hops` typed parent edges to an ancestor scope in
+  // this unit; the leaf is a typed member of that scope's class, reached by the
+  // same by-name typed descent a sibling or child route uses.
+  if (const auto* eh = std::get_if<hir::EnclosingHead>(&head)) {
+    const mir::EnclosingHops hops{.value = eh->hops.value};
+    const mir::ExprId enclosing_self =
+        BuildEnclosingScopeReceiver(frame, unit, hops);
+    return RouteReceiver{
+        .expr = enclosing_self,
+        .shape = &lowerer.EnclosingClassShapeAtHops(
+            hir::StructuralHops{.value = eh->hops.value})};
+  }
 
   if (const auto* dh = std::get_if<hir::DownwardHead>(&head)) {
     const mir::EnclosingHops hops{.value = dh->hops.value};
@@ -627,9 +640,8 @@ auto MaterializeLeaf(
 // caller emits into the resolve block.
 auto BuildRouteValue(
     StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::CrossUnitRefHead& head,
-    const std::vector<hir::PathSegment>& path, mir::TypeId slot_type)
-    -> mir::ExprId {
+    const hir::RoutedRefHead& head, const std::vector<hir::PathSegment>& path,
+    mir::TypeId slot_type) -> mir::ExprId {
   if (path.empty()) {
     throw InternalError("BuildRouteValue: route has no leaf signal");
   }
@@ -641,19 +653,19 @@ auto BuildRouteValue(
   return MaterializeLeaf(lowerer, block, receiver, path.back(), slot_type);
 }
 
-// Each cross-unit reference resolves in the resolve phase: the top-down
-// walk over the fully-constructed object tree runs each route, filling the
-// scope's `xref_N` slot with a borrowed pointer to the target's observable
-// cell. Every route lands as an ordinary `AssignExpr` on the slot member.
-void InstallCrossUnitRefs(
+// Each routed reference resolves in the resolve phase: the top-down walk over
+// the fully-constructed object tree runs each route, filling the scope's `ep_N`
+// endpoint slot with a borrowed pointer to the target's observable cell. Every
+// route lands as an ordinary `AssignExpr` on the slot member.
+void InstallRoutedRefs(
     StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame) {
   mir::Class& mir_class = *resolve_frame.current_class;
   mir::Block& resolve_block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  for (std::size_t ci = 0; ci < hir_scope.cross_unit_refs.size(); ++ci) {
-    const hir::CrossUnitRefId hir_id{static_cast<std::uint32_t>(ci)};
-    const auto& cu = hir_scope.cross_unit_refs.Get(hir_id);
-    const mir::FieldId slot = lowerer.CrossUnitRefTarget(hir_id).target;
+  for (std::size_t ci = 0; ci < hir_scope.routed_refs.size(); ++ci) {
+    const hir::RoutedRefId hir_id{static_cast<std::uint32_t>(ci)};
+    const auto& cu = hir_scope.routed_refs.Get(hir_id);
+    const mir::FieldId slot = lowerer.RoutedRefTarget(hir_id).target;
     const mir::TypeId slot_type = mir_class.fields.Get(slot).type;
     const mir::ExprId nav =
         BuildRouteValue(lowerer, resolve_frame, cu.head, cu.path, slot_type);
@@ -1035,7 +1047,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     lowerer.MapStructuralDataObject(hir_id, mir_id);
   }
 
-  DeclareCrossUnitRefSlots(lowerer, shape);
+  DeclareRoutedRefSlots(lowerer, shape);
 
   // Reserve each subroutine's MIR id before any body lowers, so a call in
   // one body resolves a forward or mutual reference to a peer (LRM 13.7).
@@ -1830,6 +1842,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
   }
 
+  // Fill every routed-reference endpoint slot first in the resolve phase, so a
+  // later resolve-phase consumer that reaches a target through a sealed
+  // endpoint -- a continuous-assign driver attached to an enclosing or
+  // cross-unit net, a port-cell connection -- dereferences a slot that is
+  // already bound.
+  InstallRoutedRefs(lowerer, resolve_frame);
+
   // Scope-local multi-driver dedup. Two continuous assigns in this scope
   // whose LHS reaches the same resolved-net target address the same net;
   // the lowering registers each net target into `driven_nets` and rejects
@@ -1866,7 +1885,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   }
 
   EmitInstanceMemberConstruction(lowerer, ctor_frame);
-  InstallCrossUnitRefs(lowerer, resolve_frame);
   auto port_conn_r = InstallPortConnections(
       lowerer, ctor_frame, resolve_frame, init_frame, activate_frame);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));

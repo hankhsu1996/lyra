@@ -399,10 +399,8 @@ class HirDumper {
               return std::format("RealLiteral({})", lit.value);
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
-            [](const StructuralDataObjectRef& r) -> std::string {
-              return std::format(
-                  "StructuralDataObject[{}](hops={})", r.var.value,
-                  r.hops.value);
+            [](const DirectMemberRef& r) -> std::string {
+              return std::format("DirectMember[{}]", r.var.value);
             },
             [](const ProceduralVarRef& r) -> std::string {
               return std::format("ProceduralVar[{}]", r.var.value);
@@ -410,8 +408,8 @@ class HirDumper {
             [](const ClassPropertyRef& r) -> std::string {
               return std::format("ClassProperty[{}]", r.field_index);
             },
-            [](const CrossUnitVarRef& r) -> std::string {
-              return std::format("CrossUnitRef[{}]", r.id.value);
+            [](const RoutedRef& r) -> std::string {
+              return std::format("RoutedRef[{}]", r.id.value);
             },
             [](const IterationBindingRef& r) -> std::string {
               const char* role = r.role == IterationBindingRole::kElement
@@ -426,13 +424,11 @@ class HirDumper {
   static auto FormatReferenceRoute(const ReferenceRoute& ref) -> std::string {
     return std::visit(
         Overloaded{
-            [](const StructuralDataObjectRef& r) -> std::string {
-              return std::format(
-                  "hops={} var=StructuralDataObject[{}]", r.hops.value,
-                  r.var.value);
+            [](const DirectMemberRef& r) -> std::string {
+              return std::format("var=DirectMember[{}]", r.var.value);
             },
-            [](const CrossUnitVarRef& r) -> std::string {
-              return std::format("cross_unit_ref={}", r.id.value);
+            [](const RoutedRef& r) -> std::string {
+              return std::format("routed_ref={}", r.id.value);
             },
         },
         ref);
