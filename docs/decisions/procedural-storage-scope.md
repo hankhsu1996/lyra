@@ -136,14 +136,14 @@ The same owned-child binding registry that routes downward access through an ins
 generate-block head registers named procedural blocks too, so a reference of the form `outer.x` from
 a sibling process routes as a downward head rather than a cross-unit by-name climb. A named
 procedural block is an intra-unit layout-visible structural child (LRM 23.9). Its declaration-time
-hierarchical identity is the SV label -- the stable name slang resolves the reference to, independent
-of source order.
+hierarchical identity is the SV label -- the stable name slang resolves the reference to,
+independent of source order.
 
 Its executable realization is a typed segment. The enclosing climb to the block's owning scope is
 typed, and the block itself is reached through the materialized procedural scope's companion handle
 on the enclosing class -- a typed member access, not a by-name lookup. HIR-to-MIR recovers that
-companion from the label, so the label is the head's declaration-time identity while the companion is
-its realization. The runtime by-name walk serves only a cross-compilation-unit descent past this
+companion from the label, so the label is the head's declaration-time identity while the companion
+is its realization. The runtime by-name walk serves only a cross-compilation-unit descent past this
 head.
 
 ### D8. Ownership is the runtime tree; the companion is navigation only
