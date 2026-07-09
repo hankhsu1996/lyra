@@ -193,6 +193,13 @@ enum class BuiltinFn : std::uint16_t {
   kFileEof,
   kFileError,
   kFileFlush,
+  // LRM 21.6 command-line plusargs. Free functions on `lyra::runtime` that
+  // take the services handle plus SV `string` operands; the value form also
+  // takes the output lvalue by reference (a `PackedArray` or `String`,
+  // selected by C++ overload from the SV lvalue's declared type). Both
+  // return an SV `int` (1 on prefix match, 0 otherwise).
+  kTestPlusargs,
+  kValuePlusargs,
   // LRM 9.4.1 `#N`. The runtime free function the scheduler suspends on.
   // The call takes the engine handle, the duration in the calling scope's
   // precision steps, and the calling scope's precision power; the runtime

@@ -80,6 +80,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "PeekBuffered";
     case support::BuiltinFn::kAdvanceFd:
       return "AdvanceFd";
+    case support::BuiltinFn::kTestPlusargs:
+      return "TestPlusargs";
+    case support::BuiltinFn::kValuePlusargs:
+      return "ValuePlusargs";
     case support::BuiltinFn::kTrigger:
       return "Trigger";
     case support::BuiltinFn::kAwait:
@@ -348,6 +352,8 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:
+    case support::BuiltinFn::kTestPlusargs:
+    case support::BuiltinFn::kValuePlusargs:
       return "lyra::runtime";
     default:
       return "";

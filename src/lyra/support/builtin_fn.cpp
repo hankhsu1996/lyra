@@ -282,6 +282,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "peek_buffered";
     case BuiltinFn::kAdvanceFd:
       return "advance_fd";
+    case BuiltinFn::kTestPlusargs:
+      return "test_plusargs";
+    case BuiltinFn::kValuePlusargs:
+      return "value_plusargs";
     case BuiltinFn::kDelay:
       return "delay";
     case BuiltinFn::kSimTime:

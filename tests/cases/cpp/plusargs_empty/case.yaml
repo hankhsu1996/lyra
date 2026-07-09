@@ -1,0 +1,17 @@
+id: cpp.plusargs_empty
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    test_hit: 0
+    value_hit_s: 0
+    value_hit_d: 0
+    value_hit_b: 0
+    s_out: "sentinel"
+    d_out: 42
+    b_out: 0xA5
