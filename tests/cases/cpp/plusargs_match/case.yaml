@@ -1,0 +1,30 @@
+id: cpp.plusargs_match
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args:
+    - "+BOOL_ONLY"
+    - "+INT=42"
+    - "+HEX=FF"
+    - "+OCT=17"
+    - "+BIN=10101"
+    - "+STR=hello"
+expect:
+  exit: 0
+  variables:
+    test_hit_bool: 1
+    test_hit_prefix: 1
+    test_hit_miss: 0
+    hit_d: 1
+    hit_h: 1
+    hit_o: 1
+    hit_b: 1
+    hit_s: 1
+    d_out: 42
+    h_out: 0xFF
+    o_out: 15
+    b_out: 0x15
+    s_out: "hello"

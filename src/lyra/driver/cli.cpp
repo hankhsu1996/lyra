@@ -62,6 +62,10 @@ struct ParsedArgs {
   std::string pch_cache_dir;
   lyra::frontend::CompilationInput input;
   std::string out_dir;
+  // LRM 21.6 plusarg pass-through: `+`-prefixed positional entries collected
+  // from the trailing bucket at parse time. `run` forwards them verbatim to
+  // the built program's argv; other subcommands never consult them.
+  std::vector<std::string> plusargs;
 };
 
 void AddCompilationFlags(argparse::ArgumentParser& cmd) {
@@ -126,7 +130,16 @@ void BindCompilationFlags(
   out.input.disable_assertions = cmd.get<bool>("--disable-assertions");
   out.format = cmd.get<bool>("--format");
   if (auto files = cmd.present<std::vector<std::string>>("files")) {
-    out.input.files = std::move(*files);
+    // argparse collects `.sv` paths and `+`-prefixed plusargs in the same
+    // remaining-bucket; sort them here so downstream stages see the natural
+    // shape (source files vs runtime tokens).
+    for (auto& f : *files) {
+      if (!f.empty() && f.front() == '+') {
+        out.plusargs.push_back(std::move(f));
+      } else {
+        out.input.files.push_back(std::move(f));
+      }
+    }
   }
 }
 
@@ -533,7 +546,8 @@ auto main(int argc, char** argv) -> int {
             const auto tops =
                 build_tops(units, result.artifacts.top_unit_names);
             auto exit_code = lyra::driver::RunInPlace(
-                *runtime, units, tops, *tmp_or, args.format, pch_opts);
+                *runtime, units, tops, *tmp_or, args.format, pch_opts,
+                args.plusargs);
             if (!exit_code) {
               report(std::move(exit_code.error()), mgr);
               return 1;
