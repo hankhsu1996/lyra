@@ -173,11 +173,12 @@ auto RenderConstructor(
     init_parts.push_back(std::move(f));
   }
 
+  const std::string cpp_name = ToCppName(s.name);
   const std::string sig =
       init_parts.empty()
-          ? std::format("{}({})", s.name, JoinCommaSeparated(sig_args))
+          ? std::format("{}({})", cpp_name, JoinCommaSeparated(sig_args))
           : std::format(
-                "{}({}) : {}", s.name, JoinCommaSeparated(sig_args),
+                "{}({}) : {}", cpp_name, JoinCommaSeparated(sig_args),
                 JoinCommaSeparated(init_parts));
 
   // The C++ constructor is the one shape that is not an ordinary method:
@@ -194,7 +195,7 @@ auto RenderConstructor(
       "{0}static auto init({2}* self) -> void {{\n"
       "{3}"
       "{0}}}\n",
-      Indent(indent), sig, s.name,
+      Indent(indent), sig, cpp_name,
       RenderBlockStatements(scope_view, indent + 1));
 }
 
@@ -254,7 +255,7 @@ auto RenderScopeAsClass(
           : std::nullopt;
 
   std::string out;
-  out += Indent(indent) + "class " + s.name + " final";
+  out += Indent(indent) + "class " + ToCppName(s.name) + " final";
   if (base.has_value()) {
     out += " : public " + RenderTypeAsCpp(unit, s, base->renderable);
   }
@@ -381,7 +382,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/dynamic_array.hpp\"\n";
   out += "#include \"lyra/value/union.hpp\"\n";
   for (const auto& name : CollectExternalUnitNames(unit)) {
-    out += std::format("#include \"{}.hpp\"\n", name);
+    out += std::format("#include \"{}.hpp\"\n", ToCppName(name));
   }
   out += "\n";
   bool any_enum = false;
@@ -447,7 +448,7 @@ auto RenderScopeHeaderFile(
   return out;
 }
 
-auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
+auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   std::string out;
   out += "#include <memory>\n";
   out += "#include <string>\n";
@@ -458,14 +459,20 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
-  for (const auto& top : tops) {
-    out += std::format(
-        "#include \"{}.hpp\"\n", top.unit->GetClass(top.unit->root).name);
-  }
+  const auto& root_class = root.GetClass(root.root);
+  const std::string root_cpp_name = ToCppName(root_class.name);
+  out += std::format("#include \"{}.hpp\"\n", root_cpp_name);
   out += "\n";
+  // The host constructs the design-root unit and hands it to the engine. The
+  // root's constructor elaborates the design -- it builds the top-level units
+  // as its owned children -- so this harness invokes generated behavior rather
+  // than composing the object tree itself. The engine then walks the built
+  // tree. The segment carries the root's `$root` display name with no
+  // per-dimension indices; its type literal comes from the canonical
+  // RenderTypeAsCpp mapping, so this file does not repeat a type name MIR owns.
   // LRM 21.6: `+`-prefixed argv entries are plusargs; the runtime stores them
-  // with the `+` stripped so a match compares against the user-supplied
-  // prefix directly.
+  // with the `+` stripped so a match compares against the user-supplied prefix
+  // directly.
   out += "auto main(int argc, char** argv) -> int {\n";
   out += "  std::vector<std::string> plusargs;\n";
   out += "  for (int i = 1; i < argc; ++i) {\n";
@@ -477,24 +484,13 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   out += "  auto options = lyra::runtime::DefaultEngineOptions();\n";
   out += "  options.plusargs = std::move(plusargs);\n";
   out += "  lyra::runtime::Engine engine{std::move(options)};\n";
-  out += "  std::vector<std::unique_ptr<lyra::runtime::Scope>> tops;\n";
-  for (const auto& top : tops) {
-    // A top instance's structural identity is fixed at this construction
-    // site: the segment carries the top's source name with no per-dimension
-    // indices, which $root reads back when binding the design. The segment
-    // type name comes from the canonical RenderTypeAsCpp mapping so this
-    // harness file does not repeat a type literal already owned by MIR's
-    // builtin TypeId table. The root owns each top; construction hands it over.
-    const auto& unit = *top.unit;
-    const auto& top_class = unit.GetClass(unit.root);
-    const std::string segment_cpp =
-        RenderTypeAsCpp(unit, top_class, unit.builtins.hierarchy_segment);
-    out += std::format(
-        "  tops.push_back(std::make_unique<{0}>(nullptr, {1}{{\"{2}\", {{}}}}, "
-        "engine.Services()));\n",
-        top_class.name, segment_cpp, top.name);
-  }
-  out += "  engine.BindDesign(std::move(tops));\n";
+  const std::string segment_cpp =
+      RenderTypeAsCpp(root, root_class, root.builtins.hierarchy_segment);
+  out += std::format(
+      "  auto root = std::make_unique<{0}>(nullptr, {1}{{\"{2}\", {{}}}}, "
+      "engine.Services());\n",
+      root_cpp_name, segment_cpp, root_class.name);
+  out += "  engine.BindDesign(std::move(root));\n";
   out += "  return lyra::runtime::RunSimulation(engine);\n";
   out += "}\n";
   return out;
@@ -505,22 +501,23 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
 auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact {
   const auto& root = unit.GetClass(unit.root);
   return {
-      .relpath = std::format("{}.hpp", root.name),
+      .relpath = std::format("{}.hpp", ToCppName(root.name)),
       .content = RenderScopeHeaderFile(unit, root)};
 }
 
-auto EmitCppHostMain(std::span<const TopInstance> tops) -> CppArtifact {
-  return {.relpath = "main.cpp", .content = RenderHostMain(tops)};
+auto EmitCppHostMain(const mir::CompilationUnit& root) -> CppArtifact {
+  return {.relpath = "main.cpp", .content = RenderHostMain(root)};
 }
 
 auto EmitCpp(
     std::span<const mir::CompilationUnit> units,
-    std::span<const TopInstance> tops) -> CppArtifactSet {
+    const mir::CompilationUnit& root) -> CppArtifactSet {
   CppArtifactSet set;
   for (const auto& unit : units) {
     set.files.push_back(EmitCppDeclarations(unit));
   }
-  set.files.push_back(EmitCppHostMain(tops));
+  set.files.push_back(EmitCppDeclarations(root));
+  set.files.push_back(EmitCppHostMain(root));
   return set;
 }
 

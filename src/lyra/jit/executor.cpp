@@ -6,7 +6,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include <llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
@@ -136,8 +135,18 @@ auto Execute(
   }
 
   runtime::Engine engine;
+
+  // The design-root unit's constructor elaborates the design by building the
+  // top-level units through the cross-unit construct ABI, which this backend
+  // does not yet lower. The JIT therefore constructs the top unit directly and
+  // adopts it under a no-op `$root`; the engine then walks the built tree
+  // exactly as for any backend.
+  static constexpr runtime::ScopeProgram kRootProgram{};
+  auto root = std::make_unique<runtime::Scope>(
+      nullptr, runtime::HierarchySegment{"$root", {}}, engine.Services(),
+      &kRootProgram);
   auto top = std::make_unique<runtime::Instance>(
-      nullptr, runtime::HierarchySegment{root_class.name, {}},
+      root.get(), runtime::HierarchySegment{root_class.name, {}},
       engine.Services(), &definition);
 
   // Construction runs generated code that allocates opaque value temporaries in
@@ -149,9 +158,8 @@ auto Execute(
     runtime::GeneratedCallScope construct_scope;
     definition.construct(top.get());
   }
-  std::vector<std::unique_ptr<runtime::Scope>> tops;
-  tops.push_back(std::move(top));
-  engine.BindDesign(std::move(tops));
+  root->AddOwnedChild(std::move(top));
+  engine.BindDesign(std::move(root));
   return runtime::RunSimulation(engine);
 }
 

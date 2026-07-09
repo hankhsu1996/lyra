@@ -133,6 +133,11 @@ the detail lives in the entry itself.
   the transient values one generated entry creates -- the JIT counterpart of C++ stack/RAII.
   Physical-layout / in-frame value lowering is a later optimization, not a correctness prerequisite;
   cross-suspension and managed-value lifetime is out of scope for the call scope.
+- [root-unit-elaboration](root-unit-elaboration.md) -- design elaboration is the synthetic `$root`
+  unit's `construct` entry, which builds the top-level modules as its owned children; there is no
+  design-level free function. Engine / bind / run stay host runner policy and never enter MIR; both
+  backends' host shells collapse to creating the engine, calling the root construct, then bind /
+  run.
 
 ### Compile-time model and specialization
 

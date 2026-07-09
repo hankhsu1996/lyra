@@ -62,7 +62,14 @@ class Engine {
   auto operator=(Engine&&) -> Engine& = delete;
   ~Engine() = default;
 
-  void BindDesign(std::vector<std::unique_ptr<Scope>> tops);
+  // Binds the design's already-constructed `$root` -- the parent-less topmost
+  // scope whose owned children are the top-level units -- and runs the
+  // post-construction elaboration phases across the whole tree. The generated
+  // code constructs `$root` (its constructor builds the tops as owned
+  // children); the engine takes ownership here and walks resolve / initialize /
+  // activate over the built tree. Each phase is a full top-down walk, so the
+  // phase barrier holds design-wide.
+  void BindDesign(std::unique_ptr<Scope> root);
   auto Run() -> int;
 
   auto Stream() -> StreamDispatcher& {

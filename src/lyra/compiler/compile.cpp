@@ -1,11 +1,14 @@
 #include "lyra/compiler/compile.hpp"
 
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
+#include "lyra/hir/module_unit.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
@@ -27,6 +30,21 @@ auto BuildUnitMetadata(const mir::CompilationUnit& unit)
   return ElaboratedUnitMetadata{
       .def_name = root.name,
       .time_precision_power = root.time_resolution.precision_power};
+}
+
+// The design-root unit is a module whose only members are the top-level units,
+// instantiated as its owned children. Its constructor then elaborates the
+// design through the same owned-child construction any parent uses for a
+// submodule, so no code path is special-cased for the top level.
+auto BuildRootHirUnit(const std::vector<std::string>& top_names)
+    -> hir::ModuleUnit {
+  hir::ModuleUnit root{std::string{kDesignRootUnitName}};
+  for (const auto& name : top_names) {
+    root.root_scope.instance_members.Add(
+        hir::InstanceMemberDecl{
+            .instance_name = name, .target_unit = name, .array_dims = {}});
+  }
+  return root;
 }
 
 }  // namespace
@@ -113,9 +131,31 @@ auto Compile(
     unit_metadata.push_back(BuildUnitMetadata(mir_units.back()));
   }
 
+  // The design-root unit is synthesized after the source units it instantiates,
+  // so it references them by the same cross-unit-by-name link every submodule
+  // instantiation uses. It is a distinct compiler output, not one of the source
+  // units, so it is held apart rather than mixed into `mir_units`. Its
+  // constructor elaborates the design through cross-unit construction, which
+  // MIR-to-LIR does not yet lower, so it is not carried to LIR; the execution
+  // backend constructs each top unit directly.
+  std::optional<mir::CompilationUnit> root_unit;
+  if (want_mir) {
+    const hir::ModuleUnit root_hir =
+        BuildRootHirUnit(result.artifacts.top_unit_names);
+    lowering::hir_to_mir::ModuleLowerer root_module(
+        root_hir, result.artifacts.parse->diag_sources);
+    auto root_mir = root_module.Run();
+    if (!root_mir) {
+      sink.Report(std::move(root_mir.error()));
+      return result;
+    }
+    root_unit = *std::move(root_mir);
+  }
+
   result.artifacts.hir_units = std::move(hir_units);
   if (want_mir) {
     result.artifacts.mir_units = std::move(mir_units);
+    result.artifacts.root_unit = std::move(root_unit);
   }
   if (want_lir) {
     result.artifacts.lir_units = std::move(lir_units);

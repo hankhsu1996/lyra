@@ -155,9 +155,9 @@ void FormatSources(
 
 auto EmitAndWriteSources(
     std::span<const mir::CompilationUnit> units,
-    std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& dir, bool format) -> diag::Result<void> {
-  auto set = backend::cpp::EmitCpp(units, tops);
+    const mir::CompilationUnit& root, const std::filesystem::path& dir,
+    bool format) -> diag::Result<void> {
+  auto set = backend::cpp::EmitCpp(units, root);
   for (const auto& file : set.files) {
     if (auto r = WriteFile(dir / file.relpath, file.content); !r) {
       return r;
@@ -206,9 +206,9 @@ auto CompileProgram(
 
 auto AssembleProject(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
-    std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& dir, bool format) -> diag::Result<void> {
-  if (auto r = EmitAndWriteSources(units, tops, dir, format); !r) {
+    const mir::CompilationUnit& root, const std::filesystem::path& dir,
+    bool format) -> diag::Result<void> {
+  if (auto r = EmitAndWriteSources(units, root, dir, format); !r) {
     return r;
   }
 
@@ -250,11 +250,10 @@ auto BuildProject(
 
 auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
-    std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& work_dir, bool format,
-    const pch::Options& pch_opts, std::span<const std::string> child_args)
-    -> diag::Result<int> {
-  if (auto r = EmitAndWriteSources(units, tops, work_dir, format); !r) {
+    const mir::CompilationUnit& root, const std::filesystem::path& work_dir,
+    bool format, const pch::Options& pch_opts,
+    std::span<const std::string> child_args) -> diag::Result<int> {
+  if (auto r = EmitAndWriteSources(units, root, work_dir, format); !r) {
     return std::unexpected(std::move(r.error()));
   }
   const auto program = work_dir / kProgramName;
