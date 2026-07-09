@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <span>
+#include <string>
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -29,12 +30,15 @@ auto BuildProject(
 
 // Emit `units`' sources into `work_dir`, build them in place against `runtime`
 // (no bundled copy), execute the result streaming its stdout/stderr, and return
-// its exit code. `tops` are the top-level blocks the program constructs. This
-// is the ephemeral path behind `run`: it never materializes a portable project.
+// its exit code. `tops` are the top-level blocks the program constructs.
+// `child_args` are forwarded verbatim as argv to the built program (LRM 21.6
+// plusargs land here). This is the ephemeral path behind `run`: it never
+// materializes a portable project.
 auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
     const std::filesystem::path& work_dir, bool format,
-    const pch::Options& pch_opts) -> diag::Result<int>;
+    const pch::Options& pch_opts, std::span<const std::string> child_args)
+    -> diag::Result<int>;
 
 }  // namespace lyra::driver

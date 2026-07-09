@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,9 @@ enum class SchedulerPhase : std::uint8_t {
 struct EngineOptions {
   StreamDispatcher::StreamSink stream_sink;
   DiagnosticDispatcher::DiagnosticSink diagnostic_sink;
+  // LRM 21.6 command-line plusarg tokens with the `+` prefix already
+  // stripped, in the order they appeared on the host command line.
+  std::vector<std::string> plusargs;
 };
 
 [[nodiscard]] auto DefaultEngineOptions() -> EngineOptions;

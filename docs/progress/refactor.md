@@ -805,6 +805,18 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         none identified; pairs with the endpoint-capability decisions
         (`../decisions/net-driver-resolution.md`, `../decisions/reference-as-data-type.md`).
 
+- [ ] R54 -- Move the emitted host-boundary out of the C++ backend. Today the backend renders the
+      program entry point as one raw C++ string blob covering both the invariant host boundary (argv
+      parsing, plusargs collection, engine construction, `BindDesign`, shutdown) and the
+      design-derived tops construction. Every new host-boundary concept -- a seed CLI flag, a VCD
+      sink path, a simulation deadline, verbosity, signal handling -- grows that blob rather than
+      landing as real, type-checked runtime code. Target: the runtime provides a single
+      host-boundary entry that takes `argc` / `argv` and a design-supplied tops constructor; the
+      backend emits only the tops constructor (which is what MIR actually knows) plus a one-line
+      hand-off. New host-boundary concepts are then added by editing runtime C++, not by growing the
+      emitter's string surface. This is a host-execution-model concern, not a semantic-IR one, so it
+      stays outside MIR. **Blocker**: none.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

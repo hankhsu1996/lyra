@@ -252,7 +252,8 @@ auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
     const std::filesystem::path& work_dir, bool format,
-    const pch::Options& pch_opts) -> diag::Result<int> {
+    const pch::Options& pch_opts, std::span<const std::string> child_args)
+    -> diag::Result<int> {
   if (auto r = EmitAndWriteSources(units, tops, work_dir, format); !r) {
     return std::unexpected(std::move(r.error()));
   }
@@ -263,7 +264,7 @@ auto RunInPlace(
       !r) {
     return std::unexpected(std::move(r.error()));
   }
-  auto exit_or = support::RunProcessStreaming(program, {});
+  auto exit_or = support::RunProcessStreaming(program, child_args);
   if (!exit_or) {
     return IoError(std::move(exit_or.error()));
   }
