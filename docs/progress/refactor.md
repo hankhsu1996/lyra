@@ -776,7 +776,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 - [ ] R53 -- Finish the front-end reference / sensitivity translation boundary
       (`../decisions/front-end-semantic-boundary.md`). The correctness repairs and the move to route
       cross-scope references by layout visibility (order-independent, from a whole-unit declaration
-      pass) have landed. Three items remain before the boundary is fully realized:
+      pass) have landed. The boundary is realized in three staged sub-items:
   - [x] R53a -- One route translation for every reference consumer. Value read, value write, and
         change observation (including a dependency read only inside a called function) route through
         one translator keyed on the reader's elaborated position and the target symbol; each segment
@@ -785,13 +785,12 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         or cross-unit-slot dedup. The reader's elaborated position is recovered from its enclosing
         structural scope, so a read nested in a procedural block or fork branch routes from that
         scope. The frontend's resolved reference path is provenance only, not a routing authority.
-  - [ ] R53b -- The declaration pass covers every addressable identity. Generate and instance
-        identities are registered before any body lowers, so a forward cross-scope reference to them
-        is order-independent. A named procedural block's identity is still assigned while its body
-        lowers -- it shares an arena populated by statement traversal, with no source-order position
-        the declaration pass can predict -- so a forward cross-scope reference to a named block is
-        not yet order-independent. Give the named block a declaration-time identity so the invariant
-        holds for it too.
+  - [x] R53b -- The declaration pass covers every addressable identity. Generate, instance, and
+        named procedural block identities are all registered before any body lowers, so a forward
+        cross-scope reference to any of them resolves the same layout-visible route regardless of
+        declaration order. A named block's head identity is its SV label (a hierarchical-reference
+        head, LRM 23.9), registered directly from the elaborated scope members; the body pass grows
+        no structural identity.
   - [ ] R53c -- Endpoint binding. Whether a value read, a value write, and a change observation of
         one target ultimately share one bound runtime endpoint -- and whether an enclosing reference
         binds a per-instance handle rather than re-navigating the parent chain on the hot path -- is

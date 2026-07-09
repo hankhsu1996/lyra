@@ -1,0 +1,12 @@
+id: cpp.hierarchy_named_block_shadow
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      local=222 outer=111

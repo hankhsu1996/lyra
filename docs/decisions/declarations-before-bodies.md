@@ -162,8 +162,8 @@ mechanism.
 - **Procedural storage scope materialization** (`procedural-storage-scope.md`). A named procedural
   block whose subtree owns hierarchy-addressable storage is a structural declaration: its class
   identity, its statics, the parent's owning-pointer companion member, and the contained-class edge
-  are minted by the shape pass. A sibling process's body lowering reads its peer block's members
-  through a typed segment chain; the body never mints any of these.
+  are minted by the shape pass. A sibling process's body lowering reaches its peer block's static
+  through a head the shape pass already registered; the body never mints any of these.
 
 The same invariant applies to future structural concepts that admit cross-reference; new
 applications do not introduce new mechanism.

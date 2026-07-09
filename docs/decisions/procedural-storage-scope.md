@@ -14,8 +14,8 @@ A named procedural block (LRM 9.3.5 `begin : name ... end`) is a hierarchical-re
 23.9): `Top.outer.x` reaches a static inside `outer` from another scope. The block is therefore not
 statement-tree decoration -- it is part of the compilation unit's hierarchical structure. Once that
 is true, every existing rule for structural declaration applies to it: it has a stable identity, its
-layout and storage are settled before any executable lowering, and a peer body that reaches into it
-does so by typed segment, not by re-walking source.
+layout and storage are settled before any executable lowering, and a peer body reaches it through a
+route resolved before any body lowers, not by re-walking source.
 
 This decision pins the named procedural block as a first-class structural concept, separates the
 HIR-side lexical view from the MIR-side runtime realization, and forbids body lowering from creating
@@ -130,14 +130,21 @@ visiting the statement tree:
 The body lowering looks up the planner's resulting binding per static var; it does not re-derive
 placement and does not visit the statement tree for any planner concern.
 
-### D7. Intra-unit access to a procedural-scope static is a typed segment
+### D7. Intra-unit access to a procedural-scope static is a typed layout-visible segment
 
 The same owned-child binding registry that routes downward access through an instance or
-generate-block head registers materialized procedural scopes too. A reference of the form `outer.x`
-from a sibling process resolves through the typed segment chain (`self -> outer_companion -> x`);
-the runtime by-name walk is used only across compilation-unit boundaries. Procedural-scope heads
-share routing mechanism with the other structural-child kinds; the distinction is the head's
-`TypeKind`, not the resolution path.
+generate-block head registers named procedural blocks too, so a reference of the form `outer.x` from
+a sibling process routes as a downward head rather than a cross-unit by-name climb. A named
+procedural block is an intra-unit layout-visible structural child (LRM 23.9). Its declaration-time
+hierarchical identity is the SV label -- the stable name slang resolves the reference to,
+independent of source order.
+
+Its executable realization is a typed segment. The enclosing climb to the block's owning scope is
+typed, and the block itself is reached through the materialized procedural scope's companion handle
+on the enclosing class -- a typed member access, not a by-name lookup. HIR-to-MIR recovers that
+companion from the label, so the label is the head's declaration-time identity while the companion
+is its realization. The runtime by-name walk serves only a cross-compilation-unit descent past this
+head.
 
 ### D8. Ownership is the runtime tree; the companion is navigation only
 
@@ -202,7 +209,7 @@ indexed by-name child lookup downcast to the child's typed class.
   clean passes over a small tree.
 - **Body-lowering mints the scope on encounter.** The procedural-scope class is created when the
   body lowering enters the named begin/end. Rejected: re-binds structural graph to executable
-  traversal even when the class id appears peer-unreferenced; the intra-unit typed segment rule (D7)
+  traversal even when the class id appears peer-unreferenced; the intra-unit downward-head rule (D7)
   shows the id IS peer-referenced.
 - **Reuse the generate-scope MIR `TypeKind` for procedural storage scopes.** The runtime base is
   identical, so use one kind. Rejected: dump, debug, and per-kind semantics (named fork, disable
@@ -218,7 +225,7 @@ indexed by-name child lookup downcast to the child's typed class.
 - `declarations-before-bodies.md` -- the strict-D5 invariant a procedural-scope class respects.
 - `variable-lifetime-storage.md` -- the storage-owner rule for static-lifetime body locals, read
   through the addressable-scope concept this decision provides.
-- `hierarchical-reference-routing.md` -- one routing path per access shape; procedural-scope heads
-  resolve through the same typed-segment route as generate-block heads for intra-unit access, and
-  through the runtime by-name walk for cross-unit access.
+- `hierarchical-reference-routing.md` -- one routing path per access shape; a named-block head
+  routes as a downward head, a typed enclosing climb into the materialized scope's companion handle
+  recovered from the block label; the runtime by-name walk serves cross-unit access.
 - `object-model-storage.md` -- the unit's class registry that holds the procedural-scope classes.

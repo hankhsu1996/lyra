@@ -67,6 +67,20 @@ struct GenerateChildRef {
   GenerateId generate;
   StructuralScopeId scope;
 };
+// A named procedural block head (LRM 9.3.5 / 23.9), identified by its SV
+// label. A named block is a layout-visible structural child of its enclosing
+// scope; the label is its stable declaration-time identity, not a by-name
+// runtime lookup. The label is meaningful only relative to the `DownwardHead`
+// owner reached by `hops` -- the enclosing structural scope directly
+// containing the block, where sibling block labels are unique (LRM 23.9) -- and
+// is not a unit-global name. HIR-to-MIR resolves it against that owner's
+// materialized scopes to a typed companion handle, so the realization is a
+// typed segment.
+struct NamedBlockRef {
+  std::string label;
+
+  auto operator==(const NamedBlockRef&) const -> bool = default;
+};
 // A downward head can sit in the current scope (`hops == 0`) or in an
 // enclosing scope (`hops > 0`). The enclosing case covers references that
 // reach an owned child of an ancestor scope without leaving the compilation
@@ -75,10 +89,10 @@ struct GenerateChildRef {
 // the owning scope's HIR-level identities; the install resolves it through
 // the enclosing class's owned-child binding table. `head_indices` selects an
 // element when the head is an instance / generate array; empty for a scalar
-// head.
+// head or a named-block head.
 struct DownwardHead {
   StructuralHops hops = {};
-  std::variant<InstanceMemberId, GenerateChildRef, ProceduralScopeId> child;
+  std::variant<InstanceMemberId, GenerateChildRef, NamedBlockRef> child;
   std::vector<std::uint32_t> head_indices = {};
 };
 
