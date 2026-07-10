@@ -49,6 +49,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       .structs = {},
       .methods = {},
       .static_constants = {},
+      .static_callables = {},
       .base_init = {},
       .type_aliases = {}};
 
