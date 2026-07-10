@@ -328,9 +328,12 @@ auto RenderScopeAsClass(
 
 // The `extern "C"` declarations for every DPI-C import the unit calls: each
 // import's foreign symbol as a C-linkage prototype over its ABI carrier types
-// (LRM 35.4 / 35.5.6). Emitted before the classes that call them so a foreign
-// call resolves against a declared signature; the definitions come from the
-// user's linked C. Empty when the unit declares no import.
+// (LRM 35.4 / 35.5.6). An output / inout argument crosses by pointer, so its
+// carrier type gains a trailing `*` (a scalar `int` -> `int*`, a `const char*`
+// string -> `const char**`); an input argument crosses by value. Emitted before
+// the classes that call them so a foreign call resolves against a declared
+// signature; the definitions come from the user's linked C. Empty when the unit
+// declares no import.
 auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
     -> std::string {
   std::string out;
@@ -342,6 +345,9 @@ auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
       for (std::size_t p = 0; p < callable.params.size(); ++p) {
         if (p != 0) params += ", ";
         params += std::string{DpiCarrierCppType(callable.params[p].abi)};
+        if (support::DpiDirectionWritesBack(callable.params[p].direction)) {
+          params += "*";
+        }
       }
       out +=
           std::format(

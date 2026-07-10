@@ -1,4 +1,4 @@
-id: cpp.dpi_import_int
+id: cpp.dpi_import_output_inout
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -10,5 +10,6 @@ expect:
   exit: 0
   stdout:
     exact: |
-      add_one=42
-      mul=42
+      out i=42 r=2.5 s=hello
+      inout i=15 r=3.0 s=ab!
+      q=3 rem=2
