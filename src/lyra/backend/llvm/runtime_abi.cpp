@@ -79,4 +79,32 @@ auto RuntimeAbi::PackedConst() -> llvm::FunctionCallee {
        llvm::Type::getInt1Ty(*ctx_), llvm::Type::getInt1Ty(*ctx_)});
 }
 
+auto RuntimeAbi::MakeSegment() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_make_segment", types_->Ptr(), {types_->Ptr(), types_->Span()});
+}
+
+auto RuntimeAbi::MakeUnit() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_make_unit", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::AddOwnedChild() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_add_owned_child", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::LoadField() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_load_field", types_->Ptr(),
+      {types_->Ptr(), llvm::Type::getInt32Ty(*ctx_)});
+}
+
+auto RuntimeAbi::StoreField() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_store_field", types_->Void(),
+      {types_->Ptr(), llvm::Type::getInt32Ty(*ctx_), types_->Ptr()});
+}
+
 }  // namespace lyra::backend::llvm_backend

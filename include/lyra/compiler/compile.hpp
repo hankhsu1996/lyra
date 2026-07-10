@@ -38,15 +38,21 @@ struct CompileArtifacts {
   // owned children. It is a compiler output distinct from the source units, so
   // the host constructs it directly rather than searching the source set.
   std::optional<mir::CompilationUnit> root_unit;
-  // Each LIR unit borrows the same-index MIR unit above for types and metadata,
-  // so `lir_units` must not outlive `mir_units`. A vector move keeps the MIR
-  // elements at their addresses, so the borrow survives moving these artifacts.
+  // The executable body of each source unit, co-indexed with `mir_units`. Each
+  // LIR unit is self-contained -- it owns its own type graph and holds no
+  // reference back to the MIR it was lowered from.
   std::optional<std::vector<lir::CompilationUnit>> lir_units;
   // The definition metadata of each compiled unit, co-indexed with `lir_units`:
   // a compiled unit is its executable body plus these immutable source-level
   // facts, held apart because LIR carries no source-language concept. A host
   // builds the runtime definition from the two together.
   std::optional<std::vector<ElaboratedUnitMetadata>> unit_metadata;
+  // The design-root unit lowered to its executable body plus metadata, present
+  // exactly when `lir_units` is. The execution backend loads it alongside the
+  // source units and runs its construct to elaborate the design, the same path
+  // the C++ backend takes through the root's constructor.
+  std::optional<lir::CompilationUnit> root_lir_unit;
+  std::optional<ElaboratedUnitMetadata> root_metadata;
   // A subset of the compiled units: a unit reached only through instantiation
   // is compiled but is not a top.
   std::vector<std::string> top_unit_names;

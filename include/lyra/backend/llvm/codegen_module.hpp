@@ -14,8 +14,10 @@
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/runtime_abi.hpp"
 #include "lyra/lir/class_id.hpp"
+#include "lyra/lir/type_id.hpp"
 
 namespace llvm {
+class Constant;
 class Function;
 }  // namespace llvm
 
@@ -57,6 +59,13 @@ class CodeGenModule {
   // class and the method's index -- never a reconstructed symbol name.
   auto MethodFunction(lir::ClassId class_id, std::uint32_t index)
       -> llvm::Function*;
+
+  // The definition-reference projection of an external-unit object type: the
+  // address of that unit's runtime definition, as an external symbol the host
+  // resolves. The sibling of `MethodFunction` -- both project a LIR identity to
+  // its artifact. A construct that builds a child of the unit passes this
+  // opaque reference to the runtime; the generated code never inspects it.
+  auto UnitDefinitionRef(lir::TypeId object_type) -> llvm::Constant*;
 
  private:
   void DeclareCallable(

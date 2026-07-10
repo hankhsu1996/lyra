@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace llvm {
 class LLVMContext;
@@ -51,5 +52,11 @@ class EmittedModule {
 // value is an opaque handle the runtime builds from a step entry and its
 // environment.
 auto EmitModule(const lir::CompilationUnit& unit) -> EmittedModule;
+
+// The linkage symbol under which a unit publishes its runtime definition. A
+// unit's construct references a child unit's definition by this name; the host
+// resolves it to the built definition object. One source of truth so the
+// producing reference and the resolving host never drift.
+auto UnitDefinitionSymbolName(std::string_view unit_name) -> std::string;
 
 }  // namespace lyra::backend::llvm_backend
