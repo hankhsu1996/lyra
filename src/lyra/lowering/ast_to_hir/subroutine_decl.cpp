@@ -58,13 +58,15 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
 
 // Classifies an SV type into its DPI-C carrier category (LRM 35.5.6). This is
 // the one place slang types are inspected for DPI. The supported set is 2-state
-// integral scalars up to one machine word, `real`, `string`, and `void`;
-// anything else is a located Unsupported so the gap is a clean diagnostic.
+// integral scalars up to one machine word, `real`, `string`, `chandle`, and
+// `void`; anything else is a located Unsupported so the gap is a clean
+// diagnostic.
 auto ClassifyDpiAbi(const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<support::DpiAbiClass> {
   const auto& t = type.getCanonicalType();
   if (t.isVoid()) return support::DpiAbiClass::kVoid;
   if (t.isString()) return support::DpiAbiClass::kString;
+  if (t.isCHandle()) return support::DpiAbiClass::kChandle;
   if (t.isFloating()) {
     if (t.as<slang::ast::FloatingType>().floatKind ==
         slang::ast::FloatingType::Real) {
@@ -89,11 +91,6 @@ auto ClassifyDpiAbi(const slang::ast::Type& type, diag::SourceSpan span)
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedDpi,
         "wide packed DPI-C value is not yet supported");
-  }
-  if (t.isCHandle()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedDpi,
-        "chandle DPI-C argument is not yet supported");
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedDpi, "DPI-C type is not yet supported");

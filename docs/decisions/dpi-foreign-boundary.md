@@ -188,11 +188,9 @@ usage inflate the scope.
 
 - Both backends consume the same MIR for a foreign call and a marshal conversion; only the
   type-mapping of the ABI carrier and the realization of the foreign-linkage symbol differ.
-- Foreign-symbol linkage must be built per backend: the C++ backend gains a user-link-input seam in
-  its build recipe; the LLVM/JIT backend gains external-symbol resolution in its execution session.
-  Neither exists today.
-- A `chandle` argument needs a runtime representation and a type-mapping entry, which do not exist
-  yet; it is required before `chandle` crosses the boundary.
+- Foreign-symbol linkage is a per-backend concern: the C++ backend resolves it through a
+  user-link-input seam in its build recipe; the LLVM/JIT backend resolves it through external-symbol
+  resolution in its execution session.
 - The export-context install composes into the one shared run entry, so it serves both backends from
   a single place.
 

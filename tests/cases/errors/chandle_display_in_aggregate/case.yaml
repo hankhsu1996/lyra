@@ -1,0 +1,18 @@
+id: errors.chandle_display_in_aggregate
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "main.sv:3:"
+      - "unsupported:"
+      - "chandle"
+    not_contains:
+      - "internal error"
+      - "\x1b["

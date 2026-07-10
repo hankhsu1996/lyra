@@ -41,15 +41,21 @@ backend. Every later item leaves the MIR shape backend-agnostic and lands on bot
 The C++ backend half of D1 is done: a scalar import (2-state integral, `real`, and `string`,
 `input`-only functions) declares, marshals across the boundary, calls the foreign symbol, and
 marshals the result back; a user C source is linked in through a repeatable `--dpi-link` option, and
-mixed-language tests assert the round trip. The remaining D1 work is the LLVM / JIT backend, which
-does not yet resolve an external foreign symbol; the MIR is already backend-agnostic, so that half
-is additive.
+mixed-language tests assert the round trip.
+
+The remaining D1 work is the LLVM / JIT backend, and it is not additive. That backend still cannot
+lower a minimal procedural body -- a plain write to a module variable does not reach LIR -- so a
+foreign call has no body to sit inside, and resolving an external symbol on its own would buy
+nothing. The MIR is already backend-agnostic and the MIR-to-LIR lowering names the foreign-call gap
+explicitly, so the DPI-specific work is small; it unblocks with the general execution-backend
+buildout (`architecture-reset.md`), not before. Re-check that backend's procedural coverage before
+planning this item.
 
 The C++ backend also carries the general D2 argument surface: `output` and `inout` scalar arguments
-(2-state integral, `real`, `string`) cross by pointer with a copy back into the actual, functions
-returning a value alongside `output` / `inout` arguments work in expression position, and non-pure
-imports and packed 2-state values up to one machine word are accepted. The sole remaining D2 gap is
-`chandle`, which needs a runtime representation of its own before it can cross the boundary.
+(2-state integral, `real`, `string`, `chandle`) cross by pointer with a copy back into the actual,
+functions returning a value alongside `output` / `inout` arguments work in expression position, and
+non-pure imports and packed 2-state values up to one machine word are accepted. `chandle` crosses as
+an opaque pointer in either direction and round-trips its identity.
 
 ## Sub-Steps
 
@@ -65,9 +71,9 @@ inline.
       backend, resolved through the execution session on the LLVM / JIT backend), asserted by a
       mixed-language test.
 - [ ] D2 -- General import (LRM 35.5.5, 35.5.6). `output` and `inout` arguments, non-pure imports,
-      and packed 2-state values up to a single machine word are supported on the C++ backend, with
-      the copy-out directions crossing by pointer to a boundary temporary. `chandle` is the
-      remaining gap: it needs a runtime representation before it can cross the boundary.
+      `chandle`, and packed 2-state values up to a single machine word are supported on the C++
+      backend, with the copy-out directions crossing by pointer to a boundary temporary. The
+      remaining work is the LLVM / JIT backend, which shares the same MIR.
 - [ ] D3 -- 4-state and wide marshaling: 4-state scalars and vectors across the boundary (the DPI
       canonical 4-state layout versus Lyra's internal representation) and packed vectors wider than
       one machine word (LRM 35.5.6).
@@ -127,11 +133,9 @@ and the out-of-scope boundary. Work proceeds against that record.
 
 Prerequisites surfaced during design:
 
-- `chandle` has no runtime representation or type-mapping entry today; it must gain one before D2
-  (where a `chandle` argument first crosses the boundary).
-- Foreign-symbol linkage does not exist on either backend: the C++ backend needs a user-link-input
-  seam in its build recipe, and the LLVM / JIT backend needs external-symbol resolution in its
-  execution session; both are part of D1.
+- Foreign-symbol linkage: the C++ backend needed a user-link-input seam in its build recipe, and the
+  LLVM / JIT backend needs external-symbol resolution in its execution session; both are part of D1.
+  Only the LLVM / JIT half remains.
 
 ## Cross-references
 

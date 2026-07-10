@@ -302,6 +302,10 @@ auto BuildDefaultValueExpr(
           [&](const mir::ManagedRefType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
+          // LRM 6.14: a chandle is always initialized to null.
+          [&](const mir::ChandleType&) -> mir::Expr {
+            return mir::Expr{.data = mir::NullLiteral{}, .type = type};
+          },
           [&](const mir::VectorType&) -> mir::Expr {
             return mir::Expr{
                 .data =

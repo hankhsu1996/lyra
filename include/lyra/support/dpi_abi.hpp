@@ -12,7 +12,7 @@ namespace lyra::support {
 // available; every layer below reads the category.
 //
 // The set covers 2-state integral scalars up to one machine word, real, string,
-// and void; four-state, wide packed, chandle, and open-array carriers are not
+// chandle, and void; four-state, wide packed, and open-array carriers are not
 // yet represented.
 enum class DpiAbiClass : std::uint8_t {
   kVoid,
@@ -23,6 +23,7 @@ enum class DpiAbiClass : std::uint8_t {
   kLongInt,
   kReal,
   kString,
+  kChandle,
 };
 
 // The direction of a DPI-C formal argument (LRM 35.5.1.2). `ref` is illegal in
@@ -78,6 +79,8 @@ enum class DpiDirection : std::uint8_t {
       return "real";
     case DpiAbiClass::kString:
       return "string";
+    case DpiAbiClass::kChandle:
+      return "chandle";
   }
   return "unknown";
 }

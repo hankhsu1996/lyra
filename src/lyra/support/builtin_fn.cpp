@@ -370,6 +370,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "real_value";
     case BuiltinFn::kStringCStr:
       return "string_cstr";
+    case BuiltinFn::kChandlePtr:
+      return "chandle_ptr";
     case BuiltinFn::kFromInt:
       return "from_int";
     case BuiltinFn::kConvertFrom:

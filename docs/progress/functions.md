@@ -18,9 +18,8 @@ and [Out of Scope](#out-of-scope).
 
 ## Actionable
 
-F1 is the entry point: the value-returning function call and return path. Most other items build on
-it -- the dependencies are stated inline. Tasks that suspend (T2) wait on the timing machinery owned
-by `processes.md`.
+All sub-steps are closed; the subroutine surface in scope is complete. What remains is the one
+[Blocked](#blocked) item, which waits on module hierarchy.
 
 ## Sub-Steps
 
@@ -97,8 +96,9 @@ everything and the inline "rides on" notes record the real dependencies.
       reassigns inside the body copies the resulting container back, and a returned container is
       independent of the body's local. The outdated-reference rules of LRM 13.5.2 are a `ref`-formal
       concern, not a by-value one, and are tracked with F10.
-- [ ] F9 -- `chandle` arguments and return values (LRM 6.14). Identity round-trip and `null`
-      handling through the subroutine boundary.
+- [x] F9 -- `chandle` arguments and return values (LRM 6.14). Identity round-trip and `null`
+      handling through the subroutine boundary. A chandle is an ordinary value at the boundary, so
+      it needed no call-path work of its own beyond the data type (`datatypes.md`).
 
 ### Tasks
 

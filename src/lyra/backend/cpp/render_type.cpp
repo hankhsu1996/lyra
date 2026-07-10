@@ -31,6 +31,8 @@ auto DpiCarrierCppType(support::DpiAbiClass abi) -> std::string_view {
       return "double";
     case support::DpiAbiClass::kString:
       return "const char*";
+    case support::DpiAbiClass::kChandle:
+      return "void*";
     case support::DpiAbiClass::kVoid:
       return "void";
   }
@@ -103,6 +105,9 @@ auto RenderTypeAsCpp(
           },
           [](const mir::DpiCarrierType& d) -> std::string {
             return std::string{DpiCarrierCppType(d.abi)};
+          },
+          [](const mir::ChandleType&) -> std::string {
+            return std::string{"lyra::value::Chandle"};
           },
           [](const mir::EventType&) -> std::string {
             return std::string{"lyra::runtime::NamedEvent"};

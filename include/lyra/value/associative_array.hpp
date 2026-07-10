@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -12,6 +13,7 @@
 
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/oob_shield.hpp"
@@ -108,6 +110,24 @@ struct AssocKeyTraits<PackedArray> {
 template <>
 struct AssocKeyTraits<WildcardKey> {
   using Less = WildcardKeyLess;
+};
+
+// LRM 6.14: a chandle may key an associative array, and the relative ordering
+// of two entries is explicitly allowed to vary between runs. The order is
+// therefore a host storage choice, not an SV operator -- `<` is not defined on
+// a chandle
+// -- and `std::less` supplies the total order `std::map` needs over unrelated
+// pointers.
+struct ChandleKeyLess {
+  [[nodiscard]] auto operator()(const Chandle& a, const Chandle& b) const
+      -> bool {
+    return std::less<>{}(a.Ptr(), b.Ptr());
+  }
+};
+
+template <>
+struct AssocKeyTraits<Chandle> {
+  using Less = ChandleKeyLess;
 };
 
 // A wildcard key formats as its underlying integral value (LRM 21.2.1.6 prints

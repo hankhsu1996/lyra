@@ -1,0 +1,25 @@
+id: cpp.chandle
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  link_sources: [dpi.c]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      default null
+      bang null
+      non null
+      truthy
+      read=7
+      case eq
+      case ne null
+      assoc holds
+      keyed=3
+      struct holds x=9
+      assigned null
+      out read=5
+      inout read=6

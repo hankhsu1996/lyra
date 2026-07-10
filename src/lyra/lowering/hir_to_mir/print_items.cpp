@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <expected>
 #include <optional>
@@ -31,6 +32,44 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// LRM 6.14 permits a chandle only in the equality family and a boolean test, so
+// a chandle -- alone or nested inside an aggregate whose `%p` would print it --
+// is never a legal format operand. slang does not filter the form, so lowering
+// does, exactly as it does for a `real` case-equality (LRM Table 11-1). The
+// runtime consequently carries no chandle formatter, and no simulation prints a
+// host pointer.
+auto TypeContainsChandle(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> bool {
+  return std::visit(
+      Overloaded{
+          [](const mir::ChandleType&) { return true; },
+          [&](const mir::UnpackedArrayType& t) {
+            return TypeContainsChandle(unit, t.element_type);
+          },
+          [&](const mir::DynamicArrayType& t) {
+            return TypeContainsChandle(unit, t.element_type);
+          },
+          [&](const mir::QueueType& t) {
+            return TypeContainsChandle(unit, t.element_type);
+          },
+          [&](const mir::AssociativeArrayType& t) {
+            return TypeContainsChandle(unit, t.key_type) ||
+                   TypeContainsChandle(unit, t.element_type);
+          },
+          [&](const mir::TupleType& t) {
+            return std::ranges::any_of(t.elements, [&](mir::TypeId e) {
+              return TypeContainsChandle(unit, e);
+            });
+          },
+          [&](const mir::UnionType& t) {
+            return std::ranges::any_of(t.elements, [&](mir::TypeId e) {
+              return TypeContainsChandle(unit, e);
+            });
+          },
+          [](const auto&) { return false; }},
+      unit.types.Get(type).data);
+}
 
 auto ToValueFormatKind(support::FormatDirectiveKind k) -> value::FormatKind {
   switch (k) {
@@ -75,9 +114,17 @@ auto BuildPrintValueItem(
     mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
   const auto& hir_proc = process.HirBody();
   auto& block = *frame.current_block;
-  auto lowered_or = process.LowerExpr(hir_proc.exprs.Get(hir_arg), frame);
+  const hir::Expr& hir_expr = hir_proc.exprs.Get(hir_arg);
+  auto lowered_or = process.LowerExpr(hir_expr, frame);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
+
+  if (TypeContainsChandle(process.Module().Unit(), lowered.type)) {
+    return diag::Fail(
+        hir_expr.span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a chandle is not a legal format argument (LRM 6.14 permits a chandle "
+        "only in an equality comparison and a boolean test)");
+  }
 
   // %s formats by operand type (LRM 21.2.1.7): a String and a packed value
   // each format directly, without building a string value. Only an unpacked
