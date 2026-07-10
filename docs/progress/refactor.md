@@ -822,6 +822,25 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       positive case (an import declared at module scope, called from a nested block), never by
       pinning the current rejection. **Blocker**: none.
 
+- [ ] R56 -- A condition is a value; reducing it to a control predicate is an explicit conversion,
+      not a backend's contextual one. MIR already owns the primitive: `BoolCastExpr` reduces any
+      operand to a host bool, and a real or chandle `!` lowers through it. But `IfStmt`,
+      `WhileStmt`, the loop forms, and `ConditionalExpr` all carry a raw SV-typed condition, and the
+      C++ backend recovers the predicate by handing that value to C++'s contextual conversion -- a
+      passthrough render that works only because every value type happens to expose
+      `explicit operator bool`. The semantic fact "this value is read as a predicate here" is
+      therefore stated nowhere in MIR; each backend rediscovers it from the operand's type at the
+      branch site, which is exactly the re-derivation `mir.md` invariant 10 forbids, and an LLVM
+      backend must synthesize a different test per type (`icmp ne ptr null` for a chandle, a runtime
+      call for a `PackedArray`) with no MIR node telling it to. The asymmetry is visible today: `!h`
+      on a chandle carries an explicit `BoolCastExpr` while `if (h)` does not, for no reason other
+      than that `!`'s result must be re-shaped to a 1-bit integral. Target: every condition context
+      carries its condition already reduced through `BoolCastExpr` at HIR-to-MIR, and the backend's
+      condition-rendering passthrough disappears -- render emits the cast like any other node. No
+      new node kind is needed; the cut is to make the existing primitive mandatory where a predicate
+      is consumed, and to settle each value type's predicate semantics against LRM Table 11-1 while
+      doing so. **Blocker**: none.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

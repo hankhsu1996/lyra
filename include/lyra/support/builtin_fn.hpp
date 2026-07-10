@@ -279,9 +279,11 @@ enum class BuiltinFn : std::uint16_t {
   // Native-host value accessors used by DPI-C marshaling (LRM 35.5.6):
   // `kRealValue` reads a `Real` / `ShortReal` out as its host floating value;
   // `kStringCStr` borrows a `String` as a NUL-terminated C string valid for the
-  // owning string's lifetime. Instance methods on the receiver (`args[0]`).
+  // owning string's lifetime; `kChandlePtr` reads a `Chandle` out as the opaque
+  // pointer it carries. Instance methods on the receiver (`args[0]`).
   kRealValue,
   kStringCStr,
+  kChandlePtr,
   kFromInt,
   kConvertFrom,
   kFromPackedArray,

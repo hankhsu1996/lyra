@@ -296,10 +296,13 @@ auto BuildMirUnaryExpr(
     return MakeBuiltinFnCall(*builtin, {operand_id}, result_type);
   }
 
-  // LRM 11.3.1 real `!`: route through `bool(...)` and wrap the host-bool
-  // result in `FromBool` so the surface type stays the 1-bit integral the
-  // SV semantic prescribes.
-  if (op == mir::UnaryOp::kLogicalNot && IsRealFamilyType(operand_ty)) {
+  // LRM 11.3.1 real `!` and LRM 6.14 chandle `!`: route through `bool(...)` and
+  // wrap the host-bool result in `FromBool` so the surface type stays the 1-bit
+  // integral the SV semantic prescribes. A chandle's boolean value is 0 when it
+  // is null and 1 otherwise.
+  if (op == mir::UnaryOp::kLogicalNot &&
+      (IsRealFamilyType(operand_ty) ||
+       operand_ty.Kind() == mir::TypeKind::kChandle)) {
     const mir::ExprId operand_bool =
         block.exprs.Add(MakeBoolCast(operand_id, unit.builtins.bit1));
     const mir::ExprId not_id = block.exprs.Add(
@@ -327,13 +330,14 @@ auto BuildMirBinaryExpr(
   const bool string_lhs = lhs_ty.Kind() == mir::TypeKind::kString;
   const bool string_rhs = rhs_ty.Kind() == mir::TypeKind::kString;
 
-  // LRM 8.4: handle equality compares object identity and yields a 1-bit
-  // value. A handle's `==` / `!=` produces a host bool, reshaped to the SV
-  // 1-bit integral by `FromBool` so the result carries the value type a 1-bit
-  // signal assignment expects.
+  // LRM 8.4: class-handle equality compares object identity and yields a 1-bit
+  // value. A class handle's `==` / `!=` produces a host bool, reshaped to the
+  // SV 1-bit integral by `FromBool` so the result carries the value type a
+  // 1-bit signal assignment expects. A chandle is not in this family: it is a
+  // value type whose `==` already yields the 1-bit integral directly, like a
+  // string or a real, so it renders as a plain binary operator.
   const auto is_handle = [](const mir::Type& ty) {
-    return ty.Kind() == mir::TypeKind::kManagedRef ||
-           ty.Kind() == mir::TypeKind::kChandle;
+    return ty.Kind() == mir::TypeKind::kManagedRef;
   };
   if ((is_handle(lhs_ty) || is_handle(rhs_ty)) &&
       (op == mir::BinaryOp::kEquality || op == mir::BinaryOp::kInequality)) {

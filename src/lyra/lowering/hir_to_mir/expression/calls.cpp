@@ -628,6 +628,16 @@ auto MarshalSvToCarrier(
                               .target = support::BuiltinFn::kStringCStr},
                       .arguments = {sv_id}},
               .type = carrier});
+    case support::DpiAbiClass::kChandle:
+      return block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{
+                              .target = support::BuiltinFn::kChandlePtr},
+                      .arguments = {sv_id}},
+              .type = carrier});
     case support::DpiAbiClass::kVoid:
       throw InternalError(
           "MarshalArgToCarrier: void is not an argument carrier");
@@ -638,9 +648,9 @@ auto MarshalSvToCarrier(
 // Foreign ABI carrier -> SV value into a declared SV type's canonical shape. An
 // integral carrier is landed into the type's representation by the packed
 // factory (the prototype carries that shape, so width / signedness / state
-// domain follow the declared type); a real / string carrier constructs the SV
-// value directly. Feeds both a function's marshaled return and the copy-back of
-// an output / inout argument into its actual.
+// domain follow the declared type); a real / string / chandle carrier
+// constructs the SV value directly. Feeds both a function's marshaled return
+// and the copy-back of an output / inout argument into its actual.
 auto MarshalCarrierToSv(
     ModuleLowerer& module, WalkFrame frame, mir::ExprId call_id,
     support::DpiAbiClass abi, mir::TypeId result_type) -> mir::Expr {
@@ -666,6 +676,7 @@ auto MarshalCarrierToSv(
     }
     case support::DpiAbiClass::kReal:
     case support::DpiAbiClass::kString:
+    case support::DpiAbiClass::kChandle:
       return mir::Expr{
           .data =
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {call_id}},
