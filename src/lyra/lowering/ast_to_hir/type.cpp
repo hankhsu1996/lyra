@@ -408,14 +408,16 @@ auto TranslateTypeData(
             .key_type = module.Unit().builtins.wildcard_index,
         }};
       }
-      // A declared index covers string (LRM 7.8.2) and integral, which includes
-      // a packed struct / enum (LRM 7.8.4 / 7.8.5). A class index (LRM 7.8.3)
-      // and a real index are rejected.
-      if (!(aa.indexType->isIntegral() || aa.indexType->isString())) {
+      // A declared index covers string (LRM 7.8.2), integral, which includes a
+      // packed struct / enum (LRM 7.8.4 / 7.8.5), and chandle, whose entries
+      // may order arbitrarily (LRM 6.14). A class index (LRM 7.8.3) and a real
+      // index are rejected.
+      if (!(aa.indexType->isIntegral() || aa.indexType->isString() ||
+            aa.indexType->isCHandle())) {
         return diag::Fail(
             decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
-            "associative arrays are only supported with a string, integral, or "
-            "wildcard index type");
+            "associative arrays are only supported with a string, integral, "
+            "chandle, or wildcard index type");
       }
       auto key_id_or = module.InternType(*aa.indexType, decl_span);
       if (!key_id_or) {

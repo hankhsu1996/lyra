@@ -9,19 +9,12 @@ unpacked arrays here; the variable-size aggregate family in `aggregate.md`), `da
 
 ## Actionable
 
-Enum, real, string, fixed-size unpacked arrays, the integral-family declaration initializers, and
-parameter references in expressions are complete. The variable-size aggregate family (dynamic array,
-queue, associative array) is complete; see `aggregate.md`. Unpacked struct and union are complete.
-Default initialization (LRM Table 6-7) and value representation, including a wide value carrying X/Z
-across the 64-bit word boundary, are complete. Chandle is the only remaining datatype, and its
-representation is built with the DPI boundary it serves.
-
-| Item | Status                                                                         |
-| ---- | ------------------------------------------------------------------------------ |
-| -    | Variable-size aggregates (array / queue / assoc) -- `aggregate.md` (complete). |
-| -    | Unpacked struct / union -- complete.                                           |
-| -    | `datatypes/default_init`, `datatypes/representation` -- complete.              |
-| -    | Chandle -- rides on the DPI workstream (its only non-null value source).       |
+All items closed; the datatype surface in scope is complete. Enum, real, string, fixed-size unpacked
+arrays, the integral-family declaration initializers, and parameter references in expressions are
+complete. The variable-size aggregate family (dynamic array, queue, associative array) is complete;
+see `aggregate.md`. Unpacked struct and union are complete. Default initialization (LRM Table 6-7)
+and value representation, including a wide value carrying X/Z across the 64-bit word boundary, are
+complete. Chandle is complete.
 
 ## Enum
 
@@ -126,3 +119,29 @@ frontend inserts an implicit conversion when a literal participates in an expres
 - LRM 6.16 (String data type), Table 6-9 (String operators), 6.16.1 -- 6.16.15 (String methods),
   Table 6-7 (Default initial values).
 - Archive items: `datatypes/string/{string_concat}`.
+
+## Chandle
+
+LRM 6.14: `chandle` stores a pointer passed through the DPI. It always initializes to `null`, and
+its only legal uses are equality (`==` / `!=`) and case equality (`===` / `!==`) against another
+chandle or `null`, a boolean test that is 0 when null and 1 otherwise, assignment from another
+chandle or `null`, membership in an associative array, a class, or a subroutine's arguments and
+return value. It is illegal as a port, in a sensitivity list or event expression, in a continuous
+assignment, in an untagged union, and in a packed type, so a chandle never participates in event
+propagation and a structural chandle is not observable storage.
+
+- [x] CH1 -- Declaration and `null` default, assignment from `null` and from another chandle, the
+      equality and case-equality families against a chandle and against `null`, the boolean test
+      (including `!`), passing to and returning from a subroutine with the identity preserved, use
+      as an unpacked-struct field, as an associative-array element, and as an associative-array key
+      (whose relative entry ordering LRM 6.14 leaves to the implementation). A non-null chandle
+      originates only at the DPI boundary, where it crosses as an opaque pointer in either direction
+      (`dpi.md`).
+- [x] CH2 -- A chandle reaching a format argument, alone or nested in an aggregate, is an LRM 6.14
+      violation the frontend does not filter, so lowering diagnoses it. No simulation prints a host
+      pointer.
+
+### Cross-references
+
+- LRM 6.14 (Chandle data type), Table 11-1 (Operators and data types), Table 6-7 (Default initial
+  values), 7.8 (Associative arrays), 35.5.6 (DPI type mapping).

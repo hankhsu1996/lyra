@@ -235,8 +235,9 @@ the lookup key and imposes an ordering.
       frontend rejects a wildcard-indexed array used in `foreach` or with a manipulation method that
       returns an index (LRM 7.8.1 / 7.12.1), so those illegal forms never reach lowering. A
       packed-struct key (LRM 7.8.5) is an integral index, keyed and ordered by its bit-pattern
-      value. The class index (LRM 7.8.3) stays blocked on class support and is deferred to that
-      workstream.
+      value. A chandle key (LRM 6.14) identifies an entry by pointer identity; the LRM leaves the
+      relative ordering of two entries to the implementation. The class index (LRM 7.8.3) stays
+      blocked on class support and is deferred to that workstream.
 
 ## Cross-references
 

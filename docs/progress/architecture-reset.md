@@ -73,8 +73,7 @@ Granular tracking lives in `integral.md` and `datatypes.md`.
 
 - [x] datatypes/default_init -- LRM Table 6-7 default initialization across families and nesting.
 - [x] datatypes/enum
-- [ ] datatypes/general -- parameters and typedef done; chandle remains and rides on the DPI
-      boundary (its only non-null value source), so it is built with `dpi/*`.
+- [x] datatypes/general -- parameters, typedef, and chandle.
 - [x] datatypes/integral -- `integral.md`.
 - [x] datatypes/packed -- `packed.md`.
 - [x] datatypes/real
@@ -117,7 +116,7 @@ Tracked in `functions.md` (the full LRM 13 subroutine surface).
 - [x] functions/string_return -- F7.
 - [x] functions/container_params -- F7, F8.
 - [x] functions/container_outparams -- F4, F8.
-- [ ] functions/chandle -- F9; rides on the chandle data type (`datatypes/general`).
+- [x] functions/chandle -- F9.
 
 ### generate
 

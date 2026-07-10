@@ -256,6 +256,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Value";
     case support::BuiltinFn::kStringCStr:
       return "CStr";
+    case support::BuiltinFn::kChandlePtr:
+      return "Ptr";
     case support::BuiltinFn::kFromInt:
       return "FromInt";
     case support::BuiltinFn::kConvertFrom:

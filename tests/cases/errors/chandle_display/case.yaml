@@ -1,4 +1,4 @@
-id: errors.dpi_import_chandle
+id: errors.chandle_display
 tags: [errors, diag]
 input:
   command: [emit, cpp]
@@ -10,9 +10,9 @@ expect:
   exit: 1
   stderr:
     contains:
-      - "main.sv:2:"
+      - "main.sv:3:"
       - "unsupported:"
-      - "chandle DPI-C argument is not yet supported"
+      - "chandle"
     not_contains:
       - "internal error"
       - "\x1b["
