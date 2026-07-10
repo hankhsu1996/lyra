@@ -10,6 +10,7 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::mir {
 
@@ -29,6 +30,7 @@ enum class TypeKind {
   kShortReal,
   kRealTime,
   kChandle,
+  kDpiCarrier,
   kVoid,
   kObject,
   kExternalUnitObject,
@@ -237,6 +239,23 @@ struct RealTimeType {
 struct ChandleType {
   auto operator==(const ChandleType&) const -> bool = default;
 };
+
+// A foreign-ABI carrier: the plain C ABI type an SV value is marshaled to or
+// from when it crosses the DPI-C boundary (LRM 35.5.6). One value per carrier
+// category; a backend maps the category to a concrete C ABI type (kInt ->
+// int32_t, kReal -> double, kString -> const char*, ...).
+//
+// Invariant -- this is an ABI temporary, never a value-model type. It occurs
+// only within a single foreign-call lowering window: as the result type of a
+// marshal-to-carrier expression, and as the operand and result type of a
+// foreign call. It is never an SV variable's type, never stored to storage,
+// never produced by a user expression, and never escapes that window.
+struct DpiCarrierType {
+  support::DpiAbiClass abi;
+
+  auto operator==(const DpiCarrierType&) const -> bool = default;
+};
+
 struct VoidType {
   auto operator==(const VoidType&) const -> bool = default;
 };
@@ -533,10 +552,10 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, WildcardIndexType, StringType, StringViewType,
     MachineIntType, EventType, RealType, ShortRealType, RealTimeType,
-    ChandleType, VoidType, ObjectType, ExternalUnitObjectType, ScopeType,
-    InstanceType, GenScopeType, ProceduralStorageScopeType, ServicesType,
-    FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
-    PointerType, ManagedRefType, VectorType, TupleType, UnionType,
+    ChandleType, DpiCarrierType, VoidType, ObjectType, ExternalUnitObjectType,
+    ScopeType, InstanceType, GenScopeType, ProceduralStorageScopeType,
+    ServicesType, FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType,
+    RefType, PointerType, ManagedRefType, VectorType, TupleType, UnionType,
     ObservableType, ResolvedType, DriverType, StructType, ClosureType>;
 
 struct Type {

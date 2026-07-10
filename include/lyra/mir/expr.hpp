@@ -15,6 +15,7 @@
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/method_id.hpp"
 #include "lyra/mir/param.hpp"
+#include "lyra/mir/static_callable_id.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/struct_construct.hpp"
 #include "lyra/mir/unary_op.hpp"
@@ -125,12 +126,15 @@ struct TypeQualifier {
 
 using ScopeQualifier = std::variant<TypeQualifier>;
 
-// The target of a `Direct` call -- the symbol identity. Two identity
-// spaces today: built-in runtime entries (closed-namespace `BuiltinFn`)
-// and user-declared class methods (per-class `MethodId` arena). The two
-// collapse into one `CallableId` once external callables (DPI) and SV
-// class statics share one callable-declaration shape.
-using DirectTarget = std::variant<MethodId, support::BuiltinFn>;
+// The target of a `Direct` call -- the symbol identity. Three identity
+// spaces: built-in runtime entries (closed-namespace `BuiltinFn`),
+// user-declared class methods (per-class `MethodId` arena), and class-level
+// static callables (per-class `StaticCallableId` arena -- a DPI-C import's
+// external symbol, a receiver-less associated callable). These collapse into
+// one `CallableId` once the method and static-callable declarations share one
+// callable-declaration shape.
+using DirectTarget =
+    std::variant<MethodId, support::BuiltinFn, StaticCallableId>;
 
 // A direct call to a named symbol. The single shape for every direct
 // invocation -- user method, built-in instance method, type-qualified

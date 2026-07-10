@@ -79,6 +79,8 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
         } else if constexpr (std::is_same_v<T, MachineIntType>) {
           HashField(seed, t.bit_width);
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.signedness)));
+        } else if constexpr (std::is_same_v<T, DpiCarrierType>) {
+          HashCombine(seed, std::hash<int>{}(static_cast<int>(t.abi)));
         } else if constexpr (std::is_same_v<T, RuntimeLibraryType>) {
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.kind)));
         } else if constexpr (std::is_same_v<T, CoroutineType>) {

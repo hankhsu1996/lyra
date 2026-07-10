@@ -366,6 +366,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "to_int64";
     case BuiltinFn::kRound:
       return "round";
+    case BuiltinFn::kRealValue:
+      return "real_value";
+    case BuiltinFn::kStringCStr:
+      return "string_cstr";
     case BuiltinFn::kFromInt:
       return "from_int";
     case BuiltinFn::kConvertFrom:

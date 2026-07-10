@@ -276,6 +276,12 @@ enum class BuiltinFn : std::uint16_t {
   // from packed bits (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
   kToInt64,
   kRound,
+  // Native-host value accessors used by DPI-C marshaling (LRM 35.5.6):
+  // `kRealValue` reads a `Real` / `ShortReal` out as its host floating value;
+  // `kStringCStr` borrows a `String` as a NUL-terminated C string valid for the
+  // owning string's lifetime. Instance methods on the receiver (`args[0]`).
+  kRealValue,
+  kStringCStr,
   kFromInt,
   kConvertFrom,
   kFromPackedArray,

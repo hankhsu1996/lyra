@@ -576,6 +576,158 @@ auto LowerMethodCall(
       .type = result_type};
 }
 
+// SV value -> foreign ABI carrier (marshal-in, LRM 35.5.6). An integral value
+// yields its host int64, narrowed to the carrier's C width by a host cast; a
+// real yields its native floating value; a string borrows a NUL-terminated C
+// string that stays valid for the call. Reuses the ordinary value accessors;
+// the boundary conversion is a plain expression, not a DPI-specific primitive.
+auto MarshalArgToCarrier(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId sv_id,
+    support::DpiAbiClass abi) -> mir::ExprId {
+  const mir::TypeId carrier =
+      unit.types.Intern(mir::TypeData{mir::DpiCarrierType{.abi = abi}});
+  switch (abi) {
+    case support::DpiAbiClass::kBit:
+    case support::DpiAbiClass::kByte:
+    case support::DpiAbiClass::kShortInt:
+    case support::DpiAbiClass::kInt:
+    case support::DpiAbiClass::kLongInt: {
+      const mir::ExprId host_int = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{.target = support::BuiltinFn::kToInt64},
+                      .arguments = {sv_id}},
+              .type = unit.builtins.int32});
+      return block.exprs.Add(
+          mir::Expr{
+              .data = mir::CastExpr{.operand = host_int}, .type = carrier});
+    }
+    case support::DpiAbiClass::kReal:
+      return block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{.target = support::BuiltinFn::kRealValue},
+                      .arguments = {sv_id}},
+              .type = carrier});
+    case support::DpiAbiClass::kString:
+      return block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{
+                              .target = support::BuiltinFn::kStringCStr},
+                      .arguments = {sv_id}},
+              .type = carrier});
+    case support::DpiAbiClass::kVoid:
+      throw InternalError(
+          "MarshalArgToCarrier: void is not an argument carrier");
+  }
+  throw InternalError("MarshalArgToCarrier: unknown DpiAbiClass");
+}
+
+// Foreign ABI carrier -> SV value (marshal-out) into the declared return type's
+// canonical shape. An integral carrier is landed into the return type's
+// representation by the packed factory (the prototype carries that shape, so
+// width / signedness / state domain follow the declared type); a real / string
+// carrier constructs the SV value directly.
+auto MarshalResultFromCarrier(
+    ModuleLowerer& module, WalkFrame frame, mir::ExprId call_id,
+    support::DpiAbiClass abi, mir::TypeId result_type) -> mir::Expr {
+  mir::Block& block = *frame.current_block;
+  switch (abi) {
+    case support::DpiAbiClass::kBit:
+    case support::DpiAbiClass::kByte:
+    case support::DpiAbiClass::kShortInt:
+    case support::DpiAbiClass::kInt:
+    case support::DpiAbiClass::kLongInt: {
+      const mir::ExprId prototype =
+          block.exprs.Add(BuildDefaultValueExpr(module, frame, result_type));
+      return mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kFromInt,
+                          .qualification =
+                              mir::TypeQualifier{.type = result_type}},
+                  .arguments = {call_id, prototype}},
+          .type = result_type};
+    }
+    case support::DpiAbiClass::kReal:
+    case support::DpiAbiClass::kString:
+      return mir::Expr{
+          .data =
+              mir::CallExpr{.callee = mir::Construct{}, .arguments = {call_id}},
+          .type = result_type};
+    case support::DpiAbiClass::kVoid:
+      throw InternalError("MarshalResultFromCarrier: void has no marshal-out");
+  }
+  throw InternalError("MarshalResultFromCarrier: unknown DpiAbiClass");
+}
+
+// LRM 35.4 import call: an ordinary call to the external static callable,
+// wrapped in boundary marshaling. Each actual is marshaled to its ABI carrier,
+// the foreign symbol is called over the carriers, and a non-void result is
+// marshaled back to the declared SV return type. The ABI classes are read from
+// the callable's own declaration, resolved once at its declaration lowering.
+template <ExprLowerer Lowerer>
+auto LowerForeignImportCall(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const hir::ForeignImportRef& ref, diag::SourceSpan span,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  if (ref.hops.value != 0) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedDpi,
+        "a call to a DPI-C import declared in an enclosing scope is not yet "
+        "supported");
+  }
+  auto& module = lowerer.Module();
+  auto& unit = module.Unit();
+  auto& block = *frame.current_block;
+  const auto& hir_exprs = lowerer.HirExprs();
+  const mir::StaticCallableId callable{ref.id.value};
+  const mir::StaticCallableDecl& decl =
+      frame.current_class->static_callables.Get(callable);
+
+  std::vector<mir::ExprId> carrier_args;
+  carrier_args.reserve(c.arguments.size());
+  for (std::size_t i = 0; i < c.arguments.size(); ++i) {
+    if (!c.arguments[i].has_value()) {
+      throw InternalError("DPI-C import call argument unexpectedly elided");
+    }
+    auto sv_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
+    if (!sv_or) return std::unexpected(std::move(sv_or.error()));
+    const mir::ExprId sv_id = block.exprs.Add(*std::move(sv_or));
+    carrier_args.push_back(
+        MarshalArgToCarrier(unit, block, sv_id, decl.params[i].abi));
+  }
+
+  // A void import has no carrier result and needs no marshal-out; a valued one
+  // returns its ABI carrier, which is then marshaled back to the SV type.
+  const bool is_void = decl.ret_abi == support::DpiAbiClass::kVoid;
+  const mir::TypeId call_type =
+      is_void ? unit.builtins.void_type
+              : unit.types.Intern(
+                    mir::TypeData{mir::DpiCarrierType{.abi = decl.ret_abi}});
+  mir::Expr foreign_call{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = callable},
+              .arguments = std::move(carrier_args)},
+      .type = call_type};
+  if (is_void) {
+    return foreign_call;
+  }
+  const mir::ExprId call_id = block.exprs.Add(std::move(foreign_call));
+  return MarshalResultFromCarrier(
+      module, frame, call_id, decl.ret_abi, result_type);
+}
+
 }  // namespace
 
 template <ExprLowerer Lowerer>
@@ -611,10 +763,9 @@ auto LowerHirCallExpr(
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);
           },
-          [&](const hir::ForeignImportRef&) -> diag::Result<mir::Expr> {
-            return diag::Fail(
-                span, diag::DiagCode::kUnsupportedDpi,
-                "a call to a DPI-C import is not yet supported");
+          [&](const hir::ForeignImportRef& imp) -> diag::Result<mir::Expr> {
+            return LowerForeignImportCall(
+                lowerer, frame, c, imp, span, result_type);
           },
       },
       c.callee);

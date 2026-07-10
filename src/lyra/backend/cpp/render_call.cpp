@@ -252,6 +252,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "ToInt64";
     case support::BuiltinFn::kRound:
       return "Round";
+    case support::BuiltinFn::kRealValue:
+      return "Value";
+    case support::BuiltinFn::kStringCStr:
+      return "CStr";
     case support::BuiltinFn::kFromInt:
       return "FromInt";
     case support::BuiltinFn::kConvertFrom:
@@ -439,6 +443,16 @@ auto RenderDirectBuiltinCall(
       .leading_arg_count = 1};
 }
 
+// Renders a `Direct` callee whose target is a class-level static callable.
+// Today that is a DPI-C import: a global `extern "C"` symbol reached by its
+// foreign linkage name, with no receiver and no qualifier, so the callee text
+// is the bare foreign name and no leading argument is absorbed into it.
+auto RenderDirectStaticCallableCall(
+    const ScopeView& view, mir::StaticCallableId id) -> CalleeRender {
+  const auto& callable = view.Class().static_callables.Get(id);
+  return {.expr = callable.external.foreign_name, .leading_arg_count = 0};
+}
+
 auto RenderCalleePart(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> CalleeRender {
@@ -454,6 +468,9 @@ auto RenderCalleePart(
                     [&](const support::BuiltinFn& id) {
                       return RenderDirectBuiltinCall(
                           view, call, id, d.qualification);
+                    },
+                    [&](const mir::StaticCallableId& s) {
+                      return RenderDirectStaticCallableCall(view, s);
                     },
                 },
                 d.target);

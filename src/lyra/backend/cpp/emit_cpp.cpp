@@ -326,6 +326,33 @@ auto RenderScopeAsClass(
   return out;
 }
 
+// The `extern "C"` declarations for every DPI-C import the unit calls: each
+// import's foreign symbol as a C-linkage prototype over its ABI carrier types
+// (LRM 35.4 / 35.5.6). Emitted before the classes that call them so a foreign
+// call resolves against a declared signature; the definitions come from the
+// user's linked C. Empty when the unit declares no import.
+auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
+    -> std::string {
+  std::string out;
+  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
+    const mir::ClassId id{static_cast<std::uint32_t>(i)};
+    if (!unit.classes.IsDefined(id)) continue;
+    for (const auto& callable : unit.GetClass(id).static_callables) {
+      std::string params;
+      for (std::size_t p = 0; p < callable.params.size(); ++p) {
+        if (p != 0) params += ", ";
+        params += std::string{DpiCarrierCppType(callable.params[p].abi)};
+      }
+      out +=
+          std::format(
+              R"(extern "C" {} {}({});)", DpiCarrierCppType(callable.ret_abi),
+              callable.external.foreign_name, params) +
+          "\n";
+    }
+  }
+  return out;
+}
+
 auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
     -> std::vector<std::string> {
   std::vector<std::string> names;
@@ -385,6 +412,11 @@ auto RenderScopeHeaderFile(
     out += std::format("#include \"{}.hpp\"\n", ToCppName(name));
   }
   out += "\n";
+  if (const std::string foreign_decls = RenderForeignImportDeclarations(unit);
+      !foreign_decls.empty()) {
+    out += foreign_decls;
+    out += "\n";
+  }
   bool any_enum = false;
   for (std::size_t i = 0; i < unit.types.size(); ++i) {
     const mir::TypeId type_id{static_cast<std::uint32_t>(i)};

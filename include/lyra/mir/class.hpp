@@ -13,6 +13,8 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/param.hpp"
+#include "lyra/mir/static_callable.hpp"
+#include "lyra/mir/static_callable_id.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/struct_id.hpp"
@@ -101,6 +103,12 @@ struct Class {
   // the constructor forwards its address to the runtime base through
   // `base_init`.
   base::Arena<StaticConstantDecl, StaticConstantId> static_constants;
+  // The class-level static callables this class owns -- receiver-less callables
+  // in its associated namespace, the callable peer of the static constants. A
+  // DPI-C import (LRM 35.4) lives here as an external-symbol callable; nothing
+  // in the instance method arena is one. Empty for a class that declares no
+  // static callable.
+  base::Arena<StaticCallableDecl, StaticCallableId> static_callables;
   // The base-constructor arguments beyond the forwarded prefix params, as
   // ordinary MIR expressions the backend translates in order (their expression
   // tree lives in `constructor.body.exprs`). A runtime tree node passes the
