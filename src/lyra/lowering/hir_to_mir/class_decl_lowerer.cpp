@@ -41,8 +41,6 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       .base = std::nullopt,
       .self_pointer_type = self_pointer_type,
       .time_resolution = {},
-      .ctor_prefix_params = {},
-      .params = {},
       .fields = {},
       .constructor = {},
       .contained = {},
@@ -50,9 +48,12 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       .methods = {},
       .static_constants = {},
       .static_callables = {},
-      .base_init = {},
       .type_aliases = {}};
 
+  // The constructor's callable code is built in a local first, then handed
+  // to the class's method storage last so its id sits after every
+  // declaration-ordered SV method -- each SV method keeps its natural
+  // declaration index.
   mir::CallableCode ctor_code;
   CallableBindings ctor_bindings(module.Unit(), ctor_code);
   const mir::LocalId self_id = ctor_bindings.Declare(
@@ -145,7 +146,14 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
 
   ctor_code.params = {self_id};
   ctor_code.result_type = module.Unit().builtins.void_type;
-  mir_class.constructor = std::move(ctor_code);
+  const mir::MethodId ctor_method_id = mir_class.methods.Add(
+      mir::MethodDecl{
+          .name = "<ctor>",
+          .code = std::move(ctor_code),
+          .overrides = std::nullopt,
+          .visibility = mir::MethodVisibility::kInternal});
+  mir_class.constructor = mir::ConstructorDecl{
+      .method = ctor_method_id, .base_init = std::nullopt, .member_inits = {}};
 
   return mir_class;
 }

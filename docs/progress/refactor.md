@@ -676,26 +676,19 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       so the former linear search per access -- the one remaining place the backend re-derived
       information the lowering already had -- is gone.
 
-- [ ] R51 -- Close R45's last asymmetry: a class constructor should be a `mir::MethodDecl` resolved
-      through `Construct` like any other callable, not a separate `CallableCode` field on the side.
-      R45 unified the call side onto `Direct / Indirect / Construct`, so a child construction at a
-      parent's body already emits a generic `Construct(self, segment, services, structural...)`
-      callee whose args are plain MIR primitives. The receiver side -- the constructor declaration
-      -- is now a `Class::constructor` `CallableCode` carrying its own signature
-      (`locals[0] = self`), but it is still a separate field rather than a `MethodDecl` resolved
-      through `Construct` like any other callable; the C++ ctor entry args
-      (`parent / segment / services / structural...`) are not in MIR at all. The interim shape lands
-      the prefix args as `Class::ctor_prefix_params` so the render can iterate without restating any
-      type literal, and the render forwards each prefix arg to the base by pure name pass-through
-      (no `std::move`) -- which causes one `HierarchySegment` copy per scope construction. The
-      principled close: make the constructor a `MethodDecl` carrying its full signature, let the
-      call site's `Construct` callee resolve to it like any other callable, and let the C++ render
-      share the generic method renderer with one C++-specific mem-init mapping. Moving args into the
-      base init list then becomes an explicit MIR primitive (a `Move(expr)` wrapper or equivalent
-      data-flow encoding) rather than a render-time type-kind heuristic, so the copy can be elided
-      without the render learning what `HierarchySegment` / `Scope*` / `RuntimeServices&` mean.
-      **Likely interacts with**: R8 (callable-model unification) and R47 (SV class object model),
-      since both touch what "a class with a body" looks like at MIR.
+- [x] R51 -- Class construction is stated as a protocol on the class rather than side fields on the
+      class or render conventions in the backend. `Class::constructor` is a `ConstructorDecl`
+      pairing (a) the ctor's callable code, stored as an ordinary `MethodDecl` in `Class::methods`,
+      with (b) explicit base and per-field initialization ordered before the body runs. The C++
+      render composes the mem-init list from those stated facts alone; the interim
+      `Class::ctor_prefix_params` / `Class::params` / `Class::base_init` side fields are removed,
+      the prefix params flow through the ctor's own signature, and `ParamRef` (dead vocabulary tied
+      to the removed `Class::params`) is gone. Value transfer to the base call is an explicit
+      `MoveExpr` MIR primitive that the C++ backend translates mechanically to `std::move(...)`; an
+      alias-style handle (services / files / diagnostic) is exempt via `Type::IsAliasHandle` rather
+      than a render-side pattern match, so the render learns no runtime type name. The previous
+      `HierarchySegment` copy per scope construction is elided as a consequence; the LLVM path
+      treats `MoveExpr` as pass-through and defers transfer to LIR liveness.
 
 - [ ] R52 -- Collapse the closure environment and the activation frame onto MIR's value/reference
       spine. The design round this entry once held is resolved: the contract is

@@ -20,7 +20,6 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/param.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -53,18 +52,6 @@ auto RenderFieldList(
     out += RenderField(view, field, indent);
   }
   return out;
-}
-
-auto RenderParamField(
-    const mir::CompilationUnit& unit, const mir::Class& owner_class,
-    const mir::ParamDecl& param, std::size_t indent) -> std::string {
-  return std::format(
-      "{}const {} {};\n", Indent(indent),
-      RenderTypeAsCpp(unit, owner_class, param.type), param.name);
-}
-
-auto CtorParamName(std::size_t index) -> std::string {
-  return std::format("param{}", index);
 }
 
 auto RenderMethodParam(
@@ -107,9 +94,8 @@ auto RenderMethod(
   return out;
 }
 
-// Joins string parts with ", " for emission of ctor sig args, base init
-// forwards, and member-init list entries. Local to RenderConstructor; the
-// rest of the file does not yet need a shared helper.
+// Joins string parts with ", " for emission of ctor sig args, base-init
+// forwards, and member-init list entries.
 auto JoinCommaSeparated(const std::vector<std::string>& parts) -> std::string {
   std::string out;
   for (const auto& part : parts) {
@@ -122,55 +108,50 @@ auto JoinCommaSeparated(const std::vector<std::string>& parts) -> std::string {
 }
 
 auto RenderConstructor(
-    const ScopeView& scope_view, const mir::Class& s,
-    const std::string& base_class, std::size_t indent) -> std::string {
-  // The render iterates every ctor entry in MIR-stated order without
-  // switching on what each type means: ctor_prefix_params forward to the
-  // base by name, structural params bind to same-named fields.
-  // Each type goes through the single RenderTypeAsCpp dispatch, so the
-  // C++ form of every type lives in exactly one place. Base forwarding is
-  // plain pass-through (no std::move) -- C++ may copy a HierarchySegment
-  // once at construction, which the iteration-time budget can absorb.
-  //
-  // The base's trailing arguments (a tree node forwards the address of its
-  // generated-behavior constant) arrive as ordinary MIR expressions in
-  // `base_init`, translated in order after the prefix params.
+    const ScopeView& scope_view, const mir::Class& s, std::size_t indent)
+    -> std::string {
+  // The C++ ctor is composed from the class's construction protocol: the
+  // ctor's own callable carries the signature (with `self` at position 0
+  // per MIR contract -- omitted here because C++ makes `this` implicit); the
+  // base-init phase carries the args to forward to the base ctor; each
+  // member-init maps a field to its initializing expression. The body is the
+  // ctor callable's own body, threaded through a static `init(self)` helper
+  // so a body-local `self` reference resolves the same way it does in every
+  // other method render.
   const auto& unit = scope_view.Unit();
+  const auto& ctor_code = mir::GetConstructorCode(s);
   const auto render_typed_name = [&](mir::TypeId type, std::string_view name) {
     return std::format("{} {}", RenderTypeAsCpp(unit, s, type), name);
   };
 
   std::vector<std::string> sig_args;
-  std::vector<std::string> base_forwards;
-  std::vector<std::string> field_inits;
-  sig_args.reserve(s.ctor_prefix_params.size() + s.params.size());
-  base_forwards.reserve(s.ctor_prefix_params.size() + s.base_init.size());
-  field_inits.reserve(s.params.size());
-
-  for (std::size_t i = 0; i < s.ctor_prefix_params.size(); ++i) {
-    const auto& p =
-        s.ctor_prefix_params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
+  sig_args.reserve(ctor_code.params.size());
+  // Skip params[0] (self, MIR contract); the C++ ctor's receiver is `this`.
+  for (std::size_t i = 1; i < ctor_code.params.size(); ++i) {
+    const auto& p = ctor_code.locals.Get(ctor_code.params[i]);
     sig_args.push_back(render_typed_name(p.type, p.name));
-    base_forwards.push_back(p.name);
-  }
-  for (const mir::ExprId arg : s.base_init) {
-    base_forwards.push_back(RenderExpr(scope_view, scope_view.Expr(arg)));
-  }
-  for (std::size_t i = 0; i < s.params.size(); ++i) {
-    const auto& p = s.params.Get(mir::ParamId{static_cast<std::uint32_t>(i)});
-    const auto param_name = CtorParamName(i);
-    sig_args.push_back(render_typed_name(p.type, param_name));
-    field_inits.push_back(std::format("{}({})", p.name, param_name));
   }
 
   std::vector<std::string> init_parts;
-  init_parts.reserve(1 + field_inits.size());
-  if (!s.ctor_prefix_params.empty()) {
+  if (s.constructor.base_init.has_value()) {
+    const std::string base_class = RenderTypeAsCpp(
+        unit, s, mir::ResolveBaseContract(unit, *s.base).renderable);
+    std::vector<std::string> base_args_rendered;
+    base_args_rendered.reserve(s.constructor.base_init->args.size());
+    for (const mir::ExprId arg : s.constructor.base_init->args) {
+      base_args_rendered.push_back(
+          RenderExpr(scope_view, scope_view.Expr(arg)));
+    }
     init_parts.push_back(
-        std::format("{}({})", base_class, JoinCommaSeparated(base_forwards)));
+        std::format(
+            "{}({})", base_class, JoinCommaSeparated(base_args_rendered)));
   }
-  for (auto& f : field_inits) {
-    init_parts.push_back(std::move(f));
+  for (const mir::FieldInit& mi : s.constructor.member_inits) {
+    const auto& f = s.fields.Get(mi.target);
+    init_parts.push_back(
+        std::format(
+            "{}({})", f.name,
+            RenderExpr(scope_view, scope_view.Expr(mi.value))));
   }
 
   const std::string cpp_name = ToCppName(s.name);
@@ -181,15 +162,10 @@ auto RenderConstructor(
                 "{}({}) : {}", cpp_name, JoinCommaSeparated(sig_args),
                 JoinCommaSeparated(init_parts));
 
-  // The C++ constructor is the one shape that is not an ordinary method:
-  // it has no result type and runs a member-init list before its body, so
-  // it is not a lifecycle entry -- construction precedes elaboration. It is an
-  // allocation shell that forwards to the base and the field members, then
-  // kicks off the body -- a static worker over `self`, the same shape
-  // every method uses. An empty body needs no kickoff.
-  if (s.constructor.body.root_stmts.empty()) {
-    return std::format("{}{} {{}}\n", Indent(indent), sig);
-  }
+  // The C++ ctor is an allocation shell that forwards to the base and the
+  // field members, then hands off to a static `init(self)` -- the same
+  // static-over-self shape every method render uses, so a body-local self
+  // reference resolves as `self` here just like in any other body.
   return std::format(
       "{0}{1} {{ init(this); }}\n"
       "{0}static auto init({2}* self) -> void {{\n"
@@ -231,7 +207,7 @@ auto RenderStaticConstant(
     const ScopeView& parent_view, const mir::Class& s,
     const mir::StaticConstantDecl& c, std::size_t indent) -> std::string {
   const ScopeView view =
-      parent_view.WithClass(s, s.constructor).WithBlock(c.body);
+      parent_view.WithClass(s, mir::GetConstructorCode(s)).WithBlock(c.body);
   return std::format(
       "\n{0}static constexpr {1} {2} = {3};\n", Indent(indent),
       RenderTypeAsCpp(parent_view.Unit(), s, c.type), c.name,
@@ -246,8 +222,8 @@ auto RenderScopeAsClass(
   // class (one hop above the child).
   const ScopeView this_anchor =
       (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, s.constructor)
-          : parent_struct_view->WithClass(s, s.constructor);
+          ? ScopeView::ForRoot(unit, s, mir::GetConstructorCode(s))
+          : parent_struct_view->WithClass(s, mir::GetConstructorCode(s));
 
   const std::optional<mir::BaseContract> base =
       s.base.has_value()
@@ -277,26 +253,11 @@ auto RenderScopeAsClass(
     out += "\n";
   }
 
-  // A tree node forwards to its runtime base; a plain object (a class) has no
-  // base but still runs its constructor body to initialize its members. Either
-  // way the constructor is emitted when there is a base to forward to or a body
-  // to run; a baseless object with an empty body keeps the implicit default.
-  if (base.has_value()) {
-    out += RenderConstructor(
-        this_anchor, s, RenderTypeAsCpp(unit, s, base->renderable), indent + 1);
-  } else if (!s.constructor.body.root_stmts.empty()) {
-    out += RenderConstructor(this_anchor, s, "", indent + 1);
-  }
+  out += RenderConstructor(this_anchor, s, indent + 1);
 
   // Members follow the constructor and methods. They are public so cross-unit
   // references can reach them directly.
-  if (!s.params.empty() || !s.fields.empty()) {
-    out += "\n";
-  }
-  for (const auto& p : s.params) {
-    out += RenderParamField(unit, s, p, indent + 1);
-  }
-  if (!s.params.empty() && !s.fields.empty()) {
+  if (!s.fields.empty()) {
     out += "\n";
   }
   out += RenderFieldList(this_anchor, s.fields, indent + 1);
@@ -304,9 +265,14 @@ auto RenderScopeAsClass(
   // Each method declares its access -- a class instance method is the object's
   // public callable surface, a scope's processes and lifecycle hooks are
   // internal -- and the access specifier follows that stated visibility,
-  // coalescing a run of methods that share one.
+  // coalescing a run of methods that share one. The ctor lives in the same
+  // method storage but is emitted separately with C++ mem-init-list syntax,
+  // so it is skipped here.
   std::optional<mir::MethodVisibility> open_section;
-  for (const auto& sub : s.methods) {
+  for (std::size_t i = 0; i < s.methods.size(); ++i) {
+    const mir::MethodId mid{static_cast<std::uint32_t>(i)};
+    if (mid == s.constructor.method) continue;
+    const auto& sub = s.methods.Get(mid);
     if (open_section != sub.visibility) {
       open_section = sub.visibility;
       out += std::format(

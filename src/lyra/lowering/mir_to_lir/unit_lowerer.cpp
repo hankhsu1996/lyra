@@ -60,15 +60,18 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
   }
 
   auto constructor =
-      FunctionLowerer(*this, cls.constructor, "constructor", class_id).Run();
+      FunctionLowerer(
+          *this, mir::GetConstructorCode(cls), "constructor", class_id)
+          .Run();
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
   }
   out.constructor = *std::move(constructor);
 
   for (std::size_t i = 0; i < cls.methods.size(); ++i) {
-    const mir::MethodDecl& method =
-        cls.methods.Get(mir::MethodId{static_cast<std::uint32_t>(i)});
+    const mir::MethodId mid{static_cast<std::uint32_t>(i)};
+    if (mid == cls.constructor.method) continue;
+    const mir::MethodDecl& method = cls.methods.Get(mid);
     auto fn = FunctionLowerer(*this, method.code, method.name, class_id).Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
