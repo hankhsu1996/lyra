@@ -143,6 +143,12 @@ auto Type::AsIntegralPacked() const -> const PackedArrayType& {
       "PackedArrayType or EnumType)");
 }
 
+auto Type::IsAliasHandle() const -> bool {
+  return std::holds_alternative<ServicesType>(data) ||
+         std::holds_alternative<FilesType>(data) ||
+         std::holds_alternative<DiagnosticType>(data);
+}
+
 namespace {
 
 auto AsUniquePointee(const CompilationUnit& unit, TypeId type)

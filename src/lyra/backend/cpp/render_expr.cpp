@@ -167,16 +167,6 @@ auto RenderRealLiteralExpr(
       "lyra::value::{}{{{}}}", is_short ? "ShortReal" : "Real", body);
 }
 
-auto RenderParamExpr(const ScopeView& view, const mir::ParamRef& r)
-    -> std::string {
-  const mir::Expr& receiver = view.Expr(r.receiver);
-  const auto& ptr =
-      std::get<mir::PointerType>(view.Unit().types.Get(receiver.type).data);
-  const std::string& name =
-      view.ClassByObjectType(ptr.pointee).params.Get(r.param).name;
-  return std::format("{}->{}", RenderExpr(view, receiver), name);
-}
-
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
   // Every callable body is a static function over the explicit receiver `self`
@@ -839,9 +829,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [](const mir::HostIntLiteral& h) -> std::string {
             return std::format("{}LL", h.value);
           },
-          [&](const mir::ParamRef& r) -> std::string {
-            return RenderParamExpr(view, r);
-          },
           [&](const mir::LocalRef& l) -> std::string {
             return LookupLocalName(view, l);
           },
@@ -874,6 +861,10 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::AddressOfExpr& a) -> std::string {
             return RenderAddressOfExpr(view, a);
+          },
+          [&](const mir::MoveExpr& m) -> std::string {
+            return std::format(
+                "std::move({})", RenderExpr(view, view.Expr(m.operand)));
           },
           [&](const mir::PointerCastExpr& c) -> std::string {
             return RenderPointerCastExpr(view, c, expr.type);

@@ -579,17 +579,15 @@ class MirDumper {
               return std::format(
                   "AddressOfExpr operand=Expr[{}]", a.operand.value);
             },
+            [](const MoveExpr& m) -> std::string {
+              return std::format("MoveExpr operand=Expr[{}]", m.operand.value);
+            },
             [](const PointerCastExpr& c) -> std::string {
               return std::format(
                   "PointerCastExpr operand=Expr[{}]", c.operand.value);
             },
             [](const CastExpr& c) -> std::string {
               return std::format("CastExpr operand=Expr[{}]", c.operand.value);
-            },
-            [](const ParamRef& r) -> std::string {
-              return std::format(
-                  "ParamRef receiver=Expr[{}] param=Param[{}]",
-                  r.receiver.value, r.param.value);
             },
             [this](const LocalRef& r) -> std::string {
               const auto& var = code_->locals.Get(r.var);
@@ -766,16 +764,6 @@ class MirDumper {
     }
     Dedent();
 
-    if (!s.params.empty()) {
-      Line("Params:");
-      Indent();
-      for (std::size_t i = 0; i < s.params.size(); ++i) {
-        const auto& p = s.params.Get(ParamId{static_cast<std::uint32_t>(i)});
-        Line(std::format("[{}] \"{}\" : {}", i, p.name, FormatVarType(p.type)));
-      }
-      Dedent();
-    }
-
     Line("Fields:");
     Indent();
     DumpFieldList(s.fields);
@@ -784,7 +772,9 @@ class MirDumper {
     Line("Methods:");
     Indent();
     for (std::size_t i = 0; i < s.methods.size(); ++i) {
-      DumpMethod(s.methods.Get(MethodId{static_cast<std::uint32_t>(i)}), i);
+      const MethodId mid{static_cast<std::uint32_t>(i)};
+      if (mid == s.constructor.method) continue;
+      DumpMethod(s.methods.Get(mid), i);
     }
     Dedent();
 
@@ -802,7 +792,34 @@ class MirDumper {
 
     Line("Constructor:");
     Indent();
-    DumpCallableBody(s.constructor);
+    Line(std::format("Method: #{}", s.constructor.method.value));
+    if (s.constructor.base_init.has_value()) {
+      Line("BaseInit:");
+      Indent();
+      for (std::size_t i = 0; i < s.constructor.base_init->args.size(); ++i) {
+        Line(
+            std::format(
+                "[{}] arg=Expr[{}]", i,
+                s.constructor.base_init->args[i].value));
+      }
+      Dedent();
+    }
+    if (!s.constructor.member_inits.empty()) {
+      Line("MemberInits:");
+      Indent();
+      for (std::size_t i = 0; i < s.constructor.member_inits.size(); ++i) {
+        const auto& mi = s.constructor.member_inits[i];
+        Line(
+            std::format(
+                "[{}] field=Field[{}] value=Expr[{}]", i, mi.target.value,
+                mi.value.value));
+      }
+      Dedent();
+    }
+    Line("Body:");
+    Indent();
+    DumpCallableBody(GetConstructorCode(s));
+    Dedent();
     Dedent();
 
     Dedent();

@@ -574,6 +574,12 @@ struct Type {
   // distinguish should match on the variant directly.
   [[nodiscard]] auto IsIntegralPacked() const -> bool;
   [[nodiscard]] auto AsIntegralPacked() const -> const PackedArrayType&;
+  // True for a stable runtime facade the backend realizes as a live reference
+  // rather than a movable value -- the runtime services handle, the file
+  // table handle, the diagnostic dispatcher handle. Lowering sites that
+  // decide whether an operand may be transferred consult this: an alias
+  // handle carries no ownership to move.
+  [[nodiscard]] auto IsAliasHandle() const -> bool;
 };
 
 class CompilationUnit;

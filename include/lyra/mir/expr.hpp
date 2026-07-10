@@ -14,7 +14,6 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/method_id.hpp"
-#include "lyra/mir/param.hpp"
 #include "lyra/mir/static_callable_id.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/struct_construct.hpp"
@@ -200,6 +199,22 @@ struct AddressOfExpr {
   ExprId operand;
 };
 
+// A consuming (transfer) read of the operand: the operand's contents flow
+// into the enclosing expression as the last use of that operand's storage,
+// and no subsequent read of the same storage is valid. `Expr::type` is the
+// operand's type -- move does not change what value the expression yields,
+// only how ownership crosses the boundary. Lowering emits this at last-use
+// sites where the backend must transfer rather than copy (a ctor param
+// forwarded to the base construction); an ordinary read stays a plain
+// expression.
+//
+// Operand must be a type whose value can be transferred. Alias-style handle
+// types carry no ownership to move, so lowering never wraps them here -- a
+// move primitive over an alias is a semantic type error.
+struct MoveExpr {
+  ExprId operand;
+};
+
 // Reinterprets a borrowed pointer as a pointer to a different pointee type.
 // `operand` is a pointer-typed expression; `Expr::type` is the destination
 // `PointerType`. Used when a runtime entry returns a type-erased pointer
@@ -342,9 +357,9 @@ struct StaticConstantRef {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
-    HostIntLiteral, ParamRef, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
+    HostIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
-    PointerCastExpr, CastExpr, FieldAccessExpr, StructConstructExpr,
+    MoveExpr, PointerCastExpr, CastExpr, FieldAccessExpr, StructConstructExpr,
     ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
     AwaitExpr, TupleGetExpr, UnionExpr, UnionGetExpr, UnionGetRefExpr,
     FunctionRef, StaticConstantRef>;

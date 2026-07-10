@@ -27,9 +27,9 @@ Before this decision, MIR carried the variable initializer two ways:
 
 The C++ backend plucked path (1) into an inline class-body NSDMI (`Var<int> a{1};`) and rendered
 path (2) inside a static `init(Self* self)` helper. A `RenderContext::in_class_member_init_` flag
-switched receiver-access rendering between NSDMI position and function-body position, because
-`MemberAccessExpr(self, X)` and `ParamRef(p)` had to spell as the bare field name in NSDMI scope but
-`self->X` in the body.
+switched receiver-access rendering between NSDMI position and function-body position, because a
+member access (a class field, a structural param read) had to spell as the bare field name in NSDMI
+scope but as `self->X` in the body.
 
 The two-channel shape forced every backend to read state from two places. It also locked the render
 to a C++-specific syntactic mode dependency that a LIR / LLVM-IR backend would have no analogue for.

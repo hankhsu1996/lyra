@@ -26,15 +26,16 @@ knows it is intended.
 
 ## Findings that shaped the design
 
-### F1. The constructor-input vehicle already exists, used narrowly
+### F1. No MIR-level constructor-input vehicle exists today
 
 The architecture's target shape -- a value that flows into the constructor rather than being baked
--- is already implemented and running: `mir::Class.params` plus the `ParamRef` expression. Today it
-carries exactly one thing: the `generate for` loop variable, threaded as a structural parameter into
-each generate-arm scope so the arm body reads the genvar as a runtime value. The generate loop bound
-is an expression evaluated in the constructor (`hir::LoopGenerate` holds it as an `ExprId`), so
-`generate for` / `generate if` already lower to constructor-time logic. The vehicle is proven;
-module parameters simply do not ride it yet -- they are constant-folded.
+-- is not present in MIR. `generate for` folds the loop variable per arm and constructs each arm's
+own concrete scalar child directly, so the arm body reads the genvar as a compile-time constant. The
+generate loop bound is still an expression evaluated in the constructor (`hir::LoopGenerate` holds
+it as an `ExprId`), but no structural parameter is threaded onto the arm scope for later runtime
+read. The infrastructure to thread a constructor-input value (a scope-level runtime parameter the
+constructor body reads as a runtime value) has not been built yet, so no existing vehicle stands
+ready for module parameters to reuse when the classification lands.
 
 ### F2. Over-approximating the specialization key is sound, not a hack
 
@@ -101,7 +102,9 @@ Two constraints bind going forward, so that deferring the optimization does not 
 ## Consequences
 
 - No classification tool and no module-parameter-as-constructor-input threading are built now. The
-  existing genvar vehicle (`mir::Class.params` / `ParamRef`) is the seam the future work extends.
+  future work builds the constructor-input vehicle from scratch: a scope-level runtime parameter
+  that the constructor body reads as a runtime value, with `generate for` and module parameters
+  wired onto it together.
 - When compile-time sharing across parameter values becomes a turnaround-budget problem, the
   deferred work is: classify parameters per `specialization_model.md` invariants 2-4; thread the
   constructor-input axis as runtime parameters by extending the genvar vehicle to module parameters;

@@ -294,6 +294,12 @@ auto FunctionLowerer::LowerExpr(mir::ExprId id) -> diag::Result<lir::Operand> {
                 lir::StoreInstr{.place = *std::move(place), .value = *value});
             return *std::move(value);
           },
+          [&](const mir::MoveExpr& m) -> diag::Result<lir::Operand> {
+            // Move-vs-copy is derived from SSA liveness at this layer; the
+            // marker unwraps to its operand and the downstream backend
+            // decides the transfer.
+            return LowerExpr(m.operand);
+          },
           [](const auto&) -> diag::Result<lir::Operand> {
             return diag::Fail(
                 diag::DiagCode::kUnsupportedExpressionForm,
