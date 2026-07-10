@@ -182,7 +182,7 @@ auto ConnectElementPorts(
       }
       case slang::ast::ArgumentDirection::Ref: {
         direction = hir::PortDirection::kRef;
-        endpoint = hir::PortAliasEndpoint{
+        endpoint = hir::RoutedPathRecipe{
             .head = head, .path = std::move(path), .type = *type_id};
         auto peer_or = scope.LowerExpr(*expr, frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));

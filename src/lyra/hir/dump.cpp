@@ -934,8 +934,8 @@ class HirDumper {
               [](const PortCellEndpoint& c) -> std::string {
                 return std::format("cell=Expr[{}]", c.cell.value);
               },
-              [](const PortAliasEndpoint& a) -> std::string {
-                return std::format("alias_to:Type[{}]", a.type.value);
+              [](const RoutedPathRecipe& r) -> std::string {
+                return std::format("alias_to:Type[{}]", r.type.value);
               }},
           pc.endpoint);
       Line(

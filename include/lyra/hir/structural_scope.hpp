@@ -131,22 +131,33 @@ struct UpwardNamedHead {
 using RoutedRefHead =
     std::variant<EnclosingHead, DownwardHead, UpwardRootHead, UpwardNamedHead>;
 
-// A routed reference resolved once, in the resolve phase after the object tree
-// is fully built. `head` is where navigation starts -- an enclosing ancestor,
-// an owned child, or an upward climb; `path` carries the navigation from the
-// head down to the referenced leaf, one segment per named step (each with its
-// own per-axis indices, if any); `type` is the slang-resolved leaf data type.
-// `target_net_type` is the target's net type when the target is a net (LRM 6.7:
-// the net type fixes how drivers resolve and the undriven value), or empty when
-// the target is a variable. Together they determine the producer's actual cell
-// -- a resolved net of that net type, or a variable's observable cell -- which
-// the realized endpoint must match so a read reaches the right access protocol.
-// The endpoint is read / written / observed through one stored direct
-// reference.
-struct RoutedRefDecl {
+// How to navigate from a scope to a cross-instance target member: `head` is
+// where navigation starts -- an enclosing ancestor, an owned child, or an
+// upward climb; `path` carries the descent from the head to the leaf, one
+// segment per named step (each with its own per-axis indices, if any); `type`
+// is the slang-resolved leaf data type. This is the route alone. Whether the
+// route materializes a persistent endpoint slot (a value reference read on the
+// hot path) or is resolved once for a one-shot bind (a `ref` port alias) is the
+// consumer's endpoint-capability decision, not a property of the route.
+struct RoutedPathRecipe {
   RoutedRefHead head;
   std::vector<PathSegment> path;
   TypeId type;
+
+  auto operator==(const RoutedPathRecipe&) const -> bool = default;
+};
+
+// A routed reference that materializes a persistent endpoint slot, resolved
+// once in the resolve phase after the object tree is fully built.
+// `target_net_type` is the target's net type when the target is a net (LRM 6.7:
+// the net type fixes how drivers resolve and the undriven value), or empty when
+// the target is a variable. With the recipe's leaf type it determines the
+// producer's actual cell -- a resolved net of that net type, or a variable's
+// observable cell -- which the realized endpoint must match so a read reaches
+// the right access protocol. The endpoint is read / written / observed through
+// one stored direct reference.
+struct RoutedRefDecl {
+  RoutedPathRecipe recipe;
   std::optional<NetType> target_net_type;
 };
 
@@ -163,22 +174,18 @@ struct InstanceMemberDecl {
 
 enum class PortDirection : std::uint8_t { kInput, kOutput, kRef };
 
-// How the child port is reached, by realization. An input or output port has
-// its own cell and is realized as a reactive edge over it (a variable cell is
-// written / read, a net cell is driven / read), so it holds a persistent routed
+// How the child port is reached, by endpoint capability. An input or output
+// port has its own cell, realized as a reactive edge over it (a variable cell
+// written / read, a net cell driven / read), so it holds a persistent routed
 // reference (`cell`, a `RoutedRef`) whose target capability (net versus
-// variable) the reference itself carries. A `ref` port owns no cell; it is
-// bound once in the resolve phase, so it holds only the by-name reach (`head` +
-// `path`, with `type` the port value type) -- no persistent slot.
+// variable) the reference itself carries. A `ref` port owns no cell: it is
+// bound once in the resolve phase to the peer's cell, so it holds only the
+// route to the child's reference member (a `RoutedPathRecipe`) -- no persistent
+// slot, since a `ref` needs no simulation-time reach (LRM 23.3.3.2).
 struct PortCellEndpoint {
   ExprId cell;
 };
-struct PortAliasEndpoint {
-  RoutedRefHead head;
-  std::vector<PathSegment> path;
-  TypeId type;
-};
-using PortEndpoint = std::variant<PortCellEndpoint, PortAliasEndpoint>;
+using PortEndpoint = std::variant<PortCellEndpoint, RoutedPathRecipe>;
 
 // A module port connection at an instantiation (LRM 23.3.3). `endpoint` reaches
 // the child's port member; `peer` is the parent-side connected expression;

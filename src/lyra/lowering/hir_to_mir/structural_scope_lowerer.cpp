@@ -271,15 +271,15 @@ void DeclareRoutedRefSlots(
     std::string member_name = "ep" + std::to_string(slot_index++);
     if (cu.target_net_type.has_value()) {
       const bool is_upward =
-          std::holds_alternative<hir::UpwardRootHead>(cu.head) ||
-          std::holds_alternative<hir::UpwardNamedHead>(cu.head);
+          std::holds_alternative<hir::UpwardRootHead>(cu.recipe.head) ||
+          std::holds_alternative<hir::UpwardNamedHead>(cu.recipe.head);
       if (is_upward) {
         throw InternalError(
             "DeclareRoutedRefSlots: an upward routed reference to a net is not "
             "yet supported");
       }
     }
-    const mir::TypeId value = module.TranslateType(cu.type);
+    const mir::TypeId value = module.TranslateType(cu.recipe.type);
     const mir::TypeId leaf =
         cu.target_net_type.has_value()
             ? module.Unit().types.Intern(mir::ResolvedType{.value = value})
@@ -640,13 +640,13 @@ auto MaterializeLeaf(
 // caller emits into the resolve block.
 auto BuildRouteValue(
     StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::RoutedRefHead& head, const std::vector<hir::PathSegment>& path,
-    mir::TypeId slot_type) -> mir::ExprId {
+    const hir::RoutedPathRecipe& recipe, mir::TypeId slot_type) -> mir::ExprId {
+  const std::vector<hir::PathSegment>& path = recipe.path;
   if (path.empty()) {
     throw InternalError("BuildRouteValue: route has no leaf signal");
   }
   mir::Block& block = *frame.current_block;
-  RouteReceiver receiver = BuildRouteAnchor(lowerer, frame, head);
+  RouteReceiver receiver = BuildRouteAnchor(lowerer, frame, recipe.head);
   for (std::size_t i = 0; i + 1 < path.size(); ++i) {
     receiver = AppendRouteSegment(lowerer, block, receiver, path[i]);
   }
@@ -668,7 +668,7 @@ void InstallRoutedRefs(
     const mir::FieldId slot = lowerer.RoutedRefTarget(hir_id).target;
     const mir::TypeId slot_type = mir_class.fields.Get(slot).type;
     const mir::ExprId nav =
-        BuildRouteValue(lowerer, resolve_frame, cu.head, cu.path, slot_type);
+        BuildRouteValue(lowerer, resolve_frame, cu.recipe, slot_type);
     const mir::ExprId self_for_target = resolve_block.exprs.Add(
         MakeSelfRefExpr(resolve_frame, mir_class.self_pointer_type));
     const mir::ExprId target = resolve_block.exprs.Add(
@@ -738,22 +738,24 @@ auto InstallPortConnections(
   ModuleLowerer& module = lowerer.Module();
   for (const auto& pc : hir_scope.port_connections) {
     if (pc.direction == hir::PortDirection::kRef) {
-      // Bind the child's reference member to the connected variable's cell in
-      // the resolve phase: navigate the owned child by name to its reference
-      // member and store a reference to the peer's cell into it.
-      const auto& alias = std::get<hir::PortAliasEndpoint>(pc.endpoint);
-      if (!std::holds_alternative<hir::DownwardHead>(alias.head)) {
+      // A `ref` port reaches the child's reference member by the same route
+      // navigation a routed reference uses, then binds it to the peer's cell
+      // through the one canonical reference-store primitive. It holds no
+      // persistent slot -- a `ref` needs no simulation-time reach, so the
+      // member is reached once here in the resolve phase (LRM 23.3.3.2).
+      const auto& recipe = std::get<hir::RoutedPathRecipe>(pc.endpoint);
+      if (!std::holds_alternative<hir::DownwardHead>(recipe.head)) {
         throw InternalError(
             "InstallPortConnections: a ref port reaches its child downward");
       }
-      const mir::TypeId value_type = module.TranslateType(alias.type);
+      const mir::TypeId value_type = module.TranslateType(recipe.type);
       const mir::TypeId ref_type = module.Unit().types.Intern(
           mir::RefType{
               .pointee = value_type, .mutability = mir::Mutability::kMutable});
       const mir::TypeId slot_type = module.Unit().types.PointerTo(
           ref_type, mir::PointerOwnership::kBorrowed);
-      const mir::ExprId nav = BuildRouteValue(
-          lowerer, resolve_frame, alias.head, alias.path, slot_type);
+      const mir::ExprId nav =
+          BuildRouteValue(lowerer, resolve_frame, recipe, slot_type);
       const mir::ExprId target = resolve_block.exprs.Add(
           mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
 
@@ -762,15 +764,10 @@ auto InstallPortConnections(
       if (!peer_or) return std::unexpected(std::move(peer_or.error()));
       const mir::ExprId peer_cell =
           resolve_block.exprs.Add(*std::move(peer_or));
-      const mir::ExprId ref_value = BuildReferenceArg(
-          module.Unit(), resolve_block, peer_cell,
-          resolve_block.exprs.Get(peer_cell).type);
 
-      const mir::ExprId assign = resolve_block.exprs.Add(
-          mir::Expr{
-              .data = mir::AssignExpr{.target = target, .value = ref_value},
-              .type = ref_type});
-      resolve_block.AppendStmt(mir::ExprStmt{.expr = assign});
+      const mir::ExprId bind =
+          BindReferenceSlot(module.Unit(), resolve_block, target, peer_cell);
+      resolve_block.AppendStmt(mir::ExprStmt{.expr = bind});
       continue;
     }
     const auto& cell = std::get<hir::PortCellEndpoint>(pc.endpoint);

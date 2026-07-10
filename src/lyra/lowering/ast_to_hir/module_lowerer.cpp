@@ -266,9 +266,8 @@ auto ModuleLowerer::MapOrGetRoutedRef(
   const hir::RoutedRefId id{static_cast<std::uint32_t>(slots.size())};
   slots.push_back(
       hir::RoutedRefDecl{
-          .head = std::move(head),
-          .path = std::move(path),
-          .type = type,
+          .recipe =
+              {.head = std::move(head), .path = std::move(path), .type = type},
           .target_net_type = TargetNetType(target)});
   frame_dedup.emplace(&target, id);
   return id;
