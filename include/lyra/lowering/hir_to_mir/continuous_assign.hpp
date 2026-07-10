@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -17,10 +16,10 @@ namespace lyra::lowering::hir_to_mir {
 
 // Stable identity of a resolved-net target reached by a continuous
 // assignment's LHS. Two assignments whose LHS reaches the same net share
-// one identity value (LRM 6.5).
-using ContinuousWriteTarget = std::variant<
-    std::pair<hir::StructuralHops, hir::StructuralDataObjectId>,
-    hir::CrossUnitRefId>;
+// one identity value (LRM 6.5): a direct member of the driver's own scope is
+// keyed by its data-object id, a routed target by its resolved-slot id.
+using ContinuousWriteTarget =
+    std::variant<hir::StructuralDataObjectId, hir::RoutedRefId>;
 
 // Caller-owned record of the resolved-net targets a lowering loop has
 // already installed a driver on. `LowerContinuousAssign` inspects and

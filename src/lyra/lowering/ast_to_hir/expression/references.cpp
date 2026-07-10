@@ -227,8 +227,8 @@ auto MakeClassPropertyRefExpr(
 }
 
 // Wraps a resolved reader-relative route as a reference Expr. A route is one of
-// two primaries -- a typed enclosing structural-data-object reference or a
-// cross-unit slot reference -- and each wraps identically.
+// two primaries -- a direct member of the reader's own scope or a routed
+// reference sealed to a per-instance endpoint -- and each wraps identically.
 auto RouteRefExpr(
     const hir::ReferenceRoute& route, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr {

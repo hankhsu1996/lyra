@@ -57,4 +57,17 @@ auto BuildReferenceArg(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId;
 
+// Binds a cell into a reference-typed lvalue (LRM 23.3.3.2 / 13.5.2): wraps
+// `source_cell` as a reference value and stores it into `ref_lvalue`. This is
+// the one canonical `Ref<T>`-member alias store -- a `ref` port binds the
+// child's reference member, and any future reference member fills the same way.
+// It is the lvalue-store placement only; a `ref` formal's call-argument
+// placement and a closure's field-init placement share the reference-value
+// construction but not this store. `ref_lvalue`'s type is the `RefType`; a
+// reference-to-reference source seals to the final cell during construction.
+// Returns the store expression for the caller to sequence.
+auto BindReferenceSlot(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
+    mir::ExprId source_cell) -> mir::ExprId;
+
 }  // namespace lyra::lowering::hir_to_mir

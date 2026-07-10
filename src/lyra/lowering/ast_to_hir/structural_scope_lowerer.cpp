@@ -153,8 +153,8 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  for (auto& ref : module_->TakeCrossUnitRefsForFrame(frame_)) {
-    scope.cross_unit_refs.Add(std::move(ref));
+  for (auto& ref : module_->TakeRoutedRefsForFrame(frame_)) {
+    scope.routed_refs.Add(std::move(ref));
   }
   return scope;
 }
@@ -286,9 +286,7 @@ auto StructuralScopeLowerer::PopulateNetMember(
     if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
     const hir::ExprId lhs_id = frame.Exprs().Add(
         hir::MakeRefExpr(
-            hir::StructuralDataObjectRef{
-                .hops = hir::StructuralHops{0}, .var = local},
-            *type_id_or, span));
+            hir::DirectMemberRef{.var = local}, *type_id_or, span));
     const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
     const auto& reads = module_->Sensitivity().AnalyzeReads(*init, net);
     frame.current_structural_scope->continuous_assigns.Add(

@@ -14,6 +14,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -32,19 +33,19 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // The MIR value type behind a resolved-net LHS, paired with the LHS target's
-// stable identity. Only bare structural or cross-unit references may name a
-// net target: a select or other computed LHS is a variable path even if its
-// root sits on a net (whose runtime protocol still forbids a direct write).
+// stable identity. Only a bare direct or routed reference may name a net
+// target: a select or other computed LHS is a variable path even if its root
+// sits on a net (whose runtime protocol still forbids a direct write).
 struct ResolvedNetLhs {
   mir::TypeId value_type;
   ContinuousWriteTarget target;
 };
 
 // Answers "is this LHS a resolved-net cell" at the type level, without
-// lowering the LHS. Reads the field type of the ancestor class picked by
-// the LHS's `hops` for a same-unit ref, or the pointee of the pre-declared
-// cross-unit slot's type for a cross-unit ref. In both cases, net-versus-
-// variable is a property of the target's MIR type (LRM 6.5).
+// lowering the LHS. Reads the target's own field type for a direct member, or
+// the pointee of the pre-declared endpoint slot for a routed reference. In
+// both cases, net-versus-variable is a property of the target's MIR type
+// (LRM 6.5).
 auto ClassifyLhsAsResolvedNet(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     hir::ExprId lhs_id) -> std::optional<ResolvedNetLhs> {
@@ -52,29 +53,21 @@ auto ClassifyLhsAsResolvedNet(
   const auto* prim =
       std::get_if<hir::PrimaryExpr>(&lowerer.HirScope().exprs.Get(lhs_id).data);
   if (prim == nullptr) return std::nullopt;
-  if (const auto* ref =
-          std::get_if<hir::StructuralDataObjectRef>(&prim->data)) {
-    const mir::FieldId target =
-        lowerer.TranslateStructuralDataObject(ref->hops, ref->var);
-    const mir::TypeId target_type =
-        frame.EnclosingClassAtHops(mir::EnclosingHops{ref->hops.value})
-            .fields.Get(target)
-            .type;
-    const auto* resolved =
-        std::get_if<mir::ResolvedType>(&unit.types.Get(target_type).data);
+  if (const auto* ref = std::get_if<hir::DirectMemberRef>(&prim->data)) {
+    const BoundEndpoint endpoint =
+        BindEndpoint(lowerer, frame, hir::ReferenceRoute{*ref});
+    const auto* resolved = std::get_if<mir::ResolvedType>(
+        &unit.types.Get(endpoint.cell_type).data);
     if (resolved == nullptr) return std::nullopt;
-    return ResolvedNetLhs{
-        .value_type = resolved->value,
-        .target = std::pair{ref->hops, ref->var}};
+    return ResolvedNetLhs{.value_type = resolved->value, .target = ref->var};
   }
-  if (const auto* cuv = std::get_if<hir::CrossUnitVarRef>(&prim->data)) {
-    const auto& meta = lowerer.CrossUnitRefTarget(cuv->id);
-    const auto& ptr =
-        std::get<mir::PointerType>(unit.types.Get(meta.slot_type).data);
-    const auto* resolved =
-        std::get_if<mir::ResolvedType>(&unit.types.Get(ptr.pointee).data);
+  if (const auto* rr = std::get_if<hir::RoutedRef>(&prim->data)) {
+    const BoundEndpoint endpoint =
+        BindEndpoint(lowerer, frame, hir::ReferenceRoute{*rr});
+    const auto* resolved = std::get_if<mir::ResolvedType>(
+        &unit.types.Get(endpoint.cell_type).data);
     if (resolved == nullptr) return std::nullopt;
-    return ResolvedNetLhs{.value_type = resolved->value, .target = cuv->id};
+    return ResolvedNetLhs{.value_type = resolved->value, .target = rr->id};
   }
   return std::nullopt;
 }
@@ -92,10 +85,9 @@ struct AttachedDriver {
 // seeded at Initialize (`self->driver.Update(services, source)`). The
 // caller supplies `net_access` -- the resolve-phase lvalue of the net cell,
 // itself the LHS lowered in `resolve_frame` -- so a same-scope target reads
-// as `self->net`, a cross-scope one as `self->parent()->net`, and a
-// cross-unit target as the routed navigation into the child. The driver
-// handle field is added to the enclosing class under `driver_name` (LRM
-// 6.5).
+// as `self->net`, and an enclosing or cross-unit target as a dereference of
+// its resolve-filled endpoint slot. The driver handle field is added to the
+// enclosing class under `driver_name` (LRM 6.5).
 auto AttachDriver(
     const StructuralScopeLowerer& lowerer, mir::ExprId net_access,
     mir::TypeId value_type, const std::string& driver_name, hir::ExprId source,

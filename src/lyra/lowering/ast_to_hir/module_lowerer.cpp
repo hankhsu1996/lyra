@@ -254,46 +254,45 @@ auto TargetNetType(const slang::ast::ValueSymbol& target)
 
 }  // namespace
 
-auto ModuleLowerer::MapOrGetCrossUnitRef(
+auto ModuleLowerer::MapOrGetRoutedRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
-    hir::TypeId type) -> hir::CrossUnitRefId {
-  auto& frame_dedup = cross_unit_ref_dedup_[slot_owner_frame];
+    hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
+    hir::TypeId type) -> hir::RoutedRefId {
+  auto& frame_dedup = routed_ref_dedup_[slot_owner_frame];
   if (const auto it = frame_dedup.find(&target); it != frame_dedup.end()) {
     return it->second;
   }
-  auto& slots = cross_unit_refs_by_frame_[slot_owner_frame];
-  const hir::CrossUnitRefId id{static_cast<std::uint32_t>(slots.size())};
+  auto& slots = routed_refs_by_frame_[slot_owner_frame];
+  const hir::RoutedRefId id{static_cast<std::uint32_t>(slots.size())};
   slots.push_back(
-      hir::CrossUnitRefDecl{
-          .head = std::move(head),
-          .path = std::move(path),
-          .type = type,
+      hir::RoutedRefDecl{
+          .recipe =
+              {.head = std::move(head), .path = std::move(path), .type = type},
           .target_net_type = TargetNetType(target)});
   frame_dedup.emplace(&target, id);
   return id;
 }
 
-auto ModuleLowerer::TakeCrossUnitRefsForFrame(ScopeFrameId slot_owner_frame)
-    -> std::vector<hir::CrossUnitRefDecl> {
-  const auto it = cross_unit_refs_by_frame_.find(slot_owner_frame);
-  if (it == cross_unit_refs_by_frame_.end()) {
+auto ModuleLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
+    -> std::vector<hir::RoutedRefDecl> {
+  const auto it = routed_refs_by_frame_.find(slot_owner_frame);
+  if (it == routed_refs_by_frame_.end()) {
     return {};
   }
   auto out = std::move(it->second);
-  cross_unit_refs_by_frame_.erase(it);
+  routed_refs_by_frame_.erase(it);
   return out;
 }
 
-auto ModuleLowerer::MakeCrossUnitMemberRef(
+auto ModuleLowerer::MakeRoutedMemberRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::CrossUnitRefHead head, std::vector<hir::PathSegment> path,
+    hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
     hir::TypeId type, diag::SourceSpan span) -> hir::Expr {
-  const hir::CrossUnitRefId slot = MapOrGetCrossUnitRef(
+  const hir::RoutedRefId slot = MapOrGetRoutedRef(
       target, slot_owner_frame, std::move(head), std::move(path), type);
   return hir::Expr{
       .type = type,
-      .data = hir::PrimaryExpr{.data = hir::CrossUnitVarRef{.id = slot}},
+      .data = hir::PrimaryExpr{.data = hir::RoutedRef{.id = slot}},
       .span = span,
   };
 }
@@ -308,13 +307,27 @@ auto ModuleLowerer::TranslateReferenceRoute(
     return std::nullopt;
   }
 
-  // Enclosing within this unit: the target sits directly on the reader's own
-  // scope or an ancestor scope of the same unit, reached by a typed climb of
-  // `hops` parent edges.
+  // The target sits on the reader's own scope or an ancestor scope of the same
+  // unit. `hops == 0` is a direct member of `self` -- an empty route with no
+  // sealed endpoint. `hops > 0` reaches an enclosing ancestor member: a routed
+  // reference whose head is a typed climb of `hops` parent edges and whose
+  // single path segment is the leaf member, sealed once in the resolve phase
+  // like every other routed reference rather than re-walked on each access.
   if (const auto binding = LookupStructuralDataObjectBinding(value)) {
     if (const auto hops = frame.HopsTo(binding->home_frame)) {
-      return hir::ReferenceRoute{
-          hir::StructuralDataObjectRef{.hops = *hops, .var = binding->var_id}};
+      if (hops->value == 0) {
+        return hir::ReferenceRoute{
+            hir::DirectMemberRef{.var = binding->var_id}};
+      }
+      const auto enclosing_type = InternType(
+          value.getType(), SourceMapper().PointSpanOf(value.location));
+      if (!enclosing_type) return std::nullopt;
+      const hir::RoutedRefId id = MapOrGetRoutedRef(
+          value, frame.Current(),
+          hir::RoutedRefHead{hir::EnclosingHead{.hops = *hops}},
+          {hir::PathSegment{.name = std::string{value.name}, .indices = {}}},
+          *enclosing_type);
+      return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
     }
   }
 
@@ -403,10 +416,10 @@ auto ModuleLowerer::TranslateReferenceRoute(
           head.head_indices = std::move(indices);
           const ScopeFrameId slot_owner =
               hops->value == 0 ? obinding->home_frame : frame.Current();
-          const hir::CrossUnitRefId id = MapOrGetCrossUnitRef(
-              value, slot_owner, hir::CrossUnitRefHead{std::move(head)},
+          const hir::RoutedRefId id = MapOrGetRoutedRef(
+              value, slot_owner, hir::RoutedRefHead{std::move(head)},
               std::move(descent), *type);
-          return hir::ReferenceRoute{hir::CrossUnitVarRef{.id = id}};
+          return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
         }
       }
       // No owned-child binding: this unit does not declare the head, so it
@@ -416,13 +429,13 @@ auto ModuleLowerer::TranslateReferenceRoute(
       // the same as an instance head. When this unit does own the head the
       // typed branch above always takes it -- a missing companion or
       // materialization then surfaces downstream, never a silent by-name.
-      const hir::CrossUnitRefId id = MapOrGetCrossUnitRef(
+      const hir::RoutedRefId id = MapOrGetRoutedRef(
           value, frame.Current(),
-          hir::CrossUnitRefHead{hir::UpwardNamedHead{
+          hir::RoutedRefHead{hir::UpwardNamedHead{
               .head_name = std::string{owned->name},
               .head_indices = std::move(indices)}},
           std::move(descent), *type);
-      return hir::ReferenceRoute{hir::CrossUnitVarRef{.id = id}};
+      return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
     }
 
     descent.push_back(

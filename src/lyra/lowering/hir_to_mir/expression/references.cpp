@@ -11,6 +11,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -136,18 +137,15 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
   return mir::Expr{.data = mir::RealLiteral{.value = r.value}, .type = type};
 }
 
-// Reach the storage cell of a field: `FieldAccess(self, field)`.
-// `Expr.type` is the var's declared MIR type -- an `ObservableType` wrapper
-// for observable storage, the plain value type otherwise. The dispatcher
-// decides whether to wrap the result in an `ObservableMethod{kGet}` call to
-// unwrap to a value.
-auto LowerStructuralDataObjectRefExpr(
+// A direct or routed reference reaches its endpoint's observable cell as an
+// lvalue; the dispatcher wraps it with the read (`kGet`) or write path. Both
+// route kinds funnel through the one endpoint binding, so read and write share
+// exactly the reach that observation does.
+auto LowerReferenceRouteExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::StructuralDataObjectRef& m) -> mir::Expr {
-  const mir::FieldId var = lowerer.TranslateStructuralDataObject(m.hops, m.var);
-  return BuildStructuralFieldAccessExpr(
-      frame, lowerer.Module().Unit(), mir::EnclosingHops{.value = m.hops.value},
-      var);
+    const hir::ReferenceRoute& route) -> mir::Expr {
+  return EndpointCellExpr(
+      frame, lowerer.Module().Unit(), BindEndpoint(lowerer, frame, route));
 }
 
 auto LowerProceduralVarRefExpr(
@@ -182,25 +180,6 @@ auto LowerProceduralVarRefExpr(
   const BodyBindingRef ref =
       frame.bindings->EnsureCarrier(BindingOriginId::Procedural(l.var));
   return frame.bindings->MakeReadExpr(ref, *frame.current_block);
-}
-
-auto LowerCrossUnitVarRefExpr(
-    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::CrossUnitVarRef& c) -> mir::Expr {
-  const auto& meta = lowerer.CrossUnitRefTarget(c.id);
-  const mir::FieldId target = meta.target;
-  const mir::TypeId self_ptr_type = frame.current_class->self_pointer_type;
-  const mir::ExprId self_ref =
-      frame.current_block->exprs.Add(MakeSelfRefExpr(frame, self_ptr_type));
-  // Every cross-unit reference slot is a borrowed pointer to the target's
-  // observable cell, filled once in the resolve phase; the read dereferences
-  // that pointer to reach the cell.
-  const auto& ptr = std::get<mir::PointerType>(
-      lowerer.Module().Unit().types.Get(meta.slot_type).data);
-  const mir::ExprId pointer = frame.current_block->exprs.Add(
-      mir::MakeFieldAccessExpr(self_ref, target, meta.slot_type));
-  return mir::Expr{
-      .data = mir::DerefExpr{.pointer = pointer}, .type = ptr.pointee};
 }
 
 // LRM 7.12.4: a with-clause iteration reference reads the named clause's
@@ -261,9 +240,9 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::NullLiteral&) -> mir::Expr {
             return LowerHirNullLiteral(result_type);
           },
-          [&](const hir::StructuralDataObjectRef& m) -> mir::Expr {
-            return LowerStructuralDataObjectRefExpr(
-                process.EnclosingScopeLowerer(), frame, m);
+          [&](const hir::DirectMemberRef& m) -> mir::Expr {
+            return LowerReferenceRouteExpr(
+                process.EnclosingScopeLowerer(), frame, hir::ReferenceRoute{m});
           },
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
             return LowerProceduralVarRefExpr(process, frame, l, result_type);
@@ -276,9 +255,9 @@ auto LowerHirPrimaryExprProc(
             return mir::MakeFieldAccessExpr(
                 self_ref, mir::FieldId{.value = r.field_index}, result_type);
           },
-          [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
-            return LowerCrossUnitVarRefExpr(
-                process.EnclosingScopeLowerer(), frame, c);
+          [&](const hir::RoutedRef& c) -> mir::Expr {
+            return LowerReferenceRouteExpr(
+                process.EnclosingScopeLowerer(), frame, hir::ReferenceRoute{c});
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);
@@ -308,8 +287,9 @@ auto LowerHirPrimaryExprStructural(
           [&](const hir::NullLiteral&) -> mir::Expr {
             return LowerHirNullLiteral(result_type);
           },
-          [&](const hir::StructuralDataObjectRef& m) -> mir::Expr {
-            return LowerStructuralDataObjectRefExpr(lowerer, frame, m);
+          [&](const hir::DirectMemberRef& m) -> mir::Expr {
+            return LowerReferenceRouteExpr(
+                lowerer, frame, hir::ReferenceRoute{m});
           },
           [](const hir::ProceduralVarRef&) -> mir::Expr {
             throw InternalError(
@@ -321,8 +301,9 @@ auto LowerHirPrimaryExprStructural(
                 "LowerHirPrimaryExprStructural: HIR ClassPropertyRef does not "
                 "appear in structural expressions");
           },
-          [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
-            return LowerCrossUnitVarRefExpr(lowerer, frame, c);
+          [&](const hir::RoutedRef& c) -> mir::Expr {
+            return LowerReferenceRouteExpr(
+                lowerer, frame, hir::ReferenceRoute{c});
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);

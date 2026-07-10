@@ -6,33 +6,40 @@
 
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_data_object.hpp"
-#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 
 namespace lyra::hir {
 
-struct StructuralDataObjectRef {
-  StructuralHops hops;
+// A reference to a structural data object (variable or net) that sits directly
+// on the reader's own scope: an empty route, reached as a plain member of
+// `self`. Any target that needs a route to reach -- an enclosing ancestor
+// member, a sibling or child scope, another compilation unit -- is a RoutedRef
+// instead.
+struct DirectMemberRef {
   StructuralDataObjectId var;
 
-  auto operator==(const StructuralDataObjectRef&) const -> bool = default;
+  auto operator==(const DirectMemberRef&) const -> bool = default;
 };
 
-struct CrossUnitRefId {
+struct RoutedRefId {
   std::uint32_t value;
 
-  auto operator<=>(const CrossUnitRefId&) const
-      -> std::strong_ordering = default;
+  auto operator<=>(const RoutedRefId&) const -> std::strong_ordering = default;
 };
 
-// A reference whose target lives in another compilation unit (a child
-// instance's member). Resolved once at construction into a stored direct
-// reference; the navigation recipe lives in the enclosing scope's
-// `cross_unit_refs` table keyed by this id.
-struct CrossUnitVarRef {
-  CrossUnitRefId id;
+// A reference reached through a non-empty route: an enclosing ancestor member,
+// a sibling or child scope, or another compilation unit. The route resolves
+// once in the resolve phase into a stored per-instance endpoint -- a borrowed
+// pointer to the target's cell -- and every read, write, and observation
+// dereferences that one sealed endpoint. The navigation recipe lives in the
+// owning scope's routed-reference table keyed by this id. Intra-unit and
+// cross-unit references differ only in each segment's classification during
+// resolve (typed member access vs by-name runtime lookup), not in the
+// endpoint representation.
+struct RoutedRef {
+  RoutedRefId id;
 
-  auto operator==(const CrossUnitVarRef&) const -> bool = default;
+  auto operator==(const RoutedRef&) const -> bool = default;
 };
 
 struct ProceduralVarRef {
@@ -62,11 +69,11 @@ struct IterationBindingRef {
   auto operator==(const IterationBindingRef&) const -> bool = default;
 };
 
-// A reader-relative route to a referenced value: either a this-unit structural
-// data object reached by a typed enclosing climb, or a cross-unit member
-// reached through a resolved slot. One route serves every consumer of the
-// reference -- value read, value write, and change observation -- so the name
-// is neutral to the consumer, not owned by sensitivity.
-using ReferenceRoute = std::variant<StructuralDataObjectRef, CrossUnitVarRef>;
+// A reader-relative reference to a value: either a direct member of the
+// reader's own scope, or a routed reference sealed to a per-instance endpoint
+// in the resolve phase. One route serves every consumer of the reference --
+// value read, value write, and change observation -- so the name is neutral to
+// the consumer, not owned by sensitivity.
+using ReferenceRoute = std::variant<DirectMemberRef, RoutedRef>;
 
 }  // namespace lyra::hir
