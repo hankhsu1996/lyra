@@ -32,7 +32,6 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedPortConnectionForm,
   kUnsupportedAssignmentPatternKind,
   kUnsupportedSubroutineArgument,
-  kUnsupportedForkJoinForm,
   kUnsupportedClassFeature,
   kUnsupportedDpi,
 

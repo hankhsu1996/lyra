@@ -64,13 +64,11 @@ long, follows from where the storage lives and how long the enclosing activation
       (`join_any`), or immediately (`join_none`). The LRM 9.3.2 ordering rule holds -- spawned
       processes do not run until the parent blocks at the join or terminates. Branches carry their
       own delay so the three join modes are observable (the parent resumes after the slowest, the
-      earliest, or not at all). A named fork block is rejected with a diagnostic (FJ5); a fork
-      inside a function stays rejected (a function cannot suspend), while a fork inside a task is
-      supported. How a branch reaches its enclosing scope's variables is FJ4.
+      earliest, or not at all). How a branch reaches its enclosing scope's variables is FJ4.
 
 ### Timing across branches
 
-- [ ] FJ2 -- A delay, event control, or `wait` inside a forked branch suspends that branch
+- [x] FJ2 -- A delay, event control, or `wait` inside a forked branch suspends that branch
       independently while its siblings proceed; the join condition observes each branch's actual
       completion time, so `join` resumes the parent only after the slowest branch elapses and
       `join_any` after the earliest. Rides on the timing-control machinery (`processes.md` T1,
@@ -78,7 +76,7 @@ long, follows from where the storage lives and how long the enclosing activation
 
 ### Composition
 
-- [ ] FJ3 -- Branches compose: a branch may be a begin-end sequential block (one process running
+- [x] FJ3 -- Branches compose: a branch may be a begin-end sequential block (one process running
       several statements in order), and a fork may nest inside another fork's branch, building a
       tree of concurrent processes. A whole fork wrapped in a begin-end block is a single sequential
       process (LRM 9.3.2).
@@ -102,7 +100,7 @@ long, follows from where the storage lives and how long the enclosing activation
 
 ### Naming
 
-- [ ] FJ5 -- A fork block may be named (`fork : name ... join : name`) or labelled, creating a
+- [x] FJ5 -- A fork block may be named (`fork : name ... join : name`) or labelled, creating a
       hierarchy scope (LRM 9.3.4, 9.3.5). This is the handle that process-control statements and
       hierarchical references address.
 
@@ -115,19 +113,17 @@ long, follows from where the storage lives and how long the enclosing activation
 
 ### Fork inside a function
 
-- [ ] FJ8 -- `fork ... join_none` inside a function (LRM 13.4.4). A function is not a coroutine and
+- [x] FJ8 -- `fork ... join_none` inside a function (LRM 13.4.4). A function is not a coroutine and
       cannot suspend, so it cannot await a join; only `join_none` is legal there, and it must spawn
-      its branches without suspending. FJ1 rejects every fork inside a function. (`join` /
-      `join_any` inside a function stays a compile error -- see Rejected at the frontend. A fork
-      inside a task is supported by FJ1.)
+      its branches without suspending. (`join` / `join_any` inside a function stays a compile error
+      -- see Rejected at the frontend.)
 
 ## Rejected at the frontend
 
 - A `return` statement inside a fork-join block is a compile error: the branch lives in a separate
   process (LRM 9.3.2).
 - Inside a function, `fork ... join` and `fork ... join_any` are a compile error: a function cannot
-  suspend (LRM 13.4). Only `join_none` is legal there, and enabling it is tracked by FJ8. See
-  `functions.md`.
+  suspend (LRM 13.4). Only `join_none` is legal there. See `functions.md`.
 
 ## Out of Scope
 

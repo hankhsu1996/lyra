@@ -427,7 +427,6 @@ auto ProcessLowerer::LowerForeachStmt(
   const hir::ProceduralScopeId scope_id =
       frame.current_structural_scope->procedural_scopes.Add(
           hir::ProceduralScopeDecl{
-              .kind = hir::ProceduralScopeKind::kForEachLoop,
               .label = std::nullopt,
               .direct_declarations = std::move(foreach_declarations),
               .direct_child_scopes = std::move(foreach_children)});

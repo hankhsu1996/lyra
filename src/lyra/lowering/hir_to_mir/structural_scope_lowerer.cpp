@@ -1124,9 +1124,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
   // Procedural-storage scope plan (LRM 9.3.5 / 23.9). Pass 1, post-order: a
   // procedural scope materializes as a runtime hierarchy node iff it is
-  // runtime-addressable (a named begin/end) AND it directly owns a static or a
-  // descendant materializes. Process roots, unnamed begin/ends, foreach loops,
-  // and fork scopes are never addressable and never materialize.
+  // runtime-addressable AND it directly owns a static or a descendant
+  // materializes. A scope is addressable exactly when it carries an SV block
+  // identifier, which is what a hierarchical reference names; a process root,
+  // an unnamed block, and a foreach scope carry none.
   std::vector<bool> materializes(hir_scope.procedural_scopes.size(), false);
   const auto compute_mat = [&](const auto& self_ref, hir::ProceduralScopeId sid,
                                const hir::ProceduralBody& body) -> bool {
@@ -1135,9 +1136,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     for (const auto child : decl.direct_child_scopes) {
       if (self_ref(self_ref, child, body)) descendant_materializes = true;
     }
-    const bool addressable =
-        decl.kind == hir::ProceduralScopeKind::kBeginEndBlock &&
-        decl.label.has_value();
+    const bool addressable = decl.label.has_value();
     bool owns_static = false;
     for (const auto var_id : decl.direct_declarations) {
       if (body.procedural_vars.Get(var_id).lifetime ==

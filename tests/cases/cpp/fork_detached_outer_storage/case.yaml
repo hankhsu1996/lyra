@@ -1,4 +1,4 @@
-id: cpp.fork_join_none_outer_ref
+id: cpp.fork_detached_outer_storage
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -9,4 +9,5 @@ expect:
   exit: 0
   stdout:
     exact: |
-      x=1
+      [5] parent done
+      [10] branch s=2 k=99

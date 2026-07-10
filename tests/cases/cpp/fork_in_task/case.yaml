@@ -1,4 +1,4 @@
-id: cpp.fork_join_in_task
+id: cpp.fork_in_task
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -9,6 +9,6 @@ expect:
   exit: 0
   stdout:
     exact: |
-      [10] branch A
+      [10] branch A x=5
       [20] branch B
       [20] after task

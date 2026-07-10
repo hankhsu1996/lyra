@@ -1,4 +1,4 @@
-id: cpp.fork_join
+id: cpp.fork_named_block
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -9,6 +9,5 @@ expect:
   exit: 0
   stdout:
     exact: |
-      [10] branch A
-      [20] branch B
-      [20] after join
+      [15] labelled fork branch
+      [20] counter = 42

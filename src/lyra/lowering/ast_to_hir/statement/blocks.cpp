@@ -9,10 +9,8 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/statements/MiscStatements.h>
-#include <slang/ast/symbols/SubroutineSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/structural_scope.hpp"
 
@@ -20,28 +18,18 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// LRM 9.3.2 parallel block. Each parallel statement becomes one branch. FJ1
-// covers branches that touch only module-scope state; forms that need
-// procedural state or a hierarchy name, and forks inside a function, are
-// rejected here rather than miscompiled.
+// LRM 9.3.2 parallel block. Each parallel statement becomes one branch. A
+// function body cannot suspend, so the frontend rejects `join` / `join_any`
+// there; `join_none` spawns without awaiting and needs no coroutine host.
 auto LowerForkStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::BlockStatement& block, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  // A function body is not a coroutine and cannot suspend, so it cannot spawn a
-  // branch (LRM 13.4). A task body is a coroutine and is supported.
-  if (proc.ContainingSymbol().kind == slang::ast::SymbolKind::Subroutine &&
-      proc.ContainingSymbol()
-              .as<slang::ast::SubroutineSymbol>()
-              .subroutineKind == slang::ast::SubroutineKind::Function) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedForkJoinForm,
-        "a fork-join block inside a function is not yet supported");
-  }
+  // A fork block may carry a name (LRM 9.3.4) or a statement label (LRM 9.3.5);
+  // both name the fork's lexical scope.
+  std::optional<std::string> label;
   if (block.blockSymbol != nullptr && !block.blockSymbol->name.empty()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedForkJoinForm,
-        "a named fork-join block is not yet supported");
+    label = std::string{block.blockSymbol->name};
   }
 
   hir::JoinMode mode = hir::JoinMode::kAll;
@@ -112,8 +100,7 @@ auto LowerForkStmt(
   const hir::ProceduralScopeId scope_id =
       frame.current_structural_scope->procedural_scopes.Add(
           hir::ProceduralScopeDecl{
-              .kind = hir::ProceduralScopeKind::kForkJoin,
-              .label = std::nullopt,
+              .label = std::move(label),
               .direct_declarations = std::move(fork_declarations),
               .direct_child_scopes = std::move(fork_children)});
 
@@ -162,7 +149,6 @@ auto LowerStatementListStmt(
   const hir::ProceduralScopeId scope_id =
       frame.current_structural_scope->procedural_scopes.Add(
           hir::ProceduralScopeDecl{
-              .kind = hir::ProceduralScopeKind::kBeginEndBlock,
               .label = std::nullopt,
               .direct_declarations = std::move(nested_declarations),
               .direct_child_scopes = std::move(nested_children)});
@@ -226,7 +212,6 @@ auto LowerBlockStmt(
   const hir::ProceduralScopeId scope_id =
       frame.current_structural_scope->procedural_scopes.Add(
           hir::ProceduralScopeDecl{
-              .kind = hir::ProceduralScopeKind::kBeginEndBlock,
               .label = label,
               .direct_declarations = std::move(nested_declarations),
               .direct_child_scopes = std::move(nested_children)});

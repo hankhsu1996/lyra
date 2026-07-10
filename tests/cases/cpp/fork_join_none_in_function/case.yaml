@@ -1,4 +1,4 @@
-id: cpp.fork_join_task_automatic
+id: cpp.fork_join_none_in_function
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -9,4 +9,5 @@ expect:
   exit: 0
   stdout:
     exact: |
-      x=5
+      [0] function returned 7
+      [10] branch reads local_v=8
