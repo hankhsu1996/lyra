@@ -3,8 +3,10 @@
 #include <format>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include <llvm/IR/Constant.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Type.h>
@@ -15,6 +17,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/type.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -82,6 +85,23 @@ void CodeGenModule::DeclareCallable(
 auto CodeGenModule::MethodFunction(lir::ClassId class_id, std::uint32_t index)
     -> llvm::Function* {
   return methods_.at(std::pair{class_id.value, index});
+}
+
+auto CodeGenModule::UnitDefinitionRef(lir::TypeId object_type)
+    -> llvm::Constant* {
+  const auto* external = std::get_if<lir::ExternalUnitObjectType>(
+      &unit_->types.Get(object_type).data);
+  if (external == nullptr) {
+    throw InternalError(
+        "llvm codegen: a unit definition reference requires an external-unit "
+        "type");
+  }
+  // The definition is opaque to generated code, which only forwards its
+  // address; an i8 placeholder gives the external symbol a type without
+  // encoding the runtime struct's layout.
+  return module_->getOrInsertGlobal(
+      UnitDefinitionSymbolName(external->unit_name),
+      llvm::Type::getInt8Ty(*context_));
 }
 
 }  // namespace lyra::backend::llvm_backend

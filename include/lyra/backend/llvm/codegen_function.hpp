@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <utility>
 
 #include <llvm/IR/IRBuilder.h>
 
@@ -37,12 +38,24 @@ class CodeGenFunction {
   auto LowerAggregate(const lir::AggregateInstr& agg, lir::TypeId result_type)
       -> llvm::Value*;
   auto LowerOperand(const lir::Operand& operand) -> llvm::Value*;
+
+  // Resolves a place to the base instance and the member slot index its
+  // projection selects, the index already a runtime-ABI constant. Realizes a
+  // single member step so far; a deeper projection chain is realized when its
+  // steps land.
+  auto ResolveMemberSlot(const lir::Place& place)
+      -> std::pair<llvm::Value*, llvm::Value*>;
   auto LowerIntConst(const lir::IntConst& constant) -> llvm::Value*;
   auto LowerStrConst(const lir::StrConst& constant) -> llvm::Value*;
   void LowerTerminator(const lir::Terminator& terminator);
 
   auto BuiltinCallee(support::BuiltinFn fn) -> llvm::FunctionCallee;
   auto ConstructCallee(lir::TypeId result) -> llvm::FunctionCallee;
+
+  // The leading argument a construct call needs beyond its lowered operands: an
+  // external-unit construct is prefixed with the child's definition reference;
+  // every other construct needs none.
+  auto ConstructDefinitionArg(lir::TypeId result) -> llvm::Value*;
 
   CodeGenModule* module_;
   const lir::Function* fn_;

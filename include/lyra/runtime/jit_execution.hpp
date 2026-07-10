@@ -27,4 +27,25 @@ void lyra_rt_write(void* files, void* descriptor, void* text);
 auto lyra_rt_make_coroutine(void (*entry)(void*), void* env) -> void*;
 void lyra_rt_register_initial(void* self, void* coroutine);
 void lyra_rt_register_final(void* self, void* coroutine);
+
+// Builds a scope's structural identity from its base label and per-dimension
+// indices (a span of 32-bit index values, empty for a scalar). The segment is
+// a transient runtime value owned by the current call scope.
+auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void*;
+
+// Allocates a generic instance of `definition`, runs its construct entry to
+// build its subtree, and returns the owning handle to the caller (which hands
+// it to `lyra_rt_add_owned_child`). `definition` is an opaque cross-unit
+// reference the generated code never inspects.
+auto lyra_rt_make_unit(
+    const void* definition, void* parent, void* segment, void* services)
+    -> void*;
+
+// Attaches a freshly built child to its parent, transferring ownership into the
+// runtime tree; returns the child as a borrowed scope handle.
+auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
+
+// Reads / writes a generic instance's member slot by index.
+auto lyra_rt_load_field(void* self, std::uint32_t index) -> void*;
+void lyra_rt_store_field(void* self, std::uint32_t index, void* value);
 }

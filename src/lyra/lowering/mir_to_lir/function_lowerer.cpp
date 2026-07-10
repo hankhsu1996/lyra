@@ -265,12 +265,59 @@ auto FunctionLowerer::LowerExpr(mir::ExprId id) -> diag::Result<lir::Operand> {
             // the cast lowers to its operand unchanged.
             return LowerExpr(c.operand);
           },
+          [&](const mir::FieldAccessExpr&) -> diag::Result<lir::Operand> {
+            auto place = LowerPlace(id);
+            if (!place) {
+              return std::unexpected(std::move(place.error()));
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::LoadInstr{.place = *std::move(place)});
+          },
+          [&](const mir::AssignExpr& assign) -> diag::Result<lir::Operand> {
+            if (assign.compound_op.has_value()) {
+              return diag::Fail(
+                  diag::DiagCode::kUnsupportedExpressionForm,
+                  "mir_to_lir: a compound assignment is not yet lowerable to "
+                  "LIR");
+            }
+            auto place = LowerPlace(assign.target);
+            if (!place) {
+              return std::unexpected(std::move(place.error()));
+            }
+            auto value = LowerExpr(assign.value);
+            if (!value) {
+              return std::unexpected(std::move(value.error()));
+            }
+            Emit(
+                unit_->TranslateType(unit_->Mir().builtins.void_type),
+                lir::StoreInstr{.place = *std::move(place), .value = *value});
+            return *std::move(value);
+          },
           [](const auto&) -> diag::Result<lir::Operand> {
             return diag::Fail(
                 diag::DiagCode::kUnsupportedExpressionForm,
                 "mir_to_lir: MIR expression form is not yet lowerable to LIR");
           }},
       expr.data);
+}
+
+auto FunctionLowerer::LowerPlace(mir::ExprId id) -> diag::Result<lir::Place> {
+  const mir::Expr& expr = code_->body.exprs.Get(id);
+  const auto* field = std::get_if<mir::FieldAccessExpr>(&expr.data);
+  if (field == nullptr) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedExpressionForm,
+        "mir_to_lir: only a member access is yet lowerable to a place");
+  }
+  auto base = LowerExpr(field->receiver);
+  if (!base) {
+    return std::unexpected(std::move(base.error()));
+  }
+  return lir::Place{
+      .base = *std::move(base),
+      .chain = {lir::Projection{
+          lir::MemberProjection{.member = lir::MemberId{field->field.value}}}}};
 }
 
 auto FunctionLowerer::Emit(lir::TypeId type, lir::InstrData data)

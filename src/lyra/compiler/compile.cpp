@@ -9,6 +9,7 @@
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lir/verify.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
@@ -128,6 +129,7 @@ auto Compile(
       return result;
     }
     lir_units.push_back(*std::move(lir_or));
+    lir::Verify(lir_units.back());
     unit_metadata.push_back(BuildUnitMetadata(mir_units.back()));
   }
 
@@ -135,10 +137,11 @@ auto Compile(
   // so it references them by the same cross-unit-by-name link every submodule
   // instantiation uses. It is a distinct compiler output, not one of the source
   // units, so it is held apart rather than mixed into `mir_units`. Its
-  // constructor elaborates the design through cross-unit construction, which
-  // MIR-to-LIR does not yet lower, so it is not carried to LIR; the execution
-  // backend constructs each top unit directly.
+  // constructor elaborates the design through the same owned-child construction
+  // any parent uses, lowered like any other unit.
   std::optional<mir::CompilationUnit> root_unit;
+  std::optional<lir::CompilationUnit> root_lir_unit;
+  std::optional<ElaboratedUnitMetadata> root_metadata;
   if (want_mir) {
     const hir::ModuleUnit root_hir =
         BuildRootHirUnit(result.artifacts.top_unit_names);
@@ -150,6 +153,16 @@ auto Compile(
       return result;
     }
     root_unit = *std::move(root_mir);
+    if (want_lir) {
+      auto root_lir = lowering::mir_to_lir::LowerUnit(*root_unit);
+      if (!root_lir) {
+        sink.Report(std::move(root_lir.error()));
+        return result;
+      }
+      root_lir_unit = *std::move(root_lir);
+      lir::Verify(*root_lir_unit);
+      root_metadata = BuildUnitMetadata(*root_unit);
+    }
   }
 
   result.artifacts.hir_units = std::move(hir_units);
@@ -160,6 +173,8 @@ auto Compile(
   if (want_lir) {
     result.artifacts.lir_units = std::move(lir_units);
     result.artifacts.unit_metadata = std::move(unit_metadata);
+    result.artifacts.root_lir_unit = std::move(root_lir_unit);
+    result.artifacts.root_metadata = std::move(root_metadata);
   }
 
   return result;

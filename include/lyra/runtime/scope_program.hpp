@@ -74,12 +74,16 @@ struct ScopeProgram {
 
 // The immutable per-specialization definition of a design unit: the root
 // scope's program (held by value, so a unit's whole generated behavior is one
-// constant) and the structural-construction entry. Construction is
-// bootstrap-called (a JIT design) or realized by the backend's own constructor
-// (the C++ backend), distinct from the per-phase lifecycle dispatch.
+// constant), the structural-construction entry, and the count of member slots
+// an instance carries. Construction is bootstrap-called (a JIT design) or
+// realized by the backend's own constructor (the C++ backend), distinct from
+// the per-phase lifecycle dispatch. The slot count sizes the runtime-owned
+// storage of a generic instance; a backend that lays members out natively (the
+// C++ backend, whose subclass holds real fields) leaves it zero.
 struct UnitDefinition {
   ScopeProgram root;
   ScopeEntry construct = &ScopeNoOp;
+  std::uint32_t member_slot_count = 0;
 
   constexpr UnitDefinition() = default;
   constexpr UnitDefinition(ScopeProgram root, ScopeEntry construct)

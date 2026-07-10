@@ -100,7 +100,51 @@ struct AggregateInstr {
   std::vector<Operand> elements;
 };
 
-using InstrData = std::variant<CallInstr, AggregateInstr>;
+// A class-local logical member identity: the member's stable declaration-order
+// slot in its class's member list, carried over from the MIR field it lowers
+// from. It is meaningful only together with the base's class/object type --
+// `member 0` of one class is unrelated to `member 0` of another. Never a
+// physical index or byte offset.
+struct MemberId {
+  std::uint32_t value;
+
+  auto operator<=>(const MemberId&) const -> std::strong_ordering = default;
+};
+
+// One step of a place's projection chain: it selects a member of the object the
+// projection has reached so far. The place vocabulary is member, index,
+// dereference, slice, and downcast; only member is realized so far, each
+// further step joining this variant as its feature lands.
+struct MemberProjection {
+  MemberId member;
+};
+
+using Projection = std::variant<MemberProjection>;
+
+// Storage named by logical identity: a base value plus a projection chain of
+// member / index / dereference / ... steps. A place is what a load, store, or
+// address-of names; the physical address it resolves to is derived below LIR,
+// never encoded here. An empty chain names the base itself.
+struct Place {
+  Operand base;
+  std::vector<Projection> chain;
+};
+
+// Reads the value held at `place`. The result's type is the place's type -- the
+// type the projection chain arrives at.
+struct LoadInstr {
+  Place place;
+};
+
+// Writes `value` into `place`. The store yields no value; its instruction
+// result is an unused void.
+struct StoreInstr {
+  Place place;
+  Operand value;
+};
+
+using InstrData =
+    std::variant<CallInstr, AggregateInstr, LoadInstr, StoreInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

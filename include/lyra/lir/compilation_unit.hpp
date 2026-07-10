@@ -24,12 +24,22 @@ struct RuntimeLibraryBase {
 
 using Base = std::variant<RuntimeLibraryBase>;
 
-// One compiled class: its name, the base it extends, its construction logic,
-// and its callable bodies. Mirrors `mir::Class` with every body lowered to a
-// CFG.
+// A typed member of a class instance -- the storage a member place reaches by a
+// member projection. Its position in this list is its class-local member
+// identity. The C++ backend realizes a member as a native field; a generic
+// runtime instance realizes it as runtime-owned storage.
+struct Member {
+  std::string name;
+  TypeId type;
+};
+
+// One compiled class: its name, the base it extends, its member slots, its
+// construction logic, and its callable bodies. Mirrors `mir::Class` with every
+// body lowered to a CFG.
 struct Class {
   std::string name;
   std::optional<Base> base;
+  std::vector<Member> members;
   Function constructor;
   std::vector<Function> methods;
 };

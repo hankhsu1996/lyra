@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <argparse/argparse.hpp>
 #include <cstdio>
 #include <exception>
@@ -463,12 +462,17 @@ auto main(int argc, char** argv) -> int {
         for (const auto& unit : *result.artifacts.lir_units) {
           fmt::print("{}", lyra::lir::DumpLir(unit));
         }
+        fmt::print("{}", lyra::lir::DumpLir(*result.artifacts.root_lir_unit));
         return 0;
       case CommandKind::kDumpLlvm:
         for (const auto& unit : *result.artifacts.lir_units) {
           fmt::print(
               "{}", lyra::backend::llvm_backend::EmitModule(unit).Print());
         }
+        fmt::print(
+            "{}", lyra::backend::llvm_backend::EmitModule(
+                      *result.artifacts.root_lir_unit)
+                      .Print());
         return 0;
       case CommandKind::kEmitCpp: {
         auto runtime = resolve_runtime();
@@ -513,23 +517,13 @@ auto main(int argc, char** argv) -> int {
       case CommandKind::kRun:
         switch (args.backend) {
           case Backend::kJit: {
-            const auto& lir_units = *result.artifacts.lir_units;
-            const auto& unit_metadata = *result.artifacts.unit_metadata;
-            const auto& top_names = result.artifacts.top_unit_names;
-            // The JIT constructs each top unit directly (it does not yet lower
-            // the synthesized design-root unit's cross-unit construction), so
-            // it runs only the top-level units, skipping `$root` and
-            // submodules.
-            int exit_code = 0;
-            for (std::size_t i = 0; i < lir_units.size(); ++i) {
-              const auto& name =
-                  lir_units[i].classes.Get(lir_units[i].root).name;
-              if (std::ranges::find(top_names, name) == top_names.end()) {
-                continue;
-              }
-              exit_code = lyra::jit::Execute(lir_units[i], unit_metadata[i]);
-            }
-            return exit_code;
+            // The design-root unit's construct elaborates the whole design,
+            // building the top-level units as its owned children, so the JIT
+            // runs the design once from that one entry rather than per top.
+            return lyra::jit::Execute(
+                *result.artifacts.lir_units, *result.artifacts.unit_metadata,
+                *result.artifacts.root_lir_unit,
+                *result.artifacts.root_metadata);
           }
           case Backend::kAot:
           case Backend::kLli:

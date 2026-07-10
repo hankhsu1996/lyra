@@ -33,6 +33,7 @@ class FunctionLowerer {
  private:
   auto LowerStmtInto(const mir::Stmt& stmt) -> diag::Result<void>;
   auto LowerExpr(mir::ExprId id) -> diag::Result<lir::Operand>;
+  auto LowerPlace(mir::ExprId id) -> diag::Result<lir::Place>;
   auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
 
   UnitLowerer* unit_;

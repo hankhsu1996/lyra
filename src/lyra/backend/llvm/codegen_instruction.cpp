@@ -26,13 +26,31 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr) -> llvm::Value* {
           },
           [&](const lir::AggregateInstr& agg) -> llvm::Value* {
             return LowerAggregate(agg, result_type);
+          },
+          [&](const lir::LoadInstr& load) -> llvm::Value* {
+            const auto [base, member] = ResolveMemberSlot(load.place);
+            return builder_.CreateCall(
+                module_->Runtime().LoadField(), {base, member});
+          },
+          [&](const lir::StoreInstr& store) -> llvm::Value* {
+            const auto [base, member] = ResolveMemberSlot(store.place);
+            return builder_.CreateCall(
+                module_->Runtime().StoreField(),
+                {base, member, LowerOperand(store.value)});
           }},
       instr.data);
 }
 
 auto CodeGenFunction::LowerCall(const lir::CallInstr& call) -> llvm::Value* {
   std::vector<llvm::Value*> args;
-  args.reserve(call.args.size());
+  // A construct that builds a child unit leads with the child's definition
+  // reference, which the result type names rather than the operand list.
+  if (const auto* construct = std::get_if<lir::ConstructTarget>(&call.target)) {
+    if (llvm::Value* definition = ConstructDefinitionArg(construct->result)) {
+      args.push_back(definition);
+    }
+  }
+  args.reserve(args.size() + call.args.size());
   for (const lir::Operand& arg : call.args) {
     args.push_back(LowerOperand(arg));
   }
@@ -104,6 +122,27 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
       operand);
 }
 
+// The JIT realizes a member place as a runtime-owned slot on the base instance,
+// addressed by the member index. Only a single member step is produced so far;
+// a deeper projection chain (index, dereference) is realized when its steps
+// land.
+auto CodeGenFunction::ResolveMemberSlot(const lir::Place& place)
+    -> std::pair<llvm::Value*, llvm::Value*> {
+  if (place.chain.size() != 1) {
+    throw InternalError(
+        "llvm codegen: only a single-step member place is yet lowerable");
+  }
+  const auto* member = std::get_if<lir::MemberProjection>(&place.chain.front());
+  if (member == nullptr) {
+    throw InternalError(
+        "llvm codegen: only a member projection is yet lowerable");
+  }
+  return {
+      LowerOperand(place.base),
+      llvm::ConstantInt::get(
+          llvm::Type::getInt32Ty(module_->Context()), member->member.value)};
+}
+
 // A machine integer is a native LLVM constant. A packed value has no native
 // constant form in the opaque value model -- it is a runtime object -- so its
 // constant is materialized by a runtime constructor rather than emitted inline.
@@ -160,6 +199,8 @@ auto CodeGenFunction::BuiltinCallee(support::BuiltinFn fn)
       return module_->Runtime().RegisterInitial();
     case support::BuiltinFn::kRegisterFinal:
       return module_->Runtime().RegisterFinal();
+    case support::BuiltinFn::kAddOwnedChild:
+      return module_->Runtime().AddOwnedChild();
     default:
       throw InternalError(
           "llvm codegen: builtin is not yet lowerable to the runtime ABI");
@@ -180,14 +221,42 @@ auto CodeGenFunction::ConstructCallee(lir::TypeId result)
             if (r.kind == lir::RuntimeLibraryKind::kPrintLiteralItem) {
               return module_->Runtime().MakePrintLiteralItem();
             }
+            if (r.kind == lir::RuntimeLibraryKind::kHierarchySegment) {
+              return module_->Runtime().MakeSegment();
+            }
             throw InternalError(
                 "llvm codegen: runtime-library construct is not yet lowerable");
+          },
+          [&](const lir::PointerType& p) -> llvm::FunctionCallee {
+            if (std::holds_alternative<lir::ExternalUnitObjectType>(
+                    module_->Unit().types.Get(p.pointee).data)) {
+              return module_->Runtime().MakeUnit();
+            }
+            throw InternalError(
+                "llvm codegen: pointer construct is not yet lowerable");
           },
           [&](const auto&) -> llvm::FunctionCallee {
             throw InternalError(
                 "llvm codegen: construct result type is not yet lowerable");
           }},
       module_->Unit().types.Get(result).data);
+}
+
+auto CodeGenFunction::ConstructDefinitionArg(lir::TypeId result)
+    -> llvm::Value* {
+  // Only a construct of a pointer to an external unit leads with a definition;
+  // its reference comes from the type-keyed projection, so this call knows the
+  // symbol is needed without knowing how it is named.
+  const auto* pointer =
+      std::get_if<lir::PointerType>(&module_->Unit().types.Get(result).data);
+  if (pointer == nullptr) {
+    return nullptr;
+  }
+  if (!std::holds_alternative<lir::ExternalUnitObjectType>(
+          module_->Unit().types.Get(pointer->pointee).data)) {
+    return nullptr;
+  }
+  return module_->UnitDefinitionRef(pointer->pointee);
 }
 
 }  // namespace lyra::backend::llvm_backend

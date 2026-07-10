@@ -1,4 +1,3 @@
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -34,6 +33,20 @@ auto WriteTrivialSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// A two-level hierarchy: the top instantiates a submodule, and each level runs
+// an initial block. Elaborating it exercises the design-root unit constructing
+// the top and the top constructing its submodule as owned children.
+auto WriteHierarchicalSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Leaf;\n"
+      << "  initial $display(\"leaf ran\");\n"
+      << "endmodule\n"
+      << "module Test;\n"
+      << "  Leaf a();\n"
+      << "  initial $display(\"top ran\");\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -50,6 +63,31 @@ TEST(LyraRun, ExecutesSourceEndToEnd) {
       << run.stdout_text << run.stderr_text;
   EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+}
+
+// The JIT backend elaborates the design through the synthesized design-root
+// unit's construct: it builds the top as an owned child, and the top builds its
+// submodule, so both levels' initial blocks run. This is the execution-backend
+// counterpart of the C++ backend's constructor-driven elaboration.
+TEST(LyraRun, JitElaboratesHierarchyThroughDesignRoot) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteHierarchicalSource(src);
+
+  const std::vector<std::string> args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(run.termination, TerminationKind::kExitedNormally)
+      << run.stdout_text << run.stderr_text;
+  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("top ran"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+  EXPECT_NE(run.stdout_text.find("leaf ran"), std::string::npos)
       << "stdout: " << run.stdout_text;
 }
 
