@@ -98,6 +98,19 @@ struct DownwardHead {
   std::vector<std::uint32_t> head_indices = {};
 };
 
+// The head of a routed reference whose target is a data-object member of an
+// enclosing scope of the reader, in the same compilation unit (`hops` typed
+// parent edges up, then the leaf member). Reaching a same-unit ancestor member
+// this way -- sealed once in the resolve phase like every other routed
+// reference -- rather than re-walking the parent chain on each access is what
+// keeps the hot path a single sealed-endpoint dereference. The leaf member is
+// the route's single `PathSegment`; the climb is entirely typed.
+struct EnclosingHead {
+  StructuralHops hops;
+
+  auto operator==(const EnclosingHead&) const -> bool = default;
+};
+
 // Where an upward cross-unit reference's navigation starts (LRM 23.8 / 23.9).
 // `UpwardRootHead` denotes the parent-less topmost scope -- the `$root`
 // source token identifies the climb target itself, so the descent suffix
@@ -115,25 +128,36 @@ struct UpwardNamedHead {
   auto operator==(const UpwardNamedHead&) const -> bool = default;
 };
 
-using CrossUnitRefHead =
-    std::variant<DownwardHead, UpwardRootHead, UpwardNamedHead>;
+using RoutedRefHead =
+    std::variant<EnclosingHead, DownwardHead, UpwardRootHead, UpwardNamedHead>;
 
-// A cross-unit reference resolved once, in the resolve phase after the
-// object tree is fully built. `head` is where navigation starts; `path`
-// carries the shared navigation from the head down to the referenced leaf,
-// one segment per named step (each with its own per-axis indices, if any);
-// `type` is the slang-resolved leaf data type. `target_net_type` is the
-// target's net type when the target is a net (LRM 6.7: the net type fixes
-// how drivers resolve and the undriven value), or empty when the target is
-// a variable. Together they determine the producer's actual cell -- a
-// resolved net of that net type, or a variable's observable cell -- which
-// the realized cross-unit cell must match so a read reaches the right
-// access protocol. The slot is read / written / observed through one
-// stored direct reference.
-struct CrossUnitRefDecl {
-  CrossUnitRefHead head;
+// How to navigate from a scope to a cross-instance target member: `head` is
+// where navigation starts -- an enclosing ancestor, an owned child, or an
+// upward climb; `path` carries the descent from the head to the leaf, one
+// segment per named step (each with its own per-axis indices, if any); `type`
+// is the slang-resolved leaf data type. This is the route alone. Whether the
+// route materializes a persistent endpoint slot (a value reference read on the
+// hot path) or is resolved once for a one-shot bind (a `ref` port alias) is the
+// consumer's endpoint-capability decision, not a property of the route.
+struct RoutedPathRecipe {
+  RoutedRefHead head;
   std::vector<PathSegment> path;
   TypeId type;
+
+  auto operator==(const RoutedPathRecipe&) const -> bool = default;
+};
+
+// A routed reference that materializes a persistent endpoint slot, resolved
+// once in the resolve phase after the object tree is fully built.
+// `target_net_type` is the target's net type when the target is a net (LRM 6.7:
+// the net type fixes how drivers resolve and the undriven value), or empty when
+// the target is a variable. With the recipe's leaf type it determines the
+// producer's actual cell -- a resolved net of that net type, or a variable's
+// observable cell -- which the realized endpoint must match so a read reaches
+// the right access protocol. The endpoint is read / written / observed through
+// one stored direct reference.
+struct RoutedRefDecl {
+  RoutedPathRecipe recipe;
   std::optional<NetType> target_net_type;
 };
 
@@ -150,23 +174,18 @@ struct InstanceMemberDecl {
 
 enum class PortDirection : std::uint8_t { kInput, kOutput, kRef };
 
-// How the child port is reached, by realization. An input or output port has
-// its own cell and is realized as a reactive edge over it (a variable cell is
-// written / read, a net cell is driven / read), so it holds a persistent
-// cross-unit reference (`cell`, a `CrossUnitVarRef`) whose target capability
-// (net versus variable) the reference itself carries. A `ref` port owns no
-// cell; it is bound once in the resolve phase, so it holds only the by-name
-// reach
-// (`head` + `path`, with `type` the port value type) -- no persistent slot.
+// How the child port is reached, by endpoint capability. An input or output
+// port has its own cell, realized as a reactive edge over it (a variable cell
+// written / read, a net cell driven / read), so it holds a persistent routed
+// reference (`cell`, a `RoutedRef`) whose target capability (net versus
+// variable) the reference itself carries. A `ref` port owns no cell: it is
+// bound once in the resolve phase to the peer's cell, so it holds only the
+// route to the child's reference member (a `RoutedPathRecipe`) -- no persistent
+// slot, since a `ref` needs no simulation-time reach (LRM 23.3.3.2).
 struct PortCellEndpoint {
   ExprId cell;
 };
-struct PortAliasEndpoint {
-  CrossUnitRefHead head;
-  std::vector<PathSegment> path;
-  TypeId type;
-};
-using PortEndpoint = std::variant<PortCellEndpoint, PortAliasEndpoint>;
+using PortEndpoint = std::variant<PortCellEndpoint, RoutedPathRecipe>;
 
 // A module port connection at an instantiation (LRM 23.3.3). `endpoint` reaches
 // the child's port member; `peer` is the parent-side connected expression;
@@ -220,7 +239,7 @@ struct StructuralScope {
   base::Arena<Generate, GenerateId> generates;
   base::Arena<InstanceMemberDecl, InstanceMemberId> instance_members;
   std::vector<PortConnection> port_connections;
-  base::Arena<CrossUnitRefDecl, CrossUnitRefId> cross_unit_refs;
+  base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
   // Body-bearing SV subroutines only. A bodyless DPI-C import never enters this
   // arena; it lives in `foreign_imports` (invariant relied on by the
   // per-subroutine body lowering, which assumes every entry here has a body).

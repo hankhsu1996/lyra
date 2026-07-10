@@ -773,10 +773,10 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 
     **Interacts with**: R47 (object model), R51 (a class with a body), R8 (callable model).
 
-- [ ] R53 -- Finish the front-end reference / sensitivity translation boundary
+- [x] R53 -- Finish the front-end reference / sensitivity translation boundary
       (`../decisions/front-end-semantic-boundary.md`). The correctness repairs and the move to route
       cross-scope references by layout visibility (order-independent, from a whole-unit declaration
-      pass) have landed. The boundary is realized in three staged sub-items:
+      pass) have landed. The boundary is realized across three staged sub-items:
   - [x] R53a -- One route translation for every reference consumer. Value read, value write, and
         change observation (including a dependency read only inside a called function) route through
         one translator keyed on the reader's elaborated position and the target symbol; each segment
@@ -791,18 +791,18 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
         declaration order. A named block's head identity is its SV label (a hierarchical-reference
         head, LRM 23.9), registered directly from the elaborated scope members; the body pass grows
         no structural identity.
-  - [ ] R53c -- Endpoint binding. Whether a value read, a value write, and a change observation of
-        one target ultimately share one bound runtime endpoint -- and whether an enclosing reference
-        binds a per-instance handle rather than re-navigating the parent chain on the hot path -- is
-        the endpoint-capability half of the boundary, constrained by it but not settled. The
-        endpoint binds from the target's semantic kind (variable / net / `ref` / port) narrowed by
-        the footprint. A port connection is the other construct that reaches a cross-unit cell: it
-        constructs its child-cell reference and, for a `ref` port, its alias, independently of the
-        one route translator, because the alias binds from the raw navigation recipe rather than a
-        resolved slot -- exactly the port / `ref` endpoint-capability question this entry settles,
-        so that construction unifies here rather than in the route-translation cut. **Blocker**:
-        none identified; pairs with the endpoint-capability decisions
-        (`../decisions/net-driver-resolution.md`, `../decisions/reference-as-data-type.md`).
+  - [x] R53c -- Endpoint binding. A value read, a value write, and a change observation of one
+        target reach it through one bound runtime endpoint: a reference that crosses a scope
+        boundary seals to a per-instance endpoint in the resolve phase and the hot path dereferences
+        it, rather than re-navigating the parent chain on each access; only a target on the reader's
+        own scope is a direct member. The endpoint's access protocol is bound from the target's
+        semantic kind -- a variable's observable cell, a resolved net, a reference member -- carried
+        by the endpoint's type, so one binding serves every consumer. A port connection reaches the
+        child's port member through the same route as any hierarchical reference: an input or output
+        port over its cell, a `ref` port bound once to the peer's cell through the one
+        reference-store, with no port-only route species and no port-only alias path. Pairs with the
+        endpoint-capability decisions (`../decisions/net-driver-resolution.md`,
+        `../decisions/reference-as-data-type.md`).
 
 - [x] R54 -- Runtime `RunDesignHost` consolidates every invariant host-boundary concern (argv
       parsing, plusarg collection, engine construction, `BindDesign`, exception mapping). The

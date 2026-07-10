@@ -52,10 +52,10 @@ struct GenerateBindings {
   std::vector<ChildStructuralScopeBinding> by_scope_id;
 };
 
-// The MIR slot a HIR cross-unit ref resolves to: the slot's field id bundled
+// The MIR slot a HIR routed ref resolves to: the slot's field id bundled
 // with the slot's MIR type, so a body reader decides whether the read
 // dereferences without re-touching the owning scope.
-struct CrossUnitRefMeta {
+struct RoutedRefMeta {
   mir::FieldId target = {};
   mir::TypeId slot_type = {};
 };
@@ -146,14 +146,32 @@ class StructuralScopeLowerer {
         hir::StructuralHops{.value = hops.value - 1}, id);
   }
 
-  void AddCrossUnitRefTarget(mir::FieldId target, mir::TypeId slot_type) {
-    cross_unit_ref_targets_.push_back(
-        CrossUnitRefMeta{.target = target, .slot_type = slot_type});
+  void AddRoutedRefTarget(mir::FieldId target, mir::TypeId slot_type) {
+    routed_ref_targets_.push_back(
+        RoutedRefMeta{.target = target, .slot_type = slot_type});
   }
 
-  [[nodiscard]] auto CrossUnitRefTarget(hir::CrossUnitRefId hir_id) const
-      -> const CrossUnitRefMeta& {
-    return cross_unit_ref_targets_.at(hir_id.value);
+  [[nodiscard]] auto RoutedRefTarget(hir::RoutedRefId hir_id) const
+      -> const RoutedRefMeta& {
+    return routed_ref_targets_.at(hir_id.value);
+  }
+
+  // The declared shape of the scope `hops` enclosing edges out from this one,
+  // in the same compilation unit. An enclosing routed reference reaches its
+  // leaf as a typed member of this shape, the same by-name typed reach a
+  // sibling or child route uses within the unit.
+  [[nodiscard]] auto EnclosingClassShapeAtHops(hir::StructuralHops hops) const
+      -> const mir::ClassShape& {
+    if (hops.value == 0) {
+      return module_->GetClassShape(class_id_);
+    }
+    if (parent_ == nullptr) {
+      throw InternalError(
+          "StructuralScopeLowerer::EnclosingClassShapeAtHops: hops walk ran "
+          "past the root scope");
+    }
+    return parent_->EnclosingClassShapeAtHops(
+        hir::StructuralHops{.value = hops.value - 1});
   }
 
   void MapStructuralDataObject(
@@ -344,7 +362,7 @@ class StructuralScopeLowerer {
   const hir::StructuralScope* hir_scope_;
   std::vector<mir::FieldId> structural_data_object_map_;
   std::vector<mir::MethodId> structural_subroutine_map_;
-  std::vector<CrossUnitRefMeta> cross_unit_ref_targets_;
+  std::vector<RoutedRefMeta> routed_ref_targets_;
   std::vector<GenerateBindings> generate_map_;
   // The parent's borrowed companion handle per instance member (nullopt for an
   // instance array). Indexed by `hir::InstanceMemberId`.

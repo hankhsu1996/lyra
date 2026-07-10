@@ -105,7 +105,8 @@ auto LowerNamedEventControl(
 
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
   if (primary == nullptr ||
-      !std::holds_alternative<hir::StructuralDataObjectRef>(primary->data)) {
+      !(std::holds_alternative<hir::DirectMemberRef>(primary->data) ||
+        std::holds_alternative<hir::RoutedRef>(primary->data))) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "named event reference must be a plain structural variable");
@@ -220,7 +221,8 @@ auto LowerEventTriggerStmt(
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
   if (primary == nullptr ||
-      !std::holds_alternative<hir::StructuralDataObjectRef>(primary->data)) {
+      !(std::holds_alternative<hir::DirectMemberRef>(primary->data) ||
+        std::holds_alternative<hir::RoutedRef>(primary->data))) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "event trigger target must be a plain named-event reference");

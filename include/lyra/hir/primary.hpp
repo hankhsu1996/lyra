@@ -36,7 +36,7 @@ struct RealLiteral {
 struct NullLiteral {};
 
 // Primary mirrors LRM 11.2.1 - the atomic leaf level of the expression
-// grammar. Refs are listed directly here so the same StructuralDataObjectRef /
+// grammar. Refs are listed directly here so the same DirectMemberRef /
 // ProceduralVarRef value appears identically when the expression is read and
 // when it is written. Read vs write is determined by where in the tree the
 // ref appears (a PrimaryExpr held under `AssignExpr.lhs` is a write target;
@@ -44,7 +44,7 @@ struct NullLiteral {};
 // tag.
 using Primary = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
-    StructuralDataObjectRef, ProceduralVarRef, ClassPropertyRef,
-    CrossUnitVarRef, IterationBindingRef>;
+    DirectMemberRef, ProceduralVarRef, ClassPropertyRef, RoutedRef,
+    IterationBindingRef>;
 
 }  // namespace lyra::hir

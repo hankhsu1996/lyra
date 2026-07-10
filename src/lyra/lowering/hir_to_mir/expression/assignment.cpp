@@ -43,6 +43,15 @@ auto IsExprRootedAtStructuralDataObject(
       Overloaded{
           [](const mir::FieldAccessExpr&) { return true; },
           [](const mir::LocalRef&) { return false; },
+          // A sealed endpoint reaches a structural cell through a borrowed
+          // pointer stored on this object: a routed reference (an enclosing,
+          // sibling, or cross-unit target) dereferences its slot member. The
+          // root is structural when that pointer is, so recurse through it --
+          // a `ref` formal, whose pointer roots at a local, stays non-
+          // structural.
+          [&](const mir::DerefExpr& d) {
+            return IsExprRootedAtStructuralDataObject(block, d.pointer);
+          },
           [&](const mir::TupleGetExpr& g) {
             return IsExprRootedAtStructuralDataObject(block, g.tuple);
           },

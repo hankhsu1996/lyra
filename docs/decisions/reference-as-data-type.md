@@ -90,10 +90,14 @@ form.
 - A `ref`-port child member owns no storage; reads and writes reach the connected cell directly with
   zero delta, and a write fires the connected signal's update event so the other side's sensitive
   processes wake.
-- The implementation reuses the existing reference type, its runtime wrapper, and the cross-unit
-  fill path. The only new capability is the reference type appearing as a unit member (today it
-  appears only as a callable body local) and a constructor action that fills that member across the
-  unit boundary.
+- The implementation reuses the existing reference type and its runtime wrapper. The `ref` port
+  reaches the child's reference member through the same route mechanism as any hierarchical
+  reference, then binds it through the one canonical reference-store that fills any reference-typed
+  lvalue. That store shares the reference-value construction with a `ref` formal's fill (F4: one
+  type, supplied differently), while the placement differs -- a formal fills a call argument, a port
+  stores into a member. The `ref` port carries no port-only route recipe and no port-only alias
+  path, and holds no persistent slot: reaching the member is a one-time resolve-phase navigation,
+  since a `ref` needs no simulation-time reach.
 - A `const ref` port rides the const marker already on the type; a pass-through `ref` port rides the
   reference value being copyable (the child forwards its own reference into a deeper child).
 - `inout` ports stay out of scope: they are bidirectional net connections in the deferred
