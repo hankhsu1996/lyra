@@ -1467,6 +1467,30 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   mir_class.contained = shape.contained;
   mir_class.type_aliases = shape.type_aliases;
 
+  // A DPI-C import declares no body, so it never enters the subroutine body
+  // machinery below. Its ABI projection and foreign name were resolved once at
+  // AST-to-HIR; here they translate straight into the class's static-callable
+  // namespace, the external-symbol callable the import call lowers against.
+  for (std::size_t i = 0; i < hir_scope.foreign_imports.size(); ++i) {
+    const hir::ForeignImportDecl& imp = hir_scope.foreign_imports.Get(
+        hir::ForeignImportId{static_cast<std::uint32_t>(i)});
+    std::vector<mir::ForeignParam> params;
+    params.reserve(imp.params.size());
+    for (const hir::DpiParamAbi& p : imp.params) {
+      params.push_back(
+          mir::ForeignParam{
+              .sv_type = module.TranslateType(p.sv_type), .abi = p.abi});
+    }
+    mir_class.static_callables.Add(
+        mir::StaticCallableDecl{
+            .name = imp.name,
+            .params = std::move(params),
+            .ret_sv_type = module.TranslateType(imp.ret_sv_type),
+            .ret_abi = imp.ret_abi,
+            .external = mir::ExternalSymbol{
+                .foreign_name = imp.foreign_name, .is_pure = imp.is_pure}});
+  }
+
   const mir::TypeId void_type = module.Unit().builtins.void_type;
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
   ScopeChainNode outer_scope_link{};

@@ -1,12 +1,23 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::backend::cpp {
+
+// The C ABI type spelling an SV value crosses the DPI-C boundary as
+// (LRM 35.5.6): the single carrier-to-C++ mapping both the carrier type render
+// and the emitted `extern "C"` foreign declaration read. The 2-state integral
+// carriers are signed to match SV `byte` / `shortint` / `int` / `longint`; a
+// 1-bit `bit` crosses as `unsigned char`, `real` as `double`, a string as a C
+// string, and a `void` return has no carrier value.
+[[nodiscard]] auto DpiCarrierCppType(support::DpiAbiClass abi)
+    -> std::string_view;
 
 // Renders a MIR type as the corresponding C++ type expression. `owner_class`
 // is the class that lexically declares the field whose type is being rendered;

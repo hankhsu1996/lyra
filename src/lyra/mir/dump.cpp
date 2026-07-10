@@ -26,6 +26,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/dpi_abi.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::mir {
@@ -222,6 +223,10 @@ class MirDumper {
             [](const ShortRealType&) -> std::string { return "ShortRealType"; },
             [](const RealTimeType&) -> std::string { return "RealTimeType"; },
             [](const ChandleType&) -> std::string { return "ChandleType"; },
+            [](const DpiCarrierType& d) -> std::string {
+              return std::format(
+                  "DpiCarrier({})", support::DpiAbiClassName(d.abi));
+            },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
               return std::format("Object(#{})", o.class_id.value);
@@ -476,6 +481,13 @@ class MirDumper {
             },
             [](const support::BuiltinFn& id) -> std::string {
               return std::format("builtin=\"{}\"", support::BuiltinFnName(id));
+            },
+            [this](const StaticCallableId& s) -> std::string {
+              const auto& owner = ResolveScopeAtHops(0);
+              const auto& callable = owner.static_callables.Get(s);
+              return std::format(
+                  R"(static_callable={} "{}" c_name="{}")", s.value,
+                  callable.name, callable.external.foreign_name);
             },
         },
         target);
@@ -776,6 +788,18 @@ class MirDumper {
     }
     Dedent();
 
+    if (!s.static_callables.empty()) {
+      Line("StaticCallables:");
+      Indent();
+      for (std::size_t i = 0; i < s.static_callables.size(); ++i) {
+        DumpStaticCallable(
+            s.static_callables.Get(
+                StaticCallableId{static_cast<std::uint32_t>(i)}),
+            i);
+      }
+      Dedent();
+    }
+
     Line("Constructor:");
     Indent();
     DumpCallableBody(s.constructor);
@@ -794,6 +818,23 @@ class MirDumper {
           std::format(
               "[{}] \"{}\"{} : {}", i, v.name, as, FormatVarType(v.type)));
     }
+  }
+
+  void DumpStaticCallable(const StaticCallableDecl& c, std::size_t index) {
+    Line(
+        std::format(
+            R"(StaticCallable[{}] "{}" external c_name="{}"{} ret={} : {})",
+            index, c.name, c.external.foreign_name,
+            c.external.is_pure ? " pure" : "",
+            support::DpiAbiClassName(c.ret_abi), FormatVarType(c.ret_sv_type)));
+    Indent();
+    for (std::size_t i = 0; i < c.params.size(); ++i) {
+      Line(
+          std::format(
+              "Param[{}] {} : {}", i, support::DpiAbiClassName(c.params[i].abi),
+              FormatVarType(c.params[i].sv_type)));
+    }
+    Dedent();
   }
 
   void DumpStruct(StructId id, const StructDecl& decl) {

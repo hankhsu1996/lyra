@@ -11,8 +11,31 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::backend::cpp {
+
+auto DpiCarrierCppType(support::DpiAbiClass abi) -> std::string_view {
+  switch (abi) {
+    case support::DpiAbiClass::kBit:
+      return "unsigned char";
+    case support::DpiAbiClass::kByte:
+      return "std::int8_t";
+    case support::DpiAbiClass::kShortInt:
+      return "std::int16_t";
+    case support::DpiAbiClass::kInt:
+      return "std::int32_t";
+    case support::DpiAbiClass::kLongInt:
+      return "std::int64_t";
+    case support::DpiAbiClass::kReal:
+      return "double";
+    case support::DpiAbiClass::kString:
+      return "const char*";
+    case support::DpiAbiClass::kVoid:
+      return "void";
+  }
+  throw InternalError("DpiCarrierCppType: unknown DpiAbiClass");
+}
 
 auto RenderPackedType(const mir::PackedArrayType& pa) -> std::string {
   const char* signed_lit =
@@ -77,6 +100,9 @@ auto RenderTypeAsCpp(
                 throw InternalError(
                     "RenderTypeAsCpp: unsupported MachineIntType width");
             }
+          },
+          [](const mir::DpiCarrierType& d) -> std::string {
+            return std::string{DpiCarrierCppType(d.abi)};
           },
           [](const mir::EventType&) -> std::string {
             return std::string{"lyra::runtime::NamedEvent"};
@@ -252,8 +278,8 @@ auto RenderTypeAsCpp(
           },
           [](const auto&) -> std::string {
             throw InternalError(
-                "RenderTypeAsCpp: MIR type not yet supported in C++ render "
-                "cut");
+                "RenderTypeAsCpp: MIR type not yet supported in the C++ "
+                "backend");
           },
       },
       unit.types.Get(type_id).data);

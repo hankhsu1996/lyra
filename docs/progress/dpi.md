@@ -38,6 +38,13 @@ shape, per-backend foreign-call materialization, and per-backend foreign-symbol 
 completes as one deliverable: scalar import works end to end on both the C++ and the LLVM / JIT
 backend. Every later item leaves the MIR shape backend-agnostic and lands on both backends.
 
+The C++ backend half of D1 is done: a scalar import (2-state integral, `real`, and `string`,
+`input`-only functions) declares, marshals across the boundary, calls the foreign symbol, and
+marshals the result back; a user C source is linked in through a repeatable `--dpi-link` option, and
+mixed-language tests assert the round trip. The remaining D1 work is the LLVM / JIT backend, which
+does not yet resolve an external foreign symbol; the MIR is already backend-agnostic, so that half
+is additive.
+
 ## Sub-Steps
 
 The `D*` IDs are stable references. They do not impose a total order; real dependencies are stated

@@ -246,6 +246,14 @@ class String {
     return impl_;
   }
 
+  // Borrows the string as a NUL-terminated C string. The pointer is owned by
+  // this `String` and stays valid until the string is mutated or destroyed;
+  // it is the carrier a DPI-C `const char*` argument crosses the boundary as
+  // (LRM 35.5.6). A caller that needs the string to outlive this object copies.
+  [[nodiscard]] auto CStr() const -> const char* {
+    return impl_.c_str();
+  }
+
  private:
   // Hand-rolled to avoid std::from_chars's pointer-pair API; accumulates one
   // digit at a time. Underscores are skipped per the LRM atoi family rules.

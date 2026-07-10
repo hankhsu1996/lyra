@@ -169,15 +169,64 @@ auto EmitAndWriteSources(
   return {};
 }
 
+// Prepares one DPI-C link input for the final link (LRM 35). A `.c` source is
+// compiled to an object in its own step so its symbols keep C linkage -- the
+// emitted `extern "C"` declaration expects that, and the C++ driver would
+// otherwise mangle a `.c` compiled in the C++ invocation. A `.cpp` joins the
+// C++ link directly (the user gives it C linkage with `extern "C"`). Returns
+// the path to add to the link line.
+auto PrepareDpiLinkInput(
+    const std::filesystem::path& cxx, const std::string& src,
+    const std::filesystem::path& work_dir) -> diag::Result<std::string> {
+  const std::filesystem::path src_path{src};
+  const std::string ext = src_path.extension().string();
+  if (ext == ".cpp" || ext == ".cc" || ext == ".cxx") {
+    return src;
+  }
+  if (ext != ".c") {
+    return diag::Fail(
+        diag::DiagCode::kHostBuildFailed,
+        std::format(
+            "unsupported DPI-C link input '{}': only .c and .cpp are supported",
+            src));
+  }
+  const std::filesystem::path obj =
+      work_dir / (src_path.stem().string() + ".dpi.o");
+  const std::vector<std::string> compile_args = {"-x", "c",  "-c",
+                                                 src,  "-o", obj.string()};
+  auto compiled = support::RunProcessCaptured(cxx, compile_args);
+  if (!compiled) {
+    return IoError(std::move(compiled.error()));
+  }
+  if (compiled->exit_code != 0) {
+    return diag::Fail(
+        diag::DiagCode::kHostBuildFailed,
+        std::format(
+            "compiling DPI-C source '{}' failed:\n{}", src,
+            compiled->stderr_text));
+  }
+  return obj.string();
+}
+
 auto CompileProgram(
     const std::filesystem::path& main_cpp,
     const std::filesystem::path& include_root, const std::filesystem::path& lib,
-    const std::filesystem::path& program, const pch::Options& pch_opts)
-    -> diag::Result<void> {
+    const std::filesystem::path& program, const pch::Options& pch_opts,
+    std::span<const std::string> dpi_link_sources) -> diag::Result<void> {
   auto cxx_or = support::ResolveCxxCompiler();
   if (!cxx_or) {
     return IoError(std::move(cxx_or.error()));
   }
+  std::vector<std::string> link_inputs;
+  link_inputs.reserve(dpi_link_sources.size());
+  for (const std::string& src : dpi_link_sources) {
+    auto prepared = PrepareDpiLinkInput(*cxx_or, src, program.parent_path());
+    if (!prepared) {
+      return std::unexpected(std::move(prepared.error()));
+    }
+    link_inputs.push_back(*std::move(prepared));
+  }
+
   std::vector<std::string> args = {
       std::string(kCxxStandardFlag), "-I", include_root.string()};
   if (auto cached = pch::EnsureCached(*cxx_or, include_root, pch_opts)) {
@@ -185,6 +234,9 @@ auto CompileProgram(
     args.push_back(cached->string());
   }
   args.push_back(main_cpp.string());
+  for (const std::string& in : link_inputs) {
+    args.push_back(in);
+  }
   args.push_back(lib.string());
   args.emplace_back("-o");
   args.push_back(program.string());
@@ -236,12 +288,14 @@ auto AssembleProject(
 }
 
 auto BuildProject(
-    const std::filesystem::path& dir, const pch::Options& pch_opts)
+    const std::filesystem::path& dir, const pch::Options& pch_opts,
+    std::span<const std::string> dpi_link_sources)
     -> diag::Result<std::filesystem::path> {
   const auto program = dir / kProgramName;
   if (auto r = CompileProgram(
           dir / kMainSource, dir / kRuntimeIncludeDir,
-          dir / kRuntimeLibDir / kRuntimeLibFile, program, pch_opts);
+          dir / kRuntimeLibDir / kRuntimeLibFile, program, pch_opts,
+          dpi_link_sources);
       !r) {
     return std::unexpected(std::move(r.error()));
   }
@@ -252,14 +306,15 @@ auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root, const std::filesystem::path& work_dir,
     bool format, const pch::Options& pch_opts,
-    std::span<const std::string> child_args) -> diag::Result<int> {
+    std::span<const std::string> child_args,
+    std::span<const std::string> dpi_link_sources) -> diag::Result<int> {
   if (auto r = EmitAndWriteSources(units, root, work_dir, format); !r) {
     return std::unexpected(std::move(r.error()));
   }
   const auto program = work_dir / kProgramName;
   if (auto r = CompileProgram(
           work_dir / kMainSource, runtime.include_root, runtime.lib, program,
-          pch_opts);
+          pch_opts, dpi_link_sources);
       !r) {
     return std::unexpected(std::move(r.error()));
   }

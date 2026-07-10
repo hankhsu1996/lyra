@@ -24,17 +24,21 @@ auto AssembleProject(
 // (the same recipe `build.sh` carries). Returns the produced executable's path;
 // a non-zero compiler exit surfaces its stderr as a diagnostic.
 auto BuildProject(
-    const std::filesystem::path& dir, const pch::Options& pch_opts)
+    const std::filesystem::path& dir, const pch::Options& pch_opts,
+    std::span<const std::string> dpi_link_sources)
     -> diag::Result<std::filesystem::path>;
 
 // its exit code. `root` is the design-root unit the program constructs.
 // `child_args` are forwarded verbatim as argv to the built program (LRM 21.6
-// plusargs land here). This is the ephemeral path behind `run`: it never
-// materializes a portable project.
+// plusargs land here). `dpi_link_sources` are native sources (`.c` / `.cpp`)
+// providing DPI-C foreign symbols, compiled and linked into the program
+// (LRM 35). This is the ephemeral path behind `run`: it never materializes a
+// portable project.
 auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root, const std::filesystem::path& work_dir,
     bool format, const pch::Options& pch_opts,
-    std::span<const std::string> child_args) -> diag::Result<int>;
+    std::span<const std::string> child_args,
+    std::span<const std::string> dpi_link_sources) -> diag::Result<int>;
 
 }  // namespace lyra::driver
