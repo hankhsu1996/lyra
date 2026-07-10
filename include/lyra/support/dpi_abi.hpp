@@ -25,6 +25,37 @@ enum class DpiAbiClass : std::uint8_t {
   kString,
 };
 
+// The direction of a DPI-C formal argument (LRM 35.5.1.2). `ref` is illegal in
+// import declarations, so the set is exactly input / output / inout. The
+// direction decides the boundary plumbing -- input crosses by value, output and
+// inout cross by pointer with a copy back -- not the carrier class, which is
+// direction-independent. Shared by HIR and MIR so no layer re-derives it.
+enum class DpiDirection : std::uint8_t {
+  kInput,
+  kOutput,
+  kInout,
+};
+
+// Whether the direction writes the actual back after the call: output and inout
+// copy the foreign-written carrier back into the SV actual, input does not.
+[[nodiscard]] constexpr auto DpiDirectionWritesBack(DpiDirection dir) -> bool {
+  return dir != DpiDirection::kInput;
+}
+
+// The SV keyword a direction corresponds to, for dumps.
+[[nodiscard]] constexpr auto DpiDirectionName(DpiDirection dir)
+    -> std::string_view {
+  switch (dir) {
+    case DpiDirection::kInput:
+      return "input";
+    case DpiDirection::kOutput:
+      return "output";
+    case DpiDirection::kInout:
+      return "inout";
+  }
+  return "unknown";
+}
+
 // The SV keyword an ABI category corresponds to. The shared human-readable
 // spelling every HIR and MIR dump names the category by, so the two dumps
 // agree without each restating the mapping.

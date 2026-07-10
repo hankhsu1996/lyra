@@ -1,4 +1,4 @@
-id: cpp.dpi_import_string
+id: cpp.dpi_import_input
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -10,5 +10,9 @@ expect:
   exit: 0
   stdout:
     exact: |
+      add_one=42
+      mul=42
+      scale=6.0
+      negate=-2.5
       var=11
       lit=2

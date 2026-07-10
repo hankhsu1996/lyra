@@ -247,9 +247,11 @@ struct ChandleType {
 //
 // Invariant -- this is an ABI temporary, never a value-model type. It occurs
 // only within a single foreign-call lowering window: as the result type of a
-// marshal-to-carrier expression, and as the operand and result type of a
-// foreign call. It is never an SV variable's type, never stored to storage,
-// never produced by a user expression, and never escapes that window.
+// marshal-to-carrier expression, as the operand and result type of a foreign
+// call, and as the type of a boundary temp local that an output / inout
+// argument crosses by pointer (the foreign side writes the temp; the copy-back
+// marshals it to the SV actual). It is never an SV variable's type, never
+// produced by a user expression, and never escapes that window.
 struct DpiCarrierType {
   support::DpiAbiClass abi;
 

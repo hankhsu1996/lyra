@@ -9,10 +9,13 @@
 namespace lyra::hir {
 
 // One argument of a DPI-C import's ABI projection (LRM 35.5.6): the SV type it
-// was declared with, paired with the C ABI category it crosses the boundary as.
+// was declared with, the C ABI category it crosses the boundary as, and its
+// direction (LRM 35.5.1.2), which decides whether the boundary copies the value
+// in, back, or both.
 struct DpiParamAbi {
   TypeId sv_type{};
   support::DpiAbiClass abi = support::DpiAbiClass::kVoid;
+  support::DpiDirection direction = support::DpiDirection::kInput;
 };
 
 // A subroutine declared `import "DPI-C"` (LRM 35.4). It has no SV body, so it

@@ -831,7 +831,9 @@ class MirDumper {
     for (std::size_t i = 0; i < c.params.size(); ++i) {
       Line(
           std::format(
-              "Param[{}] {} : {}", i, support::DpiAbiClassName(c.params[i].abi),
+              "Param[{}] {} {} : {}", i,
+              support::DpiDirectionName(c.params[i].direction),
+              support::DpiAbiClassName(c.params[i].abi),
               FormatVarType(c.params[i].sv_type)));
     }
     Dedent();

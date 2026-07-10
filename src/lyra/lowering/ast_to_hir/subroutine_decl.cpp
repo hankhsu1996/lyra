@@ -99,6 +99,26 @@ auto ClassifyDpiAbi(const slang::ast::Type& type, diag::SourceSpan span)
       span, diag::DiagCode::kUnsupportedDpi, "DPI-C type is not yet supported");
 }
 
+// The direction of a DPI-C formal argument (LRM 35.5.1.2). `ref` is illegal in
+// import declarations (LRM 35.5.4), so only input / output / inout arrive here.
+auto ClassifyDpiDirection(
+    const slang::ast::FormalArgumentSymbol& formal, diag::SourceSpan span)
+    -> diag::Result<support::DpiDirection> {
+  switch (formal.direction) {
+    case slang::ast::ArgumentDirection::In:
+      return support::DpiDirection::kInput;
+    case slang::ast::ArgumentDirection::Out:
+      return support::DpiDirection::kOutput;
+    case slang::ast::ArgumentDirection::InOut:
+      return support::DpiDirection::kInout;
+    case slang::ast::ArgumentDirection::Ref:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedDpi,
+          "DPI-C ref argument is not allowed in an import declaration");
+  }
+  throw InternalError("ClassifyDpiDirection: unknown ArgumentDirection");
+}
+
 // The resolved C linkage name of a DPI import (LRM 35.5.4): the explicit
 // `c_identifier` token when present, otherwise the SV subroutine name. slang
 // does not persist this for imports, so it is re-derived from the syntax here.
@@ -220,16 +240,15 @@ auto LowerForeignImport(
   abi_params.reserve(sym.getArguments().size());
   for (const auto* formal : sym.getArguments()) {
     const auto floc = mapper.PointSpanOf(formal->location);
-    if (formal->direction != slang::ast::ArgumentDirection::In) {
-      return diag::Fail(
-          floc, diag::DiagCode::kUnsupportedDpi,
-          "DPI-C output/inout argument is not yet supported");
-    }
+    auto direction = ClassifyDpiDirection(*formal, floc);
+    if (!direction) return std::unexpected(std::move(direction.error()));
     auto abi = ClassifyDpiAbi(formal->getType(), floc);
     if (!abi) return std::unexpected(std::move(abi.error()));
     auto param_type = module.InternType(formal->getType(), floc);
     if (!param_type) return std::unexpected(std::move(param_type.error()));
-    abi_params.push_back(hir::DpiParamAbi{.sv_type = *param_type, .abi = *abi});
+    abi_params.push_back(
+        hir::DpiParamAbi{
+            .sv_type = *param_type, .abi = *abi, .direction = *direction});
   }
 
   return hir::ForeignImportDecl{
