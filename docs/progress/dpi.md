@@ -45,6 +45,12 @@ mixed-language tests assert the round trip. The remaining D1 work is the LLVM / 
 does not yet resolve an external foreign symbol; the MIR is already backend-agnostic, so that half
 is additive.
 
+The C++ backend also carries the general D2 argument surface: `output` and `inout` scalar arguments
+(2-state integral, `real`, `string`) cross by pointer with a copy back into the actual, functions
+returning a value alongside `output` / `inout` arguments work in expression position, and non-pure
+imports and packed 2-state values up to one machine word are accepted. The sole remaining D2 gap is
+`chandle`, which needs a runtime representation of its own before it can cross the boundary.
+
 ## Sub-Steps
 
 The `D*` IDs are stable references. They do not impose a total order; real dependencies are stated
@@ -58,9 +64,10 @@ inline.
       call to it; a user-provided C object is linked in (via the emitted build recipe on the C++
       backend, resolved through the execution session on the LLVM / JIT backend), asserted by a
       mixed-language test.
-- [ ] D2 -- General import: `output` and `inout` arguments, non-pure imports, `chandle`, and packed
-      2-state values up to a single machine word (LRM 35.5.5, 35.5.6). Bidirectional boundary
-      temporaries for the copy-out directions.
+- [ ] D2 -- General import (LRM 35.5.5, 35.5.6). `output` and `inout` arguments, non-pure imports,
+      and packed 2-state values up to a single machine word are supported on the C++ backend, with
+      the copy-out directions crossing by pointer to a boundary temporary. `chandle` is the
+      remaining gap: it needs a runtime representation before it can cross the boundary.
 - [ ] D3 -- 4-state and wide marshaling: 4-state scalars and vectors across the boundary (the DPI
       canonical 4-state layout versus Lyra's internal representation) and packed vectors wider than
       one machine word (LRM 35.5.6).

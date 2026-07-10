@@ -1,6 +1,9 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 
+#include <algorithm>
 #include <expected>
+#include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -576,12 +579,14 @@ auto LowerMethodCall(
       .type = result_type};
 }
 
-// SV value -> foreign ABI carrier (marshal-in, LRM 35.5.6). An integral value
-// yields its host int64, narrowed to the carrier's C width by a host cast; a
-// real yields its native floating value; a string borrows a NUL-terminated C
-// string that stays valid for the call. Reuses the ordinary value accessors;
-// the boundary conversion is a plain expression, not a DPI-specific primitive.
-auto MarshalArgToCarrier(
+// SV value -> foreign ABI carrier (LRM 35.5.6). An integral value yields its
+// host int64, narrowed to the carrier's C width by a host cast; a real yields
+// its native floating value; a string borrows a NUL-terminated C string that
+// stays valid for the call. Reuses the ordinary value accessors; the boundary
+// conversion is a plain expression, not a DPI-specific primitive. Feeds both an
+// input argument (crossed by value) and the copy-in of an inout / output
+// argument (seeding its boundary temp).
+auto MarshalSvToCarrier(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId sv_id,
     support::DpiAbiClass abi) -> mir::ExprId {
   const mir::TypeId carrier =
@@ -630,12 +635,13 @@ auto MarshalArgToCarrier(
   throw InternalError("MarshalArgToCarrier: unknown DpiAbiClass");
 }
 
-// Foreign ABI carrier -> SV value (marshal-out) into the declared return type's
-// canonical shape. An integral carrier is landed into the return type's
-// representation by the packed factory (the prototype carries that shape, so
-// width / signedness / state domain follow the declared type); a real / string
-// carrier constructs the SV value directly.
-auto MarshalResultFromCarrier(
+// Foreign ABI carrier -> SV value into a declared SV type's canonical shape. An
+// integral carrier is landed into the type's representation by the packed
+// factory (the prototype carries that shape, so width / signedness / state
+// domain follow the declared type); a real / string carrier constructs the SV
+// value directly. Feeds both a function's marshaled return and the copy-back of
+// an output / inout argument into its actual.
+auto MarshalCarrierToSv(
     ModuleLowerer& module, WalkFrame frame, mir::ExprId call_id,
     support::DpiAbiClass abi, mir::TypeId result_type) -> mir::Expr {
   mir::Block& block = *frame.current_block;
@@ -670,29 +676,19 @@ auto MarshalResultFromCarrier(
   throw InternalError("MarshalResultFromCarrier: unknown DpiAbiClass");
 }
 
-// LRM 35.4 import call: an ordinary call to the external static callable,
-// wrapped in boundary marshaling. Each actual is marshaled to its ABI carrier,
-// the foreign symbol is called over the carriers, and a non-void result is
-// marshaled back to the declared SV return type. The ABI classes are read from
-// the callable's own declaration, resolved once at its declaration lowering.
+// The all-input import call: every actual crosses by value, so the call is a
+// plain expression -- no statement sequencing, no boundary temps. Each actual
+// is marshaled to its ABI carrier, the foreign symbol is called over the
+// carriers, and a non-void result is marshaled back to the declared SV type.
 template <ExprLowerer Lowerer>
-auto LowerForeignImportCall(
+auto LowerForeignImportInputsOnly(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::ForeignImportRef& ref, diag::SourceSpan span,
+    const mir::StaticCallableDecl& decl, mir::StaticCallableId callable,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  if (ref.hops.value != 0) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedDpi,
-        "a call to a DPI-C import declared in an enclosing scope is not yet "
-        "supported");
-  }
   auto& module = lowerer.Module();
   auto& unit = module.Unit();
   auto& block = *frame.current_block;
   const auto& hir_exprs = lowerer.HirExprs();
-  const mir::StaticCallableId callable{ref.id.value};
-  const mir::StaticCallableDecl& decl =
-      frame.current_class->static_callables.Get(callable);
 
   std::vector<mir::ExprId> carrier_args;
   carrier_args.reserve(c.arguments.size());
@@ -704,11 +700,9 @@ auto LowerForeignImportCall(
     if (!sv_or) return std::unexpected(std::move(sv_or.error()));
     const mir::ExprId sv_id = block.exprs.Add(*std::move(sv_or));
     carrier_args.push_back(
-        MarshalArgToCarrier(unit, block, sv_id, decl.params[i].abi));
+        MarshalSvToCarrier(unit, block, sv_id, decl.params[i].abi));
   }
 
-  // A void import has no carrier result and needs no marshal-out; a valued one
-  // returns its ABI carrier, which is then marshaled back to the SV type.
   const bool is_void = decl.ret_abi == support::DpiAbiClass::kVoid;
   const mir::TypeId call_type =
       is_void ? unit.builtins.void_type
@@ -724,8 +718,176 @@ auto LowerForeignImportCall(
     return foreign_call;
   }
   const mir::ExprId call_id = block.exprs.Add(std::move(foreign_call));
-  return MarshalResultFromCarrier(
-      module, frame, call_id, decl.ret_abi, result_type);
+  return MarshalCarrierToSv(module, frame, call_id, decl.ret_abi, result_type);
+}
+
+// The general import call: at least one output / inout actual. The call must
+// sequence copy-in, the by-pointer foreign call, copy-back into each actual's
+// cell, and the marshaled return -- a statement sequence yielding a value, so
+// it lowers to an immediately-invoked closure, uniform for void / valued and
+// statement / expression position. An output / inout actual crosses by pointer
+// to a boundary temp of the carrier's C type; input actuals still cross by
+// value.
+template <ExprLowerer Lowerer>
+auto LowerForeignImportWithWriteback(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const mir::StaticCallableDecl& decl, mir::StaticCallableId callable,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto& module = lowerer.Module();
+  auto& unit = module.Unit();
+  const auto& hir_exprs = lowerer.HirExprs();
+  const mir::TypeId void_t = unit.builtins.void_type;
+
+  ClosureBuilder closure(unit, frame);
+  mir::Block& body = closure.Body();
+  const WalkFrame& cframe = closure.Frame();
+
+  // One output / inout argument to copy back after the call.
+  struct Writeback {
+    mir::LocalId temp;
+    mir::TypeId carrier_type;
+    hir::ExprId actual;
+    support::DpiAbiClass abi;
+    mir::TypeId sv_type;
+  };
+  std::vector<Writeback> writebacks;
+
+  std::vector<mir::ExprId> call_args;
+  call_args.reserve(c.arguments.size());
+  for (std::size_t i = 0; i < c.arguments.size(); ++i) {
+    if (!c.arguments[i].has_value()) {
+      throw InternalError("DPI-C import call argument unexpectedly elided");
+    }
+    const hir::ExprId actual = *c.arguments[i];
+    const support::DpiAbiClass abi = decl.params[i].abi;
+
+    if (!support::DpiDirectionWritesBack(decl.params[i].direction)) {
+      auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
+      if (!sv_or) return std::unexpected(std::move(sv_or.error()));
+      const mir::ExprId sv_id = body.exprs.Add(*std::move(sv_or));
+      call_args.push_back(MarshalSvToCarrier(unit, body, sv_id, abi));
+      continue;
+    }
+
+    // An output / inout actual crosses by pointer to a carrier-typed boundary
+    // temp. The temp is seeded from the actual's current value: inout requires
+    // that initial value (LRM 35.5.1.2), and for output its initial carrier
+    // value is implementation-defined, so seeding from the actual is a legal,
+    // uniform choice. The foreign side writes through the pointer; the
+    // copy-back below lands the result in the actual's cell.
+    const mir::TypeId carrier_type =
+        unit.types.Intern(mir::TypeData{mir::DpiCarrierType{.abi = abi}});
+    const mir::LocalId temp = closure.Bindings().DeclareAnonymous(
+        mir::LocalDecl{
+            .name = "_lyra_dpi_arg" + std::to_string(i), .type = carrier_type});
+    auto seed_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
+    if (!seed_or) return std::unexpected(std::move(seed_or.error()));
+    const mir::ExprId seed_sv = body.exprs.Add(*std::move(seed_or));
+    body.AppendStmt(
+        mir::LocalDeclStmt{
+            .target = temp,
+            .init = MarshalSvToCarrier(unit, body, seed_sv, abi)});
+
+    const mir::TypeId ptr_type =
+        unit.types.PointerTo(carrier_type, mir::PointerOwnership::kBorrowed);
+    const mir::ExprId temp_ref =
+        body.exprs.Add(mir::MakeLocalRefExpr(temp, carrier_type));
+    call_args.push_back(
+        body.exprs.Add(mir::MakeAddressOfExpr(temp_ref, ptr_type)));
+    writebacks.push_back(
+        Writeback{
+            .temp = temp,
+            .carrier_type = carrier_type,
+            .actual = actual,
+            .abi = abi,
+            .sv_type = decl.params[i].sv_type});
+  }
+
+  const bool is_void = decl.ret_abi == support::DpiAbiClass::kVoid;
+  const mir::TypeId call_type =
+      is_void ? void_t
+              : unit.types.Intern(
+                    mir::TypeData{mir::DpiCarrierType{.abi = decl.ret_abi}});
+  mir::Expr foreign_call{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = callable},
+              .arguments = std::move(call_args)},
+      .type = call_type};
+
+  // A valued call captures its carrier result in a temp so the copy-backs run
+  // before it is marshaled and returned; a void call is a bare statement.
+  std::optional<mir::LocalId> ret_temp;
+  if (!is_void) {
+    ret_temp = closure.Bindings().DeclareAnonymous(
+        mir::LocalDecl{.name = "_lyra_dpi_ret", .type = call_type});
+    body.AppendStmt(
+        mir::LocalDeclStmt{
+            .target = *ret_temp,
+            .init = body.exprs.Add(std::move(foreign_call))});
+  } else {
+    body.AppendStmt(
+        mir::ExprStmt{.expr = body.exprs.Add(std::move(foreign_call))});
+  }
+
+  for (const Writeback& wb : writebacks) {
+    auto lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(wb.actual), cframe);
+    if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+    const mir::ExprId lhs_id = body.exprs.Add(*std::move(lhs_or));
+    const mir::ExprId temp_ref =
+        body.exprs.Add(mir::MakeLocalRefExpr(wb.temp, wb.carrier_type));
+    const mir::ExprId rhs_id = body.exprs.Add(
+        MarshalCarrierToSv(module, cframe, temp_ref, wb.abi, wb.sv_type));
+    const mir::ExprId services_id =
+        body.exprs.Add(BuildServicesCallExpr(module, cframe));
+    const mir::Expr assign = BuildObservableAssignExpr(
+        unit, body, services_id, lhs_id, rhs_id, std::nullopt, wb.sv_type,
+        void_t);
+    body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
+  }
+
+  if (is_void) {
+    return BuildClosureCallExpr(
+        unit, *frame.current_block, closure.BuildVoid());
+  }
+  const mir::ExprId ret_ref =
+      body.exprs.Add(mir::MakeLocalRefExpr(*ret_temp, call_type));
+  const mir::ExprId result_id = body.exprs.Add(
+      MarshalCarrierToSv(module, cframe, ret_ref, decl.ret_abi, result_type));
+  return BuildClosureCallExpr(
+      unit, *frame.current_block, closure.Build(result_id));
+}
+
+// LRM 35.4 import call: an ordinary call to the external static callable,
+// wrapped in boundary marshaling. The ABI classes and directions are read from
+// the callable's own declaration, resolved once at its declaration lowering. An
+// all-input call is a plain expression; a call with any output / inout actual
+// sequences a copy-back through a closure.
+template <ExprLowerer Lowerer>
+auto LowerForeignImportCall(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const hir::ForeignImportRef& ref, diag::SourceSpan span,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  if (ref.hops.value != 0) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedDpi,
+        "a call to a DPI-C import declared in an enclosing scope is not yet "
+        "supported");
+  }
+  const mir::StaticCallableId callable{ref.id.value};
+  const mir::StaticCallableDecl& decl =
+      frame.current_class->static_callables.Get(callable);
+
+  const bool has_writeback =
+      std::ranges::any_of(decl.params, [](const mir::ForeignParam& p) {
+        return support::DpiDirectionWritesBack(p.direction);
+      });
+  if (has_writeback) {
+    return LowerForeignImportWithWriteback(
+        lowerer, frame, c, decl, callable, result_type);
+  }
+  return LowerForeignImportInputsOnly(
+      lowerer, frame, c, decl, callable, result_type);
 }
 
 }  // namespace

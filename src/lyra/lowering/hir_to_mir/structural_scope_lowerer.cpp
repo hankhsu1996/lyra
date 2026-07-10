@@ -1479,7 +1479,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     for (const hir::DpiParamAbi& p : imp.params) {
       params.push_back(
           mir::ForeignParam{
-              .sv_type = module.TranslateType(p.sv_type), .abi = p.abi});
+              .sv_type = module.TranslateType(p.sv_type),
+              .abi = p.abi,
+              .direction = p.direction});
     }
     mir_class.static_callables.Add(
         mir::StaticCallableDecl{

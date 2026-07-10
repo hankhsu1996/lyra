@@ -983,7 +983,8 @@ class HirDumper {
     for (std::size_t i = 0; i < fi.params.size(); ++i) {
       Line(
           std::format(
-              "Param[{}] {} : Type[{}]", i,
+              "Param[{}] {} {} : Type[{}]", i,
+              support::DpiDirectionName(fi.params[i].direction),
               support::DpiAbiClassName(fi.params[i].abi),
               fi.params[i].sv_type.value));
     }

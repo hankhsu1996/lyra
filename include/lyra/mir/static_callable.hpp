@@ -9,12 +9,15 @@
 namespace lyra::mir {
 
 // One parameter of an external callable's ABI projection (LRM 35.5.6): the SV
-// type the boundary marshals from, paired with the C ABI carrier category it
-// crosses as. Both are fixed once at HIR-to-MIR and read by a backend's
-// marshaling, never re-derived from the type.
+// type the boundary marshals from, the C ABI carrier category it crosses as,
+// and its direction (LRM 35.5.1.2). All three are fixed once at HIR-to-MIR and
+// read by a backend's marshaling, never re-derived from the type. The direction
+// decides the boundary plumbing: input crosses by value, output and inout cross
+// by pointer with a copy back.
 struct ForeignParam {
   TypeId sv_type;
   support::DpiAbiClass abi;
+  support::DpiDirection direction;
 };
 
 // The external implementation form of a callable: a foreign linkage name plus
