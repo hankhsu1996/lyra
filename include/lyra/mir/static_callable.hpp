@@ -1,0 +1,52 @@
+#pragma once
+
+#include <string>
+#include <vector>
+
+#include "lyra/mir/type_id.hpp"
+#include "lyra/support/dpi_abi.hpp"
+
+namespace lyra::mir {
+
+// One parameter of an external callable's ABI projection (LRM 35.5.6): the SV
+// type the boundary marshals from, paired with the C ABI carrier category it
+// crosses as. Both are fixed once at HIR-to-MIR and read by a backend's
+// marshaling, never re-derived from the type.
+struct ForeignParam {
+  TypeId sv_type;
+  support::DpiAbiClass abi;
+};
+
+// The external implementation form of a callable: a foreign linkage name plus
+// the pure property, with no SV body. A DPI-C import is realized as one
+// (LRM 35.4). `is_pure` marks an import the LRM lets the simulator treat as
+// side-effect-free (LRM 35.5.4). The source language and calling convention are
+// implicitly C, the only foreign linkage today; a second linkage adds them
+// here.
+struct ExternalSymbol {
+  std::string foreign_name;
+  bool is_pure;
+};
+
+// A class-level receiver-less associated callable, the callable peer of a
+// static constant. It is called by name with no `self`, so it is a
+// type-associated function, not an instance method, and lives in the class's
+// static-callable namespace rather than the instance method arena. Its
+// implementation form is an external foreign symbol today -- a DPI-C import; a
+// bodied static (an SV class static method) is the second form the same home
+// admits when that feature lands, at which point the implementation form
+// becomes a variant.
+//
+// The signature is the ABI projection: each parameter's SV type and carrier
+// class, and the return SV type and carrier class. The SV semantic signature
+// stays on the frontend where type checking ran; MIR carries only what
+// marshaling and linkage need.
+struct StaticCallableDecl {
+  std::string name;
+  std::vector<ForeignParam> params;
+  TypeId ret_sv_type;
+  support::DpiAbiClass ret_abi;
+  ExternalSymbol external;
+};
+
+}  // namespace lyra::mir

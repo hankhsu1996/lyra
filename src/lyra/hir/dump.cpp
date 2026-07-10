@@ -976,40 +976,18 @@ class HirDumper {
   void DumpForeignImport(std::size_t index, const ForeignImportDecl& fi) {
     Line(
         std::format(
-            "ForeignImport[{}] function \"{}\" c_name=\"{}\"{} ret={}", index,
+            R"(ForeignImport[{}] function "{}" c_name="{}"{} ret={})", index,
             fi.name, fi.foreign_name, fi.is_pure ? " pure" : "",
-            FormatDpiAbiClass(fi.ret_abi)));
+            support::DpiAbiClassName(fi.ret_abi)));
     Indent();
     for (std::size_t i = 0; i < fi.params.size(); ++i) {
       Line(
           std::format(
-              "Param[{}] {} : Type[{}]", i, FormatDpiAbiClass(fi.params[i].abi),
+              "Param[{}] {} : Type[{}]", i,
+              support::DpiAbiClassName(fi.params[i].abi),
               fi.params[i].sv_type.value));
     }
     Dedent();
-  }
-
-  [[nodiscard]] static auto FormatDpiAbiClass(support::DpiAbiClass abi)
-      -> std::string_view {
-    switch (abi) {
-      case support::DpiAbiClass::kVoid:
-        return "void";
-      case support::DpiAbiClass::kBit:
-        return "bit";
-      case support::DpiAbiClass::kByte:
-        return "byte";
-      case support::DpiAbiClass::kShortInt:
-        return "shortint";
-      case support::DpiAbiClass::kInt:
-        return "int";
-      case support::DpiAbiClass::kLongInt:
-        return "longint";
-      case support::DpiAbiClass::kReal:
-        return "real";
-      case support::DpiAbiClass::kString:
-        return "string";
-    }
-    throw InternalError("FormatDpiAbiClass: unknown support::DpiAbiClass");
   }
 
   [[nodiscard]] static auto FormatParamDirection(ParamDirection dir)

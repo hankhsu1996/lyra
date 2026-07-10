@@ -20,6 +20,9 @@ struct CaseInput {
   std::optional<std::string> top;
   std::vector<std::string> files;
   std::vector<std::string> extra_args;
+  // Native sources (.c / .cpp) providing DPI-C foreign symbols, passed to the
+  // run via `--dpi-link` and linked into the built program (LRM 35).
+  std::vector<std::string> link_sources;
 };
 
 struct ExpectedVariable {

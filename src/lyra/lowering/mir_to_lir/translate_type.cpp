@@ -287,6 +287,9 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           },
           [&](const mir::ClosureType&) -> lir::TypeData {
             return RecordUnsupportedType("a closure");
+          },
+          [&](const mir::DpiCarrierType&) -> lir::TypeData {
+            return RecordUnsupportedType("a DPI-C ABI carrier");
           }},
       ty.data);
 }

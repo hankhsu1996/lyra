@@ -65,6 +65,10 @@ struct ParsedArgs {
   // from the trailing bucket at parse time. `run` forwards them verbatim to
   // the built program's argv; other subcommands never consult them.
   std::vector<std::string> plusargs;
+  // LRM 35 DPI-C link inputs: native source files (`.c` / `.cpp`) providing the
+  // foreign symbols an `import "DPI-C"` calls. Compiled and linked into the
+  // built program alongside the emitted C++.
+  std::vector<std::string> dpi_link_sources;
 };
 
 void AddCompilationFlags(argparse::ArgumentParser& cmd) {
@@ -106,6 +110,9 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .help("reformat the emitted C++ with clang-format (skipped if absent)")
       .default_value(false)
       .implicit_value(true);
+  cmd.add_argument("--dpi-link")
+      .help("native source (.c/.cpp) providing DPI-C foreign symbols to link")
+      .append();
   cmd.add_argument("files").help("SystemVerilog source files").remaining();
 }
 
@@ -118,6 +125,9 @@ void BindCompilationFlags(
   if (auto incs =
           cmd.present<std::vector<std::string>>("--include-directory")) {
     out.input.incdirs = std::move(*incs);
+  }
+  if (auto dpi = cmd.present<std::vector<std::string>>("--dpi-link")) {
+    out.dpi_link_sources = std::move(*dpi);
   }
   if (auto defs = cmd.present<std::vector<std::string>>("--define-macro")) {
     out.input.defines = std::move(*defs);
@@ -491,7 +501,8 @@ auto main(int argc, char** argv) -> int {
           report(std::move(assembled.error()), mgr);
           return 1;
         }
-        auto built = lyra::driver::BuildProject(dir, pch_opts);
+        auto built =
+            lyra::driver::BuildProject(dir, pch_opts, args.dpi_link_sources);
         if (!built) {
           report(std::move(built.error()), mgr);
           return 1;
@@ -544,7 +555,7 @@ auto main(int argc, char** argv) -> int {
             const auto& root = *result.artifacts.root_unit;
             auto exit_code = lyra::driver::RunInPlace(
                 *runtime, units, root, *tmp_or, args.format, pch_opts,
-                args.plusargs);
+                args.plusargs, args.dpi_link_sources);
             if (!exit_code) {
               report(std::move(exit_code.error()), mgr);
               return 1;

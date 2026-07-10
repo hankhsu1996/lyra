@@ -170,6 +170,19 @@ auto ParseCase(
       c.input.extra_args.push_back(a.as<std::string>());
     }
   }
+  if (in["link_sources"]) {
+    for (const auto& s : in["link_sources"]) {
+      const auto rel = s.as<std::string>();
+      const auto abs = case_dir / rel;
+      if (!std::filesystem::exists(abs)) {
+        throw std::runtime_error(
+            std::format(
+                "{}: referenced link source '{}' does not exist at '{}'",
+                yaml_path.string(), rel, abs.string()));
+      }
+      c.input.link_sources.push_back(rel);
+    }
+  }
 
   const auto& ex = root["expect"];
   if (ex && ex.IsMap()) {
@@ -487,6 +500,10 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
   }
   for (const auto& a : c.input.extra_args) {
     argv.push_back(a);
+  }
+  for (const auto& s : c.input.link_sources) {
+    argv.emplace_back("--dpi-link");
+    argv.push_back((c.case_dir / s).string());
   }
   for (const auto& f : resolved_input_files) {
     argv.push_back(f.string());

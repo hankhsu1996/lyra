@@ -60,6 +60,14 @@ auto LowerCallTarget(
                     [](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{lir::BuiltinTarget{.fn = fn}};
+                    },
+                    [](const mir::StaticCallableId&)
+                        -> diag::Result<lir::CallTarget> {
+                      return diag::Fail(
+                          diag::DiagCode::kUnsupportedExpressionForm,
+                          "mir_to_lir: a DPI-C import call is not yet "
+                          "lowerable "
+                          "to LIR");
                     }},
                 d.target);
           },

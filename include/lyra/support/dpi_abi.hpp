@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 namespace lyra::support {
 
@@ -23,5 +24,31 @@ enum class DpiAbiClass : std::uint8_t {
   kReal,
   kString,
 };
+
+// The SV keyword an ABI category corresponds to. The shared human-readable
+// spelling every HIR and MIR dump names the category by, so the two dumps
+// agree without each restating the mapping.
+[[nodiscard]] constexpr auto DpiAbiClassName(DpiAbiClass abi)
+    -> std::string_view {
+  switch (abi) {
+    case DpiAbiClass::kVoid:
+      return "void";
+    case DpiAbiClass::kBit:
+      return "bit";
+    case DpiAbiClass::kByte:
+      return "byte";
+    case DpiAbiClass::kShortInt:
+      return "shortint";
+    case DpiAbiClass::kInt:
+      return "int";
+    case DpiAbiClass::kLongInt:
+      return "longint";
+    case DpiAbiClass::kReal:
+      return "real";
+    case DpiAbiClass::kString:
+      return "string";
+  }
+  return "unknown";
+}
 
 }  // namespace lyra::support

@@ -65,6 +65,8 @@ cc_test(
         [
             "cases/**/*.yaml",
             "cases/**/*.sv",
+            "cases/**/*.c",
+            "cases/**/*.cpp",
         ],
         allow_empty = True,
     ),

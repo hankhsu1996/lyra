@@ -72,6 +72,7 @@ auto Type::Kind() const -> TypeKind {
           [](const ShortRealType&) { return TypeKind::kShortReal; },
           [](const RealTimeType&) { return TypeKind::kRealTime; },
           [](const ChandleType&) { return TypeKind::kChandle; },
+          [](const DpiCarrierType&) { return TypeKind::kDpiCarrier; },
           [](const VoidType&) { return TypeKind::kVoid; },
           [](const ObjectType&) { return TypeKind::kObject; },
           [](const ExternalUnitObjectType&) {
