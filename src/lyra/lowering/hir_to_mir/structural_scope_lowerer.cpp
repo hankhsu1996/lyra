@@ -799,30 +799,12 @@ auto InstallPortConnections(
 }
 
 void ValidateOwnedChildConstruction(
-    ModuleLowerer& module, const mir::Class& owner_class,
-    const mir::Block& block, mir::ClassId child_scope_id,
-    std::span<const mir::ExprId> ctor_args) {
+    const mir::Class& owner_class, mir::ClassId child_scope_id) {
   if (std::ranges::find(owner_class.contained, child_scope_id) ==
       owner_class.contained.end()) {
     throw InternalError(
         "owned-child construction: child scope is not a direct child of the "
         "enclosing class");
-  }
-  const auto& child_scope_shape = module.GetClassShape(child_scope_id);
-  if (ctor_args.size() != child_scope_shape.params.size()) {
-    throw InternalError(
-        "owned-child construction: args count does not match child class "
-        "param count");
-  }
-  for (std::size_t i = 0; i < ctor_args.size(); ++i) {
-    const auto& arg = block.exprs.Get(ctor_args[i]);
-    const auto& param = child_scope_shape.params.Get(
-        mir::ParamId{static_cast<std::uint32_t>(i)});
-    if (arg.type != param.type) {
-      throw InternalError(
-          "owned-child construction: arg type does not match structural "
-          "param type");
-    }
   }
 }
 
@@ -840,12 +822,11 @@ void ValidateOwnedChildConstruction(
 void AppendOwnedChildConstruction(
     ModuleLowerer& module, const WalkFrame& arm_frame,
     const std::string& runtime_label, mir::ClassId child_scope_id,
-    std::vector<mir::ExprId> ctor_args, std::optional<mir::ExprId> array_index,
+    std::optional<mir::ExprId> array_index,
     std::optional<mir::FieldId> companion_field) {
   mir::Block& arm_block = *arm_frame.current_block;
   const mir::Class& owner_class = *arm_frame.current_class;
-  ValidateOwnedChildConstruction(
-      module, owner_class, arm_block, child_scope_id, ctor_args);
+  ValidateOwnedChildConstruction(owner_class, child_scope_id);
 
   const auto& builtins = module.Unit().builtins;
   const mir::TypeId self_ptr_type = owner_class.self_pointer_type;
@@ -888,14 +869,11 @@ void AppendOwnedChildConstruction(
           .type = builtins.hierarchy_segment});
 
   std::vector<mir::ExprId> ctor_call_args;
-  ctor_call_args.reserve(3 + ctor_args.size());
+  ctor_call_args.reserve(3);
   ctor_call_args.push_back(self_read());
   ctor_call_args.push_back(segment_id);
   ctor_call_args.push_back(
       arm_block.exprs.Add(BuildServicesCallExpr(module, arm_frame)));
-  for (const mir::ExprId arg : ctor_args) {
-    ctor_call_args.push_back(arg);
-  }
   const mir::ExprId ctor_call_id = arm_block.exprs.Add(
       mir::Expr{
           .data =
@@ -958,8 +936,8 @@ auto LowerResolvedGenerate(
       index_id = body.exprs.Add(mir::MakeInt32Literal(int32_type, *item.index));
     }
     AppendOwnedChildConstruction(
-        lowerer.Module(), body_frame, binding.label, binding.scope_id, {},
-        index_id, binding.companion);
+        lowerer.Module(), body_frame, binding.label, binding.scope_id, index_id,
+        binding.companion);
   }
   const mir::BlockId body_id = block.child_scopes.Add(std::move(body));
   return mir::Stmt{
@@ -1337,13 +1315,13 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 // -- a UnitDefinition adding the construct entry. A class that is not a runtime
 // tree node gets none.
 auto InstallGeneratedDefinition(
-    mir::CompilationUnit& unit, mir::Class& cls,
+    mir::CompilationUnit& unit, mir::Class& cls, mir::CallableCode& ctor_code,
     std::optional<mir::MethodId> resolve_body,
     std::optional<mir::MethodId> init_body,
-    std::optional<mir::MethodId> create_body) -> void {
+    std::optional<mir::MethodId> create_body) -> std::vector<mir::ExprId> {
   const mir::BaseContract contract = mir::ResolveBaseContract(unit, *cls.base);
   if (!contract.is_runtime_tree_node) {
-    return;
+    return {};
   }
   const bool is_unit =
       contract.representation == mir::ScopeRepresentationKind::kUnitInstance;
@@ -1444,7 +1422,7 @@ auto InstallGeneratedDefinition(
   const mir::StaticConstantId def_id = cls.static_constants.Add(std::move(def));
 
   // The constructor hands the base the address of the constant just installed.
-  auto& cex = cls.constructor.body.exprs;
+  auto& cex = ctor_code.body.exprs;
   const mir::ExprId ref = cex.Add(
       mir::Expr{
           .data = mir::StaticConstantRef{.constant = def_id},
@@ -1454,7 +1432,49 @@ auto InstallGeneratedDefinition(
           .data = mir::AddressOfExpr{.operand = ref},
           .type = unit.types.PointerTo(
               const_type, mir::PointerOwnership::kBorrowed)});
-  cls.base_init = {addr};
+  return {addr};
+}
+
+// Composes the base-init arg list (each prefix forwarded as a consuming use,
+// followed by trailing args), moves the ctor callable into the class's
+// method storage, and points the construction protocol at it. `ctor_code`
+// must be finalized (params and result_type set) but not yet inserted into
+// the arena.
+void FinalizeConstructor(
+    mir::CompilationUnit& unit, mir::Class& cls, mir::CallableCode ctor_code,
+    const std::vector<mir::LocalId>& prefix_local_ids,
+    const std::vector<mir::ExprId>& base_trailing_args) {
+  std::optional<mir::BaseInit> base_init_opt;
+  if (cls.base.has_value()) {
+    std::vector<mir::ExprId> base_args;
+    base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
+    for (const mir::LocalId id : prefix_local_ids) {
+      const mir::TypeId ty = ctor_code.locals.Get(id).type;
+      const mir::ExprId local_ref = ctor_code.body.exprs.Add(
+          mir::Expr{.data = mir::LocalRef{.var = id}, .type = ty});
+      if (unit.types.Get(ty).IsAliasHandle()) {
+        base_args.push_back(local_ref);
+      } else {
+        base_args.push_back(ctor_code.body.exprs.Add(
+            mir::Expr{
+                .data = mir::MoveExpr{.operand = local_ref}, .type = ty}));
+      }
+    }
+    for (const mir::ExprId e : base_trailing_args) {
+      base_args.push_back(e);
+    }
+    base_init_opt = mir::BaseInit{.args = std::move(base_args)};
+  }
+  const mir::MethodId ctor_method_id = cls.methods.Add(
+      mir::MethodDecl{
+          .name = "<ctor>",
+          .code = std::move(ctor_code),
+          .overrides = std::nullopt,
+          .visibility = mir::MethodVisibility::kInternal});
+  cls.constructor = mir::ConstructorDecl{
+      .method = ctor_method_id,
+      .base_init = std::move(base_init_opt),
+      .member_inits = {}};
 }
 
 auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
@@ -1469,8 +1489,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   mir_class.base = shape.base;
   mir_class.self_pointer_type = shape.self_pointer_type;
   mir_class.time_resolution = shape.time_resolution;
-  mir_class.ctor_prefix_params = shape.ctor_prefix_params;
-  mir_class.params = shape.params;
   mir_class.fields = shape.fields;
   mir_class.contained = shape.contained;
   mir_class.type_aliases = shape.type_aliases;
@@ -1516,6 +1534,17 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   mir::CallableCode ctor_code;
   CallableBindings ctor_bindings(module.Unit(), ctor_code);
   const mir::LocalId self_id = seed_self(ctor_bindings);
+  // Each prefix param the base contract demands lands as an ordinary local
+  // after `self`, so a base call reads it as a plain LocalRef and the ctor
+  // signature exposes it as a regular parameter.
+  std::vector<mir::LocalId> ctor_prefix_local_ids;
+  ctor_prefix_local_ids.reserve(shape.ctor_prefix_params.size());
+  for (std::size_t i = 0; i < shape.ctor_prefix_params.size(); ++i) {
+    const auto& p = shape.ctor_prefix_params.Get(
+        mir::ParamId{static_cast<std::uint32_t>(i)});
+    ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(
+        mir::LocalDecl{.name = p.name, .type = p.type}));
+  }
   mir::Block& ctor_block = ctor_code.body;
   const WalkFrame ctor_frame =
       parent_frame.WithClass(&mir_class, outer_scope_link)
@@ -1708,8 +1737,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     sub_class.base = sub_shape.base;
     sub_class.self_pointer_type = sub_shape.self_pointer_type;
     sub_class.time_resolution = sub_shape.time_resolution;
-    sub_class.ctor_prefix_params = sub_shape.ctor_prefix_params;
-    sub_class.params = sub_shape.params;
     sub_class.fields = sub_shape.fields;
     sub_class.contained = sub_shape.contained;
     sub_class.type_aliases = sub_shape.type_aliases;
@@ -1719,6 +1746,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::LocalId sub_self_id = sub_ctor_bindings.Declare(
         BindingOriginId::Receiver(),
         mir::LocalDecl{.name = "self", .type = sub_shape.self_pointer_type});
+    std::vector<mir::LocalId> sub_ctor_prefix_local_ids;
+    sub_ctor_prefix_local_ids.reserve(sub_shape.ctor_prefix_params.size());
+    for (std::size_t j = 0; j < sub_shape.ctor_prefix_params.size(); ++j) {
+      const auto& p = sub_shape.ctor_prefix_params.Get(
+          mir::ParamId{static_cast<std::uint32_t>(j)});
+      sub_ctor_prefix_local_ids.push_back(sub_ctor_bindings.DeclareAnonymous(
+          mir::LocalDecl{.name = p.name, .type = p.type}));
+    }
     mir::Block& sub_ctor_block = sub_ctor_code.body;
     ScopeChainNode sub_scope_link{};
     const WalkFrame sub_ctor_frame =
@@ -1732,7 +1767,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           std::get_if<hir::ProceduralScopeId>(&child_entry.runtime_parent);
       if (parent_scope == nullptr || parent_scope->value != i) continue;
       AppendOwnedChildConstruction(
-          module, sub_ctor_frame, child_entry.label, child_entry.class_id, {},
+          module, sub_ctor_frame, child_entry.label, child_entry.class_id,
           std::nullopt, child_entry.companion_field);
     }
     // Register each static on this procedural-storage scope as a by-name
@@ -1774,11 +1809,23 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               .type = void_type});
       sub_ctor_block.AppendStmt(mir::ExprStmt{.expr = call});
     }
-    sub_ctor_code.params = {sub_self_id};
+    sub_ctor_code.params.clear();
+    sub_ctor_code.params.reserve(1 + sub_ctor_prefix_local_ids.size());
+    sub_ctor_code.params.push_back(sub_self_id);
+    for (const mir::LocalId id : sub_ctor_prefix_local_ids) {
+      sub_ctor_code.params.push_back(id);
+    }
     sub_ctor_code.result_type = void_type;
-    sub_class.constructor = std::move(sub_ctor_code);
-    InstallGeneratedDefinition(
-        module.Unit(), sub_class, std::nullopt, std::nullopt, std::nullopt);
+    // Ctor code stays local so subsequent lowering can still append exprs
+    // into its body; once complete, it is moved into the class's method
+    // storage and referenced by the construction protocol.
+    const std::vector<mir::ExprId> sub_base_trailing_args =
+        InstallGeneratedDefinition(
+            module.Unit(), sub_class, sub_ctor_code, std::nullopt, std::nullopt,
+            std::nullopt);
+    FinalizeConstructor(
+        module.Unit(), sub_class, std::move(sub_ctor_code),
+        sub_ctor_prefix_local_ids, sub_base_trailing_args);
     module.Unit().DefineClass(entry.class_id, std::move(sub_class));
   }
 
@@ -1792,7 +1839,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (!entry.materialized) continue;
     if (!std::holds_alternative<EnclosingClass>(entry.runtime_parent)) continue;
     AppendOwnedChildConstruction(
-        module, ctor_frame, entry.label, entry.class_id, {}, std::nullopt,
+        module, ctor_frame, entry.label, entry.class_id, std::nullopt,
         entry.companion_field);
   }
 
@@ -1887,9 +1934,16 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       lowerer, ctor_frame, resolve_frame, init_frame, activate_frame);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
 
-  ctor_code.params = {self_id};
+  ctor_code.params.clear();
+  ctor_code.params.reserve(1 + ctor_prefix_local_ids.size());
+  ctor_code.params.push_back(self_id);
+  for (const mir::LocalId id : ctor_prefix_local_ids) {
+    ctor_code.params.push_back(id);
+  }
   ctor_code.result_type = void_type;
-  mir_class.constructor = std::move(ctor_code);
+  // Ctor code stays local so subsequent lowering can still append exprs into
+  // its body; once complete, it is moved into the class's method storage and
+  // referenced by the construction protocol.
 
   auto& unit = module.Unit();
 
@@ -1921,8 +1975,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const std::optional<mir::MethodId> create_body = add_body(
       activate_block, activate_code, activate_self_id, "CreateProcesses");
 
-  InstallGeneratedDefinition(
-      unit, mir_class, resolve_body, init_body, create_body);
+  const std::vector<mir::ExprId> base_trailing_args =
+      InstallGeneratedDefinition(
+          unit, mir_class, ctor_code, resolve_body, init_body, create_body);
+
+  FinalizeConstructor(
+      unit, mir_class, std::move(ctor_code), ctor_prefix_local_ids,
+      base_trailing_args);
 
   unit.DefineClass(class_id_, std::move(mir_class));
   return {};
