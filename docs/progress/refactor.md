@@ -814,6 +814,21 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       artifact); unifying it with the JIT's allocation shape waits for instance-representation
       unification.
 
+- [ ] R55 -- An external callable belongs to the compilation unit, not to a class. A DPI-C import is
+      an external callable (`../decisions/unified-callable-model.md`): a foreign-symbol declaration
+      -- signature, linkage name, language, calling convention -- with no body and no receiver. Its
+      identity at link time is the linkage name, a global. Today it is stored per class and named by
+      a class-relative id, so a call resolves the declaration only in the caller's own class, and a
+      call to an import declared in an enclosing scope is rejected as unsupported. That rejection is
+      an artifact of the storage model, not a language limitation: with no body and no receiver
+      there is nothing to reach at run time, so the declaring scope's depth is a compile-time lookup
+      distance, never a runtime reach -- unlike an internal subroutine, whose enclosing-scope hop is
+      a real receiver climb. Target: external callables live on the compilation unit, named by a
+      unit-level id; the enclosing-scope hop count disappears from the reference; each foreign
+      symbol is declared once per emitted unit rather than once per declaring class. Cover it with a
+      positive case (an import declared at module scope, called from a nested block), never by
+      pinning the current rejection. **Blocker**: none.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,
