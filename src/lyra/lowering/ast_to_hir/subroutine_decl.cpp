@@ -175,7 +175,6 @@ auto LowerSubroutineDecl(
   if (frame.current_structural_scope != nullptr) {
     body.root_scope = frame.current_structural_scope->procedural_scopes.Add(
         hir::ProceduralScopeDecl{
-            .kind = hir::ProceduralScopeKind::kProcessRoot,
             .label = std::nullopt,
             .direct_declarations = std::move(root_declarations),
             .direct_child_scopes = std::move(root_children)});

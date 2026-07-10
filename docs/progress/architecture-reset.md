@@ -122,9 +122,9 @@ Tracked in `functions.md` (the full LRM 13 subroutine surface).
 ### generate
 
 - [ ] generate/generate -- if / case / for-generate, nesting, genvars, processes and instances
-      inside generate, and hierarchical references through generate all lower and run. A
-      genvar-conditional branch (an `if` reading the genvar inside a `for`-generate) is rejected and
-      remains; the archive suite is not yet migrated.
+      inside generate, and hierarchical references through generate all lower and run; so does a
+      genvar-conditional branch (an `if` reading the genvar inside a `for`-generate). The archive
+      suite is not yet migrated.
 
 ### hierarchy
 
@@ -136,8 +136,8 @@ Tracked in `hierarchy.md`.
       defaults, `ref` ports, pass-through, instance-array and non-integral ports (Stage E).
       Net-typed ports follow the net model.
 - [x] hierarchy/refs -- downward and upward hierarchical references at any depth, through generate
-      scopes and instance arrays, with cross-instance sensitivity and `%m` paths (Stages C, D). A
-      reference whose head is a named procedural block remains.
+      scopes and instance arrays, with cross-instance sensitivity and `%m` paths (Stages C, D),
+      including a reference whose head is a named procedural block or a named fork-join block.
 
 ### nets
 

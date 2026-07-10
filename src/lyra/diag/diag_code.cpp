@@ -117,11 +117,6 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_subroutine_argument"}},
     std::pair{
-        DiagCode::kUnsupportedForkJoinForm,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_fork_join_form"}},
-    std::pair{
         DiagCode::kUnsupportedClassFeature,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

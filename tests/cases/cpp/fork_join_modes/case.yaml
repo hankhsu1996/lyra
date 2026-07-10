@@ -1,0 +1,19 @@
+id: cpp.fork_join_modes
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      [10] join A
+      [20] join B
+      [20] after join
+      [30] join_any A
+      [30] after join_any
+      [30] after join_none
+      [35] join_none A
+      [50] join_any B
