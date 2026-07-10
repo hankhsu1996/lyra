@@ -52,6 +52,13 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
     out.base = LowerBase(*cls.base);
   }
 
+  for (std::size_t i = 0; i < cls.fields.size(); ++i) {
+    const mir::FieldDecl& field =
+        cls.fields.Get(mir::FieldId{static_cast<std::uint32_t>(i)});
+    out.members.push_back(
+        lir::Member{.name = field.name, .type = TranslateType(field.type)});
+  }
+
   auto constructor =
       FunctionLowerer(*this, cls.constructor, "constructor", class_id).Run();
   if (!constructor) {

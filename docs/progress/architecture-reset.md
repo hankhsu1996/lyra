@@ -25,10 +25,13 @@ deleted.
 - [ ] Execution backend -- MIR / LIR lowered to LLVM IR, consumed as either an AOT binary or a JIT
       image. JIT and AOT are link-time choices over one backend, not separate surfaces. Contracts in
       `../architecture/backend_contract.md` and `../architecture/runtime_distribution.md`. Design
-      elaboration (constructing the top-level units) runs on the C++ backend as the synthesized
-      design-root unit's construct (`../decisions/root-unit-elaboration.md`); the execution backend
-      does not yet lower cross-unit construction, so it constructs each top directly, does not run
-      the design-root's elaboration, and does not run a design whose tops instantiate submodules.
+      elaboration runs on both backends as the synthesized design-root unit's construct
+      (`../decisions/root-unit-elaboration.md`): the execution backend lowers cross-unit
+      construction and realizes members as runtime-owned slots
+      (`../decisions/member-slot-storage.md`), so it elaborates a hierarchy of modules through the
+      design-root, matching the C++ backend. Still open on the execution backend: selecting among
+      multiple specializations of one parameterized module at construction, and native layout for
+      value members (the baseline keeps opaque slots).
 - [ ] Per-unit artifact emission -- one artifact per unit specialization, assembled by linking,
       replacing the transitional single-`main.cpp` aggregation. Contract in
       `../architecture/emission_model.md` (inv 1).

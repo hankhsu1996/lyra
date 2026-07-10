@@ -39,6 +39,12 @@ class LirDumper {
     if (cls.base.has_value()) {
       Line(std::format("Base: {}", FormatBase(*cls.base)));
     }
+    for (std::size_t i = 0; i < cls.members.size(); ++i) {
+      Line(
+          std::format(
+              "member[{}] \"{}\" : {}", i, cls.members[i].name,
+              FormatType(cls.members[i].type)));
+    }
     DumpFunction(cls.constructor);
     for (const Function& method : cls.methods) {
       DumpFunction(method);
@@ -86,6 +92,14 @@ class LirDumper {
             },
             [&](const AggregateInstr& agg) -> std::string {
               return std::format("aggregate({})", FormatOperands(agg.elements));
+            },
+            [&](const LoadInstr& load) -> std::string {
+              return std::format("load {}", FormatPlace(load.place));
+            },
+            [&](const StoreInstr& store) -> std::string {
+              return std::format(
+                  "store {} = {}", FormatPlace(store.place),
+                  FormatOperand(store.value));
             }},
         data);
   }
@@ -144,6 +158,18 @@ class LirDumper {
         out += ", ";
       }
       out += FormatOperand(ops[i]);
+    }
+    return out;
+  }
+
+  [[nodiscard]] static auto FormatPlace(const Place& place) -> std::string {
+    std::string out = FormatOperand(place.base);
+    for (const Projection& step : place.chain) {
+      std::visit(
+          Overloaded{[&](const MemberProjection& m) {
+            out += std::format(".member({})", m.member.value);
+          }},
+          step);
     }
     return out;
   }

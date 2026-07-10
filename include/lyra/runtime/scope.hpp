@@ -244,6 +244,29 @@ class Instance : public Scope {
   const UnitDefinition* definition_;
 };
 
+// A design-unit instance whose member storage the runtime owns, rather than a
+// backend's native object layout. A generic instance holds one opaque slot per
+// member the definition declares; a member place resolves to one of these slots
+// by index. This is the runtime-owned counterpart of the C++ backend's native
+// member fields: a member is a logical place, and this is its realization when
+// the backend does not lay one out physically.
+class GeneratedInstance : public Instance {
+ public:
+  GeneratedInstance(
+      Scope* parent, HierarchySegment segment, RuntimeServices& services,
+      const UnitDefinition* definition)
+      : Instance(parent, std::move(segment), services, definition),
+        slots_(definition->member_slot_count, nullptr) {
+  }
+
+  [[nodiscard]] auto Slot(std::uint32_t index) -> void*& {
+    return slots_.at(index);
+  }
+
+ private:
+  std::vector<void*> slots_;
+};
+
 // A module-local generate naming scope (`if` / `for` / `case` generate block):
 // an intra-unit owned child that crosses no compilation-unit boundary. It
 // carries its own scope program and no unit metadata.
