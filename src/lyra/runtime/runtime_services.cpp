@@ -68,6 +68,13 @@ void RuntimeServices::Spawn(Coroutine<void> coroutine) {
   engine_->Spawn(std::move(coroutine));
 }
 
+auto RuntimeServices::CurrentProcess() -> RuntimeProcess& {
+  if (engine_ == nullptr) {
+    throw InternalError("RuntimeServices::CurrentProcess: no Engine bound");
+  }
+  return engine_->CurrentProcess();
+}
+
 auto RuntimeServices::Now() const -> SimTime {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::Now: no Engine bound");

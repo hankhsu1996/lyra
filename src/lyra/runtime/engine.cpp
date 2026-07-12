@@ -224,7 +224,7 @@ void Engine::ExecutePostponedRegion() {
 void Engine::ExecuteFinalProcesses() {
   phase_ = SchedulerPhase::kPostponed;
   for (CoroutineHandle handle : queues_.finals) {
-    const bool completed = handle->Process().ResumeWith(handle);
+    const bool completed = ResumeProcess(handle);
     if (completed) {
       continue;
     }
@@ -290,6 +290,14 @@ auto Engine::IsRunnablePhase() const -> bool {
          phase_ == SchedulerPhase::kReactive;
 }
 
+auto Engine::ResumeProcess(CoroutineHandle handle) -> bool {
+  // Capture the owning process before resuming, since `handle` may be an
+  // enabled task's frame that is destroyed as control returns up the enable
+  // chain.
+  RuntimeProcess& process = handle->Process();
+  return process.ResumeWith(execution_context_, handle);
+}
+
 void Engine::RunProcess(CoroutineHandle handle) {
   // Sole gate for post-$finish user code; finals bypass via their own path.
   if (finished_) {
@@ -300,20 +308,22 @@ void Engine::RunProcess(CoroutineHandle handle) {
         "Engine::RunProcess: process resumed outside runnable phase");
   }
   // No wait dispatch: each awaitable has already arranged its own wakeup path
-  // during await_suspend. Capture the owning process before resuming, since
-  // `handle` may be an enabled task's frame that is destroyed as control
-  // returns up the enable chain.
+  // during await_suspend.
   RuntimeProcess& process = handle->Process();
-  const bool completed = process.ResumeWith(handle);
-  // A spawned process (a fork-join branch) is owned by the engine for its
-  // dynamic lifetime; drop it the moment it finishes -- executor-standard
-  // drop-on-completion, co-located with the resume that completed it. Static
-  // processes are owned by their scope and outlive the simulation.
-  if (completed && process.Kind() == ProcessKind::kSpawned) {
-    std::erase_if(spawned_, [&](const std::unique_ptr<RuntimeProcess>& p) {
-      return p.get() == &process;
-    });
+  if (!ResumeProcess(handle)) {
+    return;
   }
+  // A terminating process is the last live child its parent was waiting on iff
+  // the parent's `wait fork` condition now holds (LRM 9.6.1); wake the parked
+  // waiter before releasing, while the just-terminated node is still linked.
+  if (RuntimeProcess* parent = process.Parent(); parent != nullptr) {
+    if (CoroutineHandle waiter = parent->TakeWaitForkWaiterIfSatisfied()) {
+      ScheduleNextDelta(waiter);
+    }
+  }
+  // Releasing destroys `process` and every ancestor the release leaves with no
+  // lineage to retain, so no statement may follow it here.
+  RuntimeProcess::ReleaseTerminatedLineage(process);
 }
 
 void Engine::RequestFinish(
@@ -359,11 +369,15 @@ void Engine::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
 }
 
 void Engine::Spawn(Coroutine<void> coroutine) {
-  auto process = std::make_unique<RuntimeProcess>(
+  auto child = std::make_unique<RuntimeProcess>(
       ProcessKind::kSpawned, std::move(coroutine));
-  const CoroutineHandle handle = process->TopHandle();
-  spawned_.push_back(std::move(process));
+  const CoroutineHandle handle = child->TopHandle();
+  execution_context_.CurrentProcess().AdoptChild(std::move(child));
   ScheduleActive(handle);
+}
+
+auto Engine::CurrentProcess() -> RuntimeProcess& {
+  return execution_context_.CurrentProcess();
 }
 
 auto Engine::CheckedAdd(SimTime base, SimDuration delta) -> SimTime {

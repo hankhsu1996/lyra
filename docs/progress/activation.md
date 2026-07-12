@@ -6,9 +6,11 @@ reach, and what (if anything) blocks it.
 
 The runtime already realizes the load-bearing core of the contract: an activation is a coroutine
 frame; the scheduler holds a payload-neutral activation token and never sees the completion type; a
-suspending callable's result type is `Coroutine<T>` and a typed await consumes its value; a fork
-branch is owned by the fork domain and reports to a join state. The gaps below are where the current
-shape is still wrong or incomplete relative to the contract.
+suspending callable's result type is `Coroutine<T>` and a typed await consumes its value; a spawned
+process is attached to its spawner's lineage, which is both the ownership and the
+cancellation-domain relation and outlives the execution it named while any descendant is live; and
+its outcome is aggregated by a join state. The gaps below are where the current shape is still wrong
+or incomplete relative to the contract.
 
 ## Items
 
@@ -25,24 +27,30 @@ shape is still wrong or incomplete relative to the contract.
       a parked activation -- a region queue slot, a delay slot, an event waiter entry, a
       value-change subscription, a join aggregator entry -- is a revocable registration the
       activation owns, and a frame is destroyed only after the registration set is empty. Current
-      shape: value-change subscriptions are tracked and revocable, but region-queue membership and
-      event-waiter entries hold references the activation cannot itself revoke. Target: one
-      revocable registration set covering every registration kind, with destruction gated on it.
-      Until then, no new registration kind may be added that an activation cannot revoke. Partly
-      gated on cancellation (below), but the general registration-set contract should land first.
+      shape: value-change subscriptions and the completion-aggregator waiter (the parked parent of a
+      `join` / `join_any`, and the parked process of a `wait fork`) are revocable registrations that
+      detach safely from either end; but a delay slot, region-queue membership, and event-waiter
+      entries still hold references the activation cannot itself revoke. Target: one revocable
+      registration set covering every registration kind, with destruction gated on it. Until then,
+      no new registration kind may be added that an activation cannot revoke. Partly gated on
+      cancellation (below), but the general registration-set contract should land first.
 
 - [ ] **Cancellation is absent.** Contract: the terminal outcome includes `Cancelled`; a
       cancellation domain -- a relation distinct from ownership and continuation -- decides which
       activations are cancelled together; disabling settles `Cancelled`, revokes every registration,
-      cancels the owned descendants, then releases the frame. Current shape: there is no
-      cancellation path, no `Cancelled` outcome, and no cancellation-domain relation. Target: the
-      full cancellation model behind `disable` / `disable fork` (LRM 9.6.x). Blocked on the
-      `disable` language feature; the activation lifetime must not foreclose it (it does not --
-      frame ownership already cascades, and the registration-set and outcome-unification items above
-      are the remaining prerequisites).
+      cancels the owned descendants, then releases the frame. Current shape: the cancellation-domain
+      relation now exists -- the process lineage, over which a `disable fork` would walk, with a
+      terminated process retained while any descendant is live -- and a body's terminal execution
+      state is outcome-neutral, ready to carry `Cancelled`; but there is no cancellation path and no
+      `Cancelled` outcome yet. Target: the full cancellation model behind `disable` / `disable fork`
+      (LRM 9.6.x). Blocked on the `disable` language feature; the activation lifetime must not
+      foreclose it (it does not -- frame ownership already cascades, and the registration-set and
+      outcome-unification items above are the remaining prerequisites).
 
 - [ ] **Runtime vocabulary trails the model.** The execution code names the activation and its core
       in coroutine-implementation terms; the contract's vocabulary is activation / completion slot /
-      cancellation domain / join state, with the coroutine mechanics as one realization. Rename to
-      the model's vocabulary where it clarifies the boundary between execution control and
-      completion. Low priority; unblocked.
+      cancellation domain / join state, with the coroutine mechanics as one realization. The
+      execution-state axis is now named for the model -- a process's states are execution states,
+      and its end state is outcome-neutral termination rather than "completed" -- but the
+      completion-slot and join-state vocabulary still trails. Rename the rest where it clarifies the
+      boundary between execution control and completion. Low priority; unblocked.
