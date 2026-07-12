@@ -23,4 +23,25 @@ module Top;
     n = slen("hi");
     $display("lit=%0d", n);
   end
+
+  // The imports are declared here, at module scope. A call from inside a
+  // generate block reaches a receiver-less associated callable of an enclosing
+  // class, so the call target must name that class rather than the caller's --
+  // a different path from a call in the declaring scope (LRM 35.4).
+  if (1) begin : g
+    int gn;
+    initial begin
+      #1;
+      gn = add_one(7);
+      $display("nested=%0d", gn);
+    end
+    if (1) begin : h
+      int hn;
+      initial begin
+        #2;
+        hn = mul(3, 5);
+        $display("deeper=%0d", hn);
+      end
+    end
+  end
 endmodule

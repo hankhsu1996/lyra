@@ -61,7 +61,7 @@ auto LowerCallTarget(
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{lir::BuiltinTarget{.fn = fn}};
                     },
-                    [](const mir::StaticCallableId&)
+                    [](const mir::StaticCallableTarget&)
                         -> diag::Result<lir::CallTarget> {
                       return diag::Fail(
                           diag::DiagCode::kUnsupportedExpressionForm,

@@ -446,12 +446,17 @@ auto RenderDirectBuiltinCall(
 }
 
 // Renders a `Direct` callee whose target is a class-level static callable.
-// Today that is a DPI-C import: a global `extern "C"` symbol reached by its
-// foreign linkage name, with no receiver and no qualifier, so the callee text
-// is the bare foreign name and no leading argument is absorbed into it.
+// The target names the class whose associated namespace declares it, which need
+// not be the class being rendered -- an import declared in the module is called
+// from a generate block's class. Today that callable is a DPI-C import: a
+// global `extern "C"` symbol reached by its foreign linkage name, with no
+// receiver and no qualifier, so the callee text is the bare foreign name and no
+// leading argument is absorbed into it.
 auto RenderDirectStaticCallableCall(
-    const ScopeView& view, mir::StaticCallableId id) -> CalleeRender {
-  const auto& callable = view.Class().static_callables.Get(id);
+    const ScopeView& view, const mir::StaticCallableTarget& target)
+    -> CalleeRender {
+  const auto& callable =
+      view.Unit().GetClass(target.owner).static_callables.Get(target.slot);
   return {.expr = callable.external.foreign_name, .leading_arg_count = 0};
 }
 
@@ -471,7 +476,7 @@ auto RenderCalleePart(
                       return RenderDirectBuiltinCall(
                           view, call, id, d.qualification);
                     },
-                    [&](const mir::StaticCallableId& s) {
+                    [&](const mir::StaticCallableTarget& s) {
                       return RenderDirectStaticCallableCall(view, s);
                     },
                 },

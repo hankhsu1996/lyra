@@ -8,6 +8,7 @@
 
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/cast.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
@@ -125,15 +126,30 @@ struct TypeQualifier {
 
 using ScopeQualifier = std::variant<TypeQualifier>;
 
+// Identity of a class-level static callable at a call site: the class whose
+// associated namespace declares it, and the slot within that class. A
+// receiver-less callable has no receiver to name its owner, so the owner is
+// part of the symbol identity rather than recovered from an operand -- which
+// is what lets a call reach an associated callable of an enclosing class
+// (a DPI-C import declared in the module, called from a generate block) and,
+// later, a static method of another class.
+struct StaticCallableTarget {
+  ClassId owner;
+  StaticCallableId slot;
+
+  auto operator==(const StaticCallableTarget&) const -> bool = default;
+};
+
 // The target of a `Direct` call -- the symbol identity. Three identity
 // spaces: built-in runtime entries (closed-namespace `BuiltinFn`),
-// user-declared class methods (per-class `MethodId` arena), and class-level
-// static callables (per-class `StaticCallableId` arena -- a DPI-C import's
-// external symbol, a receiver-less associated callable). These collapse into
-// one `CallableId` once the method and static-callable declarations share one
-// callable-declaration shape.
+// user-declared class methods (per-class `MethodId` arena, whose owner the
+// receiver names), and class-level static callables (`StaticCallableTarget`,
+// which names its own owner -- a DPI-C import's external symbol, a
+// receiver-less associated callable). These collapse into one `CallableId`
+// once the method and static-callable declarations share one
+// callable-declaration shape; the owner survives that collapse.
 using DirectTarget =
-    std::variant<MethodId, support::BuiltinFn, StaticCallableId>;
+    std::variant<MethodId, support::BuiltinFn, StaticCallableTarget>;
 
 // A direct call to a named symbol. The single shape for every direct
 // invocation -- user method, built-in instance method, type-qualified
