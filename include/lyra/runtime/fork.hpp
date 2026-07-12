@@ -1,12 +1,15 @@
 #pragma once
 
+#include <coroutine>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
+#include "lyra/runtime/wake_registration.hpp"
 
 namespace lyra::runtime {
 
@@ -32,8 +35,7 @@ class ForkGroup {
   }
 
   void ParkParent(CoroutineHandle parent) {
-    parent_ = parent;
-    parent_parked_ = true;
+    parent_registration_.Arm(parent);
   }
 
   // Called from a branch's completion. Decrements the outstanding count and
@@ -42,17 +44,17 @@ class ForkGroup {
     if (completions_needed_ > 0) {
       completions_needed_ -= 1;
     }
-    if (parent_parked_ && completions_needed_ == 0) {
-      parent_parked_ = false;
-      services_->ScheduleNextDelta(parent_);
+    if (completions_needed_ == 0) {
+      if (CoroutineHandle parent = parent_registration_.TakeForWake()) {
+        services_->ScheduleNextDelta(parent);
+      }
     }
   }
 
  private:
   RuntimeServices* services_;
   std::int64_t completions_needed_;
-  CoroutineHandle parent_{};
-  bool parent_parked_ = false;
+  WakeRegistration parent_registration_;
 };
 
 // What the parent `co_await`s after the branches are spawned. The wait reports
@@ -130,6 +132,36 @@ auto ForkWaitFirst(RuntimeServices& services, Branches... branches)
 template <class... Branches>
 void SpawnAll(RuntimeServices& services, Branches... branches) {
   (services.Spawn(std::move(branches)), ...);
+}
+
+// LRM 9.6.1 `wait fork`: block the executing process until every immediate
+// child it spawned has terminated. The condition is read from the executing
+// process; the frame parked on it is the one that ran `wait fork` (the task
+// frame when `wait fork` sits in a task), so it is armed through the suspending
+// handle rather than the process's own body.
+class WaitForkAwaitable {
+ public:
+  explicit WaitForkAwaitable(RuntimeServices& services) : services_(&services) {
+  }
+
+  [[nodiscard]] auto await_ready() const -> bool {
+    return services_->CurrentProcess().HasNoLiveChild();
+  }
+
+  template <class P>
+  void await_suspend(std::coroutine_handle<P> waiter) const {
+    services_->CurrentProcess().ArmWaitFork(&waiter.promise());
+  }
+
+  void await_resume() const noexcept {
+  }
+
+ private:
+  RuntimeServices* services_;
+};
+
+inline auto WaitFork(RuntimeServices& services) -> WaitForkAwaitable {
+  return WaitForkAwaitable{services};
 }
 
 }  // namespace lyra::runtime

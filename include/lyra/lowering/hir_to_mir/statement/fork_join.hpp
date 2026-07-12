@@ -21,4 +21,8 @@ auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt>;
 
+auto LowerWaitForkStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
+    -> diag::Result<mir::Stmt>;
+
 }  // namespace lyra::lowering::hir_to_mir

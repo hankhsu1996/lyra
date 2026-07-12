@@ -265,10 +265,16 @@ struct WaitStmt {
   std::vector<SensitivityEntry> sensitivity_list;
 };
 
+// LRM 9.6.1 `wait fork`: block the enclosing process until all of its immediate
+// child subprocesses have terminated. Carries no operand -- the child set is
+// the executing process's, resolved at runtime.
+struct WaitForkStmt {};
+
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
     CaseInsideStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
-    BreakStmt, ContinueStmt, ReturnStmt, TimedStmt, EventTriggerStmt, WaitStmt>;
+    BreakStmt, ContinueStmt, ReturnStmt, TimedStmt, EventTriggerStmt, WaitStmt,
+    WaitForkStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

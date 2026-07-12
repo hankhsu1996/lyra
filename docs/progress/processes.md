@@ -86,8 +86,9 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       `wait_order(...)`, event aliasing / nullness / comparison are out of scope.
 - [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). Sensitivity is precomputed by
       slang's flow analysis on `cond` as a standalone expression. The "skip suspend if cond is
-      already true" semantic falls out of the lowering. `wait fork;` (LRM 9.6.1) and
-      `wait_order(...)` (LRM 15.6) are out of scope.
+      already true" semantic falls out of the lowering. `wait fork;` (LRM 9.6.1) is a distinct
+      process-control construct tracked in `fork-join.md`; `wait_order(...)` (LRM 15.6) is out of
+      scope.
 
 ### Concurrency
 

@@ -106,8 +106,10 @@ long, follows from where the storage lives and how long the enclosing activation
 
 ### Process control over spawned threads
 
-- [ ] FJ6 -- `wait fork` blocks the current process until all of its immediate child processes (not
-      their descendants) have terminated (LRM 9.6.1).
+- [x] FJ6 -- `wait fork` blocks the current process until all of its immediate child processes (not
+      their descendants) have terminated (LRM 9.6.1). Because a task runs in its caller's thread
+      (LRM 9.5), a `wait fork` inside a task waits on children the enclosing process spawned before
+      the task was called, and a process with no live child resumes without suspending.
 - [ ] FJ7 -- `disable fork` terminates all descendant processes of the calling process, including
       descendants of subprocesses that have already terminated (LRM 9.6.3).
 
