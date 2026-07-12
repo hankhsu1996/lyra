@@ -7,7 +7,7 @@ report properties of a data type or of an array's shape, not a computation over 
 
 Done when the whole 20.6 / 20.7 family lowers and runs for every data type: the fixed-size forms as
 elaboration-time constants, and the dynamically sized forms as runtime queries of the array's
-current state. When the last item lands, this file is deleted.
+current state.
 
 ## Semantic model
 

@@ -64,13 +64,16 @@ struct UnaryExpr {
   ExprId operand;
 };
 
-// Reduces an operand to a host `bool`. Used to bring real / string operands
-// onto the host-bool plane before a C++ native logical operator (`&&`, `||`,
-// `!`), and as the inner argument of `BuiltinFn::kFromBool` when the result
-// must re-shape to a 1-bit packed value. `Expr::type` is conventionally
-// `builtins.bit1` (the result is observable only after `FromBool` re-shapes
-// it; the operand of a `BoolCastExpr` is whatever the host's `bool(...)`
-// conversion accepts).
+// Reduces an operand to a host `bool` -- the predicate-reduction primitive. It
+// stands wherever a value is consumed as a boolean: a condition context (an
+// if / while / for / do-while / ternary, LRM 12.4, true when the operand is
+// nonzero and false when it is zero, x, or z), an operand of a native logical
+// operator (`&&` / `||` / `!`), and the inner argument of a re-shape back to a
+// 1-bit packed value. The node kind, not the operand's type, is what tells a
+// backend to emit the reduction, so a condition never leaves the boolean
+// decision to a contextual conversion at the branch site. `Expr::type` carries
+// the 1-bit type by convention; the operand is any value the host's `bool(...)`
+// conversion accepts.
 struct BoolCastExpr {
   ExprId operand;
 };

@@ -14,9 +14,7 @@ in four parts:
   dissolved each so they are not reintroduced.
 
 An item is checked only when its behavior is reproduced on the current architecture, or, for an
-infrastructure surface, built. Items are written at the semantic level: completing one is flipping
-`[ ]` to `[x]`, not rewriting it into an account of what landed. When every item lands, this file is
-deleted.
+infrastructure surface, built.
 
 ## Infrastructure
 

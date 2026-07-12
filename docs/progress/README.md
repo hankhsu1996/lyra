@@ -31,7 +31,8 @@ status.
 Each file contains:
 
 - A short header stating the feature's scope and its defined "done" state.
-- The checkbox list of sub-steps, with completed items checked off as their PRs land.
+- The checkbox list of sub-steps, with an item flipped to `[x]` in the same change that lands its
+  code -- the working tree before commit included, never a follow-up change.
 - Any blockers, open design questions, or cross-references to architecture contracts the work must
   satisfy.
 
