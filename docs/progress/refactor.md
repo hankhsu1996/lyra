@@ -807,20 +807,33 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       artifact); unifying it with the JIT's allocation shape waits for instance-representation
       unification.
 
-- [ ] R55 -- An external callable belongs to the compilation unit, not to a class. A DPI-C import is
-      an external callable (`../decisions/unified-callable-model.md`): a foreign-symbol declaration
-      -- signature, linkage name, language, calling convention -- with no body and no receiver. Its
-      identity at link time is the linkage name, a global. Today it is stored per class and named by
-      a class-relative id, so a call resolves the declaration only in the caller's own class, and a
-      call to an import declared in an enclosing scope is rejected as unsupported. That rejection is
-      an artifact of the storage model, not a language limitation: with no body and no receiver
-      there is nothing to reach at run time, so the declaring scope's depth is a compile-time lookup
-      distance, never a runtime reach -- unlike an internal subroutine, whose enclosing-scope hop is
-      a real receiver climb. Target: external callables live on the compilation unit, named by a
-      unit-level id; the enclosing-scope hop count disappears from the reference; each foreign
-      symbol is declared once per emitted unit rather than once per declaring class. Cover it with a
-      positive case (an import declared at module scope, called from a nested block), never by
-      pinning the current rejection. **Blocker**: none.
+- [x] R55 -- A receiver-less associated callable names its own owner. An instance method's call
+      target recovers its declaring class from its receiver; a type-associated callable -- a DPI-C
+      import today, an SV class static method later -- has no receiver, so a bare slot id left the
+      owner implicit, meaning the caller's own class. A call to a callable declared in an enclosing
+      scope therefore had to be rejected rather than resolved against the wrong namespace. The call
+      target now names the owning class and the slot, so an import declared at module scope is
+      callable from a generate block. The declaring scope's depth is a compile-time lookup distance,
+      resolved once during lowering and absent from the target; nothing is reached at run time,
+      because the callable has no body and no receiver. Declarations stay in the declaring type's
+      associated namespace (`../decisions/dpi-foreign-boundary.md`,
+      `../architecture/object_model.md` invariants 7 and 8); only the target identity gained what it
+      was missing, and that identity survives the later collapse of the method and static-callable
+      identity spaces into one callable identity (R8).
+
+- [ ] R56 -- A foreign symbol has no single record. An external callable's symbol -- its linkage
+      name and purity -- is copied into every declaring type's associated namespace, so one
+      link-time global can hold several declarations in one compilation unit and emit one
+      `extern "C"` prototype per declaration. The frontend guarantees the copies agree (two imports
+      of one C identifier with mismatching signatures are rejected), so the emitted code is correct
+      today; this is redundancy, not a defect. It is not fixed by deduplicating in the render: a
+      render entry is a mechanical function of one node and makes no decisions, so a redundancy the
+      render must hide is a redundancy in MIR (`../architecture/backend_contract.md`). Target shape:
+      the unit holds one record per foreign symbol, keyed by its linkage name, that the
+      type-associated declarations reference -- the single source of truth a generated ABI header
+      and the JIT's external-symbol resolution both read. Deferred until one of those consumers
+      exists, so the record is built for a real reader rather than to hide duplicate prototypes.
+      **Blocker**: none.
 
 - [ ] R56 -- A condition is a value; reducing it to a control predicate is an explicit conversion,
       not a backend's contextual one. MIR already owns the primitive: `BoolCastExpr` reduces any

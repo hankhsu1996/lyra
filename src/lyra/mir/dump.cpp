@@ -482,12 +482,13 @@ class MirDumper {
             [](const support::BuiltinFn& id) -> std::string {
               return std::format("builtin=\"{}\"", support::BuiltinFnName(id));
             },
-            [this](const StaticCallableId& s) -> std::string {
-              const auto& owner = ResolveScopeAtHops(0);
-              const auto& callable = owner.static_callables.Get(s);
+            [this](const StaticCallableTarget& s) -> std::string {
+              const auto& callable =
+                  unit_->GetClass(s.owner).static_callables.Get(s.slot);
               return std::format(
-                  R"(static_callable={} "{}" c_name="{}")", s.value,
-                  callable.name, callable.external.foreign_name);
+                  R"(static_callable=Class[{}].{} "{}" c_name="{}")",
+                  s.owner.value, s.slot.value, callable.name,
+                  callable.external.foreign_name);
             },
         },
         target);

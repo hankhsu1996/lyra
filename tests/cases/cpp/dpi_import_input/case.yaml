@@ -16,3 +16,5 @@ expect:
       negate=-2.5
       var=11
       lit=2
+      nested=8
+      deeper=15

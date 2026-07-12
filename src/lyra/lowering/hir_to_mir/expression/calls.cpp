@@ -694,7 +694,7 @@ auto MarshalCarrierToSv(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportInputsOnly(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::StaticCallableDecl& decl, mir::StaticCallableId callable,
+    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& module = lowerer.Module();
   auto& unit = module.Unit();
@@ -722,7 +722,7 @@ auto LowerForeignImportInputsOnly(
   mir::Expr foreign_call{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = callable},
+              .callee = mir::Direct{.target = target},
               .arguments = std::move(carrier_args)},
       .type = call_type};
   if (is_void) {
@@ -742,7 +742,7 @@ auto LowerForeignImportInputsOnly(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportWithWriteback(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::StaticCallableDecl& decl, mir::StaticCallableId callable,
+    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& module = lowerer.Module();
   auto& unit = module.Unit();
@@ -822,7 +822,7 @@ auto LowerForeignImportWithWriteback(
   mir::Expr foreign_call{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = callable},
+              .callee = mir::Direct{.target = target},
               .arguments = std::move(call_args)},
       .type = call_type};
 
@@ -869,6 +869,20 @@ auto LowerForeignImportWithWriteback(
       unit, *frame.current_block, closure.Build(result_id));
 }
 
+// The compilation-unit identity of the class `hops` enclosing levels up. A
+// receiver-less callable names its owner in the call target, so that owner must
+// be a unit-stable class identity rather than a position in the lowering walk;
+// a class carries its own identity in its self-pointer type, so recover it from
+// there.
+auto EnclosingClassIdAtHops(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    mir::EnclosingHops hops) -> mir::ClassId {
+  const mir::TypeId self_ptr =
+      frame.EnclosingClassAtHops(hops).self_pointer_type;
+  const auto& ptr = std::get<mir::PointerType>(unit.types.Get(self_ptr).data);
+  return std::get<mir::ObjectType>(unit.types.Get(ptr.pointee).data).class_id;
+}
+
 // LRM 35.4 import call: an ordinary call to the external static callable,
 // wrapped in boundary marshaling. The ABI classes and directions are read from
 // the callable's own declaration, resolved once at its declaration lowering. An
@@ -877,17 +891,20 @@ auto LowerForeignImportWithWriteback(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::ForeignImportRef& ref, diag::SourceSpan span,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  if (ref.hops.value != 0) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedDpi,
-        "a call to a DPI-C import declared in an enclosing scope is not yet "
-        "supported");
-  }
-  const mir::StaticCallableId callable{ref.id.value};
+    const hir::ForeignImportRef& ref, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  // An import is a receiver-less associated callable of the scope that declares
+  // it. `hops` is how far out that scope sits from the caller -- a declaration
+  // lookup distance, resolved here and then gone; the callable has no body and
+  // no receiver, so nothing is reached at run time and the call names its owner
+  // directly.
+  const mir::CompilationUnit& unit = lowerer.Module().Unit();
+  const mir::EnclosingHops hops{.value = ref.hops.value};
+  const mir::StaticCallableTarget target{
+      .owner = EnclosingClassIdAtHops(frame, unit, hops),
+      .slot = mir::StaticCallableId{ref.id.value}};
   const mir::StaticCallableDecl& decl =
-      frame.current_class->static_callables.Get(callable);
+      frame.EnclosingClassAtHops(hops).static_callables.Get(target.slot);
 
   const bool has_writeback =
       std::ranges::any_of(decl.params, [](const mir::ForeignParam& p) {
@@ -895,10 +912,10 @@ auto LowerForeignImportCall(
       });
   if (has_writeback) {
     return LowerForeignImportWithWriteback(
-        lowerer, frame, c, decl, callable, result_type);
+        lowerer, frame, c, decl, target, result_type);
   }
   return LowerForeignImportInputsOnly(
-      lowerer, frame, c, decl, callable, result_type);
+      lowerer, frame, c, decl, target, result_type);
 }
 
 }  // namespace
@@ -937,8 +954,7 @@ auto LowerHirCallExpr(
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);
           },
           [&](const hir::ForeignImportRef& imp) -> diag::Result<mir::Expr> {
-            return LowerForeignImportCall(
-                lowerer, frame, c, imp, span, result_type);
+            return LowerForeignImportCall(lowerer, frame, c, imp, result_type);
           },
       },
       c.callee);
