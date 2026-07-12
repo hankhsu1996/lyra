@@ -17,8 +17,6 @@ next touched, not when some future event is deemed to "trigger" it. The only hon
 an entry open are a named unlanded prerequisite (it is blocked), or a cut large and cross-cutting
 enough to warrant its own focused review.
 
-Entries get checked off as their PRs land. When the last entry lands, the file is deleted.
-
 ## Sub-Steps
 
 - [x] R1 -- The canonical builtin TypeIds (`int`, `bit[0]`, `string`, `void`, `realtime`, and the
@@ -835,7 +833,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       exists, so the record is built for a real reader rather than to hide duplicate prototypes.
       **Blocker**: none.
 
-- [ ] R56 -- A condition is a value; reducing it to a control predicate is an explicit conversion,
+- [x] R57 -- A condition is a value; reducing it to a control predicate is an explicit conversion,
       not a backend's contextual one. MIR already owns the primitive: `BoolCastExpr` reduces any
       operand to a host bool, and a real or chandle `!` lowers through it. But `IfStmt`,
       `WhileStmt`, the loop forms, and `ConditionalExpr` all carry a raw SV-typed condition, and the

@@ -9,6 +9,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -132,7 +133,9 @@ auto LowerValuePlusargs(
   const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
   then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
-  body.AppendIfThen(cond_id, std::move(then_body));
+  body.AppendIfThen(
+      ReduceToCondition(body, cond_id, unit.builtins.bit1),
+      std::move(then_body));
 
   const mir::ExprId final_hit =
       body.exprs.Add(mir::MakeLocalRefExpr(hit_var, int32_t_id));

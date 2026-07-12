@@ -16,11 +16,4 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string;
 // so this render is purely mechanical -- it does not inject any wrapper.
 auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr) -> std::string;
 
-// Renders `expr` for use in a C++ boolean context (`if`, `while`, `do`, `for`
-// condition, ternary cond, `&&` / `||` / `!`). When the expression's MIR type
-// is a packed array, `PackedArray`'s `explicit operator bool` fires on the
-// contextual conversion; no explicit wrapping is needed.
-auto RenderConditionAsBool(const ScopeView& view, const mir::Expr& expr)
-    -> std::string;
-
 }  // namespace lyra::backend::cpp

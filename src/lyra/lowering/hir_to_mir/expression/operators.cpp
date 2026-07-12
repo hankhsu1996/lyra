@@ -13,6 +13,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
@@ -455,7 +456,9 @@ auto LowerHirConditionalExpr(
   auto& block = *frame.current_block;
   auto cond_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.condition), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
+  const mir::ExprId cond_id = ReduceToCondition(
+      block, block.exprs.Add(*std::move(cond_or)),
+      lowerer.Module().Unit().builtins.bit1);
   auto then_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.then_value), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const mir::ExprId then_id = block.exprs.Add(*std::move(then_or));

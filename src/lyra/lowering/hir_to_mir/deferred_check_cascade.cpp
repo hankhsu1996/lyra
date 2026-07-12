@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
@@ -194,6 +195,7 @@ auto BuildUniqueCheckClosure(
   mir::Block& body = closure.Body();
 
   const mir::TypeId int32_type = module.Unit().builtins.int32;
+  const mir::TypeId bit1_type = module.Unit().builtins.bit1;
   const BodyBindingRef self_ref =
       closure.Bindings().EnsureCarrier(BindingOriginId::Receiver());
 
@@ -222,7 +224,7 @@ auto BuildUniqueCheckClosure(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
-                    .condition = bit_read,
+                    .condition = ReduceToCondition(body, bit_read, bit1_type),
                     .then_value = one_lit,
                     .else_value = zero_lit},
             .type = int32_type});
@@ -270,7 +272,7 @@ auto BuildUniqueCheckClosure(
 
   body.AppendStmt(
       mir::IfStmt{
-          .condition = predicate_id,
+          .condition = ReduceToCondition(body, predicate_id, bit1_type),
           .then_scope = diag_scope_id,
           .else_scope = std::nullopt});
 
@@ -287,6 +289,7 @@ auto BuildDeferredCheckCascade(
     -> mir::Stmt {
   const mir::TypeId void_type = module.Unit().builtins.void_type;
   const mir::TypeId int32_type = module.Unit().builtins.int32;
+  const mir::TypeId bit1_type = module.Unit().builtins.bit1;
 
   // SnapshotPredicate / BuildDefaultValueExpr append to wrapper, so route
   // through a wrapper-local frame; the cascade levels each derive their own
@@ -344,7 +347,7 @@ auto BuildDeferredCheckCascade(
 
     level_block.AppendStmt(
         mir::IfStmt{
-            .condition = cond_read,
+            .condition = ReduceToCondition(level_block, cond_read, bit1_type),
             .then_scope = body_scope_id,
             .else_scope = else_scope_id});
     tail = std::move(level_block);
@@ -363,7 +366,7 @@ auto BuildDeferredCheckCascade(
 
     wrapper.AppendStmt(
         mir::IfStmt{
-            .condition = cond_read0,
+            .condition = ReduceToCondition(wrapper, cond_read0, bit1_type),
             .then_scope = body0_id,
             .else_scope = else0_id});
   }

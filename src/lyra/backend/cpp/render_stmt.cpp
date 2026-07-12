@@ -90,7 +90,7 @@ auto RenderIfStmt(
   const auto& then_scope = view.Block().child_scopes.Get(s.then_scope);
   std::string result;
   result += std::format(
-      "{}if ({}) {{\n", Indent(indent), RenderConditionAsBool(view, cond_expr));
+      "{}if ({}) {{\n", Indent(indent), RenderExpr(view, cond_expr));
   result += RenderNestedBlock(view, then_scope, indent + 1);
   result += std::format("{}}}", Indent(indent));
   if (s.else_scope.has_value()) {
@@ -121,7 +121,7 @@ auto RenderForStmt(
   std::string cond;
   if (s.condition.has_value()) {
     const auto& cond_expr = view.Block().exprs.Get(*s.condition);
-    cond = RenderConditionAsBool(view, cond_expr);
+    cond = RenderExpr(view, cond_expr);
   }
   std::string step;
   for (std::size_t i = 0; i < s.step.size(); ++i) {
@@ -147,8 +147,7 @@ auto RenderWhileStmt(
   const auto& cond_expr = view.Block().exprs.Get(s.condition);
   const auto& block = view.Block().child_scopes.Get(s.scope);
   std::string result = std::format(
-      "{}while ({}) {{\n", Indent(indent),
-      RenderConditionAsBool(view, cond_expr));
+      "{}while ({}) {{\n", Indent(indent), RenderExpr(view, cond_expr));
   result += RenderNestedBlock(view, block, indent + 1);
   result += std::format("{}}}\n", Indent(indent));
   return result;
@@ -162,8 +161,7 @@ auto RenderDoWhileStmt(
   std::string result = std::format("{}do {{\n", Indent(indent));
   result += RenderNestedBlock(view, block, indent + 1);
   result += std::format(
-      "{}}} while ({});\n", Indent(indent),
-      RenderConditionAsBool(view, cond_expr));
+      "{}}} while ({});\n", Indent(indent), RenderExpr(view, cond_expr));
   return result;
 }
 
