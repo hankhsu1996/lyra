@@ -2,8 +2,7 @@
 
 Tracks where the runtime's execution code differs from the golden activation model in
 `../architecture/activation.md`. Each entry names the current shape, the contract shape it must
-reach, and what (if anything) blocks it. Entries get checked off as their PRs land; when the last
-lands, this file is deleted.
+reach, and what (if anything) blocks it.
 
 The runtime already realizes the load-bearing core of the contract: an activation is a coroutine
 frame; the scheduler holds a payload-neutral activation token and never sees the completion type; a

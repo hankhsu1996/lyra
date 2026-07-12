@@ -16,6 +16,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -314,7 +315,10 @@ auto LowerWaitStmt(
       wrapper.child_scopes.Add(std::move(inner_block));
 
   wrapper.AppendStmt(
-      mir::WhileStmt{.condition = not_cond_id, .scope = inner_scope_id});
+      mir::WhileStmt{
+          .condition = ReduceToCondition(
+              wrapper, not_cond_id, process.Module().Unit().builtins.bit1),
+          .scope = inner_scope_id});
 
   const hir::Stmt& body_hir = hir_proc.stmts.Get(w.body);
   auto body_or = process.LowerStmt(body_hir, wrapper_frame);

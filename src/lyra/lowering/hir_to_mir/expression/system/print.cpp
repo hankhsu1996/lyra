@@ -13,6 +13,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
@@ -133,7 +134,8 @@ auto LowerStrobeCall(
     guard.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
     body.AppendStmt(
         mir::IfStmt{
-            .condition = is_cancelled,
+            .condition =
+                ReduceToCondition(body, is_cancelled, unit.builtins.bit1),
             .then_scope = body.child_scopes.Add(std::move(guard)),
             .else_scope = std::nullopt});
   }

@@ -281,10 +281,9 @@ auto RenderBinaryExpr(const ScopeView& view, const mir::BinaryExpr& b)
       RenderExpr(view, view.Expr(b.rhs)));
 }
 
-// Brings an operand onto the host-bool plane so a native C++ logical
-// operator (`&&` / `||` / `!`) can take it. The wrap is observable only as
-// the operand of `kFromBool` -- the value-shape re-projection back to the
-// SV 1-bit integral lives there.
+// Emits the host-bool reduction the node states, so a condition and a native
+// C++ logical operand read a value as a boolean the same way, without leaving
+// the boolean decision to a contextual conversion at the use site.
 auto RenderBoolCastExpr(const ScopeView& view, const mir::BoolCastExpr& b)
     -> std::string {
   return std::format("bool({})", RenderExpr(view, view.Expr(b.operand)));
@@ -293,7 +292,7 @@ auto RenderBoolCastExpr(const ScopeView& view, const mir::BoolCastExpr& b)
 auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
     -> std::string {
   return std::format(
-      "({} ? {} : {})", RenderConditionAsBool(view, view.Expr(c.condition)),
+      "({} ? {} : {})", RenderExpr(view, view.Expr(c.condition)),
       RenderExpr(view, view.Expr(c.then_value)),
       RenderExpr(view, view.Expr(c.else_value)));
 }
@@ -937,13 +936,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
       },
       expr.data);
-}
-
-auto RenderConditionAsBool(const ScopeView& view, const mir::Expr& expr)
-    -> std::string {
-  // PackedArray's `explicit operator bool` fires in any boolean context (if /
-  // while / for / ternary cond / `&&` / `||` / `!`), so no wrapping needed.
-  return RenderExpr(view, expr);
 }
 
 }  // namespace lyra::backend::cpp

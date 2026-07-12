@@ -15,6 +15,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -99,7 +100,8 @@ auto EmitIsUnknownGuard(
           module.Unit().builtins.integer, static_cast<std::int64_t>(-1)));
   then_body.AppendStmt(mir::ReturnStmt{.value = minus_one});
 
-  body.AppendIfThen(guard_id, std::move(then_body));
+  body.AppendIfThen(
+      ReduceToCondition(body, guard_id, bit_t), std::move(then_body));
 }
 
 auto ValidateTargetType(
@@ -314,7 +316,9 @@ auto LowerScanSystemSubroutineCall(
     const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
-    body.AppendIfThen(cond_id, std::move(then_body));
+    body.AppendIfThen(
+        ReduceToCondition(body, cond_id, unit.builtins.bit1),
+        std::move(then_body));
   }
 
   const mir::ExprId count_id =

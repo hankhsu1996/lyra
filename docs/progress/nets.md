@@ -9,7 +9,7 @@ tracks the delta between the code and that model.
 Done when the in-scope net types carry correct driver-resolution semantics end to end --
 declaration, single- and multi-driver resolution, the wired and tri-state net types, drive strength,
 pull/supply, and charge storage -- and net-typed port connections behave as those nets across the
-object graph. When the last item lands, the file is deleted.
+object graph.
 
 ## Contracts
 

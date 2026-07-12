@@ -13,6 +13,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_check_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -38,7 +39,9 @@ auto LowerIfStmt(
   if (!cond_expr_or) {
     return std::unexpected(std::move(cond_expr_or.error()));
   }
-  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_expr_or));
+  const mir::ExprId cond_id = ReduceToCondition(
+      block, block.exprs.Add(*std::move(cond_expr_or)),
+      process.Module().Unit().builtins.bit1);
 
   auto then_or = LowerStmtIntoChildScope(process, frame, i.then_stmt);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
@@ -189,7 +192,8 @@ auto LowerCaseStmt(
 
   return BuildCaseCascade(
       frame, std::move(wrapper), std::move(label), c.items.size(),
-      std::move(body_scopes), std::move(default_scope), build_predicate);
+      std::move(body_scopes), std::move(default_scope), bit_type,
+      build_predicate);
 }
 
 auto LowerCaseInsideStmt(
@@ -291,7 +295,8 @@ auto LowerCaseInsideStmt(
 
   return BuildCaseCascade(
       frame, std::move(wrapper), std::move(label), c.items.size(),
-      std::move(body_scopes), std::move(default_scope), build_item_predicate);
+      std::move(body_scopes), std::move(default_scope), bit_type,
+      build_item_predicate);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

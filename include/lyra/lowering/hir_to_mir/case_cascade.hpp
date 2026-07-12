@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -92,8 +93,8 @@ auto BuildCaseCascade(
     WalkFrame frame, mir::Block wrapper_block,
     std::optional<std::string> outer_label, std::size_t item_count,
     std::vector<mir::Block> body_scopes,
-    std::optional<mir::Block> default_scope, PredicateBuilder&& build_predicate)
-    -> diag::Result<mir::Stmt> {
+    std::optional<mir::Block> default_scope, mir::TypeId bit1_type,
+    PredicateBuilder&& build_predicate) -> diag::Result<mir::Stmt> {
   std::optional<mir::Block> tail = std::move(default_scope);
 
   for (std::size_t i = item_count; i-- > 1;) {
@@ -114,7 +115,7 @@ auto BuildCaseCascade(
 
     level_block.AppendStmt(
         mir::IfStmt{
-            .condition = *pred_or,
+            .condition = ReduceToCondition(level_block, *pred_or, bit1_type),
             .then_scope = body_scope_id,
             .else_scope = else_scope_id});
 
@@ -138,7 +139,7 @@ auto BuildCaseCascade(
 
     wrapper_block.AppendStmt(
         mir::IfStmt{
-            .condition = *pred0_or,
+            .condition = ReduceToCondition(wrapper_block, *pred0_or, bit1_type),
             .then_scope = body0_id,
             .else_scope = else0_id});
   } else if (tail.has_value()) {

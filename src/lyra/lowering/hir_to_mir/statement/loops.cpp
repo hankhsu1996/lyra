@@ -12,6 +12,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
@@ -80,7 +81,9 @@ auto LowerForStmt(
     if (!cond_or) {
       return std::unexpected(std::move(cond_or.error()));
     }
-    cond_id = block.exprs.Add(*std::move(cond_or));
+    cond_id = ReduceToCondition(
+        block, block.exprs.Add(*std::move(cond_or)),
+        process.Module().Unit().builtins.bit1);
   }
 
   std::vector<mir::ExprId> step_ids;
@@ -123,7 +126,9 @@ auto LowerWhileStmt(
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
+  const mir::ExprId cond_id = ReduceToCondition(
+      block, block.exprs.Add(*std::move(cond_or)),
+      process.Module().Unit().builtins.bit1);
 
   auto body_or = LowerStmtIntoChildScope(process, frame, w.body);
   if (!body_or) {
@@ -152,7 +157,9 @@ auto LowerDoWhileStmt(
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  const mir::ExprId cond_id = block.exprs.Add(*std::move(cond_or));
+  const mir::ExprId cond_id = ReduceToCondition(
+      block, block.exprs.Add(*std::move(cond_or)),
+      process.Module().Unit().builtins.bit1);
 
   const mir::BlockId body_scope_id =
       frame.current_block->child_scopes.Add(std::move(*body_or));
@@ -199,7 +206,7 @@ auto LowerRepeatStmt(
       wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));
   const mir::ExprId count_ref_cond =
       wrapper.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
-  const mir::ExprId cond_id = wrapper.exprs.Add(
+  const mir::ExprId less_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::BinaryExpr{
@@ -207,6 +214,7 @@ auto LowerRepeatStmt(
                   .lhs = idx_ref_cond,
                   .rhs = count_ref_cond},
           .type = bit_type});
+  const mir::ExprId cond_id = ReduceToCondition(wrapper, less_id, bit_type);
 
   const mir::ExprId idx_ref_step =
       wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));
