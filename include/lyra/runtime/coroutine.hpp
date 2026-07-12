@@ -14,6 +14,7 @@ namespace lyra::runtime {
 
 class Observable;
 class RuntimeProcess;
+class WakeRegistration;
 
 // Non-templated scheduling state shared by every coroutine frame -- a process
 // body, a task body, a fork branch -- regardless of the value the frame
@@ -30,6 +31,17 @@ struct PromiseBase {
   std::vector<Observable*> pending_value_change_subscriptions;
   std::function<void()> on_complete;
   std::coroutine_handle<> self;
+  // The wake source this frame is currently parked on, if any. Held so the
+  // frame unlinks itself when destroyed, keeping the source from waking freed
+  // storage.
+  WakeRegistration* parked_registration = nullptr;
+
+  PromiseBase() = default;
+  PromiseBase(const PromiseBase&) = delete;
+  auto operator=(const PromiseBase&) -> PromiseBase& = delete;
+  PromiseBase(PromiseBase&&) = delete;
+  auto operator=(PromiseBase&&) -> PromiseBase& = delete;
+  ~PromiseBase();
 
   // A promise protocol hook is an instance customization point by contract, so
   // it stays a member even when an implementation reads no promise state; the

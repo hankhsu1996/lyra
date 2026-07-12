@@ -1,0 +1,17 @@
+id: cpp.fork_wait_fork
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      [10] child1
+      [20] child2
+      [30] child3
+      [30] after wait fork
+      [30] initial after do_test
+      [50] grandchild

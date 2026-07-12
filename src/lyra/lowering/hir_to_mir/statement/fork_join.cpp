@@ -132,4 +132,32 @@ auto LowerForkStmt(
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
+// LRM 9.6.1 `wait fork`: suspend the executing process until its immediate
+// children have terminated. It lowers to a single awaited runtime call taking
+// only the services handle; the child set is resolved at runtime from the
+// executing process, so MIR carries no operand. The awaited call's result type
+// is `void`, the same await shape as `join`.
+auto LowerWaitForkStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
+    -> diag::Result<mir::Stmt> {
+  mir::Block& block = *frame.current_block;
+  const auto& builtins = process.Module().Unit().builtins;
+  const mir::ExprId services_id =
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+  const mir::ExprId call_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kWaitFork},
+                  .arguments = {services_id}},
+          .type = builtins.void_type});
+  const mir::ExprId await_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::AwaitExpr{.awaitable = call_id},
+          .type = builtins.void_type});
+  return mir::Stmt{
+      .label = std::move(label), .data = mir::ExprStmt{.expr = await_id}};
+}
+
 }  // namespace lyra::lowering::hir_to_mir

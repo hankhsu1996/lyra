@@ -1,0 +1,14 @@
+id: cpp.fork_wait_fork_no_park
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      [0] no children
+      [5] child
+      [10] child already finished

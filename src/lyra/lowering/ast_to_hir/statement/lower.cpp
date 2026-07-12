@@ -122,6 +122,10 @@ auto LowerStatement(
       return LowerWaitStmt(
           proc, frame, stmt.as<slang::ast::WaitStatement>(), span);
 
+    case slang::ast::StatementKind::WaitFork:
+      return hir::Stmt{
+          .label = std::nullopt, .data = hir::WaitForkStmt{}, .span = span};
+
     case slang::ast::StatementKind::Timed:
       return LowerTimedStmt(
           proc, frame, stmt.as<slang::ast::TimedStatement>(), span);

@@ -35,6 +35,9 @@ the awaiter consumes, not of the scheduler.
   through the activation, never through the scheduler.
 - The three activation relations: **ownership** (who releases it), **continuation** (who consumes
   the outcome and resumes on completion), and **cancellation domain** (who is cancelled together).
+- The **process lineage**: the parent-child tree of processes (LRM 9.5), which realizes ownership
+  and cancellation membership for a spawned process. A lineage node outlives the execution it named,
+  for as long as any descendant is live.
 - The **registration set**: every external reference to a parked activation (a region queue slot, a
   delay slot, an event waiter entry, a value-change subscription, a join aggregator entry) as a
   revocable registration owned by the activation.
@@ -70,10 +73,12 @@ the awaiter consumes, not of the scheduler.
 3. **Ownership, continuation, and cancellation membership are three distinct relations.** Ownership
    decides who releases the activation; continuation decides who consumes its outcome and resumes on
    completion; cancellation membership decides who is cancelled when a domain is disabled. A direct
-   task enable makes the enabler all three; a fork branch separates them -- owned and cancelled by
-   the fork domain, its outcome aggregated by a join state, with no single resuming continuation.
-   _Consequence: these relations are not one pointer; a model that collapses them cannot express
-   fork or selective cancellation._
+   task enable makes the enabler all three; a fork branch separates them -- attached to the spawning
+   process's lineage, which determines storage ownership and cancellation membership, while its
+   outcome is aggregated by the join state of the fork statement that spawned it, with no single
+   resuming continuation. _Consequence: these relations are not one pointer; a model that collapses
+   them cannot express fork or selective cancellation. The lineage edge realizes two of them; the
+   join state realizes the third._
 
 4. **Every external reference to a parked activation is a revocable registration, and a frame is
    destroyed only after no scheduler structure can name its token.** When an activation suspends,
@@ -92,10 +97,10 @@ the awaiter consumes, not of the scheduler.
    is not an activation.** A process is owned by its scope, has process identity, completes `Void`,
    and is observed by the engine (no continuation). A task activation inherits the enabler's process
    identity, completes with a typed payload, and resumes the enabler. A fork branch has its own
-   process identity, is owned by the fork domain, completes `Void`, and reports to a join state. A
-   deferred effect is a closure submitted to a region, not an activation. _Consequence: each kind
-   reuses the activation core but binds its own ownership / continuation / completion; deferred work
-   never enters the activation/completion model._
+   process identity, is owned by the spawning process's lineage, completes `Void`, and reports to a
+   join state. A deferred effect is a closure submitted to a region, not an activation.
+   _Consequence: each kind reuses the activation core but binds its own ownership / continuation /
+   completion; deferred work never enters the activation/completion model._
 
 ## Boundary to Adjacent Layers
 
@@ -144,9 +149,22 @@ the awaiter consumes, not of the scheduler.
   nor settle an outcome a consumer awaits (invariant 6).
 
 - **A fork branch modeled as a task the parent awaits.** A branch has its own process identity, is
-  owned and cancelled by the fork domain, and reports to a join state under a join-mode condition;
+  owned by the spawning process's lineage, and reports to a join state under a join-mode condition;
   `join_none` has no parent wait at all. Reusing task-enable ownership for a branch conflates the
   two (invariant 3, invariant 6).
+
+- **A cancellation domain scoped to the fork statement rather than to the process.** `disable fork`
+  terminates every descendant of the calling process, spawned by any fork that process ever
+  executed, and `wait fork` observes the immediate children accumulated across all of them (LRM
+  9.6.1, 9.6.3). A per-fork-statement domain cannot answer either question. The join state is
+  per-fork-statement because the join condition is; the lineage is per-process because cancellation
+  and child observation are.
+
+- **A lineage node whose lifetime is its activation's execution.** `disable fork` reaches "the
+  descendants of subprocesses that have already terminated" (LRM 9.6.3), so a terminated process
+  stays reachable from its parent while any descendant is still live. Releasing the node with the
+  frame loses that reach; retaining the frame to keep the node pins the activation storage the frame
+  solely owns. Node lifetime and execution lifetime are distinct.
 
 ## Notes / Examples
 
@@ -164,12 +182,16 @@ A fork splits them:
 
 ```text
 fork branch  ->  branch activation, completion slot `Void`, own process identity
-  ownership            = the fork domain
+  ownership            = the spawning process's lineage (it releases the branch)
   continuation         = none (the branch resumes no one)
-  cancellation domain  = the fork domain
+  cancellation domain  = the spawning process (an ancestor's `disable fork` reaches it)
 join state  <-  each branch reports terminated / faulted / cancelled
   join / join_any / join_none decide when the forking process resumes
 ```
+
+Ownership and cancellation membership ride the same lineage edge here; continuation rides the join
+state. That the first two coincide for a branch is not a collapse of the relations -- what invariant
+3 forbids is one edge that also carries the consumer.
 
 The C++ backend realizes an activation as a coroutine frame. Its activation token is the coroutine
 promise's non-templated base (the scheduler holds a pointer to it); its completion slot is the typed

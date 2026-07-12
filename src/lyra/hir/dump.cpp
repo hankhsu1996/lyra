@@ -1475,6 +1475,9 @@ class HirDumper {
               Dedent();
               Dedent();
             },
+            [&](const WaitForkStmt&) {
+              Line(std::format("Stmt[{}] WaitForkStmt", id.value));
+            },
         },
         s.data);
   }

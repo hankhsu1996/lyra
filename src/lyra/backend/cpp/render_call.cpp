@@ -248,6 +248,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "ForkWaitFirst";
     case support::BuiltinFn::kSpawnAll:
       return "SpawnAll";
+    case support::BuiltinFn::kWaitFork:
+      return "WaitFork";
     case support::BuiltinFn::kToInt64:
       return "ToInt64";
     case support::BuiltinFn::kRound:
@@ -358,6 +360,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:
+    case support::BuiltinFn::kWaitFork:
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
       return "lyra::runtime";

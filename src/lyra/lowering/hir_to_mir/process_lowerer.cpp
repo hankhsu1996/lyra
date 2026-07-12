@@ -90,6 +90,9 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::WaitStmt& w) {
             return LowerWaitStmt(*this, frame, stmt.label, w);
           },
+          [&](const hir::WaitForkStmt&) {
+            return LowerWaitForkStmt(*this, frame, stmt.label);
+          },
       },
       stmt.data);
 }

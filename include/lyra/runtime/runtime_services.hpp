@@ -19,6 +19,7 @@ class FileTable;
 class PlusArgsSource;
 class Engine;
 class Observable;
+class RuntimeProcess;
 
 class RuntimeServices {
  public:
@@ -90,6 +91,9 @@ class RuntimeServices {
   void ScheduleAtTime(SimTime when, CoroutineHandle handle);
   void RequestFinish(int level, bool fatal = false);
   void Spawn(Coroutine<void> coroutine);
+  // The process whose body is executing right now (LRM 9.5); the observation
+  // target `wait fork` reads and a fork spawn parents its branch to.
+  [[nodiscard]] auto CurrentProcess() -> RuntimeProcess&;
   [[nodiscard]] auto Now() const -> SimTime;
 
   // The design-global time precision (LRM 3.14.3) the delay awaitable scales a

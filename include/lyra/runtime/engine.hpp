@@ -13,9 +13,9 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/diagnostic.hpp"
+#include "lyra/runtime/execution_context.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/plusargs.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
@@ -104,13 +104,17 @@ class Engine {
   //                        code per LRM 20.10).
   // Now                 -- query current simulation time.
   // Spawn               -- adopt a coroutine created mid-simulation as a
-  //                        runnable process and schedule it (used by fork-join
-  //                        branches); construct-neutral by design.
+  //                        process of the executing process's lineage and
+  //                        schedule it (used by fork-join branches);
+  //                        construct-neutral by design.
   void ScheduleNextDelta(CoroutineHandle handle);
   void ScheduleInactive(CoroutineHandle handle);
   void ScheduleAtTime(SimTime when, CoroutineHandle handle);
   void RequestFinish(int level, bool fatal = false);
   void Spawn(Coroutine<void> coroutine);
+  // The process whose body is executing right now (LRM 9.5): what a fork spawn
+  // parents its branch to, and what `wait fork` observes.
+  [[nodiscard]] auto CurrentProcess() -> RuntimeProcess&;
   [[nodiscard]] auto Now() const -> SimTime {
     return now_;
   }
@@ -146,6 +150,10 @@ class Engine {
   // it.
   void ResolveGlobalTimePrecision();
   void RegisterProcesses();
+  // Runs a suspended frame's owning process against the engine's execution
+  // context. Resuming demands that context, so a body always executes with its
+  // own process identity published.
+  auto ResumeProcess(CoroutineHandle handle) -> bool;
   void RunProcess(CoroutineHandle handle);
   void DrainRunnableQueue(std::deque<CoroutineHandle>& queue);
 
@@ -180,10 +188,7 @@ class Engine {
   PlusArgsSource plusargs_;
   RuntimeServices services_{stream_, diagnostic_, files_, plusargs_, *this};
   std::unique_ptr<Scope> root_;
-  // Processes created during simulation (fork-join branches), owned for their
-  // dynamic lifetime. Each is dropped in RunProcess when it completes; static
-  // processes live on their scope instead.
-  std::vector<std::unique_ptr<RuntimeProcess>> spawned_;
+  ExecutionContext execution_context_;
   SchedulerQueues queues_;
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
