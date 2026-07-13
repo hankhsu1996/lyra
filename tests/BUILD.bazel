@@ -23,6 +23,15 @@ cc_test(
 )
 
 cc_test(
+    name = "runtime_gc_ref_test",
+    srcs = ["runtime/gc_ref_test.cpp"],
+    deps = [
+        "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "run_tests",
     srcs = ["run_test.cpp"],
     data = ["//:lyra"],

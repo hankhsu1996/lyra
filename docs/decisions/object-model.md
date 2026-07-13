@@ -97,6 +97,10 @@ cyclic garbage is part of the model, not a gap.
   (acyclic, reference-counted) one. Its lifetime is realized by precise tracing garbage collection,
   and cyclic object graphs are reclaimed by reachability. The lifetime contract and the storage
   discipline that makes tracing precise are owned by `../architecture/object_lifetime.md`.
+- A backend may realize the managed reference through shared ownership as an implementation staging
+  mechanism while other pipeline surfaces mature. This staging does not satisfy the terminal
+  managed-lifetime requirement -- cyclic reclamation remains precise tracing's job -- and does not
+  enter the semantic model any consumer reads.
 
 ## Cross-references
 
