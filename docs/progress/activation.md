@@ -14,14 +14,13 @@ or incomplete relative to the contract.
 
 ## Items
 
-- [ ] **The terminal outcome is split, not unified.** Contract invariant 2: an activation settles
-      one completion slot holding `Succeeded(T)` / `Faulted(exception)` / `Cancelled`, and the
-      scheduler-visible execution core carries none of it. Current shape: the success value lives in
-      the typed completion storage, but the exception is carried by the scheduler-visible execution
-      core, separate from the value. That is wrong -- the exception is part of the terminal outcome,
-      not execution control. Target: one completion slot owns the whole outcome (value and
-      exception, later cancellation); a consumer reads a single terminal outcome; the execution core
-      the scheduler sees is purely suspend / resume / wait state / identity. Unblocked; doable now.
+- [x] **The terminal outcome is unified.** Contract invariant 2: an activation settles one
+      completion slot holding `Succeeded(T)` / `Faulted(exception)` / `Cancelled`, and the
+      scheduler-visible execution core carries none of it. The value and the exception now travel
+      together in one typed completion slot held off the scheduler-visible core; a consumer reads
+      the whole outcome once, which re-raises a fault or yields the value. The execution core the
+      scheduler sees is purely suspend / resume / wait state / identity. The `Cancelled` alternative
+      is not yet present -- it joins the same slot with the cancellation model below.
 
 - [ ] **Registrations are only partly revocable.** Contract invariant 4: every external reference to
       a parked activation -- a region queue slot, a delay slot, an event waiter entry, a
@@ -44,13 +43,15 @@ or incomplete relative to the contract.
       state is outcome-neutral, ready to carry `Cancelled`; but there is no cancellation path and no
       `Cancelled` outcome yet. Target: the full cancellation model behind `disable` / `disable fork`
       (LRM 9.6.x). Blocked on the `disable` language feature; the activation lifetime must not
-      foreclose it (it does not -- frame ownership already cascades, and the registration-set and
-      outcome-unification items above are the remaining prerequisites).
+      foreclose it (it does not -- frame ownership already cascades, and the completion slot now
+      holds a unified outcome ready for a `Cancelled` alternative, leaving the registration-set item
+      above as the remaining substrate prerequisite).
 
 - [ ] **Runtime vocabulary trails the model.** The execution code names the activation and its core
       in coroutine-implementation terms; the contract's vocabulary is activation / completion slot /
       cancellation domain / join state, with the coroutine mechanics as one realization. The
-      execution-state axis is now named for the model -- a process's states are execution states,
-      and its end state is outcome-neutral termination rather than "completed" -- but the
-      completion-slot and join-state vocabulary still trails. Rename the rest where it clarifies the
-      boundary between execution control and completion. Low priority; unblocked.
+      execution-state axis is named for the model -- a process's states are execution states, and
+      its end state is outcome-neutral termination rather than "completed" -- and the terminal
+      outcome is now a named completion slot; the join-state vocabulary still trails. Rename the
+      rest where it clarifies the boundary between execution control and completion. Low priority;
+      unblocked.
