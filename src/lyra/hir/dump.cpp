@@ -849,9 +849,7 @@ class HirDumper {
     for (std::size_t i = 0; i < c.methods.size(); ++i) {
       DumpSubroutine("Method", i, c.methods[i]);
     }
-    if (c.constructor.has_value()) {
-      DumpSubroutine("Constructor", 0, *c.constructor);
-    }
+    DumpSubroutine("Constructor", 0, c.constructor);
     Dedent();
   }
 

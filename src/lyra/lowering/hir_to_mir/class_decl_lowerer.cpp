@@ -67,22 +67,19 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
                               .WithBlock(&ctor_block)
                               .WithBindings(&ctor_bindings);
 
-  // A class property owns its storage directly -- it is not an observable cell,
-  // so it is a plain value-typed member and its construction-time default is a
-  // plain assignment through `self`, not an observable `Set`.
+  // Declare each class property (LRM 8.4) as a value-typed member -- a property
+  // owns its storage directly and is not an observable cell. Declaration order
+  // is preserved so a receiver-relative property reference in an initializer or
+  // a method body indexes the same member.
+  std::vector<mir::FieldId> field_ids;
+  std::vector<mir::TypeId> field_types;
+  field_ids.reserve(hir_class.fields.size());
+  field_types.reserve(hir_class.fields.size());
   for (const auto& field : hir_class.fields) {
     const mir::TypeId field_type = module.TranslateType(field.type);
-    const mir::FieldId field_id = mir_class.fields.Add(
-        mir::FieldDecl{.name = field.name, .type = field_type});
-    const mir::ExprId default_id = ctor_block.exprs.Add(
-        BuildDefaultValueFromHir(module, frame, field.type));
-    const mir::ExprId self_ref =
-        ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_pointer_type));
-    const mir::ExprId target = ctor_block.exprs.Add(
-        mir::MakeFieldAccessExpr(self_ref, field_id, field_type));
-    const mir::ExprId assign = ctor_block.exprs.Add(
-        mir::MakeAssignExpr(target, default_id, field_type));
-    ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
+    field_ids.push_back(mir_class.fields.Add(
+        mir::FieldDecl{.name = field.name, .type = field_type}));
+    field_types.push_back(field_type);
   }
 
   // Pre-declare a callable's static-lifetime body locals as members on this
@@ -92,6 +89,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   // enclosing SV class. The mangled name (`<callable>__<source>_<hir_id>`)
   // keeps sibling callables that reuse a source identifier from colliding on
   // the field arena; the `hir_id` suffix distinguishes nested-block reuses too.
+  // These trail the property members, so property indices stay stable.
   //
   // The materialization table is empty because there are no procedural-storage
   // scopes inside class bodies; the per-callable plans still need a reference
@@ -125,6 +123,40 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
         class_scopes, plan_static_storage(method.name, method.body));
   }
 
+  const hir::SubroutineDecl& ctor = hir_class.constructor;
+  const CallableStoragePlan ctor_plan(
+      class_scopes, plan_static_storage("<ctor>", ctor.body));
+  ProcessLowerer ctor_lowerer(
+      module, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
+      mir::MethodVisibility::kInternal, frame, ctor_plan);
+
+  // Initialize each property in declaration order before the constructor body
+  // runs (LRM 8.7): a property with an explicit initializer takes that value --
+  // lowered through the constructor lowerer so a property read resolves against
+  // the receiver -- and one without takes its type's Table 7-1 default. The
+  // ordering is the single declaration-order pass because an initializer may
+  // read an earlier property whose own initialization has already run.
+  for (std::size_t i = 0; i < hir_class.fields.size(); ++i) {
+    const hir::ClassField& field = hir_class.fields[i];
+    mir::ExprId value_id{};
+    if (field.initializer.has_value()) {
+      auto value_or = ctor_lowerer.LowerExpr(
+          ctor.body.exprs.Get(*field.initializer), frame);
+      if (!value_or) return std::unexpected(std::move(value_or.error()));
+      value_id = ctor_block.exprs.Add(*std::move(value_or));
+    } else {
+      value_id = ctor_block.exprs.Add(
+          BuildDefaultValueFromHir(module, frame, field.type));
+    }
+    const mir::ExprId self_ref =
+        ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_pointer_type));
+    const mir::ExprId target = ctor_block.exprs.Add(
+        mir::MakeFieldAccessExpr(self_ref, field_ids[i], field_types[i]));
+    const mir::ExprId assign = ctor_block.exprs.Add(
+        mir::MakeAssignExpr(target, value_id, field_types[i]));
+    ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
+  }
+
   // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
   // resolves the body's `self` to the managed handle, and the method's
   // declaration-order position becomes its `MethodId`, so a call site naming
@@ -150,29 +182,20 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
     }
   }
 
-  // The user-written `function new` body (LRM 8.7) runs after each property
-  // takes its default, so its statements follow the field-init prologue already
-  // in the constructor body. Its input formals extend the constructor signature
-  // past the receiver. Absent when the class relies on implicit default
-  // construction.
+  // The constructor body (LRM 8.7) runs after each property is initialized, so
+  // its statements follow the field-init prologue already in the constructor
+  // body. Its input formals extend the constructor signature past the receiver;
+  // a synthesized default constructor contributes an empty body and no formals.
   std::vector<mir::LocalId> ctor_params{self_id};
-  if (hir_class.constructor.has_value()) {
-    const hir::SubroutineDecl& ctor = *hir_class.constructor;
-    const CallableStoragePlan ctor_plan(
-        class_scopes, plan_static_storage("<ctor>", ctor.body));
-    ProcessLowerer ctor_lowerer(
-        module, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
-        mir::MethodVisibility::kInternal, frame, ctor_plan);
-    auto ctor_body_or =
-        ctor_lowerer.LowerConstructorBodyInto(ctor, frame, ctor_params);
-    if (!ctor_body_or) {
-      return std::unexpected(std::move(ctor_body_or.error()));
-    }
-    for (const auto& pending : ctor_lowerer.TakePendingStaticInitializers()) {
-      auto integ = IntegratePendingStaticInitializer(
-          ctor_lowerer, ctor.body, frame, pending);
-      if (!integ) return std::unexpected(std::move(integ.error()));
-    }
+  auto ctor_body_or =
+      ctor_lowerer.LowerConstructorBodyInto(ctor, frame, ctor_params);
+  if (!ctor_body_or) {
+    return std::unexpected(std::move(ctor_body_or.error()));
+  }
+  for (const auto& pending : ctor_lowerer.TakePendingStaticInitializers()) {
+    auto integ = IntegratePendingStaticInitializer(
+        ctor_lowerer, ctor.body, frame, pending);
+    if (!integ) return std::unexpected(std::move(integ.error()));
   }
 
   ctor_code.params = std::move(ctor_params);

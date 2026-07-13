@@ -21,10 +21,15 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/integral_constant.hpp"
+#include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/stmt.hpp"
+#include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -447,6 +452,28 @@ auto TranslateTypeData(
   }
 }
 
+// LRM 8.7: a class the source declares without a `function new` still has a
+// constructor -- the implicit `new`, whose only effect is the property
+// initialization every class performs. It is modeled as a constructor with no
+// formals and an empty body; the initialization itself is composed onto the
+// body separately, the same way it is for a user-written constructor.
+auto SynthesizeDefaultConstructor(hir::TypeId void_type, diag::SourceSpan span)
+    -> hir::SubroutineDecl {
+  hir::ProceduralBody body;
+  body.root_stmt = body.stmts.Add(
+      hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::BlockStmt{.statements = {}, .scope = std::nullopt},
+          .span = span});
+  return hir::SubroutineDecl{
+      .name = "new",
+      .kind = hir::SubroutineKind::kFunction,
+      .result_type = void_type,
+      .params = {},
+      .result_var = std::nullopt,
+      .body = std::move(body)};
+}
+
 }  // namespace
 
 auto ModuleLowerer::InternClass(
@@ -467,11 +494,6 @@ auto ModuleLowerer::InternClass(
           span, diag::DiagCode::kUnsupportedClassFeature,
           "static class properties are not yet supported");
     }
-    if (prop.getInitializer() != nullptr) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "class property initializers are not yet supported");
-    }
     auto field_type = InternType(prop.getType(), span);
     if (!field_type) return std::unexpected(std::move(field_type.error()));
     decl.fields.push_back(
@@ -480,6 +502,7 @@ auto ModuleLowerer::InternClass(
             .type = *field_type,
             .initializer = std::nullopt});
   }
+  std::optional<hir::SubroutineDecl> user_constructor;
   for (const auto& method : cls.membersOfType<slang::ast::SubroutineSymbol>()) {
     // Every class carries compiler-generated built-ins (the randomize family,
     // LRM 18.6); they are provided by the runtime, not lowered from source.
@@ -497,7 +520,7 @@ auto ModuleLowerer::InternClass(
       }
       auto ctor_decl = LowerSubroutineDecl(*this, method, WalkFrame{});
       if (!ctor_decl) return std::unexpected(std::move(ctor_decl.error()));
-      decl.constructor = *std::move(ctor_decl);
+      user_constructor = *std::move(ctor_decl);
       continue;
     }
     if (method.flags.has(slang::ast::MethodFlags::Static)) {
@@ -520,6 +543,34 @@ auto ModuleLowerer::InternClass(
     if (!method_decl) return std::unexpected(std::move(method_decl.error()));
     decl.methods.push_back(*std::move(method_decl));
   }
+
+  hir::SubroutineDecl constructor =
+      user_constructor.has_value()
+          ? *std::move(user_constructor)
+          : SynthesizeDefaultConstructor(unit_.builtins.void_type, span);
+
+  // A property initializer (LRM 8.7) runs during construction and may read
+  // another property through the receiver, so it lowers on the procedural path
+  // -- the one that resolves a property name to a receiver-relative reference
+  // -- into the constructor body's expression arena that holds it. The class is
+  // the containing symbol so any structural name in the initializer routes from
+  // the class's position.
+  ProcessLowerer init_lowerer(*this, cls);
+  const WalkFrame init_frame = WalkFrame{}.WithProceduralBody(
+      &constructor.body, &constructor.body.exprs);
+  std::size_t field_index = 0;
+  for (const auto& prop :
+       cls.membersOfType<slang::ast::ClassPropertySymbol>()) {
+    if (const auto* init = prop.getInitializer(); init != nullptr) {
+      auto init_expr = init_lowerer.LowerExpr(*init, init_frame);
+      if (!init_expr) return std::unexpected(std::move(init_expr.error()));
+      decl.fields[field_index].initializer =
+          constructor.body.exprs.Add(*std::move(init_expr));
+    }
+    ++field_index;
+  }
+  decl.constructor = std::move(constructor);
+
   unit_.classes.Define(id, std::move(decl));
   return id;
 }
