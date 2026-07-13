@@ -62,9 +62,8 @@ class CodeGenModule {
 
   // The definition-reference projection of an external-unit object type: the
   // address of that unit's runtime definition, as an external symbol the host
-  // resolves. The sibling of `MethodFunction` -- both project a LIR identity to
-  // its artifact. A construct that builds a child of the unit passes this
-  // opaque reference to the runtime; the generated code never inspects it.
+  // resolves. A construct that builds a child of the unit passes this opaque
+  // reference to the runtime; the generated code never inspects it.
   auto UnitDefinitionRef(lir::TypeId object_type) -> llvm::Constant*;
 
  private:

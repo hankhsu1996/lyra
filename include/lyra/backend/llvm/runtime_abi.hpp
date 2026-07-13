@@ -1,11 +1,42 @@
 #pragma once
 
+#include <cstdint>
+#include <string>
+#include <string_view>
+
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Module.h>
+
+#include "lyra/lir/operator.hpp"
+#include "lyra/lir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
+
+namespace lyra::lir {
+struct CompilationUnit;
+}  // namespace lyra::lir
 
 namespace lyra::backend::llvm_backend {
 
 class CodeGenTypes;
+
+// The runtime value type a library entry operates on, and that a storage cell
+// is realized as. Chosen from the LIR type at the site that needs it, never
+// carried as a tag the runtime inspects: the generated module names the entry
+// it means.
+//
+// This enumerates runtime realizations, not source types. Several source types
+// share one domain -- an enumeration and an integral both become a packed value
+// -- and a source type with no runtime realization has no domain at all. It
+// grows only when the runtime library gains a value type, never to mirror the
+// source language's type kinds.
+enum class ValueDomain : std::uint8_t { kPacked, kString };
+
+auto ValueDomainName(ValueDomain domain) -> std::string_view;
+
+// The domain a LIR type is realized in. The one place a LIR type is classified,
+// so the entry a call names and the storage a cell owns cannot disagree.
+auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
+    -> ValueDomain;
 
 // The runtime ABI the generated module calls: each runtime entry point declared
 // once with its canonical signature. The ABI is execution-strategy-neutral --
@@ -51,15 +82,54 @@ class RuntimeAbi {
   // the child as a borrowed scope handle.
   auto AddOwnedChild() -> llvm::FunctionCallee;
 
-  // Reads / writes a member slot of an instance by slot index. A member is a
-  // logical place; the runtime owns the slot storage.
-  auto LoadField() -> llvm::FunctionCallee;
-  auto StoreField() -> llvm::FunctionCallee;
+  // The address of an instance's member storage, by class-local member index.
+  // A member is a logical place; the runtime owns the storage it resolves to.
+  auto MemberAddress() -> llvm::FunctionCallee;
+
+  // Operations on an observable storage cell, reached through its address.
+  // `Initialize` installs the cell's declared representation once; `Set`
+  // threads services so a change wakes the cell's subscribers.
+  auto CellGet(ValueDomain domain) -> llvm::FunctionCallee;
+  auto CellInitialize(ValueDomain domain) -> llvm::FunctionCallee;
+  auto CellSet(ValueDomain domain) -> llvm::FunctionCallee;
+
+  // Publishes a member cell under its source-level name so the scope can be
+  // navigated by name.
+  auto RegisterSignal() -> llvm::FunctionCallee;
+
+  // The library realization of an operator over a value domain. The entry's
+  // name is the domain and the operator's own spelling, so a new operator or a
+  // new domain cannot silently resolve to the wrong entry.
+  auto Binary(ValueDomain domain, lir::BinaryOp op) -> llvm::FunctionCallee;
+  auto Unary(ValueDomain domain, lir::UnaryOp op) -> llvm::FunctionCallee;
+
+  // The library realization of a value builtin -- an operation the source
+  // language spells as a call rather than an operator (a shift, a reduction, a
+  // conversion). Named the same way an operator is, from the domain and the
+  // builtin's own spelling. Its signature is the call site's own: the value
+  // model gives each runtime value one representation, so the operand and
+  // result types at the call are the entry's parameter and result types.
+  auto ValueBuiltin(
+      ValueDomain domain, lyra::support::BuiltinFn fn, llvm::Type* result,
+      llvm::ArrayRef<llvm::Type*> params) -> llvm::FunctionCallee;
+
+  // Reduces a value to the machine boolean a conditional branch tests.
+  auto ToBool(ValueDomain domain) -> llvm::FunctionCallee;
+
+  // Builds the format specification of one conversion, and the print item that
+  // pairs a value with it. A specification is written either as a bare
+  // conversion kind, leaving every field at its default, or with every field
+  // spelled out; `field_count` selects which, as an overload set would.
+  auto MakeFormatSpec(std::size_t field_count) -> llvm::FunctionCallee;
+  auto MakePrintValueItem(ValueDomain domain) -> llvm::FunctionCallee;
 
  private:
   auto Get(
       const char* name, llvm::Type* result, llvm::ArrayRef<llvm::Type*> params)
       -> llvm::FunctionCallee;
+  auto Get(
+      const std::string& name, llvm::Type* result,
+      llvm::ArrayRef<llvm::Type*> params) -> llvm::FunctionCallee;
 
   llvm::Module* module_;
   llvm::LLVMContext* ctx_;

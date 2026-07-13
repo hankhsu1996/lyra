@@ -33,9 +33,9 @@ struct Member {
   TypeId type;
 };
 
-// One compiled class: its name, the base it extends, its member slots, its
-// construction logic, and its callable bodies. Mirrors `mir::Class` with every
-// body lowered to a CFG.
+// One compiled class: its name, the base it extends, the members it declares,
+// its construction logic, and its callable bodies. Mirrors `mir::Class` with
+// every body lowered to a CFG.
 struct Class {
   std::string name;
   std::optional<Base> base;
