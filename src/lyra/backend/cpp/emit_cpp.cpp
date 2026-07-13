@@ -125,11 +125,14 @@ auto RenderConstructor(
   };
 
   std::vector<std::string> sig_args;
+  std::vector<std::string> forward_names;
   sig_args.reserve(ctor_code.params.size());
+  forward_names.reserve(ctor_code.params.size());
   // Skip params[0] (self, MIR contract); the C++ ctor's receiver is `this`.
   for (std::size_t i = 1; i < ctor_code.params.size(); ++i) {
     const auto& p = ctor_code.locals.Get(ctor_code.params[i]);
     sig_args.push_back(render_typed_name(p.type, p.name));
+    forward_names.emplace_back(p.name);
   }
 
   std::vector<std::string> init_parts;
@@ -163,15 +166,30 @@ auto RenderConstructor(
                 JoinCommaSeparated(init_parts));
 
   // The C++ ctor is an allocation shell that forwards to the base and the
-  // field members, then hands off to a static `init(self)` -- the same
+  // field members, then hands off to a static `init(self, ...)` -- the same
   // static-over-self shape every method render uses, so a body-local self
-  // reference resolves as `self` here just like in any other body.
+  // reference resolves as `self` here just like in any other body. The
+  // constructor formals ride alongside `self` so the body reaches them the same
+  // way it reaches any parameter.
+  std::vector<std::string> init_params;
+  init_params.reserve(sig_args.size() + 1);
+  init_params.push_back(std::format("{}* self", cpp_name));
+  for (const std::string& arg : sig_args) {
+    init_params.push_back(arg);
+  }
+  std::vector<std::string> init_call_args;
+  init_call_args.reserve(forward_names.size() + 1);
+  init_call_args.emplace_back("this");
+  for (const std::string& name : forward_names) {
+    init_call_args.push_back(name);
+  }
   return std::format(
-      "{0}{1} {{ init(this); }}\n"
-      "{0}static auto init({2}* self) -> void {{\n"
-      "{3}"
+      "{0}{1} {{ init({2}); }}\n"
+      "{0}static auto init({3}) -> void {{\n"
+      "{4}"
       "{0}}}\n",
-      Indent(indent), sig, cpp_name,
+      Indent(indent), sig, JoinCommaSeparated(init_call_args),
+      JoinCommaSeparated(init_params),
       RenderBlockStatements(scope_view, indent + 1));
 }
 

@@ -1,5 +1,6 @@
 #include <concepts>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -129,13 +130,24 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirAssociativeAssignmentPatternExpr(
                 lowerer, frame, a, result_type);
           },
-          [&](const hir::ClassNewExpr&) -> diag::Result<mir::Expr> {
+          [&](const hir::ClassNewExpr& n) -> diag::Result<mir::Expr> {
             // `new` allocates a managed object and runs its constructor: a
             // construction whose result type (a managed reference) names what
-            // to build, with no constructor arguments.
+            // to build; the actuals flow to the constructor's formals.
+            std::vector<mir::ExprId> args;
+            args.reserve(n.arguments.size());
+            for (const hir::ExprId arg_hid : n.arguments) {
+              auto arg_or =
+                  lowerer.LowerExpr(lowerer.HirExprs().Get(arg_hid), frame);
+              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+              args.push_back(
+                  frame.current_block->exprs.Add(*std::move(arg_or)));
+            }
             return mir::Expr{
                 .data =
-                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
+                    mir::CallExpr{
+                        .callee = mir::Construct{},
+                        .arguments = std::move(args)},
                 .type = result_type};
           },
       },

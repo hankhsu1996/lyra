@@ -389,6 +389,26 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       .visibility = Visibility()};
 }
 
+auto ProcessLowerer::LowerConstructorBodyInto(
+    const hir::SubroutineDecl& ctor, const WalkFrame& frame,
+    std::vector<mir::LocalId>& params) -> diag::Result<void> {
+  for (const auto& param : ctor.params) {
+    if (param.direction != hir::ParamDirection::kInput) {
+      throw InternalError(
+          "ProcessLowerer::LowerConstructorBodyInto: a non-input constructor "
+          "formal reached MIR lowering; AST-to-HIR rejects these");
+    }
+    const auto& hir_var = ctor.body.procedural_vars.Get(param.var);
+    const mir::TypeId value_type = module_->TranslateType(hir_var.type);
+    const mir::LocalId mir_var = frame.bindings->Declare(
+        BindingOriginId::Procedural(param.var),
+        mir::LocalDecl{.name = hir_var.name, .type = value_type});
+    MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
+    params.push_back(mir_var);
+  }
+  return LowerStraightLineBodyInto(*this, frame);
+}
+
 auto ProcessLowerer::BuildReturnPayload(
     mir::Block& block, std::optional<mir::ExprId> explicit_value)
     -> std::optional<mir::ExprId> {
