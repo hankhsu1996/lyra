@@ -1,6 +1,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 
 #include <cstddef>
+#include <exception>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -104,17 +105,19 @@ auto RuntimeProcess::ResumeWith(
     const ExecutionContextGuard guard(context, *this);
     handle->self.resume();
   }
-  // A task's exception propagates up the enable chain to the top-level promise,
-  // so it is read there regardless of which frame threw.
-  if (auto exc = std::exchange(
-          coroutine_.Handle().promise().pending_exception, nullptr)) {
-    std::rethrow_exception(exc);
-  }
   if (!coroutine_.Done()) {
     execution_state_ = ProcessExecutionState::kWaiting;
     return false;
   }
+  // A task's exception has propagated up the enable chain into this top-level
+  // frame regardless of which frame threw. Take the fault out before releasing
+  // the frame so a faulted process reaches its terminal state and frees its
+  // frame on the same path a successful one does, then re-raise it.
+  std::exception_ptr fault = coroutine_.Handle().promise().TakeFault();
   SettleTerminated();
+  if (fault) {
+    std::rethrow_exception(fault);
+  }
   return true;
 }
 

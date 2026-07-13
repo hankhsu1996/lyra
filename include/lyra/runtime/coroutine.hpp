@@ -3,9 +3,8 @@
 #include <coroutine>
 #include <exception>
 #include <functional>
-#include <optional>
-#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -25,7 +24,6 @@ class WakeRegistration;
 // (recovering a promise from a frame address is not a portable ABI, so the
 // handle is stored at construction, not derived).
 struct PromiseBase {
-  std::exception_ptr pending_exception;
   RuntimeProcess* process = nullptr;
   std::coroutine_handle<> continuation;
   std::vector<Observable*> pending_value_change_subscriptions;
@@ -83,10 +81,6 @@ struct PromiseBase {
     return FinalAwaiter{.promise = this};
   }
 
-  void unhandled_exception() noexcept {
-    pending_exception = std::current_exception();
-  }
-
   [[nodiscard]] auto Process() const -> RuntimeProcess& {
     if (process == nullptr) {
       throw InternalError(
@@ -101,23 +95,66 @@ struct PromiseBase {
 // a frame goes through `token->self`.
 using CoroutineHandle = PromiseBase*;
 
-// The completion-value storage split, kept off `PromiseBase` so the scheduler
-// never sees `T`: a value-completing frame keeps the produced value until the
-// awaiter moves it out; a void-completing frame keeps nothing. `std::optional`
-// because `T` need not be default-constructible and "not yet produced" (e.g. an
-// exceptional exit) is a real state.
+// The single typed terminal outcome an activation settles: a produced value or
+// an exception (a cancellation will join as a third alternative). Kept off
+// `PromiseBase` so the scheduler never sees `T` or the outcome. The slot stores
+// the outcome and hands it to the activation's one consumer; whether a fault is
+// re-raised in place or extracted first and re-raised after the frame is torn
+// down is the consumer's decision, not the slot's. The alternatives are
+// mutually exclusive -- a frame runs `return_value` / `return_void` xor
+// `unhandled_exception` -- and the initial monostate is the not-yet-settled
+// state, never read because a consumer only takes the outcome after the frame
+// is done.
 template <class T>
-struct CoroutineResult {
-  std::optional<T> result;
+class CompletionSlot {
+ public:
   void return_value(T value) {
-    result = std::move(value);
+    outcome_.template emplace<Value>(std::move(value));
   }
+  void unhandled_exception() noexcept {
+    outcome_.template emplace<std::exception_ptr>(std::current_exception());
+  }
+  auto Take() -> T {
+    if (auto* exc = std::get_if<std::exception_ptr>(&outcome_)) {
+      std::rethrow_exception(*exc);
+    }
+    return std::move(std::get<Value>(outcome_).held);
+  }
+
+ private:
+  struct Value {
+    T held;
+  };
+  std::variant<std::monostate, Value, std::exception_ptr> outcome_;
 };
 
 template <>
-struct CoroutineResult<void> {
+class CompletionSlot<void> {
+ public:
   void return_void() {
+    outcome_.emplace<Succeeded>();
   }
+  void unhandled_exception() noexcept {
+    outcome_.emplace<std::exception_ptr>(std::current_exception());
+  }
+  // Hands the fault out without raising it (null when the activation
+  // succeeded), so a consumer that must run its own teardown before the fault
+  // propagates can settle first and re-raise the returned outcome afterward.
+  auto TakeFault() -> std::exception_ptr {
+    if (auto* exc = std::get_if<std::exception_ptr>(&outcome_)) {
+      return std::move(*exc);
+    }
+    return nullptr;
+  }
+  void Take() {
+    if (auto fault = TakeFault()) {
+      std::rethrow_exception(fault);
+    }
+  }
+
+ private:
+  struct Succeeded {};
+  std::variant<std::monostate, Succeeded, std::exception_ptr> outcome_;
 };
 
 // A suspendable activation that completes with a value of `T` -- a task body,
@@ -133,7 +170,7 @@ struct CoroutineResult<void> {
 template <class T>
 class Coroutine {
  public:
-  struct promise_type : PromiseBase, CoroutineResult<T> {
+  struct promise_type : PromiseBase, CompletionSlot<T> {
     auto get_return_object() -> Coroutine {
       auto handle = std::coroutine_handle<promise_type>::from_promise(*this);
       self = handle;
@@ -176,13 +213,7 @@ class Coroutine {
     return handle_;
   }
   auto await_resume() -> T {
-    if (auto exc =
-            std::exchange(handle_.promise().pending_exception, nullptr)) {
-      std::rethrow_exception(exc);
-    }
-    if constexpr (!std::is_void_v<T>) {
-      return std::move(*handle_.promise().result);
-    }
+    return handle_.promise().Take();
   }
 
   [[nodiscard]] auto Handle() const -> std::coroutine_handle<promise_type> {
