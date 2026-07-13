@@ -10,6 +10,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
+#include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -29,9 +30,15 @@ struct BlockId {
   auto operator<=>(const BlockId&) const -> std::strong_ordering = default;
 };
 
-// Whether a value is a callable parameter or a temporary the lowering minted
-// for an instruction result.
-enum class LocalKind : std::uint8_t { kParam, kTemp };
+// How a value is realized. A parameter arrives in the callable's signature; a
+// temporary is a transient computed once and consumed. A place local is named
+// storage on the frame. Which one a local is follows a canonical lowering rule,
+// not the source notion of a variable: a local is a place exactly when the
+// lowering needs an address for it -- its address is taken, it is assigned
+// after its initialization, or it holds a control-flow join. LIR is not SSA, so
+// a value produced on several paths is a place each path writes, not a merge of
+// transients.
+enum class LocalKind : std::uint8_t { kParam, kTemp, kPlace };
 
 struct Local {
   std::string name;
@@ -73,8 +80,14 @@ struct FuncRef {
 // materialized at the use site.
 using Operand = std::variant<Use, IntConst, StrConst, FuncRef>;
 
+// A runtime-library entry. A static factory is named by its type namespace as
+// well as its function -- `String::FromPackedArray` and `PackedArray::FromInt`
+// are different entries of one `fn` -- so the qualifying type rides the target.
+// It is absent for an entry that takes a receiver, whose type the receiver
+// already names.
 struct BuiltinTarget {
   support::BuiltinFn fn;
+  std::optional<TypeId> qualifier;
 };
 
 struct MethodTarget {
@@ -111,27 +124,37 @@ struct MemberId {
   auto operator<=>(const MemberId&) const -> std::strong_ordering = default;
 };
 
-// One step of a place's projection chain: it selects a member of the object the
-// projection has reached so far. The place vocabulary is member, index,
-// dereference, slice, and downcast; only member is realized so far, each
-// further step joining this variant as its feature lands.
+// Reaches the storage a reference-like value refers to. A projection chain may
+// only cross a pointer through this step: a member step never implicitly
+// dereferences, so `self.counter` -- whose receiver arrives as a pointer -- is
+// the chain `deref, member`, never `member` alone.
+struct DerefProjection {};
+
+// Selects a member of the object the projection has reached so far.
 struct MemberProjection {
   MemberId member;
 };
 
-using Projection = std::variant<MemberProjection>;
+// One step of a place's projection chain. The place vocabulary is dereference,
+// member, index, slice, and downcast: each names storage reached from the
+// storage the chain has arrived at, never a byte offset from it.
+using Projection = std::variant<DerefProjection, MemberProjection>;
 
-// Storage named by logical identity: a base value plus a projection chain of
-// member / index / dereference / ... steps. A place is what a load, store, or
-// address-of names; the physical address it resolves to is derived below LIR,
-// never encoded here. An empty chain names the base itself.
+// Storage named by logical identity: a base plus a projection chain. The base
+// is either a place local, whose storage the chain starts at, or a
+// reference-like value, which the chain must open with a dereference. A place
+// is what a load, store, or address-of names; the physical address it resolves
+// to is derived below LIR, never encoded here. An empty chain names the base
+// local itself.
 struct Place {
   Operand base;
   std::vector<Projection> chain;
 };
 
 // Reads the value held at `place`. The result's type is the place's type -- the
-// type the projection chain arrives at.
+// type the projection chain arrives at. A place whose storage is a runtime cell
+// object rather than a value is not readable this way; its contents are reached
+// through the library calls that operate on the cell's address.
 struct LoadInstr {
   Place place;
 };
@@ -143,8 +166,44 @@ struct StoreInstr {
   Operand value;
 };
 
-using InstrData =
-    std::variant<CallInstr, AggregateInstr, LoadInstr, StoreInstr>;
+// Names the address of `place`. The result is a borrowed pointer to the place's
+// type. This is how storage itself -- a cell, an aggregate, a member the callee
+// mutates -- is handed to a callee, as opposed to a copy of its contents.
+struct AddrOfInstr {
+  Place place;
+};
+
+// Applies an operator to values. The operator's semantics come from the operand
+// type: the same `kAdd` is a machine add over a machine integer and an
+// X-propagating library add over a four-state packed value.
+struct BinaryInstr {
+  BinaryOp op;
+  Operand lhs;
+  Operand rhs;
+};
+
+struct UnaryInstr {
+  UnaryOp op;
+  Operand operand;
+};
+
+// Reduces a value to a machine boolean, the type a conditional branch tests.
+// This is the explicit form of the contextual conversion a C++ target performs
+// implicitly in a boolean context.
+struct BoolCastInstr {
+  Operand operand;
+};
+
+// Reinterprets a reference-like value as a reference to the result type. It
+// moves no bits; it names the destination type that an implicit conversion
+// would otherwise leave for a consumer to infer.
+struct PointerCastInstr {
+  Operand operand;
+};
+
+using InstrData = std::variant<
+    CallInstr, AggregateInstr, LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr,
+    UnaryInstr, BoolCastInstr, PointerCastInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.
@@ -160,7 +219,26 @@ struct ReturnTerm {
   bool is_coroutine = false;
 };
 
-using TerminatorData = std::variant<ReturnTerm>;
+// Transfers to `target` unconditionally.
+struct BranchTerm {
+  BlockId target;
+};
+
+// Tests a machine boolean and transfers to one of two successors.
+struct CondBranchTerm {
+  Operand condition;
+  BlockId if_true;
+  BlockId if_false;
+};
+
+// Ends a block control never reaches -- the join of a conditional whose arms
+// all returned, or the tail of a value-returning body that always returns
+// earlier. Reaching it is undefined, which is what lets a target drop the
+// block.
+struct UnreachableTerm {};
+
+using TerminatorData =
+    std::variant<ReturnTerm, BranchTerm, CondBranchTerm, UnreachableTerm>;
 
 struct Terminator {
   TerminatorData data;
@@ -172,9 +250,10 @@ struct BasicBlock {
 };
 
 // A callable lowered to a CFG. `values` holds every value of the body --
-// parameters first, then instruction temporaries; `params` names the parameter
-// subset in signature order, with the receiver `self` at `params[0]`. The entry
-// block is `blocks[0]`.
+// parameters first, then the temporaries and place locals the lowering minted;
+// `params` names the parameter subset in signature order, with the receiver
+// `self` at `params[0]`. The entry block is `blocks[0]`, and a `BlockId`
+// indexes `blocks`.
 struct Function {
   std::string name;
   base::Arena<Local, ValueId> values;
@@ -182,5 +261,10 @@ struct Function {
   TypeId result_type;
   std::vector<BasicBlock> blocks;
 };
+
+// The type of a value operand: the type of the value a use names, or of a
+// constant. A code reference names a callable, not a value, so it has none.
+auto OperandType(const Function& fn, const Operand& operand)
+    -> std::optional<TypeId>;
 
 }  // namespace lyra::lir

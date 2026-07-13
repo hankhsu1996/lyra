@@ -10,6 +10,7 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/lir/type_query.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -40,6 +41,16 @@ class UnitLowerer {
   // type error read at `Run`; it never silently mistranslates.
   auto TranslateType(mir::TypeId id) -> lir::TypeId;
 
+  [[nodiscard]] auto Types() const -> const lir::TypeArena& {
+    return out_.types;
+  }
+
+  // LIR types the lowering needs that no MIR type maps to: the reference an
+  // address-of yields, and the machine boolean a conditional branch tests. Each
+  // is minted once and reused.
+  auto BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId;
+  auto MachineBoolType() -> lir::TypeId;
+
  private:
   auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
   // Records `what` (a human phrase like "a closure") as the unit's first
@@ -53,6 +64,8 @@ class UnitLowerer {
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;
   std::unordered_map<std::uint32_t, lir::TypeId> type_memo_;
+  std::unordered_map<std::uint32_t, lir::TypeId> pointer_memo_;
+  std::optional<lir::TypeId> machine_bool_type_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as
   // the unit's failure at `Run`, so translation stays non-throwing and
   // total-shaped while an unmirrored type is still a clean diagnostic, not a

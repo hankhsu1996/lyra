@@ -45,7 +45,110 @@ auto lyra_rt_make_unit(
 // runtime tree; returns the child as a borrowed scope handle.
 auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
 
-// Reads / writes a generic instance's member slot by index.
-auto lyra_rt_load_field(void* self, std::uint32_t index) -> void*;
-void lyra_rt_store_field(void* self, std::uint32_t index, void* value);
+// The address of a generic instance's member storage, by class-local index.
+auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void*;
+
+// Publishes a member cell under its source-level name for by-name navigation.
+void lyra_rt_register_signal(void* self, const void* name, void* cell);
+
+// Observable storage cell operations, reached through the cell's address. The
+// entry names the cell's value domain; the runtime never inspects a type tag.
+auto lyra_rt_cell_packed_get(void* cell) -> const void*;
+void lyra_rt_cell_packed_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_packed_set(void* cell, void* services, const void* value);
+auto lyra_rt_cell_string_get(void* cell) -> const void*;
+void lyra_rt_cell_string_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_string_set(void* cell, void* services, const void* value);
+
+// One entry per operator per value domain: the generated module names the entry
+// it means, so no operator code crosses the boundary. Each is the library peer
+// of the C++ operator a native target would emit. The result is a transient
+// value owned by the current call scope.
+auto lyra_rt_packed_add(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_sub(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_mul(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_div(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_mod(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_and(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_or(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_xor(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_lt(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_le(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_gt(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_ge(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_logical_and(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_logical_or(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_neg(const void* operand) -> void*;
+auto lyra_rt_packed_not(const void* operand) -> void*;
+auto lyra_rt_packed_logical_not(const void* operand) -> void*;
+auto lyra_rt_packed_inc(const void* operand) -> void*;
+auto lyra_rt_packed_dec(const void* operand) -> void*;
+auto lyra_rt_packed_to_bool(const void* operand) -> bool;
+
+// Value builtins: the operations the source language spells as a call rather
+// than an operator. Named `lyra_rt_<domain>_<builtin>`, the same way an
+// operator entry is, so the generated module derives the symbol it means.
+auto lyra_rt_packed_convert_from(const void* src, const void* prototype)
+    -> void*;
+auto lyra_rt_packed_from_bool(bool value) -> void*;
+auto lyra_rt_packed_to_int64(const void* value) -> std::int64_t;
+auto lyra_rt_packed_is_unknown(const void* value) -> void*;
+auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void*;
+auto lyra_rt_packed_shift_left(const void* value, const void* amount) -> void*;
+auto lyra_rt_packed_logical_shift_right(const void* value, const void* amount)
+    -> void*;
+auto lyra_rt_packed_arithmetic_shift_right(
+    const void* value, const void* amount) -> void*;
+auto lyra_rt_packed_bitwise_xnor(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_logical_implication(const void* lhs, const void* rhs)
+    -> void*;
+auto lyra_rt_packed_logical_equivalence(const void* lhs, const void* rhs)
+    -> void*;
+auto lyra_rt_packed_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_wildcard_equals(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_casez_equals(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_casex_equals(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_reduction_and(const void* value) -> void*;
+auto lyra_rt_packed_reduction_or(const void* value) -> void*;
+auto lyra_rt_packed_reduction_xor(const void* value) -> void*;
+auto lyra_rt_packed_reduction_nand(const void* value) -> void*;
+auto lyra_rt_packed_reduction_nor(const void* value) -> void*;
+auto lyra_rt_packed_reduction_xnor(const void* value) -> void*;
+
+auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
+auto lyra_rt_string_len(const void* value) -> void*;
+auto lyra_rt_string_getc(const void* value, const void* index) -> void*;
+auto lyra_rt_string_toupper(const void* value) -> void*;
+auto lyra_rt_string_tolower(const void* value) -> void*;
+auto lyra_rt_string_compare(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_icompare(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_substr(
+    const void* value, const void* first, const void* last) -> void*;
+auto lyra_rt_string_atoi(const void* value) -> void*;
+auto lyra_rt_string_atohex(const void* value) -> void*;
+auto lyra_rt_string_atooct(const void* value) -> void*;
+auto lyra_rt_string_atobin(const void* value) -> void*;
+
+auto lyra_rt_string_add(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_lt(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_le(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_gt(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_ge(const void* lhs, const void* rhs) -> void*;
+
+// Builds one conversion's format specification, and the print item that pairs a
+// value with it. Each field arrives as a packed value, as the value model
+// routes every compile-time scalar.
+auto lyra_rt_make_format_spec_of_kind(const void* kind) -> void*;
+auto lyra_rt_make_format_spec(
+    const void* kind, const void* width, const void* precision,
+    const void* zero_pad, const void* left_align, const void* timeunit_power)
+    -> void*;
+auto lyra_rt_make_print_value_item_packed(const void* value, const void* spec)
+    -> void*;
+auto lyra_rt_make_print_value_item_string(const void* value, const void* spec)
+    -> void*;
 }

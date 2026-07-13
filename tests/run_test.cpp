@@ -47,6 +47,37 @@ auto WriteHierarchicalSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// Straight-line procedural code over the integral and string value domains:
+// module and process variables, arithmetic, comparison, a conditional
+// expression, a loop with early exits, a subroutine that writes its own
+// parameter, and a `$display` that formats values rather than a bare literal.
+auto WriteProceduralSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  int total = 0;\n"
+      << "  string name = \"lyra\";\n"
+      << "  bit [3:0] narrow;\n"
+      << "  function automatic int scale(int n);\n"
+      << "    n = n * 10;\n"
+      << "    return n;\n"
+      << "  endfunction\n"
+      << "  initial begin\n"
+      << "    for (int k = 0; k < 5; k++) begin\n"
+      << "      if (k == 2) continue;\n"
+      << "      if (k == 4) break;\n"
+      << "      total = total + k;\n"
+      << "    end\n"
+      << "    narrow = 8'hFF;\n"
+      << "    $display(\"total=%0d\", total);\n"
+      << "    $display(\"pick=%0d\", total > 3 ? 111 : 222);\n"
+      << "    $display(\"scaled=%0d\", scale(4));\n"
+      << "    $display(\"narrow=%0d\", narrow);\n"
+      << "    $display(\"name=%s eq=%0d\", name, name == \"lyra\");\n"
+      << "    if (total > 0 && total < 100) $display(\"in range\");\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -89,6 +120,41 @@ TEST(LyraRun, JitElaboratesHierarchyThroughDesignRoot) {
       << "stdout: " << run.stdout_text;
   EXPECT_NE(run.stdout_text.find("leaf ran"), std::string::npos)
       << "stdout: " << run.stdout_text;
+}
+
+// The execution backend runs procedural code: a variable is a runtime-owned
+// storage cell reached through a member place, an expression is a library call
+// over the value's domain, and structured control flow is a CFG. The two
+// backends must agree, so the same source is run through both and the outputs
+// compared rather than matched against a transcript written here.
+TEST(LyraRun, JitAndCppAgreeOnProceduralCode) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteProceduralSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_NE(jit.stdout_text.find("name=lyra eq=1"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
+  EXPECT_NE(jit.stdout_text.find("scaled=40"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
 }
 
 TEST(LyraCompile, ProducesPortableBuildableProject) {

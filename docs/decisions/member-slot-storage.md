@@ -1,4 +1,4 @@
-# Member storage as runtime-owned typed slots
+# Member storage as runtime-owned typed storage
 
 Date: 2026-07-09 Status: accepted
 
@@ -22,36 +22,36 @@ Member storage is where an instance's own _places_ live. The two are independent
 
 ## Decision
 
-A member is a logical place. A place is a base value plus a projection chain of member / index /
-dereference / ... steps, named by logical identity, and a load or store names a place. A member step
-carries a class-local member identity, never a physical offset. A unit definition declares a member
-schema; a generic instance owns one runtime-managed slot per member, which is how the execution
-backend realizes a member place. This is the member-storage counterpart of the opaque-handle value
-realization: the runtime owns the storage, the generated code addresses it through the ABI, and no
-physical layout is derived.
+A member is a logical place. A place is a base plus a projection chain of dereference / member /
+index / ... steps, named by logical identity; a load, a store, and an address-of each name a place.
+A member step carries a class-local member identity, never a physical offset. A unit definition
+declares a member storage schema; a generic instance owns one storage object per member, and a
+member place resolves to that object's address. This is the member-storage counterpart of the
+opaque-handle value realization: the runtime owns the storage, the generated code addresses it
+through the ABI, and no physical layout is derived.
 
 - **A member is a logical place, realized per backend.** The C++ backend realizes it as a native
-  field; the execution backend realizes it as a runtime-owned slot. Both are the same logical member
-  place -- a base and a member projection reached by load / store; only the realization differs.
-  This matches the LIR contract that a place names storage by logical identity and its physical
-  layout is derived below LIR.
+  field; the execution backend realizes it as a runtime-owned storage object. Both are the same
+  logical member place -- a base and a member projection -- and only the realization differs. This
+  matches the LIR contract that a place names storage by logical identity and its physical layout is
+  derived below LIR.
 
-- **The definition carries the member schema; the instance carries the storage.** The
-  per-specialization definition declares how many slots an instance has (a definition-level fact); a
-  generic instance allocates that many runtime-owned slots (an instance-level fact). A backend that
-  lays members out natively leaves the slot count zero and never allocates runtime slots.
+- **The definition describes the storage schema; the instance owns the storage.** The
+  per-specialization definition carries, per member, what storage that member needs: a box holding a
+  borrowed handle, or an observable cell of a given value domain. A generic instance realizes one
+  storage object per descriptor. A backend that lays members out natively leaves the schema empty
+  and owns nothing.
+
+- **What a member place means follows its storage kind.** A member whose storage holds a value is
+  read and written through the place. A member whose storage _is_ a cell has no value to read out of
+  it: the place is only ever addressed, and the library calls that operate on the cell take that
+  address. LIR states which of the two a member is, through its type, and rejects a load or a store
+  of the latter.
 
 - **Physical in-frame layout is a later optimization.** Deriving native field offsets -- so member
   bytes live in the instance's own storage and value members fold into machine operations -- is the
-  `CodegenLayout` maturity path, not a correctness prerequisite. The runtime-owned slot model is the
-  baseline, exactly as opaque handles are the baseline for values.
-
-### The first realized subset is the typed route slot
-
-The only member the baseline realizes is the borrowed-scope-pointer companion -- the typed head of a
-cross-unit route. A value member (`int i`) needs a physical representation and is part of the later
-layout work; it is not a slot in this baseline. The subset is chosen by what construct-and-own needs
-and what is realizable without physical layout, not by a unit or member being special.
+  `CodegenLayout` maturity path, not a correctness prerequisite. The runtime-owned storage model is
+  the baseline, exactly as opaque handles are the baseline for values.
 
 ## Rejected alternatives
 
@@ -74,17 +74,20 @@ and what is realizable without physical layout, not by a unit or member being sp
 
 ## Consequences
 
-- The unit definition gains a member-slot count; a generic instance owns that many opaque slots that
-  a member place resolves to. The C++ backend's native fields are unaffected and it leaves the slot
-  count zero.
+- The unit definition gains a member storage schema; a generic instance owns one storage object per
+  descriptor, and a member place resolves to that object's address. The C++ backend's native fields
+  are unaffected and it leaves the schema empty.
 - LIR gains a class member schema and the place vocabulary -- a place is a base plus a projection
-  chain, named by load / store -- with a member step carrying a class-local member identity. A LIR
-  verifier checks that a place's base is projectable, its member steps exist, and its load / store
-  types line up. The execution backend realizes a member place as runtime slot access, the C++
-  backend from its own fields.
+  chain, named by load, store, and address-of -- with a member step carrying a class-local member
+  identity and a dereference step as the only way to cross a reference. A LIR verifier checks that a
+  place's projections type-check, that an address-of yields a reference to its place's type, and
+  that no cell is loaded or stored as if it held a value. The execution backend realizes a member
+  place as a runtime storage address, the C++ backend from its own fields.
 - The execution backend can run any construct that writes a member, so it elaborates hierarchical
-  designs and the `$root` unit through the same construct path the C++ backend uses.
-- Physical layout and native value members remain future work; reaching them does not change this
+  designs and the `$root` unit through the same construct path the C++ backend uses, and it runs
+  procedural code over member variables.
+- Physical layout remains future work: an observable cell is a runtime object addressed through the
+  ABI rather than bytes in the instance's own storage. Reaching native layout does not change this
   baseline.
 
 ## Cross-references

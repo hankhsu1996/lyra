@@ -81,6 +81,31 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
   return out;
 }
 
+auto UnitLowerer::BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId {
+  const auto it = pointer_memo_.find(pointee.value);
+  if (it != pointer_memo_.end()) {
+    return it->second;
+  }
+  const lir::TypeId id = out_.types.Add(
+      lir::Type{
+          .data = lir::PointerType{
+              .pointee = pointee,
+              .ownership = lir::PointerOwnership::kBorrowed,
+              .mutability = lir::Mutability::kMutable}});
+  pointer_memo_.emplace(pointee.value, id);
+  return id;
+}
+
+auto UnitLowerer::MachineBoolType() -> lir::TypeId {
+  if (!machine_bool_type_.has_value()) {
+    machine_bool_type_ = out_.types.Add(
+        lir::Type{
+            .data = lir::MachineIntType{
+                .bit_width = 1, .signedness = lir::Signedness::kUnsigned}});
+  }
+  return *machine_bool_type_;
+}
+
 auto UnitLowerer::LowerBase(const mir::ClassRef& base) -> lir::Base {
   return std::visit(
       Overloaded{[&](const mir::RuntimeLibraryClassRef& r) -> lir::Base {

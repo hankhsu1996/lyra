@@ -852,6 +852,20 @@ enough to warrant its own focused review.
       is consumed, and to settle each value type's predicate semantics against LRM Table 11-1 while
       doing so. **Blocker**: none.
 
+- [ ] R58 -- A design unit's definition reference has two realizations. Semantic modeling already
+      states it once: a unit's definition is a class-level constant, and the constructor hands the
+      base its address, so a unit installs its own definition. The C++ backend renders exactly that.
+      The execution backend does not read it: it drops the constructor's base initialization, and
+      the code generator instead re-derives a definition symbol from the child's type at every
+      construction site, so a child unit's definition is supplied by its caller rather than by the
+      unit itself. The two backends therefore disagree on who owns a definition reference, and the
+      same concept is realized once in semantic modeling and once, independently, in the code
+      generator. **Target shape**: one realization -- the unit installs its own definition, both
+      backends render that, and cross-unit construction names a unit rather than its definition.
+      **Blocker**: none identified, but it moves the definition out of the construction ABI, which
+      touches how a unit definition is published and filled; it warrants its own review rather than
+      riding along with a value-domain or storage cut.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,
