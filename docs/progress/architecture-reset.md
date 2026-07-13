@@ -25,11 +25,14 @@ infrastructure surface, built.
       `../architecture/backend_contract.md` and `../architecture/runtime_distribution.md`. Design
       elaboration runs on both backends as the synthesized design-root unit's construct
       (`../decisions/root-unit-elaboration.md`): the execution backend lowers cross-unit
-      construction and realizes members as runtime-owned slots
+      construction and realizes members as runtime-owned storage
       (`../decisions/member-slot-storage.md`), so it elaborates a hierarchy of modules through the
-      design-root, matching the C++ backend. Still open on the execution backend: selecting among
-      multiple specializations of one parameterized module at construction, and native layout for
-      value members (the baseline keeps opaque slots).
+      design-root, matching the C++ backend. It also runs procedural code over the integral and
+      string value domains -- variables, expressions, structured control flow, and value-carrying
+      formatted output -- with control flow lowered to a control-flow graph. Still open on the
+      execution backend: the remaining value domains (reals, enumerations, aggregates, containers),
+      time control and process suspension, subroutine reference arguments, closures, DPI-C imports,
+      and native layout for value members (the baseline keeps runtime-owned cells).
 - [ ] Per-unit artifact emission -- one artifact per unit specialization, assembled by linking,
       replacing the transitional single-`main.cpp` aggregation. Contract in
       `../architecture/emission_model.md` (inv 1).

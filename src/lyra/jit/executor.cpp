@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <llvm/ExecutionEngine/JITSymbol.h>
@@ -17,9 +18,13 @@
 #include <llvm/Support/TargetSelect.h>
 
 #include "lyra/backend/llvm/emit.hpp"
+#include "lyra/backend/llvm/runtime_abi.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/type.hpp"
+#include "lyra/lir/type_id.hpp"
+#include "lyra/lir/type_query.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
@@ -76,12 +81,137 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
   add("lyra_rt_make_unit", &lyra_rt_make_unit);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
-  add("lyra_rt_load_field", &lyra_rt_load_field);
-  add("lyra_rt_store_field", &lyra_rt_store_field);
+  add("lyra_rt_member_addr", &lyra_rt_member_addr);
+  add("lyra_rt_register_signal", &lyra_rt_register_signal);
+  add("lyra_rt_cell_packed_get", &lyra_rt_cell_packed_get);
+  add("lyra_rt_cell_packed_initialize", &lyra_rt_cell_packed_initialize);
+  add("lyra_rt_cell_packed_set", &lyra_rt_cell_packed_set);
+  add("lyra_rt_cell_string_get", &lyra_rt_cell_string_get);
+  add("lyra_rt_cell_string_initialize", &lyra_rt_cell_string_initialize);
+  add("lyra_rt_cell_string_set", &lyra_rt_cell_string_set);
+  add("lyra_rt_packed_add", &lyra_rt_packed_add);
+  add("lyra_rt_packed_sub", &lyra_rt_packed_sub);
+  add("lyra_rt_packed_mul", &lyra_rt_packed_mul);
+  add("lyra_rt_packed_div", &lyra_rt_packed_div);
+  add("lyra_rt_packed_mod", &lyra_rt_packed_mod);
+  add("lyra_rt_packed_and", &lyra_rt_packed_and);
+  add("lyra_rt_packed_or", &lyra_rt_packed_or);
+  add("lyra_rt_packed_xor", &lyra_rt_packed_xor);
+  add("lyra_rt_packed_eq", &lyra_rt_packed_eq);
+  add("lyra_rt_packed_ne", &lyra_rt_packed_ne);
+  add("lyra_rt_packed_lt", &lyra_rt_packed_lt);
+  add("lyra_rt_packed_le", &lyra_rt_packed_le);
+  add("lyra_rt_packed_gt", &lyra_rt_packed_gt);
+  add("lyra_rt_packed_ge", &lyra_rt_packed_ge);
+  add("lyra_rt_packed_logical_and", &lyra_rt_packed_logical_and);
+  add("lyra_rt_packed_logical_or", &lyra_rt_packed_logical_or);
+  add("lyra_rt_packed_neg", &lyra_rt_packed_neg);
+  add("lyra_rt_packed_not", &lyra_rt_packed_not);
+  add("lyra_rt_packed_logical_not", &lyra_rt_packed_logical_not);
+  add("lyra_rt_packed_inc", &lyra_rt_packed_inc);
+  add("lyra_rt_packed_dec", &lyra_rt_packed_dec);
+  add("lyra_rt_packed_to_bool", &lyra_rt_packed_to_bool);
+  add("lyra_rt_packed_convert_from", &lyra_rt_packed_convert_from);
+  add("lyra_rt_packed_from_bool", &lyra_rt_packed_from_bool);
+  add("lyra_rt_packed_to_int64", &lyra_rt_packed_to_int64);
+  add("lyra_rt_packed_is_unknown", &lyra_rt_packed_is_unknown);
+  add("lyra_rt_packed_pow", &lyra_rt_packed_pow);
+  add("lyra_rt_packed_shift_left", &lyra_rt_packed_shift_left);
+  add("lyra_rt_packed_logical_shift_right",
+      &lyra_rt_packed_logical_shift_right);
+  add("lyra_rt_packed_arithmetic_shift_right",
+      &lyra_rt_packed_arithmetic_shift_right);
+  add("lyra_rt_packed_bitwise_xnor", &lyra_rt_packed_bitwise_xnor);
+  add("lyra_rt_packed_logical_implication",
+      &lyra_rt_packed_logical_implication);
+  add("lyra_rt_packed_logical_equivalence",
+      &lyra_rt_packed_logical_equivalence);
+  add("lyra_rt_packed_case_equal", &lyra_rt_packed_case_equal);
+  add("lyra_rt_packed_wildcard_equals", &lyra_rt_packed_wildcard_equals);
+  add("lyra_rt_packed_casez_equals", &lyra_rt_packed_casez_equals);
+  add("lyra_rt_packed_casex_equals", &lyra_rt_packed_casex_equals);
+  add("lyra_rt_packed_reduction_and", &lyra_rt_packed_reduction_and);
+  add("lyra_rt_packed_reduction_or", &lyra_rt_packed_reduction_or);
+  add("lyra_rt_packed_reduction_xor", &lyra_rt_packed_reduction_xor);
+  add("lyra_rt_packed_reduction_nand", &lyra_rt_packed_reduction_nand);
+  add("lyra_rt_packed_reduction_nor", &lyra_rt_packed_reduction_nor);
+  add("lyra_rt_packed_reduction_xnor", &lyra_rt_packed_reduction_xnor);
+  add("lyra_rt_string_from_packed_array", &lyra_rt_string_from_packed_array);
+  add("lyra_rt_string_len", &lyra_rt_string_len);
+  add("lyra_rt_string_getc", &lyra_rt_string_getc);
+  add("lyra_rt_string_toupper", &lyra_rt_string_toupper);
+  add("lyra_rt_string_tolower", &lyra_rt_string_tolower);
+  add("lyra_rt_string_compare", &lyra_rt_string_compare);
+  add("lyra_rt_string_icompare", &lyra_rt_string_icompare);
+  add("lyra_rt_string_substr", &lyra_rt_string_substr);
+  add("lyra_rt_string_atoi", &lyra_rt_string_atoi);
+  add("lyra_rt_string_atohex", &lyra_rt_string_atohex);
+  add("lyra_rt_string_atooct", &lyra_rt_string_atooct);
+  add("lyra_rt_string_atobin", &lyra_rt_string_atobin);
+  add("lyra_rt_string_add", &lyra_rt_string_add);
+  add("lyra_rt_string_eq", &lyra_rt_string_eq);
+  add("lyra_rt_string_ne", &lyra_rt_string_ne);
+  add("lyra_rt_string_lt", &lyra_rt_string_lt);
+  add("lyra_rt_string_le", &lyra_rt_string_le);
+  add("lyra_rt_string_gt", &lyra_rt_string_gt);
+  add("lyra_rt_string_ge", &lyra_rt_string_ge);
+  add("lyra_rt_make_format_spec_of_kind", &lyra_rt_make_format_spec_of_kind);
+  add("lyra_rt_make_format_spec", &lyra_rt_make_format_spec);
+  add("lyra_rt_make_print_value_item_packed",
+      &lyra_rt_make_print_value_item_packed);
+  add("lyra_rt_make_print_value_item_string",
+      &lyra_rt_make_print_value_item_string);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
       "define runtime abi");
+}
+
+// The runtime's spelling of a domain the execution backend classified a type
+// into. The two enumerations are the two sides of one ABI -- the backend names
+// the library entry, the runtime realizes the storage -- and only the backend
+// classifies a LIR type, so the entry a call names and the storage a cell owns
+// cannot disagree.
+auto AbiDomain(backend::llvm_backend::ValueDomain domain)
+    -> runtime::ValueDomain {
+  switch (domain) {
+    case backend::llvm_backend::ValueDomain::kPacked:
+      return runtime::ValueDomain::kPacked;
+    case backend::llvm_backend::ValueDomain::kString:
+      return runtime::ValueDomain::kString;
+  }
+  throw InternalError("jit executor: unknown value domain");
+}
+
+// The storage a generic instance realizes for one declared member, projected
+// from the member's LIR type: an observable cell holds a value other processes
+// subscribe to, and a reference-typed member is a box holding a borrowed
+// handle.
+auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
+    -> runtime::MemberStorageDescriptor {
+  const auto& data = unit.types.Get(type).data;
+  if (const auto* observable = std::get_if<lir::ObservableType>(&data)) {
+    return runtime::MemberStorageDescriptor{
+        .kind = runtime::MemberStorageKind::kObservableCell,
+        .domain = AbiDomain(
+            backend::llvm_backend::ValueDomainOf(unit, observable->value))};
+  }
+  if (lir::Pointee(unit.types, type).has_value()) {
+    return runtime::MemberStorageDescriptor{
+        .kind = runtime::MemberStorageKind::kBorrowedHandle,
+        .domain = runtime::ValueDomain::kNone};
+  }
+  throw InternalError("jit executor: member type has no storage realization");
+}
+
+auto DescribeMembers(const lir::CompilationUnit& unit, const lir::Class& cls)
+    -> std::vector<runtime::MemberStorageDescriptor> {
+  std::vector<runtime::MemberStorageDescriptor> descriptors;
+  descriptors.reserve(cls.members.size());
+  for (const lir::Member& member : cls.members) {
+    descriptors.push_back(DescribeMember(unit, member.type));
+  }
+  return descriptors;
 }
 
 // Fills a unit's runtime definition from its JIT-compiled entries and its
@@ -121,16 +251,17 @@ void FillDefinition(
   if (auto entry = lookup("constructor")) {
     definition.construct = entry->toPtr<runtime::ScopeEntry>();
   }
-  definition.member_slot_count =
-      static_cast<std::uint32_t>(root_class.members.size());
 }
 
 // One design unit loaded into the JIT: its executable body, its source-level
-// metadata, and the runtime definition built from the two, which owns a stable
-// address the runtime and peer units reference.
+// metadata, the storage schema its instances realize, and the runtime
+// definition built from those, which owns a stable address the runtime and peer
+// units reference. The schema is held here because the definition names it as
+// plain data it does not own.
 struct LoadedUnit {
   const lir::CompilationUnit* unit;
   const compiler::ElaboratedUnitMetadata* metadata;
+  std::vector<runtime::MemberStorageDescriptor> members;
   std::unique_ptr<runtime::UnitDefinition> definition;
 };
 
@@ -153,20 +284,29 @@ auto Execute(
   // whole run; the runtime holds pointers into it. The root is loaded and
   // driven like any other unit, distinguished only as the bootstrap entry
   // below.
+  const auto load = [](const lir::CompilationUnit& unit,
+                       const compiler::ElaboratedUnitMetadata& unit_metadata) {
+    return LoadedUnit{
+        .unit = &unit,
+        .metadata = &unit_metadata,
+        .members = DescribeMembers(unit, unit.classes.Get(unit.root)),
+        .definition = std::make_unique<runtime::UnitDefinition>()};
+  };
+
   std::vector<LoadedUnit> loaded;
   loaded.reserve(units.size() + 1);
   for (std::size_t i = 0; i < units.size(); ++i) {
-    loaded.push_back(
-        LoadedUnit{
-            .unit = &units[i],
-            .metadata = &metadata[i],
-            .definition = std::make_unique<runtime::UnitDefinition>()});
+    loaded.push_back(load(units[i], metadata[i]));
   }
-  loaded.push_back(
-      LoadedUnit{
-          .unit = &root_unit,
-          .metadata = &root_metadata,
-          .definition = std::make_unique<runtime::UnitDefinition>()});
+  loaded.push_back(load(root_unit, root_metadata));
+
+  // The schema is named only once every unit is in place, so no descriptor
+  // vector is reallocated out from under a definition that points at it.
+  for (LoadedUnit& entry : loaded) {
+    entry.definition->members = runtime::MemberStorageSchema{
+        .data = entry.members.data(),
+        .size = static_cast<std::uint32_t>(entry.members.size())};
+  }
 
   for (const LoadedUnit& entry : loaded) {
     auto owned = backend::llvm_backend::EmitModule(*entry.unit).Release();

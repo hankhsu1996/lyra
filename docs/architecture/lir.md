@@ -83,11 +83,15 @@ identity is the suspect, not the analysis.
 1. LIR is a CFG-shaped IR. Every callable body is a graph of basic blocks with explicit successors.
    _Machine-execution consequence: control flow is the graph the codegen consumes; structured
    constructs do not survive at this layer._
-2. Each LIR value is either a place or a transient value, and which one is explicit. A value is a
-   place -- named storage -- exactly when it needs one: its address is taken, or it names storage
-   written through more than once. A value computed once and consumed is a transient value with a
-   pure dataflow origin. _Machine-execution consequence: the codegen knows for every value whether
-   it lives in memory or in a register-class temporary; no value's storage class must be inferred._
+2. Each LIR value is either a place or a transient value, and which one is explicit. Which one a
+   local is follows a canonical lowering rule, not the source language's notion of a variable: a
+   local is a place -- named storage -- exactly when the canonical lowering needs an address for it
+   (its address is taken, it is assigned after its initialization, or it holds a control-flow join).
+   A value computed once and consumed is a transient value with a pure dataflow origin. The rule
+   fixes the storage topology; it does not minimize it -- recovering a register where the address is
+   never truly needed is a separate derivation below LIR. _Machine-execution consequence: the
+   codegen knows for every value whether it lives in memory or in a register-class temporary; no
+   value's storage class must be inferred._
 3. LIR fixes logical storage topology, not physical layout. A place names storage by logical
    identity -- a base local and a projection chain of member, index, and dereference steps -- never
    as a byte offset, an address, or pointer arithmetic. The physical realization of that topology is
@@ -189,6 +193,19 @@ lowering introduces. A source-level variable with static lifetime is not a funct
 member of the enclosing class, reached through `self` as a place. The bulk of a program's state is
 member storage reached through receivers, not locals on a frame.
 
+LIR is not an SSA form. A local is either a transient -- computed once, consumed, with a pure
+dataflow origin -- or a place, which is storage on the frame. Which one a local is follows a
+canonical lowering rule, not the source language's notion of a variable: a local is a place exactly
+when the canonical lowering needs an address for it -- its address is taken, it is assigned after
+its initialization, or it holds a control-flow join. Everything else is a transient. So there is no
+phi and none is needed: a value produced on more than one path is a place each path writes, a
+conditional expression writes its result into a place from each arm, and a loop-carried variable is
+a place the body updates. A parameter arrives as a transient (the incoming argument) and becomes a
+place only when the body assigns it or takes its address, in which case the entry block copies the
+argument into that place. Recovering a register where the address is never truly needed is a
+target-side derivation, not a property LIR must establish: LIR states the storage topology, it does
+not minimize it.
+
 A closure lowers to a code reference plus an environment value; invocation is an indirect call
 passing the environment and the call arguments. `self` is the first argument, supplied like any
 other; LIR has no implicit receiver. A direct call to a statically known callable passes the
@@ -202,6 +219,15 @@ member by its logical identity, not by an offset. An observable signal arrives a
 runtime-library call -- the cell's get / set / mutate, because HIR-to-MIR expressed the access that
 way -- and lowers as a call, the same as any other. Whether a plain-value member's place becomes a
 load or a store, and at what address, is the physical layer's question, not LIR's.
+
+A member access always yields a place. What the use site does with that place -- read the value it
+holds, write a value into it, or name where it lives -- is the use site's decision, never a property
+of the access. Some storage has no first-class value in LIR at all: a storage cell, a scope, an
+object-tree node. Such a type is address-only, and every operation over it consumes its address, so
+loading or storing a place of that type is a lowering defect. Address-only is a fact about the
+storage object, not about how values are represented: a packed value reached through an opaque
+handle is an ordinary first-class value, and a place holding one is loaded and stored like any
+other. The cell that holds it is what may only be addressed.
 
 LIR carries the fact that a packed value is two-state or four-state; it does not carry how a
 four-state value is stored. The canonical encoding of a four-state value -- value bits plus a state

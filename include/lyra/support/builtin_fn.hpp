@@ -388,11 +388,14 @@ enum class BuiltinFn : std::uint16_t {
 // through a copy-out wrapper at statement position.
 [[nodiscard]] auto IsFileOutputArgBuiltinFn(BuiltinFn id) -> bool;
 
-// Short snake-case name for the id. Used for HIR / MIR dumps and any
-// diagnostic that names the runtime entry; aligns with the SV method
-// spelling where one exists (LRM 6.16 / 7.9 / 7.12 / 6.19.5) and a
-// descriptive name where there is no SV-side surface (`get` / `set` /
-// `mutate` / `services`).
+// The id's stable spelling. It aligns with the SV method spelling where one
+// exists (LRM 6.16 / 7.9 / 7.12 / 6.19.5) and is descriptive where there is no
+// SV-side surface (`get` / `set` / `mutate` / `services`).
+//
+// This is an interface contract, not a display string. It names the entry in a
+// dump and in a diagnostic, and it is the suffix of the runtime-library symbol
+// a generated module calls, so changing it renames a linked symbol. Change it
+// only to correct the entry's identity, never to improve how a dump reads.
 [[nodiscard]] auto BuiltinFnName(BuiltinFn id) -> std::string_view;
 
 }  // namespace lyra::support

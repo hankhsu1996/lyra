@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 
 namespace lyra::runtime {
 
@@ -72,18 +73,56 @@ struct ScopeProgram {
   }
 };
 
+// The runtime value type a storage cell carries. It enumerates the value types
+// the runtime library has, not the type kinds the source language has: several
+// source types share one domain, and a source type the runtime cannot realize
+// has no domain at all. It grows when the runtime gains a value type, never to
+// mirror the source language. `kNone` is the domain of storage that carries no
+// value of its own, such as a box holding a borrowed handle.
+enum class ValueDomain : std::uint8_t { kNone, kPacked, kString };
+
+// How a member's storage is realized. A borrowed handle is a box holding a
+// pointer the instance does not own, the storage behind a companion reference
+// to another scope. An observable cell is the subscribable variable a process
+// reads, writes, and waits on.
+enum class MemberStorageKind : std::uint8_t {
+  kBorrowedHandle,
+  kObservableCell
+};
+
+struct MemberStorageDescriptor {
+  MemberStorageKind kind = MemberStorageKind::kBorrowedHandle;
+  ValueDomain domain = ValueDomain::kNone;
+};
+
+// A unit's member storage schema, in class-local member order: what a generic
+// instance must realize for each member its class declares. Crosses the
+// generated-runtime boundary as plain data -- a pointer plus a length, not a
+// C++ container -- so a non-C++ backend supplies it without depending on a C++
+// type's layout. The pointed-at descriptors are owned by whoever built the
+// definition and outlive every instance of it.
+struct MemberStorageSchema {
+  const MemberStorageDescriptor* data = nullptr;
+  std::uint32_t size = 0;
+
+  [[nodiscard]] constexpr auto Descriptors() const
+      -> std::span<const MemberStorageDescriptor> {
+    return {data, size};
+  }
+};
+
 // The immutable per-specialization definition of a design unit: the root
 // scope's program (held by value, so a unit's whole generated behavior is one
-// constant), the structural-construction entry, and the count of member slots
-// an instance carries. Construction is bootstrap-called (a JIT design) or
-// realized by the backend's own constructor (the C++ backend), distinct from
-// the per-phase lifecycle dispatch. The slot count sizes the runtime-owned
-// storage of a generic instance; a backend that lays members out natively (the
-// C++ backend, whose subclass holds real fields) leaves it zero.
+// constant), the structural-construction entry, and the storage schema of its
+// members. Construction is bootstrap-called (a JIT design) or realized by the
+// backend's own constructor (the C++ backend), distinct from the per-phase
+// lifecycle dispatch. The schema tells a generic instance what storage to own
+// for each member; a backend that lays members out natively (the C++ backend,
+// whose subclass holds real fields) leaves it empty.
 struct UnitDefinition {
   ScopeProgram root;
   ScopeEntry construct = &ScopeNoOp;
-  std::uint32_t member_slot_count = 0;
+  MemberStorageSchema members;
 
   constexpr UnitDefinition() = default;
   constexpr UnitDefinition(ScopeProgram root, ScopeEntry construct)

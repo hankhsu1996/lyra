@@ -11,6 +11,7 @@
 
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/member_storage.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -245,26 +246,30 @@ class Instance : public Scope {
 };
 
 // A design-unit instance whose member storage the runtime owns, rather than a
-// backend's native object layout. A generic instance holds one opaque slot per
-// member the definition declares; a member place resolves to one of these slots
-// by index. This is the runtime-owned counterpart of the C++ backend's native
-// member fields: a member is a logical place, and this is its realization when
-// the backend does not lay one out physically.
+// backend's native object layout. The definition describes the storage schema,
+// the instance owns one storage object per member, and a member place resolves
+// to that object's address. This is the runtime-owned counterpart of the C++
+// backend's native member fields: a member is a logical place, and this is its
+// realization when the backend does not lay one out physically.
 class GeneratedInstance : public Instance {
  public:
   GeneratedInstance(
       Scope* parent, HierarchySegment segment, RuntimeServices& services,
       const UnitDefinition* definition)
-      : Instance(parent, std::move(segment), services, definition),
-        slots_(definition->member_slot_count, nullptr) {
+      : Instance(parent, std::move(segment), services, definition) {
+    members_.reserve(definition->members.size);
+    for (const MemberStorageDescriptor& descriptor :
+         definition->members.Descriptors()) {
+      members_.push_back(std::make_unique<MemberStorage>(descriptor));
+    }
   }
 
-  [[nodiscard]] auto Slot(std::uint32_t index) -> void*& {
-    return slots_.at(index);
+  [[nodiscard]] auto MemberAddress(std::uint32_t index) -> void* {
+    return members_.at(index)->Address();
   }
 
  private:
-  std::vector<void*> slots_;
+  std::vector<std::unique_ptr<MemberStorage>> members_;
 };
 
 // A module-local generate naming scope (`if` / `for` / `case` generate block):

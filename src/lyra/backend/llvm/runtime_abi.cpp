@@ -1,12 +1,48 @@
 #include "lyra/backend/llvm/runtime_abi.hpp"
 
+#include <format>
+#include <string>
+#include <string_view>
+
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Type.h>
 
 #include "lyra/backend/llvm/codegen_types.hpp"
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/operator.hpp"
+#include "lyra/lir/type.hpp"
+#include "lyra/lir/type_id.hpp"
 
 namespace lyra::backend::llvm_backend {
+
+auto ValueDomainName(ValueDomain domain) -> std::string_view {
+  switch (domain) {
+    case ValueDomain::kPacked:
+      return "packed";
+    case ValueDomain::kString:
+      return "string";
+  }
+  throw InternalError("llvm codegen: unknown value domain");
+}
+
+auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
+    -> ValueDomain {
+  return std::visit(
+      Overloaded{
+          [](const lir::PackedArrayType&) { return ValueDomain::kPacked; },
+          // An enumeration is a packed value at runtime; only its own entries,
+          // which read its declared members, need more than that.
+          [](const lir::EnumType&) { return ValueDomain::kPacked; },
+          [](const lir::StringType&) { return ValueDomain::kString; },
+          [](const auto&) -> ValueDomain {
+            throw InternalError(
+                "llvm codegen: value type has no runtime library domain");
+          }},
+      unit.types.Get(type).data);
+}
 
 RuntimeAbi::RuntimeAbi(
     llvm::Module& module, llvm::LLVMContext& ctx, CodeGenTypes& types)
@@ -18,6 +54,12 @@ auto RuntimeAbi::Get(
     -> llvm::FunctionCallee {
   return module_->getOrInsertFunction(
       name, llvm::FunctionType::get(result, params, false));
+}
+
+auto RuntimeAbi::Get(
+    const std::string& name, llvm::Type* result,
+    llvm::ArrayRef<llvm::Type*> params) -> llvm::FunctionCallee {
+  return Get(name.c_str(), result, params);
 }
 
 auto RuntimeAbi::Services() -> llvm::FunctionCallee {
@@ -95,16 +137,90 @@ auto RuntimeAbi::AddOwnedChild() -> llvm::FunctionCallee {
       "lyra_rt_add_owned_child", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
-auto RuntimeAbi::LoadField() -> llvm::FunctionCallee {
+auto RuntimeAbi::MemberAddress() -> llvm::FunctionCallee {
   return Get(
-      "lyra_rt_load_field", types_->Ptr(),
+      "lyra_rt_member_addr", types_->Ptr(),
       {types_->Ptr(), llvm::Type::getInt32Ty(*ctx_)});
 }
 
-auto RuntimeAbi::StoreField() -> llvm::FunctionCallee {
+auto RuntimeAbi::CellGet(ValueDomain domain) -> llvm::FunctionCallee {
   return Get(
-      "lyra_rt_store_field", types_->Void(),
-      {types_->Ptr(), llvm::Type::getInt32Ty(*ctx_), types_->Ptr()});
+      std::format("lyra_rt_cell_{}_get", ValueDomainName(domain)),
+      types_->Ptr(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::CellInitialize(ValueDomain domain) -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_cell_{}_initialize", ValueDomainName(domain)),
+      types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::CellSet(ValueDomain domain) -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_cell_{}_set", ValueDomainName(domain)),
+      types_->Void(), {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::RegisterSignal() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_register_signal", types_->Void(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::Binary(ValueDomain domain, lir::BinaryOp op)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format(
+          "lyra_rt_{}_{}", ValueDomainName(domain), lir::BinaryOpName(op)),
+      types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::Unary(ValueDomain domain, lir::UnaryOp op)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format(
+          "lyra_rt_{}_{}", ValueDomainName(domain), lir::UnaryOpName(op)),
+      types_->Ptr(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::ValueBuiltin(
+    ValueDomain domain, lyra::support::BuiltinFn fn, llvm::Type* result,
+    llvm::ArrayRef<llvm::Type*> params) -> llvm::FunctionCallee {
+  return Get(
+      std::format(
+          "lyra_rt_{}_{}", ValueDomainName(domain),
+          lyra::support::BuiltinFnName(fn)),
+      result, params);
+}
+
+auto RuntimeAbi::ToBool(ValueDomain domain) -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_{}_to_bool", ValueDomainName(domain)),
+      llvm::Type::getInt1Ty(*ctx_), {types_->Ptr()});
+}
+
+auto RuntimeAbi::MakeFormatSpec(std::size_t field_count)
+    -> llvm::FunctionCallee {
+  if (field_count == 1) {
+    return Get(
+        "lyra_rt_make_format_spec_of_kind", types_->Ptr(), {types_->Ptr()});
+  }
+  if (field_count == 6) {
+    return Get(
+        "lyra_rt_make_format_spec", types_->Ptr(),
+        {types_->Ptr(), types_->Ptr(), types_->Ptr(), types_->Ptr(),
+         types_->Ptr(), types_->Ptr()});
+  }
+  throw InternalError(
+      "llvm codegen: a format specification is built from a kind or from every "
+      "field");
+}
+
+auto RuntimeAbi::MakePrintValueItem(ValueDomain domain)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_make_print_value_item_{}", ValueDomainName(domain)),
+      types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
 }  // namespace lyra::backend::llvm_backend

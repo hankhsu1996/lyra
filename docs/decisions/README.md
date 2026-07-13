@@ -139,10 +139,11 @@ the detail lives in the entry itself.
   backends' host shells collapse to creating the engine, calling the root construct, then bind /
   run.
 - [member-slot-storage](member-slot-storage.md) -- a member is a logical place (a base plus a
-  projection chain, named by load / store); a unit definition declares a member schema and a generic
-  instance owns one runtime-managed slot per member. The C++ backend realizes a member as a native
-  field, the execution backend as a runtime-owned slot; physical in-frame layout is a later
-  optimization, the member-storage counterpart of the opaque-handle value baseline.
+  projection chain, named by load, store, and address-of); a unit definition declares a member
+  storage schema and a generic instance owns one storage object per member. The C++ backend realizes
+  a member as a native field, the execution backend as runtime-owned storage; a cell is only ever
+  addressed, never read as a value. Physical in-frame layout is a later optimization, the
+  member-storage counterpart of the opaque-handle value baseline.
 
 ### Compile-time model and specialization
 

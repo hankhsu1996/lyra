@@ -100,6 +100,24 @@ class LirDumper {
               return std::format(
                   "store {} = {}", FormatPlace(store.place),
                   FormatOperand(store.value));
+            },
+            [&](const AddrOfInstr& addr) -> std::string {
+              return std::format("addrof {}", FormatPlace(addr.place));
+            },
+            [&](const BinaryInstr& bin) -> std::string {
+              return std::format(
+                  "{} {}, {}", BinaryOpName(bin.op), FormatOperand(bin.lhs),
+                  FormatOperand(bin.rhs));
+            },
+            [&](const UnaryInstr& un) -> std::string {
+              return std::format(
+                  "{} {}", UnaryOpName(un.op), FormatOperand(un.operand));
+            },
+            [&](const BoolCastInstr& cast) -> std::string {
+              return std::format("bool {}", FormatOperand(cast.operand));
+            },
+            [&](const PointerCastInstr& cast) -> std::string {
+              return std::format("ptrcast {}", FormatOperand(cast.operand));
             }},
         data);
   }
@@ -107,14 +125,26 @@ class LirDumper {
   [[nodiscard]] static auto FormatTerminator(const Terminator& term)
       -> std::string {
     return std::visit(
-        Overloaded{[&](const ReturnTerm& ret) -> std::string {
-          std::string keyword =
-              ret.is_coroutine ? "return.coroutine" : "return";
-          if (ret.value.has_value()) {
-            return std::format("{} {}", keyword, FormatOperand(*ret.value));
-          }
-          return keyword;
-        }},
+        Overloaded{
+            [&](const ReturnTerm& ret) -> std::string {
+              std::string keyword =
+                  ret.is_coroutine ? "return.coroutine" : "return";
+              if (ret.value.has_value()) {
+                return std::format("{} {}", keyword, FormatOperand(*ret.value));
+              }
+              return keyword;
+            },
+            [](const BranchTerm& br) -> std::string {
+              return std::format("br bb{}", br.target.value);
+            },
+            [&](const CondBranchTerm& br) -> std::string {
+              return std::format(
+                  "br {} ? bb{} : bb{}", FormatOperand(br.condition),
+                  br.if_true.value, br.if_false.value);
+            },
+            [](const UnreachableTerm&) -> std::string {
+              return "unreachable";
+            }},
         term.data);
   }
 
@@ -139,7 +169,11 @@ class LirDumper {
     return std::visit(
         Overloaded{
             [](const BuiltinTarget& b) -> std::string {
-              return std::string(support::BuiltinFnName(b.fn));
+              const std::string name{support::BuiltinFnName(b.fn)};
+              if (!b.qualifier.has_value()) {
+                return name;
+              }
+              return std::format("{}<{}>", name, FormatType(*b.qualifier));
             },
             [&](const MethodTarget& m) -> std::string {
               return unit_->classes.Get(m.method.class_id)
@@ -166,9 +200,11 @@ class LirDumper {
     std::string out = FormatOperand(place.base);
     for (const Projection& step : place.chain) {
       std::visit(
-          Overloaded{[&](const MemberProjection& m) {
-            out += std::format(".member({})", m.member.value);
-          }},
+          Overloaded{
+              [&](const DerefProjection&) { out += ".deref"; },
+              [&](const MemberProjection& m) {
+                out += std::format(".member({})", m.member.value);
+              }},
           step);
     }
     return out;
