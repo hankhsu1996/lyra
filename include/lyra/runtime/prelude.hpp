@@ -44,6 +44,7 @@
 #include "lyra/value/array_case_equal.hpp"     // IWYU pragma: keep
 #include "lyra/value/associative_array.hpp"    // IWYU pragma: keep
 #include "lyra/value/chandle.hpp"              // IWYU pragma: keep
+#include "lyra/value/dpi_canonical.hpp"        // IWYU pragma: keep
 #include "lyra/value/dynamic_array.hpp"        // IWYU pragma: keep
 #include "lyra/value/enum.hpp"                 // IWYU pragma: keep
 #include "lyra/value/format.hpp"               // IWYU pragma: keep

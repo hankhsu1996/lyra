@@ -9,12 +9,13 @@
 namespace lyra::hir {
 
 // One argument of a DPI-C import's ABI projection (LRM 35.5.6): the SV type it
-// was declared with, the C ABI category it crosses the boundary as, and its
+// was declared with, the C ABI carrier it crosses the boundary as, and its
 // direction (LRM 35.5.1.2), which decides whether the boundary copies the value
 // in, back, or both.
 struct DpiParamAbi {
   TypeId sv_type{};
-  support::DpiAbiClass abi = support::DpiAbiClass::kVoid;
+  support::DpiCarrier carrier =
+      support::ScalarCarrier{support::DpiScalarAbi::kVoid};
   support::DpiDirection direction = support::DpiDirection::kInput;
 };
 
@@ -28,7 +29,7 @@ struct ForeignImportDecl {
   std::string name;
   std::string foreign_name;
   bool is_pure = false;
-  support::DpiAbiClass ret_abi = support::DpiAbiClass::kVoid;
+  support::DpiScalarAbi ret_abi = support::DpiScalarAbi::kVoid;
   TypeId ret_sv_type{};
   std::vector<DpiParamAbi> params;
 };
