@@ -629,18 +629,20 @@ auto FunctionLowerer::LowerContinueInto() -> diag::Result<void> {
 
 auto FunctionLowerer::LowerCondition(const mir::Block& block, mir::ExprId id)
     -> diag::Result<lir::Operand> {
+  // A condition arrives already reduced to a predicate at HIR-to-MIR, so it
+  // lowers to the machine boolean a branch tests directly. The reduction is
+  // stated upstream and lowered like any other value here, never re-derived
+  // from the operand's type; a condition that did not arrive reduced is an
+  // upstream defect.
   auto value = LowerExpr(block, id);
   if (!value) {
     return value;
   }
-  // A value already on the machine-boolean plane is what a branch tests; any
-  // other value needs the reduction a target's boolean context would apply.
-  if (lir::OperandType(fn_, *value) == unit_->MachineBoolType()) {
-    return value;
+  if (lir::OperandType(fn_, *value) != unit_->MachineBoolType()) {
+    throw InternalError(
+        "mir_to_lir: a condition did not arrive as a reduced predicate");
   }
-  return Emit(
-      unit_->MachineBoolType(),
-      lir::BoolCastInstr{.operand = *std::move(value)});
+  return value;
 }
 
 auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
@@ -1003,9 +1005,10 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerConditional(block, cond, type);
           },
           [&](const mir::MoveExpr& m) -> diag::Result<lir::Operand> {
-            // Move-vs-copy is derived from SSA liveness at this layer; the
-            // marker unwraps to its operand and the downstream backend
-            // decides the transfer.
+            // A move is a last-use transfer marker placed at HIR-to-MIR; it
+            // changes neither the value nor its type, so it unwraps to its
+            // operand here. Whether the transfer is realized as a move or a
+            // copy is decided below LIR, not at this layer.
             return LowerExpr(block, m.operand);
           },
           [](const auto&) -> diag::Result<lir::Operand> {
