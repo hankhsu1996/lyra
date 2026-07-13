@@ -77,6 +77,34 @@ each stage establishes, not how.
       record, its identity aligned with compilation-unit specialization (a stable id within a unit,
       a by-name canonical key across units) -- the same shape a parameterized module uses.
 
+## Managed-object lifetime: current implementation status
+
+The managed-object lifetime sub-step above states the terminal semantic target (precise tracing with
+cyclic reclamation). Current backend coverage:
+
+- C++ backend: shared-ownership interim. Acyclic garbage is reclaimed as the last handle drops; a
+  cycle of handles that becomes unreachable is not reclaimed. Sufficient to unblock class surface
+  work whose semantics do not depend on cyclic reclamation, which covers every SV class feature
+  planned in this workstream.
+- LLVM / JIT backend: managed execution is not implemented; a program that constructs an SV class
+  object is not lowerable through this path.
+
+Precise-tracing storage discipline and collector are deferred until a driver appears (a workload
+that hits cycle leaks in practice, or LLVM / JIT SV-class execution becoming a priority). The design
+space explored while scoping this deferral surfaced:
+
+- Runtime `Traceable` inheritance protocol is rejected: it would force every managed-carrying
+  emitted type into a runtime vtable shape and violates the mechanical-translation contract.
+- Extending the lifetime-extended-automatic-scope promoter to also spill managed locals is rejected:
+  it entangles lexical retained scope with GC root publication, two separate concerns.
+- Conservative scanning of native stack or coroutine frames is rejected by the object-lifetime
+  contract (precise-tracing invariant).
+- Candidate mechanisms for the terminal design include typed activation containers with
+  compiler-emitted descriptors, LIR-level explicit safepoint edges, per-safepoint liveness maps,
+  LLVM stackmap / statepoint integration, and coarser strategies that trace whole frames without
+  per-safepoint liveness. The trade-off between precision and infrastructure cost has not been
+  settled.
+
 ## Open Questions and Deferred Choices
 
 - Nullability stays a value-level fact, not a type axis, until an analysis that reads it (e.g.

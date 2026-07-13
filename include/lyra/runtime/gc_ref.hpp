@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <memory>
 #include <utility>
-#include <vector>
 
 namespace lyra::runtime {
 
@@ -11,55 +10,42 @@ namespace lyra::runtime {
 // heap object whose lifetime the simulator owns. Null is a legal value, copies
 // are shallow (two handles refer to the same object), and identity is compared
 // by object address.
+//
+// Realized as a shared owner: the last handle to drop releases the object. A
+// cycle of handles that becomes unreachable is not reclaimed.
 template <typename T>
 class GcRef {
  public:
   GcRef() = default;
-  // `null` (LRM 8.4) flows in as a null pointer; the implicit conversion lets a
-  // handle be assigned, initialized, and compared against `null` directly.
   GcRef(std::nullptr_t) {  // NOLINT(google-explicit-constructor)
   }
-  explicit GcRef(T* object) : object_(object) {
+  explicit GcRef(std::shared_ptr<T> ptr) : ptr_(std::move(ptr)) {
   }
 
   auto operator->() const -> T* {
-    return object_;
+    return ptr_.get();
   }
   auto operator*() const -> T& {
-    return *object_;
+    return *ptr_;
   }
   [[nodiscard]] auto Get() const -> T* {
-    return object_;
+    return ptr_.get();
   }
 
   friend auto operator==(const GcRef& a, const GcRef& b) -> bool {
-    return a.object_ == b.object_;
+    return a.ptr_.get() == b.ptr_.get();
   }
   friend auto operator!=(const GcRef& a, const GcRef& b) -> bool {
-    return a.object_ != b.object_;
+    return a.ptr_.get() != b.ptr_.get();
   }
 
  private:
-  T* object_ = nullptr;
+  std::shared_ptr<T> ptr_;
 };
 
-// The managed heap. Every allocation is retained for the life of the run and
-// reclaimed at shutdown, so a handle never dangles.
-namespace detail {
-inline auto ManagedHeap() -> std::vector<std::shared_ptr<void>>& {
-  static std::vector<std::shared_ptr<void>> heap;
-  return heap;
-}
-}  // namespace detail
-
-// Allocates a class object on the managed heap and returns a handle to it. The
-// object is retained by the heap, so the returned handle never dangles.
 template <typename T, typename... Args>
 auto GcNew(Args&&... args) -> GcRef<T> {
-  auto object = std::make_shared<T>(std::forward<Args>(args)...);
-  T* raw = object.get();
-  detail::ManagedHeap().push_back(std::move(object));
-  return GcRef<T>(raw);
+  return GcRef<T>(std::make_shared<T>(std::forward<Args>(args)...));
 }
 
 }  // namespace lyra::runtime

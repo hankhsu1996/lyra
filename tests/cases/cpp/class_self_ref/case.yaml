@@ -1,0 +1,14 @@
+id: cpp.class_self_ref
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    head_val: 1
+    tail_val: 2
+    chain_matches_tail: 1
+    tail_next_is_null: 1
