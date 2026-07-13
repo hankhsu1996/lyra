@@ -141,19 +141,20 @@ auto LowerStatementListStmt(
         body_frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
   }
 
-  if (frame.current_structural_scope == nullptr) {
-    throw InternalError(
-        "LowerStatementListStmt: statement list has no enclosing structural "
-        "scope to register its lexical scope against");
+  // A class method / constructor body sits inside no structural scope (LRM 8):
+  // its lexical scopes are not hierarchically addressable and no consumer reads
+  // the scope record, so the block registers none -- matching the guard the
+  // body's root scope already gets. In a structural scope the record is
+  // registered and the block names it.
+  std::optional<hir::ProceduralScopeId> scope_id;
+  if (frame.current_structural_scope != nullptr) {
+    scope_id = frame.current_structural_scope->procedural_scopes.Add(
+        hir::ProceduralScopeDecl{
+            .label = std::nullopt,
+            .direct_declarations = std::move(nested_declarations),
+            .direct_child_scopes = std::move(nested_children)});
+    frame.current_scope_children->push_back(*scope_id);
   }
-  const hir::ProceduralScopeId scope_id =
-      frame.current_structural_scope->procedural_scopes.Add(
-          hir::ProceduralScopeDecl{
-              .label = std::nullopt,
-              .direct_declarations = std::move(nested_declarations),
-              .direct_child_scopes = std::move(nested_children)});
-
-  frame.current_scope_children->push_back(scope_id);
 
   return hir::Stmt{
       .label = std::nullopt,
@@ -204,19 +205,20 @@ auto LowerBlockStmt(
         body_frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
   }
 
-  if (frame.current_structural_scope == nullptr) {
-    throw InternalError(
-        "LowerBlockStmt: begin/end body has no enclosing structural scope "
-        "to register its lexical scope against");
+  // A class method / constructor body sits inside no structural scope (LRM 8):
+  // its begin/end lexical scopes are not hierarchically addressable and no
+  // consumer reads the scope record, so the block registers none -- matching
+  // the guard the body's root scope already gets. In a structural scope the
+  // record is registered and the block names it.
+  std::optional<hir::ProceduralScopeId> scope_id;
+  if (frame.current_structural_scope != nullptr) {
+    scope_id = frame.current_structural_scope->procedural_scopes.Add(
+        hir::ProceduralScopeDecl{
+            .label = label,
+            .direct_declarations = std::move(nested_declarations),
+            .direct_child_scopes = std::move(nested_children)});
+    frame.current_scope_children->push_back(*scope_id);
   }
-  const hir::ProceduralScopeId scope_id =
-      frame.current_structural_scope->procedural_scopes.Add(
-          hir::ProceduralScopeDecl{
-              .label = label,
-              .direct_declarations = std::move(nested_declarations),
-              .direct_child_scopes = std::move(nested_children)});
-
-  frame.current_scope_children->push_back(scope_id);
 
   return hir::Stmt{
       .label = std::nullopt,

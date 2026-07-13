@@ -28,10 +28,17 @@ struct ClassField {
 // reached through a handle, so it carries no structural position of its own.
 // Each method (LRM 8.6) is a subroutine reached through the instance, so its
 // body reads the receiver and the class's properties through the receiver.
+//
+// `constructor` is the user-written `function new` (LRM 8.7) when the class
+// declares one -- a subroutine like any other, distinguished by naming the
+// construction slot rather than the method set. Absent when the class relies on
+// the implicit default construction; HIR-to-MIR synthesizes the empty body in
+// that case.
 struct ClassDecl {
   std::string name;
   std::vector<ClassField> fields;
   std::vector<SubroutineDecl> methods;
+  std::optional<SubroutineDecl> constructor;
   base::Arena<Expr, ExprId> exprs;
 };
 

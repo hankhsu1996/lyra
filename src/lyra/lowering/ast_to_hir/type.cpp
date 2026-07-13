@@ -487,9 +487,18 @@ auto ModuleLowerer::InternClass(
       continue;
     }
     if (method.flags.has(slang::ast::MethodFlags::Constructor)) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "user-defined class constructors are not yet supported");
+      for (const auto* formal : method.getArguments()) {
+        if (formal->direction != slang::ast::ArgumentDirection::In) {
+          return diag::Fail(
+              span, diag::DiagCode::kUnsupportedClassFeature,
+              "a constructor with an output / inout / ref argument is not yet "
+              "supported");
+        }
+      }
+      auto ctor_decl = LowerSubroutineDecl(*this, method, WalkFrame{});
+      if (!ctor_decl) return std::unexpected(std::move(ctor_decl.error()));
+      decl.constructor = *std::move(ctor_decl);
+      continue;
     }
     if (method.flags.has(slang::ast::MethodFlags::Static)) {
       return diag::Fail(

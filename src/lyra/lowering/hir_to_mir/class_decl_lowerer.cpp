@@ -6,6 +6,7 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -84,39 +85,44 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
     ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 
-  // Pre-declare each method's static-lifetime body locals as members on
-  // this class before any method body lowers. A static local has per-
-  // instance storage that outlives every activation of its body (LRM
-  // 13.3.1); an SV class has no named-procedural-block hierarchy, so every
-  // static lives directly on the enclosing SV class. The mangled name
-  // (`<method>__<source>_<hir_id>`) keeps sibling methods that reuse a
-  // source identifier from colliding on the field arena; the `hir_id`
-  // suffix distinguishes nested-block reuses too.
+  // Pre-declare a callable's static-lifetime body locals as members on this
+  // class before any body lowers. A static local has per-instance storage that
+  // outlives every activation of its body (LRM 13.3.1); an SV class has no
+  // named-procedural-block hierarchy, so every static lives directly on the
+  // enclosing SV class. The mangled name (`<callable>__<source>_<hir_id>`)
+  // keeps sibling callables that reuse a source identifier from colliding on
+  // the field arena; the `hir_id` suffix distinguishes nested-block reuses too.
   //
-  // The materialization table is empty because there are no procedural-
-  // storage scopes inside class methods; the per-method plans still need a
-  // reference for the API.
-  ProceduralScopeMaterializationTable method_scopes;
-  std::vector<CallableStoragePlan> method_plans;
-  method_plans.reserve(hir_class.methods.size());
-  for (const auto& method : hir_class.methods) {
+  // The materialization table is empty because there are no procedural-storage
+  // scopes inside class bodies; the per-callable plans still need a reference
+  // for the API.
+  ProceduralScopeMaterializationTable class_scopes;
+  const auto plan_static_storage = [&](std::string_view callable_name,
+                                       const hir::ProceduralBody& body) {
     std::vector<std::optional<StaticStoragePlacement>> placements(
-        method.body.procedural_vars.size());
-    for (std::size_t j = 0; j < method.body.procedural_vars.size(); ++j) {
+        body.procedural_vars.size());
+    for (std::size_t j = 0; j < body.procedural_vars.size(); ++j) {
       const hir::ProceduralVarId var_id{static_cast<std::uint32_t>(j)};
-      const auto& v = method.body.procedural_vars.Get(var_id);
+      const auto& v = body.procedural_vars.Get(var_id);
       if (v.lifetime != hir::VariableLifetime::kStatic) {
         continue;
       }
       const std::string mangled =
-          std::format("{}__{}_{}", method.name, v.name, j);
+          std::format("{}__{}_{}", callable_name, v.name, j);
       const mir::TypeId type = module.TranslateType(v.type);
       const mir::FieldId mid =
           mir_class.fields.Add(mir::FieldDecl{.name = mangled, .type = type});
       placements[j] = StaticStoragePlacement{
           .owner = StorageOwner{EnclosingClass{}}, .field = mid};
     }
-    method_plans.emplace_back(method_scopes, std::move(placements));
+    return placements;
+  };
+
+  std::vector<CallableStoragePlan> method_plans;
+  method_plans.reserve(hir_class.methods.size());
+  for (const auto& method : hir_class.methods) {
+    method_plans.emplace_back(
+        class_scopes, plan_static_storage(method.name, method.body));
   }
 
   // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
@@ -144,7 +150,32 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
     }
   }
 
-  ctor_code.params = {self_id};
+  // The user-written `function new` body (LRM 8.7) runs after each property
+  // takes its default, so its statements follow the field-init prologue already
+  // in the constructor body. Its input formals extend the constructor signature
+  // past the receiver. Absent when the class relies on implicit default
+  // construction.
+  std::vector<mir::LocalId> ctor_params{self_id};
+  if (hir_class.constructor.has_value()) {
+    const hir::SubroutineDecl& ctor = *hir_class.constructor;
+    const CallableStoragePlan ctor_plan(
+        class_scopes, plan_static_storage("<ctor>", ctor.body));
+    ProcessLowerer ctor_lowerer(
+        module, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
+        mir::MethodVisibility::kInternal, frame, ctor_plan);
+    auto ctor_body_or =
+        ctor_lowerer.LowerConstructorBodyInto(ctor, frame, ctor_params);
+    if (!ctor_body_or) {
+      return std::unexpected(std::move(ctor_body_or.error()));
+    }
+    for (const auto& pending : ctor_lowerer.TakePendingStaticInitializers()) {
+      auto integ = IntegratePendingStaticInitializer(
+          ctor_lowerer, ctor.body, frame, pending);
+      if (!integ) return std::unexpected(std::move(integ.error()));
+    }
+  }
+
+  ctor_code.params = std::move(ctor_params);
   ctor_code.result_type = module.Unit().builtins.void_type;
   const mir::MethodId ctor_method_id = mir_class.methods.Add(
       mir::MethodDecl{

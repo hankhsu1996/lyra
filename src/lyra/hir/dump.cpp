@@ -753,8 +753,14 @@ class HirDumper {
                   "DynamicArrayNewExpr size=Expr[{}]", n.size.value);
             },
             [](const ClassNewExpr& n) -> std::string {
+              std::string args;
+              for (std::size_t i = 0; i < n.arguments.size(); ++i) {
+                if (i != 0) args += ", ";
+                args += std::format("Expr[{}]", n.arguments[i].value);
+              }
               return std::format(
-                  "ClassNewExpr class=Class[{}]", n.class_id.value);
+                  "ClassNewExpr class=Class[{}] args=[{}]", n.class_id.value,
+                  args);
             },
             [](const AssociativeAssignmentPatternExpr& a) -> std::string {
               std::string entries;
@@ -842,6 +848,9 @@ class HirDumper {
     }
     for (std::size_t i = 0; i < c.methods.size(); ++i) {
       DumpSubroutine("Method", i, c.methods[i]);
+    }
+    if (c.constructor.has_value()) {
+      DumpSubroutine("Constructor", 0, *c.constructor);
     }
     Dedent();
   }
