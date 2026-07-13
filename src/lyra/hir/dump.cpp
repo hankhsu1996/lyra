@@ -981,14 +981,14 @@ class HirDumper {
         std::format(
             R"(ForeignImport[{}] function "{}" c_name="{}"{} ret={})", index,
             fi.name, fi.foreign_name, fi.is_pure ? " pure" : "",
-            support::DpiAbiClassName(fi.ret_abi)));
+            support::DpiScalarAbiName(fi.ret_abi)));
     Indent();
     for (std::size_t i = 0; i < fi.params.size(); ++i) {
       Line(
           std::format(
               "Param[{}] {} {} : Type[{}]", i,
               support::DpiDirectionName(fi.params[i].direction),
-              support::DpiAbiClassName(fi.params[i].abi),
+              support::DpiCarrierName(fi.params[i].carrier),
               fi.params[i].sv_type.value));
     }
     Dedent();

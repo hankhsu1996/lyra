@@ -56,44 +56,96 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
   throw InternalError("ParamDirectionOf: unknown ArgumentDirection");
 }
 
-// Classifies an SV type into its DPI-C carrier category (LRM 35.5.6). This is
-// the one place slang types are inspected for DPI. The supported set is 2-state
-// integral scalars up to one machine word, `real`, `string`, `chandle`, and
-// `void`; anything else is a located Unsupported so the gap is a clean
-// diagnostic.
-auto ClassifyDpiAbi(const slang::ast::Type& type, diag::SourceSpan span)
-    -> diag::Result<support::DpiAbiClass> {
+// Classifies an SV type into its DPI-C carrier (LRM 35.5.6, Annex H.10 /
+// Table H.1). This is the one place slang types are inspected for DPI. The
+// dispatch is on the declared type shape, not the bit width -- WYSIWYG
+// (LRM 35.6.1.1) makes `int` (by-value C `int`) and `bit [31:0]` (canonical
+// `svBitVecVal*`) different DPI ABIs even though both are 32-bit 2-state.
+//
+//   scalar `bit` / `logic` (1 bit)        -> by-value `svBit` / `svLogic`
+//   predefined `byte`/`shortint`/`int`/`longint` (2-state) -> by-value C int
+//   predefined `integer` / `time` (4-state) -> canonical logic vector
+//   packed `bit [N:0]`                    -> canonical bit vector
+//   packed `logic [N:0]`                  -> canonical logic vector
+//
+// `real`, `string`, `chandle`, `void` are by-value scalars. `shortreal`, packed
+// struct / union, and open arrays are a located Unsupported so the gap stays a
+// clean diagnostic.
+auto ClassifyDpiCarrier(const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<support::DpiCarrier> {
   const auto& t = type.getCanonicalType();
-  if (t.isVoid()) return support::DpiAbiClass::kVoid;
-  if (t.isString()) return support::DpiAbiClass::kString;
-  if (t.isCHandle()) return support::DpiAbiClass::kChandle;
+  const auto scalar = [](support::DpiScalarAbi abi) -> support::DpiCarrier {
+    return support::ScalarCarrier{abi};
+  };
+  if (t.isVoid()) return scalar(support::DpiScalarAbi::kVoid);
+  if (t.isString()) return scalar(support::DpiScalarAbi::kString);
+  if (t.isCHandle()) return scalar(support::DpiScalarAbi::kChandle);
   if (t.isFloating()) {
     if (t.as<slang::ast::FloatingType>().floatKind ==
         slang::ast::FloatingType::Real) {
-      return support::DpiAbiClass::kReal;
+      return scalar(support::DpiScalarAbi::kReal);
     }
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedDpi,
         "DPI-C shortreal is not yet supported");
   }
   if (t.isIntegral()) {
-    if (t.isFourState()) {
+    // A 1-bit scalar crosses by value as svBit / svLogic (LRM Table H.1).
+    if (t.isScalar()) {
+      return scalar(
+          t.isFourState() ? support::DpiScalarAbi::kLogicScalar
+                          : support::DpiScalarAbi::kBitScalar);
+    }
+    // A predefined named integer crosses by value if 2-state; the 4-state
+    // `integer` / `time` are canonical logic vectors (LRM H.7.3).
+    if (t.isPredefinedInteger()) {
+      if (t.isFourState()) {
+        return support::VectorCarrier{.four_state = true};
+      }
+      switch (t.getBitWidth()) {
+        case 8:
+          return scalar(support::DpiScalarAbi::kByte);
+        case 16:
+          return scalar(support::DpiScalarAbi::kShortInt);
+        case 32:
+          return scalar(support::DpiScalarAbi::kInt);
+        case 64:
+          return scalar(support::DpiScalarAbi::kLongInt);
+        default:
+          break;
+      }
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedDpi,
-          "4-state DPI-C value is not yet supported");
+          "DPI-C integer type is not yet supported");
     }
-    const auto width = t.getBitWidth();
-    if (width == 1) return support::DpiAbiClass::kBit;
-    if (width <= 8) return support::DpiAbiClass::kByte;
-    if (width <= 16) return support::DpiAbiClass::kShortInt;
-    if (width <= 32) return support::DpiAbiClass::kInt;
-    if (width <= 64) return support::DpiAbiClass::kLongInt;
+    // A packed array of bit / logic crosses by pointer as a canonical vector.
+    if (t.isPackedArray()) {
+      return support::VectorCarrier{.four_state = t.isFourState()};
+    }
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedDpi,
-        "wide packed DPI-C value is not yet supported");
+        "packed struct / union DPI-C arguments are not yet supported");
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedDpi, "DPI-C type is not yet supported");
+}
+
+// Classifies a DPI-C function result. LRM 35.5.5 restricts a result to a small
+// value -- a by-value scalar; a canonical vector (a packed value, `integer`, or
+// `time`) cannot be returned. So a vector carrier here is an error, not a
+// by-pointer result.
+auto ClassifyDpiScalarResult(
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<support::DpiScalarAbi> {
+  auto carrier = ClassifyDpiCarrier(type, span);
+  if (!carrier) return std::unexpected(std::move(carrier.error()));
+  if (const auto* scalar = std::get_if<support::ScalarCarrier>(&*carrier)) {
+    return scalar->abi;
+  }
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedDpi,
+      "a DPI-C function result must be a small value (LRM 35.5.5); a packed "
+      "vector, integer, or time cannot be returned");
 }
 
 // The direction of a DPI-C formal argument (LRM 35.5.1.2). `ref` is illegal in
@@ -227,7 +279,7 @@ auto LowerForeignImport(
         loc, diag::DiagCode::kUnsupportedDpi,
         "DPI-C context import is not yet supported");
   }
-  auto ret_abi = ClassifyDpiAbi(sym.getReturnType(), loc);
+  auto ret_abi = ClassifyDpiScalarResult(sym.getReturnType(), loc);
   if (!ret_abi) return std::unexpected(std::move(ret_abi.error()));
   auto ret_type = module.InternType(sym.getReturnType(), loc);
   if (!ret_type) return std::unexpected(std::move(ret_type.error()));
@@ -238,13 +290,15 @@ auto LowerForeignImport(
     const auto floc = mapper.PointSpanOf(formal->location);
     auto direction = ClassifyDpiDirection(*formal, floc);
     if (!direction) return std::unexpected(std::move(direction.error()));
-    auto abi = ClassifyDpiAbi(formal->getType(), floc);
-    if (!abi) return std::unexpected(std::move(abi.error()));
+    auto carrier = ClassifyDpiCarrier(formal->getType(), floc);
+    if (!carrier) return std::unexpected(std::move(carrier.error()));
     auto param_type = module.InternType(formal->getType(), floc);
     if (!param_type) return std::unexpected(std::move(param_type.error()));
     abi_params.push_back(
         hir::DpiParamAbi{
-            .sv_type = *param_type, .abi = *abi, .direction = *direction});
+            .sv_type = *param_type,
+            .carrier = *carrier,
+            .direction = *direction});
   }
 
   return hir::ForeignImportDecl{

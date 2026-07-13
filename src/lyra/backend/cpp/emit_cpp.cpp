@@ -328,16 +328,28 @@ auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
       std::string params;
       for (std::size_t p = 0; p < callable.params.size(); ++p) {
         if (p != 0) params += ", ";
-        params += std::string{DpiCarrierCppType(callable.params[p].abi)};
-        if (support::DpiDirectionWritesBack(callable.params[p].direction)) {
-          params += "*";
+        const bool writes_back =
+            support::DpiDirectionWritesBack(callable.params[p].direction);
+        if (const auto* scalar = std::get_if<support::ScalarCarrier>(
+                &callable.params[p].carrier)) {
+          // A by-value scalar crosses by value for input, by pointer for a
+          // writeback direction.
+          params += std::string{DpiScalarCarrierCppType(scalar->abi)};
+          if (writes_back) params += "*";
+        } else {
+          // A canonical vector always crosses by pointer to its chunk buffer;
+          // an input is read-only (`const`).
+          const auto& vec =
+              std::get<support::VectorCarrier>(callable.params[p].carrier);
+          if (!writes_back) params += "const ";
+          params += vec.four_state ? "svLogicVecVal*" : "svBitVecVal*";
         }
       }
-      out +=
-          std::format(
-              R"(extern "C" {} {}({});)", DpiCarrierCppType(callable.ret_abi),
-              callable.external.foreign_name, params) +
-          "\n";
+      out += std::format(
+                 R"(extern "C" {} {}({});)",
+                 DpiScalarCarrierCppType(callable.ret_abi),
+                 callable.external.foreign_name, params) +
+             "\n";
     }
   }
   return out;

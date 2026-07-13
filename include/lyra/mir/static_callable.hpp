@@ -9,14 +9,15 @@
 namespace lyra::mir {
 
 // One parameter of an external callable's ABI projection (LRM 35.5.6): the SV
-// type the boundary marshals from, the C ABI carrier category it crosses as,
-// and its direction (LRM 35.5.1.2). All three are fixed once at HIR-to-MIR and
-// read by a backend's marshaling, never re-derived from the type. The direction
-// decides the boundary plumbing: input crosses by value, output and inout cross
-// by pointer with a copy back.
+// type the boundary marshals from, the C ABI carrier it crosses as, and its
+// direction (LRM 35.5.1.2). All three are fixed once at HIR-to-MIR and read by
+// a backend's marshaling, never re-derived from the type. The carrier decides
+// how the value crosses -- a scalar in a register, a canonical vector by
+// pointer to a buffer -- and the direction decides whether the boundary copies
+// it in, back, or both.
 struct ForeignParam {
   TypeId sv_type;
-  support::DpiAbiClass abi;
+  support::DpiCarrier carrier;
   support::DpiDirection direction;
 };
 
@@ -40,15 +41,17 @@ struct ExternalSymbol {
 // admits when that feature lands, at which point the implementation form
 // becomes a variant.
 //
-// The signature is the ABI projection: each parameter's SV type and carrier
-// class, and the return SV type and carrier class. The SV semantic signature
-// stays on the frontend where type checking ran; MIR carries only what
-// marshaling and linkage need.
+// The signature is the ABI projection: each parameter's SV type and carrier,
+// and the return SV type and carrier. A function result is restricted to a
+// small value (LRM 35.5.5), so the return carrier is always a by-value scalar
+// -- `DpiScalarAbi`, not the full carrier variant, which makes a vector return
+// unrepresentable. The SV semantic signature stays on the frontend where type
+// checking ran; MIR carries only what marshaling and linkage need.
 struct StaticCallableDecl {
   std::string name;
   std::vector<ForeignParam> params;
   TypeId ret_sv_type;
-  support::DpiAbiClass ret_abi;
+  support::DpiScalarAbi ret_abi;
   ExternalSymbol external;
 };
 
