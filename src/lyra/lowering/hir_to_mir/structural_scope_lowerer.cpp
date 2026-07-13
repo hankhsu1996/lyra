@@ -1506,7 +1506,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       params.push_back(
           mir::ForeignParam{
               .sv_type = module.TranslateType(p.sv_type),
-              .abi = p.abi,
+              .carrier = p.carrier,
               .direction = p.direction});
     }
     mir_class.static_callables.Add(

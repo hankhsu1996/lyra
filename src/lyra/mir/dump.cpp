@@ -225,7 +225,7 @@ class MirDumper {
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const DpiCarrierType& d) -> std::string {
               return std::format(
-                  "DpiCarrier({})", support::DpiAbiClassName(d.abi));
+                  "DpiCarrier({})", support::DpiCarrierName(d.carrier));
             },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
@@ -844,14 +844,15 @@ class MirDumper {
             R"(StaticCallable[{}] "{}" external c_name="{}"{} ret={} : {})",
             index, c.name, c.external.foreign_name,
             c.external.is_pure ? " pure" : "",
-            support::DpiAbiClassName(c.ret_abi), FormatVarType(c.ret_sv_type)));
+            support::DpiScalarAbiName(c.ret_abi),
+            FormatVarType(c.ret_sv_type)));
     Indent();
     for (std::size_t i = 0; i < c.params.size(); ++i) {
       Line(
           std::format(
               "Param[{}] {} {} : {}", i,
               support::DpiDirectionName(c.params[i].direction),
-              support::DpiAbiClassName(c.params[i].abi),
+              support::DpiCarrierName(c.params[i].carrier),
               FormatVarType(c.params[i].sv_type)));
     }
     Dedent();

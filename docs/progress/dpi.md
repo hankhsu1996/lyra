@@ -31,52 +31,37 @@ orchestration.
 
 ## Actionable
 
-D1 is the entry point: the thinnest end-to-end vertical -- one pure scalar import, materialized,
-linked against a user-provided C object, and asserted by a mixed-language test -- standing up the
-whole pipeline the later items extend. D1 lands three foundations together (the external-callable IR
-shape, per-backend foreign-call materialization, and per-backend foreign-symbol linkage) and
-completes as one deliverable: scalar import works end to end on both the C++ and the LLVM / JIT
-backend. Every later item leaves the MIR shape backend-agnostic and lands on both backends.
-
-The C++ backend half of D1 is done: a scalar import (2-state integral, `real`, and `string`,
-`input`-only functions) declares, marshals across the boundary, calls the foreign symbol, and
-marshals the result back; a user C source is linked in through a repeatable `--dpi-link` option, and
-mixed-language tests assert the round trip.
-
-The remaining D1 work is the LLVM / JIT backend, and it is not additive. That backend still cannot
-lower a minimal procedural body -- a plain write to a module variable does not reach LIR -- so a
-foreign call has no body to sit inside, and resolving an external symbol on its own would buy
-nothing. The MIR is already backend-agnostic and the MIR-to-LIR lowering names the foreign-call gap
-explicitly, so the DPI-specific work is small; it unblocks with the general execution-backend
-buildout (`architecture-reset.md`), not before. Re-check that backend's procedural coverage before
-planning this item.
-
-The C++ backend also carries the general D2 argument surface: `output` and `inout` scalar arguments
-(2-state integral, `real`, `string`, `chandle`) cross by pointer with a copy back into the actual,
-functions returning a value alongside `output` / `inout` arguments work in expression position, and
-non-pure imports and packed 2-state values up to one machine word are accepted. `chandle` crosses as
-an opaque pointer in either direction and round-trips its identity.
+The feature items (D1-D9) are the live frontier on the C++ backend: the scalar import surface and
+4-state / wide marshaling (D1-D3) are in. Export (D4) is the next open deliverable, then DPI tasks
+(D5). The LLVM / JIT realization of the whole surface (D10) is blocked on the general execution
+backend (`architecture-reset.md`), which cannot yet lower a minimal procedural body; re-check that
+backend's procedural coverage before planning it.
 
 ## Sub-Steps
 
 The `D*` IDs are stable references. They do not impose a total order; real dependencies are stated
-inline.
+inline. Each feature item (D1-D9) is a deliverable on the C++ backend, the live backend; the LLVM /
+JIT realization of the whole surface is a single item (D10), because that backend is unbuilt and its
+DPI work unblocks as one unit.
 
 ### Import: SV calls foreign C
 
-- [ ] D1 -- Pure scalar import, end to end on both backends: 2-state integral scalars, `real`, and
-      `string`, `input`-only, function kind (LRM 35.4, 35.5.1). An imported subroutine lowers to a
-      callable whose implementation form is an external symbol, and an import call is an ordinary
-      call to it; a user-provided C object is linked in (via the emitted build recipe on the C++
-      backend, resolved through the execution session on the LLVM / JIT backend), asserted by a
-      mixed-language test.
-- [ ] D2 -- General import (LRM 35.5.5, 35.5.6). `output` and `inout` arguments, non-pure imports,
-      `chandle`, and packed 2-state values up to a single machine word are supported on the C++
-      backend, with the copy-out directions crossing by pointer to a boundary temporary. The
-      remaining work is the LLVM / JIT backend, which shares the same MIR.
-- [ ] D3 -- 4-state and wide marshaling: 4-state scalars and vectors across the boundary (the DPI
-      canonical 4-state layout versus Lyra's internal representation) and packed vectors wider than
-      one machine word (LRM 35.5.6).
+- [x] D1 -- Pure scalar import: 2-state integral scalars, `real`, and `string`, `input`-only,
+      function kind (LRM 35.4, 35.5.1). An imported subroutine lowers to a callable whose
+      implementation form is an external symbol, and an import call is an ordinary call to it; a
+      user-provided C object links in through the emitted build recipe, asserted by a mixed-language
+      test.
+- [x] D2 -- General scalar import (LRM 35.5.5, 35.5.6): `output` and `inout` arguments cross by
+      pointer to a boundary temporary and copy back into the actual, a value result works in
+      expression position alongside `output` / `inout` arguments, non-pure imports are accepted, and
+      `chandle` crosses as an opaque pointer in either direction and round-trips its identity.
+- [x] D3 -- 4-state and wide marshaling (LRM 35.5.6, Annex H.10): every packed vector --
+      `bit [N:0]`, `logic [N:0]`, the 4-state `integer` / `time`, and values wider than one machine
+      word -- crosses by pointer as its canonical `svBitVecVal*` / `svLogicVecVal*` buffer,
+      classified by declared type shape (WYSIWYG, LRM 35.6.1.1) not width, so `int` (by value) and
+      `bit [31:0]` (canonical vector) get distinct C ABIs; the canonical layout matches Lyra's
+      two-plane representation, so marshaling is a plane reshape. A 4-state scalar `logic` result
+      crosses by value; a wider result stays restricted to a small value (LRM 35.5.5).
 
 ### Export: foreign C calls SV
 
@@ -119,23 +104,24 @@ from an external main.
 
 ### Driver and link
 
-- [ ] D9 -- Link-input orchestration across both backends: a repeatable `--dpi-link` CLI option and
-      a `lyra.toml` DPI link-inputs array, validated before any backend runs. The C++ backend adds
-      the inputs to the emitted build recipe's link line; the LLVM / JIT backend resolves them
-      through its execution session. A generated ABI header lets the user compile their C against
-      the correct signatures.
+- [ ] D9 -- Link-input orchestration: a repeatable `--dpi-link` CLI option and a `lyra.toml` DPI
+      link-inputs array, validated before any backend runs, added to the emitted build recipe's link
+      line. A generated ABI header lets the user compile their C against the correct signatures.
 
-## Design record and prerequisites
+### LLVM / JIT backend
+
+- [ ] D10 -- Realize the DPI surface on the LLVM / JIT backend: the same backend-agnostic MIR the
+      C++ backend consumes, materialized as external-linkage symbols and foreign-call marshaling
+      through the execution session. Blocked on the general execution backend
+      (`architecture-reset.md`), which cannot yet lower a minimal procedural body, so a foreign call
+      has no body to sit inside; the MIR-to-LIR lowering names the foreign-call gap explicitly, so
+      the work is small once unblocked, and splits into per-feature items when picked up.
+
+## Design record
 
 The two questions that gated the design -- where marshaling lives and how an export wrapper recovers
 its context -- are settled in `../decisions/dpi-foreign-boundary.md`, along with the callable model
 and the out-of-scope boundary. Work proceeds against that record.
-
-Prerequisites surfaced during design:
-
-- Foreign-symbol linkage: the C++ backend needed a user-link-input seam in its build recipe, and the
-  LLVM / JIT backend needs external-symbol resolution in its execution session; both are part of D1.
-  Only the LLVM / JIT half remains.
 
 ## Cross-references
 

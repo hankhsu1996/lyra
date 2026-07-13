@@ -15,28 +15,29 @@
 
 namespace lyra::backend::cpp {
 
-auto DpiCarrierCppType(support::DpiAbiClass abi) -> std::string_view {
+auto DpiScalarCarrierCppType(support::DpiScalarAbi abi) -> std::string_view {
   switch (abi) {
-    case support::DpiAbiClass::kBit:
+    case support::DpiScalarAbi::kBitScalar:
+    case support::DpiScalarAbi::kLogicScalar:
       return "unsigned char";
-    case support::DpiAbiClass::kByte:
+    case support::DpiScalarAbi::kByte:
       return "std::int8_t";
-    case support::DpiAbiClass::kShortInt:
+    case support::DpiScalarAbi::kShortInt:
       return "std::int16_t";
-    case support::DpiAbiClass::kInt:
+    case support::DpiScalarAbi::kInt:
       return "std::int32_t";
-    case support::DpiAbiClass::kLongInt:
+    case support::DpiScalarAbi::kLongInt:
       return "std::int64_t";
-    case support::DpiAbiClass::kReal:
+    case support::DpiScalarAbi::kReal:
       return "double";
-    case support::DpiAbiClass::kString:
+    case support::DpiScalarAbi::kString:
       return "const char*";
-    case support::DpiAbiClass::kChandle:
+    case support::DpiScalarAbi::kChandle:
       return "void*";
-    case support::DpiAbiClass::kVoid:
+    case support::DpiScalarAbi::kVoid:
       return "void";
   }
-  throw InternalError("DpiCarrierCppType: unknown DpiAbiClass");
+  throw InternalError("DpiScalarCarrierCppType: unknown DpiScalarAbi");
 }
 
 auto RenderPackedType(const mir::PackedArrayType& pa) -> std::string {
@@ -104,7 +105,16 @@ auto RenderTypeAsCpp(
             }
           },
           [](const mir::DpiCarrierType& d) -> std::string {
-            return std::string{DpiCarrierCppType(d.abi)};
+            // A scalar carrier is its by-value C type; a vector carrier's local
+            // realization is a boundary-buffer value that sizes itself from the
+            // SV value and hands the foreign side a canonical chunk pointer.
+            if (const auto* scalar =
+                    std::get_if<support::ScalarCarrier>(&d.carrier)) {
+              return std::string{DpiScalarCarrierCppType(scalar->abi)};
+            }
+            const auto& vec = std::get<support::VectorCarrier>(d.carrier);
+            return vec.four_state ? "lyra::value::DpiLogicBuffer"
+                                  : "lyra::value::DpiBitBuffer";
           },
           [](const mir::ChandleType&) -> std::string {
             return std::string{"lyra::value::Chandle"};

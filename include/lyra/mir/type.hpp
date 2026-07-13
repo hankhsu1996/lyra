@@ -240,20 +240,22 @@ struct ChandleType {
   auto operator==(const ChandleType&) const -> bool = default;
 };
 
-// A foreign-ABI carrier: the plain C ABI type an SV value is marshaled to or
-// from when it crosses the DPI-C boundary (LRM 35.5.6). One value per carrier
-// category; a backend maps the category to a concrete C ABI type (kInt ->
-// int32_t, kReal -> double, kString -> const char*, ...).
+// A foreign-ABI carrier: the C ABI type an SV value is marshaled to or from
+// when it crosses the DPI-C boundary (LRM 35.5.6). A backend maps a scalar
+// carrier to its by-value C type (`ScalarCarrier{kInt}` -> int32_t, `kReal` ->
+// double, ...) and a vector carrier to a runtime boundary-buffer value that
+// hands the foreign side a canonical `svBitVecVal*` / `svLogicVecVal*`.
 //
 // Invariant -- this is an ABI temporary, never a value-model type. It occurs
 // only within a single foreign-call lowering window: as the result type of a
 // marshal-to-carrier expression, as the operand and result type of a foreign
-// call, and as the type of a boundary temp local that an output / inout
-// argument crosses by pointer (the foreign side writes the temp; the copy-back
-// marshals it to the SV actual). It is never an SV variable's type, never
-// produced by a user expression, and never escapes that window.
+// call, and as the type of a boundary temp local -- a scalar temp an output /
+// inout argument crosses by pointer, or a buffer a vector argument crosses by
+// pointer (the foreign side writes the temp; the copy-back marshals it to the
+// SV actual). It is never an SV variable's type, never produced by a user
+// expression, and never escapes that window.
 struct DpiCarrierType {
-  support::DpiAbiClass abi;
+  support::DpiCarrier carrier;
 
   auto operator==(const DpiCarrierType&) const -> bool = default;
 };
