@@ -1,0 +1,15 @@
+id: cpp.class_property_init
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    gx: 5
+    gy: 6
+    gz: 16
+    gp: 7
+    gq: 14

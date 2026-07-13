@@ -111,6 +111,17 @@ class ProcessLowerer {
   // initializers are drained the same way as for a process body.
   auto Run(const hir::SubroutineDecl& src) -> diag::Result<mir::MethodDecl>;
 
+  // Lowers a user-written constructor body (LRM 8.7) into an already-open
+  // constructor frame. Registers each input formal as a body local -- appending
+  // its MIR local to `params` after the receiver the caller seeded -- then
+  // walks the body's statements into `frame.current_block`, after the
+  // field-init prologue the caller composed there. A non-input constructor
+  // formal is rejected at AST-to-HIR, so one reaching here is a compiler-bug
+  // invariant.
+  auto LowerConstructorBodyInto(
+      const hir::SubroutineDecl& ctor, const WalkFrame& frame,
+      std::vector<mir::LocalId>& params) -> diag::Result<void>;
+
   // Central expression dispatcher. One switch over `hir::Expr::data` routing
   // each kind to its per-family handler; handlers recurse through this
   // method, so sub-expressions reach `frame` through it. An observable-cell

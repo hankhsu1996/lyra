@@ -175,10 +175,11 @@ struct DynamicArrayNewExpr {
 
 // LRM 8.5 class object construction `new`. Allocates a new object of the named
 // class and runs its constructor, yielding a handle. The class is named by its
-// declaration id; `Expr::type` is the class handle type. Carries no constructor
-// arguments (the default `new`).
+// declaration id; `Expr::type` is the class handle type. `arguments` are the
+// constructor actuals (LRM 8.7), empty for the default `new`.
 struct ClassNewExpr {
   ClassId class_id;
+  std::vector<ExprId> arguments;
 };
 
 // LRM 7.9.11 associative-array literal `'{index: value, ..., default: d}`. Each

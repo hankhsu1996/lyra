@@ -213,12 +213,15 @@ auto LowerNewClassExpr(
         span, diag::DiagCode::kUnsupportedClassFeature,
         "super.new is not yet supported");
   }
-  if (const auto* call = nc.constructorCall();
-      call != nullptr &&
-      !call->as<slang::ast::CallExpression>().arguments().empty()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedClassFeature,
-        "class constructor arguments are not yet supported");
+  std::vector<hir::ExprId> arguments;
+  if (const auto* call = nc.constructorCall(); call != nullptr) {
+    const auto& actuals = call->as<slang::ast::CallExpression>().arguments();
+    arguments.reserve(actuals.size());
+    for (const auto* actual : actuals) {
+      auto arg_or = lowerer.LowerExpr(*actual, frame);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      arguments.push_back(frame.Exprs().Add(*std::move(arg_or)));
+    }
   }
   const auto& cls = nc.type->getCanonicalType().as<slang::ast::ClassType>();
   auto class_id = module.InternClass(cls, span);
@@ -227,7 +230,9 @@ auto LowerNewClassExpr(
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
-      .data = hir::ClassNewExpr{.class_id = *class_id},
+      .data =
+          hir::ClassNewExpr{
+              .class_id = *class_id, .arguments = std::move(arguments)},
       .span = span,
   };
 }
