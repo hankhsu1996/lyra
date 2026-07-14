@@ -10,7 +10,6 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::mir {
 
@@ -23,14 +22,14 @@ enum class TypeKind {
   kAssociativeArray,
   kWildcardIndex,
   kString,
-  kStringView,
+  kMachineCString,
   kMachineInt,
+  kMachineFloat,
   kEvent,
   kReal,
   kShortReal,
   kRealTime,
   kChandle,
-  kDpiCarrier,
   kVoid,
   kObject,
   kExternalUnitObject,
@@ -203,26 +202,33 @@ struct StringType {
   auto operator==(const StringType&) const -> bool = default;
 };
 
-// A borrowed view of string bytes the value does not own (the generic-language
-// borrowed string -- Rust `&str`, C++ `std::string_view`), distinct from the
-// owning `StringType`. A constant exposed through it borrows static storage and
-// copies nothing; the owning-versus-borrowing distinction survives
-// optimization, so it is its own type rather than a use of `StringType`.
-struct StringViewType {
-  auto operator==(const StringViewType&) const -> bool = default;
+// A borrowed, NUL-terminated machine string (the generic-language `*const
+// c_char`, C `const char*`), distinct from the owning `StringType`, which is a
+// simulation value. It names raw character storage the value does not own, so
+// it copies nothing and carries no length.
+struct MachineCStringType {
+  auto operator==(const MachineCStringType&) const -> bool = default;
 };
 
 // A primitive machine integer (the generic-language `iN` / `uN`, C `intN_t`):
 // a fixed-width 2-state scalar, distinct from the 4-state SV `PackedArrayType`.
-// It carries runtime-contract scalar metadata -- a scope's time precision power
-// (LRM 3.14.2) -- which is plain machine data, not a simulation value, and
-// lowers to a raw target integer rather than a value wrapper. The owning string
-// metadata's `StringViewType` is its string counterpart.
+// It is plain machine data, not a simulation value, and lowers to a raw target
+// integer rather than a value wrapper -- a scope's time precision power
+// (LRM 3.14.2), a foreign call's by-value integer argument.
 struct MachineIntType {
   std::uint32_t bit_width;
   Signedness signedness;
 
   auto operator==(const MachineIntType&) const -> bool = default;
+};
+
+// A primitive machine float (the generic-language `fN`, C `float` / `double`):
+// plain machine data, distinct from the SV `RealType`, which is a simulation
+// value reached through a value wrapper. It lowers to a raw target float.
+struct MachineFloatType {
+  std::uint32_t bit_width;
+
+  auto operator==(const MachineFloatType&) const -> bool = default;
 };
 struct EventType {
   auto operator==(const EventType&) const -> bool = default;
@@ -238,26 +244,6 @@ struct RealTimeType {
 };
 struct ChandleType {
   auto operator==(const ChandleType&) const -> bool = default;
-};
-
-// A foreign-ABI carrier: the C ABI type an SV value is marshaled to or from
-// when it crosses the DPI-C boundary (LRM 35.5.6). A backend maps a scalar
-// carrier to its by-value C type (`ScalarCarrier{kInt}` -> int32_t, `kReal` ->
-// double, ...) and a vector carrier to a runtime boundary-buffer value that
-// hands the foreign side a canonical `svBitVecVal*` / `svLogicVecVal*`.
-//
-// Invariant -- this is an ABI temporary, never a value-model type. It occurs
-// only within a single foreign-call lowering window: as the result type of a
-// marshal-to-carrier expression, as the operand and result type of a foreign
-// call, and as the type of a boundary temp local -- a scalar temp an output /
-// inout argument crosses by pointer, or a buffer a vector argument crosses by
-// pointer (the foreign side writes the temp; the copy-back marshals it to the
-// SV actual). It is never an SV variable's type, never produced by a user
-// expression, and never escapes that window.
-struct DpiCarrierType {
-  support::DpiCarrier carrier;
-
-  auto operator==(const DpiCarrierType&) const -> bool = default;
 };
 
 struct VoidType {
@@ -383,6 +369,13 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kScopeMetadata,
   kAbiStringRef,
   kScopeEntry,
+  // The canonical buffer a packed vector crosses the DPI-C boundary in (LRM
+  // 35.5.6, Annex H.10.1.2): `lyra::value::DpiBitBuffer` holds `svBitVecVal`
+  // chunks, `lyra::value::DpiLogicBuffer` holds `svLogicVecVal` chunks. The
+  // buffer sizes itself from the SV value and hands the foreign side the
+  // canonical chunk pointer.
+  kDpiBitBuffer,
+  kDpiLogicBuffer,
 };
 
 struct RuntimeLibraryType {
@@ -559,9 +552,9 @@ struct DriverType {
 
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-    AssociativeArrayType, WildcardIndexType, StringType, StringViewType,
-    MachineIntType, EventType, RealType, ShortRealType, RealTimeType,
-    ChandleType, DpiCarrierType, VoidType, ObjectType, ExternalUnitObjectType,
+    AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
+    MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
+    RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
     ScopeType, InstanceType, GenScopeType, ProceduralStorageScopeType,
     ServicesType, FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType,
     RefType, PointerType, ManagedRefType, VectorType, TupleType, UnionType,

@@ -55,7 +55,10 @@ below LIR, at LIR-to-LLVM.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
   identity of every class member and callable a node refers to.
 - Effect ordering within a block.
-- Low-level operations: arithmetic, comparisons, loads, stores, calls.
+- Low-level operations: arithmetic, comparisons, machine conversions, loads, stores, calls.
+- Foreign symbols: the linkage name of a callable defined outside the program, which a call may
+  target. LIR states the name and the machine types the call crosses on; how the name is resolved --
+  a link line, an execution session -- is below LIR.
 - The boundary protocol to the scheduling runtime (entry, suspend, resume, completion).
 
 ## Does Not Own

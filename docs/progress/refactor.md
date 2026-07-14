@@ -619,18 +619,17 @@ enough to warrant its own focused review.
       inventing it now: gated on R47, a future `Virtual { slot, static_receiver_type }` arm slots in
       as an additional `Callee` arm with no change to the others.
 
-- [x] R46 -- MIR's value-reinterpretation primitive is one `CastExpr{operand}` carrying no kind
-      axis. The destination type is stated on the enclosing `Expr::type`; the source type is read
-      off the operand; the `(source, destination)` type pair fully determines the realization
-      (integral resize / sign-handling, integral-to-real, real-to-integral, packed-to-enum,
-      pointer-to-different-pointee). Backends consult the type pair to select the emit (C++ chooses
-      among `static_cast` and `lyra::value` helpers; LLVM picks `zext` / `sext` / `trunc` / `fptosi`
-      / `bitcast` / `inttoptr`). The earlier `mir::ConversionExpr` (mirroring HIR's LRM-defined
-      `ConversionKind`) and `mir::PointerCastExpr` (the backend type-erasure bridge) retire; HIR's
-      `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR, and the 5 HIR kinds collapse to
-      the one MIR primitive at HIR-to-MIR. The kind axis Clang's AST carries exists because Clang
-      drives LLVM codegen directly; Lyra's MIR is a higher layer and the (src, dst) type pair
-      already names the same dispatch.
+- [x] R46 -- MIR's cast vocabulary is a set of single-meaning primitives, each carrying no kind axis
+      because each _is_ one kind: `BoolCastExpr` reduces a value to a machine boolean,
+      `PointerCastExpr` re-types a reference without moving bits, and `IntCastExpr` converts a
+      machine integer's width or signedness. The destination type is stated on the enclosing
+      `Expr::type`. A conversion no primitive covers therefore fails to compile, which is the
+      property a single node whose realization each backend selects from the (source, destination)
+      type pair cannot offer: there, a pair a backend never handled is a silent no-op. Every
+      conversion that reshapes a _value_ -- integral resize, real <-> integral, packed <-> string --
+      is a library call, not a cast node. `mir::ConversionExpr` (mirroring HIR's LRM-defined
+      `ConversionKind`) retires; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR
+      and collapse into these primitives at HIR-to-MIR.
 
 - [ ] R49 -- Unify callable identity. Today `mir::Direct::target` is `variant<MethodId, BuiltinFn>`
       -- a built-in is a closed-enum global id; a user method is a per-class arena id. As DPI

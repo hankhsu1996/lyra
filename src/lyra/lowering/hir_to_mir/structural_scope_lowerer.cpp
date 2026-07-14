@@ -130,8 +130,8 @@ void EmitExternalUnitDimLevel(
     std::vector<mir::ExprId>& indices) {
   mir::Block& block = *frame.current_block;
   const auto& builtins = module.Unit().builtins;
-  const auto host_int_lit = [&](std::int64_t v) -> mir::ExprId {
-    return block.exprs.Add(mir::MakeInt32Literal(builtins.int32, v));
+  const auto int_lit = [&](std::int64_t v) -> mir::ExprId {
+    return block.exprs.Add(mir::MakeIntLiteral(builtins.int_type, v));
   };
   const auto string_literal = [&](const std::string& s) -> mir::ExprId {
     return block.exprs.Add(
@@ -145,7 +145,7 @@ void EmitExternalUnitDimLevel(
     // dim chain (empty for a scalar instance).
     const mir::TypeId indices_type = module.Unit().types.Intern(
         mir::UnpackedArrayType{
-            .element_type = builtins.int32,
+            .element_type = builtins.int_type,
             .dim = mir::UnpackedRange::ZeroBased(indices.size())});
     const mir::ExprId indices_id = block.exprs.Add(
         mir::Expr{
@@ -207,7 +207,7 @@ void EmitExternalUnitDimLevel(
   const std::span<const std::uint32_t> remaining_dims = dims.subspan(1);
   const std::uint32_t count = dims.front();
   for (std::uint32_t i = 0; i < count; ++i) {
-    indices.push_back(host_int_lit(static_cast<std::int64_t>(i)));
+    indices.push_back(int_lit(static_cast<std::int64_t>(i)));
     EmitExternalUnitDimLevel(
         module, frame, parent_self, runtime_label, leaf_pointer_type, companion,
         remaining_dims, indices);
@@ -308,11 +308,12 @@ auto BuildIndicesLiteral(
   ids.reserve(indices.size());
   for (const std::uint32_t idx : indices) {
     ids.push_back(block.exprs.Add(
-        mir::MakeInt32Literal(builtins.int32, static_cast<std::int64_t>(idx))));
+        mir::MakeIntLiteral(
+            builtins.int_type, static_cast<std::int64_t>(idx))));
   }
   const mir::TypeId indices_type = module.Unit().types.Intern(
       mir::UnpackedArrayType{
-          .element_type = builtins.int32,
+          .element_type = builtins.int_type,
           .dim = mir::UnpackedRange::ZeroBased(indices.size())});
   return block.exprs.Add(
       mir::Expr{
@@ -631,7 +632,8 @@ auto MaterializeLeaf(
                        BuildStringLiteral(module, block, leaf.name)}},
           .type = void_ptr_type});
   return block.exprs.Add(
-      mir::Expr{.data = mir::CastExpr{.operand = raw}, .type = slot_type});
+      mir::Expr{
+          .data = mir::PointerCastExpr{.operand = raw}, .type = slot_type});
 }
 
 // Composes the resolve-phase pointer value that fills a cross-unit
@@ -854,7 +856,7 @@ void AppendOwnedChildConstruction(
   }
   const mir::TypeId indices_type = module.Unit().types.Intern(
       mir::UnpackedArrayType{
-          .element_type = builtins.int32,
+          .element_type = builtins.int_type,
           .dim = mir::UnpackedRange::ZeroBased(index_elems.size())});
   const mir::ExprId indices_id = arm_block.exprs.Add(
       mir::Expr{
@@ -925,7 +927,7 @@ auto LowerResolvedGenerate(
     const GenerateBindings& gen_bindings, const hir::ResolvedGenerate& resolved)
     -> diag::Result<mir::Stmt> {
   mir::Block& block = *frame.current_block;
-  const mir::TypeId int32_type = lowerer.Module().Unit().builtins.int32;
+  const mir::TypeId int_type = lowerer.Module().Unit().builtins.int_type;
 
   mir::Block body;
   const WalkFrame body_frame = frame.WithBlock(&body);
@@ -933,7 +935,7 @@ auto LowerResolvedGenerate(
     const auto& binding = gen_bindings.by_scope_id.at(item.scope.value);
     std::optional<mir::ExprId> index_id;
     if (item.index.has_value()) {
-      index_id = body.exprs.Add(mir::MakeInt32Literal(int32_type, *item.index));
+      index_id = body.exprs.Add(mir::MakeIntLiteral(int_type, *item.index));
     }
     AppendOwnedChildConstruction(
         lowerer.Module(), body_frame, binding.label, binding.scope_id, index_id,
@@ -1380,11 +1382,11 @@ auto InstallGeneratedDefinition(
                     .callee = mir::Construct{}, .arguments = std::move(args)},
             .type = intern(kind)});
   };
-  const auto host_int = [&](std::int64_t value) {
+  const auto machine_int = [&](std::int64_t value) {
     return ex.Add(
         mir::Expr{
-            .data = mir::HostIntLiteral{.value = value},
-            .type = unit.builtins.int32});
+            .data = mir::MachineIntLiteral{.value = value},
+            .type = unit.builtins.machine_int64});
   };
   const auto func_ref = [&](mir::MethodId m) {
     return ex.Add(
@@ -1400,10 +1402,10 @@ auto InstallGeneratedDefinition(
           .type = unit.builtins.string});
   const mir::ExprId def_name_ref = construct(
       mir::RuntimeLibraryKind::kAbiStringRef,
-      {name_lit, host_int(static_cast<std::int64_t>(def_name.size()))});
+      {name_lit, machine_int(static_cast<std::int64_t>(def_name.size()))});
   const mir::ExprId metadata = construct(
       mir::RuntimeLibraryKind::kScopeMetadata,
-      {def_name_ref, host_int(cls.time_resolution.precision_power)});
+      {def_name_ref, machine_int(cls.time_resolution.precision_power)});
   const mir::ExprId program = construct(
       mir::RuntimeLibraryKind::kScopeProgram,
       {metadata, func_ref(resolve_abi), func_ref(init_abi),

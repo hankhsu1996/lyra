@@ -33,6 +33,10 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::MachineIntType& m) -> llvm::Type* {
             return llvm::IntegerType::get(*ctx_, m.bit_width);
           },
+          [&](const lir::MachineFloatType& m) -> llvm::Type* {
+            return m.bit_width == 32 ? llvm::Type::getFloatTy(*ctx_)
+                                     : llvm::Type::getDoubleTy(*ctx_);
+          },
           [&](const auto&) -> llvm::Type* { return ptr_ty_; }},
       unit_->types.Get(id).data);
   cache_.emplace(id.value, mapped);

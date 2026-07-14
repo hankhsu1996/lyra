@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/cast.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -48,14 +47,11 @@ struct RealLiteral {
 // produce for a default-init pointer.
 struct NullLiteral {};
 
-// A host-language integer literal: renders as a bare C++ integer (e.g.
-// `42LL`), not as a `PackedArray::Int(42)` runtime value. Used at the
-// boundary between MIR and the runtime when a runtime entry's signature
-// takes a host scalar (`uint64_t` bit-width, `bool` flag) rather than a
-// SV-typed value. `Expr::type` is conventionally `builtins.int32` so
-// downstream type accounting stays uniform; the host-int-ness is implicit
-// from the node kind.
-struct HostIntLiteral {
+// A machine-integer literal: a plain scalar, not a simulation value. It is what
+// a runtime entry's signature takes where it wants a machine scalar (a bit
+// width, a flag) rather than an SV-typed value, so no runtime value is ever
+// built for it.
+struct MachineIntLiteral {
   std::int64_t value;
 };
 
@@ -64,15 +60,15 @@ struct UnaryExpr {
   ExprId operand;
 };
 
-// Reduces an operand to a host `bool` -- the predicate-reduction primitive. It
-// stands wherever a value is consumed as a boolean: a condition context (an
+// Reduces an operand to a machine `bool` -- the predicate-reduction primitive.
+// It stands wherever a value is consumed as a boolean: a condition context (an
 // if / while / for / do-while / ternary, LRM 12.4, true when the operand is
 // nonzero and false when it is zero, x, or z), an operand of a native logical
 // operator (`&&` / `||` / `!`), and the inner argument of a re-shape back to a
 // 1-bit packed value. The node kind, not the operand's type, is what tells a
 // backend to emit the reduction, so a condition never leaves the boolean
 // decision to a contextual conversion at the branch site. `Expr::type` carries
-// the 1-bit type by convention; the operand is any value the host's `bool(...)`
+// the 1-bit type by convention; the operand is any value a `bool(...)`
 // conversion accepts.
 struct BoolCastExpr {
   ExprId operand;
@@ -243,6 +239,17 @@ struct PointerCastExpr {
   ExprId operand;
 };
 
+// Converts a machine integer to a machine integer of a different width or
+// signedness. `operand` is a `MachineIntType` expression; `Expr::type` is the
+// destination `MachineIntType`. This moves bits -- it truncates or extends --
+// and is the primitive a foreign-call boundary crosses on: a call narrows the
+// widest machine integer to its declared C carrier and widens the carrier back.
+// A simulation value's resize is not this: an SV integral is a `PackedArray`
+// whose resize is a library call.
+struct IntCastExpr {
+  ExprId operand;
+};
+
 // Field access through an explicit receiver expression. `receiver` evaluates to
 // a field-bearing value reached by pointer -- a class instance, a closure, or a
 // promoted-scope handle (typically `LocalRef(self)` or a shared handle);
@@ -376,12 +383,12 @@ struct StaticConstantRef {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
-    HostIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
+    MachineIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
-    MoveExpr, PointerCastExpr, CastExpr, FieldAccessExpr, StructConstructExpr,
-    ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
-    AwaitExpr, TupleGetExpr, UnionExpr, UnionGetExpr, UnionGetRefExpr,
-    FunctionRef, StaticConstantRef>;
+    MoveExpr, PointerCastExpr, IntCastExpr, FieldAccessExpr,
+    StructConstructExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
+    ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr, UnionExpr,
+    UnionGetExpr, UnionGetRefExpr, FunctionRef, StaticConstantRef>;
 
 struct Expr {
   ExprData data;

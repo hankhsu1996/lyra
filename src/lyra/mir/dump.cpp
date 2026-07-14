@@ -210,23 +210,22 @@ class MirDumper {
               return "WildcardIndexType";
             },
             [](const StringType&) -> std::string { return "StringType"; },
-            [](const StringViewType&) -> std::string {
-              return "StringViewType";
+            [](const MachineCStringType&) -> std::string {
+              return "MachineCStringType";
             },
             [](const MachineIntType& m) -> std::string {
               return std::format(
                   "MachineInt(width={}, signed={})", m.bit_width,
                   m.signedness == Signedness::kSigned ? "true" : "false");
             },
+            [](const MachineFloatType& m) -> std::string {
+              return std::format("MachineFloat(width={})", m.bit_width);
+            },
             [](const EventType&) -> std::string { return "EventType"; },
             [](const RealType&) -> std::string { return "RealType"; },
             [](const ShortRealType&) -> std::string { return "ShortRealType"; },
             [](const RealTimeType&) -> std::string { return "RealTimeType"; },
             [](const ChandleType&) -> std::string { return "ChandleType"; },
-            [](const DpiCarrierType& d) -> std::string {
-              return std::format(
-                  "DpiCarrier({})", support::DpiCarrierName(d.carrier));
-            },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
               return std::format("Object(#{})", o.class_id.value);
@@ -272,6 +271,10 @@ class MirDumper {
                   return "RuntimeLibrary(AbiStringRef)";
                 case RuntimeLibraryKind::kScopeEntry:
                   return "RuntimeLibrary(ScopeEntry)";
+                case RuntimeLibraryKind::kDpiBitBuffer:
+                  return "RuntimeLibrary(DpiBitBuffer)";
+                case RuntimeLibraryKind::kDpiLogicBuffer:
+                  return "RuntimeLibrary(DpiLogicBuffer)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
@@ -575,8 +578,8 @@ class MirDumper {
               return std::format("RealLiteral({})", lit.value);
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
-            [](const HostIntLiteral& lit) -> std::string {
-              return std::format("HostIntLiteral({})", lit.value);
+            [](const MachineIntLiteral& lit) -> std::string {
+              return std::format("MachineIntLiteral({})", lit.value);
             },
             [](const AddressOfExpr& a) -> std::string {
               return std::format(
@@ -589,8 +592,9 @@ class MirDumper {
               return std::format(
                   "PointerCastExpr operand=Expr[{}]", c.operand.value);
             },
-            [](const CastExpr& c) -> std::string {
-              return std::format("CastExpr operand=Expr[{}]", c.operand.value);
+            [](const IntCastExpr& c) -> std::string {
+              return std::format(
+                  "IntCastExpr operand=Expr[{}]", c.operand.value);
             },
             [this](const LocalRef& r) -> std::string {
               const auto& var = code_->locals.Get(r.var);

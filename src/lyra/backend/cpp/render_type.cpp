@@ -87,8 +87,8 @@ auto RenderTypeAsCpp(
           [](const mir::StringType&) -> std::string {
             return std::string{"lyra::value::String"};
           },
-          [](const mir::StringViewType&) -> std::string {
-            return std::string{"std::string_view"};
+          [](const mir::MachineCStringType&) -> std::string {
+            return std::string{"const char*"};
           },
           [](const mir::MachineIntType& m) -> std::string {
             const std::string_view sign =
@@ -104,17 +104,16 @@ auto RenderTypeAsCpp(
                     "RenderTypeAsCpp: unsupported MachineIntType width");
             }
           },
-          [](const mir::DpiCarrierType& d) -> std::string {
-            // A scalar carrier is its by-value C type; a vector carrier's local
-            // realization is a boundary-buffer value that sizes itself from the
-            // SV value and hands the foreign side a canonical chunk pointer.
-            if (const auto* scalar =
-                    std::get_if<support::ScalarCarrier>(&d.carrier)) {
-              return std::string{DpiScalarCarrierCppType(scalar->abi)};
+          [](const mir::MachineFloatType& m) -> std::string {
+            switch (m.bit_width) {
+              case 32:
+                return std::string{"float"};
+              case 64:
+                return std::string{"double"};
+              default:
+                throw InternalError(
+                    "RenderTypeAsCpp: unsupported MachineFloatType width");
             }
-            const auto& vec = std::get<support::VectorCarrier>(d.carrier);
-            return vec.four_state ? "lyra::value::DpiLogicBuffer"
-                                  : "lyra::value::DpiBitBuffer";
           },
           [](const mir::ChandleType&) -> std::string {
             return std::string{"lyra::value::Chandle"};
@@ -213,6 +212,10 @@ auto RenderTypeAsCpp(
                 return std::string{"lyra::runtime::AbiStringRef"};
               case mir::RuntimeLibraryKind::kScopeEntry:
                 return std::string{"lyra::runtime::ScopeEntry"};
+              case mir::RuntimeLibraryKind::kDpiBitBuffer:
+                return std::string{"lyra::value::DpiBitBuffer"};
+              case mir::RuntimeLibraryKind::kDpiLogicBuffer:
+                return std::string{"lyra::value::DpiLogicBuffer"};
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },

@@ -1,6 +1,7 @@
 #include "lyra/jit/executor.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -13,6 +14,7 @@
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
+#include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
 #include <llvm/ExecutionEngine/Orc/IRTransformLayer.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
@@ -161,6 +163,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_to_bool", &lyra_rt_packed_to_bool);
   add("lyra_rt_packed_convert_from", &lyra_rt_packed_convert_from);
   add("lyra_rt_packed_from_bool", &lyra_rt_packed_from_bool);
+  add("lyra_rt_packed_from_int", &lyra_rt_packed_from_int);
   add("lyra_rt_packed_to_int64", &lyra_rt_packed_to_int64);
   add("lyra_rt_packed_is_unknown", &lyra_rt_packed_is_unknown);
   add("lyra_rt_packed_pow", &lyra_rt_packed_pow);
@@ -185,6 +188,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_reduction_nor", &lyra_rt_packed_reduction_nor);
   add("lyra_rt_packed_reduction_xnor", &lyra_rt_packed_reduction_xnor);
   add("lyra_rt_string_from_packed_array", &lyra_rt_string_from_packed_array);
+  add("lyra_rt_string_string_cstr", &lyra_rt_string_string_cstr);
   add("lyra_rt_string_len", &lyra_rt_string_len);
   add("lyra_rt_string_getc", &lyra_rt_string_getc);
   add("lyra_rt_string_toupper", &lyra_rt_string_toupper);
@@ -213,6 +217,23 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
       "define runtime abi");
+}
+
+// Opens the design's DPI-C library to the execution session, so a generated
+// foreign call finds its symbol (LRM 35.4). A generator searches the library on
+// each unresolved name, which is what an ahead-of-time image's link step does
+// once; the mangling prefix is the platform's, taken from the JIT's data
+// layout.
+void DefineForeignSymbols(
+    llvm::orc::LLJIT& jit, const std::filesystem::path& library) {
+  auto generator = llvm::orc::DynamicLibrarySearchGenerator::Load(
+      library.c_str(), jit.getDataLayout().getGlobalPrefix());
+  if (!generator) {
+    throw InternalError(
+        "jit executor: loading the DPI-C library '" + library.string() +
+        "': " + llvm::toString(generator.takeError()));
+  }
+  jit.getMainJITDylib().addGenerator(std::move(*generator));
 }
 
 // The runtime's spelling of a domain the execution backend classified a type
@@ -319,13 +340,17 @@ auto Execute(
     std::span<const lir::CompilationUnit> units,
     std::span<const compiler::ElaboratedUnitMetadata> metadata,
     const lir::CompilationUnit& root_unit,
-    const compiler::ElaboratedUnitMetadata& root_metadata) -> int {
+    const compiler::ElaboratedUnitMetadata& root_metadata,
+    const std::optional<std::filesystem::path>& dpi_library) -> int {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
 
   auto jit = Unwrap(llvm::orc::LLJITBuilder().create(), "create jit");
   LowerCoroutines(*jit);
   DefineRuntimeAbi(*jit);
+  if (dpi_library.has_value()) {
+    DefineForeignSymbols(*jit, *dpi_library);
+  }
 
   // Every unit -- the source units and the design-root -- becomes one module in
   // the shared JIT, so a unit's construct reaches another unit's entries and

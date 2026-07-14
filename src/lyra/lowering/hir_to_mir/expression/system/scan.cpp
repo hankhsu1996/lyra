@@ -140,7 +140,7 @@ auto LowerScanSystemSubroutineCall(
   auto& module = process.Module();
   auto& unit = module.Unit();
   const mir::TypeId integer_t = unit.builtins.integer;
-  const mir::TypeId int32_t_id = unit.builtins.int32;
+  const mir::TypeId int_type = unit.builtins.int_type;
   const mir::TypeId string_t = unit.builtins.string;
   const mir::TypeId bit_t = unit.builtins.bit1;
   const mir::TypeId void_t = unit.builtins.void_type;
@@ -219,9 +219,9 @@ auto LowerScanSystemSubroutineCall(
   // input stream": the parse returns the byte-count it consumed so the
   // file form can rewind the unconsumed tail before the next read.
   const mir::ExprId consumed_init =
-      body.exprs.Add(mir::MakeInt32Literal(int32_t_id, 0));
+      body.exprs.Add(mir::MakeIntLiteral(int_type, 0));
   const mir::LocalId consumed_var = closure.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_scan_consumed", .type = int32_t_id});
+      mir::LocalDecl{.name = "_lyra_scan_consumed", .type = int_type});
   body.AppendStmt(
       mir::LocalDeclStmt{.target = consumed_var, .init = consumed_init});
 
@@ -243,7 +243,7 @@ auto LowerScanSystemSubroutineCall(
   scan_args.push_back(source_id);
   scan_args.push_back(format_id);
   scan_args.push_back(
-      body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int32_t_id)));
+      body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type)));
   for (std::size_t k = 0; k < target_types.size(); ++k) {
     scan_args.push_back(
         body.exprs.Add(mir::MakeLocalRefExpr(temp_ids[k], target_types[k])));
@@ -272,7 +272,7 @@ auto LowerScanSystemSubroutineCall(
                     .arguments = {services_after}},
             .type = unit.builtins.files});
     const mir::ExprId consumed_read =
-        body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int32_t_id));
+        body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type));
     const mir::ExprId advance_call = body.exprs.Add(
         mir::Expr{
             .data =

@@ -22,6 +22,7 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/driver/cpp_build.hpp"
+#include "lyra/driver/dpi_link.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/frontend/load.hpp"
@@ -517,13 +518,34 @@ auto main(int argc, char** argv) -> int {
       case CommandKind::kRun:
         switch (args.backend) {
           case Backend::kJit: {
+            // A JIT image has no link step, so the design's DPI-C sources are
+            // compiled into a library the execution session resolves the
+            // imports' foreign symbols from. The temp dir holds it for the run.
+            std::optional<std::filesystem::path> dpi_library;
+            auto dpi_dir = lyra::support::MakeTempDir();
+            if (!args.dpi_link_sources.empty()) {
+              if (!dpi_dir) {
+                report(
+                    lyra::diag::Make(
+                        lyra::diag::DiagCode::kHostIoError,
+                        std::move(dpi_dir.error())));
+                return 1;
+              }
+              auto built = lyra::driver::BuildDpiSharedLibrary(
+                  args.dpi_link_sources, *dpi_dir);
+              if (!built) {
+                report(std::move(built.error()), mgr);
+                return 1;
+              }
+              dpi_library = *std::move(built);
+            }
             // The design-root unit's construct elaborates the whole design,
             // building the top-level units as its owned children, so the JIT
             // runs the design once from that one entry rather than per top.
             return lyra::jit::Execute(
                 *result.artifacts.lir_units, *result.artifacts.unit_metadata,
                 *result.artifacts.root_lir_unit,
-                *result.artifacts.root_metadata);
+                *result.artifacts.root_metadata, dpi_library);
           }
           case Backend::kAot:
           case Backend::kLli:

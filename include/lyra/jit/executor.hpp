@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+#include <optional>
 #include <span>
 
 namespace lyra::lir {
@@ -20,10 +22,16 @@ namespace lyra::jit {
 // children -- the same path the C++ backend takes through the root's
 // constructor. The JIT owning the generated code outlives the design, so the
 // runtime's pointers into generated code stay valid for the whole run.
+//
+// `dpi_library`, when present, is a shared library the design's DPI-C imports
+// (LRM 35) are resolved from: a generated foreign call names a symbol this
+// process does not define, and with no link step the execution session is where
+// it must be found. A design with no imports passes none.
 auto Execute(
     std::span<const lir::CompilationUnit> units,
     std::span<const compiler::ElaboratedUnitMetadata> metadata,
     const lir::CompilationUnit& root_unit,
-    const compiler::ElaboratedUnitMetadata& root_metadata) -> int;
+    const compiler::ElaboratedUnitMetadata& root_metadata,
+    const std::optional<std::filesystem::path>& dpi_library) -> int;
 
 }  // namespace lyra::jit

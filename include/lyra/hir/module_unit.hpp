@@ -20,7 +20,7 @@ struct BuiltinHirTypes {
   TypeId scalar_bit;
   TypeId scalar_logic;
   TypeId void_type;
-  TypeId int32;
+  TypeId int_type;
   TypeId integer;
   TypeId string;
   TypeId time;
@@ -57,7 +57,7 @@ struct ModuleUnit {
         .scalar_bit = scalar_bit,
         .scalar_logic = scalar_logic,
         .void_type = add(VoidType{}),
-        .int32 =
+        .int_type =
             add(PackedArrayType{
                 .dim = PackedRange{.left = 31, .right = 0},
                 .element_type = scalar_bit,

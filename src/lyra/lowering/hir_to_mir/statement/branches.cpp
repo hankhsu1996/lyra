@@ -5,7 +5,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -20,7 +19,6 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/cast.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -88,35 +86,7 @@ auto LowerCaseStmt(
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
-
-  // Peel an outer CastExpr widening the selector when state-kind is
-  // preserved -- the cpp backend cannot init form=explicit from form=int,
-  // and the cascade builds its own per-label compares. Differing state-kind
-  // would make the snapshot 2-state while wildcard labels are 4-state, and the
-  // runtime's word-parallel compare requires both operands in the same state
-  // domain.
-  auto packed_state = [&](mir::TypeId tid) -> std::optional<bool> {
-    const auto& ty = process.Module().Unit().types.Get(tid);
-    if (const auto* pa = std::get_if<mir::PackedArrayType>(&ty.data)) {
-      return pa->IsFourState();
-    }
-    if (const auto* en = std::get_if<mir::EnumType>(&ty.data)) {
-      return en->base.IsFourState();
-    }
-    return std::nullopt;
-  };
-  if (const auto* cv =
-          std::get_if<mir::CastExpr>(&wrapper.exprs.Get(cond_expr_id).data)) {
-    const mir::TypeId dst_tid = wrapper.exprs.Get(cond_expr_id).type;
-    const mir::TypeId src_tid = wrapper.exprs.Get(cv->operand).type;
-    const auto dst_state = packed_state(dst_tid);
-    const auto src_state = packed_state(src_tid);
-    if (dst_state.has_value() && src_state.has_value() &&
-        *dst_state == *src_state) {
-      cond_expr_id = cv->operand;
-    }
-  }
+  const mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
 
   const CaseSnapshotRefs snapshot =
       AppendCaseSnapshot(process.Module(), wrapper_frame, cond_expr_id);
@@ -209,12 +179,7 @@ auto LowerCaseInsideStmt(
   auto cond_or =
       process.LowerExpr(hir_proc.exprs.Get(c.condition), wrapper_frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
-
-  if (const auto* cv =
-          std::get_if<mir::CastExpr>(&wrapper.exprs.Get(cond_expr_id).data)) {
-    cond_expr_id = cv->operand;
-  }
+  const mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
 
   const CaseSnapshotRefs snapshot =
       AppendCaseSnapshot(process.Module(), wrapper_frame, cond_expr_id);

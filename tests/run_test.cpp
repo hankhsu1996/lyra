@@ -105,6 +105,36 @@ auto WriteTimingSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// Scalar DPI-C imports (LRM 35.5): each argument is marshaled to its declared C
+// carrier and the result back. The carriers span the widths, so the boundary's
+// machine-integer conversion is exercised in both directions -- `byte` narrows
+// the widest machine integer to a C `signed char` and widens the returned one
+// back.
+auto WriteDpiImportSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  import \"DPI-C\" function int add_one(input int x);\n"
+      << "  import \"DPI-C\" function byte twice(input byte v);\n"
+      << "  import \"DPI-C\" function longint widen(input longint v);\n"
+      << "  import \"DPI-C\" function int slen(input string s);\n"
+      << "  initial begin\n"
+      << "    $display(\"add=%0d\", add_one(41));\n"
+      << "    $display(\"twice=%0d\", twice(-5));\n"
+      << "    $display(\"widen=%0d\", widen(64'd4294967296));\n"
+      << "    $display(\"len=%0d\", slen(\"lyra\"));\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+auto WriteDpiImportForeign(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "#include <string.h>\n"
+      << "int add_one(int x) { return x + 1; }\n"
+      << "signed char twice(signed char v) { return (signed char)(v * 2); }\n"
+      << "long long widen(long long v) { return v + 1; }\n"
+      << "int slen(const char* s) { return (int)strlen(s); }\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -213,6 +243,50 @@ TEST(LyraRun, JitAndCppAgreeOnTimingControl) {
 
   EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
   EXPECT_EQ(jit.stdout_text, "b=2\nb0 done\na=2\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+// The execution backend calls foreign C: the import lowers to an external
+// symbol, which a JIT image has no link step to resolve, so the design's DPI-C
+// sources are compiled into a library the execution session searches. Both
+// backends marshal through the same carriers, so the same source and the same C
+// must produce the same output.
+TEST(LyraRun, JitAndCppAgreeOnDpiScalarImports) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  const auto foreign = *tmp_or / "dpi.c";
+  WriteDpiImportSource(src);
+  WriteDpiImportForeign(foreign);
+
+  const std::vector<std::string> jit_args = {
+      "run",          "--backend",      "jit",
+      "--no-project", "--top",          "Test",
+      "--dpi-link",   foreign.string(), src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run",        "--no-project",   "--top",     "Test",
+      "--dpi-link", foreign.string(), src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_NE(jit.stdout_text.find("add=42"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
+  EXPECT_NE(jit.stdout_text.find("twice=-10"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
+  EXPECT_NE(jit.stdout_text.find("widen=4294967297"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
+  EXPECT_NE(jit.stdout_text.find("len=4"), std::string::npos)
       << "stdout: " << jit.stdout_text;
 }
 

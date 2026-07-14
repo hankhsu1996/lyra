@@ -138,8 +138,8 @@ auto LowerDiagnosticSystemSubroutineCall(
   const mir::ExprId finish_services_id =
       block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   const mir::ExprId level_id = block.exprs.Add(
-      mir::MakeInt32Literal(
-          unit.builtins.int32, static_cast<std::int64_t>(finish_level)));
+      mir::MakeIntLiteral(
+          unit.builtins.int_type, static_cast<std::int64_t>(finish_level)));
   return mir::Expr{
       .data =
           mir::CallExpr{

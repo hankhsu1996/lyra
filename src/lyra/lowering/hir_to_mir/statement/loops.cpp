@@ -172,7 +172,7 @@ auto LowerDoWhileStmt(
 auto LowerRepeatStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::RepeatStmt& r) -> diag::Result<mir::Stmt> {
-  const mir::TypeId int_type = process.Module().Unit().builtins.int32;
+  const mir::TypeId int_type = process.Module().Unit().builtins.int_type;
   const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
 
   mir::Block wrapper;
@@ -198,9 +198,9 @@ auto LowerRepeatStmt(
       mir::LocalDecl{.name = "_lyra_repeat_index", .type = int_type});
 
   const mir::ExprId zero_id = wrapper.exprs.Add(
-      mir::MakeInt32Literal(process.Module().Unit().builtins.int32, 0));
+      mir::MakeIntLiteral(process.Module().Unit().builtins.int_type, 0));
   const mir::ExprId one_id = wrapper.exprs.Add(
-      mir::MakeInt32Literal(process.Module().Unit().builtins.int32, 1));
+      mir::MakeIntLiteral(process.Module().Unit().builtins.int_type, 1));
 
   const mir::ExprId idx_ref_cond =
       wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));

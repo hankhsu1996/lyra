@@ -83,8 +83,8 @@ auto LowerPrintTimescaleSystemSubroutineCall(
                   .callee = mir::Construct{}, .arguments = {text_lit}},
           .type = builtins.string});
 
-  const mir::ExprId fd_id =
-      body.exprs.Add(mir::MakeInt32Literal(builtins.int32, support::kStdoutFd));
+  const mir::ExprId fd_id = body.exprs.Add(
+      mir::MakeIntLiteral(builtins.int_type, support::kStdoutFd));
   const mir::ExprId files_id =
       body.exprs.Add(BuildFilesCallExpr(process.Module(), frame));
   return mir::Expr{

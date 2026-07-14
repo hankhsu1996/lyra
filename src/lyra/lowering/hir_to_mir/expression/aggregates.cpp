@@ -109,14 +109,16 @@ auto LowerHirConcatExpr(
     const std::int64_t bound = q->max_bound.has_value()
                                    ? static_cast<std::int64_t>(*q->max_bound)
                                    : -1;
-    const mir::TypeId int32_type = lowerer.Module().Unit().builtins.int32;
+    const mir::TypeId machine_int =
+        lowerer.Module().Unit().builtins.machine_int64;
     std::vector<mir::ExprId> args;
     args.reserve(operand_ids.size() + 2);
     args.push_back(block.exprs.Add(
         BuildDefaultValueExpr(lowerer.Module(), frame, element_type)));
     args.push_back(block.exprs.Add(
         mir::Expr{
-            .data = mir::HostIntLiteral{.value = bound}, .type = int32_type}));
+            .data = mir::MachineIntLiteral{.value = bound},
+            .type = machine_int}));
     args.insert(args.end(), operand_ids.begin(), operand_ids.end());
     return mir::Expr{
         .data =

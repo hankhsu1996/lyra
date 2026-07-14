@@ -90,7 +90,7 @@ auto LowerFileOpenCall(
   }
   return BuildFileIoCall(
       process, frame, support::BuiltinFn::kFileOpen, std::move(operands),
-      process.Module().Unit().builtins.int32);
+      process.Module().Unit().builtins.int_type);
 }
 
 // LRM 21.3.6: the no-argument flush-all form and the addressed form select
@@ -140,22 +140,22 @@ auto LowerFileIOSystemSubroutineCall(
           process, frame, call, info.builtin_fn, 1, builtins.void_type);
     case support::BuiltinFn::kFileGetc:
       return LowerFixedOperandCall(
-          process, frame, call, info.builtin_fn, 1, builtins.int32);
+          process, frame, call, info.builtin_fn, 1, builtins.int_type);
     case support::BuiltinFn::kFileUngetc:
       return LowerFixedOperandCall(
-          process, frame, call, info.builtin_fn, 2, builtins.int32);
+          process, frame, call, info.builtin_fn, 2, builtins.int_type);
     case support::BuiltinFn::kFileSeek:
       return LowerFixedOperandCall(
-          process, frame, call, info.builtin_fn, 3, builtins.int32);
+          process, frame, call, info.builtin_fn, 3, builtins.int_type);
     case support::BuiltinFn::kFileRewind:
       return LowerFixedOperandCall(
-          process, frame, call, info.builtin_fn, 1, builtins.int32);
+          process, frame, call, info.builtin_fn, 1, builtins.int_type);
     case support::BuiltinFn::kFileTell:
       return LowerFixedOperandCall(
-          process, frame, call, info.builtin_fn, 1, builtins.int32);
+          process, frame, call, info.builtin_fn, 1, builtins.int_type);
     case support::BuiltinFn::kFileEof:
       return LowerFixedOperandCall(
-          process, frame, call, info.builtin_fn, 1, builtins.int32);
+          process, frame, call, info.builtin_fn, 1, builtins.int_type);
     case support::BuiltinFn::kFileFlush:
       return LowerFileFlushCall(process, frame, call);
     case support::BuiltinFn::kFileGets:
@@ -206,7 +206,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
           mir::MakeLocalRefExpr(slots[0].temp, slots[0].type));
       call_expr = BuildFileIoCall(
           process, wrapper_frame, info.builtin_fn, {temp_ref, fd_id},
-          process.Module().Unit().builtins.int32);
+          process.Module().Unit().builtins.int_type);
       break;
     }
     case support::BuiltinFn::kFileRead: {
@@ -260,9 +260,9 @@ auto LowerFileIOSystemSubroutineCallStmt(
       std::vector<mir::ExprId> operands{temp_ref, fd_id};
       if (unpacked != nullptr) {
         operands.push_back(wrapper.exprs.Add(
-            mir::MakeInt32Literal(builtins.int32, unpacked->dim.left)));
+            mir::MakeIntLiteral(builtins.int_type, unpacked->dim.left)));
         operands.push_back(wrapper.exprs.Add(
-            mir::MakeInt32Literal(builtins.int32, unpacked->dim.right)));
+            mir::MakeIntLiteral(builtins.int_type, unpacked->dim.right)));
         // start: the SV index, or the lowest declared index when omitted
         // (LRM 21.3.4.4 default). Synthesizing it keeps count the only
         // trailing-optional operand.
@@ -273,8 +273,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
           operands.push_back(wrapper.exprs.Add(*std::move(start_or)));
         } else {
           operands.push_back(wrapper.exprs.Add(
-              mir::MakeInt32Literal(
-                  builtins.int32,
+              mir::MakeIntLiteral(
+                  builtins.int_type,
                   std::min(unpacked->dim.left, unpacked->dim.right))));
         }
         if (call.arguments.size() > 3 && call.arguments[3].has_value()) {
@@ -286,7 +286,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
       }
       call_expr = BuildFileIoCall(
           process, wrapper_frame, info.builtin_fn, std::move(operands),
-          builtins.int32);
+          builtins.int_type);
       break;
     }
     case support::BuiltinFn::kFileError: {
@@ -303,7 +303,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
           mir::MakeLocalRefExpr(slots[0].temp, slots[0].type));
       call_expr = BuildFileIoCall(
           process, wrapper_frame, info.builtin_fn, {fd_id, temp_ref},
-          process.Module().Unit().builtins.int32);
+          process.Module().Unit().builtins.int_type);
       break;
     }
     default:

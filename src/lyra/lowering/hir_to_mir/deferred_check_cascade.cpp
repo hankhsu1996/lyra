@@ -123,16 +123,16 @@ auto BuildDiagnosticThenScope(
     BodyBindingRef self_ref, mir::LocalId count_var,
     const CheckVerdict& verdict, std::string origin) -> mir::Block {
   mir::Block block;
-  const mir::TypeId int32_type = unit.builtins.int32;
+  const mir::TypeId int_type = unit.builtins.int_type;
 
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.prefix_text});
   if (verdict.include_count_value) {
     const mir::ExprId count_read_id =
-        block.exprs.Add(mir::MakeLocalRefExpr(count_var, int32_type));
+        block.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
     items.emplace_back(
         mir::RuntimePrintValue(
-            count_read_id, int32_type,
+            count_read_id, int_type,
             mir::FormatSpec(
                 value::FormatKind::kDecimal, mir::FormatModifiers{})));
     items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.suffix_text});
@@ -194,7 +194,7 @@ auto BuildUniqueCheckClosure(
   ClosureBuilder closure(module.Unit(), wrapper_frame);
   mir::Block& body = closure.Body();
 
-  const mir::TypeId int32_type = module.Unit().builtins.int32;
+  const mir::TypeId int_type = module.Unit().builtins.int_type;
   const mir::TypeId bit1_type = module.Unit().builtins.bit1;
   const BodyBindingRef self_ref =
       closure.Bindings().EnsureCarrier(BindingOriginId::Receiver());
@@ -208,18 +208,18 @@ auto BuildUniqueCheckClosure(
   }
 
   const mir::LocalId count_var = closure.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_unique_count", .type = int32_type});
+      mir::LocalDecl{.name = "_lyra_unique_count", .type = int_type});
 
   const mir::ExprId zero_init_id =
-      body.exprs.Add(mir::MakeInt32Literal(int32_type, 0));
+      body.exprs.Add(mir::MakeIntLiteral(int_type, 0));
   body.AppendStmt(
       mir::LocalDeclStmt{.target = count_var, .init = zero_init_id});
 
   for (const mir::ExprId bit_read : inner_reads) {
     const mir::ExprId one_lit =
-        body.exprs.Add(mir::MakeInt32Literal(int32_type, 1));
+        body.exprs.Add(mir::MakeIntLiteral(int_type, 1));
     const mir::ExprId zero_lit =
-        body.exprs.Add(mir::MakeInt32Literal(int32_type, 0));
+        body.exprs.Add(mir::MakeIntLiteral(int_type, 0));
     const mir::ExprId cond_value = body.exprs.Add(
         mir::Expr{
             .data =
@@ -227,9 +227,9 @@ auto BuildUniqueCheckClosure(
                     .condition = ReduceToCondition(body, bit_read, bit1_type),
                     .then_value = one_lit,
                     .else_value = zero_lit},
-            .type = int32_type});
+            .type = int_type});
     const mir::ExprId count_read =
-        body.exprs.Add(mir::MakeLocalRefExpr(count_var, int32_type));
+        body.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
     const mir::ExprId added = body.exprs.Add(
         mir::Expr{
             .data =
@@ -237,23 +237,23 @@ auto BuildUniqueCheckClosure(
                     .op = mir::BinaryOp::kAdd,
                     .lhs = count_read,
                     .rhs = cond_value},
-            .type = int32_type});
+            .type = int_type});
     const mir::ExprId count_target =
-        body.exprs.Add(mir::MakeLocalRefExpr(count_var, int32_type));
+        body.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
     const mir::ExprId assign = body.exprs.Add(
         mir::Expr{
             .data = mir::AssignExpr{.target = count_target, .value = added},
-            .type = int32_type});
+            .type = int_type});
     body.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 
   const CheckVerdict verdict = VerdictFor(check, snapshot_vars.size());
 
   const mir::ExprId final_count_read =
-      body.exprs.Add(mir::MakeLocalRefExpr(count_var, int32_type));
+      body.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
   const mir::ExprId expected_lit = body.exprs.Add(
-      mir::MakeInt32Literal(
-          int32_type, static_cast<std::int64_t>(verdict.expected)));
+      mir::MakeIntLiteral(
+          int_type, static_cast<std::int64_t>(verdict.expected)));
   const mir::ExprId predicate_id = body.exprs.Add(
       mir::Expr{
           .data =
@@ -261,7 +261,7 @@ auto BuildUniqueCheckClosure(
                   .op = verdict.violation_op,
                   .lhs = final_count_read,
                   .rhs = expected_lit},
-          .type = int32_type});
+          .type = int_type});
 
   mir::Block diag_block = BuildDiagnosticThenScope(
       module.Unit(), closure.Bindings(), self_ref, count_var, verdict,
@@ -288,7 +288,7 @@ auto BuildDeferredCheckCascade(
     std::optional<std::string> outer_label, diag::SourceSpan span)
     -> mir::Stmt {
   const mir::TypeId void_type = module.Unit().builtins.void_type;
-  const mir::TypeId int32_type = module.Unit().builtins.int32;
+  const mir::TypeId int_type = module.Unit().builtins.int_type;
   const mir::TypeId bit1_type = module.Unit().builtins.bit1;
 
   // SnapshotPredicate / BuildDefaultValueExpr append to wrapper, so route
@@ -317,8 +317,7 @@ auto BuildDeferredCheckCascade(
   const mir::ExprId self_id = wrapper.exprs.Add(MakeSelfRefExpr(
       wrapper_frame, wrapper_frame.current_class->self_pointer_type));
   const mir::ExprId site_id_expr = wrapper.exprs.Add(
-      mir::MakeInt32Literal(
-          int32_type, static_cast<std::int64_t>(site_id.value)));
+      mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(site_id.value)));
   const mir::ExprId submit_expr_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
@@ -336,7 +335,7 @@ auto BuildDeferredCheckCascade(
   for (std::size_t i = branches.size(); i-- > 1;) {
     mir::Block level_block;
     const mir::ExprId cond_read = level_block.exprs.Add(
-        mir::MakeLocalRefExpr(snapshot_vars[i].local, int32_type));
+        mir::MakeLocalRefExpr(snapshot_vars[i].local, int_type));
 
     const mir::BlockId body_scope_id =
         level_block.child_scopes.Add(std::move(branches[i].body));
@@ -355,7 +354,7 @@ auto BuildDeferredCheckCascade(
 
   if (!branches.empty()) {
     const mir::ExprId cond_read0 = wrapper.exprs.Add(
-        mir::MakeLocalRefExpr(snapshot_vars[0].local, int32_type));
+        mir::MakeLocalRefExpr(snapshot_vars[0].local, int_type));
 
     const mir::BlockId body0_id =
         wrapper.child_scopes.Add(std::move(branches[0].body));

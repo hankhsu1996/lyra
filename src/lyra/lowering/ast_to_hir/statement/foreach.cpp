@@ -64,7 +64,7 @@ auto SizeMethodFor(const slang::ast::Type& array_type)
 auto BuildIntegerLevel(
     ProcessLowerer& proc, WalkFrame frame, const LoopDim& dim,
     std::optional<hir::ExprId> array, const slang::ast::Type* array_type,
-    hir::TypeId int32_type, diag::SourceSpan span,
+    hir::TypeId int_type, diag::SourceSpan span,
     std::vector<hir::StmtId>& setup) -> LevelLoop {
   auto& body = *frame.current_procedural_body;
   hir::ExprId first_id{};
@@ -72,25 +72,25 @@ auto BuildIntegerLevel(
   bool ascending = true;
   if (dim.range.has_value()) {
     const auto& declared = *dim.range;
-    first_id = frame.Exprs().Add(
-        hir::MakeInt32Literal(declared.left, int32_type, span));
-    last_id = frame.Exprs().Add(
-        hir::MakeInt32Literal(declared.right, int32_type, span));
+    first_id =
+        frame.Exprs().Add(hir::MakeIntLiteral(declared.left, int_type, span));
+    last_id =
+        frame.Exprs().Add(hir::MakeIntLiteral(declared.right, int_type, span));
     ascending = declared.left <= declared.right;
   } else {
     hir::SubroutineRef size_callee = SizeMethodFor(*array_type);
     const hir::ExprId size_id = frame.Exprs().Add(
         hir::Expr{
-            .type = int32_type,
+            .type = int_type,
             .data =
                 hir::CallExpr{
                     .callee = std::move(size_callee), .arguments = {*array}},
             .span = span});
     const hir::ExprId one_id =
-        frame.Exprs().Add(hir::MakeInt32Literal(1, int32_type, span));
+        frame.Exprs().Add(hir::MakeIntLiteral(1, int_type, span));
     const hir::ExprId last_value_id = frame.Exprs().Add(
         hir::Expr{
-            .type = int32_type,
+            .type = int_type,
             .data =
                 hir::BinaryExpr{
                     .op = hir::BinaryOp::kSub, .lhs = size_id, .rhs = one_id},
@@ -98,7 +98,7 @@ auto BuildIntegerLevel(
     const hir::ProceduralVarId last_var = body.procedural_vars.Add(
         hir::ProceduralVarDecl{
             .name = std::string{kLastIndexName},
-            .type = int32_type,
+            .type = int_type,
             .lifetime = hir::VariableLifetime::kAutomatic});
     frame.current_scope_declarations->push_back(last_var);
     setup.push_back(body.stmts.Add(
@@ -106,22 +106,21 @@ auto BuildIntegerLevel(
             .label = std::nullopt,
             .data = hir::VarDeclStmt{.var = last_var, .init = last_value_id},
             .span = span}));
-    first_id = frame.Exprs().Add(hir::MakeInt32Literal(0, int32_type, span));
+    first_id = frame.Exprs().Add(hir::MakeIntLiteral(0, int_type, span));
     last_id = frame.Exprs().Add(
         hir::MakeRefExpr(
-            hir::ProceduralVarRef{.var = last_var}, int32_type, span));
+            hir::ProceduralVarRef{.var = last_var}, int_type, span));
   }
 
   const hir::ProceduralVarId loop_var =
-      proc.AddProceduralVar(frame, body, *dim.loopVar, int32_type);
+      proc.AddProceduralVar(frame, body, *dim.loopVar, int_type);
   std::vector<hir::ForInit> init;
   init.emplace_back(hir::ForInitDecl{.var = loop_var, .init = first_id});
   const hir::ExprId cond_ref = frame.Exprs().Add(
-      hir::MakeRefExpr(
-          hir::ProceduralVarRef{.var = loop_var}, int32_type, span));
+      hir::MakeRefExpr(hir::ProceduralVarRef{.var = loop_var}, int_type, span));
   const hir::ExprId cond_id = frame.Exprs().Add(
       hir::Expr{
-          .type = int32_type,
+          .type = int_type,
           .data =
               hir::BinaryExpr{
                   .op = ascending ? hir::BinaryOp::kLessEqual
@@ -130,11 +129,10 @@ auto BuildIntegerLevel(
                   .rhs = last_id},
           .span = span});
   const hir::ExprId step_ref = frame.Exprs().Add(
-      hir::MakeRefExpr(
-          hir::ProceduralVarRef{.var = loop_var}, int32_type, span));
+      hir::MakeRefExpr(hir::ProceduralVarRef{.var = loop_var}, int_type, span));
   const hir::ExprId step_id = frame.Exprs().Add(
       hir::Expr{
-          .type = int32_type,
+          .type = int_type,
           .data =
               hir::IncDecExpr{
                   .op = ascending ? hir::IncDecOp::kPreInc
@@ -143,7 +141,7 @@ auto BuildIntegerLevel(
           .span = span});
   return LevelLoop{
       .loop_var = loop_var,
-      .loop_var_type = int32_type,
+      .loop_var_type = int_type,
       .init = std::move(init),
       .condition = cond_id,
       .step = {step_id}};
@@ -159,7 +157,7 @@ auto BuildIntegerLevel(
 // differs from the counter and cannot share one C++ init declaration.
 auto BuildAssociativeLevel(
     ProcessLowerer& proc, WalkFrame frame, const LoopDim& dim,
-    hir::ExprId array, hir::TypeId int32_type, diag::SourceSpan span,
+    hir::ExprId array, hir::TypeId int_type, diag::SourceSpan span,
     std::vector<hir::StmtId>& setup) -> diag::Result<LevelLoop> {
   auto& body = *frame.current_procedural_body;
   auto key_type_or = proc.Module().InternType(dim.loopVar->getType(), span);
@@ -176,7 +174,7 @@ auto BuildAssociativeLevel(
   const hir::ProceduralVarId more_var = body.procedural_vars.Add(
       hir::ProceduralVarDecl{
           .name = std::string{kMoreFlagName},
-          .type = int32_type,
+          .type = int_type,
           .lifetime = hir::VariableLifetime::kAutomatic});
   frame.current_scope_declarations->push_back(more_var);
 
@@ -186,7 +184,7 @@ auto BuildAssociativeLevel(
             hir::ProceduralVarRef{.var = key_var}, key_type, span));
     return frame.Exprs().Add(
         hir::Expr{
-            .type = int32_type,
+            .type = int_type,
             .data =
                 hir::CallExpr{
                     .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
@@ -200,14 +198,12 @@ auto BuildAssociativeLevel(
       hir::ForInitDecl{
           .var = more_var, .init = walk_call(support::BuiltinFn::kAssocFirst)});
   const hir::ExprId cond_id = frame.Exprs().Add(
-      hir::MakeRefExpr(
-          hir::ProceduralVarRef{.var = more_var}, int32_type, span));
+      hir::MakeRefExpr(hir::ProceduralVarRef{.var = more_var}, int_type, span));
   const hir::ExprId more_lhs = frame.Exprs().Add(
-      hir::MakeRefExpr(
-          hir::ProceduralVarRef{.var = more_var}, int32_type, span));
+      hir::MakeRefExpr(hir::ProceduralVarRef{.var = more_var}, int_type, span));
   const hir::ExprId step_id = frame.Exprs().Add(
       hir::Expr{
-          .type = int32_type,
+          .type = int_type,
           .data =
               hir::AssignExpr{
                   .kind = hir::AssignKind::kBlocking,
@@ -245,7 +241,7 @@ auto BuildForeachNest(
     ProcessLowerer& proc, const slang::ast::ForeachLoopStatement& fs,
     WalkFrame frame, const std::vector<const LoopDim*>& levels,
     std::size_t level, std::optional<hir::ExprId> array,
-    const slang::ast::Type* array_type, hir::TypeId int32_type,
+    const slang::ast::Type* array_type, hir::TypeId int_type,
     diag::SourceSpan span, hir::LoopLabelId foreach_label, bool* label_used)
     -> diag::Result<std::vector<hir::StmtId>> {
   auto& body = *frame.current_procedural_body;
@@ -272,13 +268,13 @@ auto BuildForeachNest(
       array_type->getCanonicalType().isAssociativeArray();
   LevelLoop loop{};
   if (is_associative) {
-    auto loop_or = BuildAssociativeLevel(
-        proc, frame, dim, *array, int32_type, span, stmts);
+    auto loop_or =
+        BuildAssociativeLevel(proc, frame, dim, *array, int_type, span, stmts);
     if (!loop_or) return std::unexpected(std::move(loop_or.error()));
     loop = std::move(*loop_or);
   } else {
     loop = BuildIntegerLevel(
-        proc, frame, dim, array, array_type, int32_type, span, stmts);
+        proc, frame, dim, array, array_type, int_type, span, stmts);
   }
 
   // Descend: the inner levels iterate `array[loop_var]`, one type peel deeper.
@@ -308,7 +304,7 @@ auto BuildForeachNest(
 
   auto inner_or = BuildForeachNest(
       proc, fs, frame, levels, level + 1, inner_array, inner_array_type,
-      int32_type, span, foreach_label, label_used);
+      int_type, span, foreach_label, label_used);
   if (!inner_or) return std::unexpected(std::move(inner_or.error()));
   const hir::StmtId inner_body =
       inner_or->size() == 1
@@ -348,7 +344,7 @@ auto ProcessLowerer::LowerForeachStmt(
   auto& body = *frame.current_procedural_body;
   const auto span = module.SourceMapper().SpanOf(fs.sourceRange);
 
-  const hir::TypeId int32_type = module.Unit().builtins.int32;
+  const hir::TypeId int_type = module.Unit().builtins.int_type;
 
   // Collect the iterated (non-skipped) dimensions in cardinal order. A
   // dimension with no constant range reads the array value at run time -- a
@@ -415,7 +411,7 @@ auto ProcessLowerer::LowerForeachStmt(
   const hir::LoopLabelId foreach_label = body.AddLoopLabel();
   bool label_used = false;
   auto top = BuildForeachNest(
-      proc, fs, foreach_frame, levels, 0, array, array_type, int32_type, span,
+      proc, fs, foreach_frame, levels, 0, array, array_type, int_type, span,
       foreach_label, &label_used);
   if (!top) return std::unexpected(std::move(top.error()));
 

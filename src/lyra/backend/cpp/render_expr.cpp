@@ -18,7 +18,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/cast.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
@@ -297,16 +296,13 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
       RenderExpr(view, view.Expr(c.else_value)));
 }
 
-// `mir::CastExpr` is a type-level view change with no runtime semantic
-// transform -- the C++ peer of `static_cast<T>(x)` and the LLVM peer of
-// `bitcast`. The destination type comes from the enclosing `Expr::type`;
-// render is a fixed function of the node kind, with no type-driven branching.
-// Every other value-shape conversion (integral resize, real <-> integral,
-// packed <-> string, real <-> real precision) is expressed upstream as a
-// `CallExpr` against a `lyra::value` factory and renders through the call
-// path.
-auto RenderCastExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast)
+// Converts a machine integer to the machine integer named by the enclosing
+// `Expr::type` -- a truncation or an extension, which `static_cast` performs.
+// This is a machine conversion, not a simulation-value one: every SV value
+// reshape (integral resize, real <-> integral, packed <-> string) is a
+// `CallExpr` against a `lyra::value` factory and renders through the call path.
+auto RenderIntCastExpr(
+    const ScopeView& view, const mir::Expr& expr, const mir::IntCastExpr& cast)
     -> std::string {
   return std::format(
       "static_cast<{}>({})",
@@ -825,7 +821,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [](const mir::NullLiteral&) -> std::string {
             return std::string{"nullptr"};
           },
-          [](const mir::HostIntLiteral& h) -> std::string {
+          [](const mir::MachineIntLiteral& h) -> std::string {
             return std::format("{}LL", h.value);
           },
           [&](const mir::LocalRef& l) -> std::string {
@@ -849,8 +845,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::IncDecExpr& inc) -> std::string {
             return RenderIncDecExpr(view, inc);
           },
-          [&](const mir::CastExpr& cast) -> std::string {
-            return RenderCastExpr(view, expr, cast);
+          [&](const mir::IntCastExpr& cast) -> std::string {
+            return RenderIntCastExpr(view, expr, cast);
           },
           [&](const mir::CallExpr& call) -> std::string {
             return RenderCallExpr(view, call, expr.type);

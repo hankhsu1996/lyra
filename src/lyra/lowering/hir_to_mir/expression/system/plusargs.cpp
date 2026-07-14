@@ -49,7 +49,7 @@ auto LowerTestPlusargs(
               .callee =
                   mir::Direct{.target = support::BuiltinFn::kTestPlusargs},
               .arguments = {services_id, user_id}},
-      .type = unit.builtins.int32};
+      .type = unit.builtins.int_type};
 }
 
 auto LowerValuePlusargs(
@@ -58,7 +58,7 @@ auto LowerValuePlusargs(
   const auto& hir_proc = process.HirBody();
   auto& module = process.Module();
   auto& unit = module.Unit();
-  const mir::TypeId int32_t_id = unit.builtins.int32;
+  const mir::TypeId int_type = unit.builtins.int_type;
   const mir::TypeId bit_t = unit.builtins.bit1;
   const mir::TypeId void_t = unit.builtins.void_type;
 
@@ -99,15 +99,15 @@ auto LowerValuePlusargs(
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kValuePlusargs},
                   .arguments = {services_id, user_id, temp_ref}},
-          .type = int32_t_id});
+          .type = int_type});
   const mir::LocalId hit_var = closure.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_plusargs_hit", .type = int32_t_id});
+      mir::LocalDecl{.name = "_lyra_plusargs_hit", .type = int_type});
   body.AppendStmt(mir::LocalDeclStmt{.target = hit_var, .init = hit_call});
 
   const mir::ExprId hit_read =
-      body.exprs.Add(mir::MakeLocalRefExpr(hit_var, int32_t_id));
+      body.exprs.Add(mir::MakeLocalRefExpr(hit_var, int_type));
   const mir::ExprId one_lit = body.exprs.Add(
-      mir::MakeInt32Literal(int32_t_id, static_cast<std::int64_t>(1)));
+      mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(1)));
   const mir::ExprId cond_id = body.exprs.Add(
       mir::Expr{
           .data =
@@ -138,7 +138,7 @@ auto LowerValuePlusargs(
       std::move(then_body));
 
   const mir::ExprId final_hit =
-      body.exprs.Add(mir::MakeLocalRefExpr(hit_var, int32_t_id));
+      body.exprs.Add(mir::MakeLocalRefExpr(hit_var, int_type));
   return BuildClosureCallExpr(
       unit, *frame.current_block, closure.Build(final_hit));
 }

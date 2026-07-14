@@ -45,6 +45,8 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kChannelCancellation,
   kTimeFormat,
   kHierarchySegment,
+  kDpiBitBuffer,
+  kDpiLogicBuffer,
 };
 
 struct PackedRange {
@@ -91,11 +93,20 @@ struct AssociativeArrayType {
 struct WildcardIndexType {};
 
 struct StringType {};
-struct StringViewType {};
+
+// A borrowed, NUL-terminated machine string (C `const char*`): raw character
+// storage the value does not own, distinct from the owning `StringType`.
+struct MachineCStringType {};
 
 struct MachineIntType {
   std::uint32_t bit_width;
   Signedness signedness;
+};
+
+// A primitive machine float (C `float` / `double`), distinct from `RealType`,
+// which is a simulation value reached through a value wrapper.
+struct MachineFloatType {
+  std::uint32_t bit_width;
 };
 
 struct EventType {};
@@ -174,13 +185,13 @@ struct ObservableType {
 
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-    AssociativeArrayType, WildcardIndexType, StringType, StringViewType,
-    MachineIntType, EventType, RealType, ShortRealType, RealTimeType,
-    ChandleType, VoidType, ObjectType, ExternalUnitObjectType, ScopeType,
-    InstanceType, GenScopeType, ProceduralStorageScopeType, ServicesType,
-    FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
-    PointerType, ManagedRefType, VectorType, TupleType, UnionType, ResolvedType,
-    DriverType, ObservableType>;
+    AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
+    MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
+    RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
+    ScopeType, InstanceType, GenScopeType, ProceduralStorageScopeType,
+    ServicesType, FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType,
+    RefType, PointerType, ManagedRefType, VectorType, TupleType, UnionType,
+    ResolvedType, DriverType, ObservableType>;
 
 struct Type {
   TypeData data;

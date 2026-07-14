@@ -23,7 +23,8 @@ auto SelectTimeFn(const mir::BuiltinMirTypes& builtins, support::TimeKind kind)
     case support::TimeKind::kTime:
       return {.id = support::BuiltinFn::kSimTime, .result_type = builtins.time};
     case support::TimeKind::kStime:
-      return {.id = support::BuiltinFn::kSTime, .result_type = builtins.int32};
+      return {
+          .id = support::BuiltinFn::kSTime, .result_type = builtins.int_type};
     case support::TimeKind::kRealtime:
       return {
           .id = support::BuiltinFn::kRealTime,
@@ -43,8 +44,8 @@ auto LowerTimeSystemSubroutineCall(
   const mir::ExprId services_id =
       body.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   const mir::ExprId unit_power_id = body.exprs.Add(
-      mir::MakeInt32Literal(
-          builtins.int32,
+      mir::MakeIntLiteral(
+          builtins.int_type,
           static_cast<std::int64_t>(process.Resolution().unit_power)));
   return mir::Expr{
       .data =

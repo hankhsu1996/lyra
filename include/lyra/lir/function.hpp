@@ -98,9 +98,21 @@ struct ConstructTarget {
   TypeId result;
 };
 
-// The target of a call: a runtime builtin, a class method of this unit, or a
-// value constructor named by the call's result type.
-using CallTarget = std::variant<BuiltinTarget, MethodTarget, ConstructTarget>;
+// A function outside the program, called by its linkage name -- a DPI-C
+// import's foreign symbol (LRM 35.4). The host resolves the name: a link line
+// for an ahead-of-time image, the execution session for a JIT one. The
+// signature is the call's own, since every operand and the result are already
+// the ABI carriers the boundary marshaled to, so the target carries nothing but
+// the name.
+struct ForeignTarget {
+  std::string symbol;
+};
+
+// The target of a call: a runtime builtin, a class method of this unit, a value
+// constructor named by the call's result type, or a foreign symbol the host
+// resolves.
+using CallTarget =
+    std::variant<BuiltinTarget, MethodTarget, ConstructTarget, ForeignTarget>;
 
 struct CallInstr {
   CallTarget target;
@@ -201,9 +213,18 @@ struct PointerCastInstr {
   Operand operand;
 };
 
+// Converts a machine integer to the machine integer the result type names,
+// truncating or extending it. Extension follows the *source* type's signedness,
+// which is what decides whether the added high bits repeat the sign bit or are
+// zero. This is a machine conversion, not a simulation-value one: a packed
+// value's resize is a library call.
+struct IntCastInstr {
+  Operand operand;
+};
+
 using InstrData = std::variant<
     CallInstr, AggregateInstr, LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr,
-    UnaryInstr, BoolCastInstr, PointerCastInstr>;
+    UnaryInstr, BoolCastInstr, PointerCastInstr, IntCastInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

@@ -54,6 +54,9 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr) -> llvm::Value* {
             // Every reference crosses as the same opaque handle, so retyping it
             // moves no bits.
             return LowerOperand(cast.operand);
+          },
+          [&](const lir::IntCastInstr& cast) -> llvm::Value* {
+            return LowerIntCast(cast, result_type);
           }},
       instr.data);
 }
@@ -125,6 +128,18 @@ auto CodeGenFunction::LowerBoolCast(const lir::BoolCastInstr& cast)
       module_->Runtime().ToBool(domain), {LowerOperand(cast.operand)});
 }
 
+// Widening repeats the sign bit only when the *source* is signed; the
+// destination's signedness says how the result is later read, not what the
+// added high bits hold. Narrowing discards high bits either way.
+auto CodeGenFunction::LowerIntCast(
+    const lir::IntCastInstr& cast, lir::TypeId result_type) -> llvm::Value* {
+  const auto& source = std::get<lir::MachineIntType>(
+      module_->Unit().types.Get(OperandType(cast.operand)).data);
+  return builder_.CreateIntCast(
+      LowerOperand(cast.operand), module_->Types().Map(result_type),
+      source.signedness == lir::Signedness::kSigned);
+}
+
 auto CodeGenFunction::LowerCall(
     const lir::CallInstr& call, lir::TypeId result_type) -> llvm::Value* {
   std::vector<llvm::Value*> args;
@@ -157,8 +172,28 @@ auto CodeGenFunction::ResolveCallee(
           },
           [&](const lir::ConstructTarget&) -> llvm::FunctionCallee {
             return ConstructCallee(call);
+          },
+          [&](const lir::ForeignTarget& t) -> llvm::FunctionCallee {
+            return ForeignCallee(t, call, result_type);
           }},
       call.target);
+}
+
+// A foreign symbol is declared, never defined: the host resolves it. Its
+// signature is read off the call, whose operands and result the boundary
+// already marshaled to the carriers the foreign side declared (LRM 35.5.6), so
+// no separate ABI table is consulted here.
+auto CodeGenFunction::ForeignCallee(
+    const lir::ForeignTarget& target, const lir::CallInstr& call,
+    lir::TypeId result_type) -> llvm::FunctionCallee {
+  std::vector<llvm::Type*> params;
+  params.reserve(call.args.size());
+  for (const lir::Operand& arg : call.args) {
+    params.push_back(module_->Types().Map(OperandType(arg)));
+  }
+  return module_->Module().getOrInsertFunction(
+      target.symbol, llvm::FunctionType::get(
+                         module_->Types().Map(result_type), params, false));
 }
 
 // An array literal is a value built in place, not a runtime call: its elements

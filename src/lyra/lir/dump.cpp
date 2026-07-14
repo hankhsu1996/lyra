@@ -118,6 +118,9 @@ class LirDumper {
             },
             [&](const PointerCastInstr& cast) -> std::string {
               return std::format("ptrcast {}", FormatOperand(cast.operand));
+            },
+            [&](const IntCastInstr& cast) -> std::string {
+              return std::format("intcast {}", FormatOperand(cast.operand));
             }},
         data);
   }
@@ -181,7 +184,10 @@ class LirDumper {
                   .methods[m.method.index]
                   .name;
             },
-            [](const ConstructTarget&) -> std::string { return "Construct"; }},
+            [](const ConstructTarget&) -> std::string { return "Construct"; },
+            [](const ForeignTarget& f) -> std::string {
+              return std::format("extern {}", f.symbol);
+            }},
         target);
   }
 
