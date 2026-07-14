@@ -11,15 +11,14 @@
 
 // Pure builders for the synthetic HIR expressions a lowering reaches for
 // whenever it needs a counter, bound, or sentinel -- stateless, unlike the
-// lowering passes that own them. The AST-to-HIR counterpart of
-// `mir::MakeInt32Literal`.
+// lowering passes that own them.
 namespace lyra::hir {
 
-// A 32-bit signed two-state `int`-typed integer literal for a raw value.
-[[nodiscard]] inline auto MakeInt32Literal(
-    std::int64_t value, TypeId int32_type, diag::SourceSpan span) -> Expr {
+// A 2-state signed 32-bit literal, typed `int` (LRM 6.11.1).
+[[nodiscard]] inline auto MakeIntLiteral(
+    std::int64_t value, TypeId int_type, diag::SourceSpan span) -> Expr {
   return Expr{
-      .type = int32_type,
+      .type = int_type,
       .data =
           PrimaryExpr{
               .data =

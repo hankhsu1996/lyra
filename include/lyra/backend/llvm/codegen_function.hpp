@@ -43,6 +43,8 @@ class CodeGenFunction {
   auto LowerBinary(const lir::BinaryInstr& binary) -> llvm::Value*;
   auto LowerUnary(const lir::UnaryInstr& unary) -> llvm::Value*;
   auto LowerBoolCast(const lir::BoolCastInstr& cast) -> llvm::Value*;
+  auto LowerIntCast(const lir::IntCastInstr& cast, lir::TypeId result_type)
+      -> llvm::Value*;
   auto LowerOperand(const lir::Operand& operand) -> llvm::Value*;
 
   // Whether this body's call protocol is the coroutine one. Such a body is
@@ -76,6 +78,9 @@ class CodeGenFunction {
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
       lir::TypeId result_type) -> llvm::FunctionCallee;
   auto ConstructCallee(const lir::CallInstr& call) -> llvm::FunctionCallee;
+  auto ForeignCallee(
+      const lir::ForeignTarget& target, const lir::CallInstr& call,
+      lir::TypeId result_type) -> llvm::FunctionCallee;
 
   // The leading argument a construct call needs beyond its lowered operands: an
   // external-unit construct is prefixed with the child's definition reference;

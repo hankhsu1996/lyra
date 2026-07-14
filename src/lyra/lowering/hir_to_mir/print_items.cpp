@@ -259,7 +259,7 @@ auto BuildFormatSpecExpr(
     mir::CompilationUnit& unit, mir::Block& block, const mir::FormatSpec& spec,
     std::int64_t time_unit_power) -> mir::Expr {
   const auto int_lit = [&](std::int64_t v) {
-    return block.exprs.Add(mir::MakeInt32Literal(unit.builtins.int32, v));
+    return block.exprs.Add(mir::MakeIntLiteral(unit.builtins.int_type, v));
   };
   std::vector<mir::ExprId> args;
   args.push_back(int_lit(static_cast<std::int64_t>(spec.kind)));
@@ -457,8 +457,8 @@ auto BuildRuntimeFormatCallExpr(
                   .arguments = {services_id}},
           .type = unit.builtins.time_format});
   const mir::ExprId time_unit_power = block.exprs.Add(
-      mir::MakeInt32Literal(
-          unit.builtins.int32,
+      mir::MakeIntLiteral(
+          unit.builtins.int_type,
           static_cast<std::int64_t>(process.Resolution().unit_power)));
 
   return mir::Expr{

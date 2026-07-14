@@ -90,6 +90,10 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
       return lir::RuntimeLibraryKind::kTimeFormat;
     case mir::RuntimeLibraryKind::kHierarchySegment:
       return lir::RuntimeLibraryKind::kHierarchySegment;
+    case mir::RuntimeLibraryKind::kDpiBitBuffer:
+      return lir::RuntimeLibraryKind::kDpiBitBuffer;
+    case mir::RuntimeLibraryKind::kDpiLogicBuffer:
+      return lir::RuntimeLibraryKind::kDpiLogicBuffer;
     case mir::RuntimeLibraryKind::kScopeProgram:
     case mir::RuntimeLibraryKind::kUnitDefinition:
     case mir::RuntimeLibraryKind::kScopeMetadata:
@@ -172,13 +176,17 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [](const mir::StringType&) -> lir::TypeData {
             return lir::TypeData{lir::StringType{}};
           },
-          [](const mir::StringViewType&) -> lir::TypeData {
-            return lir::TypeData{lir::StringViewType{}};
+          [](const mir::MachineCStringType&) -> lir::TypeData {
+            return lir::TypeData{lir::MachineCStringType{}};
           },
           [](const mir::MachineIntType& mi) -> lir::TypeData {
             return lir::TypeData{lir::MachineIntType{
                 .bit_width = mi.bit_width,
                 .signedness = TranslateSignedness(mi.signedness)}};
+          },
+          [](const mir::MachineFloatType& mf) -> lir::TypeData {
+            return lir::TypeData{
+                lir::MachineFloatType{.bit_width = mf.bit_width}};
           },
           [](const mir::EventType&) -> lir::TypeData {
             return lir::TypeData{lir::EventType{}};
@@ -289,9 +297,6 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           },
           [&](const mir::ClosureType&) -> lir::TypeData {
             return RecordUnsupportedType("a closure");
-          },
-          [&](const mir::DpiCarrierType&) -> lir::TypeData {
-            return RecordUnsupportedType("a DPI-C ABI carrier");
           }},
       ty.data);
 }

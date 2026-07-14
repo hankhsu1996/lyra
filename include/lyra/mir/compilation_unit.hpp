@@ -29,9 +29,13 @@ struct DeferredCheckSite {};
 // name them. Populated by `CompilationUnit`'s constructor; consumers read them
 // off the unit.
 struct BuiltinMirTypes {
-  TypeId int32;
+  TypeId int_type;
   TypeId integer;
   TypeId bit1;
+  // The machine integer a runtime entry hands back as a plain value. It is the
+  // widest one, so a narrower machine integer is reached from it by an
+  // `IntCastExpr` rather than by an entry of its own.
+  TypeId machine_int64;
   TypeId string;
   TypeId void_type;
   TypeId realtime;
@@ -75,7 +79,7 @@ struct CompilationUnit {
 
   CompilationUnit()
       : builtins{
-            .int32 = types.Intern(
+            .int_type = types.Intern(
                 PackedArrayType{
                     .atom = BitAtom::kBit,
                     .signedness = Signedness::kSigned,
@@ -93,6 +97,9 @@ struct CompilationUnit {
                     .signedness = Signedness::kUnsigned,
                     .dims = {PackedRange{.left = 0, .right = 0}},
                     .form = PackedArrayForm::kExplicit}),
+            .machine_int64 = types.Intern(
+                MachineIntType{
+                    .bit_width = 64, .signedness = Signedness::kSigned}),
             .string = types.Intern(StringType{}),
             .void_type = types.Intern(VoidType{}),
             .realtime = types.Intern(RealTimeType{}),
@@ -183,8 +190,9 @@ struct CompilationUnit {
   }
 };
 
-[[nodiscard]] inline auto MakeInt32Literal(
-    TypeId int32_type, std::int64_t value) -> Expr {
+// 2-state signed 32-bit literal, typed `int` (LRM 6.11.1).
+[[nodiscard]] inline auto MakeIntLiteral(TypeId int_type, std::int64_t value)
+    -> Expr {
   return Expr{
       .data =
           IntegerLiteral{
@@ -195,7 +203,7 @@ struct CompilationUnit {
                       .width = 32,
                       .signedness = Signedness::kSigned,
                       .state_kind = IntegralStateKind::kTwoState}},
-      .type = int32_type};
+      .type = int_type};
 }
 
 // 4-state signed 32-bit literal, typed `integer` (LRM 6.11.1). Used by sites

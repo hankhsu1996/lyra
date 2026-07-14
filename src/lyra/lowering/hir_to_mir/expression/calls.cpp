@@ -220,7 +220,7 @@ auto BuildArrayMethodClosure(
   const mir::TypeId item_type = module.TranslateType(*element_type);
   // LRM 7.12.4 `item.index`: the ordinal position for a sequence container, the
   // key for an associative receiver.
-  mir::TypeId index_type = module.Unit().builtins.int32;
+  mir::TypeId index_type = module.Unit().builtins.int_type;
   if (const auto* assoc =
           std::get_if<hir::AssociativeArrayType>(&hir_recv_ty.data);
       assoc != nullptr) {
@@ -578,13 +578,59 @@ auto LowerMethodCall(
       .type = result_type};
 }
 
+// The type a value has once it is marshaled to a DPI-C carrier (LRM 35.5.6,
+// Table H.1). The carrier classifies the *formal*'s ABI; the value that crosses
+// is an ordinary machine value, so it is typed as one -- an integer of the
+// declared C width, a machine float, a borrowed C string, a raw pointer. A
+// packed vector crosses in a canonical chunk buffer, which is a runtime library
+// value. No type exists solely to mark a value as being at the boundary.
+auto CarrierTypeId(
+    mir::CompilationUnit& unit, const support::DpiCarrier& carrier)
+    -> mir::TypeId {
+  if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
+    return unit.types.Intern(
+        mir::TypeData{mir::RuntimeLibraryType{
+            .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicBuffer
+                                    : mir::RuntimeLibraryKind::kDpiBitBuffer}});
+  }
+  const auto machine_int = [&](std::uint32_t bits, mir::Signedness sign) {
+    return unit.types.Intern(
+        mir::TypeData{
+            mir::MachineIntType{.bit_width = bits, .signedness = sign}});
+  };
+  switch (std::get<support::ScalarCarrier>(carrier).abi) {
+    case support::DpiScalarAbi::kBitScalar:
+    case support::DpiScalarAbi::kLogicScalar:
+      return machine_int(8, mir::Signedness::kUnsigned);
+    case support::DpiScalarAbi::kByte:
+      return machine_int(8, mir::Signedness::kSigned);
+    case support::DpiScalarAbi::kShortInt:
+      return machine_int(16, mir::Signedness::kSigned);
+    case support::DpiScalarAbi::kInt:
+      return machine_int(32, mir::Signedness::kSigned);
+    case support::DpiScalarAbi::kLongInt:
+      return machine_int(64, mir::Signedness::kSigned);
+    case support::DpiScalarAbi::kReal:
+      return unit.types.Intern(
+          mir::TypeData{mir::MachineFloatType{.bit_width = 64}});
+    case support::DpiScalarAbi::kString:
+      return unit.types.Intern(mir::TypeData{mir::MachineCStringType{}});
+    case support::DpiScalarAbi::kChandle:
+      return unit.types.PointerTo(
+          unit.builtins.void_type, mir::PointerOwnership::kBorrowed);
+    case support::DpiScalarAbi::kVoid:
+      return unit.builtins.void_type;
+  }
+  throw InternalError("CarrierTypeId: unknown DPI-C scalar ABI");
+}
+
 // SV value -> foreign ABI carrier (LRM 35.5.6). An integral value yields its
-// host int64, narrowed to the carrier's C width by a host cast; a real yields
-// its native floating value; a string borrows a NUL-terminated C string that
-// stays valid for the call. Reuses the ordinary value accessors; the boundary
-// conversion is a plain expression, not a DPI-specific primitive. Feeds both an
-// input argument (crossed by value) and the copy-in of an inout / output
-// argument (seeding its boundary temp).
+// widest machine integer, narrowed to the carrier's C width by a machine cast;
+// a real yields its native floating value; a string borrows a NUL-terminated C
+// string that stays valid for the call. Reuses the ordinary value accessors;
+// the boundary conversion is a plain expression, not a DPI-specific primitive.
+// Feeds both an input argument (crossed by value) and the copy-in of an inout /
+// output argument (seeding its boundary temp).
 auto MarshalSvToCarrier(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId sv_id,
     const support::DpiCarrier& carrier_desc) -> mir::ExprId {
@@ -594,25 +640,25 @@ auto MarshalSvToCarrier(
         "MarshalSvToCarrier: a canonical-vector carrier is not yet "
         "implemented");
   }
-  const mir::TypeId carrier = unit.types.Intern(
-      mir::TypeData{mir::DpiCarrierType{.carrier = carrier_desc}});
+  const mir::TypeId carrier = CarrierTypeId(unit, carrier_desc);
   switch (scalar->abi) {
     case support::DpiScalarAbi::kBitScalar:
     case support::DpiScalarAbi::kByte:
     case support::DpiScalarAbi::kShortInt:
     case support::DpiScalarAbi::kInt:
     case support::DpiScalarAbi::kLongInt: {
-      const mir::ExprId host_int = block.exprs.Add(
+      const mir::ExprId machine_int = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
                       .callee =
                           mir::Direct{.target = support::BuiltinFn::kToInt64},
                       .arguments = {sv_id}},
-              .type = unit.builtins.int32});
+              .type = unit.builtins.machine_int64});
       return block.exprs.Add(
           mir::Expr{
-              .data = mir::CastExpr{.operand = host_int}, .type = carrier});
+              .data = mir::IntCastExpr{.operand = machine_int},
+              .type = carrier});
     }
     case support::DpiScalarAbi::kReal:
       return block.exprs.Add(
@@ -682,6 +728,13 @@ auto MarshalCarrierToSv(
     case support::DpiScalarAbi::kShortInt:
     case support::DpiScalarAbi::kInt:
     case support::DpiScalarAbi::kLongInt: {
+      // The carrier is the formal's declared C width; the packed factory takes
+      // the widest machine integer, so widening here keeps one runtime entry
+      // serving every carrier width instead of one per width.
+      const mir::ExprId machine_int = block.exprs.Add(
+          mir::Expr{
+              .data = mir::IntCastExpr{.operand = call_id},
+              .type = module.Unit().builtins.machine_int64});
       const mir::ExprId prototype =
           block.exprs.Add(BuildDefaultValueExpr(module, frame, result_type));
       return mir::Expr{
@@ -692,7 +745,7 @@ auto MarshalCarrierToSv(
                           .target = support::BuiltinFn::kFromInt,
                           .qualification =
                               mir::TypeQualifier{.type = result_type}},
-                  .arguments = {call_id, prototype}},
+                  .arguments = {machine_int, prototype}},
           .type = result_type};
     }
     case support::DpiScalarAbi::kReal:
@@ -785,9 +838,7 @@ auto LowerForeignImportInputsOnly(
   const bool is_void = decl.ret_abi == support::DpiScalarAbi::kVoid;
   const mir::TypeId call_type =
       is_void ? unit.builtins.void_type
-              : unit.types.Intern(
-                    mir::TypeData{mir::DpiCarrierType{
-                        .carrier = support::ScalarCarrier{decl.ret_abi}}});
+              : CarrierTypeId(unit, support::ScalarCarrier{decl.ret_abi});
   mir::Expr foreign_call{
       .data =
           mir::CallExpr{
@@ -863,8 +914,7 @@ auto LowerForeignImportSequenced(
     // legal, uniform choice; a vector input seeds the same way. The foreign
     // side writes through the pointer (for writeback directions); the copy-back
     // below lands the result back in the actual's cell.
-    const mir::TypeId carrier_type = unit.types.Intern(
-        mir::TypeData{mir::DpiCarrierType{.carrier = carrier}});
+    const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
     const mir::LocalId temp = closure.Bindings().DeclareAnonymous(
         mir::LocalDecl{
             .name = "_lyra_dpi_arg" + std::to_string(i), .type = carrier_type});
@@ -919,9 +969,7 @@ auto LowerForeignImportSequenced(
   const bool is_void = decl.ret_abi == support::DpiScalarAbi::kVoid;
   const mir::TypeId call_type =
       is_void ? void_t
-              : unit.types.Intern(
-                    mir::TypeData{mir::DpiCarrierType{
-                        .carrier = support::ScalarCarrier{decl.ret_abi}}});
+              : CarrierTypeId(unit, support::ScalarCarrier{decl.ret_abi});
   mir::Expr foreign_call{
       .data =
           mir::CallExpr{

@@ -35,7 +35,7 @@ auto BuildToInt64Call(const mir::CompilationUnit& unit, mir::ExprId operand_id)
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kToInt64},
               .arguments = {operand_id}},
-      .type = unit.builtins.int32};
+      .type = unit.builtins.machine_int64};
 }
 
 auto BuildRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
@@ -45,7 +45,7 @@ auto BuildRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kRound},
               .arguments = {operand_id}},
-      .type = unit.builtins.int32};
+      .type = unit.builtins.machine_int64};
 }
 
 // The destination representation a packed factory call lands its result into,
@@ -234,8 +234,8 @@ auto BuildValueConversion(
     const mir::ExprId element_prototype = BuildPackedShapePrototype(
         block, elem_ty.AsIntegralPacked(), dst_arr->element_type);
     const mir::ExprId count = block.exprs.Add(
-        mir::MakeInt32Literal(
-            unit.builtins.int32,
+        mir::MakeIntLiteral(
+            unit.builtins.int_type,
             static_cast<std::int64_t>(dst_arr->dim.ElementCount())));
     return mir::Expr{
         .data =
@@ -267,7 +267,7 @@ auto BuildValueConversion(
             ? static_cast<std::int64_t>(*dst_q->max_bound)
             : -1;
     const mir::ExprId bound_id =
-        block.exprs.Add(mir::MakeInt32Literal(unit.builtins.int32, bound));
+        block.exprs.Add(mir::MakeIntLiteral(unit.builtins.int_type, bound));
     return mir::Expr{
         .data =
             mir::CallExpr{

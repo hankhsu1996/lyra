@@ -145,11 +145,11 @@ auto AppendReceiverRange(
   }
   const auto& base_ty = module.Unit().types.Get(base_type);
   if (const auto* ua = std::get_if<mir::UnpackedArrayType>(&base_ty.data)) {
-    const mir::TypeId int32_type = module.Unit().builtins.int32;
+    const mir::TypeId int_type = module.Unit().builtins.int_type;
     args.push_back(
-        block.exprs.Add(mir::MakeInt32Literal(int32_type, ua->dim.left)));
+        block.exprs.Add(mir::MakeIntLiteral(int_type, ua->dim.left)));
     args.push_back(
-        block.exprs.Add(mir::MakeInt32Literal(int32_type, ua->dim.right)));
+        block.exprs.Add(mir::MakeIntLiteral(int_type, ua->dim.right)));
   }
 }
 
@@ -215,9 +215,9 @@ auto BuildRangeSliceCallExpr(
       },
       bounds);
   if (!raw_or) return std::unexpected(std::move(raw_or.error()));
-  const mir::TypeId int32_type = module.Unit().builtins.int32;
+  const mir::TypeId int_type = module.Unit().builtins.int_type;
   const auto form_id =
-      block.exprs.Add(mir::MakeInt32Literal(int32_type, raw_or->form));
+      block.exprs.Add(mir::MakeIntLiteral(int_type, raw_or->form));
   std::vector<mir::ExprId> args = {base_id, raw_or->a, raw_or->b, form_id};
   AppendReceiverRange(module, block, base_id, args);
   return mir::Expr{
@@ -240,14 +240,14 @@ auto BuildFieldSliceCallExpr(
     ModuleLowerer& module, mir::Block& block, mir::ExprId base_id,
     std::uint32_t bit_offset, std::uint32_t bit_width, mir::TypeId result_type,
     AccessSide side) -> mir::Expr {
-  const mir::TypeId int32_type = module.Unit().builtins.int32;
+  const mir::TypeId int_type = module.Unit().builtins.int_type;
   const auto offset_id = block.exprs.Add(
-      mir::MakeInt32Literal(int32_type, static_cast<std::int64_t>(bit_offset)));
+      mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(bit_offset)));
   const auto width_id = block.exprs.Add(
-      mir::MakeInt32Literal(int32_type, static_cast<std::int64_t>(bit_width)));
+      mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(bit_width)));
   // A field occupies bits `[offset +: width]` -- a raw indexed-up part-select
   // (`value::SliceForm` `kIndexedUp` == 1); the value resolves the bit window.
-  const auto form_id = block.exprs.Add(mir::MakeInt32Literal(int32_type, 1));
+  const auto form_id = block.exprs.Add(mir::MakeIntLiteral(int_type, 1));
   return mir::Expr{
       .data =
           mir::CallExpr{

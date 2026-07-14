@@ -46,7 +46,7 @@ auto MakeReturnConventionType(
     case support::ReturnConvention::kVoid:
       return builtins.void_type;
     case support::ReturnConvention::kInt32:
-      return builtins.int32;
+      return builtins.int_type;
     case support::ReturnConvention::kInteger:
       return builtins.integer;
     case support::ReturnConvention::kString:

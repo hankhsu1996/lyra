@@ -252,8 +252,8 @@ auto BuildDefaultValueExpr(
             // as a second construction argument so the runtime can enforce it.
             if (q.max_bound.has_value()) {
               args.push_back(block.exprs.Add(
-                  mir::MakeInt32Literal(
-                      module.Unit().builtins.int32,
+                  mir::MakeIntLiteral(
+                      module.Unit().builtins.int_type,
                       static_cast<std::int64_t>(*q.max_bound))));
             }
             return mir::Expr{
@@ -402,8 +402,8 @@ auto BuildArrayConstructionCall(
   if (const auto* q = std::get_if<mir::QueueType>(&ty.data);
       q != nullptr && q->max_bound.has_value()) {
     args.push_back(block.exprs.Add(
-        mir::MakeInt32Literal(
-            module.Unit().builtins.int32,
+        mir::MakeIntLiteral(
+            module.Unit().builtins.int_type,
             static_cast<std::int64_t>(*q->max_bound))));
   }
   return mir::Expr{

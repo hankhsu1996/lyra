@@ -15,10 +15,10 @@ namespace lyra::lowering::hir_to_mir {
 // `String::FromByteArray`; cross-precision real reshape calls the
 // `RealValue<Other>` ctor; identical / same-shape inputs return the operand
 // expression unchanged. The (source, destination) type pair fully drives the
-// choice; this helper is the one place that makes it. Pointer reinterpret is
-// a structurally different operation (`mir::CastExpr`, type-level view change
-// only) and is materialized directly at its single producer, not through this
-// helper.
+// choice; this helper is the one place that makes it. Reinterpreting a
+// reference, and converting a machine integer's width, are structurally
+// different operations -- each has its own primitive and is materialized
+// directly at its producer, not through this helper.
 //
 // `block` is the destination scope for any intermediate `ExprId` the helper
 // interns when the factory call nests an inner one.

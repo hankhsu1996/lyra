@@ -358,6 +358,11 @@ auto lyra_rt_packed_convert_from(const void* src, const void* prototype)
           Read<PackedArray>(src), Read<PackedArray>(prototype)));
 }
 
+auto lyra_rt_packed_from_int(std::int64_t value, const void* prototype)
+    -> void* {
+  return Own(PackedArray::FromInt(value, Read<PackedArray>(prototype)));
+}
+
 auto lyra_rt_packed_from_bool(bool value) -> void* {
   return Own(PackedArray::FromBool(value));
 }
@@ -446,6 +451,10 @@ auto lyra_rt_packed_reduction_xnor(const void* value) -> void* {
 
 auto lyra_rt_string_from_packed_array(const void* bits) -> void* {
   return Own(String::FromPackedArray(Read<PackedArray>(bits)));
+}
+
+auto lyra_rt_string_string_cstr(const void* value) -> const char* {
+  return Read<String>(value).CStr();
 }
 
 auto lyra_rt_string_len(const void* value) -> void* {

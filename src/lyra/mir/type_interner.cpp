@@ -79,21 +79,8 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
         } else if constexpr (std::is_same_v<T, MachineIntType>) {
           HashField(seed, t.bit_width);
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.signedness)));
-        } else if constexpr (std::is_same_v<T, DpiCarrierType>) {
-          HashCombine(seed, std::hash<std::size_t>{}(t.carrier.index()));
-          std::visit(
-              [&](const auto& carrier) {
-                using C = std::decay_t<decltype(carrier)>;
-                if constexpr (std::is_same_v<C, support::ScalarCarrier>) {
-                  HashCombine(
-                      seed, std::hash<int>{}(static_cast<int>(carrier.abi)));
-                } else {
-                  HashCombine(
-                      seed,
-                      std::hash<int>{}(static_cast<int>(carrier.four_state)));
-                }
-              },
-              t.carrier);
+        } else if constexpr (std::is_same_v<T, MachineFloatType>) {
+          HashField(seed, t.bit_width);
         } else if constexpr (std::is_same_v<T, RuntimeLibraryType>) {
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.kind)));
         } else if constexpr (std::is_same_v<T, CoroutineType>) {

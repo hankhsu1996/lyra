@@ -41,6 +41,12 @@ what the construct means.
 - Objects, members, and member access as first-class entities.
 - A member as a `(name, type)` pair. The type is the sole carrier of the member's storage shape and,
   for a member that owns a child, of its child-scope kind and cardinality.
+- Machine primitives -- a machine integer, a machine float, a borrowed C string, a raw pointer -- as
+  ordinary types of the language, the way `i64` and `*const c_char` are Rust's. They are plain
+  machine data, and are distinct from the simulation value types that a source language's `int`,
+  `real`, or `string` lower to, which are library values reached through a wrapper. Every value a
+  runtime entry returns as a plain scalar, and every value that crosses a foreign-call boundary, is
+  one of these.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
   named); two composing wrappers, owning pointer and vector; and four nominal / structural
@@ -238,6 +244,23 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   source-level shape (e.g., `Inside(lhs, items)`, `CaseMatch(sel, labels)`). Sugar collapses to
   primitives in MIR; readability of generated backend source is not recovered by reintroducing
   intrinsic-style calls downstream.
+- A type that names a boundary or a foreign ABI rather than a value's own shape -- a "DPI carrier",
+  a "C ABI type" -- carried as a MIR value type. The ABI classification of a foreign call's formal
+  is a property of the _signature_, and belongs on the callable's declaration; the value that
+  crosses is an ordinary machine value and is typed as one. A type whose content is "this value is
+  at a boundary" states nothing the surrounding call does not already state, and forces every
+  backend to re-derive the machine type it stands for -- so a backend that never learned the mapping
+  silently lowers the value as the wrong thing. Missing machine primitives are what make such a type
+  look necessary; the fix is to complete them, not to wrap them. (A type names what a value _is_,
+  not where it is going.)
+- One cast node standing for every reinterpretation, whose realization each backend selects from the
+  (source, destination) type pair. A cast node names exactly one operation -- reduce a value to a
+  machine boolean, re-type a reference without moving bits, convert a machine integer's width or
+  signedness -- so a conversion no node covers fails to compile. Under a type-pair-dispatched node a
+  pair a backend never handled is instead a silent no-op, indistinguishable from a deliberate
+  reinterpretation. A conversion that reshapes a _value_ (integral resize, real <-> integral, packed
+  <-> string) is a library call, never a cast node. (A primitive means one thing; a backend does not
+  re-derive semantics MIR declined to state.)
 - A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
   contents or any side signal, instead of reading it from an explicit node or reference. Reading
   which node consumes a value is reading structure and is allowed; scanning a body to decide what it
