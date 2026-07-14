@@ -33,7 +33,7 @@ auto RuntimeProcess::Parent() const -> RuntimeProcess* {
 }
 
 void RuntimeProcess::ArmWaitFork(CoroutineHandle waiter) {
-  wait_fork_registration_.Arm(waiter);
+  waiter->Park(parked_wait_fork_);
 }
 
 auto RuntimeProcess::HasNoLiveChild() const -> bool {
@@ -49,7 +49,12 @@ auto RuntimeProcess::TakeWaitForkWaiterIfSatisfied() -> CoroutineHandle {
   if (!HasNoLiveChild()) {
     return nullptr;
   }
-  return wait_fork_registration_.TakeForWake();
+  Registration* waiter = parked_wait_fork_.PopFront();
+  return waiter != nullptr ? waiter->activation : nullptr;
+}
+
+void RuntimeProcess::DisableDescendants() {
+  children_.clear();
 }
 
 auto RuntimeProcess::IsReleasable() const -> bool {

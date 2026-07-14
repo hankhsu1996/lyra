@@ -270,11 +270,18 @@ struct WaitStmt {
 // the executing process's, resolved at runtime.
 struct WaitForkStmt {};
 
+// LRM 9.6.3 `disable fork`: terminate every descendant of the enclosing
+// process, including the descendants of subprocesses that have already
+// terminated. Like `wait fork` it carries no operand -- the descendant set is
+// the executing process's, resolved at runtime -- but it does not block the
+// caller.
+struct DisableForkStmt {};
+
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
     CaseInsideStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
     BreakStmt, ContinueStmt, ReturnStmt, TimedStmt, EventTriggerStmt, WaitStmt,
-    WaitForkStmt>;
+    WaitForkStmt, DisableForkStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

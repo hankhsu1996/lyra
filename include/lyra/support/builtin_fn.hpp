@@ -267,6 +267,12 @@ enum class BuiltinFn : std::uint16_t {
   // set is the executing process's, read at runtime. The call's result is
   // `void` and the caller awaits it, the same await shape as `join`.
   kWaitFork,
+  // LRM 9.6.3 `disable fork`: terminates every descendant of the executing
+  // process, including the descendants of subprocesses that have already
+  // terminated. Takes only the services handle; the descendant set is the
+  // executing process's, read at runtime. The caller does not block, so its
+  // `void` result is never awaited.
+  kDisableFork,
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --

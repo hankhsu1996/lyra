@@ -159,6 +159,14 @@ the detail lives in the entry itself.
   a specialization input like a parameter; demoting it to a runtime input is a proof-gated
   optimization.
 
+### Runtime execution and scheduling
+
+- [activation-registration](activation-registration.md) -- an activation's membership in a wake
+  target (an observable, an event, a join condition, a region queue, a delay slot) is one record the
+  activation owns and the target merely links; the activation-side set and the target-side list are
+  two indexes over it, revoking is a detach rather than a search, and the two-authoritative-copies
+  shape is rejected.
+
 ### Diagnostics
 
 - [diagnostic-construction](diagnostic-construction.md) -- a diagnostic's kind is derived from its
