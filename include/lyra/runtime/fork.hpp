@@ -7,9 +7,9 @@
 #include <vector>
 
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
-#include "lyra/runtime/wake_registration.hpp"
 
 namespace lyra::runtime {
 
@@ -35,7 +35,7 @@ class ForkGroup {
   }
 
   void ParkParent(CoroutineHandle parent) {
-    parent_registration_.Arm(parent);
+    parent->Park(parked_parent_);
   }
 
   // Called from a branch's completion. Decrements the outstanding count and
@@ -45,8 +45,8 @@ class ForkGroup {
       completions_needed_ -= 1;
     }
     if (completions_needed_ == 0) {
-      if (CoroutineHandle parent = parent_registration_.TakeForWake()) {
-        services_->ScheduleNextDelta(parent);
+      if (Registration* parent = parked_parent_.PopFront()) {
+        services_->ScheduleNextDelta(parent->activation);
       }
     }
   }
@@ -54,7 +54,9 @@ class ForkGroup {
  private:
   RuntimeServices* services_;
   std::int64_t completions_needed_;
-  WakeRegistration parent_registration_;
+  // The join condition holds at most one activation: the process that executed
+  // the fork.
+  RegistrationList parked_parent_;
 };
 
 // What the parent `co_await`s after the branches are spawned. The wait reports
@@ -162,6 +164,15 @@ class WaitForkAwaitable {
 
 inline auto WaitFork(RuntimeServices& services) -> WaitForkAwaitable {
   return WaitForkAwaitable{services};
+}
+
+// LRM 9.6.3 `disable fork`: terminate every descendant of the executing
+// process. The caller does not block -- the next statement runs at the same
+// simulation time -- so this is a plain call rather than an awaitable. Like
+// `wait fork`, it reads the executing process (LRM 9.5), so a `disable fork`
+// inside a task reaches the descendants the enclosing process owns.
+inline void DisableFork(RuntimeServices& services) {
+  services.CurrentProcess().DisableDescendants();
 }
 
 }  // namespace lyra::runtime

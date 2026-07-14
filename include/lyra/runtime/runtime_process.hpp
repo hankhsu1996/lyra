@@ -6,7 +6,7 @@
 
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/process_kind.hpp"
-#include "lyra/runtime/wake_registration.hpp"
+#include "lyra/runtime/registration.hpp"
 
 namespace lyra::runtime {
 
@@ -90,6 +90,15 @@ class RuntimeProcess {
   // unlink and return that frame for scheduling; null otherwise.
   [[nodiscard]] auto TakeWaitForkWaiterIfSatisfied() -> CoroutineHandle;
 
+  // Terminates every descendant of this process -- not only its immediate
+  // children, and including the descendants of subprocesses that have already
+  // terminated (LRM 9.6.3). Nothing is retained afterward: the whole subtree
+  // has reached a terminal state, so releasing the lineage releases each
+  // descendant frame, and a released frame revokes every registration it still
+  // holds, so no queue, waiter list, or subscription can name it. This process
+  // itself keeps running.
+  void DisableDescendants();
+
   // Releases `process`, whose body has just terminated, along with every
   // ancestor the release leaves with no lineage to retain, walking upward from
   // the leaf. Deliberately not a call on the released node: the release
@@ -109,7 +118,9 @@ class RuntimeProcess {
   ProcessExecutionState execution_state_ = ProcessExecutionState::kCreated;
   RuntimeProcess* parent_ = nullptr;
   std::vector<std::unique_ptr<RuntimeProcess>> children_;
-  WakeRegistration wait_fork_registration_;
+  // The `wait fork` condition holds at most one activation: the frame that
+  // executed `wait fork`.
+  RegistrationList parked_wait_fork_;
 };
 
 }  // namespace lyra::runtime

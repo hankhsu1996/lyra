@@ -9,6 +9,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/concepts.hpp"
@@ -80,48 +81,30 @@ class Observable {
   void Subscribe(
       CoroutineHandle handle, Edge edge, std::uint64_t lsb_bit_offset,
       std::uint64_t bit_width) {
-    waiters_.push_back(
-        Waiter{
-            .handle = handle,
-            .edge = edge,
-            .lsb_bit_offset = lsb_bit_offset,
-            .bit_width = bit_width});
+    Registration& reg = handle->Park(waiters_);
+    reg.edge = edge;
+    reg.lsb_bit_offset = lsb_bit_offset;
+    reg.bit_width = bit_width;
   }
 
-  // Idempotent: a no-op if `handle` is not currently subscribed. Used to clean
-  // up sibling subscriptions when a multi-trigger wait resumes on one
-  // Observable.
-  void Unsubscribe(CoroutineHandle handle) {
-    std::erase_if(
-        waiters_, [&](const Waiter& w) { return w.handle == handle; });
-  }
-
-  // Removes and returns the coroutine frames whose per-waiter classifier
-  // returns true. Non-matching waiters stay subscribed. The classifier receives
-  // each waiter's projection and edge and decides based on context the caller
-  // (Var::Set) captured (old/new value).
+  // Claims and returns the activations whose fire condition this change
+  // satisfies; the rest stay parked. The classifier reads each membership's
+  // projection and edge, and decides from the old / new value the caller
+  // captured.
   [[nodiscard]] auto TakeMatchingWaiters(const EdgeClassifier& classify)
       -> std::vector<CoroutineHandle> {
-    std::vector<CoroutineHandle> out;
-    auto keep_begin = std::ranges::partition(waiters_, [&](const Waiter& w) {
-                        return !classify(w.lsb_bit_offset, w.bit_width, w.edge);
-                      }).begin();
-    out.reserve(static_cast<std::size_t>(waiters_.end() - keep_begin));
-    for (auto it = keep_begin; it != waiters_.end(); ++it) {
-      out.push_back(it->handle);
-    }
-    waiters_.erase(keep_begin, waiters_.end());
-    return out;
+    std::vector<CoroutineHandle> woken;
+    waiters_.ForEach([&](Registration& reg) {
+      if (classify(reg.lsb_bit_offset, reg.bit_width, reg.edge)) {
+        reg.Unlink();
+        woken.push_back(reg.activation);
+      }
+    });
+    return woken;
   }
 
  private:
-  struct Waiter {
-    CoroutineHandle handle;
-    Edge edge;
-    std::uint64_t lsb_bit_offset;
-    std::uint64_t bit_width;
-  };
-  std::vector<Waiter> waiters_;
+  RegistrationList waiters_;
 };
 
 template <value::LyraValue T>
@@ -247,10 +230,9 @@ class Ref {
 };
 
 // Suspends the calling frame until one of the supplied Triggers fires
-// (matching its edge). Subscribes the frame to every Observable in
-// `await_suspend` and records the set on the frame's promise; the engine has no
-// idea what kind of wait this is. When one Observable wakes the frame, the
-// engine sweeps the recorded set to drop the dangling subscriptions.
+// (matching its edge). Subscribing registers each Observable in the frame's own
+// wait-registration set, so waking or destroying the frame revokes every
+// subscription; the engine has no idea what kind of wait this is.
 //
 // An empty trigger list is legal -- the frame suspends forever (used by
 // `always_comb` / `always_latch` with no inferred reads,
@@ -268,8 +250,6 @@ class EventControlAwaitable {
   template <class P>
   void await_suspend(std::coroutine_handle<P> handle) {
     CoroutineHandle token = &handle.promise();
-    std::vector<Observable*> subs;
-    subs.reserve(triggers_.size());
     for (const auto& trigger : triggers_) {
       if (trigger.observable == nullptr) {
         throw InternalError(
@@ -278,9 +258,7 @@ class EventControlAwaitable {
       }
       trigger.observable->Subscribe(
           token, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
-      subs.push_back(trigger.observable);
     }
-    token->pending_value_change_subscriptions = std::move(subs);
   }
 
   static void await_resume() noexcept {

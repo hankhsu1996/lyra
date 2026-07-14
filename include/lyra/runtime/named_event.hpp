@@ -3,18 +3,16 @@
 #include <optional>
 
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/event.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
-// Awaitable returned by `NamedEvent::Await()`. Subscribes the calling frame
-// directly to the underlying `RuntimeEvent`'s waiter list. The engine never
-// sees a "waiting for an event" state -- the coroutine simply suspends. The
-// producer reaches back via `RuntimeServices::ScheduleNextDelta` when it
-// triggers, so the engine has no event-specific code path.
+// Parks the calling frame on the event's waiter set. The engine never sees a
+// "waiting for an event" state -- the coroutine simply suspends, and the
+// producer schedules it again on trigger through the same construct-neutral
+// verb every other wait uses, so the engine has no event-specific code path.
 class EventAwaitable {
  public:
   explicit EventAwaitable(RuntimeEvent& event) : event_(&event) {

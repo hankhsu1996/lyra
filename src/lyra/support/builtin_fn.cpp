@@ -320,6 +320,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "spawn_all";
     case BuiltinFn::kWaitFork:
       return "wait_fork";
+    case BuiltinFn::kDisableFork:
+      return "disable_fork";
     case BuiltinFn::kRegisterInitial:
       return "register_initial";
     case BuiltinFn::kRegisterFinal:

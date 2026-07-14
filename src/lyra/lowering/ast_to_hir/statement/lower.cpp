@@ -126,6 +126,10 @@ auto LowerStatement(
       return hir::Stmt{
           .label = std::nullopt, .data = hir::WaitForkStmt{}, .span = span};
 
+    case slang::ast::StatementKind::DisableFork:
+      return hir::Stmt{
+          .label = std::nullopt, .data = hir::DisableForkStmt{}, .span = span};
+
     case slang::ast::StatementKind::Timed:
       return LowerTimedStmt(
           proc, frame, stmt.as<slang::ast::TimedStatement>(), span);
