@@ -1,5 +1,6 @@
 #include "lyra/runtime/jit_execution.hpp"
 
+#include <coroutine>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -7,10 +8,13 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
@@ -23,17 +27,44 @@ namespace lyra::runtime {
 
 namespace {
 
-using GeneratedEntry = void (*)(void*);
+using GeneratedRamp = void* (*)(void* env);
 
-// The one C++ coroutine function the runtime owns on the generated side's
-// behalf: a generated process cannot build a coroutine frame, so it hands over
-// a plain entry plus its environment and the runtime wraps them. Lazy like
-// every Coroutine, so the body runs only when the engine resumes it; the
-// generated-call scope is entered there, around the generated call.
-auto RunGeneratedProcess(GeneratedEntry entry, void* env) -> Coroutine<void> {
+// The runtime-owned coroutine that is the process the engine schedules, and
+// which drives the generated body's own coroutine.
+//
+// The engine's activation token is a C++ promise carrying non-trivial members.
+// A generated body is free of it: it holds only its own coroutine, and this
+// adapter owns the promise on its behalf. So the frame a code generator lays
+// out never has to embed a runtime C++ type -- only a coroutine's resume, done,
+// and destroy cross the boundary. That is what this adapter buys, and why the
+// engine resumes it rather than the generated coroutine.
+//
+// The generated body runs to its next suspension, having already registered its
+// own wakeup; the adapter then parks, and resumes it when the engine runs the
+// adapter again.
+//
+// Every stretch of generated code -- starting the body, resuming it, tearing it
+// down -- runs in its own generated-call scope, so a value it materializes is
+// released when that stretch returns; a value that must outlive a suspension
+// does not live there.
+auto RunGeneratedProcess(GeneratedRamp ramp, void* env) -> Coroutine<void> {
+  void* frame = nullptr;
   {
     GeneratedCallScope scope;
-    entry(env);
+    frame = ramp(env);
+  }
+  const std::coroutine_handle<> generated =
+      std::coroutine_handle<>::from_address(frame);
+  while (!generated.done()) {
+    co_await std::suspend_always{};
+    {
+      GeneratedCallScope scope;
+      generated.resume();
+    }
+  }
+  {
+    GeneratedCallScope scope;
+    generated.destroy();
   }
   co_return;
 }
@@ -56,6 +87,7 @@ auto Own(T value) -> void* {
 }  // namespace lyra::runtime
 
 using lyra::runtime::Coroutine;
+using lyra::runtime::CoroutineHandle;
 using lyra::runtime::FileTable;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedInstance;
@@ -129,9 +161,25 @@ void lyra_rt_write(void* files, void* descriptor, void* text) {
       *static_cast<PackedArray*>(descriptor), *static_cast<String*>(text));
 }
 
-auto lyra_rt_make_coroutine(void (*entry)(void*), void* env) -> void* {
+auto lyra_rt_make_coroutine(void* (*ramp)(void*), void* env) -> void* {
   return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
-      lyra::runtime::RunGeneratedProcess(entry, env));
+      lyra::runtime::RunGeneratedProcess(ramp, env));
+}
+
+void lyra_rt_delay(
+    void* services, const void* ticks, const void* precision_power) {
+  auto& svc = *static_cast<RuntimeServices*>(services);
+  const CoroutineHandle token = svc.CurrentProcess().TopHandle();
+  const std::int64_t tick_count = Read<PackedArray>(ticks).ToInt64();
+  if (tick_count == 0) {
+    svc.ScheduleInactive(token);
+    return;
+  }
+  const lyra::SimDuration global = lyra::runtime::ScaleToGlobalTicks(
+      static_cast<lyra::SimDuration>(tick_count),
+      static_cast<std::int8_t>(Read<PackedArray>(precision_power).ToInt64()),
+      svc.GlobalPrecisionPower());
+  svc.ScheduleAtTime(svc.Now() + global, token);
 }
 
 void lyra_rt_register_initial(void* self, void* coroutine) {

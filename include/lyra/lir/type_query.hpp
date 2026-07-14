@@ -27,4 +27,11 @@ auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
 // address-only, never the value itself.
 auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool;
 
+// Whether a callable's result type states the coroutine call protocol: the body
+// may hand control back to the scheduler and completes as a coroutine, rather
+// than running to a value in one call. The protocol is the type -- nothing else
+// records it -- so every layer that must realize suspension or completion asks
+// this of the result type.
+auto IsCoroutine(const TypeArena& types, TypeId type) -> bool;
+
 }  // namespace lyra::lir

@@ -211,15 +211,11 @@ enough to warrant its own focused review.
       kind touches three files (subsystem header, subsystem implementation, dispatcher switch) and
       leaves the pass-class header untouched.
 
-- [x] R14 -- The `return` / `co_return` choice is carried by MIR, not re-decided in the backend.
-      `return` and `co_return` describe the same operation (exit the callable); whether a given
-      `mir::ReturnStmt` renders as one or the other depends only on whether its enclosing callable
-      is a coroutine. `mir::ReturnStmt` carries that as `is_coroutine_return`, set at HIR-to-MIR
-      from the enclosing callable body's coroutine kind; the cpp backend reads it at each return
-      rather than inheriting a render-time walk-state flag. A closure needs no coroutine field of
-      its own -- whether a closure body suspends follows from how the closure is used (a fork-branch
-      reference spawns it as a coroutine; a deferred submit runs it synchronously), which is itself
-      explicit in MIR per `architecture/mir.md`.
+- [x] R14 -- The `return` / `co_return` choice is stated by MIR, not re-decided in the backend. Both
+      describe the same operation (exit the callable), and which one a return is depends only on
+      whether its enclosing callable completes as a coroutine. That is the callable's call protocol,
+      carried by its result type, so every backend reads it from there; no return statement,
+      closure, or lowering frame restates it as a flag of its own.
 
 - [x] R15 -- Give `mir::Process` a `name` field, so the C++ method name, static-frame struct name,
       static-frame field name, and any future LLVM-IR function symbol all flow from a single

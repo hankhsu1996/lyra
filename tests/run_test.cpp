@@ -78,6 +78,33 @@ auto WriteProceduralSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// Timing control: two processes suspend on delays and resume in simulation-time
+// order, and a `#0` re-enters this slot's inactive region. Running it exercises
+// the execution backend's suspend/resume protocol -- a process parks, the
+// scheduler advances time, and the process resumes at its next block -- across
+// interleaved processes, which straight-line code never reaches.
+auto WriteTimingSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  int a;\n"
+      << "  int b;\n"
+      << "  initial begin\n"
+      << "    a = 1;\n"
+      << "    #10;\n"
+      << "    a = 2;\n"
+      << "    $display(\"a=%0d\", a);\n"
+      << "  end\n"
+      << "  initial begin\n"
+      << "    b = 1;\n"
+      << "    #5;\n"
+      << "    b = 2;\n"
+      << "    $display(\"b=%0d\", b);\n"
+      << "    #0;\n"
+      << "    $display(\"b0 done\");\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -154,6 +181,38 @@ TEST(LyraRun, JitAndCppAgreeOnProceduralCode) {
   EXPECT_NE(jit.stdout_text.find("name=lyra eq=1"), std::string::npos)
       << "stdout: " << jit.stdout_text;
   EXPECT_NE(jit.stdout_text.find("scaled=40"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
+}
+
+// A process that consumes time suspends and resumes on the execution backend,
+// and multiple such processes are driven by one scheduler on one time axis. The
+// two backends must agree on both the values and their simulation-time order,
+// so the same timed source is run through both and the outputs compared.
+TEST(LyraRun, JitAndCppAgreeOnTimingControl) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTimingSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(jit.stdout_text, "b=2\nb0 done\na=2\n")
       << "stdout: " << jit.stdout_text;
 }
 

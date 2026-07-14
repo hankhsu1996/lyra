@@ -200,8 +200,7 @@ auto LowerContinuousAssign(
 
   mir::Block body_block;
   const WalkFrame body_frame =
-      ctor_frame.WithBindings(&bindings).WithCoroutineBody(true).WithBlock(
-          &body_block);
+      ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
 
   auto rhs_or = lowerer.LowerExpr(hir_scope.exprs.Get(src.rhs), body_frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
@@ -252,8 +251,7 @@ auto LowerContinuousAssign(
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.body.AppendStmt(
-      mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
+  code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::MethodDecl{
