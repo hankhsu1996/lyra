@@ -61,6 +61,11 @@ class RuntimeAbi {
   auto RegisterInitial() -> llvm::FunctionCallee;
   auto RegisterFinal() -> llvm::FunctionCallee;
 
+  // Registers the running process to wake after a delay, the runtime call a
+  // delay's suspend edge is preceded by. The wakeup source is the running
+  // process, read from the runtime; no token crosses the boundary.
+  auto Delay() -> llvm::FunctionCallee;
+
   // Builds a coroutine from an entry code reference and its environment; the
   // runtime owns the resulting coroutine and returns an opaque handle.
   auto MakeCoroutine() -> llvm::FunctionCallee;

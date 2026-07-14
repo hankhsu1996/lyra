@@ -9,13 +9,22 @@
 #include <variant>
 #include <vector>
 
+#include <llvm/Analysis/CGSCCPassManager.h>
+#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
+#include <llvm/ExecutionEngine/Orc/IRTransformLayer.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/PassManager.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Transforms/Coroutines/CoroCleanup.h>
+#include <llvm/Transforms/Coroutines/CoroEarly.h>
+#include <llvm/Transforms/Coroutines/CoroSplit.h>
 
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/runtime_abi.hpp"
@@ -55,6 +64,44 @@ void Check(llvm::Error error, std::string_view what) {
   }
 }
 
+// Splits every generated coroutine body into its resumable form before the
+// module is compiled. A process body reaches the JIT as an ordinary function
+// carrying coroutine intrinsics; the coroutine passes derive its frame, its
+// resume state, and the values that must survive a suspension. That derivation
+// is theirs -- the compiler states where a body suspends, never how it resumes.
+void LowerCoroutines(llvm::orc::LLJIT& jit) {
+  jit.getIRTransformLayer().setTransform(
+      [](llvm::orc::ThreadSafeModule module,
+         const llvm::orc::MaterializationResponsibility&)
+          -> llvm::Expected<llvm::orc::ThreadSafeModule> {
+        module.withModuleDo([](llvm::Module& ir) {
+          llvm::PassBuilder builder;
+          llvm::LoopAnalysisManager loops;
+          llvm::FunctionAnalysisManager functions;
+          llvm::CGSCCAnalysisManager call_graph;
+          llvm::ModuleAnalysisManager modules;
+          builder.registerModuleAnalyses(modules);
+          builder.registerCGSCCAnalyses(call_graph);
+          builder.registerFunctionAnalyses(functions);
+          builder.registerLoopAnalyses(loops);
+          builder.crossRegisterProxies(loops, functions, call_graph, modules);
+
+          // Only the coroutine lowering runs: it is what makes a suspending
+          // body executable, so it is a translation step, not an optimization
+          // the module could also be correct without.
+          llvm::ModulePassManager passes;
+          passes.addPass(llvm::CoroEarlyPass());
+          llvm::CGSCCPassManager split;
+          split.addPass(llvm::CoroSplitPass());
+          passes.addPass(
+              llvm::createModuleToPostOrderCGSCCPassAdaptor(std::move(split)));
+          passes.addPass(llvm::CoroCleanupPass());
+          passes.run(ir, modules);
+        });
+        return std::move(module);
+      });
+}
+
 // Binds the runtime ABI the generated module calls to the definitions linked
 // into this process. Absolute addresses resolve every generated call without
 // relying on the host's exported dynamic symbol table.
@@ -78,6 +125,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_make_coroutine", &lyra_rt_make_coroutine);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_final", &lyra_rt_register_final);
+  add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
   add("lyra_rt_make_unit", &lyra_rt_make_unit);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
@@ -276,6 +324,7 @@ auto Execute(
   llvm::InitializeNativeTargetAsmPrinter();
 
   auto jit = Unwrap(llvm::orc::LLJITBuilder().create(), "create jit");
+  LowerCoroutines(*jit);
   DefineRuntimeAbi(*jit);
 
   // Every unit -- the source units and the design-root -- becomes one module in

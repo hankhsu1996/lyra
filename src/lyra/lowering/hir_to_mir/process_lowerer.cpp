@@ -178,15 +178,14 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
       mir::LocalDecl{
           .name = "self", .type = parent.current_class->self_pointer_type});
   code.params = {self_id};
-  const WalkFrame body_frame = parent.WithBlock(&code.body)
-                                   .WithBindings(&bindings)
-                                   .WithCoroutineBody(true);
+  const WalkFrame body_frame =
+      parent.WithBlock(&code.body).WithBindings(&bindings);
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  // A process is a coroutine; it completes by falling off its end through
-  // `co_return`, a real body statement (LRM 9.2).
-  code.body.AppendStmt(
-      mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
+  // A process completes by falling off its end, which is a real body statement
+  // rather than an implicit exit (LRM 9.2). Its coroutine result type is what
+  // makes that return a coroutine completion.
+  code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.result_type = process.Module().Unit().builtins.coroutine_void;
   return mir::MethodDecl{
       .name = std::string{process.CallableName()},
@@ -213,9 +212,8 @@ auto LowerForeverProcess(
   code.params = {self_id};
   mir::Block body_block;
   {
-    const WalkFrame body_frame = parent.WithBlock(&body_block)
-                                     .WithBindings(&bindings)
-                                     .WithCoroutineBody(true);
+    const WalkFrame body_frame =
+        parent.WithBlock(&body_block).WithBindings(&bindings);
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     if (implicit_sensitivity != nullptr) {
@@ -233,8 +231,7 @@ auto LowerForeverProcess(
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.body.AppendStmt(
-      mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
+  code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.result_type = process.Module().Unit().builtins.coroutine_void;
   return mir::MethodDecl{
       .name = std::string{process.CallableName()},
@@ -270,12 +267,11 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       BindingOriginId::Receiver(),
       mir::LocalDecl{
           .name = "self", .type = parent.current_class->self_pointer_type});
-  // A task body suspends on timing controls and renders as a coroutine; a
-  // function body executes synchronously.
+  // A task body suspends on timing controls, so its call protocol is the
+  // coroutine one; a function body executes synchronously.
   const bool body_is_coroutine = src.kind == hir::SubroutineKind::kTask;
-  const WalkFrame body_frame = parent.WithBlock(&code.body)
-                                   .WithBindings(&bindings)
-                                   .WithCoroutineBody(body_is_coroutine);
+  const WalkFrame body_frame =
+      parent.WithBlock(&code.body).WithBindings(&bindings);
 
   // Formals normalize into the signature's data flow (LRM 13.5). An `input` and
   // a `ref` / `const ref` are parameters (the latter carries a `Ref<T>`); an
@@ -364,20 +360,14 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   auto lowered = LowerStraightLineBodyInto(*this, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
 
-  // Close the body with a trailing return of the fall-through payload. Absent
-  // when the payload is empty (a void function or a task with no outputs); the
-  // backend then supplies the bare `co_return;` for a coroutine.
+  // Close the body with a trailing return of the fall-through payload, or with
+  // a bare return when the payload is empty (a void function, or a task with no
+  // outputs, which completes by falling off its end -- LRM 13.3). Either way
+  // the completion is a real body statement, not a backend-appended epilogue.
   if (auto trailing = BuildReturnPayload(code.body, std::nullopt)) {
-    code.body.AppendStmt(
-        mir::ReturnStmt{
-            .value = trailing,
-            .is_coroutine_return = body_frame.is_coroutine_body});
+    code.body.AppendStmt(mir::ReturnStmt{.value = trailing});
   } else if (body_is_coroutine) {
-    // A task is a coroutine with no result value: it completes by falling off
-    // its end through `co_return` (LRM 13.3). The completion is a real body
-    // statement, not a backend-appended epilogue.
-    code.body.AppendStmt(
-        mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
+    code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   }
 
   code.params = std::move(params);

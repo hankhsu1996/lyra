@@ -154,9 +154,19 @@ void VerifyInstr(
 }
 
 void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
+  const bool is_coroutine = IsCoroutine(unit.types, fn.result_type);
   for (const BasicBlock& block : fn.blocks) {
     for (const Instr& instr : block.instrs) {
       VerifyInstr(unit, fn, instr);
+    }
+    // Only a body whose call protocol is the coroutine one can hand control
+    // back to the scheduler; a suspension anywhere else has no one to resume
+    // it.
+    if (std::holds_alternative<SuspendTerm>(block.terminator.data) &&
+        !is_coroutine) {
+      throw InternalError(
+          "lir verify: a suspension appears in a body whose result type is not "
+          "a coroutine");
     }
   }
 }

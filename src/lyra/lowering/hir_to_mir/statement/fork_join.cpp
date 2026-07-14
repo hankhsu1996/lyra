@@ -94,8 +94,7 @@ auto LowerForkStmt(
     // returns inside it become `co_return`. The branch policy snapshots the
     // fork's own block-item declarations and aliases deeper enclosing
     // variables (LRM 6.21).
-    ClosureBuilder closure(
-        process.Module().Unit(), fork_frame, true, branch_policy);
+    ClosureBuilder closure(process.Module().Unit(), fork_frame, branch_policy);
     auto lowered = process.LowerStmt(branch, closure.Frame());
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));

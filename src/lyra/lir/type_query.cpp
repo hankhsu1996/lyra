@@ -39,4 +39,8 @@ auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool {
       types.Get(type).data);
 }
 
+auto IsCoroutine(const TypeArena& types, TypeId type) -> bool {
+  return std::holds_alternative<CoroutineType>(types.Get(type).data);
+}
+
 }  // namespace lyra::lir

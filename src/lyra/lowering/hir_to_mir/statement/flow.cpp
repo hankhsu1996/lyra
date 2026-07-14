@@ -138,9 +138,7 @@ auto LowerReturnStmt(
   const std::optional<mir::ExprId> payload =
       process.BuildReturnPayload(block, explicit_value);
   return mir::Stmt{
-      .label = std::move(label),
-      .data = mir::ReturnStmt{
-          .value = payload, .is_coroutine_return = frame.is_coroutine_body}};
+      .label = std::move(label), .data = mir::ReturnStmt{.value = payload}};
 }
 
 auto LowerBreakStmt(

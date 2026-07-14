@@ -133,6 +133,11 @@ the detail lives in the entry itself.
   the transient values one generated entry creates -- the JIT counterpart of C++ stack/RAII.
   Physical-layout / in-frame value lowering is a later optimization, not a correctness prerequisite;
   cross-suspension and managed-value lifetime is out of scope for the call scope.
+- [jit-process-suspension](jit-process-suspension.md) -- coroutine-ness is the callable's result
+  type, a suspension is a generic LIR control edge whose wakeup is registered by preceding runtime
+  calls, and the LLVM backend states where a body suspends while LLVM's coroutine passes derive the
+  frame, resume state, and spills. The engine resumes a runtime-owned adapter, never a generated
+  frame; a hand-rolled state machine in the emitter and an is-coroutine flag are rejected.
 - [root-unit-elaboration](root-unit-elaboration.md) -- design elaboration is the synthetic `$root`
   unit's `construct` entry, which builds the top-level modules as its owned children; there is no
   design-level free function. Engine / bind / run stay host runner policy and never enter MIR; both

@@ -127,12 +127,10 @@ class LirDumper {
     return std::visit(
         Overloaded{
             [&](const ReturnTerm& ret) -> std::string {
-              std::string keyword =
-                  ret.is_coroutine ? "return.coroutine" : "return";
               if (ret.value.has_value()) {
-                return std::format("{} {}", keyword, FormatOperand(*ret.value));
+                return std::format("return {}", FormatOperand(*ret.value));
               }
-              return keyword;
+              return "return";
             },
             [](const BranchTerm& br) -> std::string {
               return std::format("br bb{}", br.target.value);
@@ -141,6 +139,9 @@ class LirDumper {
               return std::format(
                   "br {} ? bb{} : bb{}", FormatOperand(br.condition),
                   br.if_true.value, br.if_false.value);
+            },
+            [](const SuspendTerm& s) -> std::string {
+              return std::format("suspend -> bb{}", s.resume.value);
             },
             [](const UnreachableTerm&) -> std::string {
               return "unreachable";

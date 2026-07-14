@@ -106,6 +106,12 @@ auto RuntimeAbi::MakeCoroutine() -> llvm::FunctionCallee {
       "lyra_rt_make_coroutine", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
+auto RuntimeAbi::Delay() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_delay", types_->Void(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
 auto RuntimeAbi::MakeString() -> llvm::FunctionCallee {
   return Get("lyra_rt_make_string", types_->Ptr(), {types_->Ptr()});
 }
