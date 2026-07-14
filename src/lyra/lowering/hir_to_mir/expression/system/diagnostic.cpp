@@ -99,8 +99,7 @@ auto LowerDiagnosticSystemSubroutineCall(
   }
 
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      process, frame, call, support::PrintRadix::kDecimal, items_offset,
-      FormatStringRequirement::kOptional, span);
+      process, frame, call, support::PrintRadix::kDecimal, items_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   auto& unit = process.Module().Unit();

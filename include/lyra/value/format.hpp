@@ -105,9 +105,38 @@ struct Formatter;
 // must hold the underlying value alive for the duration of the print call.
 // Always two pointers wide regardless of the underlying type.
 struct FormatArg {
-  const void* ptr;
-  std::string (*format_fn)(
-      const FormatSpec&, const void*, const FormatContext&);
+  using FormatFn =
+      std::string (*)(const FormatSpec&, const void*, const FormatContext&);
+
+  const void* ptr = nullptr;
+  FormatFn format_fn = nullptr;
+
+  FormatArg() = default;
+  FormatArg(const void* ptr, FormatFn format_fn)
+      : ptr(ptr), format_fn(format_fn) {
+  }
+
+  // A format string known only at simulation time (LRM 21.3.3) binds each
+  // operand to its conversion as the parse walks the string, so the operand
+  // reaches the formatter as a bare arg carrying no spec of its own. Building
+  // one straight from a value is what lets that path construct its operands the
+  // same way the print-item path does. The overload set is closed on the leaf
+  // formattable types rather than a single greedy template so an operand that
+  // is not itself formattable but converts to one -- an `Enum<T>` decaying to
+  // `PackedArray` -- selects the converted overload instead of instantiating an
+  // undefined `Formatter`.
+  explicit FormatArg(const PackedArray& value);
+  explicit FormatArg(const String& value);
+  template <typename Host>
+  explicit FormatArg(const RealValue<Host>& value);
+  template <typename T>
+  explicit FormatArg(const UnpackedArray<T>& value);
+  template <typename T>
+  explicit FormatArg(const DynamicArray<T>& value);
+  template <typename T>
+  explicit FormatArg(const Queue<T>& value);
+  template <typename K, typename V>
+  explicit FormatArg(const AssociativeArray<K, V>& value);
 };
 
 // Build a FormatArg that borrows `value`. `value` must outlive every
@@ -119,9 +148,9 @@ struct FormatArg {
 template <typename T>
 [[nodiscard]] auto MakeFormatArg(const T& value) -> FormatArg {
   return FormatArg{
-      .ptr = &value,
-      .format_fn = [](const FormatSpec& spec, const void* p,
-                      const FormatContext& ctx) -> std::string {
+      &value,
+      [](const FormatSpec& spec, const void* p,
+         const FormatContext& ctx) -> std::string {
         const T& v = *static_cast<const T*>(p);
         // Per-formatter signature lookup: those that consult design-wide
         // context (`%t` needing `TimeFormat`) declare `Format(spec, value,
@@ -134,8 +163,33 @@ template <typename T>
         } else {
           return Formatter<T>::Format(spec, v);
         }
-      },
-  };
+      }};
+}
+
+inline FormatArg::FormatArg(const PackedArray& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+inline FormatArg::FormatArg(const String& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+template <typename Host>
+FormatArg::FormatArg(const RealValue<Host>& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+template <typename T>
+FormatArg::FormatArg(const UnpackedArray<T>& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+template <typename T>
+FormatArg::FormatArg(const DynamicArray<T>& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+template <typename T>
+FormatArg::FormatArg(const Queue<T>& value) : FormatArg(MakeFormatArg(value)) {
+}
+template <typename K, typename V>
+FormatArg::FormatArg(const AssociativeArray<K, V>& value)
+    : FormatArg(MakeFormatArg(value)) {
 }
 
 // Drive the type-erased dispatch. The runtime print loop calls this once
@@ -240,5 +294,21 @@ using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
 // step holds no engine state.
 [[nodiscard]] auto Format(
     std::span<const PrintItem> items, const TimeFormat& time_format) -> String;
+
+// Formats against a format string whose value is known only at simulation time
+// (LRM 21.3.3 permits a non-constant format_string). The directives are parsed
+// here and each one takes the next operand in turn, which is the whole
+// difference from the walk above: there the directives are already parsed and
+// each operand already carries its spec. `scope_path` is the hierarchical name
+// a `%m` directive renders (LRM 21.2.1.1) and `timeunit_power` scales a `%t`
+// against the calling scope's time unit (LRM 21.2.1.3) -- both are facts of the
+// call site, which cannot be read off the format string. Supplying too few
+// operands leaves the unsatisfied directives empty and too many ignores the
+// excess, so a count mismatch does not stop the simulation (LRM 21.3.3). A
+// malformed directive throws.
+[[nodiscard]] auto FormatRuntime(
+    const String& format, std::span<const FormatArg> args,
+    const String& scope_path, const TimeFormat& time_format,
+    const PackedArray& timeunit_power) -> String;
 
 }  // namespace lyra::value

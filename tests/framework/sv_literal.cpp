@@ -352,12 +352,7 @@ auto FormatExpectedValue(
           out += ", ";
         }
         out += value::Format(
-            spec,
-            value::FormatArg{
-                .ptr = &v.elements[i],
-                .format_fn = &FormatExpectedValue,
-            },
-            ctx);
+            spec, value::FormatArg{&v.elements[i], &FormatExpectedValue}, ctx);
       }
       out += "}";
       return out;
@@ -372,10 +367,7 @@ auto FormatExpectedValue(
 }  // namespace
 
 auto ExpectedValue::BuildFormatArg() const -> value::FormatArg {
-  return value::FormatArg{
-      .ptr = this,
-      .format_fn = &FormatExpectedValue,
-  };
+  return value::FormatArg{this, &FormatExpectedValue};
 }
 
 auto ParseExpectedValue(std::string_view text, bool node_is_integer)

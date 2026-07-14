@@ -1,9 +1,9 @@
 module Top;
-  // LRM 21.3.3: $sformat writes its formatted output to the first argument
-  // (a string-typed lvalue per Cut 1 scope). Format conversions reuse the
-  // same engine as $display, so this case only proves end-to-end wiring
-  // across a representative spec set plus the width / precision / pad /
-  // align modifiers rather than re-testing every spec semantics.
+  // LRM 21.3.3: $sformat writes its formatted output to the first argument.
+  // Format conversions reuse the same engine as $display, so this case only
+  // proves end-to-end wiring across a representative spec set plus the width /
+  // precision / pad / align modifiers rather than re-testing every spec
+  // semantics. The output_var type axis is covered separately.
   int          a;
   logic [15:0] b;
   logic [7:0]  c;

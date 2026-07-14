@@ -54,6 +54,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "IsCancelled";
     case support::BuiltinFn::kFormat:
       return "Format";
+    case support::BuiltinFn::kFormatRuntime:
+      return "FormatRuntime";
     case support::BuiltinFn::kWrite:
       return "Write";
     case support::BuiltinFn::kWriteln:
@@ -278,6 +280,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "FromPackedArray";
     case support::BuiltinFn::kFromByteArray:
       return "FromByteArray";
+    case support::BuiltinFn::kFromString:
+      return "FromString";
     case support::BuiltinFn::kConformBound:
       return "ConformBound";
     case support::BuiltinFn::kMakeQueueConcat:
@@ -360,6 +364,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
   switch (id) {
     case support::BuiltinFn::kScan:
     case support::BuiltinFn::kFormat:
+    case support::BuiltinFn::kFormatRuntime:
     case support::BuiltinFn::kToSvLogic:
     case support::BuiltinFn::kReadCanonicalBitVec:
     case support::BuiltinFn::kReadCanonicalLogicVec:

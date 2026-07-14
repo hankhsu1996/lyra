@@ -82,6 +82,8 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
       return lir::RuntimeLibraryKind::kPrintValueItem;
     case mir::RuntimeLibraryKind::kFormatSpec:
       return lir::RuntimeLibraryKind::kFormatSpec;
+    case mir::RuntimeLibraryKind::kFormatArg:
+      return lir::RuntimeLibraryKind::kFormatArg;
     case mir::RuntimeLibraryKind::kChannelCancellation:
       return lir::RuntimeLibraryKind::kChannelCancellation;
     case mir::RuntimeLibraryKind::kTimeFormat:

@@ -195,6 +195,8 @@ auto RenderTypeAsCpp(
                 return std::string{"lyra::value::PrintValueItem"};
               case mir::RuntimeLibraryKind::kFormatSpec:
                 return std::string{"lyra::value::FormatSpec"};
+              case mir::RuntimeLibraryKind::kFormatArg:
+                return std::string{"lyra::value::FormatArg"};
               case mir::RuntimeLibraryKind::kChannelCancellation:
                 return std::string{"lyra::runtime::ChannelCancellation"};
               case mir::RuntimeLibraryKind::kTimeFormat:

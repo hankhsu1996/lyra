@@ -206,6 +206,48 @@ auto BuildValueConversion(
         unit, operand_id, support::BuiltinFn::kFromPackedArray);
   }
 
+  // String -> integral (LRM 5.9): right-justified into the destination's shape,
+  // which the prototype carries.
+  if (src_kind == mir::TypeKind::kString && dst_ty.IsIntegralPacked()) {
+    const mir::ExprId prototype =
+        BuildPackedShapePrototype(block, dst_ty.AsIntegralPacked(), dst_type);
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kFromString,
+                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                .arguments = {operand_id, prototype}},
+        .type = dst_type};
+  }
+
+  // String -> unpacked array of byte (LRM 5.9): left-justified from the array's
+  // left bound. The element prototype carries the element representation and
+  // doubles as the default an element past the text keeps. LRM 5.9 defines the
+  // conversion only for a byte element, so an array of anything else is not a
+  // destination this reshapes into.
+  if (const auto* dst_arr = std::get_if<mir::UnpackedArrayType>(&dst_ty.data);
+      dst_arr != nullptr && src_kind == mir::TypeKind::kString &&
+      unit.types.Get(dst_arr->element_type).IsIntegralPacked()) {
+    const auto& elem_ty = unit.types.Get(dst_arr->element_type);
+    const mir::ExprId element_prototype = BuildPackedShapePrototype(
+        block, elem_ty.AsIntegralPacked(), dst_arr->element_type);
+    const mir::ExprId count = block.exprs.Add(
+        mir::MakeInt32Literal(
+            unit.builtins.int32,
+            static_cast<std::int64_t>(dst_arr->dim.ElementCount())));
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kFromString,
+                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                .arguments = {operand_id, element_prototype, count}},
+        .type = dst_type};
+  }
+
   // Unpacked -> unpacked: assignment requires equivalent element types and the
   // same element count (LRM 7.6), so the element representation already matches
   // and a whole-array store is a plain ordinal-payload copy. The declared range

@@ -9,7 +9,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -81,7 +80,7 @@ auto EmitFormatThenWrite(
 // intervening $fclose silences the print.
 auto LowerStrobeCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
+    const support::PrintSystemSubroutineInfo& print)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   auto& unit = process.Module().Unit();
@@ -146,8 +145,7 @@ auto LowerStrobeCall(
   // (LRM 21.2.2 sample-at-end-of-slot for signals).
   const std::size_t arg_offset = is_file_sink ? 1 : 0;
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      process, body_frame, call, print.radix, arg_offset,
-      FormatStringRequirement::kOptional, span);
+      process, body_frame, call, print.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
   const mir::ExprId items_array = body.exprs.Add(
       BuildPrintItemsArray(unit, body, *items_or, time_unit_power));
@@ -175,10 +173,10 @@ auto LowerStrobeCall(
 
 auto LowerPrintSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
+    const support::PrintSystemSubroutineInfo& print)
     -> diag::Result<mir::Expr> {
   if (print.is_strobe) {
-    return LowerStrobeCall(process, frame, call, print, span);
+    return LowerStrobeCall(process, frame, call, print);
   }
 
   auto& block = *frame.current_block;
@@ -196,8 +194,7 @@ auto LowerPrintSystemSubroutineCall(
   }
 
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      process, frame, call, print.radix, arg_offset,
-      FormatStringRequirement::kOptional, span);
+      process, frame, call, print.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   const auto time_unit_power =

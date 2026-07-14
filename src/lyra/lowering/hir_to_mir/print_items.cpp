@@ -21,13 +21,14 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/format.hpp"
+#include "lyra/value/format_parse.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -71,36 +72,7 @@ auto TypeContainsChandle(const mir::CompilationUnit& unit, mir::TypeId type)
       unit.types.Get(type).data);
 }
 
-auto ToValueFormatKind(support::FormatDirectiveKind k) -> value::FormatKind {
-  switch (k) {
-    case support::FormatDirectiveKind::kDecimal:
-      return value::FormatKind::kDecimal;
-    case support::FormatDirectiveKind::kHex:
-      return value::FormatKind::kHex;
-    case support::FormatDirectiveKind::kBinary:
-      return value::FormatKind::kBinary;
-    case support::FormatDirectiveKind::kOctal:
-      return value::FormatKind::kOctal;
-    case support::FormatDirectiveKind::kString:
-      return value::FormatKind::kString;
-    case support::FormatDirectiveKind::kChar:
-      return value::FormatKind::kChar;
-    case support::FormatDirectiveKind::kRealDecimal:
-      return value::FormatKind::kRealDecimal;
-    case support::FormatDirectiveKind::kRealExponential:
-      return value::FormatKind::kRealExponential;
-    case support::FormatDirectiveKind::kRealGeneral:
-      return value::FormatKind::kRealGeneral;
-    case support::FormatDirectiveKind::kAssignmentPattern:
-      return value::FormatKind::kAssignmentPattern;
-    case support::FormatDirectiveKind::kTime:
-      return value::FormatKind::kTime;
-    default:
-      throw InternalError("ToValueFormatKind: not a value-format kind");
-  }
-}
-
-auto ToMirFormatModifiers(const support::FormatDirectiveModifiers& m)
+auto ToMirFormatModifiers(const value::FormatModifiers& m)
     -> mir::FormatModifiers {
   return mir::FormatModifiers{
       .width = m.width,
@@ -109,22 +81,47 @@ auto ToMirFormatModifiers(const support::FormatDirectiveModifiers& m)
       .left_align = m.left_align};
 }
 
-auto BuildPrintValueItem(
-    ProcessLowerer& process, WalkFrame frame, hir::ExprId hir_arg,
-    mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
-  const auto& hir_proc = process.HirBody();
-  auto& block = *frame.current_block;
-  const hir::Expr& hir_expr = hir_proc.exprs.Get(hir_arg);
+// The print family does not permit positional elision, so the optional-bearing
+// argument list flattens to plain ids once and every walk over it works from
+// those. An elided slot indicates a frontend or HIR-lowering bug -- elision is
+// only legal at the $fread mem-form's start position.
+auto FlattenCallArgs(const hir::CallExpr& call) -> std::vector<hir::ExprId> {
+  std::vector<hir::ExprId> args;
+  args.reserve(call.arguments.size());
+  for (const auto& slot : call.arguments) {
+    if (!slot.has_value()) {
+      throw InternalError("print-family call argument is unexpectedly elided");
+    }
+    args.push_back(*slot);
+  }
+  return args;
+}
+
+// Lowers one operand of a format, whichever way its conversion is chosen. The
+// returned expression is detached for the caller to intern.
+auto LowerFormatOperand(
+    ProcessLowerer& process, WalkFrame frame, hir::ExprId hir_arg)
+    -> diag::Result<mir::Expr> {
+  const hir::Expr& hir_expr = process.HirBody().exprs.Get(hir_arg);
   auto lowered_or = process.LowerExpr(hir_expr, frame);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
-
   if (TypeContainsChandle(process.Module().Unit(), lowered.type)) {
     return diag::Fail(
         hir_expr.span, diag::DiagCode::kUnsupportedExpressionForm,
         "a chandle is not a legal format argument (LRM 6.14 permits a chandle "
         "only in an equality comparison and a boolean test)");
   }
+  return lowered;
+}
+
+auto BuildPrintValueItem(
+    ProcessLowerer& process, WalkFrame frame, hir::ExprId hir_arg,
+    mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
+  auto& block = *frame.current_block;
+  auto lowered_or = LowerFormatOperand(process, frame, hir_arg);
+  if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
+  mir::Expr lowered = *std::move(lowered_or);
 
   // %s formats by operand type (LRM 21.2.1.7): a String and a packed value
   // each format directly, without building a string value. Only an unpacked
@@ -147,21 +144,21 @@ auto BuildPrintValueItem(
 
 auto BuildPrintItemFromDirective(
     ProcessLowerer& process, WalkFrame frame,
-    const support::ParsedFormatDirective& directive,
-    std::span<const hir::ExprId> args, std::size_t& value_index,
-    diag::SourceSpan span) -> diag::Result<mir::RuntimePrintItem> {
-  switch (directive.kind) {
-    case support::FormatDirectiveKind::kLiteral:
+    const value::FormatDirective& directive, std::span<const hir::ExprId> args,
+    std::size_t& value_index, diag::SourceSpan span)
+    -> diag::Result<mir::RuntimePrintItem> {
+  switch (directive.role) {
+    case value::FormatDirective::Role::kLiteral:
       return mir::RuntimePrintLiteral{.text = directive.literal};
 
-    case support::FormatDirectiveKind::kModulePath: {
+    case value::FormatDirective::Role::kModulePath: {
       // LRM 21.2.1.1: the hierarchical name of the enclosing scope. Reach it
       // through `self`, the body's first binding -- the same receiver pattern
       // every other scope-method call uses. A deferred caller ($strobe, NBA)
-      // captures `self` via the closure builder, so a delayed fire still
-      // reads the issuing scope's path. The directive carries no operand, so
-      // the print loop's value_index is untouched; the receiver's modifiers
-      // ride through the string-format spec like an ordinary `%s` argument.
+      // captures `self` via the closure builder, so a delayed fire still reads
+      // the issuing scope's path. The directive takes no operand, so it leaves
+      // the operand cursor where it found it; its modifiers ride through the
+      // string-format spec like an ordinary `%s` argument.
       auto& block = *frame.current_block;
       const auto& builtins = process.Module().Unit().builtins;
       const mir::ExprId self_id = block.exprs.Add(
@@ -182,17 +179,7 @@ auto BuildPrintItemFromDirective(
               ToMirFormatModifiers(directive.modifiers)));
     }
 
-    case support::FormatDirectiveKind::kTime:
-    case support::FormatDirectiveKind::kChar:
-    case support::FormatDirectiveKind::kDecimal:
-    case support::FormatDirectiveKind::kHex:
-    case support::FormatDirectiveKind::kBinary:
-    case support::FormatDirectiveKind::kOctal:
-    case support::FormatDirectiveKind::kString:
-    case support::FormatDirectiveKind::kRealDecimal:
-    case support::FormatDirectiveKind::kRealExponential:
-    case support::FormatDirectiveKind::kRealGeneral:
-    case support::FormatDirectiveKind::kAssignmentPattern: {
+    case value::FormatDirective::Role::kValue: {
       if (value_index >= args.size()) {
         return diag::Fail(
             span, diag::DiagCode::kErrorDisplayMissingArg,
@@ -202,12 +189,49 @@ auto BuildPrintItemFromDirective(
       return BuildPrintValueItem(
           process, frame, hir_arg,
           mir::FormatSpec(
-              ToValueFormatKind(directive.kind),
-              ToMirFormatModifiers(directive.modifiers)));
+              directive.kind, ToMirFormatModifiers(directive.modifiers)));
     }
   }
   throw InternalError(
-      "BuildPrintItemFromDirective: unreachable directive kind");
+      "BuildPrintItemFromDirective: unreachable directive role");
+}
+
+// The format grammar is span-free so the runtime can share it (LRM 21.3.3
+// allows a format string known only at simulation time). A compile-time parse
+// rejects the same malformed directives, so it pins the failure to the format
+// string's source span here.
+auto FailFormatParse(
+    const value::FormatParseResult& parsed, diag::SourceSpan span)
+    -> std::unexpected<diag::Diagnostic> {
+  switch (parsed.error) {
+    case value::FormatParseError::kMissingSpecifier:
+      return diag::Fail(
+          span, diag::DiagCode::kErrorFormatStringMissingSpecifier,
+          "format directive '%' is missing its specifier character");
+    case value::FormatParseError::kMissingPrecision:
+      return diag::Fail(
+          span, diag::DiagCode::kErrorFormatStringMissingSpecifier,
+          "format directive '.' is missing precision digits");
+    case value::FormatParseError::kTrailingPercent:
+      return diag::Fail(
+          span, diag::DiagCode::kErrorFormatStringTrailingPercent,
+          "format string ends with unfinished '%' directive");
+    case value::FormatParseError::kUnknownSpecifier:
+      return diag::Fail(
+          span, diag::DiagCode::kErrorFormatStringUnknownSpecifier,
+          std::format("unknown format specifier '%{}'", parsed.spec_char));
+    case value::FormatParseError::kWidthOverflow:
+      return diag::Fail(
+          span, diag::DiagCode::kErrorFormatStringWidthOverflow,
+          "format directive width does not fit in int32");
+    case value::FormatParseError::kPrecisionOverflow:
+      return diag::Fail(
+          span, diag::DiagCode::kErrorFormatStringWidthOverflow,
+          "format directive precision does not fit in int32");
+    case value::FormatParseError::kNone:
+      break;
+  }
+  throw InternalError("FailFormatParse: format string parsed without error");
 }
 
 struct LiteralFormatStringRef {
@@ -312,46 +336,26 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind {
 
 auto BuildRuntimePrintItemsFromCallArgs(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    support::PrintRadix default_radix, std::size_t arg_offset,
-    FormatStringRequirement fmt_req, diag::SourceSpan call_span)
+    support::PrintRadix default_radix, std::size_t arg_offset)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
   const auto& hir_proc = process.HirBody();
   std::vector<mir::RuntimePrintItem> items;
-  // The print family does not permit positional elision; flatten the
-  // optional-bearing arg list once so the per-directive loop can pass plain
-  // ExprIds around. An elided slot here indicates a frontend or HIR-lowering
-  // bug -- elision is only legal at the $fread mem-form's start position.
-  std::vector<hir::ExprId> args;
-  args.reserve(call.arguments.size());
-  for (const auto& slot : call.arguments) {
-    if (!slot.has_value()) {
-      throw InternalError("print-family call argument is unexpectedly elided");
-    }
-    args.push_back(*slot);
-  }
+  const std::vector<hir::ExprId> args = FlattenCallArgs(call);
   std::size_t cursor = arg_offset;
 
   std::optional<LiteralFormatStringRef> literal;
   if (cursor < args.size()) {
     literal = TryGetHirStringLiteral(hir_proc, args[cursor]);
   }
-  if (!literal.has_value() && fmt_req == FormatStringRequirement::kRequired) {
-    // LRM 21.3.3 NOTE permits a non-literal format string; not yet supported.
-    const diag::SourceSpan span = cursor < args.size()
-                                      ? hir_proc.exprs.Get(args[cursor]).span
-                                      : call_span;
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedSubroutineArgument,
-        "format string must be a string literal; a runtime-evaluated format "
-        "string is not yet supported (LRM 21.3.3)");
-  }
   if (literal.has_value()) {
-    auto parsed_or =
-        support::ParseLiteralFormatString(literal->text, literal->span);
-    if (!parsed_or) return std::unexpected(std::move(parsed_or.error()));
+    const value::FormatParseResult parsed =
+        value::ParseFormatString(literal->text);
+    if (parsed.error != value::FormatParseError::kNone) {
+      return FailFormatParse(parsed, literal->span);
+    }
     ++cursor;
     auto value_index = cursor;
-    for (const auto& directive : *parsed_or) {
+    for (const auto& directive : parsed.directives) {
       auto item_or = BuildPrintItemFromDirective(
           process, frame, directive, args, value_index, literal->span);
       if (!item_or) return std::unexpected(std::move(item_or.error()));
@@ -373,6 +377,99 @@ auto BuildRuntimePrintItemsFromCallArgs(
     ++cursor;
   }
   return items;
+}
+
+auto HasLiteralFormatString(
+    const ProcessLowerer& process, const hir::CallExpr& call,
+    std::size_t arg_offset) -> bool {
+  if (arg_offset >= call.arguments.size()) return false;
+  const auto& slot = call.arguments[arg_offset];
+  if (!slot.has_value()) return false;
+  return TryGetHirStringLiteral(process.HirBody(), *slot).has_value();
+}
+
+auto BuildRuntimeFormatCallExpr(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    std::size_t arg_offset) -> diag::Result<mir::Expr> {
+  auto& unit = process.Module().Unit();
+  auto& block = *frame.current_block;
+  const std::vector<hir::ExprId> args = FlattenCallArgs(call);
+
+  if (arg_offset >= args.size()) {
+    throw InternalError(
+        "BuildRuntimeFormatCallExpr: the format-string slot is absent; the "
+        "subroutine's argument-count policy should have rejected the call");
+  }
+
+  // An integral or unpacked-byte-array format string carries its text as bytes
+  // (LRM 21.3.3), so it reaches the parse as a string value through the same
+  // conversion any other bits-to-text operand takes.
+  auto format_or = LowerFormatOperand(process, frame, args[arg_offset]);
+  if (!format_or) return std::unexpected(std::move(format_or.error()));
+  const mir::ExprId lowered_format = block.exprs.Add(*std::move(format_or));
+  const mir::ExprId format_id =
+      ConvertToType(unit, block, lowered_format, unit.builtins.string);
+
+  std::vector<mir::ExprId> operands;
+  operands.reserve(args.size() - arg_offset - 1);
+  for (std::size_t i = arg_offset + 1; i < args.size(); ++i) {
+    auto lowered_or = LowerFormatOperand(process, frame, args[i]);
+    if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
+    const mir::ExprId value = block.exprs.Add(*std::move(lowered_or));
+    operands.push_back(block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{.callee = mir::Construct{}, .arguments = {value}},
+            .type = unit.builtins.format_arg}));
+  }
+  const mir::TypeId operands_type = unit.types.Intern(
+      mir::UnpackedArrayType{
+          .element_type = unit.builtins.format_arg,
+          .dim = mir::UnpackedRange::ZeroBased(operands.size())});
+  const mir::ExprId operands_array = block.exprs.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(operands)},
+          .type = operands_type});
+
+  // The hierarchical name a `%m` renders and the scope's time unit a `%t`
+  // scales against are facts of the call site, not of the format text, so they
+  // reach the parse as operands.
+  const mir::ExprId self_id = block.exprs.Add(
+      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId path_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kHierarchicalPath},
+                  .arguments = {self_id}},
+          .type = unit.builtins.string});
+
+  const mir::ExprId services_id =
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+  const mir::ExprId time_format_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kTimeFormat},
+                  .arguments = {services_id}},
+          .type = unit.builtins.time_format});
+  const mir::ExprId time_unit_power = block.exprs.Add(
+      mir::MakeInt32Literal(
+          unit.builtins.int32,
+          static_cast<std::int64_t>(process.Resolution().unit_power)));
+
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{.target = support::BuiltinFn::kFormatRuntime},
+              .arguments =
+                  {format_id, operands_array, path_id, time_format_id,
+                   time_unit_power}},
+      .type = unit.builtins.string};
 }
 
 auto BuildPrintItemsArray(

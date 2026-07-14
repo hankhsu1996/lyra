@@ -41,6 +41,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kPrintLiteralItem,
   kPrintValueItem,
   kFormatSpec,
+  kFormatArg,
   kChannelCancellation,
   kTimeFormat,
   kHierarchySegment,
