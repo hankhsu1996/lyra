@@ -45,6 +45,7 @@ struct BuiltinMirTypes {
   TypeId print_literal_item;
   TypeId print_value_item;
   TypeId format_spec;
+  TypeId format_arg;
   TypeId time_format;
   TypeId hierarchy_segment;
   TypeId coroutine_void;
@@ -119,6 +120,8 @@ struct CompilationUnit {
                     .kind = RuntimeLibraryKind::kPrintValueItem}),
             .format_spec = types.Intern(
                 RuntimeLibraryType{.kind = RuntimeLibraryKind::kFormatSpec}),
+            .format_arg = types.Intern(
+                RuntimeLibraryType{.kind = RuntimeLibraryKind::kFormatArg}),
             .time_format = types.Intern(
                 RuntimeLibraryType{.kind = RuntimeLibraryKind::kTimeFormat}),
             .hierarchy_segment = types.Intern(

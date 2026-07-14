@@ -18,6 +18,7 @@
 #include "lyra/value/packed_internal.hpp"
 #include "lyra/value/packed_reduction.hpp"
 #include "lyra/value/slice_selector.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::value {
 
@@ -643,6 +644,20 @@ auto PackedArray::ConvertFrom(
 auto PackedArray::ConvertFrom(const PackedArray& src, PackedArray prototype)
     -> PackedArray {
   return ConvertBitsInto(std::move(prototype), src);
+}
+
+auto PackedArray::FromString(const String& text, const PackedArray& prototype)
+    -> PackedArray {
+  const std::string_view chars = text.View();
+  // An empty string carries no bytes, so it takes one zero byte and conforms to
+  // zero -- the same path every other length follows. Bytes carry no sign and
+  // no unknown state, so the text's own value is unsigned 2-state.
+  const std::uint64_t bit_width = 8 * std::max<std::size_t>(chars.size(), 1);
+  return ConvertFrom(
+      FromBytes(
+          std::span<const char>{chars.data(), chars.size()}, bit_width, false,
+          false),
+      prototype);
 }
 
 namespace {

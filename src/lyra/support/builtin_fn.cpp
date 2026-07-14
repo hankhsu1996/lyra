@@ -272,6 +272,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "is_cancelled";
     case BuiltinFn::kFormat:
       return "format";
+    case BuiltinFn::kFormatRuntime:
+      return "format_runtime";
     case BuiltinFn::kWrite:
       return "write";
     case BuiltinFn::kWriteln:
@@ -392,6 +394,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "from_packed_array";
     case BuiltinFn::kFromByteArray:
       return "from_byte_array";
+    case BuiltinFn::kFromString:
+      return "from_string";
     case BuiltinFn::kConformBound:
       return "conform_bound";
     case BuiltinFn::kMakeQueueConcat:

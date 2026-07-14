@@ -144,6 +144,13 @@ enum class BuiltinFn : std::uint16_t {
   // methods that emit that string to the descriptor's sink (LRM 21.2.1 /
   // 21.3.1); the `ln` variant appends a trailing newline.
   kFormat,
+  // LRM 21.3.3 format string known only at simulation time. Like `Format` a
+  // `lyra::value` free function yielding an SV `string`, but it parses the
+  // format string and binds each operand as it goes, so it takes the format
+  // text and a bare operand array in place of the pre-bound print items. The
+  // hierarchical name a `%m` renders and the scope's time unit for a `%t` are
+  // call-site facts absent from the format text, so they ride as operands too.
+  kFormatRuntime,
   kWrite,
   kWriteln,
   // Diagnostic subsystem accessor and severity-fixed emit operations.
@@ -314,6 +321,12 @@ enum class BuiltinFn : std::uint16_t {
   kConvertFrom,
   kFromPackedArray,
   kFromByteArray,
+  // The opposite direction, under the LRM 5.9 string-literal assignment rules:
+  // an integral destination takes the text right-justified, an unpacked byte
+  // array takes it left-justified. One factory named on whichever destination
+  // the call qualifies it with; that destination's declared representation
+  // reaches it as a prototype operand (plus an element count for the array).
+  kFromString,
   // Conforms a queue value to a destination's LRM 7.10.5 bound (a negative
   // argument means unbounded): the store boundary brings a differently-bounded
   // source to the destination's declared bound. An instance method on the
@@ -375,7 +388,8 @@ enum class BuiltinFn : std::uint16_t {
   return id == BuiltinFn::kEnumFirst || id == BuiltinFn::kEnumLast ||
          id == BuiltinFn::kEnumNum || id == BuiltinFn::kFromInt ||
          id == BuiltinFn::kConvertFrom || id == BuiltinFn::kFromPackedArray ||
-         id == BuiltinFn::kFromByteArray || id == BuiltinFn::kFromBool;
+         id == BuiltinFn::kFromByteArray || id == BuiltinFn::kFromBool ||
+         id == BuiltinFn::kFromString;
 }
 
 // True iff the function modifies its receiver argument's storage in place.

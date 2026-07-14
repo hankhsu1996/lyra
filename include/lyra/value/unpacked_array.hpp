@@ -25,6 +25,7 @@ template <typename T>
 class UnpackedArray;
 template <typename T>
 class ArraySliceRef;
+class String;
 
 // The declared range of one unpacked dimension, the array's coordinate system.
 // Element order runs left-to-right (LRM 7.6), so the leftmost element (index
@@ -87,6 +88,16 @@ class UnpackedArray {
   UnpackedArray(T element_default, std::span<const T> init)
       : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
+
+  // LRM 5.9 / 21.3.3: a string value assigned to an unpacked array of bytes is
+  // left-justified -- the first character lands at the array's left bound and
+  // runs toward the right bound, an element past the end of the text keeps the
+  // element default, and text beyond the array's last element is dropped.
+  // `element_prototype` carries the element's declared representation and
+  // doubles as that default; `count` is the destination's element count.
+  [[nodiscard]] static auto FromString(
+      const String& text, const T& element_prototype, const PackedArray& count)
+      -> UnpackedArray;
 
   UnpackedArray(const UnpackedArray&) = default;
   UnpackedArray(UnpackedArray&&) noexcept = default;

@@ -15,6 +15,7 @@
 namespace lyra::value {
 
 class PackedArrayRef;
+class String;
 
 // Unified integral value, mirroring slang's `IntegralType`: one type for every
 // integral, three attributes plus a dim stack. `backend::cpp` emits every
@@ -129,6 +130,15 @@ class PackedArray {
   [[nodiscard]] static auto ConvertFrom(
       const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
       bool dst_is_four_state) -> PackedArray;
+
+  // LRM 5.9: a string value assigned to an integral variable is right-justified
+  // -- a destination wider than the text pads its leftmost bits with zeros, and
+  // a narrower one truncates the leftmost characters. The text is first taken
+  // at its own width (its first character the most significant byte), so
+  // conforming that value to the prototype's declared representation is what
+  // applies the justification rule. An empty string yields zero.
+  [[nodiscard]] static auto FromString(
+      const String& text, const PackedArray& prototype) -> PackedArray;
 
   // LRM 11.4.12: `{a, b, c, ...}`. First operand occupies the result's MSBs,
   // last occupies the LSBs. Total bit width is the sum of operand widths.

@@ -1,0 +1,17 @@
+id: cpp.sformat_runtime_format
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    from_var: "a=42"
+    from_expr: "<a=42>"
+    with_mods: "[   42]"
+    with_string_arg: "lyra=42"
+    from_bytes: "h=0000002a"
+    too_few: "x=42 y="
+    too_many: "only=42"

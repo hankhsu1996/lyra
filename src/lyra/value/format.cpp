@@ -12,6 +12,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/value/format_parse.hpp"
 #include "lyra/value/integral_format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -92,6 +93,54 @@ auto Format(std::span<const PrintItem> items, const TimeFormat& time_format)
             },
         },
         item);
+  }
+  return String(std::move(out));
+}
+
+auto FormatRuntime(
+    const String& format, std::span<const FormatArg> args,
+    const String& scope_path, const TimeFormat& time_format,
+    const PackedArray& timeunit_power) -> String {
+  const auto power = static_cast<std::int32_t>(timeunit_power.ToInt64());
+  const FormatParseResult parsed = ParseFormatString(format.View());
+  if (parsed.error != FormatParseError::kNone) {
+    throw InternalError(
+        std::format(
+            "FormatRuntime: malformed format string at offset {}",
+            parsed.error_offset));
+  }
+
+  const FormatContext ctx{.time_format = &time_format};
+  const FormatArg path_arg{scope_path};
+  std::string out;
+  std::size_t next_arg = 0;
+  for (const FormatDirective& directive : parsed.directives) {
+    const auto spec = [&](FormatKind kind) {
+      FormatSpec s;
+      s.kind = kind;
+      s.width = directive.modifiers.width;
+      s.precision = directive.modifiers.precision;
+      s.zero_pad = directive.modifiers.zero_pad;
+      s.left_align = directive.modifiers.left_align;
+      s.timeunit_power = power;
+      return s;
+    };
+    switch (directive.role) {
+      case FormatDirective::Role::kLiteral:
+        out.append(directive.literal);
+        break;
+      case FormatDirective::Role::kModulePath:
+        out.append(Format(spec(FormatKind::kString), path_arg, ctx));
+        break;
+      case FormatDirective::Role::kValue:
+        // LRM 21.3.3: a directive with no operand left to take contributes
+        // nothing and the format continues, rather than aborting the run.
+        if (next_arg < args.size()) {
+          out.append(Format(spec(directive.kind), args[next_arg], ctx));
+          ++next_arg;
+        }
+        break;
+    }
   }
   return String(std::move(out));
 }
