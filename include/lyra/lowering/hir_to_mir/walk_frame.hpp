@@ -61,14 +61,6 @@ struct WalkFrame {
   // callable; replaced at a callable boundary.
   CallableBindings* bindings = nullptr;
 
-  // Whether the enclosing callable body suspends -- a process, a task, or a
-  // closure synthesized to run as a separate concurrent process (fork branch).
-  // Set at body entry and inherited unchanged through nested blocks;
-  // a closure entry re-establishes it from the closure's own `is_coroutine`.
-  // The `ReturnStmt` lowering reads this to fill the stmt's
-  // `is_coroutine_return` attribute (a C++ render hint, ignored by LIR / LLVM).
-  bool is_coroutine_body = false;
-
   // True while lowering an assignment's left-hand side. A queue
   // element-select dispatches to its write-side callee (LRM 7.10.1
   // append-aware) under this flag; the index and other rvalue
@@ -121,12 +113,6 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.bindings = callable_bindings;
-    return next;
-  }
-
-  [[nodiscard]] auto WithCoroutineBody(bool is_coroutine) const -> WalkFrame {
-    WalkFrame next = *this;
-    next.is_coroutine_body = is_coroutine;
     return next;
   }
 

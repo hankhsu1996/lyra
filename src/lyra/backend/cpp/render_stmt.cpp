@@ -229,12 +229,15 @@ auto RenderStmt(
             return std::format("{}continue;\n", Indent(indent));
           },
           [&](const mir::ReturnStmt& s) -> std::string {
-            // `is_coroutine_return` (set at HIR-to-MIR from the enclosing
-            // callable's coroutine-ness, mir/stmt.hpp) is a C++ render hint --
-            // LIR / LLVM ignore it -- choosing `co_return` over `return`. A
-            // value rides the result either way (LRM 13.3 / 13.4.1).
+            // A coroutine completes through `co_return`, which the enclosing
+            // callable's result type states: coroutine-ness is the call
+            // protocol, read from the type rather than restated on the
+            // statement. A value rides the result either way (LRM 13.3 /
+            // 13.4.1).
             const std::string keyword =
-                s.is_coroutine_return ? "co_return" : "return";
+                view.Unit().types.IsCoroutine(view.Code().result_type)
+                    ? "co_return"
+                    : "return";
             if (!s.value.has_value()) {
               return std::format("{}{};\n", Indent(indent), keyword);
             }

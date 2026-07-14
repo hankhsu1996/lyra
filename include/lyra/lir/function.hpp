@@ -212,11 +212,11 @@ struct Instr {
   InstrData data;
 };
 
-// Returns from the callable. `is_coroutine` distinguishes a coroutine
-// completion from a plain return; the value, when present, rides the result.
+// Returns from the callable; the value, when present, rides the result. Whether
+// this is a coroutine completion or a plain return is the callable's result
+// type, not a property of the terminator.
 struct ReturnTerm {
   std::optional<Operand> value;
-  bool is_coroutine = false;
 };
 
 // Transfers to `target` unconditionally.
@@ -231,14 +231,23 @@ struct CondBranchTerm {
   BlockId if_false;
 };
 
+// Hands control back to the scheduler and resumes at `resume` when the
+// activation is next run. It schedules nothing and names no wakeup source: the
+// source is registered by the runtime calls that precede this terminator, so a
+// delay, an event control, and a level wait differ only in those calls, never
+// in the suspend.
+struct SuspendTerm {
+  BlockId resume;
+};
+
 // Ends a block control never reaches -- the join of a conditional whose arms
 // all returned, or the tail of a value-returning body that always returns
 // earlier. Reaching it is undefined, which is what lets a target drop the
 // block.
 struct UnreachableTerm {};
 
-using TerminatorData =
-    std::variant<ReturnTerm, BranchTerm, CondBranchTerm, UnreachableTerm>;
+using TerminatorData = std::variant<
+    ReturnTerm, BranchTerm, CondBranchTerm, SuspendTerm, UnreachableTerm>;
 
 struct Terminator {
   TerminatorData data;
@@ -253,7 +262,10 @@ struct BasicBlock {
 // parameters first, then the temporaries and place locals the lowering minted;
 // `params` names the parameter subset in signature order, with the receiver
 // `self` at `params[0]`. The entry block is `blocks[0]`, and a `BlockId`
-// indexes `blocks`.
+// indexes `blocks`. A body whose call protocol is the coroutine one carries
+// that fact in its `result_type` (a `CoroutineType`): it may hold
+// `SuspendTerm`s and its completion is a coroutine completion, which a backend
+// realizes through the scheduling protocol rather than a single call.
 struct Function {
   std::string name;
   base::Arena<Local, ValueId> values;

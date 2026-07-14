@@ -104,13 +104,11 @@ struct ContinueStmt {};
 
 // LRM 13.4.1 `return [expr];`. `value` carries the returned expression for a
 // value-returning function; it is absent for `return;` and for void functions
-// / tasks. The semantic concept is one across all consumers (LRM, LIR, LLVM
-// `ret`); `is_coroutine_return` is a render hint for the C++ backend only,
-// distinguishing `co_return` from plain `return`. HIR-to-MIR sets it from
-// whether the enclosing callable body is a coroutine; LIR / LLVM ignore it.
+// / tasks. Whether this return completes a coroutine is the enclosing
+// callable's result type, which every consumer already reads; the statement
+// does not restate it.
 struct ReturnStmt {
   std::optional<ExprId> value;
-  bool is_coroutine_return = false;
 };
 
 // One leaf entry of a wait's projection set: an expression yielding a

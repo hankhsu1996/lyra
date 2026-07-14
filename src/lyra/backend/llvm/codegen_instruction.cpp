@@ -265,6 +265,8 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().RegisterInitial();
     case support::BuiltinFn::kRegisterFinal:
       return module_->Runtime().RegisterFinal();
+    case support::BuiltinFn::kDelay:
+      return module_->Runtime().Delay();
     case support::BuiltinFn::kAddOwnedChild:
       return module_->Runtime().AddOwnedChild();
     case support::BuiltinFn::kRegisterSignal:

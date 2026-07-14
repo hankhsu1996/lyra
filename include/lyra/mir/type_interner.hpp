@@ -67,6 +67,15 @@ class TypeInterner {
     return Intern(CoroutineType{.payload = payload});
   }
 
+  // Whether a callable's result type states the coroutine call protocol: the
+  // body may suspend and completes as a coroutine, rather than running to a
+  // value in one call. The protocol is the type -- nothing else records it --
+  // so every consumer that realizes suspension or completion asks this of the
+  // result type.
+  [[nodiscard]] auto IsCoroutine(TypeId id) const -> bool {
+    return std::holds_alternative<CoroutineType>(Get(id).data);
+  }
+
   auto PointerTo(
       TypeId pointee, PointerOwnership ownership,
       Mutability mutability = Mutability::kMutable) -> TypeId {

@@ -24,9 +24,25 @@ auto lyra_rt_packed_const(
     -> void*;
 void lyra_rt_writeln(void* files, void* descriptor, void* text);
 void lyra_rt_write(void* files, void* descriptor, void* text);
-auto lyra_rt_make_coroutine(void (*entry)(void*), void* env) -> void*;
+// Wraps a generated process body in a runtime-owned coroutine. `ramp` starts
+// the body's own coroutine: called with the receiver it reaches its members
+// through, it runs to the body's first suspension and yields that coroutine's
+// handle. The runtime owns the coroutine the engine schedules and drives the
+// generated one through its handle; the generated body never owns the
+// scheduler's coroutine.
+auto lyra_rt_make_coroutine(void* (*ramp)(void* env), void* env) -> void*;
 void lyra_rt_register_initial(void* self, void* coroutine);
 void lyra_rt_register_final(void* self, void* coroutine);
+
+// Registers the running process to wake after `ticks` steps of its scope's
+// precision (`precision_power`), the registration a delay's suspend edge is
+// preceded by (LRM 9.4.1). A zero delay re-enqueues on the current slot's
+// inactive region; a positive one scales to the engine's global tick. The
+// counts cross as opaque packed values, like every scalar. The wakeup source is
+// the running process itself, read from the runtime; no token crosses the
+// boundary.
+void lyra_rt_delay(
+    void* services, const void* ticks, const void* precision_power);
 
 // Builds a scope's structural identity from its base label and per-dimension
 // indices (a span of 32-bit index values, empty for a scalar). The segment is

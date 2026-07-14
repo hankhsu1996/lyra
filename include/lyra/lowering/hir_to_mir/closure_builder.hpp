@@ -30,11 +30,12 @@ namespace lyra::lowering::hir_to_mir {
 // fields resolves the receiver through the same capture machinery as any
 // binding, so the builder never special-cases it.
 //
-// `coroutine` selects a fork-branch body (LRM 9.3.2): its `return`s render as
-// `co_return` and the terminal is `BuildCoroutine`. `policy` is the capture
-// policy -- a fork branch passes the origins of its own block-item declarations
-// as the snapshot set (those snapshot, deeper-enclosing bindings alias); a
-// synchronous body passes the default (every forwarded binding aliases).
+// A body's call protocol is its result type, fixed when the closure is
+// finished: a fork branch (LRM 9.3.2) finishes with a coroutine result, a
+// synchronous body with its value's type. `policy` is the capture policy -- a
+// fork branch passes the origins of its own block-item declarations as the
+// snapshot set (those snapshot, deeper-enclosing bindings alias); a synchronous
+// body passes the default (every forwarded binding aliases).
 //
 // A closure is a value; how it is invoked -- an immediately-invoked call, a
 // fork spawn, a deferred submit, a with-clause iteration -- is the referencing
@@ -44,7 +45,7 @@ class ClosureBuilder {
  public:
   ClosureBuilder(
       mir::CompilationUnit& unit, const WalkFrame& enclosing,
-      bool coroutine = false, CapturePolicy policy = {});
+      CapturePolicy policy = {});
 
   ClosureBuilder(const ClosureBuilder&) = delete;
   auto operator=(const ClosureBuilder&) -> ClosureBuilder& = delete;

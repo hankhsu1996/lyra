@@ -45,6 +45,21 @@ class CodeGenFunction {
   auto LowerBoolCast(const lir::BoolCastInstr& cast) -> llvm::Value*;
   auto LowerOperand(const lir::Operand& operand) -> llvm::Value*;
 
+  // Whether this body's call protocol is the coroutine one. Such a body is
+  // emitted with LLVM coroutine intrinsics and split into a resumable form by
+  // the coroutine passes; the state machine and the frame are theirs, not this
+  // emitter's.
+  [[nodiscard]] auto IsCoroutine() const -> bool;
+
+  // Emits the coroutine ramp (identity, frame allocation, begin) into the entry
+  // block and builds the shared final-suspend, cleanup, and end blocks a
+  // coroutine body returns through. Runs before the body's blocks are filled.
+  void OpenCoroutine();
+
+  // Emits a suspension: save, `llvm.coro.suspend`, and the switch that resumes
+  // at `resume`, returns to the caller, or enters cleanup.
+  void EmitCoroutineSuspend(llvm::BasicBlock* resume, bool is_final);
+
   // The address a place names. The base contributes the storage the chain
   // starts from -- a place local's own frame slot, or the referent of a
   // reference value
@@ -80,6 +95,15 @@ class CodeGenFunction {
   llvm::IRBuilder<> builder_;
   std::unordered_map<std::uint32_t, llvm::Value*> values_;
   std::vector<llvm::BasicBlock*> blocks_;
+  // A coroutine body's ramp state: the coroutine identity (which names the
+  // frame to release) and its handle, plus the blocks every suspension and
+  // return funnels through. The frame's layout and the resume state machine are
+  // the coroutine passes' to synthesize, never this emitter's.
+  llvm::Value* coro_id_ = nullptr;
+  llvm::Value* coro_handle_ = nullptr;
+  llvm::BasicBlock* coro_final_ = nullptr;
+  llvm::BasicBlock* coro_cleanup_ = nullptr;
+  llvm::BasicBlock* coro_end_ = nullptr;
 };
 
 }  // namespace lyra::backend::llvm_backend

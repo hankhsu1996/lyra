@@ -17,7 +17,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 ClosureBuilder::ClosureBuilder(
-    mir::CompilationUnit& unit, const WalkFrame& enclosing, bool coroutine,
+    mir::CompilationUnit& unit, const WalkFrame& enclosing,
     CapturePolicy policy)
     : unit_(&unit),
       outer_(enclosing.current_block),
@@ -27,8 +27,7 @@ ClosureBuilder::ClosureBuilder(
           unit, closure_decl_, closure_id_, *enclosing.bindings, *outer_,
           std::move(policy)),
       frame_(enclosing.WithBlock(&closure_decl_.invoke.body)
-                 .WithBindings(&bindings_)
-                 .WithCoroutineBody(coroutine)) {
+                 .WithBindings(&bindings_)) {
 }
 
 auto ClosureBuilder::AddParam(
@@ -70,8 +69,7 @@ auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
 }
 
 auto ClosureBuilder::BuildCoroutine() -> mir::Expr {
-  closure_decl_.invoke.body.AppendStmt(
-      mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
+  closure_decl_.invoke.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   return Finish(unit_->builtins.coroutine_void);
 }
 

@@ -220,12 +220,11 @@ FunctionLowerer::FunctionLowerer(
 
 auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   fn_.name = std::move(name_);
-  // A coroutine-bodied callable lowers to its step body, which returns void;
-  // the coroutine value is a closure built where the callable is referenced.
-  fn_.result_type = std::holds_alternative<mir::CoroutineType>(
-                        unit_->Mir().types.Get(code_->result_type).data)
-                        ? unit_->TranslateType(unit_->Mir().builtins.void_type)
-                        : unit_->TranslateType(code_->result_type);
+  // A coroutine-bodied callable keeps its coroutine result type: coroutine-ness
+  // is the call protocol carried by the type, so a backend realizes suspension
+  // and completion from the type, never from a separate flag.
+  fn_.result_type = unit_->TranslateType(code_->result_type);
+  const bool is_coroutine = unit_->Mir().types.IsCoroutine(code_->result_type);
 
   CollectPlacedLocals(code_->body, placed_);
 
@@ -250,20 +249,22 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     return std::unexpected(std::move(lowered.error()));
   }
 
-  // A block the lowering left open either falls off the end of a void body --
-  // an implicit return -- or is a join control never reaches. A value-returning
-  // body reaches its returns explicitly, so its open blocks are the latter.
-  const bool returns_void =
+  // A block the lowering left open either falls off the end of a void or
+  // coroutine body -- an implicit return -- or is a join control never reaches.
+  // A value-returning body reaches its returns explicitly, so its open blocks
+  // are the latter.
+  const bool falls_through_to_return =
+      is_coroutine ||
       fn_.result_type == unit_->TranslateType(unit_->Mir().builtins.void_type);
   for (std::size_t i = 0; i < fn_.blocks.size(); ++i) {
     if (terminated_[i]) {
       continue;
     }
     fn_.blocks[i].terminator = lir::Terminator{
-        .data = returns_void
-                    ? lir::TerminatorData{lir::ReturnTerm{
-                          .value = std::nullopt, .is_coroutine = false}}
-                    : lir::TerminatorData{lir::UnreachableTerm{}}};
+        .data =
+            falls_through_to_return
+                ? lir::TerminatorData{lir::ReturnTerm{.value = std::nullopt}}
+                : lir::TerminatorData{lir::UnreachableTerm{}}};
   }
   return std::move(fn_);
 }
@@ -398,10 +399,7 @@ auto FunctionLowerer::LowerStmtInto(
               }
               value = *std::move(lowered);
             }
-            Terminate(
-                lir::ReturnTerm{
-                    .value = std::move(value),
-                    .is_coroutine = s.is_coroutine_return});
+            Terminate(lir::ReturnTerm{.value = std::move(value)});
             return {};
           },
           [](const mir::SensitivityWaitStmt&) -> diag::Result<void> {
@@ -1010,6 +1008,26 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             // operand here. Whether the transfer is realized as a move or a
             // copy is decided below LIR, not at this layer.
             return LowerExpr(block, m.operand);
+          },
+          [&](const mir::AwaitExpr& await) -> diag::Result<lir::Operand> {
+            // An await is two facts: the awaitable's effect -- registering the
+            // wakeup source through an ordinary runtime call -- and the suspend
+            // itself, a control edge back to the scheduler that resumes at the
+            // next block. The registration runs first, so a delay, an event
+            // control, and a level wait differ only in the awaitable's call.
+            if (type != unit_->Mir().builtins.void_type) {
+              return Unsupported(
+                  "mir_to_lir: a value-carrying await is not yet lowerable to "
+                  "LIR");
+            }
+            auto registration = LowerExpr(block, await.awaitable);
+            if (!registration) {
+              return registration;
+            }
+            const lir::BlockId resume = NewBlock();
+            Terminate(lir::SuspendTerm{.resume = resume});
+            SetCurrent(resume);
+            return registration;
           },
           [](const auto&) -> diag::Result<lir::Operand> {
             return Unsupported(
