@@ -109,6 +109,8 @@ auto lyra_rt_packed_to_bool(const void* operand) -> bool;
 auto lyra_rt_packed_convert_from(const void* src, const void* prototype)
     -> void*;
 auto lyra_rt_packed_from_bool(bool value) -> void*;
+auto lyra_rt_packed_from_int(std::int64_t value, const void* prototype)
+    -> void*;
 auto lyra_rt_packed_to_int64(const void* value) -> std::int64_t;
 auto lyra_rt_packed_is_unknown(const void* value) -> void*;
 auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void*;
@@ -134,6 +136,10 @@ auto lyra_rt_packed_reduction_nor(const void* value) -> void*;
 auto lyra_rt_packed_reduction_xnor(const void* value) -> void*;
 
 auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
+// The C string a `string` crosses the DPI-C boundary as (LRM 35.5.6). It points
+// into the SV value, which outlives the call, so the foreign side may read it
+// for the call's duration.
+auto lyra_rt_string_string_cstr(const void* value) -> const char*;
 auto lyra_rt_string_len(const void* value) -> void*;
 auto lyra_rt_string_getc(const void* value, const void* index) -> void*;
 auto lyra_rt_string_toupper(const void* value) -> void*;

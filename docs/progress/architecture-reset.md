@@ -18,8 +18,8 @@ infrastructure surface, built.
 
 ## Infrastructure
 
-- [ ] LIR -- the execution-oriented IR (CFG, basic blocks, storage). Contract in
-      `../architecture/lir.md`; no source under `src/lyra/lir`.
+- [x] LIR -- the execution-oriented IR (CFG, basic blocks, storage). Contract in
+      `../architecture/lir.md`.
 - [ ] Execution backend -- MIR / LIR lowered to LLVM IR, consumed as either an AOT binary or a JIT
       image. JIT and AOT are link-time choices over one backend, not separate surfaces. Contracts in
       `../architecture/backend_contract.md` and `../architecture/runtime_distribution.md`. Design
@@ -29,10 +29,12 @@ infrastructure surface, built.
       (`../decisions/member-slot-storage.md`), so it elaborates a hierarchy of modules through the
       design-root, matching the C++ backend. It also runs procedural code over the integral and
       string value domains -- variables, expressions, structured control flow, and value-carrying
-      formatted output -- with control flow lowered to a control-flow graph. Still open on the
-      execution backend: the remaining value domains (reals, enumerations, aggregates, containers),
-      time control and process suspension, subroutine reference arguments, closures, DPI-C imports,
-      and native layout for value members (the baseline keeps runtime-owned cells).
+      formatted output -- with control flow lowered to a control-flow graph. It calls foreign C: a
+      DPI-C import lowers to an external-linkage symbol, marshals the by-value carriers, and
+      resolves the symbol through the execution session (`dpi.md`). Still open on the execution
+      backend: the remaining value domains (reals, enumerations, aggregates, containers), time
+      control and process suspension, subroutine reference arguments, closures, by-pointer DPI-C
+      marshaling, and native layout for value members (the baseline keeps runtime-owned cells).
 - [ ] Per-unit artifact emission -- one artifact per unit specialization, assembled by linking,
       replacing the transitional single-`main.cpp` aggregation. Contract in
       `../architecture/emission_model.md` (inv 1).
@@ -92,16 +94,12 @@ Granular tracking lives in `integral.md` and `datatypes.md`.
 
 ### dpi
 
-HIR scaffolding exists (`include/lyra/hir/dpi.hpp`); none is wired into the active lowering
-pipeline.
+Tracked in `dpi.md` (the full LRM 35 import / export surface).
 
-- [ ] dpi/import_general -- DPI-C function / task imports (LRM 35.5).
-- [ ] dpi/import_context -- context-mode imports.
-- [ ] dpi/import_pure -- pure (delay-free) imports.
-- [ ] dpi/export_general -- DPI-C exports, including instance-scoped state.
-- [ ] dpi/export_pure -- pure-export declaration validation.
-- [ ] dpi/svdpi_runtime -- the svdpi runtime API (`svScope`, `svContext`, ...).
-- [ ] dpi/time_query -- `$time` family inside DPI-context code; rides on import_context.
+- [ ] DPI-C -- import, export, DPI tasks, context and the `svdpi` surface, open arrays, and link
+      orchestration (LRM 35). Import runs on both backends -- the full type surface on the C++
+      backend, the by-value scalar surface on the execution backend. Export, tasks, context, and
+      open arrays remain.
 
 ### fork_join
 

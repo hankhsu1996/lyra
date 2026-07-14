@@ -32,10 +32,10 @@ auto LowerUnboundedLiteralProc(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "`$` is only supported as a queue index or slice bound (LRM 7.10)");
   }
-  const hir::TypeId int32_type = proc.Module().Unit().builtins.int32;
+  const hir::TypeId int_type = proc.Module().Unit().builtins.int_type;
   const hir::ExprId size_id = frame.Exprs().Add(
       hir::Expr{
-          .type = int32_type,
+          .type = int_type,
           .data =
               hir::CallExpr{
                   .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
@@ -43,9 +43,9 @@ auto LowerUnboundedLiteralProc(
                   .arguments = {*frame.dollar_base}},
           .span = span});
   const hir::ExprId one_id =
-      frame.Exprs().Add(hir::MakeInt32Literal(1, int32_type, span));
+      frame.Exprs().Add(hir::MakeIntLiteral(1, int_type, span));
   return hir::Expr{
-      .type = int32_type,
+      .type = int_type,
       .data =
           hir::BinaryExpr{
               .op = hir::BinaryOp::kSub, .lhs = size_id, .rhs = one_id},

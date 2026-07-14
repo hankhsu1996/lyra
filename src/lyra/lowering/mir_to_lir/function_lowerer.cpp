@@ -185,12 +185,15 @@ auto LowerCallTarget(
                       return lir::CallTarget{
                           lir::BuiltinTarget{.fn = fn, .qualifier = qualifier}};
                     },
-                    [](const mir::StaticCallableTarget&)
+                    [&](const mir::StaticCallableTarget& s)
                         -> diag::Result<lir::CallTarget> {
-                      return Unsupported(
-                          "mir_to_lir: a DPI-C import call is not yet "
-                          "lowerable "
-                          "to LIR");
+                      // The target names its own owner, so the symbol is
+                      // reached without a receiver to recover it from.
+                      const mir::StaticCallableDecl& decl =
+                          unit.Mir().GetClass(s.owner).static_callables.Get(
+                              s.slot);
+                      return lir::CallTarget{lir::ForeignTarget{
+                          .symbol = decl.external.foreign_name}};
                     }},
                 d.target);
           },
@@ -913,10 +916,14 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::PointerCastInstr{.operand = *std::move(operand)});
           },
-          [&](const mir::CastExpr& c) -> diag::Result<lir::Operand> {
-            // A view change with no runtime transform: every conversion that
-            // reshapes a value is a library call upstream of this node.
-            return LowerExpr(block, c.operand);
+          [&](const mir::IntCastExpr& c) -> diag::Result<lir::Operand> {
+            auto operand = LowerExpr(block, c.operand);
+            if (!operand) {
+              return operand;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::IntCastInstr{.operand = *std::move(operand)});
           },
           [&](const mir::FieldAccessExpr&) -> diag::Result<lir::Operand> {
             const lir::TypeId field_type = unit_->TranslateType(type);

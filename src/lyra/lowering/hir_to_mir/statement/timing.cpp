@@ -209,12 +209,12 @@ auto LowerDelayTimedStmt(
         const mir::ExprId services_id = child_block.exprs.Add(
             BuildServicesCallExpr(process.Module(), child_frame));
         const mir::ExprId duration_id = child_block.exprs.Add(
-            mir::MakeInt32Literal(
-                builtins.int32, static_cast<std::int64_t>(*ticks_or)));
+            mir::MakeIntLiteral(
+                builtins.int_type, static_cast<std::int64_t>(*ticks_or)));
         const mir::ExprId precision_id = child_block.exprs.Add(
-            mir::MakeInt32Literal(
-                builtins.int32, static_cast<std::int64_t>(
-                                    process.Resolution().precision_power)));
+            mir::MakeIntLiteral(
+                builtins.int_type, static_cast<std::int64_t>(
+                                       process.Resolution().precision_power)));
         const mir::ExprId call_id = child_block.exprs.Add(
             mir::Expr{
                 .data =

@@ -131,17 +131,17 @@ auto LowerDestructuringAssign(
     const mir::ExprId part_lhs_id = wrapper.exprs.Add(*std::move(part_lhs_or));
 
     const mir::ExprId offset_id = wrapper.exprs.Add(
-        mir::MakeInt32Literal(
-            process.Module().Unit().builtins.int32,
+        mir::MakeIntLiteral(
+            process.Module().Unit().builtins.int_type,
             static_cast<std::int64_t>(offset)));
     const mir::ExprId count_id = wrapper.exprs.Add(
-        mir::MakeInt32Literal(
-            process.Module().Unit().builtins.int32,
+        mir::MakeIntLiteral(
+            process.Module().Unit().builtins.int_type,
             static_cast<std::int64_t>(w)));
     // `temp[offset +: w]`: a raw indexed-up part-select (`value::SliceForm`
     // `kIndexedUp` == 1); the snapshot value resolves the bit window itself.
     const mir::ExprId form_id = wrapper.exprs.Add(
-        mir::MakeInt32Literal(process.Module().Unit().builtins.int32, 1));
+        mir::MakeIntLiteral(process.Module().Unit().builtins.int_type, 1));
     const mir::ExprId temp_ref =
         wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
     const mir::TypeId slice_type = process.Module().Unit().types.Intern(

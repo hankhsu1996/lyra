@@ -31,9 +31,9 @@ namespace {
 
 // LRM 21.3.1 stdout pre-bound FD literal, used as the sink for $display /
 // $write / $strobe lowerings that don't carry a user-supplied descriptor.
-auto BuildStdoutFdLiteral(mir::Block& block, mir::TypeId int32_type)
+auto BuildStdoutFdLiteral(mir::Block& block, mir::TypeId int_type)
     -> mir::ExprId {
-  return block.exprs.Add(mir::MakeInt32Literal(int32_type, support::kStdoutFd));
+  return block.exprs.Add(mir::MakeIntLiteral(int_type, support::kStdoutFd));
 }
 
 auto LowerDescriptor(
@@ -85,7 +85,7 @@ auto LowerStrobeCall(
   auto& block = *frame.current_block;
   auto& unit = process.Module().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
-  const mir::TypeId int32_type = unit.builtins.int32;
+  const mir::TypeId int_type = unit.builtins.int_type;
   const std::int64_t time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
   const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
@@ -152,7 +152,7 @@ auto LowerStrobeCall(
 
   const mir::ExprId body_fd = body_user_descriptor.has_value()
                                   ? *body_user_descriptor
-                                  : BuildStdoutFdLiteral(body, int32_type);
+                                  : BuildStdoutFdLiteral(body, int_type);
   const mir::ExprId write_call = EmitFormatThenWrite(
       process, body_frame, body, items_array, body_fd, print.append_newline);
   body.AppendStmt(mir::ExprStmt{.expr = write_call});
@@ -181,7 +181,7 @@ auto LowerPrintSystemSubroutineCall(
 
   auto& block = *frame.current_block;
   auto& unit = process.Module().Unit();
-  const mir::TypeId int32_type = unit.builtins.int32;
+  const mir::TypeId int_type = unit.builtins.int_type;
   const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
 
   std::optional<mir::ExprId> user_descriptor;
@@ -204,7 +204,7 @@ auto LowerPrintSystemSubroutineCall(
 
   const mir::ExprId fd = user_descriptor.has_value()
                              ? *user_descriptor
-                             : BuildStdoutFdLiteral(block, int32_type);
+                             : BuildStdoutFdLiteral(block, int_type);
   const mir::ExprId write_call = EmitFormatThenWrite(
       process, frame, block, items_array, fd, print.append_newline);
   return block.exprs.Get(write_call);

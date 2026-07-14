@@ -31,18 +31,17 @@ orchestration.
 
 ## Actionable
 
-The feature items (D1-D9) are the live frontier on the C++ backend: the scalar import surface and
-4-state / wide marshaling (D1-D3) are in. Export (D4) is the next open deliverable, then DPI tasks
-(D5). The LLVM / JIT realization of the whole surface (D10) is blocked on the general execution
-backend (`architecture-reset.md`), which cannot yet lower a minimal procedural body; re-check that
-backend's procedural coverage before planning it.
+Two frontiers are open. On the C++ backend the import surface (D1-D3) is in, so export (D4) is the
+next C++-backend deliverable, then DPI tasks (D5). On the execution backend scalar import (D10) is
+in: a foreign call lowers to an external-linkage symbol and the by-value carriers marshal, so the
+next deliverable there is the rest of the import surface (D11) -- by-pointer marshaling, and the
+`real` carrier once that backend carries the real value domain.
 
 ## Sub-Steps
 
 The `D*` IDs are stable references. They do not impose a total order; real dependencies are stated
-inline. Each feature item (D1-D9) is a deliverable on the C++ backend, the live backend; the LLVM /
-JIT realization of the whole surface is a single item (D10), because that backend is unbuilt and its
-DPI work unblocks as one unit.
+inline. D1-D9 are deliverables on the C++ backend; D10 onward bring the same backend-agnostic MIR up
+on the execution backend, mirroring the C++-backend items one surface at a time.
 
 ### Import: SV calls foreign C
 
@@ -108,14 +107,25 @@ from an external main.
       link-inputs array, validated before any backend runs, added to the emitted build recipe's link
       line. A generated ABI header lets the user compile their C against the correct signatures.
 
-### LLVM / JIT backend
+### Execution backend
 
-- [ ] D10 -- Realize the DPI surface on the LLVM / JIT backend: the same backend-agnostic MIR the
-      C++ backend consumes, materialized as external-linkage symbols and foreign-call marshaling
-      through the execution session. Blocked on the general execution backend
-      (`architecture-reset.md`), which cannot yet lower a minimal procedural body, so a foreign call
-      has no body to sit inside; the MIR-to-LIR lowering names the foreign-call gap explicitly, so
-      the work is small once unblocked, and splits into per-feature items when picked up.
+The execution backend (MIR lowered to LIR to LLVM, run as JIT or AOT) elaborates module hierarchies
+and runs procedural code, so a foreign call has a body to sit inside. The DPI-specific gap is the
+two points the MIR-to-LIR lowering names: the import-call target and the ABI carrier type. These
+items bring the same backend-agnostic MIR the C++ backend consumes up on the execution backend, one
+surface at a time; export and tasks follow once the C++-backend items fix their shape.
+
+- [x] D10 -- Scalar import on the execution backend: 2-state integral and `string`, `input`-only
+      functions. The import-call target lowers to an external-linkage symbol the execution session
+      resolves, the by-value carriers marshal, and a JIT run cross-checks the result against the C++
+      backend. A `real` import is excluded, but not by anything DPI owns: the execution backend has
+      no real value domain at all, so it cannot read a real out of an SV value in the first place
+      (`architecture-reset.md`).
+- [ ] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
+      surface -- `output` / `inout` copy-back, `chandle`, and canonical `svBitVecVal*` /
+      `svLogicVecVal*` buffers. A `real` import rides on the real value domain, not on this item.
+- [ ] D12 -- Export and DPI tasks on the execution backend, once the C++-backend export and task
+      items (D4-D6) define the shape.
 
 ## Design record
 

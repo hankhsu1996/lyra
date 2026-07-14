@@ -147,6 +147,22 @@ void VerifyInstr(
                   "lir verify: pointer cast result is not a reference type");
             }
           },
+          [&](const IntCastInstr& cast) {
+            const std::optional<TypeId> operand_type =
+                OperandType(fn, cast.operand);
+            const auto is_machine_int = [&](TypeId type) {
+              return std::holds_alternative<MachineIntType>(
+                  unit.types.Get(type).data);
+            };
+            if (!operand_type || !is_machine_int(*operand_type)) {
+              throw InternalError(
+                  "lir verify: integer cast of a non-machine-integer operand");
+            }
+            if (!is_machine_int(result_type)) {
+              throw InternalError(
+                  "lir verify: integer cast result is not a machine integer");
+            }
+          },
           [](const CallInstr&) {}, [](const AggregateInstr&) {},
           [](const BinaryInstr&) {}, [](const UnaryInstr&) {},
           [](const BoolCastInstr&) {}},
