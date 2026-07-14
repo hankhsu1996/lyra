@@ -352,6 +352,11 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kPrintLiteralItem,
   kPrintValueItem,
   kFormatSpec,
+  // LRM 21.3.3 runtime-format operand: `lyra::value::FormatArg`, a type-erased
+  // value carrying no conversion of its own. A format string known only at
+  // simulation time binds each operand to a conversion as it is parsed, so the
+  // operand cannot be paired with a spec ahead of time the way a print item is.
+  kFormatArg,
   // LRM 21.3.2 cancel-on-close token: `lyra::runtime::ChannelCancellation`,
   // acquired by `FileTable::CancellationFor(fd)` at `$fstrobe` submit time
   // and queried in the postponed-body guard.

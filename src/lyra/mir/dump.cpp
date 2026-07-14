@@ -254,6 +254,8 @@ class MirDumper {
                   return "RuntimeLibrary(PrintValueItem)";
                 case RuntimeLibraryKind::kFormatSpec:
                   return "RuntimeLibrary(FormatSpec)";
+                case RuntimeLibraryKind::kFormatArg:
+                  return "RuntimeLibrary(FormatArg)";
                 case RuntimeLibraryKind::kChannelCancellation:
                   return "RuntimeLibrary(ChannelCancellation)";
                 case RuntimeLibraryKind::kTimeFormat:

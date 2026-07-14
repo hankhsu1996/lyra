@@ -1,0 +1,13 @@
+id: cpp.sformat_output_var_types
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    wide: 0x00004142
+    narrow: 0x4243
+    bytes: [104, 105, 0, 0, 0, 0]

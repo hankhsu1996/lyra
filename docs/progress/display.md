@@ -121,17 +121,26 @@ should close as the corresponding behaviour lands.
 
 ## String-format family follow-ups
 
-Tracks remaining LRM 21.3.3 corners explicitly rejected by `$sformat` / `$sformatf` / `$swrite*`.
-Each item is a user-observable feature gap (a lowering-time unsupported diagnostic) that should
-close as the corresponding behaviour lands.
+Tracks the LRM 21.3.3 corners of `$sformat` / `$sformatf` / `$swrite*` beyond the literal-format,
+string-output core.
 
-- [ ] Runtime-evaluated format string for `$sformat` / `$sformatf` (LRM 21.3.3 NOTE: format string
-      may be a non-constant expression). Non-literal format expressions are rejected at lowering; a
-      runtime-side format parser is the prerequisite.
-- [ ] `$sformat` / `$swrite*` output_var of integral or unpacked-array-of-byte type (LRM 21.3.3 +
-      LRM 5.9 assignment rules). Today only string-typed output_var is accepted.
-- [ ] `$sformat` / `$sformatf` format_string of integral or unpacked-array-of-byte type (LRM
-      21.3.3). Shares the runtime-format-parser blocker with the first item.
+- [x] Runtime-evaluated format string for `$sformat` / `$sformatf` (LRM 21.3.3 NOTE: format string
+      may be a non-constant expression). A format string carried as a value reaches the same
+      conversion set a literal one does -- every specifier and modifier, including `%m` and `%t`,
+      which resolve against the calling scope. A count mismatch does not stop the run: a directive
+      with no operand left contributes nothing and a surplus operand is ignored.
+- [x] `$sformat` / `$swrite*` output_var of integral or unpacked-array-of-byte type (LRM 21.3.3 +
+      LRM 5.9 assignment rules). An integral destination takes the text right-justified -- padding
+      its leftmost bits with zeros when wider, truncating the leftmost characters when narrower --
+      and an unpacked byte array takes it left-justified from its left bound, an element past the
+      end of the text keeping the element default.
+- [x] `$sformat` / `$sformatf` format_string of integral or unpacked-array-of-byte type (LRM
+      21.3.3). The text carried as bytes reaches the parse through the same bits-to-text conversion
+      any other such operand takes.
+
+Not yet closed: LRM 21.3.3 asks for a warning when the operand count does not match the format
+string's directives. The compile-time-parsed path reports the mismatch as an error, which LRM 21.3.3
+sanctions; the runtime-parsed path continues silently.
 
 ## Strobe family follow-ups
 

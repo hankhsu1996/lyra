@@ -278,8 +278,7 @@ auto LowerSystemSubroutineCall(
       Overloaded{
           [&](const support::PrintSystemSubroutineInfo& print)
               -> diag::Result<mir::Expr> {
-            return LowerPrintSystemSubroutineCall(
-                process, frame, call, print, span);
+            return LowerPrintSystemSubroutineCall(process, frame, call, print);
           },
           [&](const support::TerminationSystemSubroutineInfo& term)
               -> diag::Result<mir::Expr> {
@@ -304,7 +303,7 @@ auto LowerSystemSubroutineCall(
           [&](const support::SFormatSystemSubroutineInfo& sformat)
               -> diag::Result<mir::Expr> {
             return LowerSFormatSystemSubroutineCall(
-                process, frame, call, sformat, span);
+                process, frame, call, sformat);
           },
           [&](const support::TimeSystemSubroutineInfo& time_info)
               -> diag::Result<mir::Expr> {

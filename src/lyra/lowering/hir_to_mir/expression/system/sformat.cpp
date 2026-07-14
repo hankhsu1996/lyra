@@ -3,18 +3,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -31,13 +28,19 @@ namespace {
 
 auto BuildSFormatCallExpr(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    const support::SFormatSystemSubroutineInfo& info, std::size_t arg_offset,
-    diag::SourceSpan span) -> diag::Result<mir::Expr> {
-  const FormatStringRequirement fmt_req =
-      info.expects_format_string ? FormatStringRequirement::kRequired
-                                 : FormatStringRequirement::kOptional;
+    const support::SFormatSystemSubroutineInfo& info, std::size_t arg_offset)
+    -> diag::Result<mir::Expr> {
+  // LRM 21.3.3: `$sformat` / `$sformatf` always take a format string, but it
+  // need not be constant. A literal is parsed now, binding every operand to its
+  // conversion at compile time; anything else carries its text only at
+  // simulation time, so the parse and the binding happen there.
+  if (info.expects_format_string &&
+      !HasLiteralFormatString(process, call, arg_offset)) {
+    return BuildRuntimeFormatCallExpr(process, frame, call, arg_offset);
+  }
+
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      process, frame, call, info.radix, arg_offset, fmt_req, span);
+      process, frame, call, info.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   auto& unit = process.Module().Unit();
@@ -53,21 +56,11 @@ auto BuildSFormatCallExpr(
   return BuildFormatCallExpr(unit, block, services_id, items_array);
 }
 
-auto RejectNonStringOutput(std::string_view name, diag::SourceSpan span)
-    -> diag::Result<mir::Stmt> {
-  return diag::Fail(
-      span, diag::DiagCode::kUnsupportedSubroutineArgument,
-      std::format(
-          "{} integral and unpacked-byte-array output_var types are not yet "
-          "supported (LRM 21.3.3)",
-          std::string{name}));
-}
-
 }  // namespace
 
 auto LowerSFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    const support::SFormatSystemSubroutineInfo& info, diag::SourceSpan span)
+    const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Expr> {
   if (info.has_output_arg) {
     throw InternalError(
@@ -75,20 +68,18 @@ auto LowerSFormatSystemSubroutineCall(
         "expression-position lowering; slang's task binding should reject "
         "them outside statement position");
   }
-  return BuildSFormatCallExpr(process, frame, call, info, 0, span);
+  return BuildSFormatCallExpr(process, frame, call, info, 0);
 }
 
 auto LowerSFormatSystemSubroutineCallStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    diag::SourceSpan span, const hir::CallExpr& call, std::string_view name,
-    const support::SFormatSystemSubroutineInfo& info)
+    const hir::CallExpr& call, const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Stmt> {
   const auto& hir_proc = process.HirBody();
   auto& block = *frame.current_block;
 
   if (!info.has_output_arg) {
-    auto call_expr_or =
-        BuildSFormatCallExpr(process, frame, call, info, 0, span);
+    auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 0);
     if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
     const mir::ExprId expr_id = block.exprs.Add(*std::move(call_expr_or));
     return mir::Stmt{
@@ -112,20 +103,23 @@ auto LowerSFormatSystemSubroutineCallStmt(
   if (!out_or) return std::unexpected(std::move(out_or.error()));
   const mir::TypeId out_type = process.Module().TranslateType(
       hir_proc.exprs.Get(*call.arguments[0]).type);
-  if (process.Module().Unit().types.Get(out_type).Kind() !=
-      mir::TypeKind::kString) {
-    return RejectNonStringOutput(name, span);
-  }
   const mir::ExprId out_id = block.exprs.Add(*std::move(out_or));
 
-  auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 1, span);
+  auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 1);
   if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
   const mir::ExprId call_id = block.exprs.Add(*std::move(call_expr_or));
+
+  // LRM 21.3.3: the formatted text reaches output_var under the LRM 5.9
+  // string-literal assignment rules, so an integral or unpacked-byte-array
+  // destination conforms the string value to its own representation. A
+  // string-typed destination already matches and passes through unchanged.
+  const mir::ExprId value_id =
+      ConvertToType(process.Module().Unit(), block, call_id, out_type);
 
   const mir::ExprId services_id =
       block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
-      process.Module().Unit(), block, services_id, out_id, call_id,
+      process.Module().Unit(), block, services_id, out_id, value_id,
       std::nullopt, out_type, process.Module().Unit().builtins.void_type);
   const mir::ExprId assign_id = block.exprs.Add(assign_expr);
 
