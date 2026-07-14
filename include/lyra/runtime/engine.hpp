@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -16,6 +15,7 @@
 #include "lyra/runtime/execution_context.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/plusargs.hpp"
+#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
@@ -131,14 +131,21 @@ class Engine {
   }
 
  private:
+  // An activation waiting on the engine is parked on one of these exactly as it
+  // parks on an event or an observable, so cancelling it while it is queued is
+  // the same constant-time unlink -- the engine is never searched.
   struct SchedulerQueues {
-    std::deque<CoroutineHandle> active;
-    std::deque<CoroutineHandle> inactive;
-    std::vector<CoroutineHandle> next_delta;
+    RegistrationList active;
+    RegistrationList inactive;
+    RegistrationList next_delta;
     std::vector<std::function<void(RuntimeServices&)>> nba;
     std::vector<std::function<void()>> postponed;
-    std::map<SimTime, std::vector<CoroutineHandle>> delayed;
-    std::vector<CoroutineHandle> finals;
+    std::map<SimTime, RegistrationList> delayed;
+    RegistrationList finals;
+    // The snapshot a region drain is working through, moved out of its source
+    // queue so that work arriving mid-drain lands in the queue and waits for
+    // the next pass (LRM 9.3.2).
+    RegistrationList draining;
   };
 
   static constexpr std::size_t kMaxCurrentTimeIterations = 10000;
@@ -155,7 +162,7 @@ class Engine {
   // own process identity published.
   auto ResumeProcess(CoroutineHandle handle) -> bool;
   void RunProcess(CoroutineHandle handle);
-  void DrainRunnableQueue(std::deque<CoroutineHandle>& queue);
+  void DrainRunnableQueue(RegistrationList& queue);
 
   void ExecuteCurrentTimeSlot();
   void ExecuteActiveRegion();

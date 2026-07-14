@@ -159,4 +159,28 @@ auto LowerWaitForkStmt(
       .label = std::move(label), .data = mir::ExprStmt{.expr = await_id}};
 }
 
+// LRM 9.6.3 `disable fork` terminates every descendant of the executing
+// process. It lowers to a single runtime call taking only the services handle;
+// the descendant set is resolved at runtime, so MIR carries no operand. The
+// caller does not block, so the call is not awaited -- the same shape as
+// `join_none`.
+auto LowerDisableForkStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
+    -> diag::Result<mir::Stmt> {
+  mir::Block& block = *frame.current_block;
+  const auto& builtins = process.Module().Unit().builtins;
+  const mir::ExprId services_id =
+      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+  const mir::ExprId call_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kDisableFork},
+                  .arguments = {services_id}},
+          .type = builtins.void_type});
+  return mir::Stmt{
+      .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};
+}
+
 }  // namespace lyra::lowering::hir_to_mir

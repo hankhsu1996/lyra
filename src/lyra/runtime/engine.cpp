@@ -13,6 +13,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/process_kind.hpp"
+#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_traversal.hpp"
 #include "lyra/runtime/scope.hpp"
@@ -114,7 +115,7 @@ void Engine::RegisterProcesses() {
           ScheduleActive(process.TopHandle());
           break;
         case ProcessKind::kFinal:
-          queues_.finals.push_back(process.TopHandle());
+          process.TopHandle()->Park(queues_.finals);
           break;
         case ProcessKind::kSpawned:
           throw InternalError(
@@ -129,7 +130,7 @@ void Engine::ExecuteCurrentTimeSlot() {
   current_delta_ = 0;
   std::size_t current_work_iterations = 0;
   while (true) {
-    while (!queues_.active.empty() || !queues_.inactive.empty()) {
+    while (!queues_.active.Empty() || !queues_.inactive.Empty()) {
       if (++current_work_iterations > kMaxCurrentTimeIterations) {
         throw InternalError("Engine: current time slot did not settle");
       }
@@ -160,11 +161,15 @@ void Engine::ExecuteInactiveRegion() {
   DrainRunnableQueue(queues_.inactive);
 }
 
-void Engine::DrainRunnableQueue(std::deque<CoroutineHandle>& queue) {
-  const std::size_t snapshot_size = queue.size();
-  for (std::size_t i = 0; i < snapshot_size; ++i) {
-    CoroutineHandle handle = queue.front();
-    queue.pop_front();
+void Engine::DrainRunnableQueue(RegistrationList& queue) {
+  // LRM 9.3.2: work enqueued while this pass runs belongs to the next pass, so
+  // the snapshot moves out of the queue and new arrivals accumulate behind it.
+  queue.SpliceBackOnto(queues_.draining);
+  while (Registration* queued = queues_.draining.PopFront()) {
+    CoroutineHandle handle = queued->activation;
+    // The activation is running, not waiting: it holds no membership until its
+    // body parks again.
+    handle->RevokeRegistrations();
     RunProcess(handle);
   }
 }
@@ -223,7 +228,9 @@ void Engine::ExecutePostponedRegion() {
 
 void Engine::ExecuteFinalProcesses() {
   phase_ = SchedulerPhase::kPostponed;
-  for (CoroutineHandle handle : queues_.finals) {
+  while (Registration* queued = queues_.finals.PopFront()) {
+    CoroutineHandle handle = queued->activation;
+    handle->RevokeRegistrations();
     const bool completed = ResumeProcess(handle);
     if (completed) {
       continue;
@@ -240,7 +247,7 @@ void Engine::ExecuteFinalProcesses() {
         "Engine::ExecuteFinalProcesses: final block suspended; "
         "time-controlling statements are not allowed inside `final`");
   }
-  queues_.finals.clear();
+  queues_.finals.Clear();
 }
 
 void Engine::AdvanceDeltaCycle() {
@@ -251,25 +258,20 @@ void Engine::AdvanceDeltaCycle() {
 }
 
 void Engine::PromoteNextDeltaToActive() {
-  for (CoroutineHandle handle : queues_.next_delta) {
-    ScheduleActive(handle);
-  }
-  queues_.next_delta.clear();
+  queues_.next_delta.SpliceBackOnto(queues_.active);
 }
 
 void Engine::AdvanceToNextTime() {
   phase_ = SchedulerPhase::kAdvanceTime;
   auto it = queues_.delayed.begin();
   now_ = it->first;
-  for (CoroutineHandle handle : it->second) {
-    ScheduleActive(handle);
-  }
+  it->second.SpliceBackOnto(queues_.active);
   queues_.delayed.erase(it);
 }
 
 auto Engine::HasCurrentTimeWork() const -> bool {
-  return !queues_.active.empty() || !queues_.inactive.empty() ||
-         !queues_.next_delta.empty();
+  return !queues_.active.Empty() || !queues_.inactive.Empty() ||
+         !queues_.next_delta.Empty();
 }
 
 auto Engine::HasFutureTimedWork() const -> bool {
@@ -281,7 +283,7 @@ auto Engine::HasScheduledWork() const -> bool {
 }
 
 auto Engine::HasNextDeltaWork() const -> bool {
-  return !queues_.next_delta.empty();
+  return !queues_.next_delta.Empty();
 }
 
 auto Engine::IsRunnablePhase() const -> bool {
@@ -340,32 +342,29 @@ void Engine::RequestFinish(
 void Engine::TriggerValueChange(
     Observable& observable, const EdgeClassifier& classify) {
   for (CoroutineHandle handle : observable.TakeMatchingWaiters(classify)) {
-    // Clean up sibling subscriptions so they don't leak across waits when this
-    // frame re-enters the runnable queue.
-    for (Observable* other :
-         std::exchange(handle->pending_value_change_subscriptions, {})) {
-      if (other != &observable) {
-        other->Unsubscribe(handle);
-      }
-    }
     ScheduleNextDelta(handle);
   }
 }
 
 void Engine::ScheduleActive(CoroutineHandle handle) {
-  queues_.active.push_back(handle);
+  handle->Park(queues_.active);
 }
 
 void Engine::ScheduleInactive(CoroutineHandle handle) {
-  queues_.inactive.push_back(handle);
+  handle->Park(queues_.inactive);
 }
 
 void Engine::ScheduleNextDelta(CoroutineHandle handle) {
-  queues_.next_delta.push_back(handle);
+  // Every satisfied wait comes back through this verb, so it is also where the
+  // wait ends: the activation is runnable now, and nothing it was parked on --
+  // the sibling observables of an `@(a or b)`, the event it waited for -- may
+  // fire it a second time.
+  handle->RevokeRegistrations();
+  handle->Park(queues_.next_delta);
 }
 
 void Engine::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
-  queues_.delayed[when].push_back(handle);
+  handle->Park(queues_.delayed[when]);
 }
 
 void Engine::Spawn(Coroutine<void> coroutine) {

@@ -110,8 +110,13 @@ long, follows from where the storage lives and how long the enclosing activation
       their descendants) have terminated (LRM 9.6.1). Because a task runs in its caller's thread
       (LRM 9.5), a `wait fork` inside a task waits on children the enclosing process spawned before
       the task was called, and a process with no live child resumes without suspending.
-- [ ] FJ7 -- `disable fork` terminates all descendant processes of the calling process, including
-      descendants of subprocesses that have already terminated (LRM 9.6.3).
+- [x] FJ7 -- `disable fork` terminates all descendant processes of the calling process, including
+      descendants of subprocesses that have already terminated (LRM 9.6.3). The calling process does
+      not block: the next statement runs at the same simulation time. Terminating a descendant that
+      is still parked -- on a delay, an event, a value change, or a join -- revokes the registration
+      holding it, so nothing can resume it afterward. As with `wait fork`, a task runs in its
+      caller's thread (LRM 9.5), so a `disable fork` inside a task reaches the descendants the
+      enclosing process owns. A process with no descendants disables nothing.
 
 ### Fork inside a function
 

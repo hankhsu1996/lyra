@@ -1,0 +1,15 @@
+id: cpp.fork_disable_fork
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      [10] child spawned grandchild
+      [10] after disable fork
+      [10] initial after get_first
+      [110] done

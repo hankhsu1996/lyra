@@ -84,8 +84,12 @@ the awaiter consumes, not of the scheduler.
    destroyed only after no scheduler structure can name its token.** When an activation suspends,
    each place that can later name it -- a region queue, a delay slot, an event waiter list, a
    value-change subscription, a join aggregator -- holds a registration the activation can revoke.
-   Destruction is gated on the registration set being empty. _Consequence: an activation can be
-   cancelled and torn down with no dangling token left in any queue, waiter, or subscription._
+   Destruction is gated on the registration set being empty. A registration is **one record**: the
+   activation owns it and the target links it, so the relation is stored once and reached from both
+   ends. The activation's set and the target's list are two indexes over that record, never two
+   descriptions of it. _Consequence: an activation can be cancelled and torn down with no dangling
+   token left in any queue, waiter, or subscription -- and revoking is a detach, so neither end ever
+   searches the other, and neither can hold a belief the other has abandoned._
 
 5. **A typed await consumes the typed terminal outcome.** Awaiting an activation yields its outcome:
    `Succeeded(T)` produces `T`, `Faulted` re-raises the exception into the awaiter, `Cancelled`
@@ -142,6 +146,12 @@ the awaiter consumes, not of the scheduler.
 - **An un-revocable reference to a parked activation** -- a raw token pushed into a queue, waiter
   list, or subscription set with no registration the activation can later revoke. It dangles the
   moment the activation is cancelled or destroyed (invariant 4).
+
+- **The same membership recorded on both sides** -- a target that stores its own record of which
+  activations it holds while each activation separately stores which targets hold it. Two
+  authoritative copies of one relation must be reconciled, so revoking degrades into searching the
+  other side, enrolling has to defend against drift, and each end needs teardown logic whose only
+  job is to repair the other. The relation is one record with an index at each end (invariant 4).
 
 - **A deferred effect modeled as an activation with a completion** -- a non-blocking assignment, a
   postponed `$strobe`, or a deferred assertion action given an activation token, a completion slot,

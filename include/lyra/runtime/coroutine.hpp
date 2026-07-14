@@ -1,19 +1,18 @@
 #pragma once
 
 #include <coroutine>
+#include <deque>
 #include <exception>
 #include <functional>
 #include <utility>
 #include <variant>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/registration.hpp"
 
 namespace lyra::runtime {
 
-class Observable;
 class RuntimeProcess;
-class WakeRegistration;
 
 // Non-templated scheduling state shared by every coroutine frame -- a process
 // body, a task body, a fork branch -- regardless of the value the frame
@@ -26,20 +25,37 @@ class WakeRegistration;
 struct PromiseBase {
   RuntimeProcess* process = nullptr;
   std::coroutine_handle<> continuation;
-  std::vector<Observable*> pending_value_change_subscriptions;
   std::function<void()> on_complete;
   std::coroutine_handle<> self;
-  // The wake source this frame is currently parked on, if any. Held so the
-  // frame unlinks itself when destroyed, keeping the source from waking freed
-  // storage.
-  WakeRegistration* parked_registration = nullptr;
+  // Every membership this activation currently holds: the observables of a
+  // value-change wait (`@(a or b)` holds one each), a named event, a join or
+  // `wait fork` condition, or the scheduler queue or delay slot it sits in. It
+  // owns them, so releasing it unlinks them all and leaves nothing able to
+  // resume it. A deque because the targets' lists point at these addresses, and
+  // appending must not move the ones already linked.
+  std::deque<Registration> registrations;
 
   PromiseBase() = default;
   PromiseBase(const PromiseBase&) = delete;
   auto operator=(const PromiseBase&) -> PromiseBase& = delete;
   PromiseBase(PromiseBase&&) = delete;
   auto operator=(PromiseBase&&) -> PromiseBase& = delete;
-  ~PromiseBase();
+  ~PromiseBase() = default;
+
+  // Parks this activation on `target` and hands back the membership, so a
+  // caller whose target carries a fire condition can record it.
+  auto Park(RegistrationList& target) -> Registration& {
+    Registration& reg = registrations.emplace_back();
+    reg.activation = this;
+    target.PushBack(reg);
+    return reg;
+  }
+
+  // Drops every membership: the activation is runnable again, so nothing it was
+  // parked on may fire it a second time.
+  void RevokeRegistrations() noexcept {
+    registrations.clear();
+  }
 
   // A promise protocol hook is an instance customization point by contract, so
   // it stays a member even when an implementation reads no promise state; the
@@ -90,21 +106,16 @@ struct PromiseBase {
   }
 };
 
-// The universal wakeup / scheduling token: a pointer to a suspended frame's
-// scheduling state. The engine queues it, awaitables register it, and resuming
-// a frame goes through `token->self`.
-using CoroutineHandle = PromiseBase*;
-
 // The single typed terminal outcome an activation settles: a produced value or
-// an exception (a cancellation will join as a third alternative). Kept off
-// `PromiseBase` so the scheduler never sees `T` or the outcome. The slot stores
-// the outcome and hands it to the activation's one consumer; whether a fault is
-// re-raised in place or extracted first and re-raised after the frame is torn
-// down is the consumer's decision, not the slot's. The alternatives are
-// mutually exclusive -- a frame runs `return_value` / `return_void` xor
-// `unhandled_exception` -- and the initial monostate is the not-yet-settled
-// state, never read because a consumer only takes the outcome after the frame
-// is done.
+// an exception. Kept off `PromiseBase` so the scheduler never sees `T` or the
+// outcome. The slot stores the outcome and hands it to the activation's one
+// consumer; whether a fault is re-raised in place or extracted first and
+// re-raised after the frame is torn down is the consumer's decision, not the
+// slot's. The alternatives are mutually exclusive -- a frame runs
+// `return_value` / `return_void` xor `unhandled_exception` -- and the initial
+// monostate is the not-yet-settled state. A cancelled activation settles
+// nothing: it is released while parked, so its slot is never read, and the
+// monostate is where it ends.
 template <class T>
 class CompletionSlot {
  public:

@@ -1485,6 +1485,9 @@ class HirDumper {
             [&](const WaitForkStmt&) {
               Line(std::format("Stmt[{}] WaitForkStmt", id.value));
             },
+            [&](const DisableForkStmt&) {
+              Line(std::format("Stmt[{}] DisableForkStmt", id.value));
+            },
         },
         s.data);
   }
