@@ -155,6 +155,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "SliceRef";
     case support::BuiltinFn::kSize:
       return "Size";
+    case support::BuiltinFn::kBitstreamWidth:
+      return "BitstreamWidth";
     case support::BuiltinFn::kToOwned:
       return "ToOwned";
     case support::BuiltinFn::kDelete:

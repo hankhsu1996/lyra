@@ -138,6 +138,10 @@ class Union {
         [](const auto& active) -> bool { return active.HasUnknown(); }, data_);
   }
 
+  [[nodiscard]] auto IsUnknown() const -> PackedArray {
+    return PackedArray::Bit(HasUnknown());
+  }
+
  private:
   std::variant<Ts...> data_;
 };
