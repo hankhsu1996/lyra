@@ -302,6 +302,8 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().RegisterFinal();
     case support::BuiltinFn::kDelay:
       return module_->Runtime().Delay();
+    case support::BuiltinFn::kWaitAny:
+      return module_->Runtime().WaitAny();
     case support::BuiltinFn::kAddOwnedChild:
       return module_->Runtime().AddOwnedChild();
     case support::BuiltinFn::kRegisterSignal:
@@ -389,6 +391,8 @@ auto CodeGenFunction::ConstructCallee(const lir::CallInstr& call)
                 return module_->Runtime().MakePrintLiteralItem();
               case lir::RuntimeLibraryKind::kHierarchySegment:
                 return module_->Runtime().MakeSegment();
+              case lir::RuntimeLibraryKind::kTrigger:
+                return module_->Runtime().MakeTrigger();
               case lir::RuntimeLibraryKind::kFormatSpec:
                 return module_->Runtime().MakeFormatSpec(call.args.size());
               case lir::RuntimeLibraryKind::kPrintValueItem:

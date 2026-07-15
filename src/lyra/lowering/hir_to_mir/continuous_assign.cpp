@@ -252,7 +252,7 @@ auto LowerContinuousAssign(
   }
   body_block.AppendStmt(mir::ExprStmt{.expr = effect_id});
 
-  body_block.AppendStmt(MakeSensitivityWaitStmt(
+  body_block.AppendStmt(MakeValueChangeWaitStmt(
       body_block, body_frame, lowerer, src.sensitivity_list));
 
   const mir::BlockId body_scope_id =

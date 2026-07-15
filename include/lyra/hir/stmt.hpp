@@ -15,6 +15,7 @@
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/support/event_edge.hpp"
 
 namespace lyra::hir {
 
@@ -185,13 +186,6 @@ struct DelayControl {
   ExprId duration;
 };
 
-enum class EventEdge : std::uint8_t {
-  kAnyChange,
-  kPosedge,
-  kNegedge,
-  kBothEdges,
-};
-
 // One leaf entry of a wait's projection set. Identity-only: which structural
 // variable, the flat-bit footprint of its packed encoding the leaf observes,
 // and what edge polarity the leaf was subscribed under. An absent footprint
@@ -203,7 +197,7 @@ enum class EventEdge : std::uint8_t {
 struct SensitivityEntry {
   ReferenceRoute ref;
   std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
-  EventEdge edge_kind = EventEdge::kAnyChange;
+  support::EventEdge edge_kind = support::EventEdge::kAnyChange;
 };
 
 // One entry of an explicit `@(...)` event control. `signal` is the SV
@@ -215,7 +209,7 @@ struct SensitivityEntry {
 // wait that enforces LRM 9.4.2 correctness.
 struct EventTrigger {
   ExprId signal;
-  EventEdge edge;
+  support::EventEdge edge;
   std::vector<SensitivityEntry> sensitivity_list;
 };
 

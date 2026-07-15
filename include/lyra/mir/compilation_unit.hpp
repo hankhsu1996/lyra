@@ -52,6 +52,7 @@ struct BuiltinMirTypes {
   TypeId format_arg;
   TypeId time_format;
   TypeId hierarchy_segment;
+  TypeId trigger;
   TypeId coroutine_void;
   TypeId wildcard_index;
 };
@@ -137,6 +138,8 @@ struct CompilationUnit {
             .hierarchy_segment = types.Intern(
                 RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kHierarchySegment}),
+            .trigger = types.Intern(
+                RuntimeLibraryType{.kind = RuntimeLibraryKind::kTrigger}),
             .coroutine_void = TypeId{},
             .wildcard_index = types.Intern(WildcardIndexType{}),
         } {

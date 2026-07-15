@@ -218,6 +218,13 @@ enum class BuiltinFn : std::uint16_t {
   // precision steps, and the calling scope's precision power; the runtime
   // scales to the design-global tick (LRM 3.14.3).
   kDelay,
+  // LRM 9.4.2 / 9.4.2.2 / 9.4.3 value-change wait. The runtime free function
+  // every wait on a signal suspends on -- an `@(...)`, an `@*`, an
+  // `always_comb` / `always_latch` body, a `wait (cond)`, a continuous
+  // assignment. The call takes the engine handle and the trigger set, one
+  // entry per observed leaf; the process resumes when any leaf changes as its
+  // edge demands.
+  kWaitAny,
   // LRM 20.3 simulation-time read functions. Each takes the engine handle
   // and the calling scope's unit power; the runtime scales the design-global
   // tick down to that unit. `$time` rounds and yields a 64-bit `time`,

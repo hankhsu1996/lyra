@@ -112,6 +112,17 @@ auto RuntimeAbi::Delay() -> llvm::FunctionCallee {
       {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
+auto RuntimeAbi::WaitAny() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_wait_any", types_->Void(), {types_->Ptr(), types_->Span()});
+}
+
+auto RuntimeAbi::MakeTrigger() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_make_trigger", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
 auto RuntimeAbi::MakeString() -> llvm::FunctionCallee {
   return Get("lyra_rt_make_string", types_->Ptr(), {types_->Ptr()});
 }

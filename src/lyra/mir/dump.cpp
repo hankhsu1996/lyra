@@ -270,6 +270,8 @@ class MirDumper {
                   return "RuntimeLibrary(TimeFormat)";
                 case RuntimeLibraryKind::kHierarchySegment:
                   return "RuntimeLibrary(HierarchySegment)";
+                case RuntimeLibraryKind::kTrigger:
+                  return "RuntimeLibrary(Trigger)";
                 case RuntimeLibraryKind::kScopeProgram:
                   return "RuntimeLibrary(ScopeProgram)";
                 case RuntimeLibraryKind::kUnitDefinition:
@@ -378,20 +380,6 @@ class MirDumper {
         return "s";
     }
     throw InternalError("MirDumper::FormatTimeScale: unknown TimeScale");
-  }
-
-  static auto FormatEventEdge(EventEdge edge) -> std::string_view {
-    switch (edge) {
-      case EventEdge::kAnyChange:
-        return "any";
-      case EventEdge::kPosedge:
-        return "posedge";
-      case EventEdge::kNegedge:
-        return "negedge";
-      case EventEdge::kBothEdges:
-        return "edge";
-    }
-    throw InternalError("MirDumper::FormatEventEdge: unknown EventEdge");
   }
 
   static auto FormatUnaryOp(UnaryOp op) -> std::string {
@@ -1067,20 +1055,6 @@ class MirDumper {
               } else {
                 Line(std::format("Stmt[{}] ReturnStmt", id.value));
               }
-            },
-            [&](const SensitivityWaitStmt& s) {
-              Line(std::format("Stmt[{}] SensitivityWaitStmt", id.value));
-              Indent();
-              for (const auto& r : s.reads) {
-                Line(
-                    std::format(
-                        "observable=Expr[{}] {} lsb={} width={} edge={}",
-                        r.observable_ptr.value,
-                        FormatExpr(enclosing, r.observable_ptr),
-                        r.lsb_bit_offset, r.bit_width,
-                        FormatEventEdge(r.edge_kind)));
-              }
-              Dedent();
             },
         },
         stmt.data);

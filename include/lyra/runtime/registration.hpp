@@ -40,7 +40,7 @@ struct Registration {
   // which bit projection of the observable it watches. A membership that
   // carries no condition -- an event, a join, a scheduler queue -- leaves these
   // unset.
-  Edge edge = Edge::kAnyChange;
+  support::EventEdge edge = support::EventEdge::kAnyChange;
   std::uint64_t lsb_bit_offset = 0;
   std::uint64_t bit_width = 0;
 

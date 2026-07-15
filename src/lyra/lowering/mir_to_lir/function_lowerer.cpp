@@ -405,11 +405,6 @@ auto FunctionLowerer::LowerStmtInto(
             }
             Terminate(lir::ReturnTerm{.value = std::move(value)});
             return {};
-          },
-          [](const mir::SensitivityWaitStmt&) -> diag::Result<void> {
-            return diag::Fail(
-                diag::DiagCode::kUnsupportedStatementForm,
-                "mir_to_lir: a sensitivity wait is not yet lowerable to LIR");
           }},
       stmt.data);
 }

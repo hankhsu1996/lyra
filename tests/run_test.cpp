@@ -135,6 +135,41 @@ auto WriteDpiImportForeign(const std::filesystem::path& path) -> void {
       << "int slen(const char* s) { return (int)strlen(s); }\n";
 }
 
+// Every SV construct that waits on a value change at once: an implicit
+// sensitivity (`always_comb`), an explicit event list with two edges, and a
+// `wait (cond)` re-check loop, all driven by a delayed clock. The clock is
+// unrolled rather than looped because a loop-carried value across a suspension
+// is a lifetime the execution backend does not yet give a generated frame.
+auto WriteValueChangeWaitSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  logic clk = 0;\n"
+      << "  logic rst = 0;\n"
+      << "  logic go = 0;\n"
+      << "  int count = 0;\n"
+      << "  int doubled = 0;\n"
+      << "  always_comb doubled = count * 2;\n"
+      << "  always @(posedge clk or posedge rst) begin\n"
+      << "    count = count + 1;\n"
+      << "    $display(\"edge count=%0d doubled=%0d\", count, doubled);\n"
+      << "  end\n"
+      << "  initial begin\n"
+      << "    wait (go);\n"
+      << "    $display(\"released at go\");\n"
+      << "    #5;\n"
+      << "    clk = 1;\n"
+      << "    #5;\n"
+      << "    clk = 0;\n"
+      << "    #5;\n"
+      << "    rst = 1;\n"
+      << "  end\n"
+      << "  initial begin\n"
+      << "    #2;\n"
+      << "    go = 1;\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -287,6 +322,41 @@ TEST(LyraRun, JitAndCppAgreeOnDpiScalarImports) {
   EXPECT_NE(jit.stdout_text.find("widen=4294967297"), std::string::npos)
       << "stdout: " << jit.stdout_text;
   EXPECT_NE(jit.stdout_text.find("len=4"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
+}
+
+// A process suspended on a value change resumes when a leaf it subscribed to
+// changes as its edge demands, and a leaf it did not subscribe to leaves it
+// parked. The two backends must agree on which changes wake which process and
+// in what simulation-time order, so the same source runs through both and the
+// outputs are compared.
+TEST(LyraRun, JitAndCppAgreeOnValueChangeWait) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteValueChangeWaitSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "released at go\nedge count=1 doubled=0\nedge count=2 doubled=2\n")
       << "stdout: " << jit.stdout_text;
 }
 

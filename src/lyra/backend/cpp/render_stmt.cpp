@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <format>
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -11,7 +10,6 @@
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -39,20 +37,6 @@ auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
           },
       },
       init);
-}
-
-auto RenderEventEdgeAsRuntime(mir::EventEdge edge) -> std::string_view {
-  switch (edge) {
-    case mir::EventEdge::kAnyChange:
-      return "lyra::runtime::Edge::kAnyChange";
-    case mir::EventEdge::kPosedge:
-      return "lyra::runtime::Edge::kPosedge";
-    case mir::EventEdge::kNegedge:
-      return "lyra::runtime::Edge::kNegedge";
-    case mir::EventEdge::kBothEdges:
-      return "lyra::runtime::Edge::kBothEdges";
-  }
-  throw InternalError("RenderEventEdgeAsRuntime: unknown EventEdge value");
 }
 
 auto RenderLocalDeclStmt(
@@ -165,24 +149,6 @@ auto RenderDoWhileStmt(
   return result;
 }
 
-auto RenderSensitivityWaitStmt(
-    const ScopeView& view, const mir::SensitivityWaitStmt& s,
-    std::size_t indent) -> std::string {
-  std::string result =
-      std::format("{}co_await lyra::runtime::WaitAny({{", Indent(indent));
-  for (std::size_t i = 0; i < s.reads.size(); ++i) {
-    const auto& read = s.reads[i];
-    if (i != 0) result += ", ";
-    result += std::format(
-        "{{{}, {}, {}ULL, {}ULL}}",
-        RenderExpr(view, view.Expr(read.observable_ptr)),
-        RenderEventEdgeAsRuntime(read.edge_kind), read.lsb_bit_offset,
-        read.bit_width);
-  }
-  result += "});\n";
-  return result;
-}
-
 }  // namespace
 
 auto RenderStmt(
@@ -244,9 +210,6 @@ auto RenderStmt(
             return std::format(
                 "{}{} {};\n", Indent(indent), keyword,
                 RenderExpr(view, view.Expr(*s.value)));
-          },
-          [&](const mir::SensitivityWaitStmt& s) -> std::string {
-            return RenderSensitivityWaitStmt(view, s, indent);
           },
       },
       stmt.data);

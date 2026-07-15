@@ -77,7 +77,15 @@ the detail lives in the entry itself.
   closed-namespace identifier (`support::BuiltinFn`) shared by HIR and MIR.
 - [address-of-primitive](address-of-primitive.md) -- MIR carries an explicit place-to-pointer
   operator (`AddressOfExpr`), dual to `DerefExpr`; the backend never injects `&`.
-- [event-control-unification](event-control-unification.md) -- unified treatment of event control.
+- [event-control-unification](event-control-unification.md) -- unified treatment of event control:
+  every value-change wait (`always_comb` / `@*`, `@(...)`, `wait (cond)`, a continuous assignment)
+  is one shape over a per-leaf `(observable, bit_range, edge)` set. Its MIR carrier is superseded by
+  the next entry.
+- [value-change-wait-as-runtime-call](value-change-wait-as-runtime-call.md) -- that wait is an
+  ordinary runtime call taking the trigger set, awaited like every other suspending call; MIR
+  carries no event-control node, and one enum for edge polarity is shared by compiler and runtime. A
+  dedicated MIR statement, a per-leaf registration call, and an engine subscription verb are
+  rejected.
 - [generic-lowering-machinery](generic-lowering-machinery.md) -- generic arena and shared
   context-free expression-handler templates over the pass class; node types stay typed.
 - [arena-reference-lifetime](arena-reference-lifetime.md) -- `Arena::Get` is a transient view; the
