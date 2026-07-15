@@ -131,11 +131,13 @@ adapter drives the body; that the scheduler's token is runtime-owned is the inva
   runtime owns for the duration of one stretch of generated code. Persisting the slot does not
   persist the object it names. Closing this needs the value's storage to outlive the stretch that
   made it -- the activation-frame question [jit-value-realization](jit-value-realization.md) leaves
-  open -- not more coroutine machinery.
+  open -- not more coroutine machinery. It is what a loop-carried value around a suspension needs,
+  so a body as ordinary as a clock generator (`repeat (n) begin #d; clk = ~clk; end`) is blocked on
+  it, and a design that must run today spells the clock out.
 
-- Deferred, each its own foundation: non-blocking assignment (a deferred closure submit); process
-  re-arming (`always` / `always_ff`); timed task enables (a nested activation with a typed
-  completion, `activation.md`); cancellation and `disable`.
+- Deferred, each its own foundation: non-blocking assignment (a deferred closure submit); timed task
+  enables (a nested activation with a typed completion, `activation.md`); cancellation and
+  `disable`.
 
 - The two backends share the semantic model -- the same MIR, the same type-carried call protocol --
   and differ only in realization: the C++ backend's process coroutine is itself the token, because

@@ -193,6 +193,8 @@ auto RenderTypeAsCpp(
                 return std::string{"lyra::value::TimeFormat"};
               case mir::RuntimeLibraryKind::kHierarchySegment:
                 return std::string{"lyra::runtime::HierarchySegment"};
+              case mir::RuntimeLibraryKind::kTrigger:
+                return std::string{"lyra::runtime::Trigger"};
               case mir::RuntimeLibraryKind::kScopeProgram:
                 return std::string{"lyra::runtime::ScopeProgram"};
               case mir::RuntimeLibraryKind::kUnitDefinition:

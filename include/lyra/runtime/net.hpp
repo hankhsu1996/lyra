@@ -132,8 +132,9 @@ class ResolvedNet : public Observable {
       resolved_ = std::move(next);
       if (changed) {
         services.TriggerValueChange(
-            *this, [](std::uint64_t, std::uint64_t, Edge edge) -> bool {
-              return edge == Edge::kAnyChange;
+            *this,
+            [](std::uint64_t, std::uint64_t, support::EventEdge edge) -> bool {
+              return edge == support::EventEdge::kAnyChange;
             });
       }
     }

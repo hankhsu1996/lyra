@@ -102,8 +102,8 @@ auto LowerTimedWaitWrapper(
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
-// LRM 15.5.2 `@e body;`: a suspending named-event await in place of the `@*`
-// SensitivityWaitStmt.
+// LRM 15.5.2 `@e body;`: the wait is on a named event's waiter list, not on a
+// value change, so it awaits the event rather than a trigger set.
 auto LowerNamedEventTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t, const hir::NamedEventControl& nec)
@@ -138,9 +138,10 @@ auto LowerNamedEventTimedStmt(
       });
 }
 
-// LRM 9.4.2 `@(...) body`. Single-leaf trigger expressions lower directly to
-// a SensitivityWaitStmt over the union of leaves; multi-leaf forms require a
-// snapshot wrapper not yet implemented.
+// LRM 9.4.2 `@(...) body`. Single-leaf trigger expressions lower directly to a
+// wait over the union of the event list's leaves; a multi-leaf expression needs
+// a snapshot wrapper that is not yet implemented, because a leaf changing does
+// not entail the expression's result changing.
 auto LowerEventTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     diag::SourceSpan span, const hir::TimedStmt& t, const hir::EventControl& ec)
@@ -163,14 +164,14 @@ auto LowerEventTimedStmt(
             // the expression. A whole-signal footprint already reduces to the
             // LSB at the runtime trigger, so only a bit-addressed footprint
             // needs collapsing.
-            if (leaf.edge_kind != hir::EventEdge::kAnyChange &&
+            if (leaf.edge_kind != support::EventEdge::kAnyChange &&
                 leaf.footprint.has_value()) {
               leaf.footprint = {{leaf.footprint->first, leaf.footprint->first}};
             }
             union_reads.push_back(leaf);
           }
         }
-        return MakeSensitivityWaitStmt(
+        return MakeValueChangeWaitStmt(
             child_block, child_frame, process.EnclosingScopeLowerer(),
             union_reads);
       });
@@ -185,7 +186,7 @@ auto LowerImplicitEventTimedStmt(
       process, frame, std::move(label), t.stmt,
       [&](mir::Block& child_block,
           WalkFrame child_frame) -> diag::Result<mir::Stmt> {
-        return MakeSensitivityWaitStmt(
+        return MakeValueChangeWaitStmt(
             child_block, child_frame, process.EnclosingScopeLowerer(),
             ie.sensitivity_list);
       });
@@ -308,7 +309,7 @@ auto LowerWaitStmt(
 
   mir::Block inner_block;
   const WalkFrame inner_frame = wrapper_frame.WithBlock(&inner_block);
-  inner_block.AppendStmt(MakeSensitivityWaitStmt(
+  inner_block.AppendStmt(MakeValueChangeWaitStmt(
       inner_block, inner_frame, process.EnclosingScopeLowerer(), reads));
 
   const mir::BlockId inner_scope_id =

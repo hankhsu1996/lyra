@@ -47,6 +47,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kHierarchySegment,
   kDpiBitBuffer,
   kDpiLogicBuffer,
+  kTrigger,
 };
 
 struct PackedRange {

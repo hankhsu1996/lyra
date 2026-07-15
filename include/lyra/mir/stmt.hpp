@@ -79,13 +79,6 @@ struct ForStmt {
   std::optional<LoopLabelId> break_label = std::nullopt;
 };
 
-enum class EventEdge : std::uint8_t {
-  kAnyChange,
-  kPosedge,
-  kNegedge,
-  kBothEdges,
-};
-
 struct WhileStmt {
   ExprId condition;
   BlockId scope;
@@ -111,36 +104,9 @@ struct ReturnStmt {
   std::optional<ExprId> value;
 };
 
-// One leaf entry of a wait's projection set: an expression yielding a
-// borrowed pointer to the observable cell the leaf subscribes to, plus the
-// observed bit projection of its packed encoding as a `(lsb_bit_offset,
-// bit_width)` pair, and the edge polarity the leaf was subscribed under (LRM
-// 9.4.2 / 9.4.2.2 / 9.4.3). A `bit_width` of 0 is the whole signal observed
-// on any change; an edge reduces to the bit at `lsb_bit_offset`. The
-// projection is resolved at HIR-to-MIR from the SV-level footprint so a
-// backend emits the pair directly. `kAnyChange` is the edge for implicit
-// sensitivity. The pointer expression's exact shape -- `AddressOf` of a
-// place, a bare borrowed-pointer member access, or a call that resolves an
-// upward reference to its current observable -- is stated by HIR-to-MIR so
-// the backend never re-derives it from the leaf's type.
-struct SensitivityRead {
-  ExprId observable_ptr{};
-  std::uint64_t lsb_bit_offset = 0;
-  std::uint64_t bit_width = 0;
-  EventEdge edge_kind = EventEdge::kAnyChange;
-};
-
-// Suspends the enclosing process until any signal in `reads` changes. Lowered
-// only at the tail of an always_comb / always_latch body's forever loop. An
-// empty `reads` list legitimately means "never wake up": the body runs once
-// (at time 0) then the process hangs forever.
-struct SensitivityWaitStmt {
-  std::vector<SensitivityRead> reads;
-};
-
 using StmtData = std::variant<
     EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, IfStmt, ForStmt, WhileStmt,
-    DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt, SensitivityWaitStmt>;
+    DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

@@ -197,10 +197,10 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
       .visibility = process.Visibility()};
 }
 
-// Wraps the body in a `forever` loop. `implicit_sensitivity`, if present,
-// is materialised into a `SensitivityWaitStmt` appended after the lowered
-// body -- the always_comb / always_latch (LRM 9.2.2.2.1) tail. `always` /
-// `always_ff` pass nullptr because the body itself carries any timing.
+// Wraps the body in a `forever` loop. `implicit_sensitivity`, if present, is
+// materialised into a value-change wait appended after the lowered body -- the
+// always_comb / always_latch (LRM 9.2.2.2.1) tail. `always` / `always_ff` pass
+// nullptr because the body itself carries any timing.
 auto LowerForeverProcess(
     ProcessLowerer& process,
     const std::vector<hir::SensitivityEntry>* implicit_sensitivity)
@@ -220,7 +220,7 @@ auto LowerForeverProcess(
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     if (implicit_sensitivity != nullptr) {
-      body_block.AppendStmt(MakeSensitivityWaitStmt(
+      body_block.AppendStmt(MakeValueChangeWaitStmt(
           body_block, body_frame, process.EnclosingScopeLowerer(),
           *implicit_sensitivity));
     }

@@ -443,15 +443,15 @@ class HirDumper {
     return std::format("[{}:{}]", footprint->first, footprint->second);
   }
 
-  static auto FormatEventEdge(EventEdge edge) -> std::string_view {
+  static auto FormatEventEdge(support::EventEdge edge) -> std::string_view {
     switch (edge) {
-      case EventEdge::kAnyChange:
+      case support::EventEdge::kAnyChange:
         return "any";
-      case EventEdge::kPosedge:
+      case support::EventEdge::kPosedge:
         return "posedge";
-      case EventEdge::kNegedge:
+      case support::EventEdge::kNegedge:
         return "negedge";
-      case EventEdge::kBothEdges:
+      case support::EventEdge::kBothEdges:
         return "edge";
     }
     throw InternalError("HirDumper::FormatEventEdge: unknown EventEdge");

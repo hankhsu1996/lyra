@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <concepts>
 #include <cstdint>
-#include <initializer_list>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -54,15 +54,16 @@ inline auto ClassifyEdge(
   return EdgeTransition::kChangeOnly;
 }
 
-inline auto EdgeMatches(Edge subscribed, EdgeTransition transition) -> bool {
+inline auto EdgeMatches(
+    support::EventEdge subscribed, EdgeTransition transition) -> bool {
   switch (subscribed) {
-    case Edge::kAnyChange:
+    case support::EventEdge::kAnyChange:
       return true;
-    case Edge::kPosedge:
+    case support::EventEdge::kPosedge:
       return transition == EdgeTransition::kPosedge;
-    case Edge::kNegedge:
+    case support::EventEdge::kNegedge:
       return transition == EdgeTransition::kNegedge;
-    case Edge::kBothEdges:
+    case support::EventEdge::kBothEdges:
       return transition == EdgeTransition::kPosedge ||
              transition == EdgeTransition::kNegedge;
   }
@@ -79,8 +80,8 @@ class Observable {
   ~Observable() = default;
 
   void Subscribe(
-      CoroutineHandle handle, Edge edge, std::uint64_t lsb_bit_offset,
-      std::uint64_t bit_width) {
+      CoroutineHandle handle, support::EventEdge edge,
+      std::uint64_t lsb_bit_offset, std::uint64_t bit_width) {
     Registration& reg = handle->Park(waiters_);
     reg.edge = edge;
     reg.lsb_bit_offset = lsb_bit_offset;
@@ -229,18 +230,37 @@ class Ref {
   T* plain_ = nullptr;
 };
 
-// Suspends the calling frame until one of the supplied Triggers fires
-// (matching its edge). Subscribing registers each Observable in the frame's own
-// wait-registration set, so waking or destroying the frame revokes every
-// subscription; the engine has no idea what kind of wait this is.
+// Makes `frame` runnable again when any leaf of `triggers` changes as its edge
+// demands (LRM 9.4.2 / 9.4.2.2 / 9.4.3). Each subscription registers on the
+// frame's own wait-registration set, so waking or destroying the frame revokes
+// every leaf and the one that wakes it drops the siblings; the engine has no
+// idea what kind of wait this is. Each leaf's projection is copied into the
+// cell's subscriber record, so `triggers` is only read for the duration of this
+// call.
 //
-// An empty trigger list is legal -- the frame suspends forever (used by
-// `always_comb` / `always_latch` with no inferred reads,
-// e.g. `always_comb c = 7;`).
-class EventControlAwaitable {
+// An empty trigger set is legal and means "never wake up" -- an `always_comb`
+// whose body reads nothing (`always_comb c = 7;`) runs once, then suspends
+// forever.
+inline void SubscribeValueChange(
+    CoroutineHandle frame, std::span<const Trigger> triggers) {
+  for (const Trigger& trigger : triggers) {
+    if (trigger.observable == nullptr) {
+      throw InternalError(
+          "SubscribeValueChange: a trigger names no observable cell");
+    }
+    trigger.observable->Subscribe(
+        frame, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
+  }
+}
+
+// Suspends the calling frame on a value-change wait. The registration happens
+// in `await_suspend`, where the frame that must be resumed is in hand: a wait
+// inside an enabled task has to resume the task's frame, not the enabling
+// process's, and only the language knows which frame is awaiting.
+class ValueChangeWaitAwaitable {
  public:
-  explicit EventControlAwaitable(std::vector<Trigger> triggers)
-      : triggers_(std::move(triggers)) {
+  explicit ValueChangeWaitAwaitable(std::span<const Trigger> triggers)
+      : triggers_(triggers.begin(), triggers.end()) {
   }
 
   [[nodiscard]] static auto await_ready() noexcept -> bool {
@@ -249,16 +269,7 @@ class EventControlAwaitable {
 
   template <class P>
   void await_suspend(std::coroutine_handle<P> handle) {
-    CoroutineHandle token = &handle.promise();
-    for (const auto& trigger : triggers_) {
-      if (trigger.observable == nullptr) {
-        throw InternalError(
-            "EventControlAwaitable::await_suspend: observable pointer is "
-            "null");
-      }
-      trigger.observable->Subscribe(
-          token, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
-    }
+    SubscribeValueChange(&handle.promise(), triggers_);
   }
 
   static void await_resume() noexcept {
@@ -268,9 +279,15 @@ class EventControlAwaitable {
   std::vector<Trigger> triggers_;
 };
 
-inline auto WaitAny(std::initializer_list<Trigger> triggers)
-    -> EventControlAwaitable {
-  return EventControlAwaitable{std::vector<Trigger>(triggers)};
+// A wait's registration names the process to wake. A C++ coroutine is handed
+// its own frame at the suspension, so this realization reads the frame from the
+// language and never consults the engine handle the call carries; an execution
+// backend, whose generated frame the engine never sees, needs that handle to
+// ask the runtime which process is running.
+inline auto WaitAny(
+    RuntimeServices&,  // NOLINT(readability-named-parameter)
+    std::span<const Trigger> triggers) -> ValueChangeWaitAwaitable {
+  return ValueChangeWaitAwaitable{triggers};
 }
 
 // Builds the per-leaf classifier that the Observable invokes per waiter.
@@ -282,8 +299,9 @@ inline auto MakePackedArrayEdgeClassifier(
     const value::PackedArray& old_val, const value::PackedArray& new_val)
     -> EdgeClassifier {
   return [&old_val, &new_val](
-             std::uint64_t lsb, std::uint64_t width, Edge edge) -> bool {
-    if (edge == Edge::kAnyChange) {
+             std::uint64_t lsb, std::uint64_t width,
+             support::EventEdge edge) -> bool {
+    if (edge == support::EventEdge::kAnyChange) {
       if (width == 0U) {
         return true;
       }
@@ -332,8 +350,9 @@ void Var<T>::Set(RuntimeServices& services, const T& new_val) {
   } else {
     if (AssignIfChanged(new_val)) {
       services.TriggerValueChange(
-          *this, [](std::uint64_t, std::uint64_t, Edge edge) -> bool {
-            return edge == Edge::kAnyChange;
+          *this,
+          [](std::uint64_t, std::uint64_t, support::EventEdge edge) -> bool {
+            return edge == support::EventEdge::kAnyChange;
           });
     }
   }
