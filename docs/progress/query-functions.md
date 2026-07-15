@@ -59,15 +59,16 @@ every operand, dynamic included.
       require the dimension to be a constant expression). The query selects among the per-dimension
       results, which the operand's type still fixes; an index the type has no dimension for reads
       `'x`.
-- [ ] Q6 -- A dimension named at run time over an array that has a dynamically sized dimension. LRM
-      20.7.1 makes it an error for such an index to name that dimension; an index only the
-      simulation knows cannot be held to that rule at elaboration, so the form is rejected rather
-      than half-served. Reporting the error when the index actually lands on that dimension is what
-      the form needs.
-- [ ] Q7 -- `$bits` of a value whose elements are themselves dynamically sized (a dynamic array of
-      dynamic arrays, a queue of strings). Every other dynamically sized operand reports its element
-      count times the bits one element occupies; a dynamically sized element has no such fixed
-      width, so the count has to be summed over the elements.
+- [x] Q6 -- A dimension named at run time over an array whose top dimension is dynamic. The top
+      dimension's extent is read from the value, a deeper fixed dimension keeps its constant shape,
+      and an index the type has no dimension for reads `'x`. A variable-sized dimension _below_ the
+      top is out of scope: LRM 20.7.1 makes naming it an error, since each outer element carries its
+      own extent, and a run-time index could land there. That operand shape is rejected up front
+      rather than half-served; reporting the error only when the index actually lands on the deeper
+      dimension is what the residual case needs.
+- [x] Q7 -- `$bits` of a value whose elements are themselves dynamically sized (a dynamic array of
+      dynamic arrays, a queue of strings). The bit count sums each element's own current width, one
+      query layer down, so an operand of any nesting depth reports its live size and 0 while empty.
 
 ## LRM ambiguity
 

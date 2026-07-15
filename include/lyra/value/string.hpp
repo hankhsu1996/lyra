@@ -119,6 +119,12 @@ class String {
   }
 
   // LRM 6.16.1: len() yields an SV int.
+  // LRM 20.6.2 `$bits`: a string occupies 8 bits per character (LRM 6.16, a
+  // string element is a byte).
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
+    return PackedArray::Int(static_cast<std::int32_t>(8 * impl_.size()));
+  }
+
   [[nodiscard]] auto Len() const -> PackedArray {
     return PackedArray::Int(static_cast<std::int32_t>(impl_.size()));
   }
@@ -365,6 +371,7 @@ inline auto String::ElementRef(const PackedArray& i_arg) -> StringCharRef {
 
 static_assert(LyraValue<String>);
 static_assert(Lengthable<String>);
+static_assert(BitstreamSizable<String>);
 static_assert(Indexable<String>);
 
 // Defined here rather than alongside the rest of `UnpackedArray` because it is

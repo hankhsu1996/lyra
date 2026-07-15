@@ -128,6 +128,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "size";
     case BuiltinFn::kLen:
       return "len";
+    case BuiltinFn::kBitstreamWidth:
+      return "bitstream_width";
     case BuiltinFn::kToOwned:
       return "to_owned";
     case BuiltinFn::kDelete:

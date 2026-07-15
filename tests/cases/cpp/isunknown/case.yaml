@@ -13,3 +13,5 @@ expect:
     r_z: 1
     ca_known: 0
     ca_xz: 1
+    r_struct_known: 0
+    r_struct_x: 1
