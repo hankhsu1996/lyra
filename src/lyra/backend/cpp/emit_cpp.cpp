@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -469,7 +470,8 @@ auto RenderScopeHeaderFile(
   // derived class first (via `Derived h;` before `class Base` is seen), so
   // the emission order climbs each class's base chain first.
   std::vector<bool> emitted(unit.classes.size(), false);
-  const auto emit_class = [&](this auto& self, mir::ClassId id) -> void {
+  const std::function<void(mir::ClassId)> emit_class =
+      [&](mir::ClassId id) -> void {
     if (emitted[id.value]) return;
     if (!unit.classes.IsDefined(id)) return;
     const mir::Class& cls = unit.GetClass(id);
@@ -478,7 +480,7 @@ auto RenderScopeHeaderFile(
     }
     if (cls.base.has_value()) {
       if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&*cls.base)) {
-        self(intra->class_id);
+        emit_class(intra->class_id);
       }
     }
     if (emitted[id.value]) return;
