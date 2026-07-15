@@ -216,6 +216,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Next";
     case support::BuiltinFn::kAssocPrev:
       return "Prev";
+    case support::BuiltinFn::kAssocMinIndex:
+      return "MinIndex";
+    case support::BuiltinFn::kAssocMaxIndex:
+      return "MaxIndex";
     case support::BuiltinFn::kDelay:
       return "Delay";
     case support::BuiltinFn::kSimTime:

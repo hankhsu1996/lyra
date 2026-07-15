@@ -1,0 +1,48 @@
+id: cpp.query_array_shape
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    ram_dims: 2
+    ram_updims: 1
+    ram_left: 0
+    ram_right: 9
+    ram_low: 0
+    ram_high: 9
+    ram_incr: -1
+    ram_size: 10
+    word_size: 16
+    word_left: 16
+    word_right: 1
+    word_low: 1
+    word_high: 16
+    word_incr: 1
+    p2d_dims: 2
+    p2d_updims: 0
+    p2d_size: 4
+    p2d_inner_size: 8
+    p2d_left: 3
+    p2d_incr: 1
+    desc_size: 6
+    desc_left: 7
+    desc_right: 2
+    desc_low: 2
+    desc_high: 7
+    desc_incr: 1
+    desc_dims: 2
+    desc_updims: 1
+    plain_size: 32
+    plain_left: 31
+    plain_dims: 1
+    flag_dims: 0
+    s_dims: 1
+    s_updims: 0
+    rt_size: 16
+    rt_left: 16
+    rt_incr: 1
+    rt_out_of_range: "32'bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

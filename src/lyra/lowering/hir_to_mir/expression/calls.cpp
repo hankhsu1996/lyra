@@ -178,14 +178,11 @@ auto ArrayMethodReceiverElementType(const hir::Type& ty)
   return std::nullopt;
 }
 
-// The canonical-default prototype type for a value-producing LRM 7.12 method
-// (decision: array-manipulation-entry-stream): a locator / map result is a
-// container, so its element type is the prototype; a reduction result is the
-// scalar itself. The producer supplies the prototype because the result shape
-// (an index locator's key, a map's chosen element, an empty reduction's zero)
-// is not always recoverable from the receiver.
-auto ArrayMethodResultProtoType(
-    const ModuleLowerer& module, mir::TypeId result_type) -> mir::TypeId {
+// The canonical-default prototype type for an entry whose result shape the
+// receiver does not determine: a container result contributes its element type
+// as the prototype; a scalar result is its own prototype.
+auto ResultPrototypeType(const ModuleLowerer& module, mir::TypeId result_type)
+    -> mir::TypeId {
   return std::visit(
       Overloaded{
           [](const mir::UnpackedArrayType& t) { return t.element_type; },
@@ -494,21 +491,20 @@ auto LowerBuiltinMethodCall(
         c.with_clause.has_value() ? &*c.with_clause : nullptr);
     if (!closure_or) return std::unexpected(std::move(closure_or.error()));
     args.push_back(block.exprs.Add(*std::move(closure_or)));
-    // LRM 7.12 reduction / locator / map: the producer supplies the result's
-    // canonical default, since the result shape (an index locator's key, a
-    // map's chosen element, an empty reduction's zero) is not recoverable from
-    // the receiver (decision: array-manipulation-entry-stream). The ordering
-    // family produces no value and takes none.
-    if (support::ArrayMethodProducesValue(b.method)) {
-      const mir::TypeId proto_type =
-          ArrayMethodResultProtoType(module, result_type);
-      args.push_back(
-          block.exprs.Add(BuildDefaultValueExpr(module, frame, proto_type)));
-    }
   } else if (c.with_clause.has_value()) {
     throw InternalError(
         "BuiltinMethodRef with-clause on a method kind that does not "
         "accept a with-clause (LRM 7.12.1 family only)");
+  }
+
+  // The producer supplies the result's canonical default whenever the receiver
+  // does not determine the result's shape -- an LRM 7.12 index locator's key, a
+  // map's chosen element, an empty reduction's zero, or the index an empty
+  // associative dimension reports (LRM 20.7).
+  if (support::BuiltinFnTakesResultPrototype(b.method)) {
+    const mir::TypeId proto_type = ResultPrototypeType(module, result_type);
+    args.push_back(
+        block.exprs.Add(BuildDefaultValueExpr(module, frame, proto_type)));
   }
 
   // LRM 15.5.3: `e.triggered` reads the triggered flag out of

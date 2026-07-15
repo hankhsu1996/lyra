@@ -16,3 +16,9 @@ expect:
     slice_rt: 5
     red_rt: 0
     ca_red: 0
+    bits_dyn: 128
+    bits_queue: 96
+    bits_string: 40
+    bits_assoc: 64
+    bits_narrow: 7
+    bits_empty: 0

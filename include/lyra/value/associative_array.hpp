@@ -285,6 +285,17 @@ class AssociativeArray {
     return data_.rbegin()->first;
   }
 
+  // LRM 20.7 `$low` / `$high` over an associative dimension: the smallest and
+  // largest currently allocated index. With none allocated the dimension has no
+  // index to report and the query reads `unallocated` -- the index type's
+  // default, which is `'x` for a 4-state index type, as LRM 20.7 requires.
+  [[nodiscard]] auto MinIndex(const K& unallocated) const -> K {
+    return FirstKey().value_or(unallocated);
+  }
+  [[nodiscard]] auto MaxIndex(const K& unallocated) const -> K {
+    return LastKey().value_or(unallocated);
+  }
+
   // LRM 7.9.6 / 7.9.7: the smallest stored key strictly greater than `probe`
   // (next) or the largest strictly less (prev), or absent when none exists.
   // `probe` shares the stored keys' index type, so the bound lookup runs
