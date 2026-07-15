@@ -134,6 +134,13 @@ class ModuleLowerer {
     return unit_;
   }
 
+  // The slang instance body this unit is lowered from. A constant expression
+  // the lowering must evaluate itself -- an LRM 20.7 dimension index -- is
+  // evaluated against it.
+  [[nodiscard]] auto Body() const -> const slang::ast::InstanceBodySymbol& {
+    return *body_;
+  }
+
   // Lowers a slang type to a HIR TypeId, memoizing by slang canonical pointer.
   // The slang-keyed cache and the unit's type table are coordinated together:
   // the dedup invariant (same slang canonical -> same HIR TypeId) is enforced
@@ -141,6 +148,12 @@ class ModuleLowerer {
   // directly.
   auto InternType(const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
+
+  // Adds a type the lowering itself composes rather than reads off the
+  // frontend -- the array of a type's per-dimension query results that an LRM
+  // 20.7 query selects from when its dimension is named at run time. There is
+  // no frontend type to key the cache on, so it is added directly.
+  auto AddComposedType(hir::TypeData data) -> hir::TypeId;
 
   // Registers a class declaration on first encounter and returns its id,
   // memoizing by slang class pointer. The id is declared before the body is

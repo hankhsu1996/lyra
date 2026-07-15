@@ -1,0 +1,36 @@
+id: cpp.query_dynamic_shape
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    dyn_size: 4
+    dyn_left: 0
+    dyn_right: 3
+    dyn_low: 0
+    dyn_high: 3
+    dyn_incr: -1
+    que_size: 3
+    que_right: 2
+    que_high: 2
+    str_size: 5
+    str_left: 0
+    str_right: 4
+    empty_size: 0
+    empty_right: -1
+    empty_high: -1
+    map_size: 3
+    map_left: 0
+    map_right: 2147483647
+    map_low: -3
+    map_high: 10
+    map_incr: -1
+    map4_low: "8'h0F"
+    map4_high: "8'hA0"
+    map4_right: "8'hFF"
+    unallocated_low: "8'bxxxxxxxx"
+    unallocated_high: "8'bxxxxxxxx"

@@ -63,6 +63,12 @@ enum class BuiltinFn : std::uint16_t {
   kAssocLast,
   kAssocNext,
   kAssocPrev,
+  // The smallest and largest currently allocated index (LRM 20.7 `$low` /
+  // `$high` over an associative dimension). Each takes the value to report when
+  // no index is allocated -- the index type's default, which is `'x` for a
+  // 4-state index, as LRM 20.7 requires.
+  kAssocMinIndex,
+  kAssocMaxIndex,
   // LRM 6.16 string methods.
   kGetc,
   kPutc,
@@ -414,10 +420,14 @@ enum class BuiltinFn : std::uint16_t {
 // `reverse`) take no closure.
 [[nodiscard]] auto ArrayMethodTakesClosure(BuiltinFn id) -> bool;
 
-// True iff the LRM 7.12 method yields a new value whose result shape the
-// producer supplies (the reduction, locator, and map families). The ordering
-// family (`sort` / `rsort` / `reverse`) mutates in place and yields none.
-[[nodiscard]] auto ArrayMethodProducesValue(BuiltinFn id) -> bool;
+// True iff the entry yields a value whose shape the call site must supply as a
+// trailing prototype argument, because the receiver does not determine it: the
+// LRM 7.12 reduction, locator, and map families (an index locator's key, a
+// map's chosen element, an empty reduction's zero) and the associative index
+// queries (the value an unallocated dimension reports). The LRM 7.12 ordering
+// family
+// (`sort` / `rsort` / `reverse`) mutates in place and yields no value.
+[[nodiscard]] auto BuiltinFnTakesResultPrototype(BuiltinFn id) -> bool;
 
 // True iff `id` is an associative-array traversal entry (LRM 7.9.4 -- 7.9.7).
 // The traversal family lowers to an immediately-invoked closure (mutates the

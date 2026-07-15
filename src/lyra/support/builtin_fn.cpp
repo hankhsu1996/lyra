@@ -65,8 +65,10 @@ auto ArrayMethodTakesClosure(BuiltinFn id) -> bool {
   }
 }
 
-auto ArrayMethodProducesValue(BuiltinFn id) -> bool {
+auto BuiltinFnTakesResultPrototype(BuiltinFn id) -> bool {
   switch (id) {
+    case BuiltinFn::kAssocMinIndex:
+    case BuiltinFn::kAssocMaxIndex:
     case BuiltinFn::kSum:
     case BuiltinFn::kProduct:
     case BuiltinFn::kAnd:
@@ -188,6 +190,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "assoc_next";
     case BuiltinFn::kAssocPrev:
       return "assoc_prev";
+    case BuiltinFn::kAssocMinIndex:
+      return "assoc_min_index";
+    case BuiltinFn::kAssocMaxIndex:
+      return "assoc_max_index";
     case BuiltinFn::kGetc:
       return "getc";
     case BuiltinFn::kPutc:

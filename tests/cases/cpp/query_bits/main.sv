@@ -23,6 +23,22 @@ module Top;
   logic ca_red;
   assign ca_red = ^q[$bits(mubi_t)-1:1];
 
+  // LRM 20.6.2: a dynamically sized operand reports the bit count of what it
+  // currently holds -- its element count times the bits one element occupies --
+  // and 0 while it holds nothing. A string's element is a byte.
+  int    dyn[];
+  int    que[$];
+  string str;
+  int    map[int];
+  bit [6:0] narrow[$];
+
+  int bits_dyn;
+  int bits_queue;
+  int bits_string;
+  int bits_assoc;
+  int bits_narrow;
+  int bits_empty;
+
   initial begin
     q = 4'b1010;
     bits_type_rt = $bits(mubi_t);
@@ -32,5 +48,23 @@ module Top;
     bits_2d_rt = $bits(m2d);
     slice_rt = q[$bits(mubi_t)-1:1];
     red_rt = ^q[$bits(mubi_t)-1:1];
+
+    dyn = new[4];
+    que.push_back(1);
+    que.push_back(2);
+    que.push_back(3);
+    str = "hello";
+    map[10] = 1;
+    map[20] = 2;
+    narrow.push_back(7'h5);
+
+    bits_dyn = $bits(dyn);
+    bits_queue = $bits(que);
+    bits_string = $bits(str);
+    bits_assoc = $bits(map);
+    bits_narrow = $bits(narrow);
+
+    que.delete();
+    bits_empty = $bits(que);
   end
 endmodule
