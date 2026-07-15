@@ -19,16 +19,16 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-auto LowerEventEdge(slang::ast::EdgeKind kind) -> hir::EventEdge {
+auto LowerEventEdge(slang::ast::EdgeKind kind) -> support::EventEdge {
   switch (kind) {
     case slang::ast::EdgeKind::None:
-      return hir::EventEdge::kAnyChange;
+      return support::EventEdge::kAnyChange;
     case slang::ast::EdgeKind::PosEdge:
-      return hir::EventEdge::kPosedge;
+      return support::EventEdge::kPosedge;
     case slang::ast::EdgeKind::NegEdge:
-      return hir::EventEdge::kNegedge;
+      return support::EventEdge::kNegedge;
     case slang::ast::EdgeKind::BothEdges:
-      return hir::EventEdge::kBothEdges;
+      return support::EventEdge::kBothEdges;
   }
   throw InternalError("LowerEventEdge: unknown slang EdgeKind value");
 }

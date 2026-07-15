@@ -218,6 +218,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Prev";
     case support::BuiltinFn::kDelay:
       return "Delay";
+    case support::BuiltinFn::kWaitAny:
+      return "WaitAny";
     case support::BuiltinFn::kSimTime:
       return "SimTimeInUnit";
     case support::BuiltinFn::kSTime:
@@ -373,6 +375,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kFromSvLogic:
       return "lyra::value";
     case support::BuiltinFn::kDelay:
+    case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:
     case support::BuiltinFn::kRealTime:

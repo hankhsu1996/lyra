@@ -6,7 +6,11 @@
 
 ## Status
 
-Accepted
+Accepted. The unification -- one shape for every value-change wait, per-leaf
+`(observable, bit_range, edge)`, frontend LSB-reduce, runtime per-leaf filtering -- stands. What
+carries that shape in MIR is superseded by
+[value-change-wait-as-runtime-call](value-change-wait-as-runtime-call.md): the wait is a runtime
+call awaited like any other suspending call, not a MIR statement kind.
 
 ## Why this decision matters
 

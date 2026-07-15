@@ -66,6 +66,15 @@ class RuntimeAbi {
   // process, read from the runtime; no token crosses the boundary.
   auto Delay() -> llvm::FunctionCallee;
 
+  // Registers the running process to wake on any leaf of a trigger set, the
+  // runtime call a value-change wait's suspend edge is preceded by. Like a
+  // delay, the wakeup source is the running process, read from the runtime.
+  auto WaitAny() -> llvm::FunctionCallee;
+
+  // Builds one leaf of a wait: the observable cell it watches, the bit
+  // projection of that cell it watches, and the edge polarity it watches for.
+  auto MakeTrigger() -> llvm::FunctionCallee;
+
   // Builds a coroutine from an entry code reference and its environment; the
   // runtime owns the resulting coroutine and returns an opaque handle.
   auto MakeCoroutine() -> llvm::FunctionCallee;

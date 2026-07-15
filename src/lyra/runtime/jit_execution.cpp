@@ -92,10 +92,13 @@ using lyra::runtime::FileTable;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedInstance;
 using lyra::runtime::HierarchySegment;
+using lyra::runtime::Observable;
 using lyra::runtime::Own;
 using lyra::runtime::Read;
 using lyra::runtime::RuntimeServices;
 using lyra::runtime::Scope;
+using lyra::runtime::SubscribeValueChange;
+using lyra::runtime::Trigger;
 using lyra::runtime::UnitDefinition;
 using lyra::runtime::Var;
 using lyra::value::Format;
@@ -180,6 +183,29 @@ void lyra_rt_delay(
       static_cast<std::int8_t>(Read<PackedArray>(precision_power).ToInt64()),
       svc.GlobalPrecisionPower());
   svc.ScheduleAtTime(svc.Now() + global, token);
+}
+
+auto lyra_rt_make_trigger(
+    void* observable, const void* edge, const void* lsb_bit_offset,
+    const void* bit_width) -> void* {
+  return Own(Trigger(
+      static_cast<Observable*>(observable), Read<PackedArray>(edge),
+      Read<PackedArray>(lsb_bit_offset), Read<PackedArray>(bit_width)));
+}
+
+// The generated frame the process suspends is not a frame the engine ever sees
+// -- it resumes the runtime-owned coroutine that drives it -- so the process to
+// wake is the running one, read from the runtime.
+void lyra_rt_wait_any(void* services, LyraSpan triggers) {
+  auto& svc = *static_cast<RuntimeServices*>(services);
+  const std::span<Trigger* const> handles(
+      static_cast<Trigger* const*>(triggers.data), triggers.count);
+  std::vector<Trigger> collected;
+  collected.reserve(triggers.count);
+  for (const Trigger* handle : handles) {
+    collected.push_back(*handle);
+  }
+  SubscribeValueChange(svc.CurrentProcess().TopHandle(), collected);
 }
 
 void lyra_rt_register_initial(void* self, void* coroutine) {

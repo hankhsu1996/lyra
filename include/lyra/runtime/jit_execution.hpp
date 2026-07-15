@@ -44,6 +44,22 @@ void lyra_rt_register_final(void* self, void* coroutine);
 void lyra_rt_delay(
     void* services, const void* ticks, const void* precision_power);
 
+// Builds one leaf of a value-change wait: the observable cell it watches, the
+// bit projection of that cell's packed encoding it watches as a
+// `(lsb_bit_offset, bit_width)` pair, and the edge polarity it watches for (LRM
+// 9.4.2). The scalars cross as opaque packed values, like every scalar. The
+// trigger is a transient runtime value owned by the current call scope.
+auto lyra_rt_make_trigger(
+    void* observable, const void* edge, const void* lsb_bit_offset,
+    const void* bit_width) -> void*;
+
+// Registers the running process to wake when any leaf of `triggers` changes as
+// its edge demands, the registration a value-change wait's suspend edge is
+// preceded by (LRM 9.4.2 / 9.4.2.2 / 9.4.3). An empty span means "never wake
+// up". The wakeup source is the running process itself, read from the runtime;
+// no token crosses the boundary.
+void lyra_rt_wait_any(void* services, LyraSpan triggers);
+
 // Builds a scope's structural identity from its base label and per-dimension
 // indices (a span of 32-bit index values, empty for a scalar). The segment is
 // a transient runtime value owned by the current call scope.

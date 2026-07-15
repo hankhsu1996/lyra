@@ -128,6 +128,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_final", &lyra_rt_register_final);
   add("lyra_rt_delay", &lyra_rt_delay);
+  add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
+  add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
   add("lyra_rt_make_unit", &lyra_rt_make_unit);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);

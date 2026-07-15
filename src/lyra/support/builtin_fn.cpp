@@ -290,6 +290,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "value_plusargs";
     case BuiltinFn::kDelay:
       return "delay";
+    case BuiltinFn::kWaitAny:
+      return "wait_any";
     case BuiltinFn::kSimTime:
       return "sim_time";
     case BuiltinFn::kSTime:

@@ -351,6 +351,12 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // the value-layer format step for `%t` directives. Threaded into `Format` as
   // an explicit operand from the engine's current state.
   kTimeFormat,
+  // LRM 9.4.2 / 9.4.2.2 / 9.4.3 one leaf of a value-change wait:
+  // `lyra::runtime::Trigger`, pairing the observable cell with the observed bit
+  // projection of its packed encoding and the edge polarity it is subscribed
+  // under. A wait registers a set of these, and the runtime wakes the process
+  // when any leaf's projection changes as its edge demands.
+  kTrigger,
   // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
   // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
   // child carries from construction (base name plus per-dimension indices).
