@@ -116,14 +116,25 @@ struct RangeSelectExpr {
   RangeBounds bounds;
 };
 
-// Struct / union field access (LRM 7.2 / 7.3). `field_index` identifies the
-// member by its declaration-order position in the base expression's aggregate
-// type. How a consumer resolves that index depends on the base type: a packed
-// aggregate reads the field's offset / width from its field table (a bit
-// slice), while an unpacked aggregate selects the member's independent storage
-// by index.
+// Struct or union member access (LRM 7.2 / 7.3): `field_index` is the
+// declaration-order position of the member within the aggregate arena the
+// receiver's type names. The arena is uniquely determined by the receiver's
+// type -- struct and union have no inheritance -- so no owner qualification
+// is carried on the access.
 struct MemberAccessExpr {
   ExprId base_value;
+  std::uint32_t field_index;
+};
+
+// Class property access (LRM 8.4 / 8.13): `owner` names the class that
+// declares the property, and `field_index` is the slot within that class's
+// property arena. Under inheritance, the receiver's runtime class may not be
+// the declaring class -- the receiver reaches the object through a handle to
+// a class that extends `owner` -- so identity is owner-qualified rather than
+// derived from the receiver's type.
+struct ClassPropertyAccessExpr {
+  ExprId base_value;
+  ClassId owner;
   std::uint32_t field_index;
 };
 
@@ -200,9 +211,9 @@ struct AssociativeAssignmentPatternExpr {
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr,
-    MemberAccessExpr, ConcatExpr, ReplicationExpr, AssignmentPatternExpr,
-    AssignmentPatternReplicationExpr, DynamicArrayNewExpr, ClassNewExpr,
-    AssociativeAssignmentPatternExpr>;
+    MemberAccessExpr, ClassPropertyAccessExpr, ConcatExpr, ReplicationExpr,
+    AssignmentPatternExpr, AssignmentPatternReplicationExpr,
+    DynamicArrayNewExpr, ClassNewExpr, AssociativeAssignmentPatternExpr>;
 
 struct Expr {
   TypeId type;

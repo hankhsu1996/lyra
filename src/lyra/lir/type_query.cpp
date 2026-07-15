@@ -31,10 +31,7 @@ auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool {
           [](const DriverType&) { return true; },
           [](const ObjectType&) { return true; },
           [](const ExternalUnitObjectType&) { return true; },
-          [](const ScopeType&) { return true; },
-          [](const InstanceType&) { return true; },
-          [](const GenScopeType&) { return true; },
-          [](const ProceduralStorageScopeType&) { return true; },
+          [](const ExternalClassType&) { return true; },
           [](const auto&) { return false; }},
       types.Get(type).data);
 }

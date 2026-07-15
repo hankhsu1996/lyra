@@ -1,0 +1,12 @@
+id: cpp.class_inherit_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    derived_a: 11
+    derived_b: 22

@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 
 namespace lyra::mir {
@@ -22,8 +23,9 @@ class CallableBindings;
 // `ScopeView` resolves the same (hops, var) reference by climbing its own
 // parent link, so both reach the same `mir::FieldDecl`.
 struct ScopeChainNode {
-  const mir::Class* cls;
-  const ScopeChainNode* parent;
+  const mir::Class* cls = nullptr;
+  mir::ClassId cls_id{};
+  const ScopeChainNode* parent = nullptr;
 };
 
 // Per-recursion traversal context for HIR-to-MIR. Carried by value through
@@ -40,6 +42,11 @@ struct WalkFrame {
   // The current class write target. Set when a class-constructing task builds
   // its class and entered via `WithClass`. Null outside class handlers.
   mir::Class* current_class = nullptr;
+
+  // Registry identity of `current_class`. Set together with `current_class` by
+  // `WithClass`; carried alongside so an owner-qualified field or method
+  // target names the enclosing class arena without a reverse lookup.
+  mir::ClassId current_class_id{};
 
   // Outer classes reached by climbing `parent` links, in the same order as the
   // lowerer `parent_` chain. Populated by `WithClass` when the construction
@@ -72,11 +79,14 @@ struct WalkFrame {
   // into the outer chain through `chain_node`, which the caller stack-allocates
   // so its lifetime spans the descent.
   [[nodiscard]] auto WithClass(
-      mir::Class* cls, ScopeChainNode& chain_node) const -> WalkFrame {
+      mir::Class* cls, mir::ClassId cls_id, ScopeChainNode& chain_node) const
+      -> WalkFrame {
     chain_node.cls = current_class;
+    chain_node.cls_id = current_class_id;
     chain_node.parent = outer_classes;
     WalkFrame next = *this;
     next.current_class = cls;
+    next.current_class_id = cls_id;
     next.outer_classes = current_class != nullptr ? &chain_node : outer_classes;
     return next;
   }
@@ -101,6 +111,28 @@ struct WalkFrame {
           "WalkFrame::EnclosingClassAtHops: hops exceed chain depth");
     }
     return *node->cls;
+  }
+
+  // Registry id of the class at `hops`. Used to owner-qualify a field or
+  // method target that names a member on that class's arena.
+  [[nodiscard]] auto EnclosingClassIdAtHops(mir::EnclosingHops hops) const
+      -> mir::ClassId {
+    if (hops.value == 0) {
+      if (current_class == nullptr) {
+        throw InternalError(
+            "WalkFrame::EnclosingClassIdAtHops: no current class");
+      }
+      return current_class_id;
+    }
+    const ScopeChainNode* node = outer_classes;
+    for (std::uint32_t step = 1; step < hops.value && node != nullptr; ++step) {
+      node = node->parent;
+    }
+    if (node == nullptr || node->cls == nullptr) {
+      throw InternalError(
+          "WalkFrame::EnclosingClassIdAtHops: hops exceed chain depth");
+    }
+    return node->cls_id;
   }
 
   [[nodiscard]] auto WithBlock(mir::Block* block) const -> WalkFrame {

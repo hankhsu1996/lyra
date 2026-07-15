@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -25,17 +26,22 @@ struct ClassField {
 
 // A SystemVerilog class declaration (LRM 8). The class's properties and its
 // instance methods; references to a class name resolve to this declaration's
-// id. A class is reached through a handle, so it carries no structural position
-// of its own. Each method (LRM 8.6) is a subroutine reached through the
-// instance, reading the receiver and the class's properties through it.
+// id. A class is reached through a handle, so it carries no structural
+// position of its own. Each method (LRM 8.6) is a subroutine reached through
+// the instance, reading the receiver and the class's properties through it.
+//
+// `base` names the class this one extends (LRM 8.13), absent when the class
+// extends no other. Only own members appear in `fields` / `methods`;
+// inherited members are reached through the base's registry entry.
 //
 // `constructor` is the class's `new` (LRM 8.7). Every class has one: the
 // user-written `function new` when the source declares it, otherwise a
 // synthesized empty constructor, matching the implicit `new` the LRM provides
-// when the source omits one. Property initializers are evaluated as part of its
-// execution, so their expressions live in its body's expression arena.
+// when the source omits one. Property initializers are evaluated as part of
+// its execution, so their expressions live in its body's expression arena.
 struct ClassDecl {
   std::string name;
+  std::optional<ClassId> base;
   std::vector<ClassField> fields;
   std::vector<SubroutineDecl> methods;
   SubroutineDecl constructor;

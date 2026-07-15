@@ -5,7 +5,6 @@
 #include <utility>
 #include <variant>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -108,28 +107,15 @@ auto UnitLowerer::MachineBoolType() -> lir::TypeId {
 
 auto UnitLowerer::LowerBase(const mir::ClassRef& base) -> lir::Base {
   return std::visit(
-      Overloaded{[&](const mir::RuntimeLibraryClassRef& r) -> lir::Base {
-        const mir::Type& base_type = mir_->types.Get(r.base_type);
-        return std::visit(
-            Overloaded{
-                [](const mir::InstanceType&) -> lir::Base {
-                  return lir::Base{lir::RuntimeLibraryBase{
-                      .kind = lir::RuntimeBaseKind::kInstance}};
-                },
-                [](const mir::GenScopeType&) -> lir::Base {
-                  return lir::Base{lir::RuntimeLibraryBase{
-                      .kind = lir::RuntimeBaseKind::kGenScope}};
-                },
-                [](const mir::ScopeType&) -> lir::Base {
-                  return lir::Base{lir::RuntimeLibraryBase{
-                      .kind = lir::RuntimeBaseKind::kScope}};
-                },
-                [](const auto&) -> lir::Base {
-                  throw InternalError(
-                      "mir_to_lir: runtime base is not a tree-node base type");
-                }},
-            base_type.data);
-      }},
+      Overloaded{
+          [](const mir::IntraUnitClassRef& i) -> lir::Base {
+            return lir::Base{
+                lir::IntraUnitBase{.class_id = lir::ClassId{i.class_id.value}}};
+          },
+          [](const mir::ExternalClassRef& e) -> lir::Base {
+            return lir::Base{
+                lir::ExternalBase{.qualified_name = e.qualified_name}};
+          }},
       base);
 }
 

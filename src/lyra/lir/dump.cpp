@@ -154,17 +154,13 @@ class LirDumper {
 
   [[nodiscard]] static auto FormatBase(const Base& base) -> std::string {
     return std::visit(
-        Overloaded{[](const RuntimeLibraryBase& r) -> std::string {
-          switch (r.kind) {
-            case RuntimeBaseKind::kInstance:
-              return "Instance";
-            case RuntimeBaseKind::kGenScope:
-              return "GenScope";
-            case RuntimeBaseKind::kScope:
-              return "Scope";
-          }
-          return "?";
-        }},
+        Overloaded{
+            [](const IntraUnitBase& i) -> std::string {
+              return std::format("Class[{}]", i.class_id.value);
+            },
+            [](const ExternalBase& e) -> std::string {
+              return std::format("External(\"{}\")", e.qualified_name);
+            }},
         base);
   }
 

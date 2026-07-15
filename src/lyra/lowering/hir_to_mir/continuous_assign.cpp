@@ -110,7 +110,11 @@ auto AttachDriver(
   const mir::ExprId resolve_self =
       resolve_block.exprs.Add(MakeSelfRefExpr(resolve_frame, self_ptr_type));
   const mir::ExprId driver_lhs = resolve_block.exprs.Add(
-      mir::MakeFieldAccessExpr(resolve_self, driver_field, driver_type));
+      mir::MakeFieldAccessExpr(
+          resolve_self,
+          mir::FieldTarget{
+              .owner = resolve_frame.current_class_id, .slot = driver_field},
+          driver_type));
   const mir::ExprId attach_assign = resolve_block.exprs.Add(
       mir::Expr{
           .data = mir::AssignExpr{.target = driver_lhs, .value = attach},
@@ -128,7 +132,11 @@ auto AttachDriver(
   const mir::ExprId seed_services = init_block.exprs.Add(
       mir::MakeServicesCallExpr(init_self(), unit.builtins.services));
   const mir::ExprId seed_driver = init_block.exprs.Add(
-      mir::MakeFieldAccessExpr(init_self(), driver_field, driver_type));
+      mir::MakeFieldAccessExpr(
+          init_self(),
+          mir::FieldTarget{
+              .owner = init_frame.current_class_id, .slot = driver_field},
+          driver_type));
   const mir::ExprId seed_update = init_block.exprs.Add(
       mir::MakeNetDriverUpdateCallExpr(
           seed_driver, seed_services, seed_value, unit.builtins.void_type));
@@ -224,7 +232,11 @@ auto LowerContinuousAssign(
         body_block.exprs.Add(MakeSelfRefExpr(body_frame, self_ptr_type));
     const mir::ExprId driver_access = body_block.exprs.Add(
         mir::MakeFieldAccessExpr(
-            driver_self, attached->driver_field, attached->driver_type));
+            driver_self,
+            mir::FieldTarget{
+                .owner = body_frame.current_class_id,
+                .slot = attached->driver_field},
+            attached->driver_type));
     effect_id = body_block.exprs.Add(
         mir::MakeNetDriverUpdateCallExpr(
             driver_access, body_services_id, rhs_id, unit.builtins.void_type));

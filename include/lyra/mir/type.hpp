@@ -33,10 +33,7 @@ enum class TypeKind {
   kVoid,
   kObject,
   kExternalUnitObject,
-  kScope,
-  kInstance,
-  kGenScope,
-  kProceduralStorageScope,
+  kExternalClass,
   kServices,
   kFiles,
   kDiagnostic,
@@ -270,37 +267,15 @@ struct ExternalUnitObjectType {
   auto operator==(const ExternalUnitObjectType&) const -> bool = default;
 };
 
-// The runtime object-tree base class `lyra::runtime::Scope`, type-erased. A
-// by-name navigation handle (a `GetChild` result) is a
-// `PointerType{ScopeType, kBorrowed}`; the concrete child class is unknown
-// across the unit boundary, so only the runtime base is named.
-struct ScopeType {
-  auto operator==(const ScopeType&) const -> bool = default;
-};
+// A class declared outside this compilation unit, named by its final
+// target-language qualified name (e.g. `lyra::runtime::Scope`). MIR does not
+// know the class's members; the backend renders the qualified name through
+// its type-mapping dispatch, and inheritance and construction refer to it
+// through the same identity a class value of this type would.
+struct ExternalClassType {
+  std::string qualified_name;
 
-// The runtime object-tree base class `lyra::runtime::Instance`, the concrete
-// base a module / interface / program instance scope extends. Distinct from
-// the type-erased `ScopeType`: this is the named base in an object's lineage,
-// never a navigation handle. An object whose base lineage is this one is a
-// runtime tree node and exposes its def-name for upward navigation (LRM 23.8).
-struct InstanceType {
-  auto operator==(const InstanceType&) const -> bool = default;
-};
-
-// The runtime object-tree base class `lyra::runtime::GenScope`, the concrete
-// base a named generate scope extends. A tree node like InstanceType, but a
-// generate scope is matched by its block name, not a def-name.
-struct GenScopeType {
-  auto operator==(const GenScopeType&) const -> bool = default;
-};
-
-// The runtime object-tree base class `lyra::runtime::ProceduralStorageScope`,
-// the concrete base a named procedural block (LRM 9.3.5 / 23.9) extends when
-// its subtree holds hierarchically-reachable static storage. A tree node
-// matched by block name like GenScopeType, but a distinct kind so backend
-// dispatch and diagnostics see the source kind directly.
-struct ProceduralStorageScopeType {
-  auto operator==(const ProceduralStorageScopeType&) const -> bool = default;
+  auto operator==(const ExternalClassType&) const -> bool = default;
 };
 
 // The engine facade `lyra::runtime::RuntimeServices`. A callable body reaches
@@ -555,10 +530,10 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
     MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, InstanceType, GenScopeType, ProceduralStorageScopeType,
-    ServicesType, FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType,
-    RefType, PointerType, ManagedRefType, VectorType, TupleType, UnionType,
-    ObservableType, ResolvedType, DriverType, StructType, ClosureType>;
+    ExternalClassType, ServicesType, FilesType, DiagnosticType,
+    RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
+    VectorType, TupleType, UnionType, ObservableType, ResolvedType, DriverType,
+    StructType, ClosureType>;
 
 struct Type {
   TypeData data;

@@ -59,7 +59,7 @@ class UnitLowerer {
   auto RecordUnsupportedType(std::string_view what) -> lir::TypeData;
   auto LowerClass(lir::ClassId class_id, const mir::Class& cls)
       -> diag::Result<lir::Class>;
-  auto LowerBase(const mir::ClassRef& base) -> lir::Base;
+  static auto LowerBase(const mir::ClassRef& base) -> lir::Base;
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;

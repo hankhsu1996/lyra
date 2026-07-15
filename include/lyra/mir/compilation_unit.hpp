@@ -111,7 +111,10 @@ struct CompilationUnit {
                     .form = PackedArrayForm::kTime}),
             .services = types.Intern(ServicesType{}),
             .scope_ptr = types.PointerTo(
-                types.Intern(ScopeType{}), PointerOwnership::kBorrowed),
+                types.Intern(
+                    ExternalClassType{
+                        .qualified_name = "lyra::runtime::Scope"}),
+                PointerOwnership::kBorrowed),
             .files = types.Intern(FilesType{}),
             .diagnostic = types.Intern(DiagnosticType{}),
             .channel_cancellation = types.Intern(

@@ -4,13 +4,14 @@
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 // Lowers one HIR class declaration to its MIR object. A class is the same
 // generic nominal object as a module or generate scope, differing in that it
-// extends no runtime base (it is not a tree node), is reached through a managed
+// does not occupy the runtime object tree, is reached through a managed
 // reference, and is built by `new`. Its properties become plain value-typed
 // members -- not observable cells -- and their construction-time defaults are
 // the body of its constructor. Its instance methods (LRM 8.6) are lowered as
@@ -24,9 +25,12 @@ namespace lyra::lowering::hir_to_mir {
 class ClassDeclLowerer {
  public:
   ClassDeclLowerer(
-      ModuleLowerer& module, mir::TypeId object_type,
+      ModuleLowerer& module, mir::ClassId class_id, mir::TypeId object_type,
       const hir::ClassDecl& hir_class)
-      : module_(&module), object_type_(object_type), hir_class_(&hir_class) {
+      : module_(&module),
+        class_id_(class_id),
+        object_type_(object_type),
+        hir_class_(&hir_class) {
   }
 
   // Builds and returns the class object. The caller, which owns the class
@@ -36,6 +40,7 @@ class ClassDeclLowerer {
 
  private:
   ModuleLowerer* module_;
+  mir::ClassId class_id_;
   mir::TypeId object_type_;
   const hir::ClassDecl* hir_class_;
 };

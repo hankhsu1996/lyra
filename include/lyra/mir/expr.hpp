@@ -139,16 +139,36 @@ struct StaticCallableTarget {
   auto operator==(const StaticCallableTarget&) const -> bool = default;
 };
 
+// Identity of a concrete instance method: the class whose method arena
+// declares (or implements) the method, and the slot within that arena. Owner
+// is the declaring class, not the receiver's class; the two coincide when the
+// receiver's class declares the method itself and diverge when the method is
+// inherited from a base. A backend reads the slot's name and signature from
+// this stated owner rather than deriving them from the receiver's type.
+//
+// This target is a concrete direct method identity, and a virtual call site
+// does not name a `MethodTarget`; virtual dispatch is a separate reference
+// form -- a logical dispatch slot -- that a receiver and slot together
+// identify.
+struct MethodTarget {
+  ClassId owner;
+  MethodId slot;
+
+  auto operator==(const MethodTarget&) const -> bool = default;
+};
+
 // The target of a `Direct` call -- the symbol identity. Three identity
-// spaces: built-in runtime entries (closed-namespace `BuiltinFn`),
-// user-declared class methods (per-class `MethodId` arena, whose owner the
-// receiver names), and class-level static callables (`StaticCallableTarget`,
-// which names its own owner -- a DPI-C import's external symbol, a
-// receiver-less associated callable). These collapse into one `CallableId`
-// once the method and static-callable declarations share one
-// callable-declaration shape; the owner survives that collapse.
+// spaces: user-declared class methods (`MethodTarget`, an
+// owner-qualified method identity), built-in runtime entries
+// (closed-namespace `BuiltinFn`), and class-level static callables
+// (`StaticCallableTarget`, which names its own owner -- a DPI-C import's
+// external symbol, a receiver-less associated callable). All three are
+// owner-qualified references; none is recovered from the receiver's runtime
+// type. These collapse into one `CallableId` once the method and
+// static-callable declarations share one callable-declaration shape; the
+// owner survives that collapse.
 using DirectTarget =
-    std::variant<MethodId, support::BuiltinFn, StaticCallableTarget>;
+    std::variant<MethodTarget, support::BuiltinFn, StaticCallableTarget>;
 
 // A direct call to a named symbol. The single shape for every direct
 // invocation -- user method, built-in instance method, type-qualified
@@ -250,14 +270,44 @@ struct IntCastExpr {
   ExprId operand;
 };
 
+// Identity of a class field at an access site: the class whose field arena
+// declares the field, and the slot within that arena. Owner is the declaring
+// class, not the receiver's class; the two coincide when the receiver's class
+// declares the field itself and diverge when the field is inherited from a
+// base. A backend reads the field name and type from this stated owner rather
+// than deriving them from the receiver's type.
+struct FieldTarget {
+  ClassId owner;
+  FieldId slot;
+
+  auto operator==(const FieldTarget&) const -> bool = default;
+};
+
+// Which arena's field a `FieldAccessExpr` reaches. Two shapes because the
+// class case is the only one where "which arena" is a semantic decision:
+//
+// - `FieldTarget` (owner-qualified) is used when the receiver is a class
+//   instance. The receiver's runtime class type may not be the field's
+//   declaring class (inheritance), so the target states both.
+//
+// - Bare `FieldId` is used when the receiver is a struct value or a closure.
+//   These aggregates carry their arena identity in their own type payload
+//   (`StructType.struct_id`, `ClosureType.closure_id`) and never participate
+//   in an inheritance chain, so the arena is uniquely determined by the
+//   receiver's type; stating it again would restate what the structural
+//   context already fixes.
+using FieldRef = std::variant<FieldTarget, FieldId>;
+
 // Field access through an explicit receiver expression. `receiver` evaluates to
 // a field-bearing value reached by pointer -- a class instance, a closure, or a
 // promoted-scope handle (typically `LocalRef(self)` or a shared handle);
-// `field` names which field of the receiver's aggregate to reach. The receiver
-// is explicit -- a backend never asks "what is the current receiver?".
+// `field` names which arena position to reach. The receiver is explicit -- a
+// backend never asks "what is the current receiver?" -- and for a class
+// receiver the field is owner-qualified -- a backend never derives which class
+// arena to search from the receiver's type.
 struct FieldAccessExpr {
   ExprId receiver;
-  FieldId field;
+  FieldRef field;
 };
 
 // LRM 11.4.12 concatenation of packed or string operands, joined directly into
@@ -400,7 +450,7 @@ struct Expr {
 }
 
 [[nodiscard]] inline auto MakeFieldAccessExpr(
-    ExprId receiver, FieldId field, TypeId type) -> Expr {
+    ExprId receiver, FieldRef field, TypeId type) -> Expr {
   return Expr{
       .data = FieldAccessExpr{.receiver = receiver, .field = field},
       .type = type};

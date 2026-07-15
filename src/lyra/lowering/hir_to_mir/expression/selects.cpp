@@ -391,7 +391,8 @@ auto LowerHirRangeSelectExpr(
 // LRM 7.2.1: packed struct / union field access "can be selected as if it
 // were a packed array". HIR -> MIR resolves the field-table index to a
 // concrete `(offset, count)` slice -- the same MIR shape `s[hi:lo]`
-// produces.
+// produces. LRM 7.2 / 7.3: an unpacked struct / union lowers to the generic
+// product / sum-arm selection primitive; a packed one to a bit slice.
 template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
@@ -400,19 +401,6 @@ auto LowerHirMemberAccessExpr(
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
-  // LRM 8.4: a class property access reaches the object through the handle. The
-  // handle is read (the receiver), and the property is named by its class-local
-  // member id, which is its declaration-order field index.
-  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
-      hir::TypeKind::kClassHandle) {
-    auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
-    if (!base_or) return std::unexpected(std::move(base_or.error()));
-    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-    return mir::MakeFieldAccessExpr(
-        base_id, mir::FieldId{sel.field_index}, result_type);
-  }
-  // LRM 7.2: an unpacked struct lowers to a generic product (`TupleType`);
-  // member access is a positional projection by declaration-order index.
   if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedStruct) {
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
@@ -422,9 +410,6 @@ auto LowerHirMemberAccessExpr(
         .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
         .type = result_type};
   }
-  // LRM 7.3: an unpacked union member read projects the active member by index
-  // out of the overlapping-storage value (`UnionGetExpr`); reading an
-  // inactive member is undefined and the backend returns that member's default.
   if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedUnion) {
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
@@ -446,6 +431,29 @@ auto LowerHirMemberAccessExpr(
   return LowerMemberAccessInner(
       module, block, fields[sel.field_index], base_id, result_type,
       AccessSide::kRead);
+}
+
+// LRM 8.4: a class property read reaches the object through the handle.
+// The handle is read (the receiver), and the property is named
+// owner-qualified -- the class arena that declares the property is stated on
+// the HIR node, so an inherited property (LRM 8.13) lands on the base
+// class's slot, not on the receiver's runtime-class slot.
+template <ExprLowerer Lowerer>
+auto LowerHirClassPropertyAccessExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto& module = lowerer.Module();
+  auto& block = *frame.current_block;
+  const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
+  auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+  return mir::MakeFieldAccessExpr(
+      base_id,
+      mir::FieldTarget{
+          .owner = module.TranslateClass(sel.owner),
+          .slot = mir::FieldId{sel.field_index}},
+      result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -514,17 +522,6 @@ auto LowerHirMemberAccessExprLhs(
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
-  // LRM 8.4: a class property write reaches the object through the handle. The
-  // handle is read to reach the shared object, and the property place is the
-  // member access through it; the write itself targets the object's storage.
-  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
-      hir::TypeKind::kClassHandle) {
-    auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
-    if (!base_or) return std::unexpected(std::move(base_or.error()));
-    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-    return mir::MakeFieldAccessExpr(
-        base_id, mir::FieldId{sel.field_index}, result_type);
-  }
   // LRM 7.2: an unpacked-struct member write is a positional projection by
   // index over the base place. The observable root's write routes through the
   // cell's mutate path later, so the place is just the projection here.
@@ -566,6 +563,29 @@ auto LowerHirMemberAccessExprLhs(
       AccessSide::kLhs);
 }
 
+// LRM 8.4: a class property write reaches the object through the handle.
+// The place is the same owner-qualified `FieldAccessExpr` the read produces,
+// so the write and read share one path (a class field is a reference-storage
+// receiver, and the mutate flow is the usual observable-cell path when the
+// property is itself an observable cell).
+template <ExprLowerer Lowerer>
+auto LowerHirClassPropertyAccessExprLhs(
+    Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto& module = lowerer.Module();
+  auto& block = *frame.current_block;
+  const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
+  auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+  return mir::MakeFieldAccessExpr(
+      base_id,
+      mir::FieldTarget{
+          .owner = module.TranslateClass(sel.owner),
+          .slot = mir::FieldId{sel.field_index}},
+      result_type);
+}
+
 // One concrete instantiation per pass class. The handler templates are defined
 // in this file rather than the header so the file-local helpers stay private,
 // so the dispatchers in process_lowerer.cpp / structural_scope_lowerer.cpp link
@@ -588,6 +608,13 @@ template auto LowerHirMemberAccessExpr(
 template auto LowerHirMemberAccessExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::MemberAccessExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirClassPropertyAccessExpr(
+    ProcessLowerer&, WalkFrame, const hir::ClassPropertyAccessExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirClassPropertyAccessExpr(
+    const StructuralScopeLowerer&, WalkFrame,
+    const hir::ClassPropertyAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirElementSelectExprLhs(
     ProcessLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
@@ -606,5 +633,12 @@ template auto LowerHirMemberAccessExprLhs(
 template auto LowerHirMemberAccessExprLhs(
     const StructuralScopeLowerer&, WalkFrame, const hir::MemberAccessExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirClassPropertyAccessExprLhs(
+    ProcessLowerer&, WalkFrame, const hir::ClassPropertyAccessExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirClassPropertyAccessExprLhs(
+    const StructuralScopeLowerer&, WalkFrame,
+    const hir::ClassPropertyAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

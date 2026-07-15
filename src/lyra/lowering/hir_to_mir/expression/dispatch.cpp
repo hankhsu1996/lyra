@@ -99,6 +99,11 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::MemberAccessExpr& sel) -> diag::Result<mir::Expr> {
             return LowerHirMemberAccessExpr(lowerer, frame, sel, result_type);
           },
+          [&](const hir::ClassPropertyAccessExpr& sel)
+              -> diag::Result<mir::Expr> {
+            return LowerHirClassPropertyAccessExpr(
+                lowerer, frame, sel, result_type);
+          },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirConcatExpr(lowerer, frame, c, result_type);
           },
@@ -192,6 +197,11 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           },
           [&](const hir::MemberAccessExpr& sel) -> diag::Result<mir::Expr> {
             return LowerHirMemberAccessExprLhs(
+                lowerer, frame, sel, result_type);
+          },
+          [&](const hir::ClassPropertyAccessExpr& sel)
+              -> diag::Result<mir::Expr> {
+            return LowerHirClassPropertyAccessExprLhs(
                 lowerer, frame, sel, result_type);
           },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {

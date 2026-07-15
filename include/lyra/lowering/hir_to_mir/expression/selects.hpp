@@ -28,6 +28,10 @@ template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
+template <ExprLowerer Lowerer>
+auto LowerHirClassPropertyAccessExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 // LHS-context selector lowerings: like the read-context handlers but the
 // base lowers through `LowerLhsExpr`, leaving the chain cell-rooted with no
@@ -43,6 +47,10 @@ auto LowerHirRangeSelectExprLhs(
 template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+template <ExprLowerer Lowerer>
+auto LowerHirClassPropertyAccessExprLhs(
+    Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir
