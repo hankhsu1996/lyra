@@ -78,12 +78,7 @@ auto Type::Kind() const -> TypeKind {
           [](const ExternalUnitObjectType&) {
             return TypeKind::kExternalUnitObject;
           },
-          [](const ScopeType&) { return TypeKind::kScope; },
-          [](const InstanceType&) { return TypeKind::kInstance; },
-          [](const GenScopeType&) { return TypeKind::kGenScope; },
-          [](const ProceduralStorageScopeType&) {
-            return TypeKind::kProceduralStorageScope;
-          },
+          [](const ExternalClassType&) { return TypeKind::kExternalClass; },
           [](const ServicesType&) { return TypeKind::kServices; },
           [](const FilesType&) { return TypeKind::kFiles; },
           [](const DiagnosticType&) { return TypeKind::kDiagnostic; },

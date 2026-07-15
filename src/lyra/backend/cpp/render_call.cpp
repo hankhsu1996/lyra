@@ -6,6 +6,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -404,14 +405,16 @@ struct CalleeRender {
   std::size_t leading_arg_count;
 };
 
-// Renders a `Direct` callee whose target is a user-declared `MethodId`.
-// The callee's class is named by the `self` handle threaded as the first
-// argument: the method belongs to the receiver's class. The class
-// qualifies the emitted static call, and `self` stays an ordinary leading
-// argument (no skip). No qualification is allowed today -- cross-class
-// method calls are gated on SV class support.
+// Renders a `Direct` callee whose target is a user-declared method. The target
+// states its owning class explicitly, so the emitted qualification names the
+// declaring class arena without deriving it from the receiver's runtime type
+// (which may differ from the declaring class when the method is inherited).
+// The `self` receiver stays an ordinary leading argument. No qualification is
+// allowed today -- cross-class explicit qualification is gated on SV class
+// support.
 auto RenderDirectMethodCall(
-    const ScopeView& view, const mir::CallExpr& call, mir::MethodId method_id,
+    const ScopeView& view, const mir::CallExpr& call,
+    const mir::MethodTarget& method,
     const std::optional<mir::ScopeQualifier>& qualification) -> CalleeRender {
   if (qualification.has_value()) {
     throw InternalError(
@@ -420,15 +423,10 @@ auto RenderDirectMethodCall(
   if (call.arguments.empty()) {
     throw InternalError("Direct method call expects a receiver argument");
   }
-  const mir::Expr& receiver = view.Expr(call.arguments[0]);
-  const mir::TypeId object_type =
-      std::get<mir::PointerType>(view.Unit().types.Get(receiver.type).data)
-          .pointee;
-  const auto& cls = view.ClassByObjectType(object_type);
+  const auto& cls = view.Unit().GetClass(method.owner);
   return {
       .expr = std::format(
-          "{}::{}", RenderTypeAsCpp(view.Unit(), view.Class(), object_type),
-          cls.methods.Get(method_id).name),
+          "{}::{}", ToCppName(cls.name), cls.methods.Get(method.slot).name),
       .leading_arg_count = 0};
 }
 
@@ -493,7 +491,7 @@ auto RenderCalleePart(
           [&](const mir::Direct& d) -> CalleeRender {
             return std::visit(
                 Overloaded{
-                    [&](const mir::MethodId& m) {
+                    [&](const mir::MethodTarget& m) {
                       return RenderDirectMethodCall(
                           view, call, m, d.qualification);
                     },

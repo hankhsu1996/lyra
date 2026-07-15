@@ -163,17 +163,8 @@ auto RenderTypeAsCpp(
           [](const mir::ExternalUnitObjectType& e) -> std::string {
             return ToCppName(e.unit_name);
           },
-          [](const mir::ScopeType&) -> std::string {
-            return std::string{"lyra::runtime::Scope"};
-          },
-          [](const mir::InstanceType&) -> std::string {
-            return std::string{"lyra::runtime::Instance"};
-          },
-          [](const mir::GenScopeType&) -> std::string {
-            return std::string{"lyra::runtime::GenScope"};
-          },
-          [](const mir::ProceduralStorageScopeType&) -> std::string {
-            return std::string{"lyra::runtime::ProceduralStorageScope"};
+          [](const mir::ExternalClassType& e) -> std::string {
+            return e.qualified_name;
           },
           [](const mir::ServicesType&) -> std::string {
             return std::string{"lyra::runtime::RuntimeServices&"};
@@ -303,6 +294,19 @@ auto RenderTypeAsCpp(
           },
       },
       unit.types.Get(type_id).data);
+}
+
+auto RenderClassRefAsCpp(
+    const mir::CompilationUnit& unit, const mir::ClassRef& ref) -> std::string {
+  return std::visit(
+      Overloaded{
+          [&unit](const mir::IntraUnitClassRef& i) -> std::string {
+            return ToCppName(unit.GetClass(i.class_id).name);
+          },
+          [](const mir::ExternalClassRef& e) -> std::string {
+            return e.qualified_name;
+          }},
+      ref);
 }
 
 }  // namespace lyra::backend::cpp

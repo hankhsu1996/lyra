@@ -44,7 +44,8 @@ auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
   for (std::size_t i = 0; i < hir_->classes.size(); ++i) {
     const hir::ClassId hir_id{static_cast<std::uint32_t>(i)};
     ClassDeclLowerer class_lowerer(
-        *this, ClassObjectType(hir_id), hir_->classes.Get(hir_id));
+        *this, TranslateClass(hir_id), ClassObjectType(hir_id),
+        hir_->classes.Get(hir_id));
     auto class_or = class_lowerer.Run();
     if (!class_or) return std::unexpected(std::move(class_or.error()));
     unit_.DefineClass(TranslateClass(hir_id), *std::move(class_or));

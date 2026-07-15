@@ -16,7 +16,6 @@
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/mir/base_contract.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
@@ -137,8 +136,7 @@ auto RenderConstructor(
 
   std::vector<std::string> init_parts;
   if (s.constructor.base_init.has_value()) {
-    const std::string base_class = RenderTypeAsCpp(
-        unit, s, mir::ResolveBaseContract(unit, *s.base).renderable);
+    const std::string base_class = RenderClassRefAsCpp(unit, *s.base);
     std::vector<std::string> base_args_rendered;
     base_args_rendered.reserve(s.constructor.base_init->args.size());
     for (const mir::ExprId arg : s.constructor.base_init->args) {
@@ -243,15 +241,13 @@ auto RenderScopeAsClass(
           ? ScopeView::ForRoot(unit, s, mir::GetConstructorCode(s))
           : parent_struct_view->WithClass(s, mir::GetConstructorCode(s));
 
-  const std::optional<mir::BaseContract> base =
-      s.base.has_value()
-          ? std::optional{mir::ResolveBaseContract(unit, *s.base)}
-          : std::nullopt;
-
   std::string out;
-  out += Indent(indent) + "class " + ToCppName(s.name) + " final";
-  if (base.has_value()) {
-    out += " : public " + RenderTypeAsCpp(unit, s, base->renderable);
+  out += Indent(indent) + "class " + ToCppName(s.name);
+  if (s.is_final) {
+    out += " final";
+  }
+  if (s.base.has_value()) {
+    out += " : public " + RenderClassRefAsCpp(unit, *s.base);
   }
   out += " {\n";
   out += Indent(indent) + " public:\n";
@@ -466,16 +462,32 @@ auto RenderScopeHeaderFile(
   // every non-tree-node class before the scope tree that may reference it
   // through a handle or `new`. (The scope objects -- the module and its
   // generate scopes -- are runtime tree nodes emitted by the tree walk below.)
-  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    const mir::ClassId id{static_cast<std::uint32_t>(i)};
-    if (!unit.classes.IsDefined(id)) continue;
+  //
+  // C++ requires a base class to be a complete type at the point of a derived
+  // class's declaration, so an intra-unit base must render before its derived
+  // class. Registry order is set by the interning walk, which may reach the
+  // derived class first (via `Derived h;` before `class Base` is seen), so
+  // the emission order climbs each class's base chain first.
+  std::vector<bool> emitted(unit.classes.size(), false);
+  const auto emit_class = [&](this auto& self, mir::ClassId id) -> void {
+    if (emitted[id.value]) return;
+    if (!unit.classes.IsDefined(id)) return;
     const mir::Class& cls = unit.GetClass(id);
-    if (cls.base.has_value() &&
-        mir::ResolveBaseContract(unit, *cls.base).is_runtime_tree_node) {
-      continue;
+    if (cls.is_scope_tree_node) {
+      return;
     }
+    if (cls.base.has_value()) {
+      if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&*cls.base)) {
+        self(intra->class_id);
+      }
+    }
+    if (emitted[id.value]) return;
+    emitted[id.value] = true;
     out += RenderScopeAsClass(unit, cls, 0, nullptr);
     out += "\n";
+  };
+  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
+    emit_class(mir::ClassId{static_cast<std::uint32_t>(i)});
   }
 
   out += RenderScopeAsClass(unit, s, 0, nullptr);

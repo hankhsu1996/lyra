@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -13,16 +12,20 @@
 
 namespace lyra::lir {
 
-// Which runtime object-tree base a class extends. A tree node extends one of
-// these; the kind is read from the base's identity at MIR-to-LIR and carries no
-// reference back to MIR.
-enum class RuntimeBaseKind : std::uint8_t { kInstance, kGenScope, kScope };
-
-struct RuntimeLibraryBase {
-  RuntimeBaseKind kind;
+// A base class defined in this compilation unit, named by its LIR class
+// identity. The layout of the base is visible to the artifact this class
+// emits into.
+struct IntraUnitBase {
+  ClassId class_id;
 };
 
-using Base = std::variant<RuntimeLibraryBase>;
+// A base class declared outside this compilation unit, named by its target-
+// language qualified name.
+struct ExternalBase {
+  std::string qualified_name;
+};
+
+using Base = std::variant<IntraUnitBase, ExternalBase>;
 
 // A typed member of a class instance -- the storage a member place reaches by a
 // member projection. Its position in this list is its class-local member

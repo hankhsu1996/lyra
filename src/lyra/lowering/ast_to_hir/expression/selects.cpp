@@ -182,31 +182,43 @@ auto LowerMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  std::uint32_t field_index = 0;
-  if (sel.member.kind == slang::ast::SymbolKind::Field) {
-    field_index = sel.member.as<slang::ast::FieldSymbol>().fieldIndex;
-  } else if (sel.member.kind == slang::ast::SymbolKind::ClassProperty) {
-    field_index =
-        ClassPropertyIndex(sel.member.as<slang::ast::ClassPropertySymbol>());
-  } else {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "member access target is not a struct field or class property");
-  }
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id = frame.Exprs().Add(*std::move(base_or));
   auto type_id = lowerer.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return hir::Expr{
-      .type = *type_id,
-      .data =
-          hir::MemberAccessExpr{
-              .base_value = base_id,
-              .field_index = field_index,
-          },
-      .span = span,
-  };
+  if (sel.member.kind == slang::ast::SymbolKind::Field) {
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::MemberAccessExpr{
+                .base_value = base_id,
+                .field_index =
+                    sel.member.as<slang::ast::FieldSymbol>().fieldIndex,
+            },
+        .span = span,
+    };
+  }
+  if (sel.member.kind == slang::ast::SymbolKind::ClassProperty) {
+    const auto& prop = sel.member.as<slang::ast::ClassPropertySymbol>();
+    const auto& declaring_class =
+        prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
+    auto owner_id = lowerer.Module().InternClass(declaring_class, span);
+    if (!owner_id) return std::unexpected(std::move(owner_id.error()));
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::ClassPropertyAccessExpr{
+                .base_value = base_id,
+                .owner = *owner_id,
+                .field_index = ClassPropertyIndex(prop),
+            },
+        .span = span,
+    };
+  }
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      "member access target is not a struct field or class property");
 }
 
 // One concrete instantiation per pass class; the templates are defined here so

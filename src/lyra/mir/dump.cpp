@@ -11,7 +11,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/mir/base_contract.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
@@ -61,8 +60,7 @@ class MirDumper {
         continue;
       }
       const Class& cls = unit.GetClass(id);
-      if (cls.base.has_value() &&
-          ResolveBaseContract(unit, *cls.base).is_runtime_tree_node) {
+      if (cls.is_scope_tree_node) {
         continue;
       }
       DumpClass(id, cls);
@@ -160,6 +158,20 @@ class MirDumper {
     return out;
   }
 
+  [[nodiscard]] auto FormatClassRef(const ClassRef& ref) const -> std::string {
+    return std::visit(
+        Overloaded{
+            [this](const IntraUnitClassRef& i) -> std::string {
+              return std::format(
+                  "IntraUnit[#{}] \"{}\"", i.class_id.value,
+                  unit_->GetClass(i.class_id).name);
+            },
+            [](const ExternalClassRef& e) -> std::string {
+              return std::format("External(\"{}\")", e.qualified_name);
+            }},
+        ref);
+  }
+
   static auto FormatType(const Type& t) -> std::string {
     return std::visit(
         Overloaded{
@@ -234,11 +246,8 @@ class MirDumper {
               return std::format(
                   "ExternalUnitObject(unit=\"{}\")", e.unit_name);
             },
-            [](const ScopeType&) -> std::string { return "Scope"; },
-            [](const InstanceType&) -> std::string { return "Instance"; },
-            [](const GenScopeType&) -> std::string { return "GenScope"; },
-            [](const ProceduralStorageScopeType&) -> std::string {
-              return "ProceduralStorageScope";
+            [](const ExternalClassType& e) -> std::string {
+              return std::format("ExternalClass(\"{}\")", e.qualified_name);
             },
             [](const ServicesType&) -> std::string { return "Services"; },
             [](const FilesType&) -> std::string { return "Files"; },
@@ -479,10 +488,12 @@ class MirDumper {
       -> std::string {
     return std::visit(
         Overloaded{
-            [this](const MethodId& m) -> std::string {
-              const auto& owner = ResolveScopeAtHops(0);
-              const auto& method = owner.methods.Get(m);
-              return std::format("method={} \"{}\"", m.value, method.name);
+            [this](const MethodTarget& m) -> std::string {
+              const auto& owner = unit_->GetClass(m.owner);
+              const auto& method = owner.methods.Get(m.slot);
+              return std::format(
+                  R"(method=Class[{}].{} "{}")", m.owner.value, m.slot.value,
+                  method.name);
             },
             [](const support::BuiltinFn& id) -> std::string {
               return std::format("builtin=\"{}\"", support::BuiltinFnName(id));
@@ -659,8 +670,19 @@ class MirDumper {
             },
             [](const FieldAccessExpr& m) -> std::string {
               return std::format(
-                  "FieldAccessExpr receiver=Expr[{}] field=Field[{}]",
-                  m.receiver.value, m.field.value);
+                  "FieldAccessExpr receiver=Expr[{}] field={}",
+                  m.receiver.value,
+                  std::visit(
+                      Overloaded{
+                          [](const FieldTarget& t) -> std::string {
+                            return std::format(
+                                "Class[{}]::Field[{}]", t.owner.value,
+                                t.slot.value);
+                          },
+                          [](const FieldId& id) -> std::string {
+                            return std::format("Field[{}]", id.value);
+                          }},
+                      m.field));
             },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
@@ -757,8 +779,7 @@ class MirDumper {
     Indent();
 
     if (s.base.has_value()) {
-      const TypeId renderable = ResolveBaseContract(*unit_, *s.base).renderable;
-      Line(std::format("Base: {}", FormatType(unit_->types.Get(renderable))));
+      Line(std::format("Base: {}", FormatClassRef(*s.base)));
     }
 
     Line("Contained:");

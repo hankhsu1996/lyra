@@ -549,6 +549,10 @@ auto LowerMethodCall(
   auto& types = lowerer.Module().Unit().types;
   const mir::TypeId object_type =
       std::get<mir::ManagedRefType>(types.Get(receiver_or->type).data).pointee;
+  // The method's declaring class is stated on the HIR node; the receiver's
+  // runtime class is only used to type the self parameter (which pairs with
+  // the target's own arena entry through C++ member lookup).
+  const mir::ClassId owner_class = lowerer.Module().TranslateClass(m.class_id);
   const mir::ExprId handle_id = block.exprs.Add(*std::move(receiver_or));
   const mir::ExprId object_id = block.exprs.Add(
       mir::Expr{
@@ -572,7 +576,10 @@ auto LowerMethodCall(
           mir::CallExpr{
               .callee =
                   mir::Direct{
-                      .target = mir::MethodId{.value = m.method_index},
+                      .target =
+                          mir::MethodTarget{
+                              .owner = owner_class,
+                              .slot = mir::MethodId{.value = m.method_index}},
                       .qualification = std::nullopt},
               .arguments = std::move(args)},
       .type = result_type};

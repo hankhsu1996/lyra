@@ -157,8 +157,8 @@ void CollectPlacedLocals(const mir::Block& block, std::vector<bool>& placed) {
 }
 
 auto LowerCallTarget(
-    UnitLowerer& unit, const mir::Callee& callee, lir::ClassId current_class,
-    lir::TypeId result) -> diag::Result<lir::CallTarget> {
+    UnitLowerer& unit, const mir::Callee& callee, lir::TypeId result)
+    -> diag::Result<lir::CallTarget> {
   return std::visit(
       Overloaded{
           [&](const mir::Direct& d) -> diag::Result<lir::CallTarget> {
@@ -169,7 +169,7 @@ auto LowerCallTarget(
             }
             return std::visit(
                 Overloaded{
-                    [&](const mir::MethodId& m)
+                    [&](const mir::MethodTarget& m)
                         -> diag::Result<lir::CallTarget> {
                       if (qualifier.has_value()) {
                         return Unsupported(
@@ -178,7 +178,8 @@ auto LowerCallTarget(
                       }
                       return lir::CallTarget{lir::MethodTarget{
                           .method = lir::MethodRef{
-                              .class_id = current_class, .index = m.value}}};
+                              .class_id = lir::ClassId{m.owner.value},
+                              .index = m.slot.value}}};
                     },
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
@@ -667,12 +668,17 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             if (!receiver) {
               return std::unexpected(std::move(receiver.error()));
             }
+            const std::uint32_t slot = std::visit(
+                Overloaded{
+                    [](const mir::FieldTarget& t) { return t.slot.value; },
+                    [](const mir::FieldId& id) { return id.value; }},
+                field.field);
             return lir::Place{
                 .base = *std::move(receiver),
                 .chain = {
                     lir::Projection{lir::DerefProjection{}},
-                    lir::Projection{lir::MemberProjection{
-                        .member = lir::MemberId{field.field.value}}}}};
+                    lir::Projection{
+                        lir::MemberProjection{.member = lir::MemberId{slot}}}}};
           },
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             auto pointer = LowerExpr(block, deref.pointer);
@@ -731,7 +737,7 @@ auto FunctionLowerer::LowerCall(
           unit_->Mir().types.Get(type).data)) {
     const auto* direct = std::get_if<mir::Direct>(&call.callee);
     const auto* method = direct != nullptr
-                             ? std::get_if<mir::MethodId>(&direct->target)
+                             ? std::get_if<mir::MethodTarget>(&direct->target)
                              : nullptr;
     if (method == nullptr) {
       return Unsupported(
@@ -743,7 +749,8 @@ auto FunctionLowerer::LowerCall(
     ctor_args.emplace_back(
         lir::FuncRef{
             .method = lir::MethodRef{
-                .class_id = current_class_, .index = method->value}});
+                .class_id = lir::ClassId{method->owner.value},
+                .index = method->slot.value}});
     for (lir::Operand& arg : args) {
       ctor_args.emplace_back(std::move(arg));
     }
@@ -753,8 +760,7 @@ auto FunctionLowerer::LowerCall(
                          .args = std::move(ctor_args)});
   }
 
-  auto target =
-      LowerCallTarget(*unit_, call.callee, current_class_, result_type);
+  auto target = LowerCallTarget(*unit_, call.callee, result_type);
   if (!target) {
     return std::unexpected(std::move(target.error()));
   }

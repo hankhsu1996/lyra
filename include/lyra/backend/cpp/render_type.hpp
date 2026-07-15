@@ -27,6 +27,12 @@ namespace lyra::backend::cpp {
     const mir::CompilationUnit& unit, const mir::Class& owner_class,
     mir::TypeId type_id) -> std::string;
 
+// Renders a MIR class reference as the target C++ type expression naming
+// that class. Intra-unit refs go through the unit's class registry; external
+// refs render as their qualified name.
+[[nodiscard]] auto RenderClassRefAsCpp(
+    const mir::CompilationUnit& unit, const mir::ClassRef& ref) -> std::string;
+
 // Renders the `lyra::value::PackedType` descriptor for a packed array type, in
 // the form `lyra::value::PackedType{{{l0, r0}, ...}, <is_signed>,
 // <is_four_state>}`. This is the single shape carrier every PackedArray

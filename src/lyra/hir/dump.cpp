@@ -705,6 +705,12 @@ class HirDumper {
                   "MemberAccessExpr base=Expr[{}] field={}",
                   sel.base_value.value, sel.field_index);
             },
+            [](const ClassPropertyAccessExpr& sel) -> std::string {
+              return std::format(
+                  "ClassPropertyAccessExpr base=Expr[{}] owner=Class[{}] "
+                  "field={}",
+                  sel.base_value.value, sel.owner.value, sel.field_index);
+            },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
               for (std::size_t i = 0; i < c.operands.size(); ++i) {

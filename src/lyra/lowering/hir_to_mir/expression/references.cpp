@@ -253,7 +253,11 @@ auto LowerHirPrimaryExprProc(
             const mir::ExprId self_ref = frame.current_block->exprs.Add(
                 MakeSelfRefExpr(frame, self_type));
             return mir::MakeFieldAccessExpr(
-                self_ref, mir::FieldId{.value = r.field_index}, result_type);
+                self_ref,
+                mir::FieldTarget{
+                    .owner = frame.current_class_id,
+                    .slot = mir::FieldId{.value = r.field_index}},
+                result_type);
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
             return LowerReferenceRouteExpr(
