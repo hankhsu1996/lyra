@@ -135,20 +135,17 @@ auto ProcessLowerer::BuildStaticStorageAccess(
     // mir class.
     const mir::TypeId step_type =
         module_->GetClassShape(obj->class_id).fields.Get(step).type;
-    receiver =
-        block.exprs.Add(mir::MakeFieldAccessExpr(receiver, step, step_type));
+    receiver = block.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            receiver, mir::FieldTarget{.owner = obj->class_id, .slot = step},
+            step_type));
   }
-  // Resolve the owner class id from the placement's StorageOwner: the enclosing
-  // class is the one bound to `frame.current_class`; a procedural scope owner
-  // consults the materialization table.
+  // The enclosing class is the one bound on the frame; a procedural scope
+  // owner consults the materialization table.
   const mir::ClassId owner_class_id = std::visit(
       Overloaded{
           [&](EnclosingClass) -> mir::ClassId {
-            const mir::TypeId self_ty = frame.current_class->self_pointer_type;
-            const auto& pointee = unit.types.Get(
-                std::get<mir::PointerType>(unit.types.Get(self_ty).data)
-                    .pointee);
-            return std::get<mir::ObjectType>(pointee.data).class_id;
+            return frame.current_class_id;
           },
           [&](hir::ProceduralScopeId sid) -> mir::ClassId {
             return storage_plan_->ScopeMaterialization(sid).class_id;
@@ -156,7 +153,10 @@ auto ProcessLowerer::BuildStaticStorageAccess(
       placement.owner);
   const mir::TypeId field_type =
       module_->GetClassShape(owner_class_id).fields.Get(placement.field).type;
-  return mir::MakeFieldAccessExpr(receiver, placement.field, field_type);
+  return mir::MakeFieldAccessExpr(
+      receiver,
+      mir::FieldTarget{.owner = owner_class_id, .slot = placement.field},
+      field_type);
 }
 
 namespace {

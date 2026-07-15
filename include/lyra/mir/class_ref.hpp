@@ -1,28 +1,39 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <variant>
 
-#include "lyra/mir/type_id.hpp"
+#include "lyra/mir/class_id.hpp"
 
 namespace lyra::mir {
 
-// A reference to a runtime-library base class, named by the type that renders
-// it (`InstanceType` / `GenScopeType`). The type is the identity of the
-// imported library declaration: a consumer renders the base through the one
-// type-mapping dispatch and reads the base's contract from this type, never
-// from a closed classification it switches on.
-struct RuntimeLibraryClassRef {
-  TypeId base_type;
+// A reference to a class in this compilation unit's own class registry, named
+// by its canonical local identity. The referred class is defined in this unit;
+// a consumer reads its declaration through the registry. Used when an SV
+// class extends another class of the same unit (LRM 8.13).
+struct IntraUnitClassRef {
+  ClassId class_id;
 
-  auto operator==(const RuntimeLibraryClassRef&) const -> bool = default;
+  auto operator==(const IntraUnitClassRef&) const -> bool = default;
 };
 
-// A reference to the object type an object extends, identity following the
-// compilation-unit boundary. A consumer resolves it through one entry point;
-// the boundary split lives in the resolver, not in each consumer. Today the
-// only producer is a runtime-library base.
-using ClassRef = std::variant<RuntimeLibraryClassRef>;
+// A reference to a class declared outside this compilation unit, named by its
+// final target-language qualified name (e.g. `lyra::runtime::Scope`). One arm
+// covers every non-intra-unit class -- a runtime library base and a
+// cross-unit SV class both flow through it, distinguished only by which
+// qualified name the producer supplied. The backend renders it through the
+// same type-mapping dispatch that renders `ExternalClassType`.
+struct ExternalClassRef {
+  std::string qualified_name;
+
+  auto operator==(const ExternalClassRef&) const -> bool = default;
+};
+
+// A reference to the class an object extends. Either intra-unit (a class of
+// this unit's registry) or external (any other class, named by its qualified
+// target-language name). A consumer reads each arm directly.
+using ClassRef = std::variant<IntraUnitClassRef, ExternalClassRef>;
 
 // A lifecycle hook the runtime base declares and a derived object may override.
 // `kResolve` / `kInitialize` / `kActivate` are the post-construction phases the

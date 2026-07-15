@@ -73,17 +73,21 @@ struct ClassShape {
   base::Arena<FieldDecl, FieldId> fields;
   std::vector<ClassId> contained;
   std::vector<TypeAliasDecl> type_aliases;
+  // Whether the class occupies a node of the runtime object tree -- a module
+  // instance, a named generate scope, or a named procedural block. A backend
+  // that walks the tree for emission uses this to skip classes that emit
+  // standalone.
+  bool is_scope_tree_node = false;
+  // Whether the class is final (LRM 8.13). A structural class always is; an
+  // SV class carries the source-declared value.
+  bool is_final = false;
 };
 
 struct Class {
   std::string name;
-  // The base this object extends, or absent if it extends nothing. A consumer
-  // resolves it to the base contract -- the base type that renders the
-  // inheritance, whether the object is a runtime tree node, the constructor
-  // prefix it forwards. A runtime tree node realizes the registering
-  // constructor and the lifecycle overrides; an object that extends nothing is
-  // a plain struct.
   std::optional<ClassRef> base;
+  bool is_scope_tree_node = false;
+  bool is_final = false;
   TypeId self_pointer_type;
   // The class's resolved time unit and precision (LRM 3.14.2). The emitted
   // class exposes the precision so the engine can take the design-global

@@ -487,8 +487,30 @@ auto ModuleLowerer::InternClass(
 
   hir::ClassDecl decl;
   decl.name = std::string(cls.name);
+
+  // Base class (LRM 8.13). Slang exposes the base as a `ClassType*` on the
+  // derived class and flattens inherited members into the derived's member
+  // list; the base is registered here to reach it by identity, and each
+  // member iteration below filters by parent scope so only members declared
+  // on this class enter its arena.
+  if (const auto* base_type = cls.getBaseClass()) {
+    const auto& base_class =
+        base_type->getCanonicalType().as<slang::ast::ClassType>();
+    if (base_class.isInterface) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "interface class conformance is not yet supported");
+    }
+    auto base_id = InternClass(base_class, span);
+    if (!base_id) return std::unexpected(std::move(base_id.error()));
+    decl.base = *base_id;
+  }
+
   for (const auto& prop :
        cls.membersOfType<slang::ast::ClassPropertySymbol>()) {
+    if (prop.getParentScope() != &cls) {
+      continue;
+    }
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedClassFeature,
@@ -504,6 +526,9 @@ auto ModuleLowerer::InternClass(
   }
   std::optional<hir::SubroutineDecl> user_constructor;
   for (const auto& method : cls.membersOfType<slang::ast::SubroutineSymbol>()) {
+    if (method.getParentScope() != &cls) {
+      continue;
+    }
     // Every class carries compiler-generated built-ins (the randomize family,
     // LRM 18.6); they are provided by the runtime, not lowered from source.
     if (method.flags.has(slang::ast::MethodFlags::BuiltIn)) {

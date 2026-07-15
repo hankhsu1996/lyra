@@ -58,7 +58,9 @@ auto BuildStructuralFieldAccessExpr(
   const mir::TypeId field_type =
       frame.EnclosingClassAtHops(hops).fields.Get(var).type;
   const mir::ExprId receiver = BuildEnclosingScopeReceiver(frame, unit, hops);
-  return mir::MakeFieldAccessExpr(receiver, var, field_type);
+  const mir::ClassId owner = frame.EnclosingClassIdAtHops(hops);
+  return mir::MakeFieldAccessExpr(
+      receiver, mir::FieldTarget{.owner = owner, .slot = var}, field_type);
 }
 
 auto BuildReferenceArg(

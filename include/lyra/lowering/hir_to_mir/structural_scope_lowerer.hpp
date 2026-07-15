@@ -174,6 +174,23 @@ class StructuralScopeLowerer {
         hir::StructuralHops{.value = hops.value - 1});
   }
 
+  // Registry identity of the class returned by `EnclosingClassShapeAtHops`;
+  // carried alongside so an owner-qualified field or method target names the
+  // arena without a reverse lookup from the shape.
+  [[nodiscard]] auto EnclosingClassIdAtHops(hir::StructuralHops hops) const
+      -> mir::ClassId {
+    if (hops.value == 0) {
+      return class_id_;
+    }
+    if (parent_ == nullptr) {
+      throw InternalError(
+          "StructuralScopeLowerer::EnclosingClassIdAtHops: hops walk ran "
+          "past the root scope");
+    }
+    return parent_->EnclosingClassIdAtHops(
+        hir::StructuralHops{.value = hops.value - 1});
+  }
+
   void MapStructuralDataObject(
       hir::StructuralDataObjectId hir_id, mir::FieldId mir_id) {
     if (hir_id.value != structural_data_object_map_.size()) {
@@ -240,8 +257,10 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto TranslateStructuralSubroutine(
       hir::StructuralHops hops, hir::StructuralSubroutineId hir_id) const
       -> mir::Direct {
-    const mir::MethodId mir_id = LookupStructuralSubroutineAtHops(hops, hir_id);
-    return mir::Direct{.target = mir_id};
+    const StructuralSubroutineRef ref =
+        LookupStructuralSubroutineAtHops(hops, hir_id);
+    return mir::Direct{
+        .target = mir::MethodTarget{.owner = ref.owner, .slot = ref.method}};
   }
 
   // Records the parent's borrowed companion handle for one instance member, in
@@ -336,16 +355,26 @@ class StructuralScopeLowerer {
         hir::StructuralHops{hops.value - 1}, hir_id);
   }
 
+  // The owner-qualified identity of a structural subroutine reached by
+  // `hops` steps up the scope chain: the class that owns the subroutine's
+  // method arena and the slot within that arena.
+  struct StructuralSubroutineRef {
+    mir::ClassId owner;
+    mir::MethodId method;
+  };
+
   [[nodiscard]] auto LookupStructuralSubroutineAtHops(
       hir::StructuralHops hops, hir::StructuralSubroutineId hir_id) const
-      -> mir::MethodId {
+      -> StructuralSubroutineRef {
     if (hops.value == 0) {
       if (hir_id.value >= structural_subroutine_map_.size()) {
         throw InternalError(
             "StructuralScopeLowerer::TranslateStructuralSubroutine: "
             "unmapped HIR subroutine");
       }
-      return structural_subroutine_map_[hir_id.value];
+      return StructuralSubroutineRef{
+          .owner = class_id_,
+          .method = structural_subroutine_map_[hir_id.value]};
     }
     if (parent_ == nullptr) {
       throw InternalError(

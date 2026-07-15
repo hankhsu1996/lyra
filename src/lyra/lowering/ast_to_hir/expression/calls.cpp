@@ -456,8 +456,13 @@ auto LowerCallExpr(
     auto receiver_or = lowerer.LowerExpr(*this_class, frame);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const hir::ExprId receiver = frame.Exprs().Add(*std::move(receiver_or));
-    auto class_id = module.InternClass(
-        this_class->type->getCanonicalType().as<slang::ast::ClassType>(), span);
+    // The method's declaring class owns the method's arena position. An
+    // inherited method belongs to the base class arena, not the receiver's
+    // runtime class arena; using the receiver's type would misname the slot
+    // when the field is inherited.
+    const auto& declaring_class =
+        sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
+    auto class_id = module.InternClass(declaring_class, span);
     if (!class_id) return std::unexpected(std::move(class_id.error()));
     auto method_result_type = module.InternType(*call.type, span);
     if (!method_result_type) {

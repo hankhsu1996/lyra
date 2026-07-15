@@ -124,10 +124,10 @@ struct ExternalUnitObjectType {
   std::string unit_name;
 };
 
-struct ScopeType {};
-struct InstanceType {};
-struct GenScopeType {};
-struct ProceduralStorageScopeType {};
+struct ExternalClassType {
+  std::string qualified_name;
+};
+
 struct ServicesType {};
 struct FilesType {};
 struct DiagnosticType {};
@@ -188,10 +188,9 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
     MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, InstanceType, GenScopeType, ProceduralStorageScopeType,
-    ServicesType, FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType,
-    RefType, PointerType, ManagedRefType, VectorType, TupleType, UnionType,
-    ResolvedType, DriverType, ObservableType>;
+    ExternalClassType, ServicesType, FilesType, DiagnosticType,
+    RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
+    VectorType, TupleType, UnionType, ResolvedType, DriverType, ObservableType>;
 
 struct Type {
   TypeData data;

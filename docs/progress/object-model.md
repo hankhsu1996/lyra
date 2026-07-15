@@ -107,6 +107,10 @@ space explored while scoping this deferral surfaced:
 
 ## Open Questions and Deferred Choices
 
+- [ ] The runtime library still ships three scope subclasses (unit-instance, generate scope, named
+      procedural block). MIR now names them uniformly by qualified string, but the runtime library
+      has not yet been collapsed to one scope class with the def-name facet as an optional field. Do
+      it when the runtime cadence allows; MIR-side consumers already treat the three as one.
 - Nullability stays a value-level fact, not a type axis, until an analysis that reads it (e.g.
   static null-safety) exists.
 - The reference-representation axis gains a managed kind whose name no longer reads as pure

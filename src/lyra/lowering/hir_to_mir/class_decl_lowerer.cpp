@@ -37,9 +37,19 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   const mir::TypeId self_pointer_type = module.Unit().types.PointerTo(
       object_type_, mir::PointerOwnership::kBorrowed);
 
+  // An SV class extends another SV class of this unit; the base identity is
+  // its intra-unit class id, resolved through the unit's class registry.
+  std::optional<mir::ClassRef> base_ref;
+  if (hir_class.base.has_value()) {
+    base_ref = mir::ClassRef{mir::IntraUnitClassRef{
+        .class_id = module.TranslateClass(*hir_class.base)}};
+  }
+
   mir::Class mir_class{
       .name = hir_class.name,
-      .base = std::nullopt,
+      .base = base_ref,
+      .is_scope_tree_node = false,
+      .is_final = false,
       .self_pointer_type = self_pointer_type,
       .time_resolution = {},
       .fields = {},
@@ -63,7 +73,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   mir::Block& ctor_block = ctor_code.body;
   ScopeChainNode scope_link{};
   const WalkFrame frame = WalkFrame{}
-                              .WithClass(&mir_class, scope_link)
+                              .WithClass(&mir_class, class_id_, scope_link)
                               .WithBlock(&ctor_block)
                               .WithBindings(&ctor_bindings);
 
@@ -151,7 +161,10 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
     const mir::ExprId self_ref =
         ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_pointer_type));
     const mir::ExprId target = ctor_block.exprs.Add(
-        mir::MakeFieldAccessExpr(self_ref, field_ids[i], field_types[i]));
+        mir::MakeFieldAccessExpr(
+            self_ref,
+            mir::FieldTarget{.owner = class_id_, .slot = field_ids[i]},
+            field_types[i]));
     const mir::ExprId assign = ctor_block.exprs.Add(
         mir::MakeAssignExpr(target, value_id, field_types[i]));
     ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
@@ -168,7 +181,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
     const auto& method = hir_class.methods[i];
     ScopeChainNode method_link{};
     const WalkFrame method_owner_frame =
-        WalkFrame{}.WithClass(&mir_class, method_link);
+        WalkFrame{}.WithClass(&mir_class, class_id_, method_link);
     ProcessLowerer method_lowerer(
         module, nullptr, mir_class.time_resolution, method.body, method.name,
         mir::MethodVisibility::kPublic, method_owner_frame, method_plans[i]);

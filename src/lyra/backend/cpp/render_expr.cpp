@@ -356,38 +356,52 @@ auto ReferenceStorageFieldName(
 
 auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
     -> FieldAccess {
-  const mir::TypeId recv_type = view.Expr(m.receiver).type;
-  const auto& recv_data = view.Unit().types.Get(recv_type).data;
   // The receiver reaches its field-bearing value through a borrowed pointer (a
   // class `self`, a closure receiver), a shared handle (a promoted scope), or a
-  // managed reference (a class handle); all name the field-bearing type as
-  // pointee.
-  mir::TypeId pointee{};
-  if (const auto* ptr = std::get_if<mir::PointerType>(&recv_data)) {
-    pointee = ptr->pointee;
-  } else if (
-      const auto* managed = std::get_if<mir::ManagedRefType>(&recv_data)) {
-    pointee = managed->pointee;
-  } else {
-    throw InternalError(
-        "ResolveFieldAccess: field-access receiver is neither a pointer nor a "
-        "managed reference");
-  }
-  const auto& pointee_data = view.Unit().types.Get(pointee).data;
-  // A closure captures its fields into a lambda whose captures are in scope, so
-  // a read over the closure receiver (a borrow of the `ClosureType`) is the
-  // bare capture name, not a receiver dereference. Every other field-bearing
-  // receiver -- a promoted scope through its shared handle, a class self -- is
-  // ordinary `recv->field`.
-  if (const auto* c = std::get_if<mir::ClosureType>(&pointee_data)) {
-    return FieldAccess{
-        .name = ClosureCaptureCppName(
-            view.Unit().GetClosure(c->closure_id), m.field),
-        .through_receiver = false};
-  }
-  return FieldAccess{
-      .name = std::string(ReferenceStorageFieldName(view, pointee, m.field)),
-      .through_receiver = true};
+  // managed reference (a class handle). The field target is owner-qualified
+  // for a class receiver (owner names the declaring class arena) and a bare
+  // field id otherwise (struct or closure aggregate, whose arena is uniquely
+  // determined by the receiver's type).
+  //
+  // A closure captures its fields into a lambda whose captures are in scope,
+  // so a read over the closure receiver is the bare capture name, not a
+  // receiver dereference. Every other receiver is `recv->field`.
+  return std::visit(
+      Overloaded{
+          [&](const mir::FieldTarget& t) -> FieldAccess {
+            const auto& cls = view.Unit().GetClass(t.owner);
+            return FieldAccess{
+                .name = cls.fields.Get(t.slot).name, .through_receiver = true};
+          },
+          [&](const mir::FieldId& id) -> FieldAccess {
+            const mir::TypeId recv_type = view.Expr(m.receiver).type;
+            const auto& recv_data = view.Unit().types.Get(recv_type).data;
+            mir::TypeId pointee{};
+            if (const auto* ptr = std::get_if<mir::PointerType>(&recv_data)) {
+              pointee = ptr->pointee;
+            } else {
+              throw InternalError(
+                  "ResolveFieldAccess: bare-field-id access expects a pointer "
+                  "receiver (struct or closure aggregate)");
+            }
+            const auto& pointee_data = view.Unit().types.Get(pointee).data;
+            if (const auto* c = std::get_if<mir::ClosureType>(&pointee_data)) {
+              return FieldAccess{
+                  .name = ClosureCaptureCppName(
+                      view.Unit().GetClosure(c->closure_id), id),
+                  .through_receiver = false};
+            }
+            if (const auto* s = std::get_if<mir::StructType>(&pointee_data)) {
+              return FieldAccess{
+                  .name =
+                      view.Unit().GetStruct(s->struct_id).fields.Get(id).name,
+                  .through_receiver = true};
+            }
+            throw InternalError(
+                "ResolveFieldAccess: bare-field-id access on a receiver "
+                "that is neither a struct nor a closure");
+          }},
+      m.field);
 }
 
 // LHS expression render: produces a write-target reference (a name, a

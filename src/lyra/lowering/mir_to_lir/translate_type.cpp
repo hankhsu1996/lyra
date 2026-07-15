@@ -214,17 +214,9 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
             return lir::TypeData{
                 lir::ExternalUnitObjectType{.unit_name = eu.unit_name}};
           },
-          [](const mir::ScopeType&) -> lir::TypeData {
-            return lir::TypeData{lir::ScopeType{}};
-          },
-          [](const mir::InstanceType&) -> lir::TypeData {
-            return lir::TypeData{lir::InstanceType{}};
-          },
-          [](const mir::GenScopeType&) -> lir::TypeData {
-            return lir::TypeData{lir::GenScopeType{}};
-          },
-          [](const mir::ProceduralStorageScopeType&) -> lir::TypeData {
-            return lir::TypeData{lir::ProceduralStorageScopeType{}};
+          [](const mir::ExternalClassType& e) -> lir::TypeData {
+            return lir::TypeData{
+                lir::ExternalClassType{.qualified_name = e.qualified_name}};
           },
           [](const mir::ServicesType&) -> lir::TypeData {
             return lir::TypeData{lir::ServicesType{}};

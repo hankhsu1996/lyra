@@ -1,0 +1,13 @@
+id: cpp.class_inherit_method
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    direct_a: 7
+    method_a: 7
+    direct_b: 9
