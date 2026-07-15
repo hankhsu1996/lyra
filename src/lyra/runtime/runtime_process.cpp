@@ -1,5 +1,6 @@
 #include "lyra/runtime/runtime_process.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <exception>
 #include <memory>
@@ -37,12 +38,9 @@ void RuntimeProcess::ArmWaitFork(CoroutineHandle waiter) {
 }
 
 auto RuntimeProcess::HasNoLiveChild() const -> bool {
-  for (const auto& child : children_) {
-    if (child->execution_state_ != ProcessExecutionState::kTerminated) {
-      return false;
-    }
-  }
-  return true;
+  return std::ranges::all_of(children_, [](const auto& child) {
+    return child->execution_state_ == ProcessExecutionState::kTerminated;
+  });
 }
 
 auto RuntimeProcess::TakeWaitForkWaiterIfSatisfied() -> CoroutineHandle {
@@ -62,14 +60,14 @@ auto RuntimeProcess::IsReleasable() const -> bool {
          children_.empty();
 }
 
-void RuntimeProcess::AdoptChild(std::unique_ptr<RuntimeProcess> child) {
+void RuntimeProcess::AdoptChild(std::shared_ptr<RuntimeProcess> child) {
   child->parent_ = this;
   children_.push_back(std::move(child));
 }
 
 void RuntimeProcess::EraseChild(RuntimeProcess& child) {
   const std::size_t erased = std::erase_if(
-      children_, [&](const std::unique_ptr<RuntimeProcess>& node) {
+      children_, [&](const std::shared_ptr<RuntimeProcess>& node) {
         return node.get() == &child;
       });
   if (erased != 1) {

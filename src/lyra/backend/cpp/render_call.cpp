@@ -492,6 +492,19 @@ auto RenderDirectStaticCallableCall(
   return {.expr = callable.external.foreign_name, .leading_arg_count = 0};
 }
 
+// Renders a call to a method the runtime library provides for an imported class
+// (LRM 9.7 `process`). The callee is the runtime symbol named by the method
+// identity; every argument -- a receiver handle or the services handle -- is
+// passed positionally, so no leading argument is absorbed into the callee text.
+auto RenderDirectImportedRuntimeCall(
+    const mir::ImportedRuntimeCallTarget& target) -> CalleeRender {
+  return {
+      .expr = std::format(
+          "lyra::runtime::{}",
+          support::ImportedRuntimeMethodSymbol(target.method)),
+      .leading_arg_count = 0};
+}
+
 auto RenderCalleePart(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> CalleeRender {
@@ -510,6 +523,9 @@ auto RenderCalleePart(
                     },
                     [&](const mir::StaticCallableTarget& s) {
                       return RenderDirectStaticCallableCall(view, s);
+                    },
+                    [&](const mir::ImportedRuntimeCallTarget& i) {
+                      return RenderDirectImportedRuntimeCall(i);
                     },
                 },
                 d.target);

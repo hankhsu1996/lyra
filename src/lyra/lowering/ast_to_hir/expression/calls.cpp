@@ -9,7 +9,9 @@
 #include <variant>
 #include <vector>
 
+#include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
@@ -56,6 +58,37 @@ auto MakeReturnConventionType(
       return builtins.realtime;
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
+}
+
+// A method of an imported runtime-library class (LRM 9.7 `process`) is
+// recognized by the declaring class being a member of the built-in `std`
+// package, exactly as the handle type is; the runtime provides the body, so the
+// call routes to the library symbol rather than a lowered user method.
+auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
+    -> std::optional<support::ImportedRuntimeMethod> {
+  const slang::ast::Scope* scope = method.getParentScope();
+  if (scope == nullptr) {
+    return std::nullopt;
+  }
+  const slang::ast::Symbol& owner = scope->asSymbol();
+  if (owner.kind != slang::ast::SymbolKind::ClassType) {
+    return std::nullopt;
+  }
+  const auto& cls = owner.as<slang::ast::ClassType>();
+  const slang::ast::Scope* class_scope = cls.getParentScope();
+  if (class_scope == nullptr ||
+      class_scope != static_cast<const slang::ast::Scope*>(
+                         &class_scope->getCompilation().getStdPackage()) ||
+      cls.name != "process") {
+    return std::nullopt;
+  }
+  if (method.name == "self") {
+    return support::ImportedRuntimeMethod::kProcessSelf;
+  }
+  if (method.name == "status") {
+    return support::ImportedRuntimeMethod::kProcessStatus;
+  }
+  return std::nullopt;
 }
 
 }  // namespace
@@ -420,6 +453,32 @@ auto LowerCallExpr(
   if (sym == nullptr) {
     throw InternalError(
         "AST->HIR call: user call missing resolved SubroutineSymbol");
+  }
+
+  // A method of an imported runtime-library class routes to the library symbol.
+  // A static method carries no receiver; an instance method lowers its handle,
+  // present in `thisClass`.
+  if (const auto imported = DetectImportedRuntimeMethod(*sym)) {
+    auto result_type = module.InternType(*call.type, span);
+    if (!result_type) return std::unexpected(std::move(result_type.error()));
+    std::optional<hir::ExprId> receiver;
+    if (const slang::ast::Expression* this_class = call.thisClass();
+        this_class != nullptr) {
+      auto receiver_or = lowerer.LowerExpr(*this_class, frame);
+      if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+      receiver = frame.Exprs().Add(*std::move(receiver_or));
+    }
+    return hir::Expr{
+        .type = *result_type,
+        .data =
+            hir::CallExpr{
+                .callee =
+                    hir::ImportedMethodRef{
+                        .method = *imported, .receiver = receiver},
+                .arguments = std::move(arg_ids),
+            },
+        .span = span,
+    };
   }
 
   // An instance-method call (LRM 8.6) carries the receiver handle in

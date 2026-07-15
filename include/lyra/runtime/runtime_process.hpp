@@ -32,7 +32,7 @@ enum class ProcessExecutionState : std::uint8_t {
 // task or function it called (LRM 9.6.1): a subroutine call runs in the
 // caller's thread and creates no process of its own. The list therefore
 // accumulates across every fork the process executes.
-class RuntimeProcess {
+class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
  public:
   RuntimeProcess(ProcessKind kind, Coroutine<void> coroutine);
 
@@ -40,13 +40,22 @@ class RuntimeProcess {
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
   // Non-movable: the coroutine promise stores a back-pointer to this
   // RuntimeProcess, and so does every child node, so its address must stay
-  // stable for as long as either can name it. Owners hold processes via
-  // unique_ptr.
+  // stable for as long as either can name it. A node is retained by shared
+  // ownership -- its parent's lineage while a descendant is live, and any
+  // user-visible `process` handle (LRM 9.7) -- so its lifetime is reachability,
+  // not a single owner.
   RuntimeProcess(RuntimeProcess&&) noexcept = delete;
   auto operator=(RuntimeProcess&&) noexcept -> RuntimeProcess& = delete;
   ~RuntimeProcess() = default;
 
   [[nodiscard]] auto Kind() const -> ProcessKind;
+
+  // The process's internal execution state. A `process` handle (LRM 9.7) reads
+  // it through `status()`, which projects it onto the LRM state enum; the state
+  // survives the coroutine frame, so a terminated process is still observable.
+  [[nodiscard]] auto ExecutionState() const -> ProcessExecutionState {
+    return execution_state_;
+  }
 
   // Resumes `handle` -- the specific coroutine frame that suspended (the
   // innermost one when a task enabled by this process is suspended). Symmetric
@@ -70,7 +79,7 @@ class RuntimeProcess {
   // Takes `child` into this process's lineage. A fork's parallel statement is a
   // thread of the process that executed the fork (LRM 9.5), which is the
   // process running when the branch is spawned, not the frame that spawned it.
-  void AdoptChild(std::unique_ptr<RuntimeProcess> child);
+  void AdoptChild(std::shared_ptr<RuntimeProcess> child);
 
   [[nodiscard]] auto Parent() const -> RuntimeProcess*;
 
@@ -117,7 +126,7 @@ class RuntimeProcess {
   Coroutine<void> coroutine_;
   ProcessExecutionState execution_state_ = ProcessExecutionState::kCreated;
   RuntimeProcess* parent_ = nullptr;
-  std::vector<std::unique_ptr<RuntimeProcess>> children_;
+  std::vector<std::shared_ptr<RuntimeProcess>> children_;
   // The `wait fork` condition holds at most one activation: the frame that
   // executed `wait fork`.
   RegistrationList parked_wait_fork_;

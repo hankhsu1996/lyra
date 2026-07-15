@@ -368,7 +368,7 @@ void Engine::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
 }
 
 void Engine::Spawn(Coroutine<void> coroutine) {
-  auto child = std::make_unique<RuntimeProcess>(
+  auto child = std::make_shared<RuntimeProcess>(
       ProcessKind::kSpawned, std::move(coroutine));
   const CoroutineHandle handle = child->TopHandle();
   execution_context_.CurrentProcess().AdoptChild(std::move(child));

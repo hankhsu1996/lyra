@@ -1,0 +1,12 @@
+id: cpp.process_self_status
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    running_self: 1
+    same_handle: 1

@@ -10,6 +10,7 @@
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::hir {
 
@@ -33,6 +34,7 @@ enum class TypeKind {
   kRealTime,
   kChandle,
   kClassHandle,
+  kImportedClassHandle,
   kNull,
   kVoid,
 };
@@ -211,6 +213,14 @@ struct ClassHandleType {
   ClassId class_id;
 };
 
+// LRM 8.3 class handle whose referenced class is an imported runtime-library
+// class rather than a unit-declared one. Managed and null-legal like
+// ClassHandleType, but the class is named by its library identity, not a unit
+// class id.
+struct ImportedClassHandleType {
+  support::ImportedRuntimeClass klass;
+};
+
 // LRM 8.4: the type slang gives the `null` literal. It is assignment- and
 // comparison-compatible with any class handle; the contextual handle determines
 // the operation, so this type carries no class identity of its own.
@@ -221,7 +231,7 @@ using TypeData = std::variant<
     UnpackedStructType, UnpackedUnionType, UnpackedArrayType, DynamicArrayType,
     QueueType, AssociativeArrayType, WildcardIndexType, StringType, EventType,
     RealType, ShortRealType, RealTimeType, ChandleType, ClassHandleType,
-    NullType, VoidType>;
+    ImportedClassHandleType, NullType, VoidType>;
 
 struct Type {
   TypeData data;

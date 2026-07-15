@@ -34,6 +34,14 @@ the detail lives in the entry itself.
   fixed-size unpacked array.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is the
   generic product type (MIR `TupleType`), positional access, defaults synthesized at lowering.
+- [unpacked-union-representation](unpacked-union-representation.md) -- an untagged unpacked union is
+  overlapping storage realized as an active-member value (MIR `UnionType`).
+- [selector-coordinate-resolution](selector-coordinate-resolution.md) -- a select carries a semantic
+  selection; the selected value owns its declared coordinate system and resolves the source index
+  against its own declared range.
+- [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- for the unpacked /
+  container family the index range is part of the type, not the payload; amends
+  [selector-coordinate-resolution](selector-coordinate-resolution.md) decision 1.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
@@ -52,6 +60,9 @@ the detail lives in the entry itself.
 - [declarations-before-bodies](declarations-before-bodies.md) -- every structural declaration's
   identity and shape is CU-global and queryable before any executable lowering begins.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
+- [compound-assignment-write-location](compound-assignment-write-location.md) -- `lhs op= rhs`
+  lowers to a high-level assign carrying the operator; each backend realizes "evaluate the target
+  once" rather than desugaring a read-modify-write into MIR.
 - [conversion-folding](conversion-folding.md) -- when type conversions are folded.
 - [variable-initialization](variable-initialization.md) -- LRM 10.5 variable initialization as a
   constructor-scope statement.
@@ -75,6 +86,9 @@ the detail lives in the entry itself.
   `ErasedCallableType<Sig>` level with an explicit erasure.
 - [builtin-call-identity](builtin-call-identity.md) -- built-in method calls carry a flat
   closed-namespace identifier (`support::BuiltinFn`) shared by HIR and MIR.
+- [dpi-foreign-boundary](dpi-foreign-boundary.md) -- DPI-C is a foreign arm of the one callable
+  model, not a parallel IR subsystem; import / export reuse the ordinary call family, with ABI
+  marshaling at the runtime boundary rather than a dedicated MIR node.
 - [address-of-primitive](address-of-primitive.md) -- MIR carries an explicit place-to-pointer
   operator (`AddressOfExpr`), dual to `DerefExpr`; the backend never injects `&`.
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control:
