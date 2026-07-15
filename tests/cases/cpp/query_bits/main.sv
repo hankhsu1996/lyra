@@ -39,6 +39,17 @@ module Top;
   int bits_narrow;
   int bits_empty;
 
+  // LRM 20.6.2 over a value whose elements are themselves dynamically sized:
+  // each element contributes its current bit count, so the total sums the
+  // elements' widths rather than multiplying by one fixed element width.
+  int    nest[][];
+  string strq[$];
+  int    fixnest[2][];
+
+  int bits_nest;
+  int bits_strq;
+  int bits_fixnest;
+
   initial begin
     q = 4'b1010;
     bits_type_rt = $bits(mubi_t);
@@ -66,5 +77,17 @@ module Top;
 
     que.delete();
     bits_empty = $bits(que);
+
+    nest = new[2];
+    nest[0] = new[3];
+    nest[1] = new[5];
+    strq.push_back("hi");
+    strq.push_back("world");
+    fixnest[0] = new[1];
+    fixnest[1] = new[4];
+
+    bits_nest = $bits(nest);
+    bits_strq = $bits(strq);
+    bits_fixnest = $bits(fixnest);
   end
 endmodule

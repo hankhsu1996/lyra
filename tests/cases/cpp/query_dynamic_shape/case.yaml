@@ -34,3 +34,7 @@ expect:
     map4_right: "8'hFF"
     unallocated_low: "8'bxxxxxxxx"
     unallocated_high: "8'bxxxxxxxx"
+    rt_top1: 3
+    rt_top2: 5
+    rt_top3: 32
+    rt_top_oor: "32'bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

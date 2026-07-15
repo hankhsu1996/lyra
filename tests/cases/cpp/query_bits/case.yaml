@@ -22,3 +22,6 @@ expect:
     bits_assoc: 64
     bits_narrow: 7
     bits_empty: 0
+    bits_nest: 256
+    bits_strq: 56
+    bits_fixnest: 160

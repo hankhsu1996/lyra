@@ -243,6 +243,17 @@ class UnpackedArray {
     return PackedArray::Bit(HasUnknown());
   }
 
+  // LRM 20.6.2 `$bits`: the current bit count is the sum of the elements' own
+  // bit counts. A fixed-size unpacked array folds at elaboration; this path
+  // serves the case where an element is itself dynamically sized.
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const auto& e : data_) {
+      total = total + e.BitstreamWidth();
+    }
+    return total;
+  }
+
   // LRM 7.12.2 ordering: an in-place positional permutation at constant size (a
   // fixed array never grows or shrinks). `reverse` takes no closure; `sort` /
   // `rsort` order by the closure-projected key with the ordinal position as
@@ -507,6 +518,7 @@ struct Formatter<UnpackedArray<T>> {
 
 static_assert(LyraValue<UnpackedArray<PackedArray>>);
 static_assert(Sized<UnpackedArray<PackedArray>>);
+static_assert(BitstreamSizable<UnpackedArray<PackedArray>>);
 static_assert(RangedIndexable<UnpackedArray<PackedArray>>);
 static_assert(RangedSliceable<UnpackedArray<PackedArray>>);
 static_assert(RangedSliceableRef<UnpackedArray<PackedArray>>);

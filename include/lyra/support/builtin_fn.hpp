@@ -23,6 +23,11 @@ enum class BuiltinFn : std::uint16_t {
   // String's LRM 6.16.1 `len` is its own mandated spelling.
   kSize,
   kLen,
+  // LRM 20.6.2 `$bits` over a dynamically sized value: the bit count of what it
+  // currently holds. Sums each element's own bit count, so an element that is
+  // itself dynamically sized contributes its current width. The fixed-size case
+  // folds at elaboration and never reaches this entry.
+  kBitstreamWidth,
   // LRM 7.12 / 7.5 / 7.10 container ops.
   kToOwned,
   kDelete,

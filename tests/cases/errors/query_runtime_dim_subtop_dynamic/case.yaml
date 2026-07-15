@@ -1,0 +1,16 @@
+id: errors.query_runtime_dim_subtop_dynamic
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "variable-sized dimension below the top"
+    not_contains:
+      - "internal error"

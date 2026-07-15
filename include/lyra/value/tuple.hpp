@@ -74,11 +74,25 @@ class Tuple {
     }(std::index_sequence_for<Ts...>{});
   }
 
+  // LRM 20.6.2 `$bits`: a product occupies the sum of its members' bit counts.
+  // A member that is itself dynamically sized contributes its current width.
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      PackedArray total = PackedArray::Int(0);
+      ((total = total + std::get<I>(data_).BitstreamWidth()), ...);
+      return total;
+    }(std::index_sequence_for<Ts...>{});
+  }
+
   // LRM 20.9 `$isunknown`: any member carrying an X / Z bit propagates up.
   [[nodiscard]] auto HasUnknown() const -> bool {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
       return (std::get<I>(data_).HasUnknown() || ...);
     }(std::index_sequence_for<Ts...>{});
+  }
+
+  [[nodiscard]] auto IsUnknown() const -> PackedArray {
+    return PackedArray::Bit(HasUnknown());
   }
 
   // LRM Table 7-1 unpacked-struct default: member-wise reset, each component to
@@ -97,6 +111,7 @@ class Tuple {
 
 static_assert(LyraValue<Tuple<PackedArray, PackedArray>>);
 static_assert(CaseEqualComparable<Tuple<PackedArray, PackedArray>>);
+static_assert(BitstreamSizable<Tuple<PackedArray, PackedArray>>);
 static_assert(Defaultable<Tuple<PackedArray, PackedArray>>);
 
 }  // namespace lyra::value

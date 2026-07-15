@@ -522,6 +522,17 @@ class AssociativeArray {
     return PackedArray::Bit(HasUnknown());
   }
 
+  // LRM 20.6.2 `$bits`: the current bit count sums the allocated entries' value
+  // bit counts (a key is not part of the stored bitstream), so a dynamically
+  // sized value contributes its current width.
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const auto& [key, value] : data_) {
+      total = total + value.BitstreamWidth();
+    }
+    return total;
+  }
+
  private:
   [[nodiscard]] auto IsInvalidKey(const K& key) const -> bool {
     // LRM 7.8.6: a key carrying x/z is invalid. Decided by the key's own x/z
@@ -594,6 +605,7 @@ struct Formatter<AssociativeArray<K, V>> {
 static_assert(LyraValue<AssociativeArray<String, PackedArray>>);
 static_assert(LyraValue<AssociativeArray<PackedArray, PackedArray>>);
 static_assert(Sized<AssociativeArray<String, PackedArray>>);
+static_assert(BitstreamSizable<AssociativeArray<String, PackedArray>>);
 static_assert(AssocIndexable<AssociativeArray<String, PackedArray>, String>);
 static_assert(Defaultable<AssociativeArray<String, PackedArray>>);
 static_assert(KeyTraversal<AssociativeArray<String, PackedArray>, String>);

@@ -217,6 +217,16 @@ class DynamicArray {
     return PackedArray::Bit(HasUnknown());
   }
 
+  // LRM 20.6.2 `$bits`: the current bit count is the sum of the elements' own
+  // bit counts, so a dynamically sized element contributes its current width.
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const auto& e : data_) {
+      total = total + e.BitstreamWidth();
+    }
+    return total;
+  }
+
   // LRM 7.5.3: empties the array, resulting in a zero-sized array. Body is
   // identical to ResetToDefault (LRM Table 6-7 default for dynamic array is
   // the empty array), but the two surface names track distinct contracts:
@@ -425,6 +435,7 @@ struct Formatter<DynamicArray<T>> {
 
 static_assert(LyraValue<DynamicArray<PackedArray>>);
 static_assert(Sized<DynamicArray<PackedArray>>);
+static_assert(BitstreamSizable<DynamicArray<PackedArray>>);
 static_assert(Indexable<DynamicArray<PackedArray>>);
 static_assert(Sliceable<DynamicArray<PackedArray>>);
 static_assert(SliceableRef<DynamicArray<PackedArray>>);

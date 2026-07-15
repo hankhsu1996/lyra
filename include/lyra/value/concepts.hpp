@@ -62,13 +62,16 @@ concept LyraValue = Storable<T> && requires(const T& a, const T& b) {
   // operator (`CaseEqualComparable`) even when their internal algorithm
   // coincides.
   { a.IsBitIdentical(b) } -> std::same_as<bool>;
-  // LRM 20.9 `$isunknown` predicate: does any bit of this value's
-  // representation carry an X or Z. Universal: 2-state types implement
-  // it as `return false`; 4-state types scan their bit pattern;
-  // aggregate types recurse into elements. Lowering emits the call
-  // uniformly across every value type, and downstream optimization
-  // constant-folds the 2-state case.
+  // LRM 20.9 unknown detection: does any bit of this value's representation
+  // carry an X or Z. 2-state types answer no; 4-state types scan their bit
+  // pattern; aggregates recurse into elements. Two forms of the one question:
+  // the host-bool `HasUnknown` is the internal predicate that operator
+  // realizations and the engine's change detection read, and `IsUnknown` is
+  // the SV `$isunknown` value form (a 1-bit packed result) the lowering
+  // renders on any operand. Both are universal, so every value type exposes
+  // both; downstream optimization constant-folds the 2-state case.
   { a.HasUnknown() } -> std::same_as<bool>;
+  { a.IsUnknown() } -> std::same_as<PackedArray>;
 };
 
 // LRM 11.4.5 `===` / `!==` (Any data type except `real` and `shortreal`). A
@@ -110,6 +113,19 @@ concept Sized = requires(const T& t) {
 template <typename T>
 concept Lengthable = requires(const T& t) {
   { t.Len() } -> std::same_as<PackedArray>;
+};
+
+// BitstreamSizable: the bit-stream types (LRM 6.24.3 -- integral, packed, or
+// string, and unpacked / dynamic / associative / queue / struct compositions of
+// those, recursively) expose the LRM 20.6.2 `$bits` bit count of what the value
+// currently holds, in the SV `int` shape. `real` / `shortreal`, chandle, and
+// event are not bit-stream types and do not participate. A composite is
+// bit-stream sizable exactly when its elements are, so a container's method
+// well-forms only over a bit-stream element type; the concept pins the method's
+// shape, and element-type drift surfaces when the body instantiates.
+template <typename T>
+concept BitstreamSizable = requires(const T& t) {
+  { t.BitstreamWidth() } -> std::same_as<PackedArray>;
 };
 
 // Indexable: single-element access by integer position. The container

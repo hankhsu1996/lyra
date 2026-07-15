@@ -9,6 +9,13 @@ module Top;
   bit ca_known;
   bit ca_xz;
 
+  // LRM 20.9 $isunknown over an unpacked struct: an X / Z anywhere in a member
+  // propagates up.
+  typedef struct { int a; logic [3:0] b; } sp_t;
+  sp_t sp;
+  bit r_struct_known;
+  bit r_struct_x;
+
   // LRM 20.9 $isunknown in a continuous assignment (simulation-time value
   // expression driving a net).
   assign ca_known = $isunknown(bus_known);
@@ -24,5 +31,11 @@ module Top;
     r_z = $isunknown(a);
     bus_known = 4'b1010;
     bus_xz = 4'b1z10;
+
+    sp.a = 1;
+    sp.b = 4'b0101;
+    r_struct_known = $isunknown(sp);
+    sp.b = 4'b01x1;
+    r_struct_x = $isunknown(sp);
   end
 endmodule

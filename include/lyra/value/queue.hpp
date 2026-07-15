@@ -173,6 +173,16 @@ class Queue {
     return PackedArray::Bit(HasUnknown());
   }
 
+  // LRM 20.6.2 `$bits`: the current bit count is the sum of the elements' own
+  // bit counts, so a dynamically sized element contributes its current width.
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const auto& e : data_) {
+      total = total + e.BitstreamWidth();
+    }
+    return total;
+  }
+
   // LRM Table 6-7: a queue's default is the empty queue. When this container
   // is itself the discard sink of an outer container, the outer scrubs it to
   // canonical state before handing out a reference.
@@ -548,6 +558,7 @@ struct Formatter<Queue<T>> {
 
 static_assert(LyraValue<Queue<PackedArray>>);
 static_assert(Sized<Queue<PackedArray>>);
+static_assert(BitstreamSizable<Queue<PackedArray>>);
 static_assert(Indexable<Queue<PackedArray>>);
 // A queue's `Slice(anchor, extent, form)` is dynamic-width -- the runtime
 // derives the element count from the bounds (LRM 7.10.1) -- not the fixed-width

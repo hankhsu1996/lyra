@@ -70,6 +70,10 @@ class Chandle {
     return false;
   }
 
+  [[nodiscard]] static auto IsUnknown() -> PackedArray {
+    return PackedArray::Bit(false);
+  }
+
   // LRM 6.14: a chandle is always initialized to `null`. Satisfies the
   // container OOB-shield contract so a chandle can be an associative-array
   // element.

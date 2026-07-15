@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
@@ -344,39 +345,40 @@ auto LowerAssociativeDimensionQuery(
 }
 
 // LRM 20.6.2 over a dynamically sized value: the bit count of what it currently
-// holds. Every element occupies the same fixed number of bits -- a string's is
-// a byte -- so the count is the element count times that width. An element
-// whose own size only the running simulation knows has no such width.
+// holds, read at run time. The value reports it by summing each element's own
+// bit count, so an element that is itself dynamically sized contributes its
+// current width -- the same query one layer down -- and the lowering never
+// inspects the element shape. The read lands in the `integer` the query
+// reports.
 template <ExprLowerer Lowerer>
 auto LowerDynamicBitsQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  const slang::ast::Type& operand_type = *call.arguments()[0]->type;
-  std::uint64_t element_bits = 8;
-  if (!operand_type.isString()) {
-    const slang::ast::Type& element = *operand_type.getArrayElementType();
-    if (!element.isFixedSize()) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "$bits of a value whose elements are themselves dynamically sized is "
-          "not yet supported");
-    }
-    element_bits = element.getBitstreamWidth();
+  ModuleLowerer& module = lowerer.Module();
+  auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
+  if (!operand_or) {
+    return std::unexpected(std::move(operand_or.error()));
   }
-
-  auto count_or = BuildElementCountExpr(lowerer, frame, call, span);
-  if (!count_or) {
-    return std::unexpected(std::move(count_or.error()));
+  auto result_type = module.InternType(*call.type, span);
+  if (!result_type) {
+    return std::unexpected(std::move(result_type.error()));
   }
-  auto width_or = MakeQueryInt(
-      lowerer.Module(), frame, call, static_cast<std::int64_t>(element_bits),
-      span);
-  if (!width_or) {
-    return std::unexpected(std::move(width_or.error()));
-  }
-  return MakeQueryBinary(
-      frame, hir::BinaryOp::kMul, *std::move(count_or), *std::move(width_or),
-      span);
+  const hir::ExprId width_id = frame.Exprs().Add(
+      hir::Expr{
+          .type = module.Unit().builtins.int_type,
+          .data =
+              hir::CallExpr{
+                  .callee =
+                      hir::BuiltinMethodRef{
+                          .method = support::BuiltinFn::kBitstreamWidth},
+                  .arguments = {frame.Exprs().Add(*std::move(operand_or))}},
+          .span = span});
+  return hir::Expr{
+      .type = *result_type,
+      .data =
+          hir::ConversionExpr{
+              .operand = width_id, .kind = hir::ConversionKind::kImplicit},
+      .span = span};
 }
 
 // LRM 20.6.2: the bit count of the operand's type, taken without evaluating the
@@ -422,13 +424,39 @@ auto LowerDimensionCountQuery(
       span);
 }
 
+// The query's result for the dimension whose own range is `dimension` (LRM
+// 20.7). A fixed dimension folds to a constant; the operand's own top
+// dimension, when it is dynamic or associative, reads the value's current
+// state. The caller guarantees `dimension` is either fixed-size or the
+// operand's top dimension -- a variable-sized dimension below the top has no
+// single extent (LRM 20.7.1) and is rejected before reaching here.
+template <ExprLowerer Lowerer>
+auto LowerDimensionResult(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
+    const slang::ast::Type& dimension, QueryKind query, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  ModuleLowerer& module = lowerer.Module();
+  if (dimension.hasFixedRange() && !dimension.isScalar()) {
+    return MakeQueryInt(
+        module, frame, call,
+        FixedDimensionValue(query, dimension.getFixedRange()), span);
+  }
+  if (dimension.isAssociativeArray()) {
+    return LowerAssociativeDimensionQuery(
+        lowerer, frame, call, dimension, query, span);
+  }
+  return LowerOrderedDynamicDimensionQuery(lowerer, frame, call, query, span);
+}
+
 // LRM 20.7 with a dimension the running simulation names. Which dimensions the
-// operand has is still a property of its type, so each one's result is a
-// constant and the query is a select, by the index, out of the array of them.
-// The array is declared over `[1 : dimension count]`, so the index selects
-// directly; an index the type has no dimension for falls outside that range and
-// reads the element default, which for the `integer` a dimension function
-// reports is `'x` -- what LRM 20.7 requires of an out-of-range dimension.
+// operand has is a property of its type, so each dimension's result is built at
+// lowering -- a constant for a fixed dimension, a current-state read for a
+// dynamic top dimension -- and the query is a select, by the index, out of the
+// array of them. The array is declared over `[1 : dimension count]`, so the
+// index selects directly; an index the type has no dimension for falls outside
+// that range and reads the element default, which for the `integer` a dimension
+// function reports is `'x` -- what LRM 20.7 requires of an out-of-range
+// dimension.
 template <ExprLowerer Lowerer>
 auto LowerComposedDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
@@ -438,28 +466,31 @@ auto LowerComposedDimensionQuery(
   const auto dimension_count =
       static_cast<std::int64_t>(DimensionCount(operand_type, false));
 
-  slang::ConstantValue::Elements rows;
+  std::vector<hir::ExprId> rows;
   rows.reserve(static_cast<std::size_t>(dimension_count));
   for (std::int64_t i = 1; i <= dimension_count; ++i) {
     const slang::ast::Type* dimension =
         DimensionType(operand_type, static_cast<std::int32_t>(i));
-    // A dimension whose extent only the running simulation knows has no
-    // constant result to tabulate. LRM 20.7.1 forbids naming such a dimension
-    // beyond the first, but an index the simulation supplies cannot be held to
-    // that rule at elaboration.
-    if (dimension == nullptr || !dimension->hasFixedRange() ||
-        dimension->isScalar()) {
+    if (dimension == nullptr) {
+      throw InternalError(
+          "LowerComposedDimensionQuery: dimension index out of range");
+    }
+    // LRM 20.7.1: a variable-sized dimension below the top has no single extent
+    // -- each outer element carries its own -- so naming it is an error. A
+    // run-time index could land there, and the value-build table cannot carry a
+    // per-arm error, so the operand shape is rejected rather than half-served.
+    if (i != 1 && !dimension->hasFixedRange()) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "an array query whose dimension is not a constant expression is not "
-          "yet supported over an array with a dynamically sized dimension");
+          "an array query with a run-time dimension index is not yet supported "
+          "over an array with a variable-sized dimension below the top");
     }
-    rows.emplace_back(call.type->coerceValue(
-        slang::ConstantValue{slang::SVInt(
-            32,
-            static_cast<std::uint64_t>(
-                FixedDimensionValue(query, dimension->getFixedRange())),
-            true)}));
+    auto row_or =
+        LowerDimensionResult(lowerer, frame, call, *dimension, query, span);
+    if (!row_or) {
+      return std::unexpected(std::move(row_or.error()));
+    }
+    rows.push_back(frame.Exprs().Add(*std::move(row_or)));
   }
 
   auto element_type = module.InternType(*call.type, span);
@@ -470,12 +501,11 @@ auto LowerComposedDimensionQuery(
       hir::UnpackedArrayType{
           .element_type = *element_type,
           .dim = hir::UnpackedRange{.left = 1, .right = dimension_count}});
-  auto table_or = MakeConstantValueExpr(
-      module.Unit(), frame, slang::ConstantValue{std::move(rows)}, table_type,
-      span);
-  if (!table_or) {
-    return std::unexpected(std::move(table_or.error()));
-  }
+  const hir::ExprId table_id = frame.Exprs().Add(
+      hir::Expr{
+          .type = table_type,
+          .data = hir::AssignmentPatternExpr{.elements = std::move(rows)},
+          .span = span});
   auto index_or = lowerer.LowerExpr(*call.arguments()[1], frame);
   if (!index_or) {
     return std::unexpected(std::move(index_or.error()));
@@ -484,7 +514,7 @@ auto LowerComposedDimensionQuery(
       .type = *element_type,
       .data =
           hir::ElementSelectExpr{
-              .base_value = frame.Exprs().Add(*std::move(table_or)),
+              .base_value = table_id,
               .index = frame.Exprs().Add(*std::move(index_or))},
       .span = span};
 }
@@ -508,17 +538,7 @@ auto LowerDimensionQuery(
   if (dimension == nullptr) {
     throw InternalError("LowerDimensionQuery: dimension index out of range");
   }
-
-  if (dimension->hasFixedRange() && !dimension->isScalar()) {
-    return MakeQueryInt(
-        module, frame, call,
-        FixedDimensionValue(query, dimension->getFixedRange()), span);
-  }
-  if (dimension->isAssociativeArray()) {
-    return LowerAssociativeDimensionQuery(
-        lowerer, frame, call, *dimension, query, span);
-  }
-  return LowerOrderedDynamicDimensionQuery(lowerer, frame, call, query, span);
+  return LowerDimensionResult(lowerer, frame, call, *dimension, query, span);
 }
 
 }  // namespace

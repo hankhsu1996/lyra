@@ -27,6 +27,15 @@ module Top;
   logic [7:0] map4_low, map4_high, map4_right;
   logic [7:0] unallocated_low, unallocated_high;
 
+  // LRM 20.7 with a run-time dimension index over an array whose top dimension
+  // is dynamic. `int [][5]` has three dimensions -- the dynamic outer, the
+  // fixed unpacked `[5]`, and the element `int`'s packed `[31:0]`. The top
+  // dimension's extent is read from the value; the deeper fixed dimensions keep
+  // their constant shape; an index the type has no dimension for reads `'x`.
+  int rt_top[][5];
+  int rt_dim;
+  integer rt_top1, rt_top2, rt_top3, rt_top_oor;
+
   initial begin
     dyn = new[4];
     que.push_back(10);
@@ -75,5 +84,15 @@ module Top;
     empty_size = $size(que);
     empty_right = $right(que);
     empty_high = $high(que);
+
+    rt_top = new[3];
+    rt_dim = 1;
+    rt_top1 = $size(rt_top, rt_dim);
+    rt_dim = 2;
+    rt_top2 = $size(rt_top, rt_dim);
+    rt_dim = 3;
+    rt_top3 = $size(rt_top, rt_dim);
+    rt_dim = 4;
+    rt_top_oor = $size(rt_top, rt_dim);
   end
 endmodule

@@ -173,6 +173,13 @@ class PackedArray {
   [[nodiscard]] auto Dims() const -> std::span<const PackedRange>;
   [[nodiscard]] auto IsFourState() const -> bool;
 
+  // LRM 20.6.2 `$bits`: a packed value occupies its declared bit width. It is
+  // the leaf of the recursive bit count a dynamically sized container reports
+  // over its elements.
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
+    return PackedArray::Int(static_cast<std::int32_t>(BitWidth()));
+  }
+
   // Restore the value to this shape's canonical default in place: all-zero
   // for 2-state, all-X for 4-state (LRM Table 6-7 / Table 7-1). The declared
   // type (dimensions, signedness, state domain) is preserved.
@@ -641,6 +648,7 @@ class PackedArrayRef {
 };
 
 static_assert(LyraValue<PackedArray>);
+static_assert(BitstreamSizable<PackedArray>);
 static_assert(Indexable<PackedArray>);
 static_assert(Sliceable<PackedArray>);
 static_assert(SliceableRef<PackedArray>);
