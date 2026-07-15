@@ -575,6 +575,10 @@ auto ModuleLowerer::InternClass(
   return id;
 }
 
+auto ModuleLowerer::AddComposedType(hir::TypeData data) -> hir::TypeId {
+  return unit_.types.Add(hir::Type{.data = std::move(data)});
+}
+
 auto ModuleLowerer::InternType(
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::TypeId> {

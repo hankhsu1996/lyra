@@ -1,0 +1,17 @@
+id: cpp.query_typename
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    tn_arr: "bit$[2:0]"
+    tn_dyn: "int$[]"
+    tn_enum: "enum{A=2'd0,B=2'd1,C=2'd3}Top.e_t"
+    tn_struct: "struct packed{bit a;bit[2:0] b;}Top.sp_t"
+    tn_string: "string"
+    tn_type: "bit[3:0]"
+    tn_expr: "int"
