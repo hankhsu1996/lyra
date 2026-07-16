@@ -86,10 +86,10 @@ from an external main.
 - [ ] D4a -- Instance-bound dispatch beyond the single top-level instance (LRM 35.5.3): the wrapper
       resolves the specific instance the foreign call targets from the scope the foreign side set
       (`svSetScope`), rather than the single-instance recovery above, and a receiver-less package /
-      `$unit`-scoped export needs no instance at all (riding on the package unit and package callable
-      in `packages.md`, PK1-PK2). This is the `mhpmcounter_num` /
-      `mhpmcounter_get` shape in the Ibex bring-up; the pure-SV Ibex run never calls them, so this
-      closes the construct, not the Ibex external-driver usage.
+      `$unit`-scoped export needs no instance at all (riding on the package unit and package
+      callable in `packages.md`, PK1-PK2). This is the `mhpmcounter_num` / `mhpmcounter_get` shape
+      in the Ibex bring-up; the pure-SV Ibex run never calls them, so this closes the construct, not
+      the Ibex external-driver usage.
 - [ ] D4b -- 4-state and by-pointer packed export marshaling, including output / inout arguments and
       indirect return for return types that need hidden result storage.
 
