@@ -66,4 +66,14 @@ class DpiLogicBuffer {
 [[nodiscard]] auto ReadCanonicalLogicVec(
     const svLogicVecVal* src, const PackedArray& prototype) -> PackedArray;
 
+// Write an SV value's planes into a canonical chunk buffer at `dst`, the write
+// direction that pairs with the read helpers: a plane reshape sized by the SV
+// value, with no per-bit transcode. `dst` is either Lyra-owned (filling a
+// `DpiBitBuffer` / `DpiLogicBuffer`'s chunks) or foreign-owned (an export
+// wrapper writing an output argument through the caller's pointer). `Bit`
+// writes the value plane only; `Logic` writes both planes (`aval` the value
+// plane, `bval` the unknown plane).
+auto WriteCanonicalBitVec(svBitVecVal* dst, const PackedArray& sv) -> void;
+auto WriteCanonicalLogicVec(svLogicVecVal* dst, const PackedArray& sv) -> void;
+
 }  // namespace lyra::value

@@ -323,6 +323,32 @@ auto LowerConstructorDecl(
       .base_call = std::move(result_or->base_call)};
 }
 
+// Classifies each formal argument's ABI projection (LRM 35.5.6): its direction,
+// C ABI carrier, and SV type. Import and export declarations project their
+// arguments identically, so both build their parameter list here.
+auto ClassifyDpiParams(
+    UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
+    -> diag::Result<std::vector<hir::DpiParamAbi>> {
+  const auto& mapper = unit_lowerer.SourceMapper();
+  std::vector<hir::DpiParamAbi> abi_params;
+  abi_params.reserve(sym.getArguments().size());
+  for (const auto* formal : sym.getArguments()) {
+    const auto floc = mapper.PointSpanOf(formal->location);
+    auto direction = ClassifyDpiDirection(*formal, floc);
+    if (!direction) return std::unexpected(std::move(direction.error()));
+    auto carrier = ClassifyDpiCarrier(formal->getType(), floc);
+    if (!carrier) return std::unexpected(std::move(carrier.error()));
+    auto param_type = unit_lowerer.InternType(formal->getType(), floc);
+    if (!param_type) return std::unexpected(std::move(param_type.error()));
+    abi_params.push_back(
+        hir::DpiParamAbi{
+            .sv_type = *param_type,
+            .carrier = *carrier,
+            .direction = *direction});
+  }
+  return abi_params;
+}
+
 // Lowers a DPI-C import declaration (LRM 35.4) to a bodyless external callable.
 // It has no SV body, so it is not a `SubroutineDecl`; the caller records it
 // among the scope's foreign imports, not its subroutines. The ABI
@@ -349,22 +375,8 @@ auto LowerForeignImport(
   auto ret_type = unit_lowerer.InternType(sym.getReturnType(), loc);
   if (!ret_type) return std::unexpected(std::move(ret_type.error()));
 
-  std::vector<hir::DpiParamAbi> abi_params;
-  abi_params.reserve(sym.getArguments().size());
-  for (const auto* formal : sym.getArguments()) {
-    const auto floc = mapper.PointSpanOf(formal->location);
-    auto direction = ClassifyDpiDirection(*formal, floc);
-    if (!direction) return std::unexpected(std::move(direction.error()));
-    auto carrier = ClassifyDpiCarrier(formal->getType(), floc);
-    if (!carrier) return std::unexpected(std::move(carrier.error()));
-    auto param_type = unit_lowerer.InternType(formal->getType(), floc);
-    if (!param_type) return std::unexpected(std::move(param_type.error()));
-    abi_params.push_back(
-        hir::DpiParamAbi{
-            .sv_type = *param_type,
-            .carrier = *carrier,
-            .direction = *direction});
-  }
+  auto abi_params = ClassifyDpiParams(unit_lowerer, sym);
+  if (!abi_params) return std::unexpected(std::move(abi_params.error()));
 
   return hir::ForeignImportDecl{
       .name = std::string{sym.name},
@@ -372,7 +384,7 @@ auto LowerForeignImport(
       .is_pure = sym.flags.has(slang::ast::MethodFlags::Pure),
       .ret_abi = *ret_abi,
       .ret_sv_type = *ret_type,
-      .params = std::move(abi_params)};
+      .params = std::move(*abi_params)};
 }
 
 auto LowerForeignExport(
@@ -390,39 +402,15 @@ auto LowerForeignExport(
   auto ret_type = unit_lowerer.InternType(sym.getReturnType(), loc);
   if (!ret_type) return std::unexpected(std::move(ret_type.error()));
 
-  std::vector<hir::DpiParamAbi> abi_params;
-  abi_params.reserve(sym.getArguments().size());
-  for (const auto* formal : sym.getArguments()) {
-    const auto floc = mapper.PointSpanOf(formal->location);
-    auto direction = ClassifyDpiDirection(*formal, floc);
-    if (!direction) return std::unexpected(std::move(direction.error()));
-    if (*direction != support::DpiDirection::kInput) {
-      return diag::Fail(
-          floc, diag::DiagCode::kUnsupportedDpi,
-          "DPI-C export with an output / inout argument is not yet supported");
-    }
-    auto carrier = ClassifyDpiCarrier(formal->getType(), floc);
-    if (!carrier) return std::unexpected(std::move(carrier.error()));
-    if (std::holds_alternative<support::VectorCarrier>(*carrier)) {
-      return diag::Fail(
-          floc, diag::DiagCode::kUnsupportedDpi,
-          "DPI-C export of a packed-vector argument is not yet supported");
-    }
-    auto param_type = unit_lowerer.InternType(formal->getType(), floc);
-    if (!param_type) return std::unexpected(std::move(param_type.error()));
-    abi_params.push_back(
-        hir::DpiParamAbi{
-            .sv_type = *param_type,
-            .carrier = *carrier,
-            .direction = *direction});
-  }
+  auto abi_params = ClassifyDpiParams(unit_lowerer, sym);
+  if (!abi_params) return std::unexpected(std::move(abi_params.error()));
 
   return hir::ForeignExportDecl{
       .sv_name = std::string{sym.name},
       .foreign_name = std::string{foreign_name},
       .ret_abi = *ret_abi,
       .ret_sv_type = *ret_type,
-      .params = std::move(abi_params)};
+      .params = std::move(*abi_params)};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

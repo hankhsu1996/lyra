@@ -357,6 +357,18 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // canonical chunk pointer.
   kDpiBitBuffer,
   kDpiLogicBuffer,
+  // One canonical packed-vector chunk element (LRM 35.5.6, Annex H.10.1.2): the
+  // backend-neutral runtime-ABI storage unit a packed value crosses the foreign
+  // boundary as, used as a borrowed-pointer pointee to spell the by-pointer
+  // carrier an export wrapper receives. This is a plumbing type, never an SV
+  // value type: it has no declared range, signedness, or four-state expression
+  // semantics, and no `PackedArray` operation acts on it. `kDpiBitChunk` is a
+  // 32-bit value-plane word; `kDpiLogicChunk` is a two-plane `{ aval, bval }`
+  // record, each plane a 32-bit word. Each backend's type mapping realizes it:
+  // the C++ backend as `svBitVecVal` / `svLogicVecVal`, a lower backend as the
+  // layout-equivalent word / record.
+  kDpiBitChunk,
+  kDpiLogicChunk,
 };
 
 struct RuntimeLibraryType {

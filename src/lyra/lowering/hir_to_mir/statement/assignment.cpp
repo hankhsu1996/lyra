@@ -380,21 +380,9 @@ auto LowerSubroutineCallWithWritebacks(
       wrapper.exprs.Add(BuildServicesCallExpr(unit_lowerer, wrapper_frame));
   const mir::TypeId void_type = unit.builtins.void_type;
   for (const CompletionWriteback& wb : writebacks) {
-    // A single-component payload is the bare value; otherwise project the
-    // component out of the tuple.
-    mir::ExprId value_id{};
-    if (components.size() == 1) {
-      value_id = wrapper.exprs.Add(mir::MakeLocalRefExpr(completion, wb.type));
-    } else {
-      const mir::ExprId tuple_read =
-          wrapper.exprs.Add(mir::MakeLocalRefExpr(completion, payload_type));
-      value_id = wrapper.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::TupleGetExpr{
-                      .tuple = tuple_read, .index = wb.component_index},
-              .type = wb.type});
-    }
+    const mir::ExprId value_id = ProjectCompletionComponent(
+        wrapper, completion, payload_type, components.size(),
+        wb.component_index, wb.type);
     const mir::Expr assign_expr = BuildObservableAssignExpr(
         unit, wrapper, services_id, wb.place, value_id, std::nullopt, wb.type,
         void_type);

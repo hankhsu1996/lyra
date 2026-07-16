@@ -11,7 +11,7 @@ expect:
   stderr:
     contains:
       - "unsupported:"
-      - "DPI-C export with an output / inout argument is not yet supported"
+      - "DPI-C export of a task is not yet supported"
     not_contains:
       - "internal error"
       - "\x1b["

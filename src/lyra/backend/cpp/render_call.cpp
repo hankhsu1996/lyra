@@ -279,6 +279,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "ReadCanonicalBitVec";
     case support::BuiltinFn::kReadCanonicalLogicVec:
       return "ReadCanonicalLogicVec";
+    case support::BuiltinFn::kWriteCanonicalBitVec:
+      return "WriteCanonicalBitVec";
+    case support::BuiltinFn::kWriteCanonicalLogicVec:
+      return "WriteCanonicalLogicVec";
     case support::BuiltinFn::kDpiBufferData:
       return "Data";
     case support::BuiltinFn::kFromSvLogic:
@@ -379,6 +383,8 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kToSvLogic:
     case support::BuiltinFn::kReadCanonicalBitVec:
     case support::BuiltinFn::kReadCanonicalLogicVec:
+    case support::BuiltinFn::kWriteCanonicalBitVec:
+    case support::BuiltinFn::kWriteCanonicalLogicVec:
     case support::BuiltinFn::kFromSvLogic:
       return "lyra::value";
     case support::BuiltinFn::kDelay:

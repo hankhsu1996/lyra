@@ -31,16 +31,17 @@ orchestration.
 
 ## Actionable
 
-Two frontiers are open. On the C++ backend the import surface (D1-D3) is in, and the scalar export
-call chain (D4) runs: a scalar input-only export executes end to end through the import -> export
-chain, its wrapper marshaling the C arguments and recovering the exported subroutine's single
-top-level instance from the running design. What remains for the export surface is instance-bound
-dispatch beyond that single instance via `svSetScope` and receiver-less package / `$unit` scope
-(D4a), 4-state / by-pointer / output marshaling (D4b), the generated ABI header and export linkage
-(D9), then DPI tasks (D5). On the execution backend scalar import (D10) is in: a foreign call lowers
-to an external-linkage symbol and the by-value carriers marshal. The rest of the import surface
-(D11) is blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a closure,
-which that backend does not yet lower at all (`architecture-reset.md`).
+Two frontiers are open. On the C++ backend the import surface (D1-D3) is in, and the export
+marshaling surface (D4, D4b) runs: an export executes end to end through the import -> export chain
+across every argument direction and both value families -- by-value scalars, by-pointer scalar
+`output` / `inout`, and canonical 2-state / 4-state packed vectors -- with its wrapper recovering
+the exported subroutine's single top-level instance from the running design. What remains for the
+export surface is instance-bound dispatch beyond that single instance via `svSetScope` and
+receiver-less package / `$unit` scope (D4a), the generated ABI header and export linkage (D9), then
+DPI tasks (D5). On the execution backend scalar import (D10) is in: a foreign call lowers to an
+external-linkage symbol and the by-value carriers marshal. The rest of the import surface (D11) is
+blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a closure, which that
+backend does not yet lower at all (`architecture-reset.md`).
 
 ## Sub-Steps
 
@@ -90,8 +91,15 @@ from an external main.
       callable in `packages.md`, PK1-PK2). This is the `mhpmcounter_num` / `mhpmcounter_get` shape
       in the Ibex bring-up; the pure-SV Ibex run never calls them, so this closes the construct, not
       the Ibex external-driver usage.
-- [ ] D4b -- 4-state and by-pointer packed export marshaling, including output / inout arguments and
-      indirect return for return types that need hidden result storage.
+- [x] D4b -- 4-state and by-pointer packed export marshaling. An `output` / `inout` scalar crosses
+      by pointer to its by-value carrier; a packed vector of any direction crosses by pointer as its
+      canonical `svBitVecVal*` / `svLogicVecVal*` buffer, its planes reshaped without a per-bit
+      transcode. The `output` / `inout` values ride the completion payload the exported subroutine
+      already returns (LRM 13.5), so the wrapper destructures the payload and marshals each
+      component out through its foreign pointer. A function result stays a by-value return, limited
+      to a small value (LRM 35.5.5): an atom such as `int` / `longint` / `real` / `string` /
+      `chandle`, or a scalar `bit` / `logic`; a packed-vector, `integer`, or `time` result is not a
+      small value and cannot be returned.
 
 ### DPI tasks
 
