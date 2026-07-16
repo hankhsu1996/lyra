@@ -1,0 +1,13 @@
+id: cpp.process_kill_await
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    killed_ok: 1
+    await_ordered: 1
+    finished_ok: 1

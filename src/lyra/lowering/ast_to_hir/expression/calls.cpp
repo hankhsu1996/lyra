@@ -88,6 +88,18 @@ auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
   if (method.name == "status") {
     return support::ImportedRuntimeMethod::kProcessStatus;
   }
+  if (method.name == "kill") {
+    return support::ImportedRuntimeMethod::kProcessKill;
+  }
+  if (method.name == "await") {
+    return support::ImportedRuntimeMethod::kProcessAwait;
+  }
+  if (method.name == "suspend") {
+    return support::ImportedRuntimeMethod::kProcessSuspend;
+  }
+  if (method.name == "resume") {
+    return support::ImportedRuntimeMethod::kProcessResume;
+  }
   return std::nullopt;
 }
 
@@ -459,7 +471,7 @@ auto LowerCallExpr(
   // A static method carries no receiver; an instance method lowers its handle,
   // present in `thisClass`.
   if (const auto imported = DetectImportedRuntimeMethod(*sym)) {
-    auto result_type = module.InternType(*call.type, span);
+    auto result_type = unit_lowerer.InternType(*call.type, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     std::optional<hir::ExprId> receiver;
     if (const slang::ast::Expression* this_class = call.thisClass();

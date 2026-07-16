@@ -23,6 +23,10 @@ auto ImportedRuntimeClassName(ImportedRuntimeClass klass) -> std::string_view;
 enum class ImportedRuntimeMethod : std::uint8_t {
   kProcessSelf,
   kProcessStatus,
+  kProcessKill,
+  kProcessAwait,
+  kProcessSuspend,
+  kProcessResume,
 };
 
 // The runtime-library function name a call to this method lowers to (the symbol
@@ -31,9 +35,17 @@ enum class ImportedRuntimeMethod : std::uint8_t {
 auto ImportedRuntimeMethodSymbol(ImportedRuntimeMethod method)
     -> std::string_view;
 
-// Whether the method is a static function reached without a receiver, so the
-// call threads the engine services handle rather than a receiver as its
-// leading argument (LRM 9.7 `process::self`).
-auto ImportedRuntimeMethodIsStatic(ImportedRuntimeMethod method) -> bool;
+// Whether the runtime symbol takes the engine services handle. Every method
+// needs it except `status`, a pure read of the process node: `self` and
+// `suspend` identify the calling process through it, while `kill`, `await`, and
+// `resume` reach the scheduler to wake, park, or re-schedule. It is threaded as
+// the leading argument for a receiver-less static call (`self`) and after the
+// receiver otherwise.
+auto ImportedRuntimeMethodTakesServices(ImportedRuntimeMethod method) -> bool;
+
+// Whether calling the method suspends the caller until the target settles, so
+// the statement lowering awaits it (LRM 9.7 `process::await` is the one
+// blocking method). The others return without suspending.
+auto ImportedRuntimeMethodSuspends(ImportedRuntimeMethod method) -> bool;
 
 }  // namespace lyra::support

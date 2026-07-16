@@ -13,6 +13,7 @@
 namespace lyra::runtime {
 
 class RuntimeProcess;
+class PendingWait;
 
 // Non-templated scheduling state shared by every coroutine frame -- a process
 // body, a task body, a fork branch -- regardless of the value the frame
@@ -34,6 +35,13 @@ struct PromiseBase {
   // resume it. A deque because the targets' lists point at these addresses, and
   // appending must not move the ones already linked.
   std::deque<Registration> registrations;
+  // The wait this activation is blocked on, if any: a capability, held by the
+  // awaiter that suspended this frame, to re-establish the wait on resume (LRM
+  // 9.7). Distinct from `registrations`, which is the current enrollment; a
+  // suspend revokes the enrollment but keeps this. Null while runnable,
+  // executing, or terminal. The awaiter is frame-resident, so this points
+  // within the same frame and dies with it.
+  PendingWait* pending_wait = nullptr;
 
   PromiseBase() = default;
   PromiseBase(const PromiseBase&) = delete;

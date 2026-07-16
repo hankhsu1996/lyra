@@ -1144,10 +1144,11 @@ auto LowerForeignImportCall(
 
 // A call to a method the runtime library provides for an imported class (LRM
 // 9.7 `process`) lowers to a direct call on the library symbol. An instance
-// method passes its receiver handle as the leading argument; a static method
-// threads the engine services handle instead. The receiver is passed as the
-// managed handle itself, not a borrowed object pointer -- the runtime reads the
-// process identity from the handle.
+// method passes its receiver handle as the leading argument; whether the
+// engine services handle follows is a per-method fact. The receiver is passed
+// as the managed handle itself, not a borrowed object pointer -- the runtime
+// reads the process identity from the handle. A suspending method (`await`) is
+// wrapped in an await by the statement lowering, the same as a task enable.
 template <ExprLowerer Lowerer>
 auto LowerImportedMethodCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -1162,9 +1163,13 @@ auto LowerImportedMethodCall(
         lowerer.LowerExpr(lowerer.HirExprs().Get(*m.receiver), frame);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     args.push_back(block.exprs.Add(*std::move(receiver_or)));
-  } else if (support::ImportedRuntimeMethodIsStatic(m.method)) {
+  }
+  // A static method (no receiver) threads the services handle as its leading
+  // argument; an instance method threads it after the receiver when the method
+  // needs the engine -- to schedule, or to identify the calling process.
+  if (support::ImportedRuntimeMethodTakesServices(m.method)) {
     args.push_back(
-        block.exprs.Add(BuildServicesCallExpr(lowerer.Module(), frame)));
+        block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame)));
   }
 
   for (const auto& arg : c.arguments) {

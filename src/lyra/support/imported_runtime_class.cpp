@@ -21,18 +21,44 @@ auto ImportedRuntimeMethodSymbol(ImportedRuntimeMethod method)
       return "ProcessSelf";
     case ImportedRuntimeMethod::kProcessStatus:
       return "ProcessStatus";
+    case ImportedRuntimeMethod::kProcessKill:
+      return "ProcessKill";
+    case ImportedRuntimeMethod::kProcessAwait:
+      return "ProcessAwait";
+    case ImportedRuntimeMethod::kProcessSuspend:
+      return "ProcessSuspend";
+    case ImportedRuntimeMethod::kProcessResume:
+      return "ProcessResume";
   }
   throw InternalError("ImportedRuntimeMethodSymbol: unknown method");
 }
 
-auto ImportedRuntimeMethodIsStatic(ImportedRuntimeMethod method) -> bool {
+auto ImportedRuntimeMethodTakesServices(ImportedRuntimeMethod method) -> bool {
   switch (method) {
     case ImportedRuntimeMethod::kProcessSelf:
+    case ImportedRuntimeMethod::kProcessKill:
+    case ImportedRuntimeMethod::kProcessAwait:
+    case ImportedRuntimeMethod::kProcessSuspend:
+    case ImportedRuntimeMethod::kProcessResume:
       return true;
     case ImportedRuntimeMethod::kProcessStatus:
       return false;
   }
-  throw InternalError("ImportedRuntimeMethodIsStatic: unknown method");
+  throw InternalError("ImportedRuntimeMethodTakesServices: unknown method");
+}
+
+auto ImportedRuntimeMethodSuspends(ImportedRuntimeMethod method) -> bool {
+  switch (method) {
+    case ImportedRuntimeMethod::kProcessAwait:
+      return true;
+    case ImportedRuntimeMethod::kProcessSelf:
+    case ImportedRuntimeMethod::kProcessStatus:
+    case ImportedRuntimeMethod::kProcessKill:
+    case ImportedRuntimeMethod::kProcessSuspend:
+    case ImportedRuntimeMethod::kProcessResume:
+      return false;
+  }
+  throw InternalError("ImportedRuntimeMethodSuspends: unknown method");
 }
 
 }  // namespace lyra::support

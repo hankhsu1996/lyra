@@ -861,25 +861,6 @@ enough to warrant its own focused review.
       touches how a unit definition is published and filled; it warrants its own review rather than
       riding along with a value-domain or storage cut.
 
-- [ ] R59 -- Unify the fixed-name runtime library types. MIR carries a family of type kinds that
-      each mean only "a type the runtime library provides, mapped to a fixed `lyra::runtime::X`
-      name": the object-tree bases (`ScopeType`, `InstanceType`, `GenScopeType`,
-      `ProceduralStorageScopeType`) and the subsystem facades (`ServicesType`, `FilesType`,
-      `DiagnosticType`) are seven nullary type-kind arms, while the inert value payloads already
-      ride one parametric `RuntimeLibraryType{kind}`. The seven nullary arms differ from one another
-      only in their fixed C++ name and their semantic role -- a base a class extends and reasons
-      about for tree-node membership, versus an opaque receiver of an effect-method family -- and
-      neither difference needs its own top-level type kind. Target shape: the fixed-name runtime
-      types share one parametric representation, as the inert payloads already do, with the
-      base-versus-facade role read as a property where it is load-bearing (base-lineage resolution,
-      receiver dispatch) rather than encoded as a per-type-kind axis. `ObjectType`,
-      `ExternalUnitObjectType`, and `ImportedRuntimeObjectType` stay distinct and out of this cut:
-      they are the three legs of the object-identity-by-boundary set
-      (`../architecture/object_model.md` invariant 2 -- intra-unit id, cross-unit name, imported
-      library declaration), an object identity rather than a fixed runtime handle name. **Blocker**:
-      none, but it re-bases base-lineage resolution and receiver dispatch, both load-bearing, so it
-      warrants its own focused review rather than riding a feature cut.
-
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,
