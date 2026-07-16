@@ -7,11 +7,12 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
-#include "lyra/hir/module_unit.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 
 namespace slang::ast {
 class InstanceBodySymbol;
+class PackageSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -71,7 +72,21 @@ auto RejectDpiExports(const LowerCompilationFacts& facts) -> diag::Result<void>;
 auto LowerUnit(
     const LowerCompilationFacts& facts,
     const slang::ast::InstanceBodySymbol& body)
-    -> diag::Result<hir::ModuleUnit>;
+    -> diag::Result<hir::CompilationUnit>;
+
+// The packages the design declares (LRM 26). A package is a namespace
+// compilation unit: it owns declarations reached by name from other units, and
+// unlike a module it is never instantiated, so the list comes from the
+// declaration set, not the instance tree.
+auto CollectPackages(const LowerCompilationFacts& facts)
+    -> std::vector<const slang::ast::PackageSymbol*>;
+
+// Lowers one package to its HIR unit. Like `LowerUnit`, it reads only the
+// package's own scope and the shared frontend.
+auto LowerPackageUnit(
+    const LowerCompilationFacts& facts,
+    const slang::ast::PackageSymbol& package)
+    -> diag::Result<hir::CompilationUnit>;
 
 // A top-level block is an auto-promoted, uninstantiated module. These names
 // are a subset of the compiled units: a unit reached only through

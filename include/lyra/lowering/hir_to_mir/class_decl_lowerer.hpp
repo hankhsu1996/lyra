@@ -2,7 +2,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -25,9 +25,9 @@ namespace lyra::lowering::hir_to_mir {
 class ClassDeclLowerer {
  public:
   ClassDeclLowerer(
-      ModuleLowerer& module, mir::ClassId class_id, mir::TypeId object_type,
+      UnitLowerer& unit_lowerer, mir::ClassId class_id, mir::TypeId object_type,
       const hir::ClassDecl& hir_class)
-      : module_(&module),
+      : owner_(&unit_lowerer),
         class_id_(class_id),
         object_type_(object_type),
         hir_class_(&hir_class) {
@@ -39,7 +39,7 @@ class ClassDeclLowerer {
   auto Run() -> diag::Result<mir::Class>;
 
  private:
-  ModuleLowerer* module_;
+  UnitLowerer* owner_;
   mir::ClassId class_id_;
   mir::TypeId object_type_;
   const hir::ClassDecl* hir_class_;

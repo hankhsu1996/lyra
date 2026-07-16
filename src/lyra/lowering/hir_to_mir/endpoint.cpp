@@ -13,7 +13,7 @@ namespace lyra::lowering::hir_to_mir {
 auto BindEndpoint(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::ReferenceRoute& route) -> BoundEndpoint {
-  const mir::CompilationUnit& unit = lowerer.Module().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   return std::visit(
       Overloaded{
           [&](const hir::DirectMemberRef& m) -> BoundEndpoint {

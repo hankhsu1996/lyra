@@ -15,9 +15,9 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -32,7 +32,7 @@ auto LowerUnboundedLiteralProc(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "`$` is only supported as a queue index or slice bound (LRM 7.10)");
   }
-  const hir::TypeId int_type = proc.Module().Unit().builtins.int_type;
+  const hir::TypeId int_type = proc.Owner().Unit().builtins.int_type;
   const hir::ExprId size_id = frame.Exprs().Add(
       hir::Expr{
           .type = int_type,
@@ -79,7 +79,7 @@ auto LowerElementSelectExpr(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const hir::ExprId idx_id = frame.Exprs().Add(*std::move(idx_or));
 
-  auto type_id = lowerer.Module().InternType(*sel.type, span);
+  auto type_id = lowerer.Owner().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -150,7 +150,7 @@ auto LowerRangeSelectExpr(
         "LowerRangeSelectExpr: unknown slang RangeSelectionKind");
   }();
 
-  auto type_id = lowerer.Module().InternType(*sel.type, span);
+  auto type_id = lowerer.Owner().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -185,7 +185,7 @@ auto LowerMemberAccessExpr(
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id = frame.Exprs().Add(*std::move(base_or));
-  auto type_id = lowerer.Module().InternType(*sel.type, span);
+  auto type_id = lowerer.Owner().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   if (sel.member.kind == slang::ast::SymbolKind::Field) {
     return hir::Expr{
@@ -203,7 +203,7 @@ auto LowerMemberAccessExpr(
     const auto& prop = sel.member.as<slang::ast::ClassPropertySymbol>();
     const auto& declaring_class =
         prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto owner_id = lowerer.Module().InternClass(declaring_class, span);
+    auto owner_id = lowerer.Owner().InternClass(declaring_class, span);
     if (!owner_id) return std::unexpected(std::move(owner_id.error()));
     return hir::Expr{
         .type = *type_id,

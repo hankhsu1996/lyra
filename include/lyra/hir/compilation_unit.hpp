@@ -15,7 +15,7 @@ namespace lyra::hir {
 
 // Canonical TypeIds for primitives the lowering frequently materializes
 // (literal int type, void result of system tasks, etc.). Populated by
-// `ModuleUnit`'s constructor; consumers read them off the unit.
+// `CompilationUnit`'s constructor; consumers read them off the unit.
 struct BuiltinHirTypes {
   TypeId scalar_bit;
   TypeId scalar_logic;
@@ -28,7 +28,7 @@ struct BuiltinHirTypes {
   TypeId wildcard_index;
 };
 
-struct ModuleUnit {
+struct CompilationUnit {
   std::string name;
   base::Arena<Type, TypeId> types;
   BuiltinHirTypes builtins;
@@ -37,7 +37,7 @@ struct ModuleUnit {
   // its body is built, so its identity must exist before its definition.
   base::Registry<ClassDecl, ClassId> classes;
 
-  explicit ModuleUnit(std::string name)
+  explicit CompilationUnit(std::string name)
       : name(std::move(name)), builtins(MakeBuiltins(types)) {
   }
 

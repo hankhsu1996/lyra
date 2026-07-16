@@ -27,15 +27,15 @@ auto LowerAssignmentExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto& module = proc.Module();
-  auto validate = ValidateAssignableImpl(module, true, as.left());
+  auto& unit_lowerer = proc.Owner();
+  auto validate = ValidateAssignableImpl(unit_lowerer, true, as.left());
   if (!validate) return std::unexpected(std::move(validate.error()));
 
   auto lhs_or = proc.LowerExpr(as.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(lhs_or));
 
-  auto type_id = module.InternType(*as.type, span);
+  auto type_id = unit_lowerer.InternType(*as.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   const auto kind = as.isNonBlocking() ? hir::AssignKind::kNonBlocking
@@ -94,15 +94,15 @@ auto LowerIncDecExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::UnaryExpression& un, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto& module = proc.Module();
-  auto validate = ValidateAssignableImpl(module, true, un.operand());
+  auto& unit_lowerer = proc.Owner();
+  auto validate = ValidateAssignableImpl(unit_lowerer, true, un.operand());
   if (!validate) return std::unexpected(std::move(validate.error()));
 
   auto target_or = proc.LowerExpr(un.operand(), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   const hir::ExprId target_id = frame.Exprs().Add(*std::move(target_or));
 
-  auto type_id = module.InternType(*un.type, span);
+  auto type_id = unit_lowerer.InternType(*un.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   return hir::Expr{
@@ -114,10 +114,10 @@ auto LowerIncDecExprProc(
 }
 
 auto ValidateAssignableImpl(
-    ModuleLowerer& module, bool procedural_context,
+    UnitLowerer& unit_lowerer, bool procedural_context,
     const slang::ast::Expression& expr) -> diag::Result<void> {
   using EK = slang::ast::ExpressionKind;
-  const auto& mapper = module.SourceMapper();
+  const auto& mapper = unit_lowerer.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
   auto reject = [&](std::string_view why) -> diag::Result<void> {
     return diag::Fail(
@@ -140,7 +140,7 @@ auto ValidateAssignableImpl(
         if (procedural_context) {
           return reject("a net is not a legal procedural assignment target");
         }
-        if (!module
+        if (!unit_lowerer
                  .LookupStructuralDataObjectBinding(
                      sym.as<slang::ast::ValueSymbol>())
                  .has_value()) {
@@ -156,7 +156,7 @@ auto ValidateAssignableImpl(
       const auto& var = sym.as<slang::ast::VariableSymbol>();
       if (!procedural_context) {
         // LRM 10.3: continuous-assign target must resolve to a structural var.
-        if (!module.LookupStructuralDataObjectBinding(var).has_value()) {
+        if (!unit_lowerer.LookupStructuralDataObjectBinding(var).has_value()) {
           return reject(
               "continuous-assignment target must be a structural variable");
         }
@@ -165,11 +165,11 @@ auto ValidateAssignableImpl(
     }
     case EK::ElementSelect:
       return ValidateAssignableImpl(
-          module, procedural_context,
+          unit_lowerer, procedural_context,
           expr.as<slang::ast::ElementSelectExpression>().value());
     case EK::RangeSelect:
       return ValidateAssignableImpl(
-          module, procedural_context,
+          unit_lowerer, procedural_context,
           expr.as<slang::ast::RangeSelectExpression>().value());
     case EK::MemberAccess: {
       const auto& ma = expr.as<slang::ast::MemberAccessExpression>();
@@ -179,7 +179,8 @@ auto ValidateAssignableImpl(
             "member access target is not a struct field or class "
             "property");
       }
-      return ValidateAssignableImpl(module, procedural_context, ma.value());
+      return ValidateAssignableImpl(
+          unit_lowerer, procedural_context, ma.value());
     }
     case EK::HierarchicalValue: {
       const auto& hv = expr.as<slang::ast::HierarchicalValueExpression>();
@@ -202,7 +203,8 @@ auto ValidateAssignableImpl(
               "replication is not allowed inside a destructuring "
               "assignment target (LRM 11.4.12.1)");
         }
-        auto sub = ValidateAssignableImpl(module, procedural_context, *op);
+        auto sub =
+            ValidateAssignableImpl(unit_lowerer, procedural_context, *op);
         if (!sub) return sub;
       }
       return {};

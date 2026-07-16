@@ -38,11 +38,11 @@ auto SelectTimeFn(const mir::BuiltinMirTypes& builtins, support::TimeKind kind)
 auto LowerTimeSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     const support::TimeSystemSubroutineInfo& info) -> diag::Result<mir::Expr> {
-  const auto& builtins = process.Module().Unit().builtins;
+  const auto& builtins = process.Owner().Unit().builtins;
   const TimeFnInfo fn = SelectTimeFn(builtins, info.kind);
   auto& body = *frame.current_block;
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      body.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   const mir::ExprId unit_power_id = body.exprs.Add(
       mir::MakeIntLiteral(
           builtins.int_type,

@@ -14,7 +14,7 @@
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
@@ -71,9 +71,9 @@ struct RoutedRefMeta {
 class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
-      ModuleLowerer& module, const StructuralScopeLowerer* parent,
+      UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
       std::string name, const hir::StructuralScope& hir_scope)
-      : module_(&module),
+      : owner_(&unit_lowerer),
         parent_(parent),
         name_(std::move(name)),
         hir_scope_(&hir_scope) {
@@ -101,8 +101,8 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
       -> diag::Result<mir::Expr>;
 
-  [[nodiscard]] auto Module() const -> ModuleLowerer& {
-    return *module_;
+  [[nodiscard]] auto Owner() const -> UnitLowerer& {
+    return *owner_;
   }
 
   [[nodiscard]] auto Parent() const -> const StructuralScopeLowerer* {
@@ -163,7 +163,7 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto EnclosingClassShapeAtHops(hir::StructuralHops hops) const
       -> const mir::ClassShape& {
     if (hops.value == 0) {
-      return module_->GetClassShape(class_id_);
+      return owner_->GetClassShape(class_id_);
     }
     if (parent_ == nullptr) {
       throw InternalError(
@@ -385,7 +385,7 @@ class StructuralScopeLowerer {
         hir::StructuralHops{hops.value - 1}, hir_id);
   }
 
-  ModuleLowerer* module_;
+  UnitLowerer* owner_;
   const StructuralScopeLowerer* parent_;
   std::string name_;
   const hir::StructuralScope* hir_scope_;

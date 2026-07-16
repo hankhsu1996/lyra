@@ -7,8 +7,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
@@ -34,7 +34,7 @@ auto LowerIncDecExprProc(
 // (process / subroutine body) targets from continuous-assign targets
 // (LRM 10.3 -- structural-var only).
 auto ValidateAssignableImpl(
-    ModuleLowerer& module, bool procedural_context,
+    UnitLowerer& unit_lowerer, bool procedural_context,
     const slang::ast::Expression& expr) -> diag::Result<void>;
 
 }  // namespace lyra::lowering::ast_to_hir

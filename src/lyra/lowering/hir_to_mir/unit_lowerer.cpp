@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,7 +17,7 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
+auto UnitLowerer::Run() -> diag::Result<mir::CompilationUnit> {
   WalkFrame root_frame;
 
   // Every class identity is minted before any type is translated, so a class
@@ -64,7 +64,7 @@ auto ModuleLowerer::Run() -> diag::Result<mir::CompilationUnit> {
   return std::move(unit_);
 }
 
-auto ModuleLowerer::NextGenerateScopeName(std::string_view arm_tag)
+auto UnitLowerer::NextGenerateScopeName(std::string_view arm_tag)
     -> std::string {
   return std::format("gen{}_{}", next_generate_scope_name_++, arm_tag);
 }

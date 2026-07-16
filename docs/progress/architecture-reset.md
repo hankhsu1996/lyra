@@ -167,6 +167,8 @@ Tracked in `operators.md` and `integral.md`.
 
 ### packages
 
+Tracked in `packages.md`.
+
 - [ ] packages/basic -- package-level declarations and cross-package import (LRM 26). No package
       lowering exists.
 - [ ] packages/functions -- functions exported from packages (LRM 26.3); rides on packages/basic.

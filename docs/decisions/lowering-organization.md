@@ -39,7 +39,7 @@ not mutated.
 **The class owns its registries and the root output; nested builders live on the stack.** Every
 class member is one of three kinds: facts (constructor-injected, never mutated), registries
 (append-only accumulators with `Add` / `Lookup`), or the root output the pass is constructing. The
-root output (`hir::ModuleUnit`, `mir::CompilationUnit`, etc.) is the deliverable; it lives as a
+root output (`hir::CompilationUnit`, `mir::CompilationUnit`, etc.) is the deliverable; it lives as a
 class member with lifetime equal to the pass instance, is shared by every handler, and is moved out
 of the class by `Run`'s return -- after which the class holds no IR pointer. Nested IR scopes opened
 mid-walk (a procedural scope for an if-branch, a closure body, a fork-branch body) are
@@ -254,7 +254,7 @@ stylistic.
   recompiles.
 - Adding a new family creates a new subsystem header / implementation pair and adds switch cases in
   the central dispatcher; existing subsystems are not touched.
-- `TypeIdOfSlangExpr` is replaced by `ModuleLowerer::InternType`, a class method that encapsulates
+- `TypeIdOfSlangExpr` is replaced by `UnitLowerer::InternType`, a class method that encapsulates
   both the slang-keyed dedup cache and the output's type table together (the dedup invariant is
   enforced structurally, not by caller discipline). `MakeRefExpr` becomes a subsystem-local helper
   in `references.cpp` (its only consumer). `MakeReturnConventionType` becomes a subsystem-local

@@ -43,7 +43,7 @@ auto BuildSFormatCallExpr(
       process, frame, call, info.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
-  auto& unit = process.Module().Unit();
+  auto& unit = process.Owner().Unit();
   auto& block = *frame.current_block;
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
@@ -51,7 +51,7 @@ auto BuildSFormatCallExpr(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
 
   return BuildFormatCallExpr(unit, block, services_id, items_array);
 }
@@ -101,7 +101,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
   auto out_or =
       process.LowerLhsExpr(hir_proc.exprs.Get(*call.arguments[0]), frame);
   if (!out_or) return std::unexpected(std::move(out_or.error()));
-  const mir::TypeId out_type = process.Module().TranslateType(
+  const mir::TypeId out_type = process.Owner().TranslateType(
       hir_proc.exprs.Get(*call.arguments[0]).type);
   const mir::ExprId out_id = block.exprs.Add(*std::move(out_or));
 
@@ -114,13 +114,13 @@ auto LowerSFormatSystemSubroutineCallStmt(
   // destination conforms the string value to its own representation. A
   // string-typed destination already matches and passes through unchanged.
   const mir::ExprId value_id =
-      ConvertToType(process.Module().Unit(), block, call_id, out_type);
+      ConvertToType(process.Owner().Unit(), block, call_id, out_type);
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
-      process.Module().Unit(), block, services_id, out_id, value_id,
-      std::nullopt, out_type, process.Module().Unit().builtins.void_type);
+      process.Owner().Unit(), block, services_id, out_id, value_id,
+      std::nullopt, out_type, process.Owner().Unit().builtins.void_type);
   const mir::ExprId assign_id = block.exprs.Add(assign_expr);
 
   return mir::Stmt{

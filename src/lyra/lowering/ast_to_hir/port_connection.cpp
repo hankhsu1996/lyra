@@ -21,9 +21,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -44,12 +44,12 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
 // connection verbatim with its direction; HIR-to-MIR realizes it
 // (LRM 23.3.3).
 auto ConnectElementPorts(
-    StructuralScopeLowerer& scope, ModuleLowerer& module,
+    StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
     const slang::ast::InstanceSymbol& inst, hir::DownwardHead head,
     ScopeFrameId home_frame, std::vector<std::uint32_t> element_indices,
     WalkFrame frame) -> diag::Result<void> {
   head.head_indices = std::move(element_indices);
-  const auto span = module.SourceMapper().PointSpanOf(inst.location);
+  const auto span = unit_lowerer.SourceMapper().PointSpanOf(inst.location);
 
   for (const auto* conn : inst.getPortConnections()) {
     if (conn->port.kind != slang::ast::SymbolKind::Port) {
@@ -71,9 +71,9 @@ auto ConnectElementPorts(
           span,
           "port not bound to a connectable variable is not yet supported");
     }
-    auto type_id = module.InternType(port.getType(), span);
+    auto type_id = unit_lowerer.InternType(port.getType(), span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
-    if (!module.Unit().types.Get(*type_id).IsValueChangeObservable()) {
+    if (!unit_lowerer.Unit().types.Get(*type_id).IsValueChangeObservable()) {
       return PortConnectionUnsupported(
           span,
           "port connection of a handle / event type is not yet supported");
@@ -121,7 +121,7 @@ auto ConnectElementPorts(
     // phase, so it keeps only the by-name reach.
     const auto cell_endpoint = [&]() -> hir::PortEndpoint {
       return hir::PortCellEndpoint{
-          .cell = frame.Exprs().Add(module.MakeRoutedMemberRef(
+          .cell = frame.Exprs().Add(unit_lowerer.MakeRoutedMemberRef(
               *internal, home_frame, head, path, *type_id, span))};
     };
 
@@ -146,15 +146,15 @@ auto ConnectElementPorts(
                 "ConnectElementPorts: port default did not fold to a constant");
           }
           auto peer_or = MakeConstantValueExpr(
-              module.Unit(), frame, *constant, *type_id, span);
+              unit_lowerer.Unit(), frame, *constant, *type_id, span);
           if (!peer_or) return std::unexpected(std::move(peer_or.error()));
           peer = frame.Exprs().Add(*std::move(peer_or));
         } else {
           auto peer_or = scope.LowerExpr(*expr, frame);
           if (!peer_or) return std::unexpected(std::move(peer_or.error()));
           peer = frame.Exprs().Add(*std::move(peer_or));
-          sensitivity = module.TranslateSensitivityReads(
-              module.Sensitivity().AnalyzeReads(*expr, inst), frame);
+          sensitivity = unit_lowerer.TranslateSensitivityReads(
+              unit_lowerer.Sensitivity().AnalyzeReads(*expr, inst), frame);
         }
         break;
       }
@@ -175,7 +175,7 @@ auto ConnectElementPorts(
             expr->as<slang::ast::AssignmentExpression>().left(), frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
         peer = frame.Exprs().Add(*std::move(peer_or));
-        sensitivity = module.TranslateSensitivityReads(
+        sensitivity = unit_lowerer.TranslateSensitivityReads(
             {SensitivityRead{.symbol = internal, .footprint = std::nullopt}},
             frame);
         break;
@@ -211,7 +211,7 @@ auto ConnectElementPorts(
 // carries its own already index-matched connection expressions; this only
 // routes each to the right cell.
 auto ConnectArrayElements(
-    StructuralScopeLowerer& scope, ModuleLowerer& module,
+    StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
     const slang::ast::InstanceArraySymbol& array, hir::DownwardHead head,
     ScopeFrameId home_frame, const std::vector<std::uint32_t>& index_prefix,
     WalkFrame frame) -> diag::Result<void> {
@@ -221,13 +221,13 @@ auto ConnectArrayElements(
     const auto* element = array.elements[i];
     if (element->kind == slang::ast::SymbolKind::InstanceArray) {
       auto r = ConnectArrayElements(
-          scope, module, element->as<slang::ast::InstanceArraySymbol>(), head,
-          home_frame, element_prefix, frame);
+          scope, unit_lowerer, element->as<slang::ast::InstanceArraySymbol>(),
+          head, home_frame, element_prefix, frame);
       if (!r) return std::unexpected(std::move(r.error()));
       continue;
     }
     auto r = ConnectElementPorts(
-        scope, module, element->as<slang::ast::InstanceSymbol>(), head,
+        scope, unit_lowerer, element->as<slang::ast::InstanceSymbol>(), head,
         home_frame, std::move(element_prefix), frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
@@ -243,24 +243,24 @@ auto StructuralScopeLowerer::PopulatePortConnections(
     if (member.kind == slang::ast::SymbolKind::Instance) {
       // The instance member is bound in the pre-pass; a downward port reach
       // cannot miss it, so absence is a compiler-bug invariant.
-      const auto binding = module_->LookupOwnedChildBinding(member);
+      const auto binding = owner_->LookupOwnedChildBinding(member);
       if (!binding.has_value()) {
         throw InternalError(
             "PopulatePortConnections: instance member has no binding");
       }
       auto r = ConnectElementPorts(
-          *this, *module_, member.as<slang::ast::InstanceSymbol>(),
+          *this, *owner_, member.as<slang::ast::InstanceSymbol>(),
           binding->head, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
       // A zero-element array (`Child c[0]`, LRM 23.3.2) constructs no element
       // and binds no member, so there is nothing to connect.
-      const auto binding = module_->LookupOwnedChildBinding(member);
+      const auto binding = owner_->LookupOwnedChildBinding(member);
       if (!binding.has_value()) {
         continue;
       }
       auto r = ConnectArrayElements(
-          *this, *module_, member.as<slang::ast::InstanceArraySymbol>(),
+          *this, *owner_, member.as<slang::ast::InstanceArraySymbol>(),
           binding->head, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }

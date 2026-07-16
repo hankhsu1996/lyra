@@ -8,17 +8,17 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto CompletionComponentTypes(
-    const ModuleLowerer& module, const hir::SubroutineDecl& decl)
+    const UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
     -> std::vector<mir::TypeId> {
   std::vector<mir::TypeId> components;
   if (decl.result_var.has_value()) {
-    components.push_back(module.TranslateType(decl.result_type));
+    components.push_back(unit_lowerer.TranslateType(decl.result_type));
   }
   for (const auto& param : decl.params) {
     if (param.direction == hir::ParamDirection::kOutput ||
         param.direction == hir::ParamDirection::kInOut) {
-      components.push_back(
-          module.TranslateType(decl.body.procedural_vars.Get(param.var).type));
+      components.push_back(unit_lowerer.TranslateType(
+          decl.body.procedural_vars.Get(param.var).type));
     }
   }
   return components;

@@ -1,0 +1,15 @@
+id: cpp.package_compile_time_contents
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    wide: 165
+    nib: 12
+    col: 1
+    wv: 8
+    masked: 240

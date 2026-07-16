@@ -24,7 +24,7 @@ namespace {
 // in an expression context; the value itself is folded once, at the sole
 // boundary that reads slang's constant representation.
 auto MaterializeConstantExpr(
-    const hir::ModuleUnit& unit, WalkFrame frame,
+    const hir::CompilationUnit& unit, WalkFrame frame,
     const hir::ConstantValue& value, hir::TypeId type, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   return std::visit(
@@ -112,7 +112,7 @@ auto MakeConstantValue(const slang::ConstantValue& cv, diag::SourceSpan span)
 }
 
 auto MakeConstantValueExpr(
-    const hir::ModuleUnit& unit, WalkFrame frame,
+    const hir::CompilationUnit& unit, WalkFrame frame,
     const slang::ConstantValue& cv, hir::TypeId type, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto value = MakeConstantValue(cv, span);

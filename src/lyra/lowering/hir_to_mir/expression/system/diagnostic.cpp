@@ -102,7 +102,7 @@ auto LowerDiagnosticSystemSubroutineCall(
       process, frame, call, support::PrintRadix::kDecimal, items_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
-  auto& unit = process.Module().Unit();
+  auto& unit = process.Owner().Unit();
   auto& block = *frame.current_block;
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
@@ -110,14 +110,14 @@ auto LowerDiagnosticSystemSubroutineCall(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   const mir::ExprId text_id = block.exprs.Add(
       BuildFormatCallExpr(unit, block, services_id, items_array));
   const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildDiagnosticCallExpr(process.Owner(), frame));
   const mir::ExprId origin_id = BuildOriginStringExpr(
       unit, block,
-      FormatRuntimeOriginString(span, process.Module().SourceManager()));
+      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
 
   mir::Expr emit_call{
       .data =
@@ -136,7 +136,7 @@ auto LowerDiagnosticSystemSubroutineCall(
   block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
 
   const mir::ExprId finish_services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   const mir::ExprId level_id = block.exprs.Add(
       mir::MakeIntLiteral(
           unit.builtins.int_type, static_cast<std::int64_t>(finish_level)));

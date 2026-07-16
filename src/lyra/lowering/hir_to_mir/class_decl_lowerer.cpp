@@ -31,10 +31,10 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
-  ModuleLowerer& module = *module_;
+  UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
 
-  const mir::TypeId self_pointer_type = module.Unit().types.PointerTo(
+  const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.PointerTo(
       object_type_, mir::PointerOwnership::kBorrowed);
 
   // An SV class extends another SV class of this unit; the base identity is
@@ -42,7 +42,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {
     base_ref = mir::ClassRef{mir::IntraUnitClassRef{
-        .class_id = module.TranslateClass(*hir_class.base)}};
+        .class_id = unit_lowerer.TranslateClass(*hir_class.base)}};
   }
 
   mir::Class mir_class{
@@ -66,7 +66,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   // declaration-ordered SV method -- each SV method keeps its natural
   // declaration index.
   mir::CallableCode ctor_code;
-  CallableBindings ctor_bindings(module.Unit(), ctor_code);
+  CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
   const mir::LocalId self_id = ctor_bindings.Declare(
       BindingOriginId::Receiver(),
       mir::LocalDecl{.name = "self", .type = self_pointer_type});
@@ -86,7 +86,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   field_ids.reserve(hir_class.fields.size());
   field_types.reserve(hir_class.fields.size());
   for (const auto& field : hir_class.fields) {
-    const mir::TypeId field_type = module.TranslateType(field.type);
+    const mir::TypeId field_type = unit_lowerer.TranslateType(field.type);
     field_ids.push_back(mir_class.fields.Add(
         mir::FieldDecl{.name = field.name, .type = field_type}));
     field_types.push_back(field_type);
@@ -117,7 +117,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       }
       const std::string mangled =
           std::format("{}__{}_{}", callable_name, v.name, j);
-      const mir::TypeId type = module.TranslateType(v.type);
+      const mir::TypeId type = unit_lowerer.TranslateType(v.type);
       const mir::FieldId mid =
           mir_class.fields.Add(mir::FieldDecl{.name = mangled, .type = type});
       placements[j] = StaticStoragePlacement{
@@ -137,7 +137,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   const CallableStoragePlan ctor_plan(
       class_scopes, plan_static_storage("<ctor>", ctor.body));
   ProcessLowerer ctor_lowerer(
-      module, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
+      unit_lowerer, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
       mir::MethodVisibility::kInternal, frame, ctor_plan);
 
   // Initialize each property in declaration order before the constructor body
@@ -156,7 +156,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
       value_id = ctor_block.exprs.Add(*std::move(value_or));
     } else {
       value_id = ctor_block.exprs.Add(
-          BuildDefaultValueFromHir(module, frame, field.type));
+          BuildDefaultValueFromHir(unit_lowerer, frame, field.type));
     }
     const mir::ExprId self_ref =
         ctor_block.exprs.Add(MakeSelfRefExpr(frame, self_pointer_type));
@@ -183,8 +183,9 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
     const WalkFrame method_owner_frame =
         WalkFrame{}.WithClass(&mir_class, class_id_, method_link);
     ProcessLowerer method_lowerer(
-        module, nullptr, mir_class.time_resolution, method.body, method.name,
-        mir::MethodVisibility::kPublic, method_owner_frame, method_plans[i]);
+        unit_lowerer, nullptr, mir_class.time_resolution, method.body,
+        method.name, mir::MethodVisibility::kPublic, method_owner_frame,
+        method_plans[i]);
     auto method_or = method_lowerer.Run(method);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     mir_class.methods.Add(*std::move(method_or));
@@ -212,7 +213,7 @@ auto ClassDeclLowerer::Run() -> diag::Result<mir::Class> {
   }
 
   ctor_code.params = std::move(ctor_params);
-  ctor_code.result_type = module.Unit().builtins.void_type;
+  ctor_code.result_type = unit_lowerer.Unit().builtins.void_type;
   const mir::MethodId ctor_method_id = mir_class.methods.Add(
       mir::MethodDecl{
           .name = "<ctor>",

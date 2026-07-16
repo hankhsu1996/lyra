@@ -29,20 +29,20 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 StructuralScopeLowerer::StructuralScopeLowerer(
-    ModuleLowerer& module, const slang::ast::Scope& slang_scope)
-    : module_(&module),
+    UnitLowerer& unit_lowerer, const slang::ast::Scope& slang_scope)
+    : owner_(&unit_lowerer),
       slang_scope_(&slang_scope),
-      frame_(module.LookupScopeFrame(slang_scope)) {
+      frame_(unit_lowerer.LookupScopeFrame(slang_scope)) {
   // A `ref` / `const ref` port's internal variable aliases the connected
   // variable rather than owning storage (LRM 23.3.3.2); record which of this
   // body's variables those are so their members lower to a reference type. Only
@@ -97,10 +97,10 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     if (member.kind != slang::ast::SymbolKind::Subroutine) continue;
     const auto& sub = member.as<slang::ast::SubroutineSymbol>();
     if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-      module_->MapForeignImportBinding(
+      owner_->MapForeignImportBinding(
           sub, frame_, hir::ForeignImportId{reserved_foreign_import_id++});
     } else {
-      module_->MapSubroutineBinding(
+      owner_->MapSubroutineBinding(
           sub, frame_, hir::StructuralSubroutineId{reserved_subroutine_id++});
     }
   }
@@ -153,7 +153,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  for (auto& ref : module_->TakeRoutedRefsForFrame(frame_)) {
+  for (auto& ref : owner_->TakeRoutedRefsForFrame(frame_)) {
     scope.routed_refs.Add(std::move(ref));
   }
   return scope;
@@ -197,8 +197,8 @@ auto StructuralScopeLowerer::PopulateMember(
 auto StructuralScopeLowerer::PopulateTypeAliasMember(
     const slang::ast::TypeAliasType& alias, WalkFrame frame)
     -> diag::Result<void> {
-  const auto& mapper = module_->SourceMapper();
-  auto target_or = module_->InternType(
+  const auto& mapper = owner_->SourceMapper();
+  auto target_or = owner_->InternType(
       alias.targetType.getType(), mapper.PointSpanOf(alias.location));
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   frame.current_structural_scope->AddTypeAlias(
@@ -210,7 +210,7 @@ auto StructuralScopeLowerer::PopulateTypeAliasMember(
 auto StructuralScopeLowerer::PopulateVariableMember(
     const slang::ast::VariableSymbol& var, WalkFrame frame)
     -> diag::Result<void> {
-  const auto& mapper = module_->SourceMapper();
+  const auto& mapper = owner_->SourceMapper();
   if (var.lifetime != slang::ast::VariableLifetime::Static) {
     return diag::Fail(
         mapper.PointSpanOf(var.location),
@@ -218,13 +218,13 @@ auto StructuralScopeLowerer::PopulateVariableMember(
         "only static variables are supported");
   }
   auto type_id_or =
-      module_->InternType(var.getType(), mapper.PointSpanOf(var.location));
+      owner_->InternType(var.getType(), mapper.PointSpanOf(var.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
   // Slang rejects `void` in any variable-declaration position before
   // elaboration, so a void-typed VariableSymbol can only reach this path
   // via a slang/Lyra integration bug.
   if (std::holds_alternative<hir::VoidType>(
-          module_->Unit().types.Get(*type_id_or).data)) {
+          owner_->Unit().types.Get(*type_id_or).data)) {
     throw InternalError(
         "StructuralScopeLowerer::PopulateVariableMember: variable declaration "
         "produced "
@@ -244,15 +244,15 @@ auto StructuralScopeLowerer::PopulateVariableMember(
               .kind = hir::StructuralVariableDecl{
                   .initializer = initializer_id,
                   .reference = ReferenceBindingFor(var)}});
-  module_->MapStructuralDataObjectBinding(var, frame_, local, *type_id_or);
+  owner_->MapStructuralDataObjectBinding(var, frame_, local, *type_id_or);
   return {};
 }
 
 auto StructuralScopeLowerer::PopulateNetMember(
     const slang::ast::NetSymbol& net, WalkFrame frame) -> diag::Result<void> {
-  const auto& mapper = module_->SourceMapper();
+  const auto& mapper = owner_->SourceMapper();
   const auto span = mapper.PointSpanOf(net.location);
-  auto type_id_or = module_->InternType(net.getType(), span);
+  auto type_id_or = owner_->InternType(net.getType(), span);
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
   hir::NetType net_type{};
   switch (net.netType.netKind) {
@@ -273,7 +273,7 @@ auto StructuralScopeLowerer::PopulateNetMember(
               .name = std::string{net.name},
               .type = *type_id_or,
               .kind = hir::StructuralNetDecl{.net_type = net_type}});
-  module_->MapStructuralDataObjectBinding(net, frame_, local, *type_id_or);
+  owner_->MapStructuralDataObjectBinding(net, frame_, local, *type_id_or);
 
   // A net-declaration assignment (`wire w = expr;`, LRM 6.5) is a single
   // continuous driver of the net. slang carries it as the net's initializer
@@ -288,14 +288,14 @@ auto StructuralScopeLowerer::PopulateNetMember(
         hir::MakeRefExpr(
             hir::DirectMemberRef{.var = local}, *type_id_or, span));
     const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
-    const auto& reads = module_->Sensitivity().AnalyzeReads(*init, net);
+    const auto& reads = owner_->Sensitivity().AnalyzeReads(*init, net);
     frame.current_structural_scope->continuous_assigns.Add(
         hir::ContinuousAssign{
             .span = span,
             .lhs = lhs_id,
             .rhs = rhs_id,
             .sensitivity_list =
-                module_->TranslateSensitivityReads(reads, frame)});
+                owner_->TranslateSensitivityReads(reads, frame)});
   }
   return {};
 }
@@ -303,10 +303,10 @@ auto StructuralScopeLowerer::PopulateNetMember(
 auto StructuralScopeLowerer::PopulateSubroutineMember(
     const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
     -> diag::Result<void> {
-  auto decl_or = LowerSubroutineDecl(*module_, sym, frame);
+  auto decl_or = LowerSubroutineDecl(*owner_, sym, frame);
   if (!decl_or) return std::unexpected(std::move(decl_or.error()));
 
-  const auto binding = module_->LookupSubroutineBinding(sym);
+  const auto binding = owner_->LookupSubroutineBinding(sym);
   if (!binding.has_value() ||
       binding->subroutine_id.value !=
           static_cast<std::uint32_t>(
@@ -325,10 +325,10 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
 auto StructuralScopeLowerer::PopulateForeignImportMember(
     const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
     -> diag::Result<void> {
-  auto decl_or = LowerForeignImport(*module_, sym);
+  auto decl_or = LowerForeignImport(*owner_, sym);
   if (!decl_or) return std::unexpected(std::move(decl_or.error()));
 
-  const auto binding = module_->LookupForeignImportBinding(sym);
+  const auto binding = owner_->LookupForeignImportBinding(sym);
   if (!binding.has_value() ||
       binding->import_id.value !=
           static_cast<std::uint32_t>(
@@ -350,10 +350,10 @@ auto StructuralScopeLowerer::PopulateProceduralBlockMember(
   // contributes no behavior, so it is dropped at the source rather than emptied
   // -- an always block with no body and no timing control would be a zero-delay
   // infinite loop.
-  if (module_->DisableAssertions() && proc.isFromAssertion) {
+  if (owner_->DisableAssertions() && proc.isFromAssertion) {
     return {};
   }
-  ProcessLowerer proc_lowerer(*module_, proc);
+  ProcessLowerer proc_lowerer(*owner_, proc);
   auto p = proc_lowerer.Run(proc, frame);
   if (!p) return std::unexpected(std::move(p.error()));
   frame.current_structural_scope->processes.Add(*std::move(p));

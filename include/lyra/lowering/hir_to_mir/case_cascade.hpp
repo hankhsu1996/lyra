@@ -9,7 +9,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -34,7 +34,7 @@ struct CaseSnapshotRefs {
 // single var-decl-with-init) so the cpp backend's packed-init gap does not
 // bite when the selector unifies to a packed-explicit type.
 auto AppendCaseSnapshot(
-    const ModuleLowerer& module, WalkFrame frame, mir::ExprId cond_expr_id)
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId cond_expr_id)
     -> CaseSnapshotRefs;
 
 // Builds (sel <op> L_0) || (sel <op> L_1) || ... into the enclosing scope

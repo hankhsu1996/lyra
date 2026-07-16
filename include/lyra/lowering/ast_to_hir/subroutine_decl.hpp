@@ -11,7 +11,7 @@ class SubroutineSymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
-class ModuleLowerer;
+class UnitLowerer;
 
 // Lowers a slang subroutine (LRM 13) into a hir::SubroutineDecl: its result
 // type, its formals as body-local procedural vars carrying their direction, the
@@ -21,7 +21,7 @@ class ModuleLowerer;
 // records the result where it belongs (a scope's subroutine arena, a class's
 // method list).
 auto LowerSubroutineDecl(
-    ModuleLowerer& module, const slang::ast::SubroutineSymbol& sym,
+    UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame) -> diag::Result<hir::SubroutineDecl>;
 
 // Lowers a slang `import "DPI-C"` subroutine (LRM 35.4) into a bodyless
@@ -30,7 +30,7 @@ auto LowerSubroutineDecl(
 // DPI import has no SV body; the caller records the result in the scope's
 // `foreign_imports` arena, never in its subroutine arena.
 auto LowerForeignImport(
-    ModuleLowerer& module, const slang::ast::SubroutineSymbol& sym)
+    UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<hir::ForeignImportDecl>;
 
 }  // namespace lyra::lowering::ast_to_hir

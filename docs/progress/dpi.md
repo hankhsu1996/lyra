@@ -33,9 +33,10 @@ orchestration.
 
 Two frontiers are open. On the C++ backend the import surface (D1-D3) is in, so export (D4) is the
 next C++-backend deliverable, then DPI tasks (D5). On the execution backend scalar import (D10) is
-in: a foreign call lowers to an external-linkage symbol and the by-value carriers marshal, so the
-next deliverable there is the rest of the import surface (D11) -- by-pointer marshaling, and the
-`real` carrier once that backend carries the real value domain.
+in: a foreign call lowers to an external-linkage symbol and the by-value carriers marshal. The rest
+of the import surface (D11) is blocked, and not by anything DPI owns: by-pointer marshaling is
+expressed as a closure, which that backend does not yet lower at all (`architecture-reset.md`). D4
+is the actionable DPI item today.
 
 ## Sub-Steps
 
@@ -73,7 +74,7 @@ from an external main.
 
 - [ ] D4 -- Package / `$unit`-scoped export with foreign-linkage wrappers: scalar 2-state, `real`,
       and `string` (LRM 35.5). Generated ABI header and driver linkage of the user C that calls the
-      export.
+      export. Rides on the package unit and package callable established in `packages.md` (PK1-PK2).
 - [ ] D4a -- Module-scoped export with instance-bound dispatch (LRM 35.5.3): the exported subroutine
       reads the state of the specific instance the foreign call targets, so the wrapper resolves
       that instance's context from the scope the foreign side set. This is the `mhpmcounter_num` /
@@ -123,7 +124,11 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
       (`architecture-reset.md`).
 - [ ] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
       surface -- `output` / `inout` copy-back, `chandle`, and canonical `svBitVecVal*` /
-      `svLogicVecVal*` buffers. A `real` import rides on the real value domain, not on this item.
+      `svLogicVecVal*` buffers. Blocked on closures reaching that backend: a by-pointer argument is
+      marshaled by a sequence of statements in expression position, which MIR expresses as a
+      closure, so nothing on this path lowers today. The DPI-specific remainder once that lands is
+      the buffer constructors and the canonical-plane marshaling primitives. A `real` import rides
+      on the real value domain, not on this item.
 - [ ] D12 -- Export and DPI tasks on the execution backend, once the C++-backend export and task
       items (D4-D6) define the shape.
 

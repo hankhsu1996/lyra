@@ -8,9 +8,9 @@
 #include <slang/ast/expressions/OperatorExpressions.h>
 
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -30,7 +30,7 @@ auto LowerInsideExpr(
     items.push_back(*std::move(item_or));
   }
 
-  auto type_id = lowerer.Module().InternType(*in.type, span);
+  auto type_id = lowerer.Owner().InternType(*in.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -43,12 +43,12 @@ template <ExprLowerer Lowerer>
 auto LowerInsideItemImpl(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& item_expr)
     -> diag::Result<hir::InsideItem> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   if (item_expr.kind == slang::ast::ExpressionKind::ValueRange) {
     const auto& vr = item_expr.as<slang::ast::ValueRangeExpression>();
     if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
       return diag::Fail(
-          module.SourceMapper().SpanOf(vr.sourceRange),
+          unit_lowerer.SourceMapper().SpanOf(vr.sourceRange),
           diag::DiagCode::kUnsupportedExpressionForm,
           "tolerance-range form in inside operator is not yet supported");
     }

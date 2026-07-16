@@ -15,8 +15,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -75,9 +75,9 @@ struct OwnedChildBinding {
 using OwnedChildBindings =
     std::unordered_map<const slang::ast::Symbol*, OwnedChildBinding>;
 
-// Shared lowering-pass facts threaded into every ModuleLowerer. SourceMapper
+// Shared lowering-pass facts threaded into every UnitLowerer. SourceMapper
 // translates slang source locations; SensitivityAnalyzer is shared across
-// every module's analysis (caches reads); disable_assertions is the policy
+// every unit's analysis (caches reads); disable_assertions is the policy
 // that elides assertion constructs instead of rejecting them. Subset of
 // `LowerCompilationFacts` that excludes the slang Compilation handle (which
 // only the driver-level CompilationLowerer needs to walk top instances).
@@ -110,35 +110,36 @@ class LoweringFacts {
   bool disable_assertions_;
 };
 
-// Per-module lowerer.
+// Per-unit lowerer, over a module instance body or a package.
 //
 // Facts: the shared lowering facts (source mapper + sensitivity analyzer) and
-// a reference to the slang instance body being walked.
+// a reference to the slang scope being walked.
 // Registries: type cache (slang canonical type -> hir TypeId), structural-var
 // / subroutine / loop-var / owned-child binding tables, per-frame cross-unit
 // ref slot tables, and a scope-frame counter.
-// Root output: the in-progress `hir::ModuleUnit`. Constructed in the ctor with
-// the module's name and an initial builtins table; populated by `Run`; moved
+// Root output: the in-progress `hir::CompilationUnit`. Constructed in the ctor
+// with the unit's name and an initial builtins table; populated by `Run`; moved
 // out by `Run`'s return. After `Run` returns the class holds no IR pointer.
-class ModuleLowerer {
+class UnitLowerer {
  public:
-  ModuleLowerer(
-      const LoweringFacts& facts, const slang::ast::InstanceBodySymbol& body);
+  UnitLowerer(
+      const LoweringFacts& facts, const slang::ast::Scope& scope,
+      std::string name);
 
-  auto Run() -> diag::Result<hir::ModuleUnit>;
+  auto Run() -> diag::Result<hir::CompilationUnit>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
   // and builtins through this accessor; downstream consumers post-Run use the
-  // same `hir::ModuleUnit` interface.
-  [[nodiscard]] auto Unit() const -> const hir::ModuleUnit& {
+  // same `hir::CompilationUnit` interface.
+  [[nodiscard]] auto Unit() const -> const hir::CompilationUnit& {
     return unit_;
   }
 
-  // The slang instance body this unit is lowered from. A constant expression
-  // the lowering must evaluate itself -- an LRM 20.7 dimension index -- is
-  // evaluated against it.
-  [[nodiscard]] auto Body() const -> const slang::ast::InstanceBodySymbol& {
-    return *body_;
+  // The slang scope this unit is lowered from -- a module instance body or a
+  // package. A constant expression the lowering must evaluate itself (an LRM
+  // 20.7 dimension index) is evaluated against its symbol.
+  [[nodiscard]] auto SourceScope() const -> const slang::ast::Scope& {
+    return *scope_;
   }
 
   // Lowers a slang type to a HIR TypeId, memoizing by slang canonical pointer.
@@ -273,10 +274,10 @@ class ModuleLowerer {
  private:
   // Facts.
   LoweringFacts facts_;
-  const slang::ast::InstanceBodySymbol* body_;
+  const slang::ast::Scope* scope_;
 
   // Root output.
-  hir::ModuleUnit unit_;
+  hir::CompilationUnit unit_;
 
   // Registries.
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;

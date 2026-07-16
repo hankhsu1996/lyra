@@ -39,7 +39,7 @@ auto BuildFileIoCall(
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> args;
   args.reserve(operands.size() + 1);
-  args.push_back(block.exprs.Add(BuildFilesCallExpr(process.Module(), frame)));
+  args.push_back(block.exprs.Add(BuildFilesCallExpr(process.Owner(), frame)));
   for (const mir::ExprId operand : operands) {
     args.push_back(operand);
   }
@@ -90,7 +90,7 @@ auto LowerFileOpenCall(
   }
   return BuildFileIoCall(
       process, frame, support::BuiltinFn::kFileOpen, std::move(operands),
-      process.Module().Unit().builtins.int_type);
+      process.Owner().Unit().builtins.int_type);
 }
 
 // LRM 21.3.6: the no-argument flush-all form and the addressed form select
@@ -106,7 +106,7 @@ auto LowerFileFlushCall(
   }
   return BuildFileIoCall(
       process, frame, support::BuiltinFn::kFileFlush, std::move(operands),
-      process.Module().Unit().builtins.void_type);
+      process.Owner().Unit().builtins.void_type);
 }
 
 // LRM 13.5: $fgets / $fread / $ferror write into an actual lvalue argument
@@ -131,7 +131,7 @@ auto LowerFileIOSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     std::string_view name, const support::FileIOSystemSubroutineInfo& info,
     diag::SourceSpan span) -> diag::Result<mir::Expr> {
-  const auto& builtins = process.Module().Unit().builtins;
+  const auto& builtins = process.Owner().Unit().builtins;
   switch (info.builtin_fn) {
     case support::BuiltinFn::kFileOpen:
       return LowerFileOpenCall(process, frame, call);
@@ -182,7 +182,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
         "LowerFileIOSystemSubroutineCallStmt: BuiltinFn has no output arg");
   }
 
-  const auto& module = process.Module();
+  const auto& unit_lowerer = process.Owner();
   const auto& hir_proc = process.HirBody();
 
   mir::Block wrapper;
@@ -206,7 +206,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
           mir::MakeLocalRefExpr(slots[0].temp, slots[0].type));
       call_expr = BuildFileIoCall(
           process, wrapper_frame, info.builtin_fn, {temp_ref, fd_id},
-          process.Module().Unit().builtins.int_type);
+          process.Owner().Unit().builtins.int_type);
       break;
     }
     case support::BuiltinFn::kFileRead: {
@@ -216,8 +216,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
       // generic CallExpr whose operands are the temp, the descriptor, and --
       // for the memory form -- the declared bounds plus start / count.
       const auto& dest_hir = hir_proc.exprs.Get(*call.arguments[0]);
-      const auto& dest_hir_ty = module.Hir().types.Get(dest_hir.type);
-      const auto& builtins = process.Module().Unit().builtins;
+      const auto& dest_hir_ty = unit_lowerer.Hir().types.Get(dest_hir.type);
+      const auto& builtins = process.Owner().Unit().builtins;
       const auto* unpacked =
           std::get_if<hir::UnpackedArrayType>(&dest_hir_ty.data);
 
@@ -236,7 +236,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
         // Memory form. Only 1D unpacked of integral packed elements is in
         // scope; struct / union / multi-dim / dynamic-array element types
         // are deferred.
-        const auto& elem_ty = module.Hir().types.Get(unpacked->element_type);
+        const auto& elem_ty =
+            unit_lowerer.Hir().types.Get(unpacked->element_type);
         if (!elem_ty.IsBitVector()) {
           return diag::Fail(
               diag::DiagCode::kUnsupportedSubroutineArgument,
@@ -303,7 +304,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
           mir::MakeLocalRefExpr(slots[0].temp, slots[0].type));
       call_expr = BuildFileIoCall(
           process, wrapper_frame, info.builtin_fn, {fd_id, temp_ref},
-          process.Module().Unit().builtins.int_type);
+          process.Owner().Unit().builtins.int_type);
       break;
     }
     default:
@@ -320,9 +321,9 @@ auto LowerFileIOSystemSubroutineCallStmt(
   }
 
   const mir::ExprId services_id =
-      wrapper.exprs.Add(BuildServicesCallExpr(process.Module(), wrapper_frame));
+      wrapper.exprs.Add(BuildServicesCallExpr(process.Owner(), wrapper_frame));
   return BuildCopyOutBlock(
-      process.Module().Unit(), services_id, frame, std::move(wrapper),
+      process.Owner().Unit(), services_id, frame, std::move(wrapper),
       std::move(label), result_type, std::move(call_expr), false,
       assign_target_id, slots);
 }
