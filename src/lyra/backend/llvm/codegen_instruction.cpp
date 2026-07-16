@@ -255,6 +255,9 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
           [&](const lir::StrConst& c) -> llvm::Value* {
             return LowerStrConst(c);
           },
+          [&](const lir::RealConst& c) -> llvm::Value* {
+            return LowerRealConst(c);
+          },
           [&](const lir::FuncRef& f) -> llvm::Value* {
             return module_->MethodFunction(f.method.class_id, f.method.index);
           }},
@@ -296,6 +299,20 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
 auto CodeGenFunction::LowerStrConst(const lir::StrConst& constant)
     -> llvm::Value* {
   return builder_.CreateGlobalStringPtr(constant.value);
+}
+
+// A real literal has no native constant form in the opaque value model -- it is
+// a runtime object -- so its constant is a host-precision immediate handed to a
+// runtime constructor, the same shape a packed constant takes.
+auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
+    -> llvm::Value* {
+  const ValueDomain domain = DomainOf(constant.type);
+  llvm::Type* host = domain == ValueDomain::kShortReal
+                         ? llvm::Type::getFloatTy(module_->Context())
+                         : llvm::Type::getDoubleTy(module_->Context());
+  return builder_.CreateCall(
+      module_->Runtime().RealConst(domain),
+      {llvm::ConstantFP::get(host, constant.value)});
 }
 
 auto CodeGenFunction::BuiltinCallee(
@@ -430,11 +447,35 @@ auto CodeGenFunction::ConstructCallee(const lir::CallInstr& call)
             throw InternalError(
                 "llvm codegen: pointer construct is not yet lowerable");
           },
+          [&](const lir::RealType&) -> llvm::FunctionCallee {
+            return RealConstructCallee(call, ValueDomain::kReal);
+          },
+          [&](const lir::RealTimeType&) -> llvm::FunctionCallee {
+            return RealConstructCallee(call, ValueDomain::kReal);
+          },
+          [&](const lir::ShortRealType&) -> llvm::FunctionCallee {
+            return RealConstructCallee(call, ValueDomain::kShortReal);
+          },
           [&](const auto&) -> llvm::FunctionCallee {
             throw InternalError(
                 "llvm codegen: construct result type is not yet lowerable");
           }},
       module_->Unit().types.Get(result).data);
+}
+
+// A real-family construct is a conversion into `dst`: from a machine int64 (the
+// integral-to-real bridge, whose inner step already read the operand out as a
+// host integer) or from another real precision (`shortreal` <-> `real`). The
+// single operand's type selects which, since the result type fixes only the
+// destination precision.
+auto CodeGenFunction::RealConstructCallee(
+    const lir::CallInstr& call, ValueDomain dst) -> llvm::FunctionCallee {
+  const lir::TypeId arg_type = OperandType(call.args.at(0));
+  if (std::holds_alternative<lir::MachineIntType>(
+          module_->Unit().types.Get(arg_type).data)) {
+    return module_->Runtime().RealFromInt(dst);
+  }
+  return module_->Runtime().RealReshape(dst, DomainOf(arg_type));
 }
 
 auto CodeGenFunction::ConstructDefinitionArg(lir::TypeId result)

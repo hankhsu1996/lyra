@@ -5,6 +5,7 @@
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/real.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -27,7 +28,10 @@ class MemberStorage {
   [[nodiscard]] auto Address() -> void*;
 
  private:
-  std::variant<void*, Var<value::PackedArray>, Var<value::String>> object_;
+  std::variant<
+      void*, Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
+      Var<value::ShortReal>>
+      object_;
 };
 
 }  // namespace lyra::runtime

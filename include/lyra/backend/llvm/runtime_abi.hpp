@@ -29,7 +29,7 @@ class CodeGenTypes;
 // -- and a source type with no runtime realization has no domain at all. It
 // grows only when the runtime library gains a value type, never to mirror the
 // source language's type kinds.
-enum class ValueDomain : std::uint8_t { kPacked, kString };
+enum class ValueDomain : std::uint8_t { kPacked, kString, kReal, kShortReal };
 
 auto ValueDomainName(ValueDomain domain) -> std::string_view;
 
@@ -81,6 +81,20 @@ class RuntimeAbi {
   auto MakeString() -> llvm::FunctionCallee;
   auto MakePrintLiteralItem() -> llvm::FunctionCallee;
   auto PackedConst() -> llvm::FunctionCallee;
+
+  // Builds a real-family constant from its host-precision immediate: `double`
+  // for `kReal`, `float` for `kShortReal`. The runtime owns the resulting value
+  // and returns an opaque handle.
+  auto RealConst(ValueDomain domain) -> llvm::FunctionCallee;
+
+  // Builds a real-family value from a machine `int64` -- the outer step of the
+  // integral-to-real conversion, whose inner step already read the operand out
+  // as a host integer.
+  auto RealFromInt(ValueDomain domain) -> llvm::FunctionCallee;
+
+  // Reshapes one real-family precision into another (`shortreal` <-> `real`):
+  // `dst` names the result precision, `src` the operand's.
+  auto RealReshape(ValueDomain dst, ValueDomain src) -> llvm::FunctionCallee;
 
   // Builds a scope's structural identity from its parent-side label and its
   // per-dimension indices; the runtime owns the resulting segment handle.

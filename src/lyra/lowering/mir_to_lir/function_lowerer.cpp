@@ -122,14 +122,18 @@ auto PlacedLocal(const mir::Block& block, mir::ExprId id)
 
 // A value type whose runtime realization is an opaque handle into transient
 // storage the boundary releases at each suspension: a packed value (or the
-// enumeration and packed struct/union projections that share its shape) or a
-// string. A local of such a type that a suspending body reads across a
-// suspension needs activation-stable storage, because its handle cannot outlive
-// the stretch that produced it. A pointer, a reference, an object handle, or a
-// machine scalar is not one of these -- it is stable across a suspension on its
-// own -- so it is unaffected.
+// enumeration and packed struct/union projections that share its shape), a
+// string, or a real-family value (real / shortreal / realtime). A local of such
+// a type that a suspending body reads across a suspension needs
+// activation-stable storage, because its handle cannot outlive the stretch that
+// produced it. A pointer, a reference, an object handle, or a machine scalar is
+// not one of these -- it is stable across a suspension on its own -- so it is
+// unaffected.
 auto IsActivationValueType(const mir::Type& type) -> bool {
-  return type.IsIntegralPacked() || type.Kind() == mir::TypeKind::kString;
+  const mir::TypeKind kind = type.Kind();
+  return type.IsIntegralPacked() || kind == mir::TypeKind::kString ||
+         kind == mir::TypeKind::kReal || kind == mir::TypeKind::kShortReal ||
+         kind == mir::TypeKind::kRealTime;
 }
 
 // Marks every local the canonical lowering needs an address for: one that is
@@ -1017,6 +1021,10 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           },
           [&](const mir::StringLiteral& lit) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::StrConst{
+                .value = lit.value, .type = unit_->TranslateType(type)}};
+          },
+          [&](const mir::RealLiteral& lit) -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::RealConst{
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Operand> {

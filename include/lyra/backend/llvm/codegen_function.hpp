@@ -69,6 +69,7 @@ class CodeGenFunction {
   auto ResolvePlaceAddress(const lir::Place& place) -> llvm::Value*;
   auto LowerIntConst(const lir::IntConst& constant) -> llvm::Value*;
   auto LowerStrConst(const lir::StrConst& constant) -> llvm::Value*;
+  auto LowerRealConst(const lir::RealConst& constant) -> llvm::Value*;
   void LowerTerminator(const lir::Terminator& terminator);
 
   auto BuiltinCallee(
@@ -78,6 +79,8 @@ class CodeGenFunction {
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
       lir::TypeId result_type) -> llvm::FunctionCallee;
   auto ConstructCallee(const lir::CallInstr& call) -> llvm::FunctionCallee;
+  auto RealConstructCallee(const lir::CallInstr& call, ValueDomain dst)
+      -> llvm::FunctionCallee;
   auto ForeignCallee(
       const lir::ForeignTarget& target, const lir::CallInstr& call,
       lir::TypeId result_type) -> llvm::FunctionCallee;

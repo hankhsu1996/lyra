@@ -67,6 +67,11 @@ struct StrConst {
   TypeId type;
 };
 
+struct RealConst {
+  double value;
+  TypeId type;
+};
+
 // The code address of a method, as a value. A closure is built from a code
 // reference plus its environment, so a method's address is an operand, not a
 // call target.
@@ -78,7 +83,7 @@ struct FuncRef {
 // A constant or code reference is an operand rather than a value of its own
 // because it has no storage and no dataflow origin to name -- it is
 // materialized at the use site.
-using Operand = std::variant<Use, IntConst, StrConst, FuncRef>;
+using Operand = std::variant<Use, IntConst, StrConst, RealConst, FuncRef>;
 
 // A runtime-library entry. A static factory is named by its type namespace as
 // well as its function -- `String::FromPackedArray` and `PackedArray::FromInt`

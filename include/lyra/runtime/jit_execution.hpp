@@ -91,6 +91,12 @@ void lyra_rt_cell_packed_set(void* cell, void* services, const void* value);
 auto lyra_rt_cell_string_get(void* cell) -> const void*;
 void lyra_rt_cell_string_initialize(void* cell, const void* prototype);
 void lyra_rt_cell_string_set(void* cell, void* services, const void* value);
+auto lyra_rt_cell_real_get(void* cell) -> const void*;
+void lyra_rt_cell_real_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_real_set(void* cell, void* services, const void* value);
+auto lyra_rt_cell_shortreal_get(void* cell) -> const void*;
+void lyra_rt_cell_shortreal_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_shortreal_set(void* cell, void* services, const void* value);
 
 // A procedural local whose value crosses a suspension (LRM 9.4). The cell lives
 // in the running activation's frame, so the handle a generated frame holds
@@ -190,6 +196,65 @@ auto lyra_rt_string_lt(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_le(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_gt(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_ge(const void* lhs, const void* rhs) -> void*;
+
+// The `real` / `realtime` host-double value domain. A relational or equality
+// entry yields a packed 1-bit; the arithmetic entries yield a real. `const`
+// builds a real from a host-precision immediate, `from_int64` from an integer
+// already read out of a packed value, and `from_shortreal` / `from_real`
+// reshape the other real precision. The activation-frame entries hold a real
+// local across a suspension.
+auto lyra_rt_real_add(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_sub(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_mul(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_div(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_neg(const void* operand) -> void*;
+auto lyra_rt_real_inc(const void* operand) -> void*;
+auto lyra_rt_real_dec(const void* operand) -> void*;
+auto lyra_rt_real_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_lt(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_le(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_gt(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_ge(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_real_to_bool(const void* operand) -> bool;
+auto lyra_rt_real_pow(const void* base, const void* exponent) -> void*;
+auto lyra_rt_real_round(const void* value) -> std::int64_t;
+auto lyra_rt_real_const(double value) -> void*;
+auto lyra_rt_real_from_int64(std::int64_t value) -> void*;
+auto lyra_rt_real_from_shortreal(const void* value) -> void*;
+auto lyra_rt_real_from_real(const void* value) -> void*;
+auto lyra_rt_activation_frame_alloc_real() -> void*;
+void lyra_rt_activation_frame_store_real(void* cell, const void* value);
+auto lyra_rt_activation_frame_load_real(const void* cell) -> void*;
+auto lyra_rt_make_print_value_item_real(const void* value, const void* spec)
+    -> void*;
+
+// The `shortreal` host-float value domain, the single-precision peer of the
+// real domain above.
+auto lyra_rt_shortreal_add(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_sub(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_mul(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_div(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_neg(const void* operand) -> void*;
+auto lyra_rt_shortreal_inc(const void* operand) -> void*;
+auto lyra_rt_shortreal_dec(const void* operand) -> void*;
+auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_le(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_gt(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_ge(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_shortreal_to_bool(const void* operand) -> bool;
+auto lyra_rt_shortreal_pow(const void* base, const void* exponent) -> void*;
+auto lyra_rt_shortreal_round(const void* value) -> std::int64_t;
+auto lyra_rt_shortreal_const(float value) -> void*;
+auto lyra_rt_shortreal_from_int64(std::int64_t value) -> void*;
+auto lyra_rt_shortreal_from_real(const void* value) -> void*;
+auto lyra_rt_activation_frame_alloc_shortreal() -> void*;
+void lyra_rt_activation_frame_store_shortreal(void* cell, const void* value);
+auto lyra_rt_activation_frame_load_shortreal(const void* cell) -> void*;
+auto lyra_rt_make_print_value_item_shortreal(
+    const void* value, const void* spec) -> void*;
 
 // Builds one conversion's format specification, and the print item that pairs a
 // value with it. Each field arrives as a packed value, as the value model
