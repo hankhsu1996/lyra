@@ -12,6 +12,7 @@
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -112,23 +113,16 @@ template <value::LyraValue T>
 class ScopedMutation;
 
 template <value::LyraValue T>
-class Var : public Observable {
+class Var : public Observable, public ValueStorageCore<T> {
  public:
   Var() = default;
-
-  template <typename... Args>
-  explicit Var(Args&&... args) : value_(std::forward<Args>(args)...) {
-  }
-
   Var(const Var&) = delete;
   auto operator=(const Var&) -> Var& = delete;
   Var(Var&&) = delete;
   auto operator=(Var&&) -> Var& = delete;
   ~Var() = default;
 
-  [[nodiscard]] auto Get() const noexcept -> const T& {
-    return value_;
-  }
+  // `Get` is inherited from `ValueStorageCore`.
 
   // Installs the cell's declared representation (and default contents) exactly
   // once, at construction; `prototype` is a value of the cell's declared type,
@@ -139,12 +133,12 @@ class Var : public Observable {
   // store runs first.
   void Initialize(T prototype) {
     if constexpr (std::same_as<T, value::PackedArray>) {
-      if (!value_.IsUninitialized()) {
+      if (this->IsInstalled()) {
         throw InternalError(
             "Var<PackedArray>::Initialize: cell is already initialized");
       }
     }
-    value_ = std::move(prototype);
+    this->Install(std::move(prototype));
   }
 
   // Commits a whole-variable write and, on a real change (LRM 4.3 update
@@ -161,26 +155,6 @@ class Var : public Observable {
   // temporary lifetime -- the handle is non-copyable and non-movable, so
   // storing it past the statement is rejected at compile time.
   auto Mutate(RuntimeServices& services) -> ScopedMutation<T>;
-
- private:
-  // Records the value and reports whether it differs from the old per LRM 9.4.2
-  // `===` (the engine fires @() subscribers only on a real change). Private: it
-  // writes the cell directly, with none of the representation checks a semantic
-  // store performs, so it must never become a public path around that
-  // discipline.
-  auto AssignIfChanged(const T& v) -> bool {
-    const bool changed = !value_.IsBitIdentical(v);
-    value_ = v;
-    return changed;
-  }
-
-  auto AssignIfChanged(T&& v) -> bool {
-    const bool changed = !value_.IsBitIdentical(v);
-    value_ = std::move(v);
-    return changed;
-  }
-
-  T value_{};
 };
 
 // A reference to a variable cell. Transparently views one of two backings:
@@ -324,31 +298,22 @@ inline auto MakePackedArrayEdgeClassifier(
 template <value::LyraValue T>
 void Var<T>::Set(RuntimeServices& services, const T& new_val) {
   // A PackedArray write classifies the LSB transition per waiter (LRM 9.4.2
-  // Table 9-2); every other cell type only has any-change waiters.
+  // Table 9-2); every other cell type only has any-change waiters. The
+  // representation match and change detection live in `ValueStorageCore`; the
+  // signal cell adds only the subscriber wakeup on a real change.
   if constexpr (std::same_as<T, value::PackedArray>) {
-    // The cell's declared representation is installed once at construction and
-    // never reshaped; a store before that is a lowering defect. Every store
-    // must already be at that representation (the store boundary is what
-    // converts the right-hand side there); a mismatch is a missing upstream
-    // conversion -- a compiler bug, surfaced here rather than silently adopting
-    // the wrong shape.
-    if (value_.IsUninitialized()) {
+    if (!this->IsInstalled()) {
       throw InternalError(
           "Var<PackedArray>::Set: store into a cell that was never "
           "initialized");
     }
-    if (!value_.SameRepresentation(new_val)) {
-      throw InternalError(
-          "Var<PackedArray>::Set: stored value's representation does not match "
-          "the cell's declared type; a required conversion was not emitted");
-    }
-    const value::PackedArray old_val = Get();
-    if (AssignIfChanged(new_val)) {
+    const value::PackedArray old_val = this->Get();
+    if (this->Overwrite(new_val)) {
       services.TriggerValueChange(
           *this, MakePackedArrayEdgeClassifier(old_val, new_val));
     }
   } else {
-    if (AssignIfChanged(new_val)) {
+    if (this->Overwrite(new_val)) {
       services.TriggerValueChange(
           *this,
           [](std::uint64_t, std::uint64_t, support::EventEdge edge) -> bool {

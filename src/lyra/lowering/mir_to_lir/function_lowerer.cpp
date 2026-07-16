@@ -120,6 +120,18 @@ auto PlacedLocal(const mir::Block& block, mir::ExprId id)
   return ref != nullptr ? std::optional{ref->var} : std::nullopt;
 }
 
+// A value type whose runtime realization is an opaque handle into transient
+// storage the boundary releases at each suspension: a packed value (or the
+// enumeration and packed struct/union projections that share its shape) or a
+// string. A local of such a type that a suspending body reads across a
+// suspension needs activation-stable storage, because its handle cannot outlive
+// the stretch that produced it. A pointer, a reference, an object handle, or a
+// machine scalar is not one of these -- it is stable across a suspension on its
+// own -- so it is unaffected.
+auto IsActivationValueType(const mir::Type& type) -> bool {
+  return type.IsIntegralPacked() || type.Kind() == mir::TypeKind::kString;
+}
+
 // Marks every local the canonical lowering needs an address for: one that is
 // assigned after its initialization, or has its address taken. Such a local is
 // storage, so it must be a place local. A read never makes a local storage: a
@@ -224,6 +236,7 @@ FunctionLowerer::FunctionLowerer(
       name_(std::move(name)),
       current_class_(current_class),
       placed_(code.locals.size(), false),
+      activation_value_local_(code.locals.size(), false),
       locals_(code.locals.size(), std::nullopt) {
 }
 
@@ -236,6 +249,23 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   const bool is_coroutine = unit_->Mir().types.IsCoroutine(code_->result_type);
 
   CollectPlacedLocals(code_->body, placed_);
+
+  // In a suspending body every value-typed, non-managed local and parameter is
+  // an activation-frame value, not a transient: a value's handle cannot safely
+  // live across a suspension, so each such local needs activation-stable
+  // storage the generated frame reaches by a handle. A suspension is a
+  // statement boundary, so only named locals -- never sub-expression transients
+  // -- can cross one, which is why marking locals is sufficient. A
+  // non-suspending body keeps selective placement.
+  if (is_coroutine) {
+    for (std::size_t i = 0; i < code_->locals.size(); ++i) {
+      const mir::LocalId local{static_cast<std::uint32_t>(i)};
+      if (IsActivationValueType(
+              unit_->Mir().types.Get(code_->locals.Get(local).type))) {
+        activation_value_local_[i] = true;
+      }
+    }
+  }
 
   // A parameter is a declared local whose initial value is the incoming
   // argument. It arrives as a value in the signature and is bound like any
@@ -250,7 +280,30 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
         lir::Local{
             .name = decl.name, .type = type, .kind = lir::LocalKind::kParam});
     fn_.params.push_back(value);
-    BindLocal(param, type, lir::Use{.value = value});
+    // A cell parameter installs the cell's representation from the incoming
+    // argument, its first store; every other parameter binds to the argument
+    // value as a place or a plain value.
+    if (activation_value_local_[param.value]) {
+      const lir::Operand handle = AllocateActivationValue(type);
+      locals_[param.value] =
+          LocalBinding{ActivationValueBinding{.handle = handle}};
+      StoreActivationValue(handle, lir::Use{.value = value});
+    } else {
+      BindLocal(param, type, lir::Use{.value = value});
+    }
+  }
+
+  // Every other cell local's handle is allocated once here, at frame entry, so
+  // it is reused across iterations rather than re-created per declaration; its
+  // first store, installing the representation, is the declaration's
+  // initializer reached during the body walk.
+  for (std::size_t i = 0; i < code_->locals.size(); ++i) {
+    if (activation_value_local_[i] && !locals_[i].has_value()) {
+      const lir::TypeId type = unit_->TranslateType(
+          code_->locals.Get(mir::LocalId{static_cast<std::uint32_t>(i)}).type);
+      locals_[i] = LocalBinding{
+          ActivationValueBinding{.handle = AllocateActivationValue(type)}};
+    }
   }
 
   auto lowered = LowerBlockInto(code_->body);
@@ -320,6 +373,14 @@ auto FunctionLowerer::NewPlaceLocal(lir::TypeId type) -> lir::ValueId {
 // initial value itself.
 void FunctionLowerer::BindLocal(
     mir::LocalId local, lir::TypeId type, lir::Operand init) {
+  // A cell local's handle was allocated at frame entry; its declaration's
+  // initializer is the first store, which installs the cell's representation.
+  if (activation_value_local_[local.value]) {
+    StoreActivationValue(
+        std::get<ActivationValueBinding>(*locals_[local.value]).handle,
+        std::move(init));
+    return;
+  }
   if (!placed_[local.value]) {
     locals_[local.value] = LocalBinding{ValueBinding{.value = std::move(init)}};
     return;
@@ -337,6 +398,48 @@ void FunctionLowerer::Store(lir::Place place, lir::Operand value) {
   Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::StoreInstr{.place = std::move(place), .value = std::move(value)});
+}
+
+auto FunctionLowerer::AllocateActivationValue(lir::TypeId value_type)
+    -> lir::Operand {
+  return Emit(
+      value_type, lir::CallInstr{
+                      .target =
+                          lir::ActivationFrameTarget{
+                              .op = lir::ActivationFrameTarget::Op::kAllocate},
+                      .args = {}});
+}
+
+auto FunctionLowerer::LoadActivationValue(
+    lir::Operand handle, lir::TypeId value_type) -> lir::Operand {
+  return Emit(
+      value_type, lir::CallInstr{
+                      .target =
+                          lir::ActivationFrameTarget{
+                              .op = lir::ActivationFrameTarget::Op::kLoad},
+                      .args = {std::move(handle)}});
+}
+
+void FunctionLowerer::StoreActivationValue(
+    lir::Operand handle, lir::Operand value) {
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::CallInstr{
+          .target =
+              lir::ActivationFrameTarget{
+                  .op = lir::ActivationFrameTarget::Op::kStore},
+          .args = {std::move(handle), std::move(value)}});
+}
+
+auto FunctionLowerer::ActivationValueHandleForTarget(
+    const mir::Block& block, mir::ExprId id) -> std::optional<lir::Operand> {
+  const auto* ref = std::get_if<mir::LocalRef>(&block.exprs.Get(id).data);
+  if (ref == nullptr || !locals_[ref->var.value].has_value()) {
+    return std::nullopt;
+  }
+  const auto* cell =
+      std::get_if<ActivationValueBinding>(&*locals_[ref->var.value]);
+  return cell != nullptr ? std::optional{cell->handle} : std::nullopt;
 }
 
 auto FunctionLowerer::LowerBlockInto(const mir::Block& block)
@@ -774,6 +877,34 @@ auto FunctionLowerer::LowerAssign(
     -> diag::Result<lir::Operand> {
   const lir::TypeId type =
       unit_->TranslateType(block.exprs.Get(assign.target).type);
+
+  // An activation-frame value local is written through its handle, not a place:
+  // a compound assignment reads the old value out of the cell, combines, and
+  // overwrites.
+  if (auto handle = ActivationValueHandleForTarget(block, assign.target)) {
+    auto value = LowerExpr(block, assign.value);
+    if (!value) {
+      return std::unexpected(std::move(value.error()));
+    }
+    lir::Operand written = *value;
+    if (assign.compound_op.has_value()) {
+      const std::optional<lir::BinaryOp> op =
+          TranslateBinaryOp(*assign.compound_op);
+      if (!op) {
+        return Unsupported(
+            "mir_to_lir: compound assignment operator has no direct "
+            "realization");
+      }
+      written = Emit(
+          type, lir::BinaryInstr{
+                    .op = *op,
+                    .lhs = LoadActivationValue(*handle, type),
+                    .rhs = *std::move(value)});
+    }
+    StoreActivationValue(*handle, written);
+    return written;
+  }
+
   auto place = LowerPlace(block, assign.target);
   if (!place) {
     return std::unexpected(std::move(place.error()));
@@ -805,21 +936,30 @@ auto FunctionLowerer::LowerIncDec(
     -> diag::Result<lir::Operand> {
   const lir::TypeId type =
       unit_->TranslateType(block.exprs.Get(inc_dec.target).type);
-  auto place = LowerPlace(block, inc_dec.target);
-  if (!place) {
-    return std::unexpected(std::move(place.error()));
-  }
   const bool is_increment = inc_dec.op == mir::IncDecOp::kPreInc ||
                             inc_dec.op == mir::IncDecOp::kPostInc;
   const bool is_prefix = inc_dec.op == mir::IncDecOp::kPreInc ||
                          inc_dec.op == mir::IncDecOp::kPreDec;
+  const lir::UnaryOp op =
+      is_increment ? lir::UnaryOp::kIncrement : lir::UnaryOp::kDecrement;
 
-  lir::Operand old = Load(*place, type);
-  lir::Operand updated = Emit(
-      type, lir::UnaryInstr{
-                .op = is_increment ? lir::UnaryOp::kIncrement
-                                   : lir::UnaryOp::kDecrement,
-                .operand = old});
+  // An activation-frame value local increments through its handle: read the old
+  // value out, apply the step, overwrite.
+  if (auto handle = ActivationValueHandleForTarget(block, inc_dec.target)) {
+    const lir::Operand old = LoadActivationValue(*handle, type);
+    const lir::Operand updated =
+        Emit(type, lir::UnaryInstr{.op = op, .operand = old});
+    StoreActivationValue(*handle, updated);
+    return is_prefix ? updated : old;
+  }
+
+  auto place = LowerPlace(block, inc_dec.target);
+  if (!place) {
+    return std::unexpected(std::move(place.error()));
+  }
+  const lir::Operand old = Load(*place, type);
+  const lir::Operand updated =
+      Emit(type, lir::UnaryInstr{.op = op, .operand = old});
   Store(*std::move(place), updated);
   return is_prefix ? updated : old;
 }
@@ -893,6 +1033,10 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                     },
                     [](const ValueBinding& value) -> lir::Operand {
                       return value.value;
+                    },
+                    [&](const ActivationValueBinding& cell) -> lir::Operand {
+                      return LoadActivationValue(
+                          cell.handle, unit_->TranslateType(type));
                     }},
                 *binding);
           },

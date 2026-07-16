@@ -42,14 +42,21 @@ class FunctionLowerer {
   // What a source local resolves to. A local is frame storage exactly when the
   // canonical lowering needs an address for it: when its address is taken, or
   // when it is assigned after its initialization. Otherwise it stays the value
-  // it was bound to, with no storage.
+  // it was bound to, with no storage. A value-typed local in a suspending body
+  // is an activation-frame value instead: its value crosses suspensions, so it
+  // lives in the running activation's frame, reached through a handle read and
+  // written by activation-frame calls.
   struct PlaceBinding {
     lir::ValueId slot;
   };
   struct ValueBinding {
     lir::Operand value;
   };
-  using LocalBinding = std::variant<PlaceBinding, ValueBinding>;
+  struct ActivationValueBinding {
+    lir::Operand handle;
+  };
+  using LocalBinding =
+      std::variant<PlaceBinding, ValueBinding, ActivationValueBinding>;
 
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
   auto LowerStmtInto(const mir::Block& block, const mir::Stmt& stmt)
@@ -97,6 +104,23 @@ class FunctionLowerer {
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   void Store(lir::Place place, lir::Operand value);
 
+  // Activation-frame value operations, emitted for a value-typed local in a
+  // suspending body. `AllocateActivationValue` builds the cell (uninitialized
+  // -- the first `StoreActivationValue` installs its representation) and
+  // returns its handle; `LoadActivationValue` copies the current value out;
+  // `StoreActivationValue` overwrites it. The handle is typed as the cell's
+  // value type -- both cross the boundary as one opaque handle -- so the value
+  // domain an activation-frame call works in is read from that type.
+  auto AllocateActivationValue(lir::TypeId value_type) -> lir::Operand;
+  auto LoadActivationValue(lir::Operand handle, lir::TypeId value_type)
+      -> lir::Operand;
+  void StoreActivationValue(lir::Operand handle, lir::Operand value);
+  // The activation-frame handle an assignable expression writes through, when
+  // it names an activation-frame value local directly; nothing otherwise (a
+  // place is written the ordinary way).
+  auto ActivationValueHandleForTarget(const mir::Block& block, mir::ExprId id)
+      -> std::optional<lir::Operand>;
+
   auto NewBlock() -> lir::BlockId;
   void SetCurrent(lir::BlockId id);
   void Terminate(lir::TerminatorData data);
@@ -110,9 +134,11 @@ class FunctionLowerer {
   lir::BlockId current_{};
   std::vector<bool> terminated_;
   std::vector<LoopTargets> loops_;
-  // Which locals the body writes through or addresses, and what each local has
-  // resolved to so far.
+  // Which locals the body writes through or addresses, which are
+  // activation-frame values (a value-typed local in a suspending body), and
+  // what each local has resolved to so far.
   std::vector<bool> placed_;
+  std::vector<bool> activation_value_local_;
   std::vector<std::optional<LocalBinding>> locals_;
 };
 

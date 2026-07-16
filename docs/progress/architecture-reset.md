@@ -33,11 +33,10 @@ infrastructure surface, built.
       DPI-C import lowers to an external-linkage symbol, marshals the by-value carriers, and
       resolves the symbol through the execution session (`dpi.md`). It suspends a process on a
       delay, on a value change (`@(...)`, `@*`, `always_comb`, a continuous assignment), and on a
-      level wait. Still open on the execution backend: the remaining value domains (reals,
-      enumerations, aggregates, containers), a value whose lifetime crosses a suspension (so a
-      loop-carried value around a wait, which a clock generator needs), named events, non-blocking
-      assignment, subroutine reference arguments, closures, by-pointer DPI-C marshaling, and native
-      layout for value members (the baseline keeps runtime-owned cells).
+      level wait, and a value whose lifetime crosses a suspension -- a loop-carried local, so a
+      clock generator written as a loop runs -- lives past the stretch that produced it. The
+      backend's own realization -- how a runtime value lives across a suspension, the value shapes
+      it cannot lower yet, and its coverage -- is tracked in `execution-backend.md`.
 - [ ] Per-unit artifact emission -- one artifact per unit specialization, assembled by linking,
       replacing the transitional single-`main.cpp` aggregation. Contract in
       `../architecture/emission_model.md` (inv 1).

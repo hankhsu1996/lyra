@@ -178,6 +178,27 @@ auto RuntimeAbi::CellSet(ValueDomain domain) -> llvm::FunctionCallee {
       types_->Void(), {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
+auto RuntimeAbi::ActivationFrameAlloc(ValueDomain domain)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_activation_frame_alloc_{}", ValueDomainName(domain)),
+      types_->Ptr(), {});
+}
+
+auto RuntimeAbi::ActivationFrameStore(ValueDomain domain)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_activation_frame_store_{}", ValueDomainName(domain)),
+      types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::ActivationFrameLoad(ValueDomain domain)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_activation_frame_load_{}", ValueDomainName(domain)),
+      types_->Ptr(), {types_->Ptr()});
+}
+
 auto RuntimeAbi::RegisterSignal() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_register_signal", types_->Void(),
