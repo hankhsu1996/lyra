@@ -77,6 +77,11 @@ auto LowerExpressionStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ExpressionStatement& es, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
+  // Expressions the enclosing lowering has already consumed as a higher-
+  // level semantic fact have no additional body-level effect, so the
+  // wrapping statement lowers to empty. Pointer identity keeps this check
+  // free of any per-kind knowledge of the consumed construct.
+  if (proc.ConsumedBodyExprs().contains(&es.expr)) return LowerEmptyStmt(span);
   auto expr = proc.LowerExpr(es.expr, frame);
   if (!expr) return std::unexpected(std::move(expr.error()));
   const hir::ExprId id = frame.Exprs().Add(*std::move(expr));

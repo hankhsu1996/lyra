@@ -54,8 +54,11 @@ void ProcessLowerer::AnalyzeLifetimeExtended(
 }
 
 ProcessLowerer::ProcessLowerer(
-    UnitLowerer& unit_lowerer, const slang::ast::Symbol& containing_symbol)
-    : owner_(&unit_lowerer), containing_symbol_(&containing_symbol) {
+    UnitLowerer& unit_lowerer, const slang::ast::Symbol& containing_symbol,
+    ConsumedBodyExpressions consumed_body_exprs)
+    : owner_(&unit_lowerer),
+      containing_symbol_(&containing_symbol),
+      consumed_body_exprs_(std::move(consumed_body_exprs)) {
 }
 
 auto ProcessLowerer::Run(

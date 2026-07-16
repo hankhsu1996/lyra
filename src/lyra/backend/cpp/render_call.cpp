@@ -6,6 +6,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -413,20 +414,19 @@ struct CalleeRender {
   std::size_t leading_arg_count;
 };
 
-// Renders a `Direct` callee whose target is a user-declared method. The method
-// renders as a C++ instance member function, so the emitted callee text is
-// `(receiver)->name` -- the receiver rides as `arguments[0]` in MIR and is
-// consumed here rather than passed as an ordinary argument. No qualification
-// is allowed today -- cross-class explicit qualification is gated on SV
-// class support.
+// Renders a `Direct` callee whose target is a user-declared method as
+// `(receiver)->Owner::name`, an owner-qualified C++ member call. The owner
+// prefix is a fixed function of the target's `owner`: for a non-virtual
+// method the qualifier is redundant (C++ resolves the same either way);
+// for a virtual method reached through Direct (LRM 8.15 super) the prefix
+// forces C++ to bypass the vtable, which is precisely what the Direct arm
+// names. Emitting it unconditionally keeps render a fixed function of one
+// MIR node -- no branch on `qualification`, no arm-dependent syntactic
+// shape -- while still producing the correct instruction sequence in every
+// case.
 auto RenderDirectMethodCall(
     const ScopeView& view, const mir::CallExpr& call,
-    const mir::MethodTarget& method,
-    const std::optional<mir::ScopeQualifier>& qualification) -> CalleeRender {
-  if (qualification.has_value()) {
-    throw InternalError(
-        "Direct method call: qualification is not yet implemented");
-  }
+    const mir::MethodTarget& method) -> CalleeRender {
   if (call.arguments.empty()) {
     throw InternalError("Direct method call expects a receiver argument");
   }
@@ -434,7 +434,7 @@ auto RenderDirectMethodCall(
   const mir::Expr& receiver = view.Expr(call.arguments[0]);
   return {
       .expr = std::format(
-          "({})->{}", RenderExpr(view, receiver),
+          "({})->{}::{}", RenderExpr(view, receiver), ToCppName(cls.name),
           cls.methods.Get(method.slot).name),
       .leading_arg_count = 1};
 }
@@ -514,8 +514,7 @@ auto RenderCalleePart(
             return std::visit(
                 Overloaded{
                     [&](const mir::MethodTarget& m) {
-                      return RenderDirectMethodCall(
-                          view, call, m, d.qualification);
+                      return RenderDirectMethodCall(view, call, m);
                     },
                     [&](const support::BuiltinFn& id) {
                       return RenderDirectBuiltinCall(

@@ -31,12 +31,39 @@ struct ForeignImportRef {
   ForeignImportId id;
 };
 
-// Calls an instance method (LRM 8.6) on `receiver`, an expression yielding the
-// class handle the call dispatches through. `class_id` names the declaring
-// class and `method` is the method's declaration-order position in that
-// class's HIR method arena.
+// The receiver form of an instance-method call (LRM 8.6, 8.15). The three
+// SV source spellings each map to one arm; none combines with another.
+//
+// - `HandleReceiver` -- LRM 8.6 qualified `h.foo()`: the source supplied a
+//   class-handle expression the call dispatches through, and the call obeys
+//   the callee's own virtual role.
+// - `ImplicitSelfReceiver` -- LRM 8.6 unqualified `foo()` from inside a
+//   class method: the receiver is the enclosing method's own self, and the
+//   call obeys the callee's virtual role.
+// - `SuperReceiver` -- LRM 8.15 `super.foo()`: the receiver is still the
+//   enclosing method's self, but the source demands the base's
+//   implementation and the call must skip dynamic dispatch regardless of
+//   whether the target is virtual.
+//
+// The three arms are structurally disjoint because "receiver source" and
+// "dispatch qualifier" are not independent axes -- a super-qualified call is
+// never through an explicit handle, so encoding them as a receiver-optional
+// plus a super-flag would admit an invalid state.
+struct HandleReceiver {
+  ExprId expr;
+};
+struct ImplicitSelfReceiver {};
+struct SuperReceiver {};
+
+using MethodReceiver =
+    std::variant<HandleReceiver, ImplicitSelfReceiver, SuperReceiver>;
+
+// Calls an instance method (LRM 8.6). `class_id` names the declaring class
+// and `method` is the method's declaration-order position in that class's HIR
+// method arena. `receiver` states which of the three LRM-defined source
+// forms reached this call site.
 struct MethodCallRef {
-  ExprId receiver;
+  MethodReceiver receiver;
   ClassId class_id;
   MethodId method;
 };

@@ -26,6 +26,18 @@ struct ClassField {
   std::optional<ExprId> initializer;
 };
 
+// A construction-protocol fact (LRM 8.7): the arguments to forward to the
+// base class's constructor before this class's own body runs. Its expressions
+// live in the enclosing constructor body's expression arena, so a captured
+// argument that reads a formal parameter reaches the same procedural var the
+// body would. Absent means the source did not write an explicit `super.new`;
+// with a base present, HIR-to-MIR still emits a stated base call (LRM 8.7
+// implicit `super.new()`) so the ordering is never left to a backend
+// convention. Empty (0-arg) means the source wrote `super.new()` explicitly.
+struct BaseCall {
+  std::vector<ExprId> arguments;
+};
+
 // A SystemVerilog class declaration (LRM 8). The class's properties and its
 // instance methods; references to a class name resolve to this declaration's
 // id. A class is reached through a handle, so it carries no structural
@@ -41,12 +53,18 @@ struct ClassField {
 // synthesized empty constructor, matching the implicit `new` the LRM provides
 // when the source omits one. Property initializers are evaluated as part of
 // its execution, so their expressions live in its body's expression arena.
+//
+// `base_call` peers with `constructor` because base-constructor forwarding is
+// a class-level construction fact, not a statement inside the ctor body
+// (LRM 8.7): source-written `super.new(args)` populates it, and any expression
+// referencing the ctor's own formals lives in the same body arena.
 struct ClassDecl {
   std::string name;
   std::optional<ClassId> base;
   std::vector<ClassField> fields;
   base::Arena<SubroutineDecl, MethodId> methods;
   SubroutineDecl constructor;
+  std::optional<BaseCall> base_call;
 };
 
 }  // namespace lyra::hir

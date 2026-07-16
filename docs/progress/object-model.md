@@ -79,9 +79,13 @@ each stage establishes, not how.
       signatures. A handle whose static type is a base but whose dynamic type is a derived resolves
       the call to the derived's implementation.
 
-- [ ] `super` reference and the base-constructor call: an override body reaches its base-class
+- [x] `super` reference and the base-constructor call: an override body reaches its base-class
       implementation by name-independent reference, and a constructor forwards to the base's
-      construction as its first act (LRM 8.7).
+      construction as its first act (LRM 8.7). The super qualifier is stated at the call site as a
+      call-side fact independent of the callee's virtual role; the base-constructor call is stated
+      on the class's construction protocol, present whenever the class extends a base -- explicit
+      when the source wrote `super.new(args)`, an empty-args implicit forward otherwise -- so a
+      backend never resorts to its target language's default-construction convention.
 
 - [ ] Pure-virtual and abstract classes (LRM 8.21): a virtual method with no body is a contract the
       derived must fill, and a class carrying such a slot is not directly constructible.

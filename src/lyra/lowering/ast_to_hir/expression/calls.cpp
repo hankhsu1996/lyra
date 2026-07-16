@@ -21,6 +21,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/SVInt.h>
+#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -37,6 +38,68 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+// True when the call's source syntax carries LRM 8.15 super qualification
+// (`super.foo()` or `this.super.foo()`). Slang resolves `super.foo` to the
+// base's callee symbol but records no semantic flag, so the qualifier
+// survives only on the source syntax -- a scoped name for the plain form or
+// a member access for `this.super.foo()`. Two callee syntaxes reach here
+// depending on whether the source used parentheses; both share the same
+// shape: the callee has a `.left` whose kind is `SuperHandle`.
+auto CallReceivesSuper(const slang::ast::CallExpression& call) -> bool {
+  const auto* syn = call.syntax;
+  if (syn == nullptr) return false;
+  const slang::syntax::SyntaxNode* callee = syn;
+  if (syn->kind == slang::syntax::SyntaxKind::InvocationExpression) {
+    callee = syn->as<slang::syntax::InvocationExpressionSyntax>().left;
+  }
+  if (callee == nullptr) return false;
+  const auto is_super =
+      [](const slang::syntax::SyntaxNode& left_of_dot) -> bool {
+    return left_of_dot.kind == slang::syntax::SyntaxKind::SuperHandle;
+  };
+  if (callee->kind == slang::syntax::SyntaxKind::ScopedName) {
+    return is_super(*callee->as<slang::syntax::ScopedNameSyntax>().left);
+  }
+  if (callee->kind == slang::syntax::SyntaxKind::MemberAccessExpression) {
+    return is_super(
+        *callee->as<slang::syntax::MemberAccessExpressionSyntax>().left);
+  }
+  return false;
+}
+
+// True when the call reaches an instance method through its enclosing class
+// -- either the source supplied a handle (`h.foo()`) or slang resolved an
+// unqualified call to a class-scope subroutine, whose enclosing class is
+// the receiver's own type (LRM 8.6 implicit `this`, including LRM 8.15
+// `super.foo()`).
+auto CallReachesInstanceMethod(
+    const slang::ast::CallExpression& call,
+    const slang::ast::SubroutineSymbol& sym) -> bool {
+  if (call.thisClass() != nullptr) return true;
+  const auto* parent = sym.getParentScope();
+  return parent != nullptr &&
+         parent->asSymbol().kind == slang::ast::SymbolKind::ClassType;
+}
+
+// Classifies the three LRM-defined receiver forms of an instance-method
+// call into a MethodReceiver arm. Super takes precedence over an
+// accompanying `thisClass` because `this.super.foo()` synthesizes a
+// `thisClass` for the outer `this` while the super qualifier still applies
+// at the syntactic level.
+template <ExprLowerer Lowerer>
+auto ClassifyMethodReceiver(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call)
+    -> diag::Result<hir::MethodReceiver> {
+  if (CallReceivesSuper(call)) return hir::SuperReceiver{};
+  if (const auto* this_class = call.thisClass(); this_class != nullptr) {
+    auto receiver_or = lowerer.LowerExpr(*this_class, frame);
+    if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+    return hir::HandleReceiver{
+        .expr = frame.Exprs().Add(*std::move(receiver_or))};
+  }
+  return hir::ImplicitSelfReceiver{};
+}
 
 // Maps a frontend ReturnConvention to the builtin HIR TypeId that represents
 // it. Local to the calls subsystem (system subroutines are the only consumer).
@@ -493,11 +556,13 @@ auto LowerCallExpr(
     };
   }
 
-  // An instance-method call (LRM 8.6) carries the receiver handle in
-  // `thisClass`; the call dispatches through that handle's class rather than
-  // through an enclosing-scope subroutine.
-  if (const slang::ast::Expression* this_class = call.thisClass();
-      this_class != nullptr) {
+  // Instance-method call (LRM 8.6): three source shapes -- `h.foo()`,
+  // implicit-`this` `foo()` from inside a class body, and `super.foo()` --
+  // all lower to one `MethodCallRef` distinguished by which `MethodReceiver`
+  // arm the classifier picks. The declaring class comes from slang's
+  // resolved callee, which already accounts for inheritance and super
+  // resolution.
+  if (CallReachesInstanceMethod(call, *sym)) {
     for (const auto* formal : sym->getArguments()) {
       if (formal->direction != slang::ast::ArgumentDirection::In) {
         return diag::Fail(
@@ -506,13 +571,8 @@ auto LowerCallExpr(
             "supported");
       }
     }
-    auto receiver_or = lowerer.LowerExpr(*this_class, frame);
+    auto receiver_or = ClassifyMethodReceiver(lowerer, frame, call);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-    const hir::ExprId receiver = frame.Exprs().Add(*std::move(receiver_or));
-    // The method's declaring class owns the method's arena position. An
-    // inherited method belongs to the base class arena, not the receiver's
-    // runtime class arena; using the receiver's type would misname the slot
-    // when the field is inherited.
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
     auto class_id = unit_lowerer.InternClass(declaring_class, span);
@@ -527,7 +587,7 @@ auto LowerCallExpr(
             hir::CallExpr{
                 .callee =
                     hir::MethodCallRef{
-                        .receiver = receiver,
+                        .receiver = *std::move(receiver_or),
                         .class_id = *class_id,
                         .method = unit_lowerer.LookupMethodId(*sym)},
                 .arguments = std::move(arg_ids),

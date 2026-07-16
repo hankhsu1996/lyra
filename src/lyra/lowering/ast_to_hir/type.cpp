@@ -596,9 +596,17 @@ auto UnitLowerer::InternClass(
               "supported");
         }
       }
-      auto ctor_decl = LowerSubroutineDecl(*this, method, WalkFrame{});
-      if (!ctor_decl) return std::unexpected(std::move(ctor_decl.error()));
-      user_constructor = *std::move(ctor_decl);
+      // `getBaseConstructorCall` returns the `super.new(...)` slang lifted out
+      // of the ctor body: null when the source did not write one (LRM 8.7
+      // implicit forwarding, materialized as an empty stated base_init in
+      // HIR-to-MIR) or when this class has no base.
+      const slang::ast::Expression* base_call_ast =
+          cls.getBaseConstructorCall();
+      auto ctor_or =
+          LowerConstructorDecl(*this, method, WalkFrame{}, base_call_ast);
+      if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
+      user_constructor = std::move(ctor_or->constructor);
+      decl.base_call = std::move(ctor_or->base_call);
       continue;
     }
     if (method.flags.has(slang::ast::MethodFlags::Static)) {

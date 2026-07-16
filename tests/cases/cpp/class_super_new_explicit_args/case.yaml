@@ -1,0 +1,12 @@
+id: cpp.class_super_new_explicit_args
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    base_val: 12
+    derived_val: 7

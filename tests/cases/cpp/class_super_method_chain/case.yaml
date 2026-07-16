@@ -1,0 +1,12 @@
+id: cpp.class_super_method_chain
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    through_leaf: 111
+    through_mid_handle: 11

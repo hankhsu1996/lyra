@@ -215,6 +215,38 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       unit_lowerer, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
       mir::MethodVisibility::kInternal, frame, *ctor_plan_);
 
+  // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
+  // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
+  // formal, and that lookup resolves through the same procedural-var
+  // registry the ctor body uses. Formals land as MIR locals appended after
+  // the receiver; the base-call arg exprs and every field initializer below
+  // read them through that registry.
+  std::vector<mir::LocalId> ctor_params{self_id};
+  auto formals_or =
+      ctor_lowerer.RegisterConstructorFormals(ctor, frame, ctor_params);
+  if (!formals_or) return std::unexpected(std::move(formals_or.error()));
+
+  // Base construction (LRM 8.7): a derived class always forwards to its base
+  // -- explicit `super.new(args)` when the source wrote one, an implicit
+  // no-arg `super.new()` otherwise. Both cases publish stated args on the
+  // constructor's base-init so the backend never falls back to its target
+  // language's default-construction convention; base-constructor ordering
+  // is a MIR-stated fact, not a backend convention. A class with no base
+  // carries no base-init.
+  std::optional<mir::BaseInit> base_init;
+  if (hir_class.base_call.has_value()) {
+    std::vector<mir::ExprId> lowered;
+    lowered.reserve(hir_class.base_call->arguments.size());
+    for (const hir::ExprId arg : hir_class.base_call->arguments) {
+      auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), frame);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      lowered.push_back(ctor_block.exprs.Add(*std::move(arg_or)));
+    }
+    base_init = mir::BaseInit{.args = std::move(lowered)};
+  } else if (hir_class.base.has_value()) {
+    base_init = mir::BaseInit{.args = {}};
+  }
+
   // Initialize each property in declaration order before the constructor body
   // runs (LRM 8.7): a property with an explicit initializer takes that value --
   // lowered through the constructor lowerer so a property read resolves against
@@ -276,16 +308,11 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
     }
   }
 
-  // The constructor body (LRM 8.7) runs after each property is initialized, so
-  // its statements follow the field-init prologue already in the constructor
-  // body. Its input formals extend the constructor signature past the receiver;
-  // a synthesized default constructor contributes an empty body and no formals.
-  std::vector<mir::LocalId> ctor_params{self_id};
-  auto ctor_body_or =
-      ctor_lowerer.LowerConstructorBodyInto(ctor, frame, ctor_params);
-  if (!ctor_body_or) {
-    return std::unexpected(std::move(ctor_body_or.error()));
-  }
+  // The constructor body statements (LRM 8.7) run after base construction
+  // and property initialization, so they follow both the field-init prologue
+  // and the base-call arg evaluation already emitted into the ctor block.
+  auto body_or = ctor_lowerer.LowerConstructorBodyInto(frame);
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
   for (const auto& pending : ctor_lowerer.TakePendingStaticInitializers()) {
     auto integ = IntegratePendingStaticInitializer(
         ctor_lowerer, ctor.body, frame, pending);
@@ -301,7 +328,9 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
           .virtual_dispatch = std::nullopt,
           .visibility = mir::MethodVisibility::kInternal});
   mir_class.constructor = mir::ConstructorDecl{
-      .method = ctor_method_id, .base_init = std::nullopt, .member_inits = {}};
+      .method = ctor_method_id,
+      .base_init = std::move(base_init),
+      .member_inits = {}};
 
   unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));
   return {};
