@@ -24,6 +24,17 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+// A set of slang AST expressions the frontend exposes twice -- once as a
+// class- or scope-level semantic fact (which an enclosing lowering has
+// already consumed) and once as syntactic residue inside a subroutine body's
+// statement list. The body walker elides the residue by matching pointer
+// identity, so the two exposures resolve to one HIR representation without
+// any per-kind knowledge of which SV construct the node names. The single
+// current user is `super.new(...)` (LRM 8.7), lifted from the ctor body
+// onto its class's construction protocol.
+using ConsumedBodyExpressions =
+    std::unordered_set<const slang::ast::Expression*>;
+
 // Per-process-body lowerer: walks a slang procedural block or subroutine body
 // into a hir::ProceduralBody. Constructed once per process / subroutine; runs
 // once via Run for a procedural block, or used as a helper for subroutine
@@ -33,7 +44,8 @@ namespace lyra::lowering::ast_to_hir {
 class ProcessLowerer {
  public:
   ProcessLowerer(
-      UnitLowerer& unit_lowerer, const slang::ast::Symbol& containing_symbol);
+      UnitLowerer& unit_lowerer, const slang::ast::Symbol& containing_symbol,
+      ConsumedBodyExpressions consumed_body_exprs = {});
 
   // Lowers a procedural block to a complete hir::Process (initial / final /
   // always / always_comb / always_latch / always_ff). Stack-allocates the
@@ -74,6 +86,15 @@ class ProcessLowerer {
     return *containing_symbol_;
   }
 
+  // Slang AST expressions the enclosing lowering has already consumed as a
+  // higher-level semantic fact; the body walker elides any statement whose
+  // whole expression matches by pointer identity. Empty for a walk with
+  // no consumed residues.
+  [[nodiscard]] auto ConsumedBodyExprs() const
+      -> const ConsumedBodyExpressions& {
+    return consumed_body_exprs_;
+  }
+
   // Walker entries used by helper passes inside this layer.
   auto LowerExpr(const slang::ast::Expression& expr, WalkFrame frame)
       -> diag::Result<hir::Expr>;
@@ -91,6 +112,7 @@ class ProcessLowerer {
   // Facts.
   UnitLowerer* owner_;
   const slang::ast::Symbol* containing_symbol_;
+  ConsumedBodyExpressions consumed_body_exprs_;
 
   // Registry.
   std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>

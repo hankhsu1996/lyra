@@ -6,7 +6,10 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/Expression.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -184,11 +187,20 @@ auto ResolveImportCName(const slang::ast::SubroutineSymbol& sym)
   return std::string{sym.name};
 }
 
-}  // namespace
+// The subroutine's callable code lowered against its own binding frame plus
+// the optional base-call args lowered against that same frame. The two
+// halves must share one frame because a base-call arg may reference a formal
+// parameter, and that reference resolves through the same procedural-var
+// registry the body lowering uses.
+struct SubroutineLoweringResult {
+  hir::SubroutineDecl decl;
+  std::optional<hir::BaseCall> base_call;
+};
 
-auto LowerSubroutineDecl(
+auto LowerSubroutineDeclImpl(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
-    WalkFrame frame) -> diag::Result<hir::SubroutineDecl> {
+    WalkFrame frame, const slang::ast::Expression* base_call_ast)
+    -> diag::Result<SubroutineLoweringResult> {
   const auto& mapper = unit_lowerer.SourceMapper();
 
   auto return_type_or = unit_lowerer.InternType(
@@ -198,7 +210,9 @@ auto LowerSubroutineDecl(
   }
 
   hir::ProceduralBody body;
-  ProcessLowerer lowerer(unit_lowerer, sym);
+  ConsumedBodyExpressions consumed_body_exprs;
+  if (base_call_ast != nullptr) consumed_body_exprs.insert(base_call_ast);
+  ProcessLowerer lowerer(unit_lowerer, sym, std::move(consumed_body_exprs));
   lowerer.AnalyzeLifetimeExtended(sym.getBody());
 
   // Open the root lexical scope accumulators for this subroutine body. The
@@ -233,6 +247,30 @@ auto LowerSubroutineDecl(
         body_frame, body, *sym.returnValVar, *return_type_or);
   }
 
+  // Base-call args (LRM 8.7) evaluate in the constructor's own frame and can
+  // reference formals -- for example `super.new(a * 2)` where `a` is the
+  // derived ctor's parameter. Lowering them here, before the body statements
+  // (which the LRM requires super.new to precede), keeps them ahead of any
+  // stateful body computation and ensures they see only the formals -- the
+  // ordering the runtime observes when it invokes the base ctor first.
+  std::optional<hir::BaseCall> base_call;
+  if (base_call_ast != nullptr) {
+    const auto& new_expr = base_call_ast->as<slang::ast::NewClassExpression>();
+    const auto* ctor_call = new_expr.constructorCall();
+    hir::BaseCall lowered;
+    if (ctor_call != nullptr) {
+      const auto& actuals =
+          ctor_call->as<slang::ast::CallExpression>().arguments();
+      lowered.arguments.reserve(actuals.size());
+      for (const auto* actual : actuals) {
+        auto arg_or = lowerer.LowerExpr(*actual, body_frame);
+        if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+        lowered.arguments.push_back(body.exprs.Add(*std::move(arg_or)));
+      }
+    }
+    base_call = std::move(lowered);
+  }
+
   auto body_stmt_or = lowerer.LowerStmt(sym.getBody(), body_frame);
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
   body.root_stmt = body.stmts.Add(*std::move(body_stmt_or));
@@ -249,15 +287,40 @@ auto LowerSubroutineDecl(
             .direct_child_scopes = std::move(root_children)});
   }
 
-  return hir::SubroutineDecl{
-      .name = std::string{sym.name},
-      .kind = ToHirSubroutineKind(sym.subroutineKind),
-      .result_type = *return_type_or,
-      .params = std::move(params),
-      .result_var = result_var,
-      .body = std::move(body),
-      .is_virtual = false,
-      .overrides = std::nullopt};
+  return SubroutineLoweringResult{
+      .decl =
+          hir::SubroutineDecl{
+              .name = std::string{sym.name},
+              .kind = ToHirSubroutineKind(sym.subroutineKind),
+              .result_type = *return_type_or,
+              .params = std::move(params),
+              .result_var = result_var,
+              .body = std::move(body),
+              .is_virtual = false,
+              .overrides = std::nullopt},
+      .base_call = std::move(base_call)};
+}
+
+}  // namespace
+
+auto LowerSubroutineDecl(
+    UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
+    WalkFrame frame) -> diag::Result<hir::SubroutineDecl> {
+  auto result_or = LowerSubroutineDeclImpl(unit_lowerer, sym, frame, nullptr);
+  if (!result_or) return std::unexpected(std::move(result_or.error()));
+  return std::move(result_or->decl);
+}
+
+auto LowerConstructorDecl(
+    UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
+    WalkFrame frame, const slang::ast::Expression* base_call_ast)
+    -> diag::Result<ConstructorAndBaseCall> {
+  auto result_or =
+      LowerSubroutineDeclImpl(unit_lowerer, sym, frame, base_call_ast);
+  if (!result_or) return std::unexpected(std::move(result_or.error()));
+  return ConstructorAndBaseCall{
+      .constructor = std::move(result_or->decl),
+      .base_call = std::move(result_or->base_call)};
 }
 
 // Lowers a DPI-C import declaration (LRM 35.4) to a bodyless external callable.

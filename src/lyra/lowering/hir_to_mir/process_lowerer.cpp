@@ -382,14 +382,14 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       .visibility = Visibility()};
 }
 
-auto ProcessLowerer::LowerConstructorBodyInto(
+auto ProcessLowerer::RegisterConstructorFormals(
     const hir::SubroutineDecl& ctor, const WalkFrame& frame,
     std::vector<mir::LocalId>& params) -> diag::Result<void> {
   for (const auto& param : ctor.params) {
     if (param.direction != hir::ParamDirection::kInput) {
       throw InternalError(
-          "ProcessLowerer::LowerConstructorBodyInto: a non-input constructor "
-          "formal reached MIR lowering; AST-to-HIR rejects these");
+          "ProcessLowerer::RegisterConstructorFormals: a non-input "
+          "constructor formal reached MIR lowering; AST-to-HIR rejects these");
     }
     const auto& hir_var = ctor.body.procedural_vars.Get(param.var);
     const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
@@ -399,6 +399,11 @@ auto ProcessLowerer::LowerConstructorBodyInto(
     MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
     params.push_back(mir_var);
   }
+  return {};
+}
+
+auto ProcessLowerer::LowerConstructorBodyInto(const WalkFrame& frame)
+    -> diag::Result<void> {
   return LowerStraightLineBodyInto(*this, frame);
 }
 
