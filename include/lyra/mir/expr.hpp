@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
@@ -195,6 +196,21 @@ struct Indirect {
   ExprId closure;
 };
 
+// A virtually-dispatched call: the receiver is evaluated once and then the
+// implementation of the named slot on that receiver's dynamic type runs
+// (LRM 8.20). `owner_class` and `slot` name the slot as it appears in the
+// class arena that introduced it -- the canonical logical identity a
+// backend uses to reach the method's name and signature; the receiver's
+// dynamic type is what decides which implementation runs. The receiver
+// rides here, distinct from user-supplied `CallExpr::arguments`, so the
+// call carries exactly the arguments the SV source wrote and the receiver
+// is not conflated with them.
+struct Virtual {
+  ExprId receiver;
+  ClassId owner_class;
+  MethodId slot;
+};
+
 // Constructs a value of the call's result data type from the positional
 // arguments -- the data type's constructor, which is just a call whose
 // callee is the type itself (Python's `T(args)`, Rust's `T::new(args)`).
@@ -206,7 +222,14 @@ struct Indirect {
 // form is `ArrayLiteralExpr`, a value literal, not this.
 struct Construct {};
 
-using Callee = std::variant<Direct, Indirect, Construct>;
+// One call site's invocation semantics. The arm is a property of the call
+// node, independent of the callee's own dispatch-family membership: a
+// super-qualified call to a virtual-family method carries `Direct` because
+// the source demands the base implementation regardless of the receiver's
+// dynamic type, while a plain unqualified call to the same method carries
+// `Virtual`. A backend reads the invocation semantic from the arm and never
+// re-derives it from the callee declaration.
+using Callee = std::variant<Direct, Indirect, Construct, Virtual>;
 
 struct CallExpr {
   Callee callee;
@@ -414,13 +437,12 @@ struct UnionGetRefExpr {
   std::size_t index;
 };
 
-// A value that is a reference to a named callable of this class -- a plain
-// function pointer whose type is the callable's signature. Realized by taking
-// the callable's address (`&Class::name`). Used to install a lifecycle entry or
-// its ABI adapter into a unit's runtime definition as a bare function value,
-// with no wrapper object -- the generic-language "function as a value".
+// Used where a runtime callback surface takes a bare function value with no
+// wrapper object (a lifecycle hook slot in a per-class definition constant).
+// The referent is an `AbiAdapter`, never an instance method: instance
+// methods have no function-pointer-compatible identity.
 struct FunctionRef {
-  MethodId callable;
+  AbiAdapterId adapter;
 };
 
 // A place naming one of this class's static constants (`Class::name`), the data

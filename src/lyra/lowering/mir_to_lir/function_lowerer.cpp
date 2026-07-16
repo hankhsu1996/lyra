@@ -205,6 +205,11 @@ auto LowerCallTarget(
             return Unsupported(
                 "mir_to_lir: indirect (closure) call is not yet lowerable to "
                 "LIR");
+          },
+          [](const mir::Virtual&) -> diag::Result<lir::CallTarget> {
+            return Unsupported(
+                "mir_to_lir: virtual method dispatch is not yet lowerable to "
+                "LIR");
           }},
       callee);
 }

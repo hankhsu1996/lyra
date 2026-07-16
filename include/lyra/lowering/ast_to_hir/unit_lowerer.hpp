@@ -12,11 +12,13 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/Type.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/method_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -163,6 +165,27 @@ class UnitLowerer {
   auto InternClass(const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<hir::ClassId>;
 
+  // Records a frontend method symbol's HIR arena identity as the class
+  // interning that owns it adds the method. Downstream consumers translate a
+  // frontend symbol into the HIR-side identity through this cache, so the
+  // slang enumeration order is walked once (at class interning) and never
+  // again at a resolution site.
+  void RegisterMethodId(
+      const slang::ast::SubroutineSymbol& method, hir::MethodId id) {
+    method_cache_.emplace(&method, id);
+  }
+
+  [[nodiscard]] auto LookupMethodId(
+      const slang::ast::SubroutineSymbol& method) const -> hir::MethodId {
+    if (const auto it = method_cache_.find(&method);
+        it != method_cache_.end()) {
+      return it->second;
+    }
+    throw InternalError(
+        "UnitLowerer::LookupMethodId: method has no HIR identity; the "
+        "owning class was not interned before this lookup");
+  }
+
   // Facts.
   [[nodiscard]] auto SourceMapper() const
       -> const frontend::SlangSourceMapper& {
@@ -282,6 +305,8 @@ class UnitLowerer {
   // Registries.
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
+  std::unordered_map<const slang::ast::SubroutineSymbol*, hir::MethodId>
+      method_cache_;
   StructuralDataObjectBindings structural_data_object_bindings_;
   SubroutineBindings subroutine_bindings_;
   ForeignImportBindings foreign_import_bindings_;

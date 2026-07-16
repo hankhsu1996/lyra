@@ -193,7 +193,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
   return mir::MethodDecl{
       .name = std::string{process.CallableName()},
       .code = std::move(code),
-      .overrides = std::nullopt,
+      .virtual_dispatch = std::nullopt,
       .visibility = process.Visibility()};
 }
 
@@ -239,7 +239,7 @@ auto LowerForeverProcess(
   return mir::MethodDecl{
       .name = std::string{process.CallableName()},
       .code = std::move(code),
-      .overrides = std::nullopt,
+      .virtual_dispatch = std::nullopt,
       .visibility = process.Visibility()};
 }
 
@@ -378,7 +378,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   return mir::MethodDecl{
       .name = src.name,
       .code = std::move(code),
-      .overrides = std::nullopt,
+      .virtual_dispatch = std::nullopt,
       .visibility = Visibility()};
 }
 

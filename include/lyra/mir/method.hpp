@@ -17,28 +17,36 @@ namespace lyra::mir {
 // here rather than inferring it from the object's base or the method's role.
 enum class MethodVisibility : std::uint8_t { kPublic, kInternal };
 
-// A named, class-level callable: callable code plus a name. Every SystemVerilog
-// function and task, every process body, and the synthesized lifecycle bodies
-// are this one concept, distinguished only by how a referencing site uses them.
-// The signature -- the parameter list (with `self` at `code.params[0]`) and the
-// result type that carries the call protocol and completion payload -- lives in
-// `code`, so the backend reads task-versus-function and the output pack from
-// `code.result_type`, not a side enum. The body is uniform across every
-// callable: a static function over the explicit receiver `self`. How a
-// referencing site reaches the callable -- a direct call, a constructor-time
-// process registration, an engine-dispatched lifecycle hook -- is the
-// referencing site's concern, realized as separate dispatch plumbing. The
-// declaration records one dispatch fact of its own, the base method it
-// overrides when it overrides one, which leaves the uniform body untouched.
+// A named class instance-method callable (LRM 8.6). Every SystemVerilog
+// function and task, every process body, and the synthesized lifecycle body
+// is one of these -- callables whose receiver is the enclosing object,
+// bound implicitly at the call site. The signature -- the parameter list
+// (with `self` at `code.params[0]`) and the result type carrying the call
+// protocol -- lives in `code`, so a backend reads task-versus-function and
+// the output pack from `code.result_type`, not a side enum. `visibility`
+// states whether the method is part of the object's externally callable
+// surface. `virtual_dispatch`, when present, states this method's role in
+// the class's dispatch table -- either introducing a new slot or filling an
+// ancestor's -- so a backend renders the introduction or override marker
+// off stated structure, never re-deriving virtualness by name matching.
 struct MethodDecl {
   std::string name;
   CallableCode code;
-  // The base method this declaration overrides, resolved to a declaration
-  // reference, or absent for a method that introduces no override. A lifecycle
-  // body overrides the runtime base's matching hook; a backend reads the
-  // override target here rather than re-deriving it from the method name.
-  std::optional<OverriddenMethodRef> overrides;
+  std::optional<VirtualDispatchRole> virtual_dispatch;
   MethodVisibility visibility;
+};
+
+// A named class-owned callable whose identity is a plain function pointer
+// the runtime library holds and calls back through -- the shape a
+// `void (*)(RuntimeScopeBase*)` lifecycle hook requires. Structurally a
+// distinct callable species from `MethodDecl`: its receiver is an explicit
+// parameter (never bound implicitly), it participates in no dispatch table,
+// and it is reached only as a code address, never through a CallExpr. A
+// backend renders it in the target language's function-pointer-compatible
+// form, which is not the form an instance method takes.
+struct AbiAdapter {
+  std::string name;
+  CallableCode code;
 };
 
 }  // namespace lyra::mir

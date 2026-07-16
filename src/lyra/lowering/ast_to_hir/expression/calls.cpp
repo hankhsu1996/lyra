@@ -1,7 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression/calls.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -57,23 +56,6 @@ auto MakeReturnConventionType(
       return builtins.realtime;
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
-}
-
-// An instance method's declaration-order index among its class's methods,
-// matching the order the HIR ClassDecl registers them, so the index names the
-// same method when the call is lowered (LRM 8.6).
-auto ClassMethodIndex(const slang::ast::SubroutineSymbol& method)
-    -> std::uint32_t {
-  const auto* scope = method.getParentScope();
-  std::uint32_t index = 0;
-  for (const auto& member :
-       scope->membersOfType<slang::ast::SubroutineSymbol>()) {
-    if (&member == &method) {
-      return index;
-    }
-    ++index;
-  }
-  throw InternalError("ClassMethodIndex: method not found in its class");
 }
 
 }  // namespace
@@ -476,7 +458,7 @@ auto LowerCallExpr(
                     hir::MethodCallRef{
                         .receiver = receiver,
                         .class_id = *class_id,
-                        .method_index = ClassMethodIndex(*sym)},
+                        .method = unit_lowerer.LookupMethodId(*sym)},
                 .arguments = std::move(arg_ids),
             },
         .span = span,

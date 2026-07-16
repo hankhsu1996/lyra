@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/method_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -43,11 +45,30 @@ struct SubroutineParam {
          direction == ParamDirection::kInOut;
 }
 
+// The declaration identity of a class instance method in HIR: a
+// (class, method) pair naming one entry in the owning class's method arena.
+// A frontend symbol translates to this identity at the AST-to-HIR boundary;
+// downstream consumers hold it as-is and never re-derive it from another
+// enumeration order.
+struct MethodRef {
+  ClassId class_id;
+  MethodId method;
+
+  auto operator==(const MethodRef&) const -> bool = default;
+};
+
 // LRM 13.4.1 implicit result variable: a non-void function implicitly declares
 // a body-local variable of the return type that the body reads and writes
 // through the function name. `result_var` indexes the body's procedural-var
 // arena for that variable; it is absent for void functions and tasks, which
 // yield no value.
+//
+// Two facts on a class method carry its participation in virtual dispatch
+// (LRM 8.20); each is atomic and reflects the source directly. `is_virtual`
+// records the `virtual` keyword. `overrides`, when present, is the frontend-
+// resolved reference to the base method this one overrides -- carried as an
+// already-resolved identity so downstream consumers never repeat the name and
+// signature matching the frontend has done.
 struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
@@ -55,6 +76,8 @@ struct SubroutineDecl {
   std::vector<SubroutineParam> params;
   std::optional<ProceduralVarId> result_var;
   ProceduralBody body;
+  bool is_virtual = false;
+  std::optional<MethodRef> overrides;
 };
 
 }  // namespace lyra::hir
