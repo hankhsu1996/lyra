@@ -183,6 +183,17 @@ class LirDumper {
             [](const ConstructTarget&) -> std::string { return "Construct"; },
             [](const ForeignTarget& f) -> std::string {
               return std::format("extern {}", f.symbol);
+            },
+            [](const ActivationFrameTarget& f) -> std::string {
+              switch (f.op) {
+                case ActivationFrameTarget::Op::kAllocate:
+                  return "activation_frame_alloc";
+                case ActivationFrameTarget::Op::kLoad:
+                  return "activation_frame_load";
+                case ActivationFrameTarget::Op::kStore:
+                  return "activation_frame_store";
+              }
+              return "activation_frame_alloc";
             }},
         target);
   }

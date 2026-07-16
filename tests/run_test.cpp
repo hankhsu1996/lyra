@@ -137,9 +137,9 @@ auto WriteDpiImportForeign(const std::filesystem::path& path) -> void {
 
 // Every SV construct that waits on a value change at once: an implicit
 // sensitivity (`always_comb`), an explicit event list with two edges, and a
-// `wait (cond)` re-check loop, all driven by a delayed clock. The clock is
-// unrolled rather than looped because a loop-carried value across a suspension
-// is a lifetime the execution backend does not yet give a generated frame.
+// `wait (cond)` re-check loop, all driven by a delayed clock spelled out as a
+// sequence of edges to keep the value-change focus separate from the
+// loop-carried-value concern a separate case covers.
 auto WriteValueChangeWaitSource(const std::filesystem::path& path) -> void {
   std::ofstream out(path);
   out << "module Test;\n"
@@ -166,6 +166,47 @@ auto WriteValueChangeWaitSource(const std::filesystem::path& path) -> void {
       << "  initial begin\n"
       << "    #2;\n"
       << "    go = 1;\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+auto WriteCrossSuspensionLoopSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  logic clk = 0;\n"
+      << "  int ticks = 0;\n"
+      << "  initial begin\n"
+      << "    int n = 3;\n"
+      << "    for (int i = 0; i < n; i = i + 1) begin\n"
+      << "      #5;\n"
+      << "      clk = ~clk;\n"
+      << "      ticks = ticks + 1;\n"
+      << "      $display(\"i=%0d n=%0d clk=%0b ticks=%0d\", i, n, clk, "
+         "ticks);\n"
+      << "    end\n"
+      << "    $display(\"final ticks=%0d\", ticks);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+auto WriteNestedSuspensionSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  int total = 0;\n"
+      << "  initial begin\n"
+      << "    int outer = 2;\n"
+      << "    for (int i = 0; i < outer; i = i + 1) begin\n"
+      << "      automatic int inner_sum = 0;\n"
+      << "      for (int j = 0; j < 3; j = j + 1) begin\n"
+      << "        #1;\n"
+      << "        if (j == 1) inner_sum = inner_sum + 10;\n"
+      << "        else inner_sum = inner_sum + 1;\n"
+      << "      end\n"
+      << "      total = total + inner_sum;\n"
+      << "      $display(\"i=%0d inner_sum=%0d total=%0d\", i, inner_sum, "
+         "total);\n"
+      << "    end\n"
+      << "    $display(\"final total=%0d\", total);\n"
       << "  end\n"
       << "endmodule\n";
 }
@@ -357,6 +398,82 @@ TEST(LyraRun, JitAndCppAgreeOnValueChangeWait) {
   EXPECT_EQ(
       jit.stdout_text,
       "released at go\nedge count=1 doubled=0\nedge count=2 doubled=2\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+// A value whose lifetime crosses a suspension lives past the stretch that
+// produced it on the execution backend: a loop counter reassigned each
+// iteration and a read-only local read after a resume both survive the `#5`,
+// realized as activation value cells rather than handles into a per-stretch
+// arena. Without that storage the counter's handle would dangle after the first
+// suspension. The two backends must agree, so the same loop runs through both.
+TEST(LyraRun, JitAndCppAgreeOnCrossSuspensionLoop) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteCrossSuspensionLoopSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "i=0 n=3 clk=1 ticks=1\n"
+      "i=1 n=3 clk=0 ticks=2\n"
+      "i=2 n=3 clk=1 ticks=3\n"
+      "final ticks=3\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+// Cross-suspension values through nested control flow: nested loop counters, a
+// local declared in the outer body and carried across the inner loop's
+// suspensions, and an if/else that spans a suspension. Each is an activation
+// value that must survive the `#1` at its own nesting depth. The two backends
+// must agree, so the same nested body runs through both.
+TEST(LyraRun, JitAndCppAgreeOnNestedSuspension) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteNestedSuspensionSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "i=0 inner_sum=12 total=12\n"
+      "i=1 inner_sum=12 total=24\n"
+      "final total=24\n")
       << "stdout: " << jit.stdout_text;
 }
 

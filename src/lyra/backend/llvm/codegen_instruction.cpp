@@ -175,6 +175,24 @@ auto CodeGenFunction::ResolveCallee(
           },
           [&](const lir::ForeignTarget& t) -> llvm::FunctionCallee {
             return ForeignCallee(t, call, result_type);
+          },
+          [&](const lir::ActivationFrameTarget& t) -> llvm::FunctionCallee {
+            // The value domain an activation-frame call works in is read from
+            // the value it moves: the cell's own value type for an allocation
+            // or a load, the stored value's type for a store.
+            switch (t.op) {
+              case lir::ActivationFrameTarget::Op::kAllocate:
+                return module_->Runtime().ActivationFrameAlloc(
+                    DomainOf(result_type));
+              case lir::ActivationFrameTarget::Op::kLoad:
+                return module_->Runtime().ActivationFrameLoad(
+                    DomainOf(result_type));
+              case lir::ActivationFrameTarget::Op::kStore:
+                return module_->Runtime().ActivationFrameStore(
+                    DomainOf(OperandType(call.args.at(1))));
+            }
+            throw InternalError(
+                "llvm codegen: unknown activation-frame operation");
           }},
       call.target);
 }

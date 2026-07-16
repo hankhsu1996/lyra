@@ -146,6 +146,19 @@ the detail lives in the entry itself.
   calls, and the LLVM backend states where a body suspends while LLVM's coroutine passes derive the
   frame, resume state, and spills. The engine resumes a runtime-owned adapter, never a generated
   frame; a hand-rolled state machine in the emitter and an is-coroutine flag are rejected.
+- [cross-suspension-value-storage](cross-suspension-value-storage.md) -- a value-typed non-managed
+  procedural local in a suspending body is an activation-frame value: overwritten in place, owned by
+  the activation (which also RAII-owns the generated coroutine), reached through a frame-held handle
+  so its value outlives the per-stretch scope. Every coroutine value local gets one (no liveness
+  analysis); the cell shares a storage core with the signal cell but is not observable, and the
+  access is a `ActivationFrameTarget` LIR call so the backend stays mechanical. Native in-frame
+  layout, a backend-private arena, and a narrow liveness pass are rejected.
+- [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md) -- naming and the
+  escape invariant: `RuntimeProcess` is the lineage/scheduler node, `activation` is the control
+  identity, the `activation frame` (`ActivationFrameStorage`) is the cross-suspension value storage,
+  and `GeneratedCallScope` is the per-stretch transient. A transient may not escape its stretch;
+  every escaping store copies/promotes (the one non-copying path, a method return, stays in the
+  caller's scope). A fused `RuntimeActivation` and a speculative slot/trace/GC shape are rejected.
 - [root-unit-elaboration](root-unit-elaboration.md) -- design elaboration is the synthetic `$root`
   unit's `construct` entry, which builds the top-level modules as its owned children; there is no
   design-level free function. Engine / bind / run stay host runner policy and never enter MIR; both

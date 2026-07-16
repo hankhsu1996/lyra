@@ -108,11 +108,25 @@ struct ForeignTarget {
   std::string symbol;
 };
 
+// An operation on a value in the activation frame -- the storage a value-typed
+// local gets in a suspending body, where a value's handle cannot outlive the
+// stretch that produced it. MIR-to-LIR introduces this as storage placement:
+// `kAllocate` builds a cell in the running activation's frame, `kLoad` copies
+// its value out, `kStore` overwrites it. A LIR-only target with no MIR twin --
+// the activation frame is a below-MIR storage realization the C++ backend never
+// sees -- so a backend realizes it the way it realizes any call: the value
+// domain the op works in names the runtime entry.
+struct ActivationFrameTarget {
+  enum class Op : std::uint8_t { kAllocate, kLoad, kStore };
+  Op op;
+};
+
 // The target of a call: a runtime builtin, a class method of this unit, a value
-// constructor named by the call's result type, or a foreign symbol the host
-// resolves.
-using CallTarget =
-    std::variant<BuiltinTarget, MethodTarget, ConstructTarget, ForeignTarget>;
+// constructor named by the call's result type, a foreign symbol the host
+// resolves, or an activation-frame value operation.
+using CallTarget = std::variant<
+    BuiltinTarget, MethodTarget, ConstructTarget, ForeignTarget,
+    ActivationFrameTarget>;
 
 struct CallInstr {
   CallTarget target;
