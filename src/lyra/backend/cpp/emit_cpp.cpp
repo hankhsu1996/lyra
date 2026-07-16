@@ -18,6 +18,7 @@
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type.hpp"
@@ -64,12 +65,36 @@ auto RenderMethodParam(
   return std::format("{} {}", RenderTypeAsCpp(unit, s, param.type), param.name);
 }
 
-// The one renderer for every callable body. A body renders uniformly as a
-// static function over the explicit receiver `self`: the result type (whose
-// `void` and coroutine cases are ordinary types, handled in `RenderTypeAsCpp`),
-// the name, every parameter (`self` is `params[0]`, rendered like any other),
-// and the body (a plain statement render, including any `co_return` that is
-// itself a body statement).
+// The C++ specifier this method's dispatch role prefixes its declaration
+// with: `virtual` when the method introduces a new dispatch slot on this
+// class, empty otherwise; the source of virtualness for an override is the
+// slot the base already declares, which the `override` suffix records
+// separately.
+auto VirtualPrefix(const mir::MethodDecl& m) -> std::string_view {
+  if (!m.virtual_dispatch.has_value()) return "";
+  if (std::holds_alternative<mir::IntroducesVirtualSlot>(*m.virtual_dispatch)) {
+    return "virtual ";
+  }
+  return "";
+}
+
+// The trailing specifier attached after the return type when this method
+// fills an inherited dispatch slot: `override` records that the base's slot
+// resolves through this implementation, so a name-only compilation cannot
+// silently disagree with the intended override target.
+auto OverrideSuffix(const mir::MethodDecl& m) -> std::string_view {
+  if (!m.virtual_dispatch.has_value()) return "";
+  if (std::holds_alternative<mir::IntroducesVirtualSlot>(*m.virtual_dispatch)) {
+    return "";
+  }
+  return " override";
+}
+
+// The renderer for a class instance method: a C++ instance member function.
+// `this` is what MIR calls `self`, seeded through a one-line adapter so the
+// body's expressions resolve receiver-relative references uniformly. The
+// method's dispatch role decorates the declaration with `virtual` or
+// `override` where applicable.
 auto RenderMethod(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::MethodDecl& m, std::size_t indent)
@@ -78,12 +103,44 @@ auto RenderMethod(
                                   ? ScopeView::ForRoot(unit, s, m.code)
                                   : parent_struct_view->WithClass(s, m.code);
 
-  std::string ret = RenderTypeAsCpp(unit, s, m.code.result_type);
+  const std::string ret = RenderTypeAsCpp(unit, s, m.code.result_type);
+  const mir::LocalId self_local = m.code.params[0];
+  const auto& self_decl = m.code.locals.Get(self_local);
+  const std::string self_type = RenderTypeAsCpp(unit, s, self_decl.type);
 
-  std::string sig = std::format("static auto {}(", m.name);
-  for (std::size_t i = 0; i < m.code.params.size(); ++i) {
-    if (i != 0) sig += ", ";
+  std::string sig = std::format("{}auto {}(", VirtualPrefix(m), m.name);
+  for (std::size_t i = 1; i < m.code.params.size(); ++i) {
+    if (i != 1) sig += ", ";
     sig += RenderMethodParam(unit, s, m.code.locals.Get(m.code.params[i]));
+  }
+  sig += std::format(") -> {}{}", ret, OverrideSuffix(m));
+
+  std::string out;
+  out += std::format("{}{} {{\n", Indent(indent), sig);
+  out += std::format(
+      "{}{} {} = this;\n", Indent(indent + 1), self_type, self_decl.name);
+  out += RenderBlockStatements(body_view, indent + 1);
+  out += std::format("{}}}\n", Indent(indent));
+  return out;
+}
+
+// The renderer for a runtime-callback adapter: a static class member so its
+// address decays to a plain function pointer of the shape the runtime
+// callback table requires. The receiver is the callable's first explicit
+// parameter, rendered like any other formal.
+auto RenderAbiAdapter(
+    const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
+    const mir::Class& s, const mir::AbiAdapter& a, std::size_t indent)
+    -> std::string {
+  const ScopeView body_view = (parent_struct_view == nullptr)
+                                  ? ScopeView::ForRoot(unit, s, a.code)
+                                  : parent_struct_view->WithClass(s, a.code);
+
+  const std::string ret = RenderTypeAsCpp(unit, s, a.code.result_type);
+  std::string sig = std::format("static auto {}(", a.name);
+  for (std::size_t i = 0; i < a.code.params.size(); ++i) {
+    if (i != 0) sig += ", ";
+    sig += RenderMethodParam(unit, s, a.code.locals.Get(a.code.params[i]));
   }
   sig += std::format(") -> {}", ret);
 
@@ -295,6 +352,24 @@ auto RenderScopeAsClass(
     }
     out += "\n";
     out += RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
+  }
+
+  // The class's runtime-callback adapters. Each renders as a static member
+  // whose address decays to a plain function pointer for the runtime
+  // callback table; the class never exposes them on its public surface.
+  if (!s.abi_adapters.empty()) {
+    if (open_section != mir::MethodVisibility::kInternal) {
+      open_section = mir::MethodVisibility::kInternal;
+      out += std::format(
+          "\n{} {}:\n", Indent(indent),
+          VisibilityKeyword(mir::MethodVisibility::kInternal));
+    }
+    for (std::size_t i = 0; i < s.abi_adapters.size(); ++i) {
+      const auto& a =
+          s.abi_adapters.Get(mir::AbiAdapterId{static_cast<std::uint32_t>(i)});
+      out += "\n";
+      out += RenderAbiAdapter(parent_struct_view, unit, s, a, indent + 1);
+    }
   }
 
   // The class's static constants (a tree node's generated-behavior record among

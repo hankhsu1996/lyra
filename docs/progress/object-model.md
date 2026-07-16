@@ -65,10 +65,26 @@ each stage establishes, not how.
       item above. Minimal surface: fields, `new`, direct instance-method call, handle equality
       against another handle and against null.
 
-- [ ] Class inheritance: a single concrete base, `super` and the base-constructor call, and dynamic
-      dispatch through logical method slots -- a method introduces, overrides, or finalizes a slot,
-      and a virtual call names a receiver and a slot rather than a fixed callee. Pure-virtual /
-      abstract classes. The override relation established earlier feeds slot inheritance.
+- [x] Class inheritance's structural relation: a single concrete base is a resolved reference on the
+      derived class's declaration, and each own member (field, method) belongs to the derived's own
+      arena while an inherited member is reached through the base's arena. A cross-class reference
+      to a member is owner-qualified: it names the class arena the member lives in, so an inherited
+      method or property is identified by its declaring class rather than by the receiver's runtime
+      class.
+
+- [x] Dynamic dispatch through logical method slots: a method introduces, overrides, or finalizes a
+      slot as a fact stated on its declaration, and a virtual call site names a receiver and the
+      slot's canonical identity rather than a fixed callee. A backend renders the dispatch from the
+      stated slot; no consumer re-derives which method overrides which by matching names or
+      signatures. A handle whose static type is a base but whose dynamic type is a derived resolves
+      the call to the derived's implementation.
+
+- [ ] `super` reference and the base-constructor call: an override body reaches its base-class
+      implementation by name-independent reference, and a constructor forwards to the base's
+      construction as its first act (LRM 8.7).
+
+- [ ] Pure-virtual and abstract classes (LRM 8.21): a virtual method with no body is a contract the
+      derived must fill, and a class carrying such a slot is not directly constructible.
 
 - [ ] Interface-class conformance: a class may conform to several interfaces, a relation distinct
       from its single concrete base and carrying no second instance storage. Type-associated static

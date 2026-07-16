@@ -523,23 +523,41 @@ auto LowerBuiltinMethodCall(
       .type = result_type};
 }
 
-// An instance-method call (LRM 8.6): the receiver handle is the first argument,
-// followed by the method's value arguments. The callee names the class method
-// directly; the receiver's class layout, not the call site, decides how the
-// backend dispatches.
+// Reads the slot's canonical (owner, id) off a method's stated
+// `virtual_dispatch`. Every participating method already stores this pair --
+// an introducer names itself, an intra-unit override was populated with the
+// canonical id at class lowering -- so this is a one-arm dispatch, never a
+// chain walk.
+auto CanonicalIntraUnitSlot(
+    mir::ClassId self_owner, mir::MethodId self_slot,
+    const mir::VirtualDispatchRole& role)
+    -> std::pair<mir::ClassId, mir::MethodId> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntroducesVirtualSlot&)
+              -> std::pair<mir::ClassId, mir::MethodId> {
+            return {self_owner, self_slot};
+          },
+          [](const mir::OverridesIntraUnitSlot& s)
+              -> std::pair<mir::ClassId, mir::MethodId> {
+            return {s.slot_owner, s.slot_id};
+          }},
+      role);
+}
+
+// An instance-method call (LRM 8.6): the receiver evaluates to the managed
+// handle, and the borrowed pointer to the object reaches the method body as
+// its `self`. A direct call passes that pointer as `arguments[0]` and names
+// the concrete method arena entry; a virtual call carries it as
+// `Virtual::receiver` and names the slot's canonical identity so the
+// receiver's dynamic type -- not the call site -- picks the implementation
+// (LRM 8.20).
 template <ExprLowerer Lowerer>
 auto LowerMethodCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const hir::MethodCallRef& m, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size() + 1);
-
-  // The receiver evaluates to the managed handle; the method body operates on
-  // a borrowed pointer to the object (LRM 8.6). Reaching the object from the
-  // handle and taking its address yields that borrowed receiver -- the body
-  // does not own or root the object, the caller's handle does.
   auto receiver_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(m.receiver), frame);
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
@@ -550,24 +568,53 @@ auto LowerMethodCall(
   // runtime class is only used to type the self parameter (which pairs with
   // the target's own arena entry through C++ member lookup).
   const mir::ClassId owner_class = lowerer.Owner().TranslateClass(m.class_id);
+  const mir::MethodId method_slot{m.method.value};
   const mir::ExprId handle_id = block.exprs.Add(*std::move(receiver_or));
   const mir::ExprId object_id = block.exprs.Add(
       mir::Expr{
           .data = mir::DerefExpr{.pointer = handle_id}, .type = object_type});
   const mir::TypeId self_pointer_type =
       types.PointerTo(object_type, mir::PointerOwnership::kBorrowed);
-  args.push_back(
-      block.exprs.Add(mir::MakeAddressOfExpr(object_id, self_pointer_type)));
+  const mir::ExprId receiver_ptr =
+      block.exprs.Add(mir::MakeAddressOfExpr(object_id, self_pointer_type));
 
+  std::vector<mir::ExprId> user_args;
+  user_args.reserve(c.arguments.size());
   for (const auto& arg : c.arguments) {
     if (!arg.has_value()) {
       throw InternalError("LowerMethodCall: method-call argument elided");
     }
     auto arg_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*arg), frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    args.push_back(block.exprs.Add(*std::move(arg_or)));
+    user_args.push_back(block.exprs.Add(*std::move(arg_or)));
   }
 
+  // Cross-class dispatch role is queried through the shape store, not the
+  // unit's class registry: while any peer body is lowering the registry is
+  // one-way `Define`, so a `Get` there would leak lowering order into the
+  // reading site.
+  const auto& method_sig = lowerer.Owner()
+                               .GetClassShape(owner_class)
+                               .method_signatures.Get(method_slot);
+  if (method_sig.virtual_dispatch.has_value()) {
+    const auto [canonical_owner, canonical_slot] = CanonicalIntraUnitSlot(
+        owner_class, method_slot, *method_sig.virtual_dispatch);
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Virtual{
+                        .receiver = receiver_ptr,
+                        .owner_class = canonical_owner,
+                        .slot = canonical_slot},
+                .arguments = std::move(user_args)},
+        .type = result_type};
+  }
+
+  std::vector<mir::ExprId> direct_args;
+  direct_args.reserve(user_args.size() + 1);
+  direct_args.push_back(receiver_ptr);
+  for (const mir::ExprId a : user_args) direct_args.push_back(a);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -575,10 +622,9 @@ auto LowerMethodCall(
                   mir::Direct{
                       .target =
                           mir::MethodTarget{
-                              .owner = owner_class,
-                              .slot = mir::MethodId{.value = m.method_index}},
+                              .owner = owner_class, .slot = method_slot},
                       .qualification = std::nullopt},
-              .arguments = std::move(args)},
+              .arguments = std::move(direct_args)},
       .type = result_type};
 }
 

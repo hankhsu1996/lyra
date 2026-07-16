@@ -475,7 +475,9 @@ auto SynthesizeDefaultConstructor(hir::TypeId void_type, diag::SourceSpan span)
       .result_type = void_type,
       .params = {},
       .result_var = std::nullopt,
-      .body = std::move(body)};
+      .body = std::move(body),
+      .is_virtual = false,
+      .overrides = std::nullopt};
 }
 
 }  // namespace
@@ -557,11 +559,10 @@ auto UnitLowerer::InternClass(
           span, diag::DiagCode::kUnsupportedClassFeature,
           "static class methods are not yet supported");
     }
-    if (method.flags.has(
-            slang::ast::MethodFlags::Virtual | slang::ast::MethodFlags::Pure)) {
+    if (method.flags.has(slang::ast::MethodFlags::Pure)) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedClassFeature,
-          "virtual class methods are not yet supported");
+          "pure virtual class methods are not yet supported");
     }
     if (method.subroutineKind == slang::ast::SubroutineKind::Task) {
       return diag::Fail(
@@ -570,7 +571,25 @@ auto UnitLowerer::InternClass(
     }
     auto method_decl = LowerSubroutineDecl(*this, method, WalkFrame{});
     if (!method_decl) return std::unexpected(std::move(method_decl.error()));
-    decl.methods.push_back(*std::move(method_decl));
+    method_decl->is_virtual =
+        method.flags.has(slang::ast::MethodFlags::Virtual);
+    // The frontend has already matched signature, direction, return type, and
+    // any other LRM 8.20 override compatibility rule when it resolved this
+    // reference; the HIR consumes it as an already-resolved identity. Its
+    // base's methods were interned earlier by the recursive `InternClass`
+    // above, so their HIR identities are already in the cache the lookup
+    // reads.
+    if (const auto* overridden = method.getOverride(); overridden != nullptr) {
+      const auto& base_class =
+          overridden->getParentScope()->asSymbol().as<slang::ast::ClassType>();
+      auto base_class_id = InternClass(base_class, span);
+      if (!base_class_id)
+        return std::unexpected(std::move(base_class_id.error()));
+      method_decl->overrides = hir::MethodRef{
+          .class_id = *base_class_id, .method = LookupMethodId(*overridden)};
+    }
+    const hir::MethodId method_id = decl.methods.Add(*std::move(method_decl));
+    RegisterMethodId(method, method_id);
   }
 
   hir::SubroutineDecl constructor =

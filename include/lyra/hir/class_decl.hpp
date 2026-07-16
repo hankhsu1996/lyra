@@ -4,8 +4,10 @@
 #include <string>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/method_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -43,7 +45,7 @@ struct ClassDecl {
   std::string name;
   std::optional<ClassId> base;
   std::vector<ClassField> fields;
-  std::vector<SubroutineDecl> methods;
+  base::Arena<SubroutineDecl, MethodId> methods;
   SubroutineDecl constructor;
 };
 
