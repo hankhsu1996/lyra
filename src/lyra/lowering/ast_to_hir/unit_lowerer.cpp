@@ -1,4 +1,4 @@
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -26,26 +26,26 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-ModuleLowerer::ModuleLowerer(
-    const LoweringFacts& facts, const slang::ast::InstanceBodySymbol& body)
-    : facts_(facts), body_(&body), unit_{SpecializationName(body)} {
+UnitLowerer::UnitLowerer(
+    const LoweringFacts& facts, const slang::ast::Scope& scope,
+    std::string name)
+    : facts_(facts), scope_(&scope), unit_{std::move(name)} {
 }
 
-auto ModuleLowerer::Run() -> diag::Result<hir::ModuleUnit> {
+auto UnitLowerer::Run() -> diag::Result<hir::CompilationUnit> {
   WalkFrame frame;
-  DeclareStructuralIdentities(*body_);
-  StructuralScopeLowerer root(*this, *body_);
+  DeclareStructuralIdentities(*scope_);
+  StructuralScopeLowerer root(*this, *scope_);
   auto root_scope_or = root.Run(frame);
   if (!root_scope_or) {
     return std::unexpected(std::move(root_scope_or.error()));
@@ -54,16 +54,15 @@ auto ModuleLowerer::Run() -> diag::Result<hir::ModuleUnit> {
   return std::move(unit_);
 }
 
-auto ModuleLowerer::NextScopeFrameId() -> ScopeFrameId {
+auto UnitLowerer::NextScopeFrameId() -> ScopeFrameId {
   return ScopeFrameId{.value = next_scope_frame_++};
 }
 
-auto ModuleLowerer::NextWithClauseId() -> hir::WithClauseId {
+auto UnitLowerer::NextWithClauseId() -> hir::WithClauseId {
   return hir::WithClauseId{.value = next_with_clause_++};
 }
 
-void ModuleLowerer::DeclareStructuralIdentities(
-    const slang::ast::Scope& scope) {
+void UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope) {
   const ScopeFrameId frame = NextScopeFrameId();
   scope_frames_.emplace(&scope, frame);
   // A generate or instance owned-child id is the source-order position of that
@@ -126,18 +125,18 @@ void ModuleLowerer::DeclareStructuralIdentities(
   }
 }
 
-auto ModuleLowerer::LookupScopeFrame(const slang::ast::Scope& scope) const
+auto UnitLowerer::LookupScopeFrame(const slang::ast::Scope& scope) const
     -> ScopeFrameId {
   const auto it = scope_frames_.find(&scope);
   if (it == scope_frames_.end()) {
     throw InternalError(
-        "ModuleLowerer::LookupScopeFrame: scope frame was not declared before "
+        "UnitLowerer::LookupScopeFrame: scope frame was not declared before "
         "body lowering");
   }
   return it->second;
 }
 
-void ModuleLowerer::MapStructuralDataObjectBinding(
+void UnitLowerer::MapStructuralDataObjectBinding(
     const slang::ast::ValueSymbol& var, ScopeFrameId home_frame,
     hir::StructuralDataObjectId local, hir::TypeId type) {
   const auto [_, inserted] = structural_data_object_bindings_.emplace(
@@ -145,12 +144,12 @@ void ModuleLowerer::MapStructuralDataObjectBinding(
                 .home_frame = home_frame, .var_id = local, .type = type});
   if (!inserted) {
     throw InternalError(
-        "ModuleLowerer::MapStructuralDataObjectBinding: structural data object "
+        "UnitLowerer::MapStructuralDataObjectBinding: structural data object "
         "already mapped");
   }
 }
 
-auto ModuleLowerer::LookupStructuralDataObjectBinding(
+auto UnitLowerer::LookupStructuralDataObjectBinding(
     const slang::ast::ValueSymbol& var) const
     -> std::optional<StructuralDataObjectBinding> {
   const auto it = structural_data_object_bindings_.find(&var);
@@ -160,7 +159,7 @@ auto ModuleLowerer::LookupStructuralDataObjectBinding(
   return it->second;
 }
 
-void ModuleLowerer::MapSubroutineBinding(
+void UnitLowerer::MapSubroutineBinding(
     const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
     hir::StructuralSubroutineId local) {
   const auto [_, inserted] = subroutine_bindings_.emplace(
@@ -168,12 +167,12 @@ void ModuleLowerer::MapSubroutineBinding(
       SubroutineBinding{.owner_frame = owner_frame, .subroutine_id = local});
   if (!inserted) {
     throw InternalError(
-        "ModuleLowerer::MapSubroutineBinding: subroutine symbol already "
+        "UnitLowerer::MapSubroutineBinding: subroutine symbol already "
         "mapped");
   }
 }
 
-auto ModuleLowerer::LookupSubroutineBinding(
+auto UnitLowerer::LookupSubroutineBinding(
     const slang::ast::SubroutineSymbol& sym) const
     -> std::optional<SubroutineBinding> {
   const auto it = subroutine_bindings_.find(&sym);
@@ -183,7 +182,7 @@ auto ModuleLowerer::LookupSubroutineBinding(
   return it->second;
 }
 
-void ModuleLowerer::MapForeignImportBinding(
+void UnitLowerer::MapForeignImportBinding(
     const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
     hir::ForeignImportId import_id) {
   const auto [_, inserted] = foreign_import_bindings_.emplace(
@@ -191,12 +190,12 @@ void ModuleLowerer::MapForeignImportBinding(
       ForeignImportBinding{.owner_frame = owner_frame, .import_id = import_id});
   if (!inserted) {
     throw InternalError(
-        "ModuleLowerer::MapForeignImportBinding: DPI import symbol already "
+        "UnitLowerer::MapForeignImportBinding: DPI import symbol already "
         "mapped");
   }
 }
 
-auto ModuleLowerer::LookupForeignImportBinding(
+auto UnitLowerer::LookupForeignImportBinding(
     const slang::ast::SubroutineSymbol& sym) const
     -> std::optional<ForeignImportBinding> {
   const auto it = foreign_import_bindings_.find(&sym);
@@ -206,7 +205,7 @@ auto ModuleLowerer::LookupForeignImportBinding(
   return it->second;
 }
 
-void ModuleLowerer::MapOwnedChildBinding(
+void UnitLowerer::MapOwnedChildBinding(
     const slang::ast::Symbol& child, ScopeFrameId home_frame,
     hir::DownwardHead head) {
   const auto [_, inserted] = owned_child_bindings_.emplace(
@@ -214,12 +213,12 @@ void ModuleLowerer::MapOwnedChildBinding(
       OwnedChildBinding{.home_frame = home_frame, .head = std::move(head)});
   if (!inserted) {
     throw InternalError(
-        "ModuleLowerer::MapOwnedChildBinding: owned child already mapped");
+        "UnitLowerer::MapOwnedChildBinding: owned child already mapped");
   }
 }
 
-auto ModuleLowerer::LookupOwnedChildBinding(
-    const slang::ast::Symbol& child) const -> std::optional<OwnedChildBinding> {
+auto UnitLowerer::LookupOwnedChildBinding(const slang::ast::Symbol& child) const
+    -> std::optional<OwnedChildBinding> {
   const auto it = owned_child_bindings_.find(&child);
   if (it == owned_child_bindings_.end()) {
     return std::nullopt;
@@ -254,7 +253,7 @@ auto TargetNetType(const slang::ast::ValueSymbol& target)
 
 }  // namespace
 
-auto ModuleLowerer::MapOrGetRoutedRef(
+auto UnitLowerer::MapOrGetRoutedRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
     hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
     hir::TypeId type) -> hir::RoutedRefId {
@@ -273,7 +272,7 @@ auto ModuleLowerer::MapOrGetRoutedRef(
   return id;
 }
 
-auto ModuleLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
+auto UnitLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
     -> std::vector<hir::RoutedRefDecl> {
   const auto it = routed_refs_by_frame_.find(slot_owner_frame);
   if (it == routed_refs_by_frame_.end()) {
@@ -284,7 +283,7 @@ auto ModuleLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
   return out;
 }
 
-auto ModuleLowerer::MakeRoutedMemberRef(
+auto UnitLowerer::MakeRoutedMemberRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
     hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
     hir::TypeId type, diag::SourceSpan span) -> hir::Expr {
@@ -297,7 +296,7 @@ auto ModuleLowerer::MakeRoutedMemberRef(
   };
 }
 
-auto ModuleLowerer::TranslateReferenceRoute(
+auto UnitLowerer::TranslateReferenceRoute(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value)
     -> std::optional<hir::ReferenceRoute> {
   // Only a variable or a net is an addressable, observable signal. A genvar or
@@ -446,7 +445,7 @@ auto ModuleLowerer::TranslateReferenceRoute(
   return std::nullopt;
 }
 
-auto ModuleLowerer::TranslateSensitivityReads(
+auto UnitLowerer::TranslateSensitivityReads(
     const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
     -> std::vector<hir::SensitivityEntry> {
   std::vector<hir::SensitivityEntry> out;

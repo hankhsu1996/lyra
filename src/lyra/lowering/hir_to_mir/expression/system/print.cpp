@@ -57,13 +57,13 @@ auto EmitFormatThenWrite(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block& block,
     mir::ExprId items_array, mir::ExprId fd, bool append_newline)
     -> mir::ExprId {
-  auto& unit = process.Module().Unit();
+  auto& unit = process.Owner().Unit();
   const mir::ExprId services =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   const mir::ExprId text =
       block.exprs.Add(BuildFormatCallExpr(unit, block, services, items_array));
   const mir::ExprId files =
-      block.exprs.Add(BuildFilesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildFilesCallExpr(process.Owner(), frame));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -83,7 +83,7 @@ auto LowerStrobeCall(
     const support::PrintSystemSubroutineInfo& print)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  auto& unit = process.Module().Unit();
+  auto& unit = process.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
   const mir::TypeId int_type = unit.builtins.int_type;
   const std::int64_t time_unit_power =
@@ -97,7 +97,7 @@ auto LowerStrobeCall(
     if (!desc_or) return std::unexpected(std::move(desc_or.error()));
     outer_user_descriptor = block.exprs.Add(*std::move(desc_or));
     const mir::ExprId outer_files =
-        block.exprs.Add(BuildFilesCallExpr(process.Module(), frame));
+        block.exprs.Add(BuildFilesCallExpr(process.Owner(), frame));
     outer_cancellation = block.exprs.Add(
         mir::Expr{
             .data =
@@ -116,11 +116,11 @@ auto LowerStrobeCall(
   std::optional<mir::ExprId> body_user_descriptor;
   if (outer_user_descriptor.has_value()) {
     body_user_descriptor = SnapshotIntoClosure(
-        process.Module(), frame, closure, *outer_user_descriptor, "descriptor");
+        process.Owner(), frame, closure, *outer_user_descriptor, "descriptor");
   }
   if (outer_cancellation.has_value()) {
     const mir::ExprId cancellation = SnapshotIntoClosure(
-        process.Module(), frame, closure, *outer_cancellation, "cancellation");
+        process.Owner(), frame, closure, *outer_cancellation, "cancellation");
     const mir::ExprId is_cancelled = body.exprs.Add(
         mir::Expr{
             .data =
@@ -159,7 +159,7 @@ auto LowerStrobeCall(
 
   const mir::ExprId closure_id = block.exprs.Add(closure.BuildVoid());
   const mir::ExprId services =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -180,7 +180,7 @@ auto LowerPrintSystemSubroutineCall(
   }
 
   auto& block = *frame.current_block;
-  auto& unit = process.Module().Unit();
+  auto& unit = process.Owner().Unit();
   const mir::TypeId int_type = unit.builtins.int_type;
   const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
 

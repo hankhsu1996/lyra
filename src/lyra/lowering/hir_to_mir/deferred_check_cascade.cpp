@@ -107,13 +107,13 @@ struct SnapshotBinding {
 };
 
 auto SnapshotPredicate(
-    ModuleLowerer& module, WalkFrame frame, mir::Block& wrapper,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block& wrapper,
     std::size_t index, mir::TypeId predicate_type,
     mir::ExprId predicate_expr_id) -> SnapshotBinding {
   const BindingOriginId origin =
-      BindingOriginId::Synthesized(module.NextSynthesizedSite(), 0);
+      BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId local = SnapshotExprToLocal(
-      module, frame, wrapper, std::format("_lyra_unique_cond_{}", index),
+      unit_lowerer, frame, wrapper, std::format("_lyra_unique_cond_{}", index),
       predicate_type, predicate_expr_id, origin);
   return {.local = local, .origin = origin};
 }
@@ -187,15 +187,15 @@ auto BuildDiagnosticThenScope(
 }
 
 auto BuildUniqueCheckClosure(
-    ModuleLowerer& module, const WalkFrame& wrapper_frame,
+    UnitLowerer& unit_lowerer, const WalkFrame& wrapper_frame,
     hir::UniquePriorityCheck check,
     const std::vector<SnapshotBinding>& snapshot_vars, std::string origin)
     -> mir::Expr {
-  ClosureBuilder closure(module.Unit(), wrapper_frame);
+  ClosureBuilder closure(unit_lowerer.Unit(), wrapper_frame);
   mir::Block& body = closure.Body();
 
-  const mir::TypeId int_type = module.Unit().builtins.int_type;
-  const mir::TypeId bit1_type = module.Unit().builtins.bit1;
+  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
+  const mir::TypeId bit1_type = unit_lowerer.Unit().builtins.bit1;
   const BodyBindingRef self_ref =
       closure.Bindings().EnsureCarrier(BindingOriginId::Receiver());
 
@@ -264,7 +264,7 @@ auto BuildUniqueCheckClosure(
           .type = int_type});
 
   mir::Block diag_block = BuildDiagnosticThenScope(
-      module.Unit(), closure.Bindings(), self_ref, count_var, verdict,
+      unit_lowerer.Unit(), closure.Bindings(), self_ref, count_var, verdict,
       std::move(origin));
 
   const mir::BlockId diag_scope_id =
@@ -282,14 +282,14 @@ auto BuildUniqueCheckClosure(
 }  // namespace
 
 auto BuildDeferredCheckCascade(
-    ModuleLowerer& module, WalkFrame frame, mir::Block wrapper,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block wrapper,
     std::vector<DeferredCheckBranch> branches,
     std::optional<mir::Block> tail_else, hir::UniquePriorityCheck check,
     std::optional<std::string> outer_label, diag::SourceSpan span)
     -> mir::Stmt {
-  const mir::TypeId void_type = module.Unit().builtins.void_type;
-  const mir::TypeId int_type = module.Unit().builtins.int_type;
-  const mir::TypeId bit1_type = module.Unit().builtins.bit1;
+  const mir::TypeId void_type = unit_lowerer.Unit().builtins.void_type;
+  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
+  const mir::TypeId bit1_type = unit_lowerer.Unit().builtins.bit1;
 
   // SnapshotPredicate / BuildDefaultValueExpr append to wrapper, so route
   // through a wrapper-local frame; the cascade levels each derive their own
@@ -303,17 +303,17 @@ auto BuildDeferredCheckCascade(
     const mir::TypeId predicate_type =
         wrapper.exprs.Get(branches[i].predicate).type;
     snapshot_vars.push_back(SnapshotPredicate(
-        module, wrapper_frame, wrapper, i, predicate_type,
+        unit_lowerer, wrapper_frame, wrapper, i, predicate_type,
         branches[i].predicate));
   }
 
   mir::Expr closure = BuildUniqueCheckClosure(
-      module, wrapper_frame, check, snapshot_vars,
-      FormatRuntimeOriginString(span, module.SourceManager()));
+      unit_lowerer, wrapper_frame, check, snapshot_vars,
+      FormatRuntimeOriginString(span, unit_lowerer.SourceManager()));
   const mir::ExprId closure_expr_id = wrapper.exprs.Add(std::move(closure));
 
   const mir::DeferredCheckSiteId site_id =
-      module.Unit().AllocateDeferredCheckSiteId();
+      unit_lowerer.Unit().AllocateDeferredCheckSiteId();
   const mir::ExprId self_id = wrapper.exprs.Add(MakeSelfRefExpr(
       wrapper_frame, wrapper_frame.current_class->self_pointer_type));
   const mir::ExprId site_id_expr = wrapper.exprs.Add(
@@ -419,7 +419,7 @@ auto LowerUniqueIfStmt(
   }
 
   return BuildDeferredCheckCascade(
-      process.Module(), frame, std::move(wrapper), std::move(branches),
+      process.Owner(), frame, std::move(wrapper), std::move(branches),
       std::move(tail_scope), *root.check, std::move(label), span);
 }
 

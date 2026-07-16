@@ -29,7 +29,7 @@ class Scope;
 namespace lyra::lowering::ast_to_hir {
 
 // Lowering-only identity for a structural scope on the walk. Monotonically
-// assigned by ModuleLowerer when a scope is entered; never reused; never
+// assigned by UnitLowerer when a scope is entered; never reused; never
 // stored in HIR. Used to compute structural hops between scopes.
 struct ScopeFrameId {
   std::uint32_t value;
@@ -60,11 +60,11 @@ struct ActiveIterationClause {
 // `current_procedural_body` (inside a process or subroutine task). Exactly
 // one is non-null at any walker entry, determined by the surrounding Lowerer
 // context. Handlers writing into a nested scope go through these pointers;
-// writes to the root output go through narrow methods on ModuleLowerer
-// (`module.InternType(...)` for type dedup, etc.).
+// writes to the root output go through narrow methods on `UnitLowerer`
+// (interning a type for dedup, etc.).
 struct WalkFrame {
   // The structural-scope nesting chain. Each entry is a ScopeFrameId minted
-  // by ModuleLowerer when a scope is entered. Used to compute structural
+  // by UnitLowerer when a scope is entered. Used to compute structural
   // hops: HopsTo(target) walks back to find target in the chain.
   std::vector<ScopeFrameId> structural_chain;
 

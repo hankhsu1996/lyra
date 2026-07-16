@@ -7,12 +7,12 @@
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
-#include "lyra/hir/module_unit.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/mir_to_lir/lower.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -38,8 +38,8 @@ auto BuildUnitMetadata(const mir::CompilationUnit& unit)
 // design through the same owned-child construction any parent uses for a
 // submodule, so no code path is special-cased for the top level.
 auto BuildRootHirUnit(const std::vector<std::string>& top_names)
-    -> hir::ModuleUnit {
-  hir::ModuleUnit root{std::string{kDesignRootUnitName}};
+    -> hir::CompilationUnit {
+  hir::CompilationUnit root{std::string{kDesignRootUnitName}};
   for (const auto& name : top_names) {
     root.root_scope.instance_members.Add(
         hir::InstanceMemberDecl{
@@ -89,16 +89,26 @@ auto Compile(
     sink.Report(std::move(ok.error()));
     return result;
   }
+  const auto packages = lowering::ast_to_hir::CollectPackages(facts);
   const auto bodies = lowering::ast_to_hir::CollectUnitBodies(facts);
 
-  std::vector<hir::ModuleUnit> hir_units;
+  std::vector<hir::CompilationUnit> hir_units;
   std::vector<mir::CompilationUnit> mir_units;
   std::vector<lir::CompilationUnit> lir_units;
   std::vector<ElaboratedUnitMetadata> unit_metadata;
-  hir_units.reserve(bodies.size());
+  hir_units.reserve(packages.size() + bodies.size());
   mir_units.reserve(bodies.size());
   lir_units.reserve(bodies.size());
   unit_metadata.reserve(bodies.size());
+
+  for (const auto* package : packages) {
+    auto hir_or = lowering::ast_to_hir::LowerPackageUnit(facts, *package);
+    if (!hir_or) {
+      sink.Report(std::move(hir_or.error()));
+      return result;
+    }
+    hir_units.push_back(*std::move(hir_or));
+  }
 
   for (const auto* body : bodies) {
     auto hir_or = lowering::ast_to_hir::LowerUnit(facts, *body);
@@ -111,9 +121,9 @@ auto Compile(
       continue;
     }
 
-    lowering::hir_to_mir::ModuleLowerer module(
+    lowering::hir_to_mir::UnitLowerer lowerer(
         hir_units.back(), result.artifacts.parse->diag_sources);
-    auto mir_or = module.Run();
+    auto mir_or = lowerer.Run();
     if (!mir_or) {
       sink.Report(std::move(mir_or.error()));
       return result;
@@ -143,11 +153,11 @@ auto Compile(
   std::optional<lir::CompilationUnit> root_lir_unit;
   std::optional<ElaboratedUnitMetadata> root_metadata;
   if (want_mir) {
-    const hir::ModuleUnit root_hir =
+    const hir::CompilationUnit root_hir =
         BuildRootHirUnit(result.artifacts.top_unit_names);
-    lowering::hir_to_mir::ModuleLowerer root_module(
+    lowering::hir_to_mir::UnitLowerer root_lowerer(
         root_hir, result.artifacts.parse->diag_sources);
-    auto root_mir = root_module.Run();
+    auto root_mir = root_lowerer.Run();
     if (!root_mir) {
       sink.Report(std::move(root_mir.error()));
       return result;

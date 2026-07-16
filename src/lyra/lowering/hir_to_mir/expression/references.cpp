@@ -12,10 +12,10 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -99,9 +99,9 @@ auto StringBytesToConstant(
 // string parameter's value) instead builds a `value::String` via the
 // constructor.
 auto LowerHirStringLiteral(
-    const ModuleLowerer& module, const WalkFrame& frame,
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::StringLiteral& s, mir::TypeId type) -> mir::Expr {
-  const auto& ty = module.Unit().types.Get(type);
+  const auto& ty = unit_lowerer.Unit().types.Get(type);
   if (ty.IsIntegralPacked()) {
     return mir::Expr{
         .data =
@@ -120,12 +120,12 @@ auto LowerHirStringLiteral(
       .type = type};
 }
 
-auto LowerHirTimeLiteral(const ModuleLowerer& module, const hir::TimeLiteral& t)
-    -> mir::Expr {
+auto LowerHirTimeLiteral(
+    const UnitLowerer& unit_lowerer, const hir::TimeLiteral& t) -> mir::Expr {
   return mir::Expr{
       .data =
           mir::TimeLiteral{.value = t.value, .scale = LowerTimeScale(t.scale)},
-      .type = module.Unit().builtins.realtime};
+      .type = unit_lowerer.Unit().builtins.realtime};
 }
 
 auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
@@ -145,7 +145,7 @@ auto LowerReferenceRouteExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::ReferenceRoute& route) -> mir::Expr {
   return EndpointCellExpr(
-      frame, lowerer.Module().Unit(), BindEndpoint(lowerer, frame, route));
+      frame, lowerer.Owner().Unit(), BindEndpoint(lowerer, frame, route));
 }
 
 auto LowerProceduralVarRefExpr(
@@ -229,10 +229,10 @@ auto LowerHirPrimaryExprProc(
           },
           [&](const hir::StringLiteral& s) -> mir::Expr {
             return LowerHirStringLiteral(
-                process.Module(), frame, s, result_type);
+                process.Owner(), frame, s, result_type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return LowerHirTimeLiteral(process.Module(), t);
+            return LowerHirTimeLiteral(process.Owner(), t);
           },
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(r, result_type);
@@ -280,10 +280,10 @@ auto LowerHirPrimaryExprStructural(
           },
           [&](const hir::StringLiteral& s) -> mir::Expr {
             return LowerHirStringLiteral(
-                lowerer.Module(), frame, s, result_type);
+                lowerer.Owner(), frame, s, result_type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return LowerHirTimeLiteral(lowerer.Module(), t);
+            return LowerHirTimeLiteral(lowerer.Owner(), t);
           },
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(r, result_type);

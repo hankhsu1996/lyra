@@ -5,7 +5,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -55,10 +55,10 @@ auto TranslatePackedArrayForm(hir::PackedArrayForm f) -> mir::PackedArrayForm {
 // single-vector projection) contributes its own flat dimensions, onto which
 // this dimension prepends.
 auto FlattenPackedArray(
-    const ModuleLowerer& module, const hir::PackedArrayType& pa)
+    const UnitLowerer& unit_lowerer, const hir::PackedArrayType& pa)
     -> mir::PackedArrayType {
   const mir::PackedRange dim{.left = pa.dim.left, .right = pa.dim.right};
-  const hir::Type& element = module.Hir().types.Get(pa.element_type);
+  const hir::Type& element = unit_lowerer.Hir().types.Get(pa.element_type);
   if (const auto* scalar = std::get_if<hir::ScalarBitType>(&element.data)) {
     return mir::PackedArrayType{
         .atom = TranslateBitAtom(scalar->atom),
@@ -68,8 +68,8 @@ auto FlattenPackedArray(
     };
   }
   const mir::PackedArrayType& inner =
-      module.Unit()
-          .types.Get(module.TranslateType(pa.element_type))
+      unit_lowerer.Unit()
+          .types.Get(unit_lowerer.TranslateType(pa.element_type))
           .AsIntegralPacked();
   std::vector<mir::PackedRange> dims;
   dims.reserve(inner.dims.size() + 1U);
@@ -100,7 +100,7 @@ auto FlattenPackedAggregate(
 
 }  // namespace
 
-auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
+auto UnitLowerer::TranslateTypeData(const hir::TypeData& data) const
     -> mir::TypeData {
   return std::visit(
       Overloaded{

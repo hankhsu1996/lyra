@@ -19,8 +19,8 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -160,7 +160,7 @@ auto BuildAssociativeLevel(
     hir::ExprId array, hir::TypeId int_type, diag::SourceSpan span,
     std::vector<hir::StmtId>& setup) -> diag::Result<LevelLoop> {
   auto& body = *frame.current_procedural_body;
-  auto key_type_or = proc.Module().InternType(dim.loopVar->getType(), span);
+  auto key_type_or = proc.Owner().InternType(dim.loopVar->getType(), span);
   if (!key_type_or) return std::unexpected(std::move(key_type_or.error()));
   const hir::TypeId key_type = *key_type_or;
 
@@ -286,7 +286,7 @@ auto BuildForeachNest(
   const slang::ast::Type* inner_array_type = nullptr;
   if (array.has_value() && level + 1 < levels.size()) {
     inner_array_type = array_type->getCanonicalType().getArrayElementType();
-    auto inner_hir_type = proc.Module().InternType(*inner_array_type, span);
+    auto inner_hir_type = proc.Owner().InternType(*inner_array_type, span);
     if (!inner_hir_type) {
       return std::unexpected(std::move(inner_hir_type.error()));
     }
@@ -340,11 +340,11 @@ auto ProcessLowerer::LowerForeachStmt(
     const slang::ast::ForeachLoopStatement& fs, WalkFrame frame)
     -> diag::Result<hir::Stmt> {
   auto& proc = *this;
-  auto& module = proc.Module();
+  auto& unit_lowerer = proc.Owner();
   auto& body = *frame.current_procedural_body;
-  const auto span = module.SourceMapper().SpanOf(fs.sourceRange);
+  const auto span = unit_lowerer.SourceMapper().SpanOf(fs.sourceRange);
 
-  const hir::TypeId int_type = module.Unit().builtins.int_type;
+  const hir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
 
   // Collect the iterated (non-skipped) dimensions in cardinal order. A
   // dimension with no constant range reads the array value at run time -- a

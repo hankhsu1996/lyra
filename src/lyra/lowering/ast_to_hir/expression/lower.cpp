@@ -29,9 +29,9 @@
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -129,20 +129,20 @@ template <ExprLowerer Lowerer>
 auto LowerExprImpl(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& expr)
     -> diag::Result<hir::Expr> {
-  auto& module = lowerer.Module();
-  const auto span = module.SourceMapper().SpanOf(expr.sourceRange);
+  auto& unit_lowerer = lowerer.Owner();
+  const auto span = unit_lowerer.SourceMapper().SpanOf(expr.sourceRange);
   constexpr bool kProcedural = std::same_as<Lowerer, ProcessLowerer>;
 
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto type_id = module.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeIntegerLiteralExpr(
           expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
-      auto type_id = module.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeUnbasedUnsizedLiteralExpr(
           expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
@@ -150,14 +150,14 @@ auto LowerExprImpl(
 
     case slang::ast::ExpressionKind::StringLiteral: {
       const auto& sl = expr.as<slang::ast::StringLiteral>();
-      auto type_id = module.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeStringLiteralExpr(std::string{sl.getValue()}, *type_id, span);
     }
 
     case slang::ast::ExpressionKind::TimeLiteral: {
       const auto& tl = expr.as<slang::ast::TimeLiteral>();
-      auto type_id = module.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeTimeLiteralExpr(
           tl.getValue(), LowerTimeUnit(tl.getScale().base.unit), *type_id,
@@ -166,13 +166,13 @@ auto LowerExprImpl(
 
     case slang::ast::ExpressionKind::RealLiteral: {
       const auto& rl = expr.as<slang::ast::RealLiteral>();
-      auto type_id = module.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeRealLiteralExpr(rl.getValue(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::NullLiteral: {
-      auto type_id = module.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeNullLiteralExpr(*type_id, span);
     }
@@ -183,12 +183,13 @@ auto LowerExprImpl(
             lowerer, frame, expr.as<slang::ast::NamedValueExpression>());
       } else {
         return LowerNamedValueStructural(
-            module, frame, expr.as<slang::ast::NamedValueExpression>());
+            unit_lowerer, frame, expr.as<slang::ast::NamedValueExpression>());
       }
 
     case slang::ast::ExpressionKind::HierarchicalValue:
       return LowerHierarchicalValue(
-          module, frame, expr.as<slang::ast::HierarchicalValueExpression>());
+          unit_lowerer, frame,
+          expr.as<slang::ast::HierarchicalValueExpression>());
 
     case slang::ast::ExpressionKind::LValueReference:
       throw InternalError(
@@ -360,7 +361,7 @@ auto ProcessLowerer::LowerInsideItem(
 
 auto ProcessLowerer::ValidateAssignableProcedural(
     const slang::ast::Expression& expr) -> diag::Result<void> {
-  return ValidateAssignableImpl(*module_, true, expr);
+  return ValidateAssignableImpl(*owner_, true, expr);
 }
 
 auto StructuralScopeLowerer::LowerExpr(
@@ -371,7 +372,7 @@ auto StructuralScopeLowerer::LowerExpr(
 
 auto StructuralScopeLowerer::ValidateAssignableStructural(
     const slang::ast::Expression& expr) -> diag::Result<void> {
-  return ValidateAssignableImpl(*module_, false, expr);
+  return ValidateAssignableImpl(*owner_, false, expr);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

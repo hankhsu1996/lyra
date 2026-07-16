@@ -11,10 +11,10 @@
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/module_unit.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -73,11 +73,26 @@ auto CollectUnitBodies(const LowerCompilationFacts& facts)
 auto LowerUnit(
     const LowerCompilationFacts& facts,
     const slang::ast::InstanceBodySymbol& body)
-    -> diag::Result<hir::ModuleUnit> {
+    -> diag::Result<hir::CompilationUnit> {
   const LoweringFacts unit_facts(
       facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
-  ModuleLowerer module(unit_facts, body);
-  return module.Run();
+  UnitLowerer lowerer(unit_facts, body, SpecializationName(body));
+  return lowerer.Run();
+}
+
+auto CollectPackages(const LowerCompilationFacts& facts)
+    -> std::vector<const slang::ast::PackageSymbol*> {
+  return facts.Compilation().getPackages();
+}
+
+auto LowerPackageUnit(
+    const LowerCompilationFacts& facts,
+    const slang::ast::PackageSymbol& package)
+    -> diag::Result<hir::CompilationUnit> {
+  const LoweringFacts unit_facts(
+      facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
+  UnitLowerer lowerer(unit_facts, package, std::string{package.name});
+  return lowerer.Run();
 }
 
 auto TopLevelUnitNames(slang::ast::Compilation& compilation)

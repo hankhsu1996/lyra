@@ -56,8 +56,8 @@ auto LowerDestructuringAssign(
   part_widths.reserve(lhs_concat.operands.size());
   bool any_four_state = false;
   std::uint64_t total_width = 0;
-  const auto& hir_types = process.Module().Hir().types;
-  const auto& mir_types = process.Module().Unit().types;
+  const auto& hir_types = process.Owner().Hir().types;
+  const auto& mir_types = process.Owner().Unit().types;
   for (const hir::ExprId op_id : lhs_concat.operands) {
     const hir::Expr& op = hir_proc.exprs.Get(op_id);
     if (!hir_types.Get(op.type).IsBitVector()) {
@@ -67,7 +67,7 @@ auto LowerDestructuringAssign(
     }
     // Width and 4-state-ness are properties of the flat MIR vector; read them
     // off it directly rather than recompute from the structural HIR type.
-    const auto& packed = mir_types.Get(process.Module().TranslateType(op.type))
+    const auto& packed = mir_types.Get(process.Owner().TranslateType(op.type))
                              .AsIntegralPacked();
     const std::uint64_t w = packed.BitWidth();
     part_widths.push_back(w);
@@ -79,7 +79,7 @@ auto LowerDestructuringAssign(
         "LowerDestructuringAssign: destructuring total width must be positive");
   }
 
-  const mir::TypeId temp_type = process.Module().Unit().types.Intern(
+  const mir::TypeId temp_type = process.Owner().Unit().types.Intern(
       mir::PackedArrayType{
           .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
           .signedness = mir::Signedness::kUnsigned,
@@ -88,7 +88,7 @@ auto LowerDestructuringAssign(
           .form = mir::PackedArrayForm::kExplicit});
 
   const mir::ExprId temp_default_init = wrapper.exprs.Add(
-      BuildDefaultValueExpr(process.Module(), wrapper_frame, temp_type));
+      BuildDefaultValueExpr(process.Owner(), wrapper_frame, temp_type));
   const mir::LocalId snapshot_var = wrapper_frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_destruct_rhs", .type = temp_type});
   wrapper.AppendStmt(
@@ -102,7 +102,7 @@ auto LowerDestructuringAssign(
   mir::ExprId rhs_id = wrapper.exprs.Add(*std::move(rhs_or));
   if (wrapper.exprs.Get(rhs_id).type != temp_type) {
     rhs_id = wrapper.exprs.Add(BuildValueConversion(
-        process.Module().Unit(), wrapper, rhs_id, temp_type));
+        process.Owner().Unit(), wrapper, rhs_id, temp_type));
   }
 
   const mir::ExprId temp_assign_target =
@@ -126,25 +126,25 @@ auto LowerDestructuringAssign(
     if (!part_lhs_or) {
       return std::unexpected(std::move(part_lhs_or.error()));
     }
-    const mir::TypeId part_mir_type = process.Module().TranslateType(
+    const mir::TypeId part_mir_type = process.Owner().TranslateType(
         hir_proc.exprs.Get(lhs_concat.operands[i]).type);
     const mir::ExprId part_lhs_id = wrapper.exprs.Add(*std::move(part_lhs_or));
 
     const mir::ExprId offset_id = wrapper.exprs.Add(
         mir::MakeIntLiteral(
-            process.Module().Unit().builtins.int_type,
+            process.Owner().Unit().builtins.int_type,
             static_cast<std::int64_t>(offset)));
     const mir::ExprId count_id = wrapper.exprs.Add(
         mir::MakeIntLiteral(
-            process.Module().Unit().builtins.int_type,
+            process.Owner().Unit().builtins.int_type,
             static_cast<std::int64_t>(w)));
     // `temp[offset +: w]`: a raw indexed-up part-select (`value::SliceForm`
     // `kIndexedUp` == 1); the snapshot value resolves the bit window itself.
     const mir::ExprId form_id = wrapper.exprs.Add(
-        mir::MakeIntLiteral(process.Module().Unit().builtins.int_type, 1));
+        mir::MakeIntLiteral(process.Owner().Unit().builtins.int_type, 1));
     const mir::ExprId temp_ref =
         wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
-    const mir::TypeId slice_type = process.Module().Unit().types.Intern(
+    const mir::TypeId slice_type = process.Owner().Unit().types.Intern(
         mir::PackedArrayType{
             .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
             .signedness = mir::Signedness::kUnsigned,
@@ -169,25 +169,25 @@ auto LowerDestructuringAssign(
     mir::ExprId rhs_for_part = slice_id;
     if (part_mir_type != slice_type) {
       rhs_for_part = wrapper.exprs.Add(BuildValueConversion(
-          process.Module().Unit(), wrapper, slice_id, part_mir_type));
+          process.Owner().Unit(), wrapper, slice_id, part_mir_type));
     }
 
     mir::ExprId per_part_expr_id{};
     if (assign.kind == hir::AssignKind::kBlocking) {
       const mir::ExprId services_id = wrapper.exprs.Add(
-          BuildServicesCallExpr(process.Module(), wrapper_frame));
+          BuildServicesCallExpr(process.Owner(), wrapper_frame));
       const mir::Expr part_assign_expr = BuildObservableAssignExpr(
-          process.Module().Unit(), wrapper, services_id, part_lhs_id,
+          process.Owner().Unit(), wrapper, services_id, part_lhs_id,
           rhs_for_part, std::nullopt, part_mir_type,
-          process.Module().Unit().builtins.void_type);
+          process.Owner().Unit().builtins.void_type);
       per_part_expr_id = wrapper.exprs.Add(part_assign_expr);
     } else {
       mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
-          process.Module(), wrapper_frame, part_lhs_id, rhs_for_part,
+          process.Owner(), wrapper_frame, part_lhs_id, rhs_for_part,
           part_mir_type);
       const mir::ExprId closure_id = wrapper.exprs.Add(std::move(closure_expr));
       const mir::ExprId services_id = wrapper.exprs.Add(
-          BuildServicesCallExpr(process.Module(), wrapper_frame));
+          BuildServicesCallExpr(process.Owner(), wrapper_frame));
       per_part_expr_id = wrapper.exprs.Add(
           mir::Expr{
               .data =
@@ -195,7 +195,7 @@ auto LowerDestructuringAssign(
                       .callee =
                           mir::Direct{.target = support::BuiltinFn::kSubmitNba},
                       .arguments = {services_id, closure_id}},
-              .type = process.Module().Unit().builtins.void_type});
+              .type = process.Owner().Unit().builtins.void_type});
     }
     wrapper.AppendStmt(mir::ExprStmt{.expr = per_part_expr_id});
   }
@@ -256,15 +256,15 @@ auto LowerSubroutineCallWithWritebacks(
         "LowerSubroutineCallWithWritebacks: argument / formal count mismatch");
   }
 
-  ModuleLowerer& module = process.Module();
-  mir::CompilationUnit& unit = module.Unit();
+  UnitLowerer& unit_lowerer = process.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   // The completion layout the callee body and this call site share.
   const std::vector<mir::TypeId> components =
-      CompletionComponentTypes(module, decl);
+      CompletionComponentTypes(unit_lowerer, decl);
   const mir::TypeId payload_type = NormalizeCompletionPayload(unit, components);
   const bool is_task = decl.kind == hir::SubroutineKind::kTask;
   const mir::TypeId call_result_type =
@@ -301,7 +301,7 @@ auto LowerSubroutineCallWithWritebacks(
           "unexpectedly elided");
     }
     const hir::Expr& hir_arg = hir_proc.exprs.Get(*call.arguments[i]);
-    const mir::TypeId formal_type = module.TranslateType(
+    const mir::TypeId formal_type = unit_lowerer.TranslateType(
         decl.body.procedural_vars.Get(decl.params[i].var).type);
 
     // An `output` passes no argument; an `inout` passes its incoming value.
@@ -336,8 +336,8 @@ auto LowerSubroutineCallWithWritebacks(
       const bool root_is_cell = mir::IsObservableCellType(
           unit.types.Get(wrapper.exprs.Get(root_id).type));
       if (root_is_cell && root_id != actual_id) {
-        const mir::ExprId services_id =
-            wrapper.exprs.Add(BuildServicesCallExpr(module, wrapper_frame));
+        const mir::ExprId services_id = wrapper.exprs.Add(
+            BuildServicesCallExpr(unit_lowerer, wrapper_frame));
         actual_id =
             RewriteLhsRootWithMutate(unit, wrapper, actual_id, services_id);
       }
@@ -376,7 +376,7 @@ auto LowerSubroutineCallWithWritebacks(
       mir::LocalDeclStmt{.target = completion, .init = completion_value});
 
   const mir::ExprId services_id =
-      wrapper.exprs.Add(BuildServicesCallExpr(module, wrapper_frame));
+      wrapper.exprs.Add(BuildServicesCallExpr(unit_lowerer, wrapper_frame));
   const mir::TypeId void_type = unit.builtins.void_type;
   for (const CompletionWriteback& wb : writebacks) {
     // A single-component payload is the bare value; otherwise project the
@@ -452,7 +452,7 @@ auto LowerExprStmt(
         if (support::IsFileOutputArgBuiltinFn(file_info->builtin_fn)) {
           return LowerFileIOSystemSubroutineCallStmt(
               process, frame, std::move(label), *call, *file_info, std::nullopt,
-              process.Module().TranslateType(inner.type));
+              process.Owner().TranslateType(inner.type));
         }
       }
       if (const auto* sformat_info = support::GetSFormatInfo(desc)) {
@@ -475,7 +475,7 @@ auto LowerExprStmt(
       const mir::ExprId await_id = block.exprs.Add(
           mir::Expr{
               .data = mir::AwaitExpr{.awaitable = call_id},
-              .type = process.Module().Unit().builtins.void_type});
+              .type = process.Owner().Unit().builtins.void_type});
       return mir::Stmt{
           .label = std::move(label), .data = mir::ExprStmt{.expr = await_id}};
     }
@@ -509,7 +509,7 @@ auto LowerExprStmt(
         if (const auto* sys_ref =
                 std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
           const auto& desc = support::LookupSystemSubroutine(sys_ref->id);
-          const mir::TypeId result_type = process.Module().TranslateType(
+          const mir::TypeId result_type = process.Owner().TranslateType(
               conv_target_type.has_value() ? *conv_target_type
                                            : call_carrier->type);
           if (const auto* file_info = support::GetFileIOInfo(desc)) {

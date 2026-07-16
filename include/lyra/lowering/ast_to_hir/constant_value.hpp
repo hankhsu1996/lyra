@@ -4,9 +4,9 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -31,7 +31,7 @@ auto MakeConstantValue(const slang::ConstantValue& cv, diag::SourceSpan span)
 // wherever a slang-folded constant is spliced into the HIR -- parameter and
 // enum-value references, and defaulted port connections.
 auto MakeConstantValueExpr(
-    const hir::ModuleUnit& unit, WalkFrame frame,
+    const hir::CompilationUnit& unit, WalkFrame frame,
     const slang::ConstantValue& cv, hir::TypeId type, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
 

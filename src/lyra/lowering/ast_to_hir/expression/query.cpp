@@ -147,12 +147,12 @@ auto DimensionCount(const slang::ast::Type& operand, bool unpacked_only)
 // simulation knows -- legal, but then the query is not an elaboration-time
 // constant.
 auto ConstantDimensionIndex(
-    const ModuleLowerer& module, const slang::ast::CallExpression& call)
+    const UnitLowerer& unit_lowerer, const slang::ast::CallExpression& call)
     -> std::optional<std::int64_t> {
   if (call.arguments().size() < 2) {
     return 1;
   }
-  slang::ast::EvalContext eval_context(module.Body());
+  slang::ast::EvalContext eval_context(unit_lowerer.SourceScope().asSymbol());
   const slang::ConstantValue index = call.arguments()[1]->eval(eval_context);
   if (!index || !index.isInteger()) {
     return std::nullopt;
@@ -164,23 +164,24 @@ auto ConstantDimensionIndex(
 // state domain: LRM 20.7 types a dimension function's result as `integer`, a
 // 4-state type, and LRM 20.6.1 types `$typename`'s as `string`.
 auto MakeQueryConstant(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call, const slang::ConstantValue& value,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = module.InternType(*call.type, span);
+  auto type_id = unit_lowerer.InternType(*call.type, span);
   if (!type_id) {
     return std::unexpected(std::move(type_id.error()));
   }
   return MakeConstantValueExpr(
-      module.Unit(), frame, call.type->coerceValue(value), *type_id, span);
+      unit_lowerer.Unit(), frame, call.type->coerceValue(value), *type_id,
+      span);
 }
 
 auto MakeQueryInt(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call, std::int64_t value,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   return MakeQueryConstant(
-      module, frame, call,
+      unit_lowerer, frame, call,
       slang::ConstantValue{
           slang::SVInt(32, static_cast<std::uint64_t>(value), true)},
       span);
@@ -194,22 +195,23 @@ template <ExprLowerer Lowerer>
 auto BuildElementCountExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  ModuleLowerer& module = lowerer.Module();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
-  const bool is_string = module.Unit().types.Get(operand_or->type).Kind() ==
-                         hir::TypeKind::kString;
+  const bool is_string =
+      unit_lowerer.Unit().types.Get(operand_or->type).Kind() ==
+      hir::TypeKind::kString;
   const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
 
-  auto result_type = module.InternType(*call.type, span);
+  auto result_type = unit_lowerer.InternType(*call.type, span);
   if (!result_type) {
     return std::unexpected(std::move(result_type.error()));
   }
   const hir::ExprId count_id = frame.Exprs().Add(
       hir::Expr{
-          .type = module.Unit().builtins.int_type,
+          .type = unit_lowerer.Unit().builtins.int_type,
           .data =
               hir::CallExpr{
                   .callee =
@@ -248,13 +250,13 @@ template <ExprLowerer Lowerer>
 auto LowerOrderedDynamicDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     QueryKind query, diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  ModuleLowerer& module = lowerer.Module();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   switch (query) {
     case QueryKind::kLeft:
     case QueryKind::kLow:
-      return MakeQueryInt(module, frame, call, 0, span);
+      return MakeQueryInt(unit_lowerer, frame, call, 0, span);
     case QueryKind::kIncrement:
-      return MakeQueryInt(module, frame, call, -1, span);
+      return MakeQueryInt(unit_lowerer, frame, call, -1, span);
     case QueryKind::kSize:
       return BuildElementCountExpr(lowerer, frame, call, span);
     case QueryKind::kRight:
@@ -265,7 +267,7 @@ auto LowerOrderedDynamicDimensionQuery(
       if (!count_or) {
         return std::unexpected(std::move(count_or.error()));
       }
-      auto one_or = MakeQueryInt(module, frame, call, 1, span);
+      auto one_or = MakeQueryInt(unit_lowerer, frame, call, 1, span);
       if (!one_or) {
         return std::unexpected(std::move(one_or.error()));
       }
@@ -302,15 +304,15 @@ auto LowerAssociativeDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     const slang::ast::Type& dimension, QueryKind query, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  ModuleLowerer& module = lowerer.Module();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   switch (query) {
     case QueryKind::kLeft:
-      return MakeQueryInt(module, frame, call, 0, span);
+      return MakeQueryInt(unit_lowerer, frame, call, 0, span);
     case QueryKind::kIncrement:
-      return MakeQueryInt(module, frame, call, -1, span);
+      return MakeQueryInt(unit_lowerer, frame, call, -1, span);
     case QueryKind::kRight:
       return MakeQueryConstant(
-          module, frame, call,
+          unit_lowerer, frame, call,
           slang::ConstantValue{
               HighestIndexValue(*dimension.getAssociativeIndexType())},
           span);
@@ -322,7 +324,7 @@ auto LowerAssociativeDimensionQuery(
       if (!operand_or) {
         return std::unexpected(std::move(operand_or.error()));
       }
-      auto result_type = module.InternType(*call.type, span);
+      auto result_type = unit_lowerer.InternType(*call.type, span);
       if (!result_type) {
         return std::unexpected(std::move(result_type.error()));
       }
@@ -354,18 +356,18 @@ template <ExprLowerer Lowerer>
 auto LowerDynamicBitsQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  ModuleLowerer& module = lowerer.Module();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
-  auto result_type = module.InternType(*call.type, span);
+  auto result_type = unit_lowerer.InternType(*call.type, span);
   if (!result_type) {
     return std::unexpected(std::move(result_type.error()));
   }
   const hir::ExprId width_id = frame.Exprs().Add(
       hir::Expr{
-          .type = module.Unit().builtins.int_type,
+          .type = unit_lowerer.Unit().builtins.int_type,
           .data =
               hir::CallExpr{
                   .callee =
@@ -393,7 +395,7 @@ auto LowerBitsQuery(
     return LowerDynamicBitsQuery(lowerer, frame, call, span);
   }
   return MakeQueryConstant(
-      lowerer.Module(), frame, call,
+      lowerer.Owner(), frame, call,
       slang::ConstantValue{
           slang::SVInt(32, operand_type.getBitstreamWidth(), true)},
       span);
@@ -404,21 +406,22 @@ auto LowerBitsQuery(
 // default signing dropped, a user-defined name qualified by its declaring scope
 // -- are the frontend type printer's.
 auto LowerTypenameQuery(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   slang::ast::TypePrinter printer;
   printer.append(*call.arguments()[0]->type);
   return MakeQueryConstant(
-      module, frame, call, slang::ConstantValue{printer.toString()}, span);
+      unit_lowerer, frame, call, slang::ConstantValue{printer.toString()},
+      span);
 }
 
 auto LowerDimensionCountQuery(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call, bool unpacked_only,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   return MakeQueryInt(
-      module, frame, call,
+      unit_lowerer, frame, call,
       static_cast<std::int64_t>(
           DimensionCount(*call.arguments()[0]->type, unpacked_only)),
       span);
@@ -435,10 +438,10 @@ auto LowerDimensionResult(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     const slang::ast::Type& dimension, QueryKind query, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  ModuleLowerer& module = lowerer.Module();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   if (dimension.hasFixedRange() && !dimension.isScalar()) {
     return MakeQueryInt(
-        module, frame, call,
+        unit_lowerer, frame, call,
         FixedDimensionValue(query, dimension.getFixedRange()), span);
   }
   if (dimension.isAssociativeArray()) {
@@ -461,7 +464,7 @@ template <ExprLowerer Lowerer>
 auto LowerComposedDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     QueryKind query, diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  ModuleLowerer& module = lowerer.Module();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   const slang::ast::Type& operand_type = *call.arguments()[0]->type;
   const auto dimension_count =
       static_cast<std::int64_t>(DimensionCount(operand_type, false));
@@ -493,11 +496,11 @@ auto LowerComposedDimensionQuery(
     rows.push_back(frame.Exprs().Add(*std::move(row_or)));
   }
 
-  auto element_type = module.InternType(*call.type, span);
+  auto element_type = unit_lowerer.InternType(*call.type, span);
   if (!element_type) {
     return std::unexpected(std::move(element_type.error()));
   }
-  const hir::TypeId table_type = module.AddComposedType(
+  const hir::TypeId table_type = unit_lowerer.AddComposedType(
       hir::UnpackedArrayType{
           .element_type = *element_type,
           .dim = hir::UnpackedRange{.left = 1, .right = dimension_count}});
@@ -523,9 +526,9 @@ template <ExprLowerer Lowerer>
 auto LowerDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     QueryKind query, diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  ModuleLowerer& module = lowerer.Module();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   const std::optional<std::int64_t> index =
-      ConstantDimensionIndex(module, call);
+      ConstantDimensionIndex(unit_lowerer, call);
   if (!index.has_value()) {
     return LowerComposedDimensionQuery(lowerer, frame, call, query, span);
   }
@@ -561,17 +564,17 @@ auto LowerQueryExpr(
     return std::optional<hir::Expr>{};
   }
 
-  ModuleLowerer& module = lowerer.Module();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   diag::Result<hir::Expr> result = [&] {
     switch (*query) {
       case QueryKind::kBits:
         return LowerBitsQuery(lowerer, frame, call, span);
       case QueryKind::kTypename:
-        return LowerTypenameQuery(module, frame, call, span);
+        return LowerTypenameQuery(unit_lowerer, frame, call, span);
       case QueryKind::kDimensions:
-        return LowerDimensionCountQuery(module, frame, call, false, span);
+        return LowerDimensionCountQuery(unit_lowerer, frame, call, false, span);
       case QueryKind::kUnpackedDimensions:
-        return LowerDimensionCountQuery(module, frame, call, true, span);
+        return LowerDimensionCountQuery(unit_lowerer, frame, call, true, span);
       default:
         return LowerDimensionQuery(lowerer, frame, call, *query, span);
     }

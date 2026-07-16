@@ -10,9 +10,9 @@
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -23,7 +23,7 @@ namespace {
 // sensitivity list is always `TranslateSensitivityReads(reads)`, the single
 // place a read set is mapped to its runtime projection.
 auto BuildContinuousAssign(
-    ModuleLowerer& module, WalkFrame frame, diag::SourceSpan span,
+    UnitLowerer& unit_lowerer, WalkFrame frame, diag::SourceSpan span,
     hir::Expr lhs, hir::Expr rhs, const std::vector<SensitivityRead>& reads)
     -> hir::ContinuousAssign {
   const hir::ExprId lhs_id = frame.Exprs().Add(std::move(lhs));
@@ -32,7 +32,7 @@ auto BuildContinuousAssign(
       .span = span,
       .lhs = lhs_id,
       .rhs = rhs_id,
-      .sensitivity_list = module.TranslateSensitivityReads(reads, frame),
+      .sensitivity_list = unit_lowerer.TranslateSensitivityReads(reads, frame),
   };
 }
 
@@ -41,7 +41,7 @@ auto BuildContinuousAssign(
 auto StructuralScopeLowerer::LowerContinuousAssign(
     const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
     -> diag::Result<hir::ContinuousAssign> {
-  const auto& mapper = module_->SourceMapper();
+  const auto& mapper = owner_->SourceMapper();
   const auto span = mapper.PointSpanOf(sym.location);
 
   if (sym.getDelay() != nullptr) {
@@ -81,10 +81,10 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   // LRM 10.3.2: continuous assignment sensitivity is the read set of the
   // RHS expression. slang treats the ContinuousAssignSymbol as the
   // procedural scope for analysis purposes.
-  const auto& reads = module_->Sensitivity().AnalyzeReads(assignment_expr, sym);
+  const auto& reads = owner_->Sensitivity().AnalyzeReads(assignment_expr, sym);
 
   return BuildContinuousAssign(
-      *module_, frame, span, *std::move(lhs_or), *std::move(rhs_or), reads);
+      *owner_, frame, span, *std::move(lhs_or), *std::move(rhs_or), reads);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -13,9 +13,9 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -47,7 +47,7 @@ auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
 }
 
 auto BuildArrayReplicationFlatList(
-    const ModuleLowerer& module, WalkFrame frame,
+    const UnitLowerer& unit_lowerer, WalkFrame frame,
     std::span<const mir::ExprId> items_ids, std::uint64_t count,
     mir::TypeId result_type) -> mir::Expr {
   std::vector<mir::ExprId> flat;
@@ -56,7 +56,7 @@ auto BuildArrayReplicationFlatList(
     flat.insert(flat.end(), items_ids.begin(), items_ids.end());
   }
   return BuildArrayConstructionCall(
-      module, frame, result_type, std::move(flat));
+      unit_lowerer, frame, result_type, std::move(flat));
 }
 
 // A packed assignment pattern folds its members into one flat bit plane (LRM
@@ -103,18 +103,18 @@ auto LowerHirConcatExpr(
   // supply one) and its LRM 7.10.5 bound, built here as ordinary arguments
   // ahead of the parts. A packed or string concatenation joins its operands
   // directly and stays a value-build primitive.
-  const auto& result_ty = lowerer.Module().Unit().types.Get(result_type);
+  const auto& result_ty = lowerer.Owner().Unit().types.Get(result_type);
   if (const auto* q = std::get_if<mir::QueueType>(&result_ty.data)) {
     const mir::TypeId element_type = q->element_type;
     const std::int64_t bound = q->max_bound.has_value()
                                    ? static_cast<std::int64_t>(*q->max_bound)
                                    : -1;
     const mir::TypeId machine_int =
-        lowerer.Module().Unit().builtins.machine_int64;
+        lowerer.Owner().Unit().builtins.machine_int64;
     std::vector<mir::ExprId> args;
     args.reserve(operand_ids.size() + 2);
     args.push_back(block.exprs.Add(
-        BuildDefaultValueExpr(lowerer.Module(), frame, element_type)));
+        BuildDefaultValueExpr(lowerer.Owner(), frame, element_type)));
     args.push_back(block.exprs.Add(
         mir::Expr{
             .data = mir::MachineIntLiteral{.value = bound},
@@ -170,17 +170,17 @@ auto LowerHirAssignmentPatternExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  const auto& result_ty = lowerer.Module().Unit().types.Get(result_type);
+  const auto& result_ty = lowerer.Owner().Unit().types.Get(result_type);
   if (IsArrayContainerType(result_ty)) {
     return BuildArrayConstructionCall(
-        lowerer.Module(), frame, result_type, std::move(element_ids));
+        lowerer.Owner(), frame, result_type, std::move(element_ids));
   }
   if (std::holds_alternative<mir::TupleType>(result_ty.data)) {
     return mir::Expr{
         .data = mir::TupleExpr{.components = std::move(element_ids)},
         .type = result_type};
   }
-  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& result_pa = result_ty.AsIntegralPacked();
   const mir::ExprId concat_id = block.exprs.Add(
       mir::Expr{
@@ -203,12 +203,12 @@ auto LowerHirAssignmentPatternReplicationExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  const auto& result_ty = lowerer.Module().Unit().types.Get(result_type);
+  const auto& result_ty = lowerer.Owner().Unit().types.Get(result_type);
   if (IsArrayContainerType(result_ty)) {
     const std::uint64_t count =
         ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
     return BuildArrayReplicationFlatList(
-        lowerer.Module(), frame, item_ids, count, result_type);
+        lowerer.Owner(), frame, item_ids, count, result_type);
   }
   if (std::holds_alternative<mir::TupleType>(result_ty.data)) {
     const std::uint64_t count =
@@ -222,7 +222,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
         .data = mir::TupleExpr{.components = std::move(components)},
         .type = result_type};
   }
-  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& result_pa = result_ty.AsIntegralPacked();
   const std::uint64_t count =
       ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
@@ -261,14 +261,14 @@ auto LowerHirDynamicArrayNewExprProc(
   if (!size_or) return std::unexpected(std::move(size_or.error()));
   const mir::ExprId size_id = block.exprs.Add(*std::move(size_or));
 
-  const auto& hir_result_ty = process.Module().Hir().types.Get(hir_result_type);
+  const auto& hir_result_ty = process.Owner().Hir().types.Get(hir_result_type);
   const auto* hir_da = std::get_if<hir::DynamicArrayType>(&hir_result_ty.data);
   if (hir_da == nullptr) {
     throw InternalError(
         "LowerHirDynamicArrayNewExprProc: result type is not DynamicArrayType");
   }
   const mir::ExprId prototype_id = block.exprs.Add(
-      BuildDefaultValueFromHir(process.Module(), frame, hir_da->element_type));
+      BuildDefaultValueFromHir(process.Owner(), frame, hir_da->element_type));
 
   std::vector<mir::ExprId> args;
   args.reserve(n.initializer.has_value() ? 3U : 2U);
@@ -317,7 +317,7 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     user_default = block.exprs.Add(*std::move(default_or));
   }
   return BuildAssociativeConstructionCall(
-      lowerer.Module(), frame, result_type, std::move(entries), user_default);
+      lowerer.Owner(), frame, result_type, std::move(entries), user_default);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

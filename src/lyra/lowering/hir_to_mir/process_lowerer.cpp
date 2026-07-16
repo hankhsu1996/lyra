@@ -104,7 +104,7 @@ auto ProcessLowerer::BuildStaticStorageAccess(
     const WalkFrame& frame, StaticStoragePlacement placement) const
     -> mir::Expr {
   mir::Block& block = *frame.current_block;
-  const mir::CompilationUnit& unit = module_->Unit();
+  const mir::CompilationUnit& unit = owner_->Unit();
 
   // Intra-unit access is a typed segment: descend from the body's `self`
   // through each intervening materialized scope's borrowed companion member,
@@ -134,7 +134,7 @@ auto ProcessLowerer::BuildStaticStorageAccess(
     // member types come from the published shape, not the not-yet-committed
     // mir class.
     const mir::TypeId step_type =
-        module_->GetClassShape(obj->class_id).fields.Get(step).type;
+        owner_->GetClassShape(obj->class_id).fields.Get(step).type;
     receiver = block.exprs.Add(
         mir::MakeFieldAccessExpr(
             receiver, mir::FieldTarget{.owner = obj->class_id, .slot = step},
@@ -152,7 +152,7 @@ auto ProcessLowerer::BuildStaticStorageAccess(
           }},
       placement.owner);
   const mir::TypeId field_type =
-      module_->GetClassShape(owner_class_id).fields.Get(placement.field).type;
+      owner_->GetClassShape(owner_class_id).fields.Get(placement.field).type;
   return mir::MakeFieldAccessExpr(
       receiver,
       mir::FieldTarget{.owner = owner_class_id, .slot = placement.field},
@@ -175,7 +175,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
     -> diag::Result<mir::MethodDecl> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::CallableCode code;
-  CallableBindings bindings(process.Module().Unit(), code);
+  CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
       BindingOriginId::Receiver(),
       mir::LocalDecl{
@@ -189,7 +189,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
   // rather than an implicit exit (LRM 9.2). Its coroutine result type is what
   // makes that return a coroutine completion.
   code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  code.result_type = process.Module().Unit().builtins.coroutine_void;
+  code.result_type = process.Owner().Unit().builtins.coroutine_void;
   return mir::MethodDecl{
       .name = std::string{process.CallableName()},
       .code = std::move(code),
@@ -207,7 +207,7 @@ auto LowerForeverProcess(
     -> diag::Result<mir::MethodDecl> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::CallableCode code;
-  CallableBindings bindings(process.Module().Unit(), code);
+  CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
       BindingOriginId::Receiver(),
       mir::LocalDecl{
@@ -235,7 +235,7 @@ auto LowerForeverProcess(
           .step = {},
           .scope = body_scope_id});
   code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  code.result_type = process.Module().Unit().builtins.coroutine_void;
+  code.result_type = process.Owner().Unit().builtins.coroutine_void;
   return mir::MethodDecl{
       .name = std::string{process.CallableName()},
       .code = std::move(code),
@@ -265,7 +265,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     -> diag::Result<mir::MethodDecl> {
   const WalkFrame& parent = owner_ctor_frame_;
   mir::CallableCode code;
-  CallableBindings bindings(module_->Unit(), code);
+  CallableBindings bindings(owner_->Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
       BindingOriginId::Receiver(),
       mir::LocalDecl{
@@ -285,12 +285,12 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   std::vector<mir::LocalId> params{self_id};
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.Get(param.var);
-    const mir::TypeId value_type = module_->TranslateType(hir_var.type);
+    const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
     const hir::ParamDirection dir = param.direction;
 
     if (dir == hir::ParamDirection::kOutput) {
       const mir::ExprId default_init = code.body.exprs.Add(
-          BuildDefaultValueFromHir(*module_, body_frame, hir_var.type));
+          BuildDefaultValueFromHir(*owner_, body_frame, hir_var.type));
       const mir::LocalId local = bindings.Declare(
           BindingOriginId::Procedural(param.var),
           mir::LocalDecl{.name = hir_var.name, .type = value_type});
@@ -308,7 +308,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
                               dir == hir::ParamDirection::kConstRef;
     const mir::TypeId type =
         by_reference
-            ? module_->Unit().types.Intern(
+            ? owner_->Unit().types.Intern(
                   mir::RefType{
                       .pointee = value_type,
                       .mutability = dir == hir::ParamDirection::kConstRef
@@ -333,9 +333,9 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // `return` carries. void functions and tasks have none.
   std::vector<mir::TypeId> payload_components;
   if (src.result_var.has_value()) {
-    const mir::TypeId ret_type = module_->TranslateType(src.result_type);
+    const mir::TypeId ret_type = owner_->TranslateType(src.result_type);
     const mir::ExprId default_init = code.body.exprs.Add(
-        BuildDefaultValueFromHir(*module_, body_frame, src.result_type));
+        BuildDefaultValueFromHir(*owner_, body_frame, src.result_type));
     const mir::LocalId result_local = bindings.Declare(
         BindingOriginId::Procedural(*src.result_var),
         mir::LocalDecl{.name = "_lyra_result", .type = ret_type});
@@ -354,10 +354,10 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // inout value, normalized by count. A task wraps it in the coroutine call
   // protocol (LRM 13.3); a function's result is the payload itself (LRM 13.4).
   completion_payload_type_ =
-      NormalizeCompletionPayload(module_->Unit(), payload_components);
+      NormalizeCompletionPayload(owner_->Unit(), payload_components);
   const mir::TypeId result_type =
       body_is_coroutine
-          ? module_->Unit().types.CoroutineOf(completion_payload_type_)
+          ? owner_->Unit().types.CoroutineOf(completion_payload_type_)
           : completion_payload_type_;
 
   auto lowered = LowerStraightLineBodyInto(*this, body_frame);
@@ -392,7 +392,7 @@ auto ProcessLowerer::LowerConstructorBodyInto(
           "formal reached MIR lowering; AST-to-HIR rejects these");
     }
     const auto& hir_var = ctor.body.procedural_vars.Get(param.var);
-    const mir::TypeId value_type = module_->TranslateType(hir_var.type);
+    const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
     const mir::LocalId mir_var = frame.bindings->Declare(
         BindingOriginId::Procedural(param.var),
         mir::LocalDecl{.name = hir_var.name, .type = value_type});

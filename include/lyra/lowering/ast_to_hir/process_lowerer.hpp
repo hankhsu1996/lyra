@@ -19,7 +19,7 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/type_id.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -33,7 +33,7 @@ namespace lyra::lowering::ast_to_hir {
 class ProcessLowerer {
  public:
   ProcessLowerer(
-      ModuleLowerer& module, const slang::ast::Symbol& containing_symbol);
+      UnitLowerer& unit_lowerer, const slang::ast::Symbol& containing_symbol);
 
   // Lowers a procedural block to a complete hir::Process (initial / final /
   // always / always_comb / always_latch / always_ff). Stack-allocates the
@@ -64,11 +64,11 @@ class ProcessLowerer {
       const -> std::optional<hir::ProceduralVarId>;
 
   // Accessors.
-  [[nodiscard]] auto Module() -> ModuleLowerer& {
-    return *module_;
+  [[nodiscard]] auto Owner() -> UnitLowerer& {
+    return *owner_;
   }
-  [[nodiscard]] auto Module() const -> const ModuleLowerer& {
-    return *module_;
+  [[nodiscard]] auto Owner() const -> const UnitLowerer& {
+    return *owner_;
   }
   [[nodiscard]] auto ContainingSymbol() const -> const slang::ast::Symbol& {
     return *containing_symbol_;
@@ -89,7 +89,7 @@ class ProcessLowerer {
 
  private:
   // Facts.
-  ModuleLowerer* module_;
+  UnitLowerer* owner_;
   const slang::ast::Symbol* containing_symbol_;
 
   // Registry.

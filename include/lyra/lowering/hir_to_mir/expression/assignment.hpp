@@ -9,8 +9,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -28,7 +28,7 @@ auto LowerHirAssignExprProc(
 // (procedural-local NBA is not supported). Used by the LHS-destructuring
 // desugar, which submits each part as its own NBA closure.
 auto BuildNbaSubmitClosureExpr(
-    ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId lhs_in_outer,
     mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

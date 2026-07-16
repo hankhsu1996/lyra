@@ -29,7 +29,7 @@ auto LowerTestPlusargs(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
-  auto& unit = process.Module().Unit();
+  auto& unit = process.Owner().Unit();
   auto& body = *frame.current_block;
 
   auto user_or =
@@ -42,7 +42,7 @@ auto LowerTestPlusargs(
   const mir::ExprId user_id =
       ConvertToType(unit, body, raw_user_id, unit.builtins.string);
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      body.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -56,14 +56,14 @@ auto LowerValuePlusargs(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
-  auto& module = process.Module();
-  auto& unit = module.Unit();
+  auto& unit_lowerer = process.Owner();
+  auto& unit = unit_lowerer.Unit();
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::TypeId bit_t = unit.builtins.bit1;
   const mir::TypeId void_t = unit.builtins.void_type;
 
   const auto& hir_target = hir_proc.exprs.Get(*call.arguments[1]);
-  const mir::TypeId target_type = module.TranslateType(hir_target.type);
+  const mir::TypeId target_type = unit_lowerer.TranslateType(hir_target.type);
 
   // A match writes the parsed remainder into the caller's lvalue and returns
   // 1; a no-match leaves the lvalue untouched and returns 0. Both effects
@@ -82,14 +82,14 @@ auto LowerValuePlusargs(
   const mir::ExprId user_id =
       ConvertToType(unit, body, raw_user_id, unit.builtins.string);
 
-  const mir::ExprId temp_init =
-      body.exprs.Add(BuildDefaultValueExpr(module, closure_frame, target_type));
+  const mir::ExprId temp_init = body.exprs.Add(
+      BuildDefaultValueExpr(unit_lowerer, closure_frame, target_type));
   const mir::LocalId temp_var = closure.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_plusargs_out", .type = target_type});
   body.AppendStmt(mir::LocalDeclStmt{.target = temp_var, .init = temp_init});
 
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(module, closure_frame));
+      body.exprs.Add(BuildServicesCallExpr(unit_lowerer, closure_frame));
   const mir::ExprId temp_ref =
       body.exprs.Add(mir::MakeLocalRefExpr(temp_var, target_type));
   const mir::ExprId hit_call = body.exprs.Add(
@@ -126,7 +126,7 @@ auto LowerValuePlusargs(
   const mir::ExprId temp_read_then =
       then_body.exprs.Add(mir::MakeLocalRefExpr(temp_var, target_type));
   const mir::ExprId services_id_then =
-      then_body.exprs.Add(BuildServicesCallExpr(module, then_frame));
+      then_body.exprs.Add(BuildServicesCallExpr(unit_lowerer, then_frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
       unit, then_body, services_id_then, lvalue_id, temp_read_then,
       std::nullopt, target_type, void_t);

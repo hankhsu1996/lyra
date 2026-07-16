@@ -28,9 +28,9 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -59,10 +59,10 @@ auto LowerRange(const slang::ConstantRange& r) -> hir::PackedRange {
 // bit (LRM 7.4.1); `form` records the syntactic origin (`int` vs the equivalent
 // `bit signed [31:0]`).
 auto LowerPredefinedInteger(
-    const ModuleLowerer& module, slang::ast::PredefinedIntegerType::Kind k)
+    const UnitLowerer& unit_lowerer, slang::ast::PredefinedIntegerType::Kind k)
     -> hir::PackedArrayType {
   using SK = slang::ast::PredefinedIntegerType::Kind;
-  const auto& builtins = module.Unit().builtins;
+  const auto& builtins = unit_lowerer.Unit().builtins;
   const auto make = [&](hir::TypeId element, std::int64_t msb,
                         hir::Signedness signedness,
                         hir::PackedArrayForm form) -> hir::PackedArrayType {
@@ -107,10 +107,10 @@ auto LowerPredefinedInteger(
 // `TypeId`, so the nest -- and an aggregate element's identity -- is carried by
 // recursion, not flattened here.
 auto LowerExplicitPackedArray(
-    ModuleLowerer& module, const slang::ast::PackedArrayType& array,
+    UnitLowerer& unit_lowerer, const slang::ast::PackedArrayType& array,
     bool outer_signed, diag::SourceSpan span)
     -> diag::Result<hir::PackedArrayType> {
-  auto element = module.InternType(array.elementType, span);
+  auto element = unit_lowerer.InternType(array.elementType, span);
   if (!element) return std::unexpected(std::move(element.error()));
   return hir::PackedArrayType{
       .dim = LowerRange(array.range),
@@ -123,11 +123,11 @@ auto LowerExplicitPackedArray(
 
 auto LowerPackedStruct(
     const slang::ast::PackedStructType& struct_type, diag::SourceSpan decl_span,
-    ModuleLowerer& module) -> diag::Result<hir::PackedStructType> {
+    UnitLowerer& unit_lowerer) -> diag::Result<hir::PackedStructType> {
   std::vector<hir::PackedAggregateField> fields;
   for (const auto& field :
        struct_type.membersOfType<slang::ast::FieldSymbol>()) {
-    auto field_type_or = module.InternType(field.getType(), decl_span);
+    auto field_type_or = unit_lowerer.InternType(field.getType(), decl_span);
     if (!field_type_or) {
       return std::unexpected(std::move(field_type_or.error()));
     }
@@ -151,7 +151,7 @@ auto LowerPackedStruct(
 
 auto LowerPackedUnion(
     const slang::ast::PackedUnionType& union_type, diag::SourceSpan decl_span,
-    ModuleLowerer& module) -> diag::Result<hir::PackedUnionType> {
+    UnitLowerer& unit_lowerer) -> diag::Result<hir::PackedUnionType> {
   if (union_type.isTagged) {
     return diag::Fail(
         decl_span, diag::DiagCode::kUnsupportedTaggedPackedUnion,
@@ -160,7 +160,7 @@ auto LowerPackedUnion(
   std::vector<hir::PackedAggregateField> fields;
   for (const auto& field :
        union_type.membersOfType<slang::ast::FieldSymbol>()) {
-    auto field_type_or = module.InternType(field.getType(), decl_span);
+    auto field_type_or = unit_lowerer.InternType(field.getType(), decl_span);
     if (!field_type_or) {
       return std::unexpected(std::move(field_type_or.error()));
     }
@@ -206,12 +206,12 @@ auto LowerMemberDefault(
 
 auto LowerUnpackedAggregateFields(
     std::span<const slang::ast::FieldSymbol* const> fields,
-    diag::SourceSpan decl_span, ModuleLowerer& module)
+    diag::SourceSpan decl_span, UnitLowerer& unit_lowerer)
     -> diag::Result<std::vector<hir::UnpackedAggregateField>> {
   std::vector<hir::UnpackedAggregateField> out;
   out.reserve(fields.size());
   for (const auto* field : fields) {
-    auto field_type_or = module.InternType(field->getType(), decl_span);
+    auto field_type_or = unit_lowerer.InternType(field->getType(), decl_span);
     if (!field_type_or) {
       return std::unexpected(std::move(field_type_or.error()));
     }
@@ -231,17 +231,17 @@ auto LowerUnpackedAggregateFields(
 
 auto LowerUnpackedStruct(
     const slang::ast::UnpackedStructType& struct_type,
-    diag::SourceSpan decl_span, ModuleLowerer& module)
+    diag::SourceSpan decl_span, UnitLowerer& unit_lowerer)
     -> diag::Result<hir::UnpackedStructType> {
   auto fields_or =
-      LowerUnpackedAggregateFields(struct_type.fields, decl_span, module);
+      LowerUnpackedAggregateFields(struct_type.fields, decl_span, unit_lowerer);
   if (!fields_or) return std::unexpected(std::move(fields_or.error()));
   return hir::UnpackedStructType{.fields = *std::move(fields_or)};
 }
 
 auto LowerUnpackedUnion(
     const slang::ast::UnpackedUnionType& union_type, diag::SourceSpan decl_span,
-    ModuleLowerer& module) -> diag::Result<hir::UnpackedUnionType> {
+    UnitLowerer& unit_lowerer) -> diag::Result<hir::UnpackedUnionType> {
   // A tagged union (LRM 7.3.2) is a type-checked sum type, a separate concept
   // from the untagged overlapping-storage form; reject it here where the
   // declaration span is available, so MIR translation only ever sees untagged
@@ -252,7 +252,7 @@ auto LowerUnpackedUnion(
         "tagged unions are not yet supported");
   }
   auto fields_or =
-      LowerUnpackedAggregateFields(union_type.fields, decl_span, module);
+      LowerUnpackedAggregateFields(union_type.fields, decl_span, unit_lowerer);
   if (!fields_or) return std::unexpected(std::move(fields_or.error()));
   return hir::UnpackedUnionType{
       .fields = *std::move(fields_or),
@@ -262,8 +262,8 @@ auto LowerUnpackedUnion(
 
 auto LowerEnum(
     const slang::ast::EnumType& enum_type, diag::SourceSpan decl_span,
-    ModuleLowerer& module) -> diag::Result<hir::EnumType> {
-  auto base_id_or = module.InternType(enum_type.baseType, decl_span);
+    UnitLowerer& unit_lowerer) -> diag::Result<hir::EnumType> {
+  auto base_id_or = unit_lowerer.InternType(enum_type.baseType, decl_span);
   if (!base_id_or) return std::unexpected(std::move(base_id_or.error()));
   std::vector<hir::EnumMember> members;
   for (const auto& value_sym : enum_type.values()) {
@@ -284,7 +284,7 @@ auto LowerEnum(
 }
 
 auto TranslateTypeData(
-    ModuleLowerer& module, const slang::ast::Type& type,
+    UnitLowerer& unit_lowerer, const slang::ast::Type& type,
     diag::SourceSpan decl_span) -> diag::Result<hir::TypeData> {
   const auto& canonical = type.getCanonicalType();
 
@@ -296,11 +296,12 @@ auto TranslateTypeData(
     }
     case slang::ast::SymbolKind::PredefinedIntegerType: {
       const auto& pi = canonical.as<slang::ast::PredefinedIntegerType>();
-      return hir::TypeData{LowerPredefinedInteger(module, pi.integerKind)};
+      return hir::TypeData{
+          LowerPredefinedInteger(unit_lowerer, pi.integerKind)};
     }
     case slang::ast::SymbolKind::PackedArrayType: {
       auto pa = LowerExplicitPackedArray(
-          module, canonical.as<slang::ast::PackedArrayType>(),
+          unit_lowerer, canonical.as<slang::ast::PackedArrayType>(),
           canonical.isSigned(), decl_span);
       if (!pa.has_value()) {
         return std::unexpected(std::move(pa.error()));
@@ -308,8 +309,8 @@ auto TranslateTypeData(
       return hir::TypeData{*std::move(pa)};
     }
     case slang::ast::SymbolKind::EnumType: {
-      auto e =
-          LowerEnum(canonical.as<slang::ast::EnumType>(), decl_span, module);
+      auto e = LowerEnum(
+          canonical.as<slang::ast::EnumType>(), decl_span, unit_lowerer);
       if (!e.has_value()) {
         return std::unexpected(std::move(e.error()));
       }
@@ -336,8 +337,8 @@ auto TranslateTypeData(
     case slang::ast::SymbolKind::NullType:
       return hir::TypeData{hir::NullType{}};
     case slang::ast::SymbolKind::ClassType: {
-      auto class_id_or =
-          module.InternClass(canonical.as<slang::ast::ClassType>(), decl_span);
+      auto class_id_or = unit_lowerer.InternClass(
+          canonical.as<slang::ast::ClassType>(), decl_span);
       if (!class_id_or) {
         return std::unexpected(std::move(class_id_or.error()));
       }
@@ -347,7 +348,8 @@ auto TranslateTypeData(
       return hir::TypeData{hir::VoidType{}};
     case slang::ast::SymbolKind::PackedStructType: {
       auto s = LowerPackedStruct(
-          canonical.as<slang::ast::PackedStructType>(), decl_span, module);
+          canonical.as<slang::ast::PackedStructType>(), decl_span,
+          unit_lowerer);
       if (!s.has_value()) {
         return std::unexpected(std::move(s.error()));
       }
@@ -355,7 +357,7 @@ auto TranslateTypeData(
     }
     case slang::ast::SymbolKind::PackedUnionType: {
       auto u = LowerPackedUnion(
-          canonical.as<slang::ast::PackedUnionType>(), decl_span, module);
+          canonical.as<slang::ast::PackedUnionType>(), decl_span, unit_lowerer);
       if (!u.has_value()) {
         return std::unexpected(std::move(u.error()));
       }
@@ -363,7 +365,7 @@ auto TranslateTypeData(
     }
     case slang::ast::SymbolKind::FixedSizeUnpackedArrayType: {
       const auto& fa = canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
-      auto elem_id_or = module.InternType(fa.elementType, decl_span);
+      auto elem_id_or = unit_lowerer.InternType(fa.elementType, decl_span);
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
       }
@@ -377,7 +379,7 @@ auto TranslateTypeData(
     }
     case slang::ast::SymbolKind::DynamicArrayType: {
       const auto& da = canonical.as<slang::ast::DynamicArrayType>();
-      auto elem_id_or = module.InternType(da.elementType, decl_span);
+      auto elem_id_or = unit_lowerer.InternType(da.elementType, decl_span);
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
       }
@@ -385,7 +387,7 @@ auto TranslateTypeData(
     }
     case slang::ast::SymbolKind::QueueType: {
       const auto& q = canonical.as<slang::ast::QueueType>();
-      auto elem_id_or = module.InternType(q.elementType, decl_span);
+      auto elem_id_or = unit_lowerer.InternType(q.elementType, decl_span);
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
       }
@@ -400,7 +402,7 @@ auto TranslateTypeData(
     }
     case slang::ast::SymbolKind::AssociativeArrayType: {
       const auto& aa = canonical.as<slang::ast::AssociativeArrayType>();
-      auto elem_id_or = module.InternType(aa.elementType, decl_span);
+      auto elem_id_or = unit_lowerer.InternType(aa.elementType, decl_span);
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
       }
@@ -410,7 +412,7 @@ auto TranslateTypeData(
       if (aa.indexType == nullptr) {
         return hir::TypeData{hir::AssociativeArrayType{
             .element_type = *elem_id_or,
-            .key_type = module.Unit().builtins.wildcard_index,
+            .key_type = unit_lowerer.Unit().builtins.wildcard_index,
         }};
       }
       // A declared index covers string (LRM 7.8.2), integral, which includes a
@@ -424,7 +426,7 @@ auto TranslateTypeData(
             "associative arrays are only supported with a string, integral, "
             "chandle, or wildcard index type");
       }
-      auto key_id_or = module.InternType(*aa.indexType, decl_span);
+      auto key_id_or = unit_lowerer.InternType(*aa.indexType, decl_span);
       if (!key_id_or) {
         return std::unexpected(std::move(key_id_or.error()));
       }
@@ -435,13 +437,15 @@ auto TranslateTypeData(
     }
     case slang::ast::SymbolKind::UnpackedStructType: {
       auto s = LowerUnpackedStruct(
-          canonical.as<slang::ast::UnpackedStructType>(), decl_span, module);
+          canonical.as<slang::ast::UnpackedStructType>(), decl_span,
+          unit_lowerer);
       if (!s) return std::unexpected(std::move(s.error()));
       return hir::TypeData{*std::move(s)};
     }
     case slang::ast::SymbolKind::UnpackedUnionType: {
       auto u = LowerUnpackedUnion(
-          canonical.as<slang::ast::UnpackedUnionType>(), decl_span, module);
+          canonical.as<slang::ast::UnpackedUnionType>(), decl_span,
+          unit_lowerer);
       if (!u) return std::unexpected(std::move(u.error()));
       return hir::TypeData{*std::move(u)};
     }
@@ -476,7 +480,7 @@ auto SynthesizeDefaultConstructor(hir::TypeId void_type, diag::SourceSpan span)
 
 }  // namespace
 
-auto ModuleLowerer::InternClass(
+auto UnitLowerer::InternClass(
     const slang::ast::ClassType& cls, diag::SourceSpan span)
     -> diag::Result<hir::ClassId> {
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
@@ -600,11 +604,11 @@ auto ModuleLowerer::InternClass(
   return id;
 }
 
-auto ModuleLowerer::AddComposedType(hir::TypeData data) -> hir::TypeId {
+auto UnitLowerer::AddComposedType(hir::TypeData data) -> hir::TypeId {
   return unit_.types.Add(hir::Type{.data = std::move(data)});
 }
 
-auto ModuleLowerer::InternType(
+auto UnitLowerer::InternType(
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::TypeId> {
   const auto* canonical = &type.getCanonicalType();

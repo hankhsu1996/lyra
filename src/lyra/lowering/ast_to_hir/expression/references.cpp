@@ -176,21 +176,21 @@ auto MakeEnumValueExpr(
 }
 
 auto MakeParameterConstantExpr(
-    ModuleLowerer& module, WalkFrame frame, const slang::ast::Symbol& sym,
+    UnitLowerer& unit_lowerer, WalkFrame frame, const slang::ast::Symbol& sym,
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto type_id = module.InternType(type, span);
+  auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return MakeConstantValueExpr(
-      module.Unit(), frame, sym.as<slang::ast::ParameterSymbol>().getValue(),
-      *type_id, span);
+      unit_lowerer.Unit(), frame,
+      sym.as<slang::ast::ParameterSymbol>().getValue(), *type_id, span);
 }
 
 auto MakeEnumConstantExpr(
-    ModuleLowerer& module, const slang::ast::Symbol& sym,
+    UnitLowerer& unit_lowerer, const slang::ast::Symbol& sym,
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto type_id = module.InternType(type, span);
+  auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return MakeEnumValueExpr(
       sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
@@ -202,10 +202,10 @@ auto MakeEnumConstantExpr(
 // iteration parameters, not a variable of the enclosing scope, so neither pass
 // class's variable storage is consulted.
 auto MakeIterationElementRefExpr(
-    ModuleLowerer& module, const slang::ast::NamedValueExpression& named,
+    UnitLowerer& unit_lowerer, const slang::ast::NamedValueExpression& named,
     hir::WithClauseId clause, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto type_id = module.InternType(*named.type, span);
+  auto type_id = unit_lowerer.InternType(*named.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return MakeRefExpr(
       hir::IterationBindingRef{
@@ -214,10 +214,10 @@ auto MakeIterationElementRefExpr(
 }
 
 auto MakeClassPropertyRefExpr(
-    ModuleLowerer& module, const slang::ast::Symbol& sym,
+    UnitLowerer& unit_lowerer, const slang::ast::Symbol& sym,
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto type_id = module.InternType(type, span);
+  auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::MakeRefExpr(
       hir::ClassPropertyRef{
@@ -245,12 +245,12 @@ auto RouteRefExpr(
 // its context admits. A simple name is always lexically enclosing, so the route
 // is always available and its absence is a compiler-bug invariant.
 auto LowerStructuralSignalRef(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::ValueSymbol& value, const slang::ast::Type& type,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = module.InternType(type, span);
+  auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto route = module.TranslateReferenceRoute(frame, value);
+  auto route = unit_lowerer.TranslateReferenceRoute(frame, value);
   if (!route) {
     throw InternalError(
         "LowerStructuralSignalRef: structural signal has no reader-relative "
@@ -264,25 +264,26 @@ auto LowerStructuralSignalRef(
 auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr> {
-  auto& module = proc.Module();
-  const auto& mapper = module.SourceMapper();
+  auto& unit_lowerer = proc.Owner();
+  const auto& mapper = unit_lowerer.SourceMapper();
   const auto span = mapper.SpanOf(named.sourceRange);
   const auto& sym = named.symbol;
 
   if (auto clause = frame.FindIterationClause(sym)) {
-    return MakeIterationElementRefExpr(module, named, *clause, span);
+    return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
   }
 
   switch (ClassifyReferent(sym)) {
     case Referent::kParameterConstant:
-      return MakeParameterConstantExpr(module, frame, sym, *named.type, span);
+      return MakeParameterConstantExpr(
+          unit_lowerer, frame, sym, *named.type, span);
     case Referent::kEnumConstant:
-      return MakeEnumConstantExpr(module, sym, *named.type, span);
+      return MakeEnumConstantExpr(unit_lowerer, sym, *named.type, span);
     // Inside an instance method, a class property named without an explicit
     // handle (LRM 8.4) reaches the invoking object through the method's
     // receiver, so it lowers to a receiver-relative property reference.
     case Referent::kClassProperty:
-      return MakeClassPropertyRefExpr(module, sym, *named.type, span);
+      return MakeClassPropertyRefExpr(unit_lowerer, sym, *named.type, span);
     // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
     // variable-family symbols; each binds to procedural-var storage when the
     // enclosing process declares it, otherwise to the structural signal of the
@@ -296,12 +297,14 @@ auto LowerNamedValueProc(
             hir::ProceduralVarRef{.var = *local}, type, span);
       }
       return LowerStructuralSignalRef(
-          module, frame, sym.as<slang::ast::ValueSymbol>(), *named.type, span);
+          unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
+          span);
     }
     // A net (LRM 6.5) is always a structural signal, never a procedural local.
     case Referent::kNetStorage:
       return LowerStructuralSignalRef(
-          module, frame, sym.as<slang::ast::ValueSymbol>(), *named.type, span);
+          unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
+          span);
     case Referent::kUnsupported:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
@@ -315,10 +318,10 @@ auto LowerNamedValueProc(
 // the reader's elaborated position and the target symbol. slang's resolved
 // `ref.path` is provenance, not a routing authority, so it is not consulted.
 auto LowerHierarchicalValue(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
     -> diag::Result<hir::Expr> {
-  const auto span = module.SourceMapper().SpanOf(hve.sourceRange);
+  const auto span = unit_lowerer.SourceMapper().SpanOf(hve.sourceRange);
 
   if (hve.ref.isViaIfacePort()) {
     return diag::Fail(
@@ -331,9 +334,10 @@ auto LowerHierarchicalValue(
     // A hierarchically reached constant folds to its value; the path is not
     // navigated because the value is fixed at elaboration.
     case Referent::kParameterConstant:
-      return MakeParameterConstantExpr(module, frame, target, *hve.type, span);
+      return MakeParameterConstantExpr(
+          unit_lowerer, frame, target, *hve.type, span);
     case Referent::kEnumConstant:
-      return MakeEnumConstantExpr(module, target, *hve.type, span);
+      return MakeEnumConstantExpr(unit_lowerer, target, *hve.type, span);
     case Referent::kClassProperty:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -345,9 +349,9 @@ auto LowerHierarchicalValue(
           "supported");
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
-      auto type_id = module.InternType(*hve.type, span);
+      auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
-      auto route = module.TranslateReferenceRoute(
+      auto route = unit_lowerer.TranslateReferenceRoute(
           frame, target.as<slang::ast::ValueSymbol>());
       if (!route) {
         return diag::Fail(
@@ -361,23 +365,25 @@ auto LowerHierarchicalValue(
 }
 
 auto LowerNamedValueStructural(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr> {
-  const auto& mapper = module.SourceMapper();
+  const auto& mapper = unit_lowerer.SourceMapper();
   const auto span = mapper.SpanOf(named.sourceRange);
   const auto& sym = named.symbol;
   if (auto clause = frame.FindIterationClause(sym)) {
-    return MakeIterationElementRefExpr(module, named, *clause, span);
+    return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
   }
   switch (ClassifyReferent(sym)) {
     case Referent::kParameterConstant:
-      return MakeParameterConstantExpr(module, frame, sym, *named.type, span);
+      return MakeParameterConstantExpr(
+          unit_lowerer, frame, sym, *named.type, span);
     case Referent::kEnumConstant:
-      return MakeEnumConstantExpr(module, sym, *named.type, span);
+      return MakeEnumConstantExpr(unit_lowerer, sym, *named.type, span);
     case Referent::kVariableStorage:
     case Referent::kNetStorage:
       return LowerStructuralSignalRef(
-          module, frame, sym.as<slang::ast::ValueSymbol>(), *named.type, span);
+          unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
+          span);
     // A class property has no structural (non-procedural) meaning: it is only
     // reachable through a method receiver, so outside a method it is rejected
     // alongside the genuinely unsupported kinds.

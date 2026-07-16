@@ -125,13 +125,13 @@ auto LowerNamedEventTimedStmt(
                     .callee = mir::Direct{.target = support::BuiltinFn::kAwait},
                     .arguments = {receiver_id},
                 },
-            .type = process.Module().Unit().builtins.void_type};
+            .type = process.Owner().Unit().builtins.void_type};
         const mir::ExprId await_id =
             child_block.exprs.Add(std::move(await_call));
         const mir::ExprId await_expr_id = child_block.exprs.Add(
             mir::Expr{
                 .data = mir::AwaitExpr{.awaitable = await_id},
-                .type = process.Module().Unit().builtins.void_type});
+                .type = process.Owner().Unit().builtins.void_type});
         return mir::Stmt{
             .label = std::nullopt,
             .data = mir::ExprStmt{.expr = await_expr_id}};
@@ -206,9 +206,9 @@ auto LowerDelayTimedStmt(
           WalkFrame child_frame) -> diag::Result<mir::Stmt> {
         auto ticks_or = ResolveDelayTicks(process, d);
         if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
-        const auto& builtins = process.Module().Unit().builtins;
+        const auto& builtins = process.Owner().Unit().builtins;
         const mir::ExprId services_id = child_block.exprs.Add(
-            BuildServicesCallExpr(process.Module(), child_frame));
+            BuildServicesCallExpr(process.Owner(), child_frame));
         const mir::ExprId duration_id = child_block.exprs.Add(
             mir::MakeIntLiteral(
                 builtins.int_type, static_cast<std::int64_t>(*ticks_or)));
@@ -269,14 +269,14 @@ auto LowerEventTriggerStmt(
   // engine handle is a real trailing argument, threaded the same way every
   // runtime effect threads it.
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   mir::Expr call{
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kTrigger},
               .arguments = {receiver_id, services_id},
           },
-      .type = process.Module().Unit().builtins.void_type};
+      .type = process.Owner().Unit().builtins.void_type};
   const mir::ExprId call_id = block.exprs.Add(std::move(call));
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};
@@ -318,7 +318,7 @@ auto LowerWaitStmt(
   wrapper.AppendStmt(
       mir::WhileStmt{
           .condition = ReduceToCondition(
-              wrapper, not_cond_id, process.Module().Unit().builtins.bit1),
+              wrapper, not_cond_id, process.Owner().Unit().builtins.bit1),
           .scope = inner_scope_id});
 
   const hir::Stmt& body_hir = hir_proc.stmts.Get(w.body);

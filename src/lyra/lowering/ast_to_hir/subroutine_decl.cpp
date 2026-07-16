@@ -18,8 +18,8 @@
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -187,18 +187,18 @@ auto ResolveImportCName(const slang::ast::SubroutineSymbol& sym)
 }  // namespace
 
 auto LowerSubroutineDecl(
-    ModuleLowerer& module, const slang::ast::SubroutineSymbol& sym,
+    UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame) -> diag::Result<hir::SubroutineDecl> {
-  const auto& mapper = module.SourceMapper();
+  const auto& mapper = unit_lowerer.SourceMapper();
 
-  auto return_type_or =
-      module.InternType(sym.getReturnType(), mapper.PointSpanOf(sym.location));
+  auto return_type_or = unit_lowerer.InternType(
+      sym.getReturnType(), mapper.PointSpanOf(sym.location));
   if (!return_type_or) {
     return std::unexpected(std::move(return_type_or.error()));
   }
 
   hir::ProceduralBody body;
-  ProcessLowerer lowerer(module, sym);
+  ProcessLowerer lowerer(unit_lowerer, sym);
   lowerer.AnalyzeLifetimeExtended(sym.getBody());
 
   // Open the root lexical scope accumulators for this subroutine body. The
@@ -215,7 +215,7 @@ auto LowerSubroutineDecl(
   std::vector<hir::SubroutineParam> params;
   params.reserve(sym.getArguments().size());
   for (const auto* formal : sym.getArguments()) {
-    auto formal_type_or = module.InternType(
+    auto formal_type_or = unit_lowerer.InternType(
         formal->getType(), mapper.PointSpanOf(formal->location));
     if (!formal_type_or) {
       return std::unexpected(std::move(formal_type_or.error()));
@@ -265,9 +265,9 @@ auto LowerSubroutineDecl(
 // re-derived downstream. Input-only scalar functions are accepted; the
 // remaining forms are located diagnostics.
 auto LowerForeignImport(
-    ModuleLowerer& module, const slang::ast::SubroutineSymbol& sym)
+    UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<hir::ForeignImportDecl> {
-  const auto& mapper = module.SourceMapper();
+  const auto& mapper = unit_lowerer.SourceMapper();
   const auto loc = mapper.PointSpanOf(sym.location);
   if (sym.subroutineKind == slang::ast::SubroutineKind::Task) {
     return diag::Fail(
@@ -281,7 +281,7 @@ auto LowerForeignImport(
   }
   auto ret_abi = ClassifyDpiScalarResult(sym.getReturnType(), loc);
   if (!ret_abi) return std::unexpected(std::move(ret_abi.error()));
-  auto ret_type = module.InternType(sym.getReturnType(), loc);
+  auto ret_type = unit_lowerer.InternType(sym.getReturnType(), loc);
   if (!ret_type) return std::unexpected(std::move(ret_type.error()));
 
   std::vector<hir::DpiParamAbi> abi_params;
@@ -292,7 +292,7 @@ auto LowerForeignImport(
     if (!direction) return std::unexpected(std::move(direction.error()));
     auto carrier = ClassifyDpiCarrier(formal->getType(), floc);
     if (!carrier) return std::unexpected(std::move(carrier.error()));
-    auto param_type = module.InternType(formal->getType(), floc);
+    auto param_type = unit_lowerer.InternType(formal->getType(), floc);
     if (!param_type) return std::unexpected(std::move(param_type.error()));
     abi_params.push_back(
         hir::DpiParamAbi{

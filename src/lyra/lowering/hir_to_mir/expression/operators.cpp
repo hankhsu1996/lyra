@@ -429,7 +429,7 @@ auto LowerHirUnaryExpr(
   }
   const mir::ExprId operand_id = block.exprs.Add(*std::move(operand_or));
   return BuildMirUnaryExpr(
-      lowerer.Module().Unit(), block, LowerUnaryOp(u.op), operand_id,
+      lowerer.Owner().Unit(), block, LowerUnaryOp(u.op), operand_id,
       result_type);
 }
 
@@ -445,7 +445,7 @@ auto LowerHirBinaryExpr(
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
   return BuildMirBinaryExpr(
-      lowerer.Module().Unit(), block, LowerBinaryOp(b.op), lhs_id, rhs_id,
+      lowerer.Owner().Unit(), block, LowerBinaryOp(b.op), lhs_id, rhs_id,
       result_type);
 }
 
@@ -458,7 +458,7 @@ auto LowerHirConditionalExpr(
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const mir::ExprId cond_id = ReduceToCondition(
       block, block.exprs.Add(*std::move(cond_or)),
-      lowerer.Module().Unit().builtins.bit1);
+      lowerer.Owner().Unit().builtins.bit1);
   auto then_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.then_value), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const mir::ExprId then_id = block.exprs.Add(*std::move(then_or));
@@ -488,13 +488,13 @@ auto LowerHirIncDecExprProc(
   // If the LHS reaches an observable storage cell, the mutation runs inside
   // a `ScopedMutation` snapshot so subscribers fire once on destructor commit.
   const mir::ExprId root_id =
-      FindLhsRootId(process.Module().Unit(), block, target_id);
+      FindLhsRootId(process.Owner().Unit(), block, target_id);
   if (mir::IsObservableCellType(
-          process.Module().Unit().types.Get(block.exprs.Get(root_id).type))) {
+          process.Owner().Unit().types.Get(block.exprs.Get(root_id).type))) {
     const mir::ExprId services_id =
-        block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+        block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
     target_id = RewriteLhsRootWithMutate(
-        process.Module().Unit(), block, target_id, services_id);
+        process.Owner().Unit(), block, target_id, services_id);
   }
 
   return mir::Expr{
@@ -514,7 +514,7 @@ auto LowerHirConversionExpr(
   const mir::ExprId operand_id =
       frame.current_block->exprs.Add(*std::move(operand_or));
   return BuildValueConversion(
-      lowerer.Module().Unit(), *frame.current_block, operand_id, result_type);
+      lowerer.Owner().Unit(), *frame.current_block, operand_id, result_type);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

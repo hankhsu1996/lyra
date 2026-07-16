@@ -5,7 +5,7 @@
 
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -24,7 +24,7 @@ namespace lyra::lowering::hir_to_mir {
 // closure can forward it; without one it is anonymous (used only within
 // `wrapper`).
 auto SnapshotExprToLocal(
-    const ModuleLowerer& module, WalkFrame frame, mir::Block& wrapper,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block& wrapper,
     std::string name, mir::TypeId type, mir::ExprId expr_id,
     std::optional<BindingOriginId> origin = std::nullopt) -> mir::LocalId;
 
@@ -36,7 +36,7 @@ auto SnapshotExprToLocal(
 // time: every value goes through the same path, and the closure layer only ever
 // forwards an ordinary local -- the snapshot is not a special capture form.
 auto SnapshotIntoClosure(
-    ModuleLowerer& module, const WalkFrame& outer_frame,
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr, std::string name)
     -> mir::ExprId;
 

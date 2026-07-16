@@ -18,8 +18,8 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
@@ -81,12 +81,12 @@ class ProcessLowerer {
   // -- static placements and the shared scope materialization table that
   // chain queries route through.
   ProcessLowerer(
-      ModuleLowerer& module,
+      UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
       std::string callable_name, mir::MethodVisibility visibility,
       WalkFrame owner_ctor_frame, const CallableStoragePlan& storage_plan)
-      : module_(&module),
+      : owner_(&unit_lowerer),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
         time_resolution_(time_resolution),
         hir_body_(&hir_body),
@@ -154,11 +154,11 @@ class ProcessLowerer {
     return hir_body_->exprs;
   }
 
-  [[nodiscard]] auto Module() -> ModuleLowerer& {
-    return *module_;
+  [[nodiscard]] auto Owner() -> UnitLowerer& {
+    return *owner_;
   }
-  [[nodiscard]] auto Module() const -> const ModuleLowerer& {
-    return *module_;
+  [[nodiscard]] auto Owner() const -> const UnitLowerer& {
+    return *owner_;
   }
 
   // The lowering pass for the structural scope this body sits inside; its
@@ -336,7 +336,7 @@ class ProcessLowerer {
       -> std::optional<mir::ExprId>;
 
  private:
-  ModuleLowerer* module_;
+  UnitLowerer* owner_;
   const StructuralScopeLowerer* enclosing_scope_lowerer_;
   TimeResolution time_resolution_;
   const hir::ProceduralBody* hir_body_;

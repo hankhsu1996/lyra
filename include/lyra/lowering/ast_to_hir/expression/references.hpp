@@ -2,13 +2,13 @@
 
 // Lowering of name resolution expressions: NamedValue (LRM 6.6 names) and
 // HierarchicalValue (LRM 23.6 hierarchical references). Routed reference
-// construction lives on ModuleLowerer; this file handles the expression-level
+// construction lives on UnitLowerer; this file handles the expression-level
 // resolution into DirectMemberRef / ProceduralVarRef / RoutedRef per context.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
@@ -27,12 +27,12 @@ auto LowerNamedValueProc(
 // the referrer's structural scope), so this entry is generic over the calling
 // context rather than split into Proc / Structural variants.
 auto LowerHierarchicalValue(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
     -> diag::Result<hir::Expr>;
 
 auto LowerNamedValueStructural(
-    ModuleLowerer& module, WalkFrame frame,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

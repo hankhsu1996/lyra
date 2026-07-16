@@ -15,7 +15,7 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
@@ -35,7 +35,7 @@ namespace lyra::lowering::ast_to_hir {
 class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
-      ModuleLowerer& module, const slang::ast::Scope& slang_scope);
+      UnitLowerer& unit_lowerer, const slang::ast::Scope& slang_scope);
 
   // Stack-allocates the output `hir::StructuralScope`, walks every member of
   // `slang_scope_` into it, and returns it. `parent_frame` is the caller's walk
@@ -44,11 +44,11 @@ class StructuralScopeLowerer {
   auto Run(WalkFrame parent_frame) -> diag::Result<hir::StructuralScope>;
 
   // Accessors for inner Lowerers and helpers.
-  [[nodiscard]] auto Module() -> ModuleLowerer& {
-    return *module_;
+  [[nodiscard]] auto Owner() -> UnitLowerer& {
+    return *owner_;
   }
-  [[nodiscard]] auto Module() const -> const ModuleLowerer& {
-    return *module_;
+  [[nodiscard]] auto Owner() const -> const UnitLowerer& {
+    return *owner_;
   }
 
   // Walker entry for structural-context expression lowering (continuous
@@ -115,7 +115,7 @@ class StructuralScopeLowerer {
       -> diag::Result<hir::Generate>;
 
   // Facts.
-  ModuleLowerer* module_;
+  UnitLowerer* owner_;
   const slang::ast::Scope* slang_scope_;
   ScopeFrameId frame_;
   // The internal variables of this body's `ref` / `const ref` ports, keyed by

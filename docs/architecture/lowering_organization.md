@@ -204,7 +204,7 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
     _Current implementation:_ the dispatcher is a method on the pass class declared in its header.
     Subsystem `.cpp` files include the pass class header to accept the instance by reference and to
     recurse via `lowerer.LowerExpr(...)` / `lowerer.LowerStmt(...)` /
-    `lowerer.Module().InternType(...)`. `proc.Module()` returns the `ModuleLowerer&` the
+    `lowerer.Owner().InternType(...)`. `proc.Owner()` returns the `UnitLowerer&` the
     `ProcessLowerer` captured at construction.
 
 13. A per-kind handler whose logic is shared across pass classes is one function template
@@ -478,9 +478,9 @@ The three kinds of class members correspond to distinct access patterns:
   depend on the adjacent layer it was deliberately built to be independent of.
 - **Root output** is the IR the pass exists to produce. It lives as an owned member on the pass
   class with lifetime equal to the pass instance; every handler shares one. The class exposes read
-  access via a `const` accessor (`Unit()` returning `const hir::ModuleUnit&`, or its equivalent per
-  pass) -- the same interface downstream consumers use after `Run` returns. Writes that affect only
-  one member are forbidden as trivial wrappers; writes that coordinate multiple pieces of class
+  access via a `const` accessor (`Unit()` returning `const hir::CompilationUnit&`, or its equivalent
+  per pass) -- the same interface downstream consumers use after `Run` returns. Writes that affect
+  only one member are forbidden as trivial wrappers; writes that coordinate multiple pieces of class
   state are exposed as narrow methods that encapsulate the invariant (the canonical example:
   `InternType` ties the output's type table together with a slang-keyed cache, so the dedup
   invariant is enforced structurally). `Run` moves the root output out at the end; after `Run`

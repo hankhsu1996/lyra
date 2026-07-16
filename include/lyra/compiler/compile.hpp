@@ -9,7 +9,7 @@
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
-#include "lyra/hir/module_unit.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
@@ -31,7 +31,7 @@ enum class StopAfter : std::uint8_t { kParse, kHir, kMir, kLir };
 // for the duration of any Diagnostic-resolution work.
 struct CompileArtifacts {
   std::optional<frontend::ParseResult> parse;
-  std::optional<std::vector<hir::ModuleUnit>> hir_units;
+  std::optional<std::vector<hir::CompilationUnit>> hir_units;
   std::optional<std::vector<mir::CompilationUnit>> mir_units;
   // The synthesized design-root unit, present exactly when `mir_units` is. Its
   // constructor elaborates the design by building the top-level units as its

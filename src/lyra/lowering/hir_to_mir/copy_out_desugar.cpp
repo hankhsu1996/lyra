@@ -31,7 +31,7 @@ auto BuildOutputArgSlot(
   auto target_or = proc.LowerLhsExpr(hir_body.exprs.Get(actual_hir), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   const mir::TypeId actual_type =
-      proc.Module().TranslateType(hir_body.exprs.Get(actual_hir).type);
+      proc.Owner().TranslateType(hir_body.exprs.Get(actual_hir).type);
   const mir::ExprId actual_id = wrapper.exprs.Add(*std::move(target_or));
   auto value_or = proc.LowerExpr(hir_body.exprs.Get(actual_hir), frame);
   if (!value_or) return std::unexpected(std::move(value_or.error()));

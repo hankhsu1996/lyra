@@ -15,9 +15,9 @@
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -26,10 +26,10 @@ auto LowerConcatExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ConcatenationExpression& cc, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto& module = lowerer.Module();
-  auto type_id = module.InternType(*cc.type, span);
+  auto& unit_lowerer = lowerer.Owner();
+  auto type_id = unit_lowerer.InternType(*cc.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  const auto kind = module.Unit().types.Get(*type_id).Kind();
+  const auto kind = unit_lowerer.Unit().types.Get(*type_id).Kind();
   if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kScalarBit &&
       kind != hir::TypeKind::kPackedArray && kind != hir::TypeKind::kQueue) {
     return diag::Fail(
@@ -65,10 +65,10 @@ auto LowerReplicationExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ReplicationExpression& rp, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto& module = lowerer.Module();
-  auto type_id = module.InternType(*rp.type, span);
+  auto& unit_lowerer = lowerer.Owner();
+  auto type_id = unit_lowerer.InternType(*rp.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  const auto kind = module.Unit().types.Get(*type_id).Kind();
+  const auto kind = unit_lowerer.Unit().types.Get(*type_id).Kind();
   if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kScalarBit &&
       kind != hir::TypeKind::kPackedArray) {
     return diag::Fail(
@@ -94,7 +94,7 @@ auto LowerAssignmentPatternFromElements(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::AssignmentPatternExpressionBase& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = lowerer.Module().InternType(*ap.type, span);
+  auto type_id = lowerer.Owner().InternType(*ap.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   std::vector<hir::ExprId> element_ids;
   element_ids.reserve(ap.elements().size());
@@ -115,7 +115,7 @@ auto LowerAssociativeAssignmentPattern(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::StructuredAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = lowerer.Module().InternType(*ap.type, span);
+  auto type_id = lowerer.Owner().InternType(*ap.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   std::vector<hir::AssociativeAssignmentPatternExpr::Entry> entries;
   entries.reserve(ap.indexSetters.size());
@@ -150,7 +150,7 @@ auto LowerReplicatedAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ReplicatedAssignmentPatternExpression& rp,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = lowerer.Module().InternType(*rp.type, span);
+  auto type_id = lowerer.Owner().InternType(*rp.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   auto count_or = lowerer.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
@@ -181,7 +181,7 @@ auto LowerNewArrayExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NewArrayExpression& na, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto type_id = proc.Module().InternType(*na.type, span);
+  auto type_id = proc.Owner().InternType(*na.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   auto size_or = proc.LowerExpr(na.sizeExpr(), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
@@ -207,7 +207,7 @@ template <ExprLowerer Lowerer>
 auto LowerNewClassExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::NewClassExpression& nc,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   if (nc.isSuperClass) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedClassFeature,
@@ -224,9 +224,9 @@ auto LowerNewClassExpr(
     }
   }
   const auto& cls = nc.type->getCanonicalType().as<slang::ast::ClassType>();
-  auto class_id = module.InternClass(cls, span);
+  auto class_id = unit_lowerer.InternClass(cls, span);
   if (!class_id) return std::unexpected(std::move(class_id.error()));
-  auto type_id = module.InternType(*nc.type, span);
+  auto type_id = unit_lowerer.InternType(*nc.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,

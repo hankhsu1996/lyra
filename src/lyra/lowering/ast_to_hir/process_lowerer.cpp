@@ -18,8 +18,8 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/lifetime_extension.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -54,8 +54,8 @@ void ProcessLowerer::AnalyzeLifetimeExtended(
 }
 
 ProcessLowerer::ProcessLowerer(
-    ModuleLowerer& module, const slang::ast::Symbol& containing_symbol)
-    : module_(&module), containing_symbol_(&containing_symbol) {
+    UnitLowerer& unit_lowerer, const slang::ast::Symbol& containing_symbol)
+    : owner_(&unit_lowerer), containing_symbol_(&containing_symbol) {
 }
 
 auto ProcessLowerer::Run(
@@ -87,7 +87,7 @@ auto ProcessLowerer::Run(
                 .direct_child_scopes = std::move(root_children)});
   }
 
-  const auto& mapper = module_->SourceMapper();
+  const auto& mapper = owner_->SourceMapper();
   const auto span = mapper.PointSpanOf(proc.location);
   const auto kind = FromSlangProceduralBlockKind(proc.procedureKind);
 
@@ -102,8 +102,8 @@ auto ProcessLowerer::Run(
     // of its whole procedure, including reads inside any function it calls --
     // the procedure-level sensitivity, not the raw read set of the body node,
     // which reflects only call arguments across a function boundary.
-    out.implicit_sensitivity_list = module_->TranslateSensitivityReads(
-        module_->Sensitivity().AnalyzeProcedureSensitivity(proc), frame);
+    out.implicit_sensitivity_list = owner_->TranslateSensitivityReads(
+        owner_->Sensitivity().AnalyzeProcedureSensitivity(proc), frame);
   }
   return out;
 }

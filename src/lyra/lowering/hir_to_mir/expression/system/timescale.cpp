@@ -35,7 +35,7 @@ auto LowerTimeFormatSystemSubroutineCall(
 
   std::vector<mir::ExprId> call_args;
   call_args.push_back(
-      body.exprs.Add(BuildServicesCallExpr(process.Module(), frame)));
+      body.exprs.Add(BuildServicesCallExpr(process.Owner(), frame)));
   for (const auto& arg : args) {
     if (!arg.has_value()) {
       throw InternalError(
@@ -54,13 +54,13 @@ auto LowerTimeFormatSystemSubroutineCall(
           mir::CallExpr{
               .callee = mir::Direct{.target = builtin},
               .arguments = std::move(call_args)},
-      .type = process.Module().Unit().builtins.void_type};
+      .type = process.Owner().Unit().builtins.void_type};
 }
 
 auto LowerPrintTimescaleSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame)
     -> diag::Result<mir::Expr> {
-  const auto& builtins = process.Module().Unit().builtins;
+  const auto& builtins = process.Owner().Unit().builtins;
   auto& body = *frame.current_block;
   const auto resolution = process.Resolution();
 
@@ -86,7 +86,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   const mir::ExprId fd_id = body.exprs.Add(
       mir::MakeIntLiteral(builtins.int_type, support::kStdoutFd));
   const mir::ExprId files_id =
-      body.exprs.Add(BuildFilesCallExpr(process.Module(), frame));
+      body.exprs.Add(BuildFilesCallExpr(process.Owner(), frame));
   return mir::Expr{
       .data =
           mir::CallExpr{

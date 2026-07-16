@@ -58,14 +58,14 @@ auto MaybeWrapObservableLhsWithMutate(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block, mir::ExprId lhs_id)
     -> mir::ExprId {
   const mir::ExprId root_id =
-      FindLhsRootId(lowerer.Module().Unit(), block, lhs_id);
+      FindLhsRootId(lowerer.Owner().Unit(), block, lhs_id);
   const bool root_is_cell = mir::IsObservableCellType(
-      lowerer.Module().Unit().types.Get(block.exprs.Get(root_id).type));
+      lowerer.Owner().Unit().types.Get(block.exprs.Get(root_id).type));
   if (!root_is_cell) return lhs_id;
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(lowerer.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
   return RewriteLhsRootWithMutate(
-      lowerer.Module().Unit(), block, lhs_id, services_id);
+      lowerer.Owner().Unit(), block, lhs_id, services_id);
 }
 
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
@@ -84,15 +84,15 @@ auto LowerAssociativeTraversal(
     throw InternalError(
         "LowerAssociativeTraversal: index argument unexpectedly elided");
   }
-  const auto& module = lowerer.Module();
+  const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
   const auto recv_hir = *c.arguments[0];
   const auto idx_hir = *c.arguments[1];
   const mir::TypeId key_type =
-      module.TranslateType(hir_exprs.Get(idx_hir).type);
-  const mir::TypeId void_t = module.Unit().builtins.void_type;
+      unit_lowerer.TranslateType(hir_exprs.Get(idx_hir).type);
+  const mir::TypeId void_t = unit_lowerer.Unit().builtins.void_type;
 
-  ClosureBuilder closure(lowerer.Module().Unit(), frame);
+  ClosureBuilder closure(lowerer.Owner().Unit(), frame);
   mir::Block& body = closure.Body();
   const WalkFrame& closure_frame = closure.Frame();
 
@@ -130,16 +130,16 @@ auto LowerAssociativeTraversal(
   const mir::ExprId probe_writeback_id =
       body.exprs.Add(mir::MakeLocalRefExpr(probe_var, key_type));
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(lowerer.Module(), closure_frame));
+      body.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), closure_frame));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
-      module.Unit(), body, services_id, idx_lhs_id, probe_writeback_id,
+      unit_lowerer.Unit(), body, services_id, idx_lhs_id, probe_writeback_id,
       std::nullopt, key_type, void_t);
   body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
 
   const mir::ExprId found_id =
       body.exprs.Add(mir::MakeLocalRefExpr(found_var, result_type));
   return BuildClosureCallExpr(
-      lowerer.Module().Unit(), *frame.current_block, closure.Build(found_id));
+      lowerer.Owner().Unit(), *frame.current_block, closure.Build(found_id));
 }
 
 // Translates a HIR builtin-method ref to its MIR `Callee`. The identifier
@@ -147,13 +147,13 @@ auto LowerAssociativeTraversal(
 // id names a type-namespace-qualified static call (e.g. `MyEnum::first()`)
 // or an instance call.
 auto MakeBuiltinMirCallee(
-    const ModuleLowerer& module, const hir::BuiltinMethodRef& b,
+    const UnitLowerer& unit_lowerer, const hir::BuiltinMethodRef& b,
     hir::TypeId hir_dispatch_type) -> mir::Callee {
   if (support::IsStaticBuiltinFn(b.method)) {
     return mir::Direct{
         .target = b.method,
         .qualification = mir::TypeQualifier{
-            .type = module.TranslateType(hir_dispatch_type)}};
+            .type = unit_lowerer.TranslateType(hir_dispatch_type)}};
   }
   return mir::Direct{.target = b.method};
 }
@@ -181,8 +181,8 @@ auto ArrayMethodReceiverElementType(const hir::Type& ty)
 // The canonical-default prototype type for an entry whose result shape the
 // receiver does not determine: a container result contributes its element type
 // as the prototype; a scalar result is its own prototype.
-auto ResultPrototypeType(const ModuleLowerer& module, mir::TypeId result_type)
-    -> mir::TypeId {
+auto ResultPrototypeType(
+    const UnitLowerer& unit_lowerer, mir::TypeId result_type) -> mir::TypeId {
   return std::visit(
       Overloaded{
           [](const mir::UnpackedArrayType& t) { return t.element_type; },
@@ -191,7 +191,7 @@ auto ResultPrototypeType(const ModuleLowerer& module, mir::TypeId result_type)
           [](const mir::AssociativeArrayType& t) { return t.element_type; },
           [result_type](const auto&) { return result_type; },
       },
-      module.Unit().types.Get(result_type).data);
+      unit_lowerer.Unit().types.Get(result_type).data);
 }
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
@@ -206,27 +206,27 @@ template <ExprLowerer Lowerer>
 auto BuildArrayMethodClosure(
     Lowerer& lowerer, WalkFrame frame, hir::TypeId hir_receiver_type,
     const hir::WithClause* with_clause) -> diag::Result<mir::Expr> {
-  const auto& module = lowerer.Module();
+  const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
-  const auto& hir_recv_ty = module.Hir().types.Get(hir_receiver_type);
+  const auto& hir_recv_ty = unit_lowerer.Hir().types.Get(hir_receiver_type);
   const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
   if (!element_type.has_value()) {
     throw InternalError(
         "BuildArrayMethodClosure: receiver is not an unpacked-array type");
   }
-  const mir::TypeId item_type = module.TranslateType(*element_type);
+  const mir::TypeId item_type = unit_lowerer.TranslateType(*element_type);
   // LRM 7.12.4 `item.index`: the ordinal position for a sequence container, the
   // key for an associative receiver.
-  mir::TypeId index_type = module.Unit().builtins.int_type;
+  mir::TypeId index_type = unit_lowerer.Unit().builtins.int_type;
   if (const auto* assoc =
           std::get_if<hir::AssociativeArrayType>(&hir_recv_ty.data);
       assoc != nullptr) {
-    index_type = module.TranslateType(assoc->key_type);
+    index_type = unit_lowerer.TranslateType(assoc->key_type);
   }
   const std::string iterator_name =
       with_clause != nullptr ? with_clause->element_name : std::string{"item"};
 
-  ClosureBuilder closure(lowerer.Module().Unit(), frame);
+  ClosureBuilder closure(lowerer.Owner().Unit(), frame);
   mir::Block& body = closure.Body();
 
   mir::ExprId body_return_value{};
@@ -355,7 +355,7 @@ auto LowerStructuralSubroutineCall(
   // through `Parent()`. The same receiver path a structural member access
   // takes, so the callee's class is named by this receiver's type.
   args.push_back(BuildEnclosingScopeReceiver(
-      frame, lowerer.Module().Unit(),
+      frame, lowerer.Owner().Unit(),
       mir::EnclosingHops{.value = usr.hops.value}));
   for (std::size_t i = 0; i < c.arguments.size(); ++i) {
     if (!c.arguments[i].has_value()) {
@@ -377,13 +377,13 @@ auto LowerStructuralSubroutineCall(
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       actual_id = block.exprs.Add(*std::move(arg_or));
       const mir::ExprId root_id =
-          FindLhsRootId(lowerer.Module().Unit(), block, actual_id);
+          FindLhsRootId(lowerer.Owner().Unit(), block, actual_id);
       if (root_id != actual_id) {
         actual_id =
             MaybeWrapObservableLhsWithMutate(lowerer, frame, block, actual_id);
       }
       args.push_back(BuildReferenceArg(
-          lowerer.Module().Unit(), block, actual_id,
+          lowerer.Owner().Unit(), block, actual_id,
           block.exprs.Get(actual_id).type));
     } else {
       auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
@@ -426,7 +426,7 @@ auto LowerBuiltinMethodCall(
   if (support::IsAssociativeTraversalFn(b.method)) {
     return LowerAssociativeTraversal(lowerer, frame, c, b.method, result_type);
   }
-  const auto& module = lowerer.Module();
+  const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const hir::TypeId hir_dispatch_type =
@@ -437,7 +437,7 @@ auto LowerBuiltinMethodCall(
   // Translate the callee up front so the same trait (`mir::IsMutatingCallee`)
   // drives both lowering and backend rendering.
   const mir::Callee mir_callee =
-      MakeBuiltinMirCallee(module, b, hir_dispatch_type);
+      MakeBuiltinMirCallee(unit_lowerer, b, hir_dispatch_type);
 
   // A static call has no value receiver -- `args[0]` is the discardable
   // type-bearer, the type-namespace qualifier rides on the callee. An
@@ -502,9 +502,10 @@ auto LowerBuiltinMethodCall(
   // map's chosen element, an empty reduction's zero, or the index an empty
   // associative dimension reports (LRM 20.7).
   if (support::BuiltinFnTakesResultPrototype(b.method)) {
-    const mir::TypeId proto_type = ResultPrototypeType(module, result_type);
-    args.push_back(
-        block.exprs.Add(BuildDefaultValueExpr(module, frame, proto_type)));
+    const mir::TypeId proto_type =
+        ResultPrototypeType(unit_lowerer, result_type);
+    args.push_back(block.exprs.Add(
+        BuildDefaultValueExpr(unit_lowerer, frame, proto_type)));
   }
 
   // LRM 15.5.3: `e.triggered` reads the triggered flag out of
@@ -514,7 +515,7 @@ auto LowerBuiltinMethodCall(
   // the event-trigger stmt path; `await` takes no services.)
   if (b.method == support::BuiltinFn::kTriggered) {
     args.push_back(
-        block.exprs.Add(BuildServicesCallExpr(lowerer.Module(), frame)));
+        block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame)));
   }
 
   return mir::Expr{
@@ -542,13 +543,13 @@ auto LowerMethodCall(
   auto receiver_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(m.receiver), frame);
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  auto& types = lowerer.Module().Unit().types;
+  auto& types = lowerer.Owner().Unit().types;
   const mir::TypeId object_type =
       std::get<mir::ManagedRefType>(types.Get(receiver_or->type).data).pointee;
   // The method's declaring class is stated on the HIR node; the receiver's
   // runtime class is only used to type the self parameter (which pairs with
   // the target's own arena entry through C++ member lookup).
-  const mir::ClassId owner_class = lowerer.Module().TranslateClass(m.class_id);
+  const mir::ClassId owner_class = lowerer.Owner().TranslateClass(m.class_id);
   const mir::ExprId handle_id = block.exprs.Add(*std::move(receiver_or));
   const mir::ExprId object_id = block.exprs.Add(
       mir::Expr{
@@ -715,7 +716,7 @@ auto MarshalSvToCarrier(
 // constructs the SV value directly. Feeds both a function's marshaled return
 // and the copy-back of an output / inout argument into its actual.
 auto MarshalCarrierToSv(
-    ModuleLowerer& module, WalkFrame frame, mir::ExprId call_id,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId call_id,
     const support::DpiCarrier& carrier_desc, mir::TypeId result_type)
     -> mir::Expr {
   const auto* scalar = std::get_if<support::ScalarCarrier>(&carrier_desc);
@@ -737,9 +738,9 @@ auto MarshalCarrierToSv(
       const mir::ExprId machine_int = block.exprs.Add(
           mir::Expr{
               .data = mir::IntCastExpr{.operand = call_id},
-              .type = module.Unit().builtins.machine_int64});
-      const mir::ExprId prototype =
-          block.exprs.Add(BuildDefaultValueExpr(module, frame, result_type));
+              .type = unit_lowerer.Unit().builtins.machine_int64});
+      const mir::ExprId prototype = block.exprs.Add(
+          BuildDefaultValueExpr(unit_lowerer, frame, result_type));
       return mir::Expr{
           .data =
               mir::CallExpr{
@@ -759,8 +760,8 @@ auto MarshalCarrierToSv(
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {call_id}},
           .type = result_type};
     case support::DpiScalarAbi::kLogicScalar: {
-      const mir::ExprId prototype =
-          block.exprs.Add(BuildDefaultValueExpr(module, frame, result_type));
+      const mir::ExprId prototype = block.exprs.Add(
+          BuildDefaultValueExpr(unit_lowerer, frame, result_type));
       return mir::Expr{
           .data =
               mir::CallExpr{
@@ -820,8 +821,8 @@ auto LowerForeignImportInputsOnly(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
-  auto& unit = module.Unit();
+  auto& unit_lowerer = lowerer.Owner();
+  auto& unit = unit_lowerer.Unit();
   auto& block = *frame.current_block;
   const auto& hir_exprs = lowerer.HirExprs();
 
@@ -853,7 +854,7 @@ auto LowerForeignImportInputsOnly(
   }
   const mir::ExprId call_id = block.exprs.Add(std::move(foreign_call));
   return MarshalCarrierToSv(
-      module, frame, call_id, support::ScalarCarrier{decl.ret_abi},
+      unit_lowerer, frame, call_id, support::ScalarCarrier{decl.ret_abi},
       result_type);
 }
 
@@ -870,8 +871,8 @@ auto LowerForeignImportSequenced(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
-  auto& unit = module.Unit();
+  auto& unit_lowerer = lowerer.Owner();
+  auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
   const mir::TypeId void_t = unit.builtins.void_type;
 
@@ -1008,8 +1009,8 @@ auto LowerForeignImportSequenced(
     if (const auto* vector = std::get_if<support::VectorCarrier>(&wb.carrier)) {
       const mir::ExprId data =
           BuildBufferDataCall(unit, body, temp_ref, wb.carrier_type);
-      const mir::ExprId prototype =
-          body.exprs.Add(BuildDefaultValueExpr(module, cframe, wb.sv_type));
+      const mir::ExprId prototype = body.exprs.Add(
+          BuildDefaultValueExpr(unit_lowerer, cframe, wb.sv_type));
       rhs_id = body.exprs.Add(
           mir::Expr{
               .data =
@@ -1019,11 +1020,11 @@ auto LowerForeignImportSequenced(
                       .arguments = {data, prototype}},
               .type = wb.sv_type});
     } else {
-      rhs_id = body.exprs.Add(
-          MarshalCarrierToSv(module, cframe, temp_ref, wb.carrier, wb.sv_type));
+      rhs_id = body.exprs.Add(MarshalCarrierToSv(
+          unit_lowerer, cframe, temp_ref, wb.carrier, wb.sv_type));
     }
     const mir::ExprId services_id =
-        body.exprs.Add(BuildServicesCallExpr(module, cframe));
+        body.exprs.Add(BuildServicesCallExpr(unit_lowerer, cframe));
     const mir::Expr assign = BuildObservableAssignExpr(
         unit, body, services_id, lhs_id, rhs_id, std::nullopt, wb.sv_type,
         void_t);
@@ -1037,7 +1038,7 @@ auto LowerForeignImportSequenced(
   const mir::ExprId ret_ref =
       body.exprs.Add(mir::MakeLocalRefExpr(*ret_temp, call_type));
   const mir::ExprId result_id = body.exprs.Add(MarshalCarrierToSv(
-      module, cframe, ret_ref, support::ScalarCarrier{decl.ret_abi},
+      unit_lowerer, cframe, ret_ref, support::ScalarCarrier{decl.ret_abi},
       result_type));
   return BuildClosureCallExpr(
       unit, *frame.current_block, closure.Build(result_id));
@@ -1073,7 +1074,7 @@ auto LowerForeignImportCall(
   // lookup distance, resolved here and then gone; the callable has no body and
   // no receiver, so nothing is reached at run time and the call names its owner
   // directly.
-  const mir::CompilationUnit& unit = lowerer.Module().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::EnclosingHops hops{.value = ref.hops.value};
   const mir::StaticCallableTarget target{
       .owner = EnclosingClassIdAtHops(frame, unit, hops),

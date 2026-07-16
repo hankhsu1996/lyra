@@ -10,7 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
-#include "lyra/hir/module_unit.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -21,7 +21,7 @@ namespace lyra::lowering::hir_to_mir {
 
 // Per-unit lowerer for the HIR-to-MIR pass.
 //
-// Fact: a reference to the input `hir::ModuleUnit`.
+// Fact: a reference to the input `hir::CompilationUnit`.
 // Registry: the HIR-TypeId to MIR-TypeId translation map, populated by `Run`
 // as it walks the input's type list.
 // Root output: the in-progress `mir::CompilationUnit`. Constructed in the
@@ -29,10 +29,11 @@ namespace lyra::lowering::hir_to_mir {
 // the class holds no IR pointer. Handlers reach the unit's append-only API
 // through the mutable `Unit()` overload; downstream consumers post-`Run` use
 // the const overload, which is the same shape they hold post-move.
-class ModuleLowerer {
+class UnitLowerer {
  public:
-  ModuleLowerer(
-      const hir::ModuleUnit& hir, const diag::SourceManager& source_manager)
+  UnitLowerer(
+      const hir::CompilationUnit& hir,
+      const diag::SourceManager& source_manager)
       : hir_(&hir), source_manager_(&source_manager) {
   }
 
@@ -50,7 +51,7 @@ class ModuleLowerer {
     return unit_;
   }
 
-  [[nodiscard]] auto Hir() const -> const hir::ModuleUnit& {
+  [[nodiscard]] auto Hir() const -> const hir::CompilationUnit& {
     return *hir_;
   }
 
@@ -63,7 +64,7 @@ class ModuleLowerer {
 
   [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
     if (hir_id.value >= type_map_.size()) {
-      throw InternalError("ModuleLowerer::TranslateType: unmapped HIR type");
+      throw InternalError("UnitLowerer::TranslateType: unmapped HIR type");
     }
     return type_map_[hir_id.value];
   }
@@ -71,7 +72,7 @@ class ModuleLowerer {
   void MapType(hir::TypeId hir_id, mir::TypeId mir_id) {
     if (hir_id.value != type_map_.size()) {
       throw InternalError(
-          "ModuleLowerer::MapType: HIR types must be mapped in HIR id order");
+          "UnitLowerer::MapType: HIR types must be mapped in HIR id order");
     }
     type_map_.emplace_back(mir_id);
   }
@@ -84,7 +85,7 @@ class ModuleLowerer {
       hir::ClassId hir_id, mir::ClassId mir_id, mir::TypeId object_type) {
     if (hir_id.value != class_map_.size()) {
       throw InternalError(
-          "ModuleLowerer::MapClass: HIR classes must be mapped in HIR id "
+          "UnitLowerer::MapClass: HIR classes must be mapped in HIR id "
           "order");
     }
     class_map_.emplace_back(mir_id);
@@ -93,14 +94,14 @@ class ModuleLowerer {
 
   [[nodiscard]] auto TranslateClass(hir::ClassId hir_id) const -> mir::ClassId {
     if (hir_id.value >= class_map_.size()) {
-      throw InternalError("ModuleLowerer::TranslateClass: unmapped HIR class");
+      throw InternalError("UnitLowerer::TranslateClass: unmapped HIR class");
     }
     return class_map_[hir_id.value];
   }
 
   [[nodiscard]] auto ClassObjectType(hir::ClassId hir_id) const -> mir::TypeId {
     if (hir_id.value >= class_object_type_map_.size()) {
-      throw InternalError("ModuleLowerer::ClassObjectType: unmapped HIR class");
+      throw InternalError("UnitLowerer::ClassObjectType: unmapped HIR class");
     }
     return class_object_type_map_[hir_id.value];
   }
@@ -135,7 +136,7 @@ class ModuleLowerer {
     auto& slot = class_shapes_[id.value];
     if (slot.has_value()) {
       throw InternalError(
-          "ModuleLowerer::DefineClassShape: shape for this id is already "
+          "UnitLowerer::DefineClassShape: shape for this id is already "
           "defined");
     }
     slot = std::move(shape);
@@ -146,7 +147,7 @@ class ModuleLowerer {
     if (id.value >= class_shapes_.size() ||
         !class_shapes_[id.value].has_value()) {
       throw InternalError(
-          "ModuleLowerer::GetClassShape: shape for this id is not defined");
+          "UnitLowerer::GetClassShape: shape for this id is not defined");
     }
     return *class_shapes_[id.value];
   }
@@ -155,7 +156,7 @@ class ModuleLowerer {
   [[nodiscard]] auto TranslateTypeData(const hir::TypeData& data) const
       -> mir::TypeData;
 
-  const hir::ModuleUnit* hir_;
+  const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;
   mir::CompilationUnit unit_;
   std::vector<mir::TypeId> type_map_;
