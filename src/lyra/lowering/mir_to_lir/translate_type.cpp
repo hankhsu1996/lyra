@@ -94,6 +94,10 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
       return lir::RuntimeLibraryKind::kDpiBitBuffer;
     case mir::RuntimeLibraryKind::kDpiLogicBuffer:
       return lir::RuntimeLibraryKind::kDpiLogicBuffer;
+    case mir::RuntimeLibraryKind::kDpiBitChunk:
+      return lir::RuntimeLibraryKind::kDpiBitChunk;
+    case mir::RuntimeLibraryKind::kDpiLogicChunk:
+      return lir::RuntimeLibraryKind::kDpiLogicChunk;
     case mir::RuntimeLibraryKind::kTrigger:
       return lir::RuntimeLibraryKind::kTrigger;
     case mir::RuntimeLibraryKind::kScopeProgram:

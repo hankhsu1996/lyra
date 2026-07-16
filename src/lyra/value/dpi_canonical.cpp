@@ -67,11 +67,7 @@ auto FromSvLogic(unsigned char encoded, const PackedArray& prototype)
 
 DpiBitBuffer::DpiBitBuffer(const PackedArray& sv)
     : chunks_(ChunkCount(sv.BitWidth())) {
-  const auto value = sv.ValueWords();
-  for (std::size_t i = 0; i < chunks_.size(); ++i) {
-    const ChunkSlot slot = SlotForChunk(i);
-    chunks_[i] = LowHalf(value[slot.word], slot.shift);
-  }
+  WriteCanonicalBitVec(chunks_.data(), sv);
 }
 
 auto DpiBitBuffer::Data() -> svBitVecVal* {
@@ -80,14 +76,7 @@ auto DpiBitBuffer::Data() -> svBitVecVal* {
 
 DpiLogicBuffer::DpiLogicBuffer(const PackedArray& sv)
     : chunks_(ChunkCount(sv.BitWidth())) {
-  const auto value = sv.ValueWords();
-  const auto unknown = sv.UnknownWords();
-  for (std::size_t i = 0; i < chunks_.size(); ++i) {
-    const ChunkSlot slot = SlotForChunk(i);
-    chunks_[i].aval = LowHalf(value[slot.word], slot.shift);
-    chunks_[i].bval =
-        unknown.empty() ? 0U : LowHalf(unknown[slot.word], slot.shift);
-  }
+  WriteCanonicalLogicVec(chunks_.data(), sv);
 }
 
 auto DpiLogicBuffer::Data() -> svLogicVecVal* {
@@ -124,6 +113,29 @@ auto ReadCanonicalLogicVec(
   MaskTopWord(unknown, width);
   return PackedArray::FromWords(
       value, unknown, width, prototype.IsSigned(), true);
+}
+
+auto WriteCanonicalBitVec(svBitVecVal* dst, const PackedArray& sv) -> void {
+  const auto value = sv.ValueWords();
+  const std::size_t chunks = ChunkCount(sv.BitWidth());
+  const std::span<svBitVecVal> out{dst, chunks};
+  for (std::size_t i = 0; i < chunks; ++i) {
+    const ChunkSlot slot = SlotForChunk(i);
+    out[i] = LowHalf(value[slot.word], slot.shift);
+  }
+}
+
+auto WriteCanonicalLogicVec(svLogicVecVal* dst, const PackedArray& sv) -> void {
+  const auto value = sv.ValueWords();
+  const auto unknown = sv.UnknownWords();
+  const std::size_t chunks = ChunkCount(sv.BitWidth());
+  const std::span<svLogicVecVal> out{dst, chunks};
+  for (std::size_t i = 0; i < chunks; ++i) {
+    const ChunkSlot slot = SlotForChunk(i);
+    out[i].aval = LowHalf(value[slot.word], slot.shift);
+    out[i].bval =
+        unknown.empty() ? 0U : LowHalf(unknown[slot.word], slot.shift);
+  }
 }
 
 }  // namespace lyra::value

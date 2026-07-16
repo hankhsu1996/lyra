@@ -22,6 +22,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -446,7 +447,11 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
 // definition foreign code calls. It recovers the exported method's receiver
 // from the running design, then runs the marshaling body -- an ordinary
 // statement render, so every carrier conversion and the method call come from
-// MIR. Emitted after the class it dispatches into so that class is complete.
+// MIR. Each parameter renders from its MIR type through ordinary type mapping;
+// a packed-vector carrier's C spelling (`svBitVecVal*` / `svLogicVecVal*`, made
+// `const` for an input by the pointer's mutability) is carried by that type, so
+// render makes no per-parameter ABI decision. Emitted after the class it
+// dispatches into so that class is complete.
 auto RenderForeignExportWrapper(
     const mir::CompilationUnit& unit, const mir::Class& s,
     const mir::ForeignExportWrapper& w) -> std::string {

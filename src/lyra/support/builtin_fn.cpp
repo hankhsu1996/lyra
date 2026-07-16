@@ -394,6 +394,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "read_canonical_bit_vec";
     case BuiltinFn::kReadCanonicalLogicVec:
       return "read_canonical_logic_vec";
+    case BuiltinFn::kWriteCanonicalBitVec:
+      return "write_canonical_bit_vec";
+    case BuiltinFn::kWriteCanonicalLogicVec:
+      return "write_canonical_logic_vec";
     case BuiltinFn::kDpiBufferData:
       return "dpi_buffer_data";
     case BuiltinFn::kFromSvLogic:

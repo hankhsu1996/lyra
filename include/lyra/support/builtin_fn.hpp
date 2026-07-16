@@ -323,24 +323,26 @@ enum class BuiltinFn : std::uint16_t {
   kChandlePtr,
   // Canonical DPI-C packed and 1-bit-4-state marshaling (LRM Annex H.10.1).
   // `kToSvLogic` reads a 1-bit 4-state value out as its `svLogic` scalar
-  // encoding
-  // (`value | unknown << 1`); `kFromSvLogic` builds it back in a prototype's
-  // shape (`args[0]` the byte, `args[1]` the prototype). The `kReadCanonical*`
-  // helpers build an SV value from a canonical buffer in a prototype's shape
-  // (`args[0]` the buffer pointer, `args[1]` the prototype). These three are
-  // free
-  // functions in `lyra::value`. A packed value's copy-in is not a helper: the
-  // boundary buffer is a `DpiBitBuffer` / `DpiLogicBuffer` value constructed
-  // from
-  // the SV value (which fills it), and `kDpiBufferData` (an instance method)
+  // encoding (`value | unknown << 1`); `kFromSvLogic` builds it back in a
+  // prototype's shape (`args[0]` the byte, `args[1]` the prototype). The
+  // `kReadCanonical*` helpers build an SV value from a canonical buffer in a
+  // prototype's shape (`args[0]` the buffer pointer, `args[1]` the prototype);
+  // the `kWriteCanonical*` helpers are their inverse, writing an SV value out
+  // into a canonical buffer (`args[0]` the buffer pointer, `args[1]` the SV
+  // value), as an export wrapper does through the foreign caller's pointer.
+  // These are free functions in `lyra::value`. An import's packed copy-in is
+  // not
+  // a builtin: the boundary buffer is a `DpiBitBuffer` / `DpiLogicBuffer` value
+  // constructed from the SV value, and `kDpiBufferData` (an instance method)
   // reads its writable chunk pointer for the foreign call and the copy-back
-  // read.
-  // `Bit` carries a 2-state (aval-only) buffer, `Logic` a 4-state buffer whose
-  // `aval` is the value plane and `bval` the unknown plane.
+  // read. `Bit` carries a 2-state (aval-only) buffer, `Logic` a 4-state buffer
+  // whose `aval` is the value plane and `bval` the unknown plane.
   kToSvLogic,
   kFromSvLogic,
   kReadCanonicalBitVec,
   kReadCanonicalLogicVec,
+  kWriteCanonicalBitVec,
+  kWriteCanonicalLogicVec,
   kDpiBufferData,
   kFromInt,
   kConvertFrom,
