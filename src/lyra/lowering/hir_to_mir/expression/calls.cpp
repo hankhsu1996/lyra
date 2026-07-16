@@ -19,6 +19,7 @@
 #include "lyra/hir/with_clause_id.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
@@ -1268,6 +1269,42 @@ template auto LowerHirCallExpr(
     const hir::CallExpr& c, diag::SourceSpan span, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
+// The MIR type of one foreign wrapper parameter, the ABI carrier realized as a
+// concrete type so a backend spells it through ordinary type mapping. A scalar
+// `input` is its by-value carrier; a scalar `output` / `inout` is a borrowed
+// pointer to it. A packed vector is a borrowed pointer to its canonical chunk,
+// read-only for an `input` the wrapper only reads (rendering `const
+// svBitVecVal*` through the pointer's mutability) and mutable for a writeback
+// direction.
+auto ExportParamType(
+    mir::CompilationUnit& unit, const support::DpiCarrier& carrier,
+    support::DpiDirection direction) -> mir::TypeId {
+  if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
+    const mir::TypeId chunk = unit.types.Intern(
+        mir::TypeData{mir::RuntimeLibraryType{
+            .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicChunk
+                                    : mir::RuntimeLibraryKind::kDpiBitChunk}});
+    const mir::Mutability mutability =
+        direction == support::DpiDirection::kInput ? mir::Mutability::kReadOnly
+                                                   : mir::Mutability::kMutable;
+    return unit.types.PointerTo(
+        chunk, mir::PointerOwnership::kBorrowed, mutability);
+  }
+  const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
+  if (support::DpiDirectionWritesBack(direction)) {
+    return unit.types.PointerTo(carrier_type, mir::PointerOwnership::kBorrowed);
+  }
+  return carrier_type;
+}
+
+// The builtin that writes an SV value out into a foreign-owned canonical
+// buffer, the write direction that pairs with the vector read builtin.
+[[nodiscard]] auto VectorWriteBuiltin(const support::VectorCarrier& v)
+    -> support::BuiltinFn {
+  return v.four_state ? support::BuiltinFn::kWriteCanonicalLogicVec
+                      : support::BuiltinFn::kWriteCanonicalBitVec;
+}
+
 auto SynthesizeForeignExportWrapper(
     UnitLowerer& module, const WalkFrame& ctor_frame, mir::ClassId class_id,
     mir::MethodId method_id, const hir::ForeignExportDecl& export_decl,
@@ -1275,9 +1312,11 @@ auto SynthesizeForeignExportWrapper(
   mir::CompilationUnit& unit = module.Unit();
   const mir::Class& mir_class = *ctor_frame.current_class;
   const mir::TypeId self_ptr = mir_class.self_pointer_type;
+  const mir::TypeId void_type = unit.builtins.void_type;
 
   mir::CallableCode code;
   CallableBindings bindings(unit, code);
+  mir::Block& body = code.body;
 
   // The receiver the exported method runs against is recovered by the backend's
   // wrapper shell from the running design, not passed by the foreign caller
@@ -1286,37 +1325,74 @@ auto SynthesizeForeignExportWrapper(
       BindingOriginId::Receiver(),
       mir::LocalDecl{.name = "self", .type = self_ptr});
 
+  const WalkFrame body_frame =
+      ctor_frame.WithBlock(&body).WithBindings(&bindings);
+
+  // One foreign parameter per SV formal, in declaration order (the C ABI
+  // order). The parameter's MIR type is the ABI carrier realized concretely, so
+  // nothing downstream re-derives the C signature from the direction / carrier.
   std::vector<mir::LocalId> params;
-  std::vector<mir::TypeId> carrier_types;
   params.reserve(export_decl.params.size());
-  carrier_types.reserve(export_decl.params.size());
   for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
-    const mir::TypeId carrier_type =
-        CarrierTypeId(unit, export_decl.params[i].carrier);
-    carrier_types.push_back(carrier_type);
+    const hir::DpiParamAbi& p = export_decl.params[i];
     params.push_back(bindings.DeclareAnonymous(
         mir::LocalDecl{
-            .name = "arg" + std::to_string(i), .type = carrier_type}));
+            .name = "arg" + std::to_string(i),
+            .type = ExportParamType(unit, p.carrier, p.direction)}));
   }
 
-  const WalkFrame body_frame =
-      ctor_frame.WithBlock(&code.body).WithBindings(&bindings);
+  const auto param_ref = [&](std::size_t i) -> mir::ExprId {
+    return body.exprs.Add(
+        mir::MakeLocalRefExpr(params[i], code.locals.Get(params[i]).type));
+  };
 
+  // Marshal each `input` / `inout` argument to an explicit SV-typed temporary
+  // before the call, so the read of an `inout`'s incoming value is sequenced
+  // ahead of the copy-back that later overwrites it, and multiple arguments do
+  // not alias inside one nested call expression. An `output` formal is not a
+  // method parameter -- it rides the completion payload (LRM 13.5). A vector
+  // reads its SV value from the incoming canonical buffer; a scalar `input`
+  // crosses by value; a scalar `inout` reads through its pointer.
   std::vector<mir::ExprId> call_args;
-  call_args.reserve(export_decl.params.size() + 1);
   call_args.push_back(
-      code.body.exprs.Add(mir::MakeLocalRefExpr(self_local, self_ptr)));
+      body.exprs.Add(mir::MakeLocalRefExpr(self_local, self_ptr)));
   for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
-    const mir::ExprId carrier_ref =
-        code.body.exprs.Add(mir::MakeLocalRefExpr(params[i], carrier_types[i]));
-    call_args.push_back(code.body.exprs.Add(MarshalCarrierToSv(
-        module, body_frame, carrier_ref, export_decl.params[i].carrier,
-        module.TranslateType(export_decl.params[i].sv_type))));
+    const hir::DpiParamAbi& p = export_decl.params[i];
+    if (p.direction == support::DpiDirection::kOutput) {
+      continue;
+    }
+    const mir::TypeId sv_type = module.TranslateType(p.sv_type);
+    mir::ExprId sv_init{};
+    if (const auto* vec = std::get_if<support::VectorCarrier>(&p.carrier)) {
+      const mir::ExprId prototype =
+          body.exprs.Add(BuildDefaultValueExpr(module, body_frame, sv_type));
+      sv_init = body.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee = mir::Direct{.target = VectorReadBuiltin(*vec)},
+                      .arguments = {param_ref(i), prototype}},
+              .type = sv_type});
+    } else {
+      const mir::ExprId carrier =
+          p.direction == support::DpiDirection::kInout
+              ? body.exprs.Add(
+                    mir::Expr{
+                        .data = mir::DerefExpr{.pointer = param_ref(i)},
+                        .type = CarrierTypeId(unit, p.carrier)})
+              : param_ref(i);
+      sv_init = body.exprs.Add(
+          MarshalCarrierToSv(module, body_frame, carrier, p.carrier, sv_type));
+    }
+    const mir::LocalId sv_in = bindings.DeclareAnonymous(
+        mir::LocalDecl{.name = "in" + std::to_string(i), .type = sv_type});
+    body.AppendStmt(mir::LocalDeclStmt{.target = sv_in, .init = sv_init});
+    call_args.push_back(body.exprs.Add(mir::MakeLocalRefExpr(sv_in, sv_type)));
   }
 
-  const mir::TypeId method_result_type =
+  const mir::TypeId payload_type =
       mir_class.methods.Get(method_id).code.result_type;
-  const mir::ExprId method_call = code.body.exprs.Add(
+  const mir::ExprId method_call = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -1326,16 +1402,106 @@ auto SynthesizeForeignExportWrapper(
                               mir::MethodTarget{
                                   .owner = class_id, .slot = method_id}},
                   .arguments = std::move(call_args)},
-          .type = method_result_type});
+          .type = payload_type});
 
-  const mir::ExprId ret_carrier = MarshalSvToCarrier(
-      unit, code.body, method_call,
-      support::ScalarCarrier{export_decl.ret_abi});
-  code.body.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
+  // The completion payload's components, in the callee's payload order: the
+  // function return (when non-void) first, then each `output` / `inout` formal
+  // in declaration order. Built in that exact order so each component's index
+  // lines up with the payload the callee returns. `param_index` is unused for
+  // the return component.
+  struct Component {
+    mir::TypeId sv_type;
+    bool is_return;
+    std::size_t param_index;
+  };
+  std::vector<Component> components;
+  const bool has_return = export_decl.ret_abi != support::DpiScalarAbi::kVoid;
+  if (has_return) {
+    components.push_back(
+        Component{
+            .sv_type = module.TranslateType(export_decl.ret_sv_type),
+            .is_return = true,
+            .param_index = 0});
+  }
+  for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
+    if (support::DpiDirectionWritesBack(export_decl.params[i].direction)) {
+      components.push_back(
+          Component{
+              .sv_type = module.TranslateType(export_decl.params[i].sv_type),
+              .is_return = false,
+              .param_index = i});
+    }
+  }
+
+  // Bind the completion value to a local every component projects out of; the
+  // projection encoding (bare value vs tuple) lives in one shared place. An
+  // empty payload has nothing to bind, so the call is a bare statement.
+  std::optional<mir::LocalId> completion;
+  if (!components.empty()) {
+    completion = bindings.DeclareAnonymous(
+        mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
+    body.AppendStmt(
+        mir::LocalDeclStmt{.target = *completion, .init = method_call});
+  } else {
+    body.AppendStmt(mir::ExprStmt{.expr = method_call});
+  }
+  const auto component_value = [&](std::size_t k) -> mir::ExprId {
+    return ProjectCompletionComponent(
+        body, *completion, payload_type, components.size(), k,
+        components[k].sv_type);
+  };
+
+  // Copy each `output` / `inout` component back through its foreign pointer: a
+  // scalar stores its marshaled carrier through the pointer; a vector reshapes
+  // the SV value into the foreign-owned canonical buffer.
+  for (std::size_t k = 0; k < components.size(); ++k) {
+    const Component& c = components[k];
+    if (c.is_return) {
+      continue;
+    }
+    const hir::DpiParamAbi& p = export_decl.params[c.param_index];
+    const mir::ExprId value = component_value(k);
+    if (const auto* vec = std::get_if<support::VectorCarrier>(&p.carrier)) {
+      body.AppendStmt(
+          mir::ExprStmt{
+              .expr = body.exprs.Add(
+                  mir::Expr{
+                      .data =
+                          mir::CallExpr{
+                              .callee =
+                                  mir::Direct{
+                                      .target = VectorWriteBuiltin(*vec)},
+                              .arguments = {param_ref(c.param_index), value}},
+                      .type = void_type})});
+      continue;
+    }
+    const mir::TypeId carrier_type = CarrierTypeId(unit, p.carrier);
+    const mir::ExprId carrier =
+        MarshalSvToCarrier(unit, body, value, p.carrier);
+    const mir::ExprId place = body.exprs.Add(
+        mir::Expr{
+            .data = mir::DerefExpr{.pointer = param_ref(c.param_index)},
+            .type = carrier_type});
+    body.AppendStmt(
+        mir::ExprStmt{
+            .expr = body.exprs.Add(
+                mir::MakeAssignExpr(place, carrier, void_type))});
+  }
+
+  if (has_return) {
+    const mir::ExprId ret_carrier = MarshalSvToCarrier(
+        unit, body, component_value(0),
+        support::ScalarCarrier{export_decl.ret_abi});
+    body.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
+  } else {
+    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  }
 
   code.params = std::move(params);
   code.result_type =
-      CarrierTypeId(unit, support::ScalarCarrier{export_decl.ret_abi});
+      has_return
+          ? CarrierTypeId(unit, support::ScalarCarrier{export_decl.ret_abi})
+          : void_type;
 
   return mir::ForeignExportWrapper{
       .foreign_name = export_decl.foreign_name,

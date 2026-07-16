@@ -1,11 +1,10 @@
-// A DPI-C export whose argument is not a by-value input is not yet supported:
-// an output argument crosses the boundary by pointer, which the export
-// marshaling does not yet handle (LRM 35.5.5).
+// Exporting a DPI-C task is not yet supported: only functions are lowered so
+// far (LRM 35.5.2). The declaration is well-formed, so slang accepts it and the
+// unsupported-construct diagnostic comes from lowering, not the frontend.
 module Top;
-  export "DPI-C" function set_val;
+  export "DPI-C" task do_work;
 
-  function automatic int set_val(output int o);
-    o = 1;
-    return 42;
-  endfunction
+  task do_work(input int x);
+    $display("x=%0d", x);
+  endtask
 endmodule

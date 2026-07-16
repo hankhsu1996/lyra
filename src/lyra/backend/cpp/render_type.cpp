@@ -209,6 +209,10 @@ auto RenderTypeAsCpp(
                 return std::string{"lyra::value::DpiBitBuffer"};
               case mir::RuntimeLibraryKind::kDpiLogicBuffer:
                 return std::string{"lyra::value::DpiLogicBuffer"};
+              case mir::RuntimeLibraryKind::kDpiBitChunk:
+                return std::string{"svBitVecVal"};
+              case mir::RuntimeLibraryKind::kDpiLogicChunk:
+                return std::string{"svLogicVecVal"};
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },
