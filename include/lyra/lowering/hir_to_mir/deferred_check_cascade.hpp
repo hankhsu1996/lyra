@@ -28,7 +28,7 @@ struct DeferredCheckBranch {
 // `priority case`); the cascade tags its synthesized warning emit with that
 // location so the diagnostic dispatcher attributes and rate-limits per site.
 auto BuildDeferredCheckCascade(
-    ModuleLowerer& module, WalkFrame frame, mir::Block wrapper,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block wrapper,
     std::vector<DeferredCheckBranch> branches,
     std::optional<mir::Block> tail_else, hir::UniquePriorityCheck check,
     std::optional<std::string> outer_label, diag::SourceSpan span) -> mir::Stmt;

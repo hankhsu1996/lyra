@@ -10,12 +10,12 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/blocks.hpp"
 #include "lyra/lowering/ast_to_hir/statement/branches.hpp"
 #include "lyra/lowering/ast_to_hir/statement/loops.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -54,10 +54,10 @@ auto LowerVariableDeclStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::VariableDeclStatement& vd, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  const auto& mapper = proc.Module().SourceMapper();
+  const auto& mapper = proc.Owner().SourceMapper();
   const auto& sym = vd.symbol;
   auto type_id_or =
-      proc.Module().InternType(sym.getType(), mapper.PointSpanOf(sym.location));
+      proc.Owner().InternType(sym.getType(), mapper.PointSpanOf(sym.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
   const auto local_id = proc.AddProceduralVar(
       frame, *frame.current_procedural_body, sym, *type_id_or);
@@ -108,7 +108,7 @@ auto LowerReturnStmt(
 auto LowerStatement(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::Statement& stmt)
     -> diag::Result<hir::Stmt> {
-  const auto& mapper = proc.Module().SourceMapper();
+  const auto& mapper = proc.Owner().SourceMapper();
   const auto span = mapper.SpanOf(stmt.sourceRange);
   switch (stmt.kind) {
     case slang::ast::StatementKind::Empty:
@@ -197,7 +197,7 @@ auto LowerStatement(
       // An assertion embedded in surrounding behavior contributes no statement
       // when disabled; the rest of the process runs. Without the policy it is a
       // rejected construct, not silently ignored.
-      if (proc.Module().DisableAssertions()) {
+      if (proc.Owner().DisableAssertions()) {
         return LowerEmptyStmt(span);
       }
       return diag::Fail(

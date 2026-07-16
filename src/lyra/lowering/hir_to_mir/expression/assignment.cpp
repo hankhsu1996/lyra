@@ -18,11 +18,11 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -85,7 +85,7 @@ auto IsExprRootedAtStructuralDataObject(
 // the cell, which is the captured reference rather than a re-navigation from a
 // receiver.
 auto CloneLhsSelectorChainOntoRef(
-    ModuleLowerer& module, const WalkFrame& outer_frame,
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_id, mir::ExprId root_id,
     mir::ExprId captured_root) -> mir::ExprId {
   if (outer_id == root_id) {
@@ -114,11 +114,12 @@ auto CloneLhsSelectorChainOntoRef(
             std::vector<mir::ExprId> body_args;
             body_args.reserve(src_args.size());
             body_args.push_back(CloneLhsSelectorChainOntoRef(
-                module, outer_frame, closure, src_args.front(), root_id,
+                unit_lowerer, outer_frame, closure, src_args.front(), root_id,
                 captured_root));
             for (std::size_t i = 1; i < src_args.size(); ++i) {
               body_args.push_back(SnapshotIntoClosure(
-                  module, outer_frame, closure, src_args[i], "_lyra_nba_arg"));
+                  unit_lowerer, outer_frame, closure, src_args[i],
+                  "_lyra_nba_arg"));
             }
             return body.exprs.Add(
                 mir::Expr{
@@ -132,7 +133,8 @@ auto CloneLhsSelectorChainOntoRef(
             const auto index = g.index;
             const mir::TypeId type = outer_expr.type;
             const mir::ExprId base = CloneLhsSelectorChainOntoRef(
-                module, outer_frame, closure, g.tuple, root_id, captured_root);
+                unit_lowerer, outer_frame, closure, g.tuple, root_id,
+                captured_root);
             return body.exprs.Add(
                 mir::Expr{
                     .data = mir::TupleGetExpr{.tuple = base, .index = index},
@@ -142,7 +144,7 @@ auto CloneLhsSelectorChainOntoRef(
             const auto index = g.index;
             const mir::TypeId type = outer_expr.type;
             const mir::ExprId base = CloneLhsSelectorChainOntoRef(
-                module, outer_frame, closure, g.union_value, root_id,
+                unit_lowerer, outer_frame, closure, g.union_value, root_id,
                 captured_root);
             return body.exprs.Add(
                 mir::Expr{
@@ -171,10 +173,10 @@ auto CloneLhsSelectorChainOntoRef(
 // call it would build for a blocking write, only in the closure body.
 template <typename EffectFn>
 auto BuildDeferredAssignClosure(
-    ModuleLowerer& module, WalkFrame frame, mir::ExprId target_in_outer,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId target_in_outer,
     std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
     -> mir::Expr {
-  mir::CompilationUnit& unit = module.Unit();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& outer_block = *frame.current_block;
 
   ClosureBuilder closure(unit, frame);
@@ -190,17 +192,18 @@ auto BuildDeferredAssignClosure(
   const mir::ExprId place_ref = BuildReferenceArg(
       unit, outer_block, root_in_outer,
       outer_block.exprs.Get(root_in_outer).type);
-  const mir::ExprId captured_root =
-      SnapshotIntoClosure(module, frame, closure, place_ref, "_lyra_nba_place");
+  const mir::ExprId captured_root = SnapshotIntoClosure(
+      unit_lowerer, frame, closure, place_ref, "_lyra_nba_place");
 
   const mir::ExprId body_target = CloneLhsSelectorChainOntoRef(
-      module, frame, closure, target_in_outer, root_in_outer, captured_root);
+      unit_lowerer, frame, closure, target_in_outer, root_in_outer,
+      captured_root);
 
   std::vector<mir::ExprId> body_operands;
   body_operands.reserve(operands_in_outer.size());
   for (const mir::ExprId op : operands_in_outer) {
     body_operands.push_back(
-        SnapshotIntoClosure(module, frame, closure, op, "_lyra_nba_arg"));
+        SnapshotIntoClosure(unit_lowerer, frame, closure, op, "_lyra_nba_arg"));
   }
 
   const mir::ExprId effect_id = body.exprs.Add(effect_fn(
@@ -223,7 +226,7 @@ auto ApplyAssignEffect(
   auto& block = *frame.current_block;
   if (kind == hir::AssignKind::kBlocking) {
     const mir::ExprId services_id =
-        block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+        block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
     return effect_fn(block, target_in_outer, operands_in_outer, services_id);
   }
   if (!IsExprRootedAtStructuralDataObject(block, target_in_outer)) {
@@ -232,16 +235,16 @@ auto ApplyAssignEffect(
         "non-blocking assignment to procedural local is not supported yet");
   }
   mir::Expr closure = BuildDeferredAssignClosure(
-      process.Module(), frame, target_in_outer, operands_in_outer, effect_fn);
+      process.Owner(), frame, target_in_outer, operands_in_outer, effect_fn);
   const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kSubmitNba},
               .arguments = {services_id, closure_id}},
-      .type = process.Module().Unit().builtins.void_type};
+      .type = process.Owner().Unit().builtins.void_type};
 }
 
 // Axis A for an observable / local target: a whole-cell `Set`, a selector-chain
@@ -264,14 +267,14 @@ auto LowerObservableAssign(
   const std::optional<mir::BinaryOp> compound_op =
       a.compound_op.has_value() ? std::optional{LowerBinaryOp(*a.compound_op)}
                                 : std::nullopt;
-  const mir::TypeId void_type = process.Module().Unit().builtins.void_type;
+  const mir::TypeId void_type = process.Owner().Unit().builtins.void_type;
   const std::array<mir::ExprId, 1> operands{rhs_id};
   return ApplyAssignEffect(
       process, frame, a.kind, span, lhs_id, operands,
       [&](mir::Block& blk, mir::ExprId target, std::span<const mir::ExprId> ops,
           mir::ExprId services) -> mir::Expr {
         return BuildObservableAssignExpr(
-            process.Module().Unit(), blk, services, target, ops[0], compound_op,
+            process.Owner().Unit(), blk, services, target, ops[0], compound_op,
             result_type, void_type);
       });
 }
@@ -302,16 +305,16 @@ auto LowerHirAssignExprProc(
 // destructuring submits per part inside its own block, so this exposes just
 // the closure-building half over the observable write effect.
 auto BuildNbaSubmitClosureExpr(
-    ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId lhs_in_outer,
     mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr {
   const std::array<mir::ExprId, 1> operands{rhs_id_in_outer};
   return BuildDeferredAssignClosure(
-      module, frame, lhs_in_outer, operands,
+      unit_lowerer, frame, lhs_in_outer, operands,
       [&](mir::Block& blk, mir::ExprId target, std::span<const mir::ExprId> ops,
           mir::ExprId services) -> mir::Expr {
         return BuildObservableAssignExpr(
-            module.Unit(), blk, services, target, ops[0], std::nullopt,
-            rhs_type, module.Unit().builtins.void_type);
+            unit_lowerer.Unit(), blk, services, target, ops[0], std::nullopt,
+            rhs_type, unit_lowerer.Unit().builtins.void_type);
       });
 }
 

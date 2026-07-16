@@ -6,9 +6,9 @@
 
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -61,7 +61,7 @@ auto MakeValueChangeWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {
-  auto& unit = lowerer.Module().Unit();
+  auto& unit = lowerer.Owner().Unit();
 
   std::vector<mir::ExprId> triggers;
   triggers.reserve(sensitivity_list.size());
@@ -79,7 +79,7 @@ auto MakeValueChangeWaitStmt(
           .type = triggers_type});
 
   const mir::ExprId services_id =
-      target_block.exprs.Add(BuildServicesCallExpr(lowerer.Module(), frame));
+      target_block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
   const mir::ExprId call_id = target_block.exprs.Add(
       mir::Expr{
           .data =

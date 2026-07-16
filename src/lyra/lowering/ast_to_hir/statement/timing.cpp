@@ -13,7 +13,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -46,7 +46,7 @@ auto LowerSignalEventTrigger(
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
-  const auto& expr_type = proc.Module().Unit().types.Get(expr_or->type);
+  const auto& expr_type = proc.Owner().Unit().types.Get(expr_or->type);
   if (sig.edge != slang::ast::EdgeKind::None) {
     // The runtime classifies an edge only on a packed bit-vector cell (LRM
     // 9.4.2 Table 9-2); slang already restricts an edge to an integral operand.
@@ -65,9 +65,9 @@ auto LowerSignalEventTrigger(
 
   const auto edge_kind = LowerEventEdge(sig.edge);
 
-  const auto& reads = proc.Module().Sensitivity().AnalyzeReads(
+  const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
       sig.expr, proc.ContainingSymbol());
-  auto sensitivity_list = proc.Module().TranslateSensitivityReads(reads, frame);
+  auto sensitivity_list = proc.Owner().TranslateSensitivityReads(reads, frame);
   // Faithful record of SV: every leaf carries the trigger's edge identifier.
   // Whether the runtime can act on it directly (single leaf, LSB-reduce) or
   // needs a snapshot + re-eval wrapper (compound) is a HIR -> MIR decision.
@@ -189,10 +189,9 @@ auto LowerTimedStmt(
   // the body lowers so a read's cross-unit reference is already resolved when
   // its subscription is built.
   if (auto* ie = std::get_if<hir::ImplicitEventControl>(&*timing)) {
-    const auto& reads = proc.Module().Sensitivity().AnalyzeReads(
+    const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
         ts.stmt, proc.ContainingSymbol());
-    ie->sensitivity_list =
-        proc.Module().TranslateSensitivityReads(reads, frame);
+    ie->sensitivity_list = proc.Owner().TranslateSensitivityReads(reads, frame);
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -250,8 +249,8 @@ auto LowerWaitStmt(
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
   const auto& reads =
-      proc.Module().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
-  auto sensitivity = proc.Module().TranslateSensitivityReads(reads, frame);
+      proc.Owner().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
+  auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
   return hir::Stmt{
       .label = std::nullopt,
       .data =

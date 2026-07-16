@@ -39,7 +39,7 @@ auto LowerIfStmt(
   }
   const mir::ExprId cond_id = ReduceToCondition(
       block, block.exprs.Add(*std::move(cond_expr_or)),
-      process.Module().Unit().builtins.bit1);
+      process.Owner().Unit().builtins.bit1);
 
   auto then_or = LowerStmtIntoChildScope(process, frame, i.then_stmt);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
@@ -65,7 +65,7 @@ auto LowerCaseStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::CaseStmt& c, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
+  const mir::TypeId bit_type = process.Owner().Unit().builtins.bit1;
   const mir::BinaryOp compare_op = [&] {
     switch (c.condition_kind) {
       case hir::CaseCondition::kNormal:
@@ -89,7 +89,7 @@ auto LowerCaseStmt(
   const mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
 
   const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(process.Module(), wrapper_frame, cond_expr_id);
+      AppendCaseSnapshot(process.Owner(), wrapper_frame, cond_expr_id);
 
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(c.items.size());
@@ -127,7 +127,7 @@ auto LowerCaseStmt(
             }
             return label_frame.current_block->exprs.Add(*std::move(lab_or));
           },
-          process.Module().Unit());
+          process.Owner().Unit());
       if (!pred_or) return std::unexpected(std::move(pred_or.error()));
       predicates.push_back(*pred_or);
     }
@@ -140,7 +140,7 @@ auto LowerCaseStmt(
               .predicate = predicates[i], .body = std::move(body_scopes[i])});
     }
     return BuildDeferredCheckCascade(
-        process.Module(), frame, std::move(wrapper), std::move(branches),
+        process.Owner(), frame, std::move(wrapper), std::move(branches),
         std::move(default_scope), *c.check, std::move(label), span);
   }
 
@@ -157,7 +157,7 @@ auto LowerCaseStmt(
           }
           return label_frame.current_block->exprs.Add(*std::move(lab_or));
         },
-        process.Module().Unit());
+        process.Owner().Unit());
   };
 
   return BuildCaseCascade(
@@ -171,7 +171,7 @@ auto LowerCaseInsideStmt(
     const hir::CaseInsideStmt& c, diag::SourceSpan span)
     -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
+  const mir::TypeId bit_type = process.Owner().Unit().builtins.bit1;
 
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
@@ -182,7 +182,7 @@ auto LowerCaseInsideStmt(
   const mir::ExprId cond_expr_id = wrapper.exprs.Add(*std::move(cond_or));
 
   const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(process.Module(), wrapper_frame, cond_expr_id);
+      AppendCaseSnapshot(process.Owner(), wrapper_frame, cond_expr_id);
 
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(c.items.size());
@@ -254,7 +254,7 @@ auto LowerCaseInsideStmt(
               .predicate = predicates[i], .body = std::move(body_scopes[i])});
     }
     return BuildDeferredCheckCascade(
-        process.Module(), frame, std::move(wrapper), std::move(branches),
+        process.Owner(), frame, std::move(wrapper), std::move(branches),
         std::move(default_scope), *c.check, std::move(label), span);
   }
 

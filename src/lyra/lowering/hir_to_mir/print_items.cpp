@@ -106,7 +106,7 @@ auto LowerFormatOperand(
   auto lowered_or = process.LowerExpr(hir_expr, frame);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
-  if (TypeContainsChandle(process.Module().Unit(), lowered.type)) {
+  if (TypeContainsChandle(process.Owner().Unit(), lowered.type)) {
     return diag::Fail(
         hir_expr.span, diag::DiagCode::kUnsupportedExpressionForm,
         "a chandle is not a legal format argument (LRM 6.14 permits a chandle "
@@ -127,14 +127,14 @@ auto BuildPrintValueItem(
   // each format directly, without building a string value. Only an unpacked
   // byte array is not directly formattable, so it lifts to a string value
   // here.
-  const auto& value_type = process.Module().Unit().types.Get(lowered.type);
+  const auto& value_type = process.Owner().Unit().types.Get(lowered.type);
   if (spec.kind == value::FormatKind::kString &&
       value_type.Kind() != mir::TypeKind::kString &&
       !value_type.IsIntegralPacked()) {
     const mir::ExprId inner = block.exprs.Add(std::move(lowered));
     lowered = BuildValueConversion(
-        process.Module().Unit(), block, inner,
-        process.Module().Unit().builtins.string);
+        process.Owner().Unit(), block, inner,
+        process.Owner().Unit().builtins.string);
   }
 
   const mir::TypeId type = lowered.type;
@@ -160,7 +160,7 @@ auto BuildPrintItemFromDirective(
       // the operand cursor where it found it; its modifiers ride through the
       // string-format spec like an ordinary `%s` argument.
       auto& block = *frame.current_block;
-      const auto& builtins = process.Module().Unit().builtins;
+      const auto& builtins = process.Owner().Unit().builtins;
       const mir::ExprId self_id = block.exprs.Add(
           MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
       const mir::ExprId path_id = block.exprs.Add(
@@ -391,7 +391,7 @@ auto HasLiteralFormatString(
 auto BuildRuntimeFormatCallExpr(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     std::size_t arg_offset) -> diag::Result<mir::Expr> {
-  auto& unit = process.Module().Unit();
+  auto& unit = process.Owner().Unit();
   auto& block = *frame.current_block;
   const std::vector<hir::ExprId> args = FlattenCallArgs(call);
 
@@ -447,7 +447,7 @@ auto BuildRuntimeFormatCallExpr(
           .type = unit.builtins.string});
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   const mir::ExprId time_format_id = block.exprs.Add(
       mir::Expr{
           .data =

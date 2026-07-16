@@ -4,7 +4,7 @@
 
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 
@@ -31,8 +31,8 @@ namespace lyra::lowering::hir_to_mir {
 // -- thread it as the engine handle. It needs only the module and the walk
 // frame, not the pass class, so it serves the process body and structural-scope
 // (continuous-assign) call paths identically.
-auto BuildServicesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
-    -> mir::Expr;
+auto BuildServicesCallExpr(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame) -> mir::Expr;
 
 // Builds the file-IO broker expression `services.Files()`: a `Files` method
 // call on the engine handle, typed as the unit's `files` builtin. Returns the
@@ -40,7 +40,7 @@ auto BuildServicesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
 // interned into `frame.current_block` as a child. LRM 21.3 file-IO ops and
 // LRM 21.2.1 / 21.3.1 sink writes thread the resulting handle as the receiver
 // of their FileTable methods.
-auto BuildFilesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
+auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, const WalkFrame& frame)
     -> mir::Expr;
 
 // Builds the diagnostic broker expression `services.Diagnostic()`: a
@@ -50,7 +50,7 @@ auto BuildFilesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
 // child. LRM 20.10 `$info` / `$warning` / `$error` thread the resulting
 // handle as the receiver of their severity-fixed Emit methods.
 auto BuildDiagnosticCallExpr(
-    const ModuleLowerer& module, const WalkFrame& frame) -> mir::Expr;
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame) -> mir::Expr;
 
 // Builds the format-text expression `value::Format(items,
 // services.TimeFormat())`: a value-layer free call over the print-item array

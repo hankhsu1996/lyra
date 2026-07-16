@@ -60,9 +60,9 @@ auto LowerAutomaticVarDeclStmt(
     init_value = block.exprs.Add(*std::move(init_or));
   } else {
     init_value = block.exprs.Add(
-        BuildDefaultValueFromHir(process.Module(), frame, hir_local.type));
+        BuildDefaultValueFromHir(process.Owner(), frame, hir_local.type));
   }
-  init_value = ConvertToType(process.Module().Unit(), block, init_value, type);
+  init_value = ConvertToType(process.Owner().Unit(), block, init_value, type);
 
   return mir::Stmt{
       .label = std::move(label),
@@ -93,9 +93,9 @@ auto LowerPromotedVarDeclStmt(
     init_value = block.exprs.Add(*std::move(init_or));
   } else {
     init_value = block.exprs.Add(
-        BuildDefaultValueFromHir(process.Module(), frame, hir_type));
+        BuildDefaultValueFromHir(process.Owner(), frame, hir_type));
   }
-  init_value = ConvertToType(process.Module().Unit(), block, init_value, type);
+  init_value = ConvertToType(process.Owner().Unit(), block, init_value, type);
   const mir::ExprId assign =
       block.exprs.Add(mir::MakeAssignExpr(target, init_value, type));
   return mir::Stmt{
@@ -108,7 +108,7 @@ auto LowerVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
   const auto& hir_local = process.HirBody().procedural_vars.Get(v.var);
-  const mir::TypeId type = process.Module().TranslateType(hir_local.type);
+  const mir::TypeId type = process.Owner().TranslateType(hir_local.type);
   if (hir_local.lifetime_extended) {
     return LowerPromotedVarDeclStmt(
         process, frame, std::move(label), v, hir_local.type, type);

@@ -39,7 +39,7 @@ template <ExprLowerer L>
 auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
-  const mir::TypeId result_type = lowerer.Module().TranslateType(expr.type);
+  const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
   auto raw_or = std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
@@ -159,7 +159,7 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       expr.data);
   if (!raw_or) return raw_or;
   if (mir::IsObservableCellType(
-          lowerer.Module().Unit().types.Get(raw_or->type))) {
+          lowerer.Owner().Unit().types.Get(raw_or->type))) {
     const mir::ExprId cell_id =
         frame.current_block->exprs.Add(*std::move(raw_or));
     return mir::MakeObservableGetCallExpr(cell_id, result_type);
@@ -176,7 +176,7 @@ template <ExprLowerer L>
 auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
-  const mir::TypeId result_type = lowerer.Module().TranslateType(expr.type);
+  const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
   return std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {

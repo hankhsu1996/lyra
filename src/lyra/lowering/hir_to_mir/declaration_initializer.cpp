@@ -18,7 +18,7 @@ auto IntegratePendingStaticInitializer(
     const WalkFrame& init_frame, const PendingStaticInitializer& pending)
     -> diag::Result<void> {
   auto& init_block = *init_frame.current_block;
-  const mir::CompilationUnit& unit = process.Module().Unit();
+  const mir::CompilationUnit& unit = process.Owner().Unit();
   const mir::TypeId self_ptr_type = init_frame.current_class->self_pointer_type;
 
   const mir::ExprId target = init_block.exprs.Add(
@@ -33,7 +33,7 @@ auto IntegratePendingStaticInitializer(
   // and needs no Set.
   if (target_is_observable_cell) {
     const mir::ExprId prototype = init_block.exprs.Add(BuildDefaultValueFromHir(
-        process.Module(), init_frame, pending.hir_type));
+        process.Owner(), init_frame, pending.hir_type));
     init_block.AppendStmt(
         mir::ExprStmt{
             .expr = init_block.exprs.Add(
@@ -52,7 +52,7 @@ auto IntegratePendingStaticInitializer(
     init_value = init_block.exprs.Add(*std::move(init_or));
   } else {
     init_value = init_block.exprs.Add(BuildDefaultValueFromHir(
-        process.Module(), init_frame, pending.hir_type));
+        process.Owner(), init_frame, pending.hir_type));
   }
 
   const mir::ExprId services_self_read =

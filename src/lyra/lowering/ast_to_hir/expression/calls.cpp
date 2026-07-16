@@ -28,9 +28,9 @@
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
-#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -82,7 +82,7 @@ template <ExprLowerer Lowerer>
 auto LowerCallExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
 
   // The LRM 20.6 / 20.7 queries are resolved before the argument loop: their
   // operand is never evaluated and may be a data type, which has no value form
@@ -129,14 +129,14 @@ auto LowerCallExpr(
     const std::string_view name = info.subroutine->name;
 
     if (receiver_type.has_value() &&
-        module.Unit().types.Get(*receiver_type).IsEnum()) {
+        unit_lowerer.Unit().types.Get(*receiver_type).IsEnum()) {
       if (auto kind = LowerEnumMethodName(name); kind.has_value()) {
         // `next` / `prev` have an optional `int unsigned step = 1` (LRM
         // 6.19.5.3/4). When the user omits the step, the lowering hands the
         // backend a single-argument call and lets the backend's intrinsic
         // mechanism supply the default (C++ default-argument; LLVM constant
         // 1; etc.). No synthesized literal is injected at the HIR boundary.
-        auto type_id = module.InternType(*call.type, span);
+        auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
@@ -151,13 +151,13 @@ auto LowerCallExpr(
     }
 
     if (receiver_type.has_value() &&
-        module.Unit().types.Get(*receiver_type).Kind() ==
+        unit_lowerer.Unit().types.Get(*receiver_type).Kind() ==
             hir::TypeKind::kString) {
       if (auto kind = LowerStringMethodName(name); kind.has_value()) {
         // LRM 6.16.1 through 6.16.15 -- string intrinsic methods. The
         // receiver is arguments[0]; remaining arguments are the SV method
         // parameters (e.g. substr's `i, j`).
-        auto type_id = module.InternType(*call.type, span);
+        auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
@@ -173,13 +173,13 @@ auto LowerCallExpr(
 
     if (receiver_type.has_value() &&
         std::holds_alternative<hir::EventType>(
-            module.Unit().types.Get(*receiver_type).data) &&
+            unit_lowerer.Unit().types.Get(*receiver_type).data) &&
         name == "triggered") {
       // LRM 15.5.3: `e.triggered` returns true for the duration of the time
       // slot in which the event was last triggered. Result type is bit (1'b0
       // / 1'b1) -- slang already typed the expression; we just route the
       // call through the named-event method.
-      auto type_id = module.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternType(*call.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -197,14 +197,14 @@ auto LowerCallExpr(
 
     if (receiver_type.has_value() &&
         std::holds_alternative<hir::QueueType>(
-            module.Unit().types.Get(*receiver_type).data)) {
+            unit_lowerer.Unit().types.Get(*receiver_type).data)) {
       // LRM 7.10.2 queue-native methods. The receiver is arguments[0]; any
       // method parameters (insert's index and item, push's item) follow as the
       // remaining arguments. These methods take no `with` clause and are tried
       // before the array-manipulation family so `size` / `delete` resolve to
       // the queue-native form rather than the LRM 7.12 one.
       if (auto kind = LowerQueueMethodName(name); kind.has_value()) {
-        auto type_id = module.InternType(*call.type, span);
+        auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
@@ -232,15 +232,15 @@ auto LowerCallExpr(
     // `WithClause`, which HIR -> MIR turns into a closure argument.
     if (receiver_type.has_value() &&
         (std::holds_alternative<hir::UnpackedArrayType>(
-             module.Unit().types.Get(*receiver_type).data) ||
+             unit_lowerer.Unit().types.Get(*receiver_type).data) ||
          std::holds_alternative<hir::DynamicArrayType>(
-             module.Unit().types.Get(*receiver_type).data) ||
+             unit_lowerer.Unit().types.Get(*receiver_type).data) ||
          std::holds_alternative<hir::QueueType>(
-             module.Unit().types.Get(*receiver_type).data) ||
+             unit_lowerer.Unit().types.Get(*receiver_type).data) ||
          std::holds_alternative<hir::AssociativeArrayType>(
-             module.Unit().types.Get(*receiver_type).data))) {
+             unit_lowerer.Unit().types.Get(*receiver_type).data))) {
       if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
-        auto type_id = module.InternType(*call.type, span);
+        auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         std::optional<hir::WithClause> with_clause;
         if (std::holds_alternative<
@@ -255,7 +255,7 @@ auto LowerCallExpr(
           // distinguishes it from a foreach loop variable (also a slang
           // Iterator symbol) and lets a clause nested in the body name this
           // outer one.
-          const hir::WithClauseId clause_id = module.NextWithClauseId();
+          const hir::WithClauseId clause_id = unit_lowerer.NextWithClauseId();
           auto body_or = lowerer.LowerExpr(
               *iter_info.iterExpr,
               frame.WithIterationClause(iter_var, clause_id));
@@ -281,12 +281,12 @@ auto LowerCallExpr(
 
     if (receiver_type.has_value() &&
         std::holds_alternative<hir::AssociativeArrayType>(
-            module.Unit().types.Get(*receiver_type).data)) {
+            unit_lowerer.Unit().types.Get(*receiver_type).data)) {
       if (auto kind = LowerAssociativeMethodName(name); kind.has_value()) {
         // LRM 7.9 associative-array methods. The receiver is arguments[0]; the
         // key (exists / delete-by-index) follows as the next argument. The
         // no-argument `delete` clears the array.
-        auto type_id = module.InternType(*call.type, span);
+        auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
@@ -307,7 +307,7 @@ auto LowerCallExpr(
     if (info.subroutine != nullptr &&
         info.subroutine->knownNameId ==
             slang::parsing::KnownSystemName::IsUnknown) {
-      auto type_id = module.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternType(*call.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -329,7 +329,7 @@ auto LowerCallExpr(
     if (info.subroutine != nullptr &&
         info.subroutine->knownNameId ==
             slang::parsing::KnownSystemName::Clog2) {
-      auto type_id = module.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternType(*call.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -364,7 +364,7 @@ auto LowerCallExpr(
         throw InternalError(
             "item.index receiver is not an active with-clause iterator");
       }
-      auto type_id = module.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternType(*call.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -386,7 +386,7 @@ auto LowerCallExpr(
              slang::parsing::KnownSystemName::Signed ||
          info.subroutine->knownNameId ==
              slang::parsing::KnownSystemName::Unsigned)) {
-      auto type_id = module.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternType(*call.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -420,8 +420,8 @@ auto LowerCallExpr(
           std::string{name} + "'");
     }
 
-    const auto result_type =
-        MakeReturnConventionType(module.Unit().builtins, desc->result_conv);
+    const auto result_type = MakeReturnConventionType(
+        unit_lowerer.Unit().builtins, desc->result_conv);
     return hir::Expr{
         .type = result_type,
         .data =
@@ -462,9 +462,9 @@ auto LowerCallExpr(
     // when the field is inherited.
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto class_id = module.InternClass(declaring_class, span);
+    auto class_id = unit_lowerer.InternClass(declaring_class, span);
     if (!class_id) return std::unexpected(std::move(class_id.error()));
-    auto method_result_type = module.InternType(*call.type, span);
+    auto method_result_type = unit_lowerer.InternType(*call.type, span);
     if (!method_result_type) {
       return std::unexpected(std::move(method_result_type.error()));
     }
@@ -487,14 +487,15 @@ auto LowerCallExpr(
   // from body-bearing subroutines. Resolve it to a ForeignImportRef; its ABI
   // and foreign name were classified once at declaration and are not re-derived
   // here.
-  if (const auto import_binding = module.LookupForeignImportBinding(*sym)) {
+  if (const auto import_binding =
+          unit_lowerer.LookupForeignImportBinding(*sym)) {
     const auto import_hops = frame.HopsTo(import_binding->owner_frame);
     if (!import_hops.has_value()) {
       throw InternalError(
           "AST->HIR call: DPI import owner frame is not on the current scope "
           "stack");
     }
-    auto import_result_type = module.InternType(*call.type, span);
+    auto import_result_type = unit_lowerer.InternType(*call.type, span);
     if (!import_result_type) {
       return std::unexpected(std::move(import_result_type.error()));
     }
@@ -511,7 +512,7 @@ auto LowerCallExpr(
     };
   }
 
-  const auto binding = module.LookupSubroutineBinding(*sym);
+  const auto binding = unit_lowerer.LookupSubroutineBinding(*sym);
   if (!binding.has_value()) {
     throw InternalError(
         "AST->HIR call: resolved user subroutine has no registered HIR "
@@ -523,7 +524,7 @@ auto LowerCallExpr(
         "AST->HIR call: user subroutine owner frame is not on the current "
         "scope stack");
   }
-  auto result_type = module.InternType(*call.type, span);
+  auto result_type = unit_lowerer.InternType(*call.type, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
   return hir::Expr{
       .type = *result_type,

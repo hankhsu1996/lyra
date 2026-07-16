@@ -39,7 +39,7 @@ auto LowerForStmt(
             [&](const hir::ForInitDecl& d) -> diag::Result<mir::ForInit> {
               const auto& hir_local = hir_proc.procedural_vars.Get(d.var);
               const mir::TypeId type =
-                  process.Module().TranslateType(hir_local.type);
+                  process.Owner().TranslateType(hir_local.type);
               const mir::LocalId local_id = frame.bindings->Declare(
                   BindingOriginId::Procedural(d.var),
                   mir::LocalDecl{.name = hir_local.name, .type = type});
@@ -55,7 +55,7 @@ auto LowerForStmt(
                 init_id = block.exprs.Add(*std::move(init_or));
               } else {
                 init_id = block.exprs.Add(BuildDefaultValueFromHir(
-                    process.Module(), frame, hir_local.type));
+                    process.Owner(), frame, hir_local.type));
               }
               return mir::ForInit{
                   mir::ForInitDecl{.induction_var = local_id, .init = init_id}};
@@ -83,7 +83,7 @@ auto LowerForStmt(
     }
     cond_id = ReduceToCondition(
         block, block.exprs.Add(*std::move(cond_or)),
-        process.Module().Unit().builtins.bit1);
+        process.Owner().Unit().builtins.bit1);
   }
 
   std::vector<mir::ExprId> step_ids;
@@ -128,7 +128,7 @@ auto LowerWhileStmt(
   }
   const mir::ExprId cond_id = ReduceToCondition(
       block, block.exprs.Add(*std::move(cond_or)),
-      process.Module().Unit().builtins.bit1);
+      process.Owner().Unit().builtins.bit1);
 
   auto body_or = LowerStmtIntoChildScope(process, frame, w.body);
   if (!body_or) {
@@ -159,7 +159,7 @@ auto LowerDoWhileStmt(
   }
   const mir::ExprId cond_id = ReduceToCondition(
       block, block.exprs.Add(*std::move(cond_or)),
-      process.Module().Unit().builtins.bit1);
+      process.Owner().Unit().builtins.bit1);
 
   const mir::BlockId body_scope_id =
       frame.current_block->child_scopes.Add(std::move(*body_or));
@@ -172,8 +172,8 @@ auto LowerDoWhileStmt(
 auto LowerRepeatStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::RepeatStmt& r) -> diag::Result<mir::Stmt> {
-  const mir::TypeId int_type = process.Module().Unit().builtins.int_type;
-  const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
+  const mir::TypeId int_type = process.Owner().Unit().builtins.int_type;
+  const mir::TypeId bit_type = process.Owner().Unit().builtins.bit1;
 
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
@@ -186,7 +186,7 @@ auto LowerRepeatStmt(
   mir::ExprId count_expr_id = wrapper.exprs.Add(*std::move(count_or));
   if (wrapper.exprs.Get(count_expr_id).type != int_type) {
     count_expr_id = wrapper.exprs.Add(BuildValueConversion(
-        process.Module().Unit(), wrapper, count_expr_id, int_type));
+        process.Owner().Unit(), wrapper, count_expr_id, int_type));
   }
 
   const mir::LocalId count_var = frame.bindings->DeclareAnonymous(
@@ -198,9 +198,9 @@ auto LowerRepeatStmt(
       mir::LocalDecl{.name = "_lyra_repeat_index", .type = int_type});
 
   const mir::ExprId zero_id = wrapper.exprs.Add(
-      mir::MakeIntLiteral(process.Module().Unit().builtins.int_type, 0));
+      mir::MakeIntLiteral(process.Owner().Unit().builtins.int_type, 0));
   const mir::ExprId one_id = wrapper.exprs.Add(
-      mir::MakeIntLiteral(process.Module().Unit().builtins.int_type, 1));
+      mir::MakeIntLiteral(process.Owner().Unit().builtins.int_type, 1));
 
   const mir::ExprId idx_ref_cond =
       wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));

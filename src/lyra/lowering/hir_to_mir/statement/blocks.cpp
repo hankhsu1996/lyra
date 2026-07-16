@@ -48,8 +48,8 @@ void OpenActivationScope(
     return;
   }
 
-  ModuleLowerer& module = process.Module();
-  mir::CompilationUnit& unit = module.Unit();
+  UnitLowerer& unit_lowerer = process.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
 
   // The escaping scope's locals are promoted into a compiler-generated struct
   // whose identity lives in the unit's struct registry; its emission nesting is
@@ -65,7 +65,7 @@ void OpenActivationScope(
     const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(v);
     fields.push_back(struct_decl.fields.Add(
         mir::FieldDecl{
-            .name = decl.name, .type = module.TranslateType(decl.type)}));
+            .name = decl.name, .type = unit_lowerer.TranslateType(decl.type)}));
   }
   const mir::StructId struct_id = unit.AddStruct(std::move(struct_decl));
   // The struct is nested in the class whose body opens this scope -- its
@@ -95,7 +95,7 @@ void OpenActivationScope(
   // comes from the unit's synthesized-site allocator, the one collision-free id
   // space every synthesized carrier shares.
   const BindingOriginId handle_origin =
-      BindingOriginId::Synthesized(module.NextSynthesizedSite(), 0);
+      BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId handle = frame.bindings->Declare(
       handle_origin,
       mir::LocalDecl{.name = struct_name + "_h", .type = handle_type});

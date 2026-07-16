@@ -49,7 +49,7 @@ struct ResolvedNetLhs {
 auto ClassifyLhsAsResolvedNet(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     hir::ExprId lhs_id) -> std::optional<ResolvedNetLhs> {
-  const mir::CompilationUnit& unit = lowerer.Module().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto* prim =
       std::get_if<hir::PrimaryExpr>(&lowerer.HirScope().exprs.Get(lhs_id).data);
   if (prim == nullptr) return std::nullopt;
@@ -93,7 +93,7 @@ auto AttachDriver(
     mir::TypeId value_type, const std::string& driver_name, hir::ExprId source,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame)
     -> diag::Result<AttachedDriver> {
-  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   mir::Class& mir_class = *resolve_frame.current_class;
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
@@ -167,7 +167,7 @@ auto LowerContinuousAssign(
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
     std::string name, const hir::ContinuousAssign& src,
     ContinuousAssignDrivenNets& driven_nets) -> diag::Result<mir::MethodDecl> {
-  mir::CompilationUnit& unit = lowerer.Module().Unit();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
 

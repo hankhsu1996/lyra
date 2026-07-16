@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "lyra/hir/type_id.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -35,7 +35,7 @@ namespace lyra::lowering::hir_to_mir {
 // sugar is decomposed into a primitive Expr at the HIR-to-MIR boundary so
 // downstream layers see one shape (an Expr) instead of two.
 [[nodiscard]] auto BuildDefaultValueExpr(
-    const ModuleLowerer& module, WalkFrame frame, mir::TypeId type)
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId type)
     -> mir::Expr;
 
 // Default-construct a value from its source (HIR) type, honoring
@@ -46,7 +46,7 @@ namespace lyra::lowering::hir_to_mir {
 // serves only placeholder and transient-product defaults, where the source
 // initializer does not apply.
 [[nodiscard]] auto BuildDefaultValueFromHir(
-    const ModuleLowerer& module, WalkFrame frame, hir::TypeId hir_type)
+    const UnitLowerer& unit_lowerer, WalkFrame frame, hir::TypeId hir_type)
     -> mir::Expr;
 
 // Wraps a list of element ExprIds destined for an array container constructor
@@ -58,7 +58,7 @@ namespace lyra::lowering::hir_to_mir {
 // elements ride in an `ArrayLiteralExpr` that the renderer emits as
 // `std::array<T, N>{...}`.
 [[nodiscard]] auto BuildArrayConstructionCall(
-    const ModuleLowerer& module, WalkFrame frame, mir::TypeId array_type,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr;
 
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
@@ -70,7 +70,7 @@ namespace lyra::lowering::hir_to_mir {
 // element type default. Interns the tuple and tuple-array MIR types, so the
 // module must be the mutable in-progress unit.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
-    ModuleLowerer& module, WalkFrame frame, mir::TypeId assoc_type,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> user_default) -> mir::Expr;
 

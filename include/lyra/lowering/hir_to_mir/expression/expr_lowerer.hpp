@@ -31,7 +31,7 @@ concept ExprLowerer =
       {
         lowerer.HirExprs()
       } -> std::convertible_to<const base::Arena<hir::Expr, hir::ExprId>&>;
-      lowerer.Module();
+      lowerer.Owner();
     };
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -25,21 +25,21 @@ auto FormatRuntimeOriginString(
       loc.line, loc.col);
 }
 
-auto BuildServicesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
-    -> mir::Expr {
+auto BuildServicesCallExpr(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame) -> mir::Expr {
   auto& body = *frame.current_block;
-  const auto& builtins = module.Unit().builtins;
+  const auto& builtins = unit_lowerer.Unit().builtins;
   const mir::ExprId self_id = body.exprs.Add(
       MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return mir::MakeServicesCallExpr(self_id, builtins.services);
 }
 
-auto BuildFilesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
+auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, const WalkFrame& frame)
     -> mir::Expr {
   auto& body = *frame.current_block;
-  const auto& builtins = module.Unit().builtins;
+  const auto& builtins = unit_lowerer.Unit().builtins;
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(module, frame));
+      body.exprs.Add(BuildServicesCallExpr(unit_lowerer, frame));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -49,11 +49,11 @@ auto BuildFilesCallExpr(const ModuleLowerer& module, const WalkFrame& frame)
 }
 
 auto BuildDiagnosticCallExpr(
-    const ModuleLowerer& module, const WalkFrame& frame) -> mir::Expr {
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame) -> mir::Expr {
   auto& body = *frame.current_block;
-  const auto& builtins = module.Unit().builtins;
+  const auto& builtins = unit_lowerer.Unit().builtins;
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(module, frame));
+      body.exprs.Add(BuildServicesCallExpr(unit_lowerer, frame));
   return mir::Expr{
       .data =
           mir::CallExpr{

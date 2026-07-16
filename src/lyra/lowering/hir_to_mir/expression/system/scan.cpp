@@ -36,15 +36,15 @@ namespace {
 // the `$sscanf` source; the latter two are lifted to string here so the
 // parser only has to handle one shape.
 auto LiftStringSource(
-    const ModuleLowerer& module, WalkFrame frame, mir::TypeId source_type,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId source_type,
     mir::ExprId source_id) -> mir::ExprId {
-  const mir::TypeKind kind = module.Unit().types.Get(source_type).Kind();
+  const mir::TypeKind kind = unit_lowerer.Unit().types.Get(source_type).Kind();
   if (kind == mir::TypeKind::kString) return source_id;
 
   if (kind == mir::TypeKind::kUnpackedArray) {
     const auto& ua = std::get<mir::UnpackedArrayType>(
-        module.Unit().types.Get(source_type).data);
-    const auto& elem = module.Unit().types.Get(ua.element_type);
+        unit_lowerer.Unit().types.Get(source_type).data);
+    const auto& elem = unit_lowerer.Unit().types.Get(ua.element_type);
     if (!elem.IsIntegralPacked() || elem.AsIntegralPacked().BitWidth() != 8U) {
       throw InternalError(
           "LiftStringSource: $sscanf unpacked-array source must have an "
@@ -57,16 +57,16 @@ auto LiftStringSource(
   }
 
   return frame.current_block->exprs.Add(BuildValueConversion(
-      module.Unit(), *frame.current_block, source_id,
-      module.Unit().builtins.string));
+      unit_lowerer.Unit(), *frame.current_block, source_id,
+      unit_lowerer.Unit().builtins.string));
 }
 
 // LRM 21.3.4.3 permits string or integral as the format argument; the
 // integral form is lifted to string.
 auto LiftStringFormat(
-    const ModuleLowerer& module, WalkFrame frame, mir::TypeId format_type,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId format_type,
     mir::ExprId format_id) -> mir::ExprId {
-  const auto& t = module.Unit().types.Get(format_type);
+  const auto& t = unit_lowerer.Unit().types.Get(format_type);
   if (t.Kind() == mir::TypeKind::kString) return format_id;
   if (!t.IsIntegralPacked()) {
     throw InternalError(
@@ -74,15 +74,15 @@ auto LiftStringFormat(
         "21.3.4.3)");
   }
   return frame.current_block->exprs.Add(BuildValueConversion(
-      module.Unit(), *frame.current_block, format_id,
-      module.Unit().builtins.string));
+      unit_lowerer.Unit(), *frame.current_block, format_id,
+      unit_lowerer.Unit().builtins.string));
 }
 
 // LRM 21.3.4.3: a source or format string that contains x or z makes
 // the call return -1 before any conversion. Emit the guard before the
 // lift to string, because the lift silently drops the unknown bits.
 auto EmitIsUnknownGuard(
-    const ModuleLowerer& module, WalkFrame frame, mir::TypeId bit_t,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId bit_t,
     mir::ExprId operand_id) -> void {
   auto& body = *frame.current_block;
   const mir::ExprId guard_id = body.exprs.Add(
@@ -97,7 +97,7 @@ auto EmitIsUnknownGuard(
   mir::Block then_body;
   const mir::ExprId minus_one = then_body.exprs.Add(
       mir::MakeIntegerLiteral(
-          module.Unit().builtins.integer, static_cast<std::int64_t>(-1)));
+          unit_lowerer.Unit().builtins.integer, static_cast<std::int64_t>(-1)));
   then_body.AppendStmt(mir::ReturnStmt{.value = minus_one});
 
   body.AppendIfThen(
@@ -137,8 +137,8 @@ auto LowerScanSystemSubroutineCall(
   }
 
   const auto& hir_proc = process.HirBody();
-  auto& module = process.Module();
-  auto& unit = module.Unit();
+  auto& unit_lowerer = process.Owner();
+  auto& unit = unit_lowerer.Unit();
   const mir::TypeId integer_t = unit.builtins.integer;
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::TypeId string_t = unit.builtins.string;
@@ -153,7 +153,7 @@ auto LowerScanSystemSubroutineCall(
       throw InternalError("LowerScanSystemSubroutineCall: output arg elided");
     }
     const auto& hir_arg = hir_proc.exprs.Get(*call.arguments[i]);
-    const mir::TypeId mir_type = module.TranslateType(hir_arg.type);
+    const mir::TypeId mir_type = unit_lowerer.TranslateType(hir_arg.type);
     auto valid_or = ValidateTargetType(unit, mir_type, info.source, span);
     if (!valid_or) return std::unexpected(std::move(valid_or.error()));
     target_types.push_back(mir_type);
@@ -184,7 +184,7 @@ auto LowerScanSystemSubroutineCall(
     }
     fd_id = raw_source_id;
     const mir::ExprId services_id =
-        body.exprs.Add(BuildServicesCallExpr(process.Module(), closure_frame));
+        body.exprs.Add(BuildServicesCallExpr(process.Owner(), closure_frame));
     const mir::ExprId files_id = body.exprs.Add(
         mir::Expr{
             .data =
@@ -202,9 +202,9 @@ auto LowerScanSystemSubroutineCall(
                     .arguments = {files_id, fd_id}},
             .type = string_t});
   } else {
-    EmitIsUnknownGuard(module, closure_frame, bit_t, raw_source_id);
-    source_id =
-        LiftStringSource(module, closure_frame, raw_source_type, raw_source_id);
+    EmitIsUnknownGuard(unit_lowerer, closure_frame, bit_t, raw_source_id);
+    source_id = LiftStringSource(
+        unit_lowerer, closure_frame, raw_source_type, raw_source_id);
   }
 
   auto format_or =
@@ -212,8 +212,9 @@ auto LowerScanSystemSubroutineCall(
   if (!format_or) return std::unexpected(std::move(format_or.error()));
   const mir::TypeId format_type = format_or->type;
   mir::ExprId format_id = body.exprs.Add(*std::move(format_or));
-  EmitIsUnknownGuard(module, closure_frame, bit_t, format_id);
-  format_id = LiftStringFormat(module, closure_frame, format_type, format_id);
+  EmitIsUnknownGuard(unit_lowerer, closure_frame, bit_t, format_id);
+  format_id =
+      LiftStringFormat(unit_lowerer, closure_frame, format_type, format_id);
 
   // LRM 21.3.4.3 "the offending input character is left unread in the
   // input stream": the parse returns the byte-count it consumed so the
@@ -229,7 +230,7 @@ auto LowerScanSystemSubroutineCall(
   temp_ids.reserve(target_types.size());
   for (std::size_t k = 0; k < target_types.size(); ++k) {
     const mir::ExprId init_id = body.exprs.Add(
-        BuildDefaultValueExpr(module, closure_frame, target_types[k]));
+        BuildDefaultValueExpr(unit_lowerer, closure_frame, target_types[k]));
     const mir::LocalId temp_var = closure.Bindings().DeclareAnonymous(
         mir::LocalDecl{
             .name = std::format("_lyra_scan_temp_{}", k),
@@ -263,7 +264,7 @@ auto LowerScanSystemSubroutineCall(
 
   if (is_file) {
     const mir::ExprId services_after =
-        body.exprs.Add(BuildServicesCallExpr(process.Module(), closure_frame));
+        body.exprs.Add(BuildServicesCallExpr(process.Owner(), closure_frame));
     const mir::ExprId files_after = body.exprs.Add(
         mir::Expr{
             .data =
@@ -308,8 +309,8 @@ auto LowerScanSystemSubroutineCall(
     const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
     const mir::ExprId temp_read_id = then_body.exprs.Add(
         mir::MakeLocalRefExpr(temp_ids[k], target_types[k]));
-    const mir::ExprId services_id_then = then_body.exprs.Add(
-        BuildServicesCallExpr(process.Module(), then_frame));
+    const mir::ExprId services_id_then =
+        then_body.exprs.Add(BuildServicesCallExpr(process.Owner(), then_frame));
     const mir::Expr assign_expr = BuildObservableAssignExpr(
         unit, then_body, services_id_then, lvalue_id, temp_read_id,
         std::nullopt, target_types[k], void_t);

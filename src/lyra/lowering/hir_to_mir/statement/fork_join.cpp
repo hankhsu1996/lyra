@@ -80,9 +80,9 @@ auto LowerForkStmt(
     fork_block.AppendStmt(*std::move(lowered));
   }
 
-  const auto& builtins = process.Module().Unit().builtins;
+  const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId services_id =
-      fork_block.exprs.Add(BuildServicesCallExpr(process.Module(), fork_frame));
+      fork_block.exprs.Add(BuildServicesCallExpr(process.Owner(), fork_frame));
 
   std::vector<mir::ExprId> call_args;
   call_args.reserve(1 + f.branches.size());
@@ -94,7 +94,7 @@ auto LowerForkStmt(
     // returns inside it become `co_return`. The branch policy snapshots the
     // fork's own block-item declarations and aliases deeper enclosing
     // variables (LRM 6.21).
-    ClosureBuilder closure(process.Module().Unit(), fork_frame, branch_policy);
+    ClosureBuilder closure(process.Owner().Unit(), fork_frame, branch_policy);
     auto lowered = process.LowerStmt(branch, closure.Frame());
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
@@ -140,9 +140,9 @@ auto LowerWaitForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
     -> diag::Result<mir::Stmt> {
   mir::Block& block = *frame.current_block;
-  const auto& builtins = process.Module().Unit().builtins;
+  const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   const mir::ExprId call_id = block.exprs.Add(
       mir::Expr{
           .data =
@@ -168,9 +168,9 @@ auto LowerDisableForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
     -> diag::Result<mir::Stmt> {
   mir::Block& block = *frame.current_block;
-  const auto& builtins = process.Module().Unit().builtins;
+  const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Module(), frame));
+      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
   const mir::ExprId call_id = block.exprs.Add(
       mir::Expr{
           .data =

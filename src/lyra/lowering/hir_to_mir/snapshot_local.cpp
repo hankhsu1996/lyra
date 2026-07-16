@@ -14,7 +14,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto SnapshotExprToLocal(
-    const ModuleLowerer& module, WalkFrame frame, mir::Block& wrapper,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block& wrapper,
     std::string name, mir::TypeId type, mir::ExprId expr_id,
     std::optional<BindingOriginId> origin) -> mir::LocalId {
   const mir::LocalId snap_var =
@@ -24,7 +24,7 @@ auto SnapshotExprToLocal(
           : frame.bindings->DeclareAnonymous(
                 mir::LocalDecl{.name = std::move(name), .type = type});
   const mir::ExprId default_init =
-      wrapper.exprs.Add(BuildDefaultValueExpr(module, frame, type));
+      wrapper.exprs.Add(BuildDefaultValueExpr(unit_lowerer, frame, type));
   wrapper.AppendStmt(
       mir::LocalDeclStmt{.target = snap_var, .init = default_init});
 
@@ -40,7 +40,7 @@ auto SnapshotExprToLocal(
 }
 
 auto SnapshotIntoClosure(
-    ModuleLowerer& module, const WalkFrame& outer_frame,
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr, std::string name)
     -> mir::ExprId {
   mir::Block& outer_block = *outer_frame.current_block;
@@ -51,7 +51,7 @@ auto SnapshotIntoClosure(
   // The temp initializes directly from the snapshotted expression (not a
   // default-then-assign), so a carrier with no default value -- a `Ref<T>` over
   // the target cell -- is materialized correctly.
-  const std::uint32_t site = module.NextSynthesizedSite();
+  const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
   const BindingOriginId origin = BindingOriginId::Synthesized(site, 0);
   const mir::LocalId temp = outer_frame.bindings->Declare(
       origin,

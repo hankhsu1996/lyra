@@ -11,9 +11,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -125,14 +125,14 @@ auto WrapSliceToDeclaredType(
 // representation) and a dynamic array is zero-based, so neither contributes an
 // operand.
 auto AppendReceiverRange(
-    ModuleLowerer& module, mir::Block& block, mir::ExprId base_id,
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     std::vector<mir::ExprId>& args) -> void {
   // The declared range is a fact of the receiver's value type. On the write
   // path the base is a place -- an observable cell or a reference -- so unwrap
   // those single-level indirections to reach the underlying value type.
   mir::TypeId base_type = block.exprs.Get(base_id).type;
   for (;;) {
-    const auto& ty = module.Unit().types.Get(base_type);
+    const auto& ty = unit_lowerer.Unit().types.Get(base_type);
     if (const auto* obs = std::get_if<mir::ObservableType>(&ty.data)) {
       base_type = obs->value;
     } else if (const auto* ref = std::get_if<mir::RefType>(&ty.data)) {
@@ -143,9 +143,9 @@ auto AppendReceiverRange(
       break;
     }
   }
-  const auto& base_ty = module.Unit().types.Get(base_type);
+  const auto& base_ty = unit_lowerer.Unit().types.Get(base_type);
   if (const auto* ua = std::get_if<mir::UnpackedArrayType>(&base_ty.data)) {
-    const mir::TypeId int_type = module.Unit().builtins.int_type;
+    const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
     args.push_back(
         block.exprs.Add(mir::MakeIntLiteral(int_type, ua->dim.left)));
     args.push_back(
@@ -159,10 +159,10 @@ auto AppendReceiverRange(
 // through, plus the receiver's declared range for the unpacked family; every
 // selectable value resolves the coordinate against that range.
 auto BuildElementAccessCallExpr(
-    ModuleLowerer& module, mir::Block& block, mir::ExprId base_id,
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, AccessSide side, mir::TypeId result_type) -> mir::Expr {
   std::vector<mir::ExprId> args = {base_id, idx_id};
-  AppendReceiverRange(module, block, base_id, args);
+  AppendReceiverRange(unit_lowerer, block, base_id, args);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -180,9 +180,10 @@ auto BuildElementAccessCallExpr(
 // declared range.
 template <typename LowerOne>
 auto BuildRangeSliceCallExpr(
-    ModuleLowerer& module, mir::Block& block, const hir::RangeBounds& bounds,
-    mir::ExprId base_id, mir::TypeId result_type, AccessSide side,
-    LowerOne lower_one) -> diag::Result<mir::Expr> {
+    UnitLowerer& unit_lowerer, mir::Block& block,
+    const hir::RangeBounds& bounds, mir::ExprId base_id,
+    mir::TypeId result_type, AccessSide side, LowerOne lower_one)
+    -> diag::Result<mir::Expr> {
   struct RawSelector {
     mir::ExprId a;
     mir::ExprId b;
@@ -215,11 +216,11 @@ auto BuildRangeSliceCallExpr(
       },
       bounds);
   if (!raw_or) return std::unexpected(std::move(raw_or.error()));
-  const mir::TypeId int_type = module.Unit().builtins.int_type;
+  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
   const auto form_id =
       block.exprs.Add(mir::MakeIntLiteral(int_type, raw_or->form));
   std::vector<mir::ExprId> args = {base_id, raw_or->a, raw_or->b, form_id};
-  AppendReceiverRange(module, block, base_id, args);
+  AppendReceiverRange(unit_lowerer, block, base_id, args);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -237,10 +238,10 @@ auto BuildRangeSliceCallExpr(
 // range-select emits, so the runtime sees one slice form regardless of
 // whether the source was `s.field` or `s[hi:lo]`.
 auto BuildFieldSliceCallExpr(
-    ModuleLowerer& module, mir::Block& block, mir::ExprId base_id,
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     std::uint32_t bit_offset, std::uint32_t bit_width, mir::TypeId result_type,
     AccessSide side) -> mir::Expr {
-  const mir::TypeId int_type = module.Unit().builtins.int_type;
+  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
   const auto offset_id = block.exprs.Add(
       mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(bit_offset)));
   const auto width_id = block.exprs.Add(
@@ -266,27 +267,28 @@ auto BuildFieldSliceCallExpr(
 // intact for `operator=` to consume.
 
 auto LowerElementSelectInner(
-    ModuleLowerer& module, mir::Block& block, mir::ExprId base_id,
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, AccessSide side, mir::TypeId result_type,
     bool wrap_packed_as_owned) -> mir::Expr {
   mir::Expr access_call = BuildElementAccessCallExpr(
-      module, block, base_id, idx_id, side, result_type);
+      unit_lowerer, block, base_id, idx_id, side, result_type);
   if (!wrap_packed_as_owned) return access_call;
   return WrapPackedAsOwned(
-      module.Unit(), block, std::move(access_call), result_type);
+      unit_lowerer.Unit(), block, std::move(access_call), result_type);
 }
 
 template <typename LowerOne>
 auto LowerRangeSelectInner(
-    ModuleLowerer& module, mir::Block& block, const hir::RangeBounds& bounds,
-    mir::ExprId base_id, mir::TypeId result_type, LowerOne lower_one,
-    AccessSide side) -> diag::Result<mir::Expr> {
+    UnitLowerer& unit_lowerer, mir::Block& block,
+    const hir::RangeBounds& bounds, mir::ExprId base_id,
+    mir::TypeId result_type, LowerOne lower_one, AccessSide side)
+    -> diag::Result<mir::Expr> {
   auto slice_or = BuildRangeSliceCallExpr(
-      module, block, bounds, base_id, result_type, side, lower_one);
+      unit_lowerer, block, bounds, base_id, result_type, side, lower_one);
   if (!slice_or) return std::unexpected(std::move(slice_or.error()));
   if (side == AccessSide::kLhs) return *std::move(slice_or);
   return WrapPackedAsOwned(
-      module.Unit(), block, *std::move(slice_or), result_type);
+      unit_lowerer.Unit(), block, *std::move(slice_or), result_type);
 }
 
 // Packed-struct / union field access (LRM 7.2.1: a field "can be selected as if
@@ -296,24 +298,24 @@ auto LowerRangeSelectInner(
 // the field's declared type; the aggregate's storage reconciles the field's
 // representation when the assignment lands.
 auto LowerMemberAccessInner(
-    ModuleLowerer& module, mir::Block& block,
+    UnitLowerer& unit_lowerer, mir::Block& block,
     const hir::PackedAggregateField& field, mir::ExprId base_id,
     mir::TypeId result_type, AccessSide side) -> mir::Expr {
   if (side == AccessSide::kLhs) {
     return BuildFieldSliceCallExpr(
-        module, block, base_id, field.bit_offset, field.bit_width, result_type,
-        side);
+        unit_lowerer, block, base_id, field.bit_offset, field.bit_width,
+        result_type, side);
   }
   const mir::TypeId source_type = block.exprs.Get(base_id).type;
   const mir::TypeId slice_type =
-      PartSelectNaturalType(module.Unit(), source_type, result_type);
+      PartSelectNaturalType(unit_lowerer.Unit(), source_type, result_type);
   mir::Expr slice_call = BuildFieldSliceCallExpr(
-      module, block, base_id, field.bit_offset, field.bit_width, slice_type,
-      side);
+      unit_lowerer, block, base_id, field.bit_offset, field.bit_width,
+      slice_type, side);
   mir::Expr owned = WrapPackedAsOwned(
-      module.Unit(), block, std::move(slice_call), slice_type);
+      unit_lowerer.Unit(), block, std::move(slice_call), slice_type);
   return WrapSliceToDeclaredType(
-      module.Unit(), block, std::move(owned), result_type);
+      unit_lowerer.Unit(), block, std::move(owned), result_type);
 }
 
 }  // namespace
@@ -322,7 +324,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const bool is_write = frame.is_lvalue_target;
@@ -338,7 +340,7 @@ auto LowerHirElementSelectExpr(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  const auto& hir_base_ty = module.Hir().types.Get(hir_base.type);
+  const auto& hir_base_ty = unit_lowerer.Hir().types.Get(hir_base.type);
   // LRM 6.16: indexed character read `s[i]` is the element-value access, the
   // read-side dual of the element-reference write. It joins the generic
   // element-access path (the explicit `getc` / `putc` methods are a separate
@@ -362,14 +364,14 @@ auto LowerHirElementSelectExpr(
           ? AccessSide::kLhs
           : AccessSide::kRead;
   return LowerElementSelectInner(
-      module, block, base_id, idx_id, side, result_type, true);
+      unit_lowerer, block, base_id, idx_id, side, result_type, true);
 }
 
 template <ExprLowerer Lowerer>
 auto LowerHirRangeSelectExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
@@ -384,7 +386,7 @@ auto LowerHirRangeSelectExpr(
     return block.exprs.Add(*std::move(lowered));
   };
   return LowerRangeSelectInner(
-      module, block, sel.bounds, base_id, result_type, lower_one,
+      unit_lowerer, block, sel.bounds, base_id, result_type, lower_one,
       AccessSide::kRead);
 }
 
@@ -397,11 +399,11 @@ template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
-  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
+  if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedStruct) {
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -410,7 +412,7 @@ auto LowerHirMemberAccessExpr(
         .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
         .type = result_type};
   }
-  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
+  if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedUnion) {
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -421,7 +423,7 @@ auto LowerHirMemberAccessExpr(
         .type = result_type};
   }
   const auto& fields =
-      GetAggregateFields(module.Hir().types.Get(base_hir_expr.type));
+      GetAggregateFields(unit_lowerer.Hir().types.Get(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
     throw InternalError("LowerHirMemberAccessExpr: field_index out of range");
   }
@@ -429,7 +431,7 @@ auto LowerHirMemberAccessExpr(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
-      module, block, fields[sel.field_index], base_id, result_type,
+      unit_lowerer, block, fields[sel.field_index], base_id, result_type,
       AccessSide::kRead);
 }
 
@@ -442,7 +444,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
@@ -451,7 +453,7 @@ auto LowerHirClassPropertyAccessExpr(
   return mir::MakeFieldAccessExpr(
       base_id,
       mir::FieldTarget{
-          .owner = module.TranslateClass(sel.owner),
+          .owner = unit_lowerer.TranslateClass(sel.owner),
           .slot = mir::FieldId{sel.field_index}},
       result_type);
 }
@@ -460,7 +462,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
@@ -474,7 +476,7 @@ auto LowerHirElementSelectExprLhs(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  const auto& hir_base_ty = module.Hir().types.Get(hir_base.type);
+  const auto& hir_base_ty = unit_lowerer.Hir().types.Get(hir_base.type);
   // LRM 6.16: indexed character write `s[i] = ...` is the element-reference
   // access, the write-side dual of the element-value read. It joins the generic
   // element-access path so the place flows through the observable mutate route
@@ -488,14 +490,15 @@ auto LowerHirElementSelectExprLhs(
         .type = result_type};
   }
   return LowerElementSelectInner(
-      module, block, base_id, idx_id, AccessSide::kLhs, result_type, false);
+      unit_lowerer, block, base_id, idx_id, AccessSide::kLhs, result_type,
+      false);
 }
 
 template <ExprLowerer Lowerer>
 auto LowerHirRangeSelectExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
@@ -510,7 +513,7 @@ auto LowerHirRangeSelectExprLhs(
     return block.exprs.Add(*std::move(lowered));
   };
   return LowerRangeSelectInner(
-      module, block, sel.bounds, base_id, result_type, lower_one,
+      unit_lowerer, block, sel.bounds, base_id, result_type, lower_one,
       AccessSide::kLhs);
 }
 
@@ -518,14 +521,14 @@ template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
   // LRM 7.2: an unpacked-struct member write is a positional projection by
   // index over the base place. The observable root's write routes through the
   // cell's mutate path later, so the place is just the projection here.
-  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
+  if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedStruct) {
     auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -538,7 +541,7 @@ auto LowerHirMemberAccessExprLhs(
   // `UnionGetRefExpr` over the union place (the by-reference counterpart of
   // the `UnionGetExpr` read). The observable root routes through the cell's
   // mutate path later; the place is just the projection here.
-  if (module.Hir().types.Get(base_hir_expr.type).Kind() ==
+  if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedUnion) {
     auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -550,7 +553,7 @@ auto LowerHirMemberAccessExprLhs(
         .type = result_type};
   }
   const auto& fields =
-      GetAggregateFields(module.Hir().types.Get(base_hir_expr.type));
+      GetAggregateFields(unit_lowerer.Hir().types.Get(base_hir_expr.type));
   if (sel.field_index >= fields.size()) {
     throw InternalError(
         "LowerHirMemberAccessExprLhs: field_index out of range");
@@ -559,7 +562,7 @@ auto LowerHirMemberAccessExprLhs(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
-      module, block, fields[sel.field_index], base_id, result_type,
+      unit_lowerer, block, fields[sel.field_index], base_id, result_type,
       AccessSide::kLhs);
 }
 
@@ -572,7 +575,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& module = lowerer.Module();
+  auto& unit_lowerer = lowerer.Owner();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
@@ -581,7 +584,7 @@ auto LowerHirClassPropertyAccessExprLhs(
   return mir::MakeFieldAccessExpr(
       base_id,
       mir::FieldTarget{
-          .owner = module.TranslateClass(sel.owner),
+          .owner = unit_lowerer.TranslateClass(sel.owner),
           .slot = mir::FieldId{sel.field_index}},
       result_type);
 }

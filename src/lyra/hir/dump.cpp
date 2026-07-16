@@ -12,9 +12,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
@@ -47,7 +47,7 @@ auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
 
 class HirDumper {
  public:
-  auto Dump(const std::vector<ModuleUnit>& units) -> std::string {
+  auto Dump(const std::vector<CompilationUnit>& units) -> std::string {
     for (const auto& u : units) {
       DumpUnit(u);
     }
@@ -802,9 +802,9 @@ class HirDumper {
     return FormatExpr(s.exprs.Get(id));
   }
 
-  void DumpUnit(const ModuleUnit& u) {
+  void DumpUnit(const CompilationUnit& u) {
     unit_ = &u;
-    Line(std::format("ModuleUnit \"{}\"", u.name));
+    Line(std::format("CompilationUnit \"{}\"", u.name));
     Indent();
 
     Line("Types:");
@@ -1515,12 +1515,12 @@ class HirDumper {
   std::string out_;
   int indent_ = 0;
   std::vector<const StructuralScope*> scope_stack_;
-  const ModuleUnit* unit_ = nullptr;
+  const CompilationUnit* unit_ = nullptr;
 };
 
 }  // namespace
 
-auto DumpHir(const std::vector<ModuleUnit>& units) -> std::string {
+auto DumpHir(const std::vector<CompilationUnit>& units) -> std::string {
   HirDumper dumper;
   return dumper.Dump(units);
 }

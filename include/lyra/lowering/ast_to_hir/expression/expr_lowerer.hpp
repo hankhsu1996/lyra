@@ -12,7 +12,7 @@ class Expression;
 
 namespace lyra::lowering::ast_to_hir {
 
-class ModuleLowerer;
+class UnitLowerer;
 
 // The duck-typed contract a pass class fulfils for context-free expression
 // lowering: recurse into a sub-expression and reach the enclosing module. Both
@@ -30,7 +30,7 @@ concept ExprLowerer =
       {
         lowerer.LowerExpr(expr, frame)
       } -> std::same_as<diag::Result<hir::Expr>>;
-      lowerer.Module();
+      lowerer.Owner();
     };
 
 }  // namespace lyra::lowering::ast_to_hir
