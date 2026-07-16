@@ -107,6 +107,16 @@ class RuntimeAbi {
   auto CellInitialize(ValueDomain domain) -> llvm::FunctionCallee;
   auto CellSet(ValueDomain domain) -> llvm::FunctionCallee;
 
+  // A procedural local whose value crosses a suspension: its storage is a cell
+  // in the running activation's frame, reached by a handle the generated frame
+  // holds. `ActivationFrameAlloc` allocates the cell (uninitialized -- the
+  // first store installs its representation); `ActivationFrameStore` overwrites
+  // it; `ActivationFrameLoad` copies its value into the current stretch. No
+  // services thread through: a procedural local is not observable.
+  auto ActivationFrameAlloc(ValueDomain domain) -> llvm::FunctionCallee;
+  auto ActivationFrameStore(ValueDomain domain) -> llvm::FunctionCallee;
+  auto ActivationFrameLoad(ValueDomain domain) -> llvm::FunctionCallee;
+
   // Publishes a member cell under its source-level name so the scope can be
   // navigated by name.
   auto RegisterSignal() -> llvm::FunctionCallee;

@@ -92,6 +92,20 @@ auto lyra_rt_cell_string_get(void* cell) -> const void*;
 void lyra_rt_cell_string_initialize(void* cell, const void* prototype);
 void lyra_rt_cell_string_set(void* cell, void* services, const void* value);
 
+// A procedural local whose value crosses a suspension (LRM 9.4). The cell lives
+// in the running activation's frame, so the handle a generated frame holds
+// across a suspension points into activation-lifetime storage rather than the
+// per-stretch scope. `store` overwrites the cell -- the first store installs
+// the declared representation -- and `load` copies the current value back into
+// the per-stretch scope. No services and no subscriber wakeup: a procedural
+// local is not observable.
+auto lyra_rt_activation_frame_alloc_packed() -> void*;
+auto lyra_rt_activation_frame_alloc_string() -> void*;
+void lyra_rt_activation_frame_store_packed(void* cell, const void* value);
+void lyra_rt_activation_frame_store_string(void* cell, const void* value);
+auto lyra_rt_activation_frame_load_packed(const void* cell) -> void*;
+auto lyra_rt_activation_frame_load_string(const void* cell) -> void*;
+
 // One entry per operator per value domain: the generated module names the entry
 // it means, so no operator code crosses the boundary. Each is the library peer
 // of the C++ operator a native target would emit. The result is a transient

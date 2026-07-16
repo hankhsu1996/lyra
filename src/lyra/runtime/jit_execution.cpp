@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/file_table.hpp"
@@ -29,6 +30,46 @@ namespace {
 
 using GeneratedRamp = void* (*)(void* env);
 
+// An RAII owner of a generated body's own coroutine frame, reached as an opaque
+// address the ramp returns. Destroying it destroys the frame, so the generated
+// body is torn down on every path its driver leaves -- normal completion,
+// cancellation, or shutdown -- and never leaks when the driver is released
+// while the body is still suspended.
+class GeneratedCoroutine {
+ public:
+  GeneratedCoroutine() = default;
+  explicit GeneratedCoroutine(void* frame)
+      : handle_(std::coroutine_handle<>::from_address(frame)) {
+  }
+  GeneratedCoroutine(const GeneratedCoroutine&) = delete;
+  auto operator=(const GeneratedCoroutine&) -> GeneratedCoroutine& = delete;
+  GeneratedCoroutine(GeneratedCoroutine&& other) noexcept
+      : handle_(std::exchange(other.handle_, {})) {
+  }
+  auto operator=(GeneratedCoroutine&& other) noexcept -> GeneratedCoroutine& {
+    if (handle_ != nullptr) {
+      handle_.destroy();
+    }
+    handle_ = std::exchange(other.handle_, {});
+    return *this;
+  }
+  ~GeneratedCoroutine() {
+    if (handle_ != nullptr) {
+      handle_.destroy();
+    }
+  }
+
+  [[nodiscard]] auto Done() const -> bool {
+    return handle_.done();
+  }
+  void Resume() const {
+    handle_.resume();
+  }
+
+ private:
+  std::coroutine_handle<> handle_;
+};
+
 // The runtime-owned coroutine that is the process the engine schedules, and
 // which drives the generated body's own coroutine.
 //
@@ -43,28 +84,29 @@ using GeneratedRamp = void* (*)(void* env);
 // own wakeup; the adapter then parks, and resumes it when the engine runs the
 // adapter again.
 //
-// Every stretch of generated code -- starting the body, resuming it, tearing it
-// down -- runs in its own generated-call scope, so a value it materializes is
-// released when that stretch returns; a value that must outlive a suspension
-// does not live there.
+// This adapter frame realizes the activation. It owns two lifetimes the
+// generated body needs but cannot hold itself. The `activation_frame` holds
+// every value whose lifetime crosses a suspension -- a procedural local a
+// suspending body reads after it resumes -- so a handle the generated frame
+// carries across a suspension points here, not into a per-stretch scope that is
+// released when the stretch returns. And `generated` RAII-owns the body's own
+// coroutine, so both are destroyed together, on every path the adapter leaves.
+// Each stretch of generated code runs in its own generated-call scope naming
+// this frame; a transient the stretch materializes still lives in that scope
+// and is released when the stretch returns.
 auto RunGeneratedProcess(GeneratedRamp ramp, void* env) -> Coroutine<void> {
-  void* frame = nullptr;
+  ActivationFrameStorage activation_frame;
+  GeneratedCoroutine generated;
   {
-    GeneratedCallScope scope;
-    frame = ramp(env);
+    GeneratedCallScope scope(&activation_frame);
+    generated = GeneratedCoroutine{ramp(env)};
   }
-  const std::coroutine_handle<> generated =
-      std::coroutine_handle<>::from_address(frame);
-  while (!generated.done()) {
+  while (!generated.Done()) {
     co_await std::suspend_always{};
     {
-      GeneratedCallScope scope;
-      generated.resume();
+      GeneratedCallScope scope(&activation_frame);
+      generated.Resume();
     }
-  }
-  {
-    GeneratedCallScope scope;
-    generated.destroy();
   }
   co_return;
 }
@@ -86,6 +128,7 @@ auto Own(T value) -> void* {
 
 }  // namespace lyra::runtime
 
+using lyra::runtime::ActivationValueCell;
 using lyra::runtime::Coroutine;
 using lyra::runtime::CoroutineHandle;
 using lyra::runtime::FileTable;
@@ -283,6 +326,43 @@ void lyra_rt_cell_string_initialize(void* cell, const void* prototype) {
 void lyra_rt_cell_string_set(void* cell, void* services, const void* value) {
   static_cast<Var<String>*>(cell)->Set(
       *static_cast<RuntimeServices*>(services), Read<String>(value));
+}
+
+// A procedural local whose value crosses a suspension. The cell is allocated in
+// the activation frame (the driving coroutine owns it), so the handle the
+// generated frame carries across a suspension points into activation-lifetime
+// storage. A store overwrites the cell in place -- the first store installs the
+// declared representation -- and a load copies the current value into the
+// per-stretch scope, like any other value the boundary hands back. A procedural
+// local is not observable, so no services thread through and no subscriber
+// wakes.
+auto lyra_rt_activation_frame_alloc_packed() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<PackedArray>>();
+}
+
+auto lyra_rt_activation_frame_alloc_string() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<String>>();
+}
+
+void lyra_rt_activation_frame_store_packed(void* cell, const void* value) {
+  static_cast<ActivationValueCell<PackedArray>*>(cell)->Store(
+      Read<PackedArray>(value));
+}
+
+void lyra_rt_activation_frame_store_string(void* cell, const void* value) {
+  static_cast<ActivationValueCell<String>*>(cell)->Store(Read<String>(value));
+}
+
+auto lyra_rt_activation_frame_load_packed(const void* cell) -> void* {
+  return Own(static_cast<const ActivationValueCell<PackedArray>*>(cell)->Get());
+}
+
+auto lyra_rt_activation_frame_load_string(const void* cell) -> void* {
+  return Own(static_cast<const ActivationValueCell<String>*>(cell)->Get());
 }
 
 auto lyra_rt_packed_add(const void* lhs, const void* rhs) -> void* {
