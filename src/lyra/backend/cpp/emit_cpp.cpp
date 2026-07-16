@@ -367,6 +367,53 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
   return names;
 }
 
+// A DPI-C export's foreign-linkage entry point (LRM 35.5): a free `extern "C"`
+// definition foreign code calls. It recovers the exported method's receiver
+// from the running design, then runs the marshaling body -- an ordinary
+// statement render, so every carrier conversion and the method call come from
+// MIR. Emitted after the class it dispatches into so that class is complete.
+auto RenderForeignExportWrapper(
+    const mir::CompilationUnit& unit, const mir::Class& s,
+    const mir::ForeignExportWrapper& w) -> std::string {
+  const ScopeView body_view = ScopeView::ForRoot(unit, s, w.code);
+  const mir::LocalDecl& self_decl = w.code.locals.Get(w.self_local);
+  const std::string self_type = RenderTypeAsCpp(unit, s, self_decl.type);
+
+  std::string sig = std::format(
+      "extern \"C\" {} {}(", RenderTypeAsCpp(unit, s, w.code.result_type),
+      w.foreign_name);
+  for (std::size_t i = 0; i < w.code.params.size(); ++i) {
+    if (i != 0) sig += ", ";
+    sig += RenderMethodParam(unit, s, w.code.locals.Get(w.code.params[i]));
+  }
+  sig += ")";
+
+  std::string out;
+  out += std::format("{} {{\n", sig);
+  out += std::format(
+      "  {0} {1} = static_cast<{0}>("
+      "lyra::runtime::ResolveExportInstance(\"{2}\"));\n",
+      self_type, self_decl.name, w.instance_name);
+  out += RenderBlockStatements(body_view, 1);
+  out += "}\n";
+  return out;
+}
+
+auto RenderForeignExportWrappers(const mir::CompilationUnit& unit)
+    -> std::string {
+  std::string out;
+  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
+    const mir::ClassId id{static_cast<std::uint32_t>(i)};
+    if (!unit.classes.IsDefined(id)) continue;
+    for (const mir::ForeignExportWrapper& w :
+         unit.GetClass(id).foreign_export_wrappers) {
+      out += "\n";
+      out += RenderForeignExportWrapper(unit, unit.GetClass(id), w);
+    }
+  }
+  return out;
+}
+
 auto RenderScopeHeaderFile(
     const mir::CompilationUnit& unit, const mir::Class& s) -> std::string {
   std::string out;
@@ -385,6 +432,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/file_table.hpp\"\n";
   out += "#include \"lyra/runtime/finish.hpp\"\n";
   out += "#include \"lyra/runtime/fork.hpp\"\n";
+  out += "#include \"lyra/runtime/ambient_run_context.hpp\"\n";
   out += "#include \"lyra/runtime/gc_ref.hpp\"\n";
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
   out += "#include \"lyra/runtime/net.hpp\"\n";
@@ -493,6 +541,7 @@ auto RenderScopeHeaderFile(
   }
 
   out += RenderScopeAsClass(unit, s, 0, nullptr);
+  out += RenderForeignExportWrappers(unit);
   return out;
 }
 

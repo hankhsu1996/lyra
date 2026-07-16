@@ -43,23 +43,6 @@ struct UnitCollector
 
 }  // namespace
 
-// A DPI-C export (LRM 35.5) makes an SV subroutine callable from C. Lyra emits
-// no C-export ABI, so an exported subroutine cannot be honored; rejecting it is
-// what keeps it from lowering as an ordinary subroutine that silently drops the
-// export contract. slang collects exports only from elaborated scopes, so every
-// entry belongs to the design under compilation.
-auto RejectDpiExports(const LowerCompilationFacts& facts)
-    -> diag::Result<void> {
-  for (const auto& dpi : facts.Compilation().getDPIExports()) {
-    if (dpi.subroutine == nullptr) continue;
-    return diag::Fail(
-        facts.SourceMapper().PointSpanOf(dpi.subroutine->location),
-        diag::DiagCode::kUnsupportedDpi,
-        "DPI-C export of a subroutine is not yet supported");
-  }
-  return {};
-}
-
 auto CollectUnitBodies(const LowerCompilationFacts& facts)
     -> std::vector<const slang::ast::InstanceBodySymbol*> {
   const auto& root = facts.Compilation().getRoot();

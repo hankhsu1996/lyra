@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -24,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -1926,13 +1928,22 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         entry.companion_field);
   }
 
+  // An exported subroutine (LRM 35.5) is reached from foreign C through its
+  // wrapper, a free function outside the class, so it joins the class's
+  // externally callable surface rather than its internal one.
+  std::unordered_set<std::string_view> exported_names;
+  for (const hir::ForeignExportDecl& e : hir_scope.foreign_exports) {
+    exported_names.insert(e.sv_name);
+  }
+
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
     const auto& src = hir_scope.structural_subroutines.Get(
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
     ProcessLowerer subroutine_lowerer(
         unit_lowerer, &lowerer, hir_scope.time_resolution, src.body, src.name,
-        mir::MethodVisibility::kInternal, ctor_frame,
-        subroutine_storage_plans_[i]);
+        exported_names.contains(src.name) ? mir::MethodVisibility::kPublic
+                                          : mir::MethodVisibility::kInternal,
+        ctor_frame, subroutine_storage_plans_[i]);
     auto decl_or = subroutine_lowerer.Run(src);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::MethodId added = mir_class.methods.Add(*std::move(decl_or));
@@ -1947,6 +1958,30 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           subroutine_lowerer, src.body, init_frame, pending);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
+  }
+
+  // Each exported subroutine (LRM 35.5) already lowered as a method above, in
+  // structural-subroutine id order, so its method id is its index. The wrapper
+  // is synthesized to call that method on the instance recovered from the
+  // running design, named here by the class's own instance identity.
+  for (const hir::ForeignExportDecl& export_decl : hir_scope.foreign_exports) {
+    std::optional<mir::MethodId> method_id;
+    for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
+      if (hir_scope.structural_subroutines
+              .Get(hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)})
+              .name == export_decl.sv_name) {
+        method_id = mir::MethodId{static_cast<std::uint32_t>(i)};
+        break;
+      }
+    }
+    if (!method_id.has_value()) {
+      throw InternalError(
+          "StructuralScopeLowerer::PopulateBodies: exported subroutine has no "
+          "lowered method");
+    }
+    mir_class.foreign_export_wrappers.push_back(SynthesizeForeignExportWrapper(
+        unit_lowerer, ctor_frame, class_id_, *method_id, export_decl,
+        mir_class.name));
   }
 
   for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {

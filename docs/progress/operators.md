@@ -60,7 +60,7 @@ merged node.
       position in its own wide, X/Z-preserving domain (decisions/selector-coordinate-resolution.md),
       so no coordinate arithmetic is synthesized on the selector's own -- possibly narrow, possibly
       four-state -- type, and no runtime comparison between the two bounds is emitted. Unblocks
-      `$bits` in a part-select bound (`query-functions.md` Q1) and the `ibex_top` parity reduction.
+      `$bits` in a part-select bound and the `ibex_top` parity reduction.
 
 ### Construction
 

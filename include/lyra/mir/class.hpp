@@ -11,6 +11,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/foreign_export_wrapper.hpp"
 #include "lyra/mir/method.hpp"
 #include "lyra/mir/method_id.hpp"
 #include "lyra/mir/param.hpp"
@@ -122,6 +123,10 @@ struct Class {
   // in the instance method arena is one. Empty for a class that declares no
   // static callable.
   base::Arena<StaticCallableDecl, StaticCallableId> static_callables;
+  // The foreign-linkage wrappers this class exposes -- one per `export "DPI-C"`
+  // of one of its methods (LRM 35.5). Each is an external entry a backend
+  // materializes beside the class; empty for a class that exports nothing.
+  std::vector<ForeignExportWrapper> foreign_export_wrappers;
   std::vector<TypeAliasDecl> type_aliases;
 
   void AddTypeAlias(TypeAliasDecl decl) {
