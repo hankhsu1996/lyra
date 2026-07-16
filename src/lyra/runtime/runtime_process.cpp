@@ -1,5 +1,6 @@
 #include "lyra/runtime/runtime_process.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <exception>
 #include <memory>
@@ -14,7 +15,11 @@
 namespace lyra::runtime {
 
 RuntimeProcess::RuntimeProcess(ProcessKind kind, Coroutine<void> coroutine)
-    : kind_(kind), coroutine_(std::move(coroutine)) {
+    : kind_(kind),
+      coroutine_(std::move(coroutine)),
+      // Before the body runs, the top frame is the active leaf (what the engine
+      // schedules to start the process); a wait moves the leaf inward.
+      current_leaf_(coroutine_.Token()) {
   // Wire the promise's back-pointer so coroutine-side code (awaitables)
   // can recover the RuntimeProcess identity from within await_suspend.
   coroutine_.BindProcess(*this);
@@ -36,13 +41,32 @@ void RuntimeProcess::ArmWaitFork(CoroutineHandle waiter) {
   waiter->Park(parked_wait_fork_);
 }
 
-auto RuntimeProcess::HasNoLiveChild() const -> bool {
-  for (const auto& child : children_) {
-    if (child->execution_state_ != ProcessExecutionState::kTerminated) {
-      return false;
-    }
+void RuntimeProcess::ArmTerminatedWaiter(CoroutineHandle waiter) {
+  waiter->Park(terminated_waiters_);
+}
+
+void RuntimeProcess::Suspend() {
+  if (execution_state_ == ProcessExecutionState::kSuspended ||
+      execution_state_ == ProcessExecutionState::kTerminated) {
+    return;
   }
-  return true;
+  // Detach the leaf from whatever holds it -- a wait target (desensitize) or a
+  // run queue (dequeue). Its pending wait, if any, is a separate member and
+  // stays: it is the saved blocked disposition resume re-establishes.
+  if (current_leaf_ != nullptr) {
+    current_leaf_->RevokeRegistrations();
+  }
+  execution_state_ = ProcessExecutionState::kSuspended;
+}
+
+void RuntimeProcess::MarkResumed() {
+  execution_state_ = ProcessExecutionState::kWaiting;
+}
+
+auto RuntimeProcess::HasNoLiveChild() const -> bool {
+  return std::ranges::all_of(children_, [](const auto& child) {
+    return child->execution_state_ == ProcessExecutionState::kTerminated;
+  });
 }
 
 auto RuntimeProcess::TakeWaitForkWaiterIfSatisfied() -> CoroutineHandle {
@@ -53,8 +77,43 @@ auto RuntimeProcess::TakeWaitForkWaiterIfSatisfied() -> CoroutineHandle {
   return waiter != nullptr ? waiter->activation : nullptr;
 }
 
-void RuntimeProcess::DisableDescendants() {
+void RuntimeProcess::DisableDescendants(std::vector<CoroutineHandle>& woken) {
+  for (const std::shared_ptr<RuntimeProcess>& child : children_) {
+    // Sever the upward link before the recursion severs the downward ones, so a
+    // handle-held child left behind by the clear below is a parent-less orphan
+    // rather than a node pointing into freed storage.
+    child->parent_ = nullptr;
+    child->TerminateSubtreeKilled(woken);
+  }
   children_.clear();
+}
+
+void RuntimeProcess::TerminateSubtreeKilled(
+    std::vector<CoroutineHandle>& woken) {
+  DisableDescendants(woken);
+  if (execution_state_ != ProcessExecutionState::kTerminated) {
+    SettleTerminated(ProcessTerminationCause::kKilled, woken);
+  }
+}
+
+auto RuntimeProcess::IsSelfOrAncestorOf(const RuntimeProcess& other) const
+    -> bool {
+  for (const RuntimeProcess* node = &other; node != nullptr;
+       node = node->parent_) {
+    if (node == this) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void RuntimeProcess::DetachFromParent() {
+  if (parent_ == nullptr) {
+    return;
+  }
+  RuntimeProcess* parent = parent_;
+  parent_ = nullptr;
+  parent->EraseChild(*this);
 }
 
 auto RuntimeProcess::IsReleasable() const -> bool {
@@ -62,14 +121,14 @@ auto RuntimeProcess::IsReleasable() const -> bool {
          children_.empty();
 }
 
-void RuntimeProcess::AdoptChild(std::unique_ptr<RuntimeProcess> child) {
+void RuntimeProcess::AdoptChild(std::shared_ptr<RuntimeProcess> child) {
   child->parent_ = this;
   children_.push_back(std::move(child));
 }
 
 void RuntimeProcess::EraseChild(RuntimeProcess& child) {
   const std::size_t erased = std::erase_if(
-      children_, [&](const std::unique_ptr<RuntimeProcess>& node) {
+      children_, [&](const std::shared_ptr<RuntimeProcess>& node) {
         return node.get() == &child;
       });
   if (erased != 1) {
@@ -86,18 +145,29 @@ void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
   }
 }
 
-void RuntimeProcess::SettleTerminated() {
+void RuntimeProcess::SettleTerminated(
+    ProcessTerminationCause cause, std::vector<CoroutineHandle>& woken) {
   execution_state_ = ProcessExecutionState::kTerminated;
-  // The frame is parked at its final suspend point and holds the only copies of
-  // this activation's automatic storage, so it is released with the terminal
-  // state rather than pinned for as long as the node lives. A branch this body
-  // spawned may still be running, which is why the node itself stays (LRM
-  // 9.6.3).
+  termination_cause_ = cause;
+  // The frame is parked at its final suspend point (normal completion) or at
+  // some blocking point (a kill), and holds the only copies of this
+  // activation's automatic storage, so it is released with the terminal state
+  // rather than pinned for as long as the node lives. Releasing it destroys the
+  // frame, which revokes every registration it held -- so a killed process,
+  // parked anywhere, is left unable to resume. A branch this body spawned may
+  // still be running, which is why the node itself stays (LRM 9.6.3).
   coroutine_ = Coroutine<void>{};
+  // Settling and draining the `await` waiters are one step: a process reaching
+  // terminal always hands its waiters to `woken` in the same primitive, so no
+  // terminal path can leave an awaiter parked forever (LRM 9.7).
+  while (Registration* waiter = terminated_waiters_.PopFront()) {
+    woken.push_back(waiter->activation);
+  }
 }
 
 auto RuntimeProcess::ResumeWith(
-    ExecutionContext& context, CoroutineHandle handle) -> bool {
+    ExecutionContext& context, CoroutineHandle handle,
+    std::vector<CoroutineHandle>& woken) -> bool {
   if (execution_state_ == ProcessExecutionState::kTerminated) {
     throw InternalError(
         "RuntimeProcess::ResumeWith: cannot resume terminated process");
@@ -119,7 +189,7 @@ auto RuntimeProcess::ResumeWith(
   // the frame so a faulted process reaches its terminal state and frees its
   // frame on the same path a successful one does, then re-raise it.
   std::exception_ptr fault = coroutine_.Handle().promise().TakeFault();
-  SettleTerminated();
+  SettleTerminated(ProcessTerminationCause::kCompleted, woken);
   if (fault) {
     std::rethrow_exception(fault);
   }

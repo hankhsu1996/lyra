@@ -242,6 +242,12 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data) const
             return mir::ManagedRefType{
                 .pointee = ClassObjectType(src.class_id)};
           },
+          [&](const hir::ImportedClassHandleType& src) -> mir::TypeData {
+            // A handle to an imported runtime-library class is the same managed
+            // reference, its pointee the runtime-provided object type.
+            return mir::ManagedRefType{
+                .pointee = ImportedRuntimeObjectType(src.klass)};
+          },
           [](const hir::NullType&) -> mir::TypeData {
             // The `null` literal carries no class identity; it renders as a
             // null pointer that any handle absorbs, so MIR types it as the

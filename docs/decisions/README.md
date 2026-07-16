@@ -187,6 +187,11 @@ the detail lives in the entry itself.
   activation owns and the target merely links; the activation-side set and the target-side list are
   two indexes over it, revoking is a detach rather than a search, and the two-authoritative-copies
   shape is rejected.
+- [activation-disposition](activation-disposition.md) -- an activation has one authoritative
+  disposition (Executing / Runnable / Blocked / Suspended(saved) / Terminal); a wait is a retainable
+  pending capability distinct from its registration (enrollment), supplied uniformly by each
+  construct; suspension saves the prior disposition; a central wait-kind taxonomy,
+  `Runnable(region)`, and mirroring the wait's state are rejected.
 
 ### Diagnostics
 

@@ -220,7 +220,7 @@ class Scope {
   // Filled during construction; scanned only at construction-time
   // resolution, never on the simulation path.
   std::vector<SignalEntry> signals_;
-  std::vector<std::unique_ptr<RuntimeProcess>> processes_;
+  std::vector<std::shared_ptr<RuntimeProcess>> processes_;
   // Empty std::function == clean slot; no parallel dirty bitmap needed.
   std::vector<std::function<void()>> observed_pending_;
 };

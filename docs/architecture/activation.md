@@ -40,7 +40,21 @@ the awaiter consumes, not of the scheduler.
   for as long as any descendant is live.
 - The **registration set**: every external reference to a parked activation (a region queue slot, a
   delay slot, an event waiter entry, a value-change subscription, a join aggregator entry) as a
-  revocable registration owned by the activation.
+  revocable registration owned by the activation. A registration is the activation's _current
+  enrollment_ in a target, not the wait itself.
+- The **activation disposition**: how an activation currently participates in execution --
+  `Executing`, `Runnable`, `Blocked`, `Suspended`, or `Terminal`. This is the activation's
+  authoritative state; the registration set and completion slot are resources constrained by it, not
+  independent facts. `Suspended` carries the disposition the activation held before it was
+  suspended.
+- The **pending wait**: for a `Blocked` (or `Suspended`-from-blocked) activation, the retainable
+  ability to re-establish its wait and to report whether the wait is already satisfied -- distinct
+  from the registration, which only records the current enrollment. It is a uniform capability every
+  suspending construct supplies, never a taxonomy the scheduler branches on.
+- The **active leaf**: the relation from a process to the one activation currently carrying its
+  thread. A process is a single thread (a task or function call runs in the caller's thread, LRM
+  9.5), so when it is not executing exactly one leaf activation -- the innermost frame -- is
+  enrolled or runnable. Process control names the process and acts on its active leaf.
 - The **join state**: the completion aggregator for a fork's branches and its join-mode condition.
 
 ## Does Not Own
@@ -87,9 +101,12 @@ the awaiter consumes, not of the scheduler.
    Destruction is gated on the registration set being empty. A registration is **one record**: the
    activation owns it and the target links it, so the relation is stored once and reached from both
    ends. The activation's set and the target's list are two indexes over that record, never two
-   descriptions of it. _Consequence: an activation can be cancelled and torn down with no dangling
-   token left in any queue, waiter, or subscription -- and revoking is a detach, so neither end ever
-   searches the other, and neither can hold a belief the other has abandoned._
+   descriptions of it. A registration records the activation's _current enrollment_ in a target, not
+   the wait it is serving: revoking a registration detaches the enrollment and forgets nothing the
+   activation still needs, because the ability to re-establish the wait lives in the pending wait
+   (invariant 7), not the registration. _Consequence: an activation can be cancelled and torn down
+   with no dangling token left in any queue, waiter, or subscription -- and revoking is a detach, so
+   neither end ever searches the other, and neither can hold a belief the other has abandoned._
 
 5. **A typed await consumes the typed terminal outcome.** Awaiting an activation yields its outcome:
    `Succeeded(T)` produces `T`, `Faulted` re-raises the exception into the awaiter, `Cancelled`
@@ -105,6 +122,22 @@ the awaiter consumes, not of the scheduler.
    join state. A deferred effect is a closure submitted to a region, not an activation.
    _Consequence: each kind reuses the activation core but binds its own ownership / continuation /
    completion; deferred work never enters the activation/completion model._
+
+7. **An activation's disposition is authoritative, and suspension saves the disposition it
+   replaces.** A non-terminal activation is `Executing`, `Runnable` (entitled to run; the region it
+   sits in is the engine's placement, not part of the disposition), or `Blocked` (waiting on a
+   condition, enrolled by a registration and holding a pending wait). `Suspended` is not another
+   kind of wait: it is process control (LRM 9.7) revoking an activation's scheduler participation
+   while saving the disposition it held -- `Suspended(Runnable)` or `Suspended(Blocked)` -- so
+   resume restores exactly that. A saved `Runnable` resume re-takes an execution entitlement; a
+   saved `Blocked` resume asks its pending wait to re-establish, which either re-enrolls or reports
+   the wait already satisfied. The pending wait is one uniform capability every suspending construct
+   supplies -- re-establish, report-satisfied, discard -- so no scheduler or activation path
+   branches on which construct the wait came from; the construct-specific knowledge stays in the
+   construct's own registration, exactly as a wakeup registration is one per-construct runtime call
+   and the suspend itself is construct-neutral. _Consequence: the disposition is one state machine
+   with one authoritative owner; the registration set, the pending wait, and run-queue membership
+   are resources that must agree with it, never independent truths that drift._
 
 ## Boundary to Adjacent Layers
 
@@ -158,6 +191,31 @@ the awaiter consumes, not of the scheduler.
   or an await edge. These are closures submitted to a region; they neither suspend their submitter
   nor settle an outcome a consumer awaits (invariant 6).
 
+- **A central taxonomy of wait kinds the scheduler or activation core branches on** -- a
+  `variant`/enum of delay / event / join / await blocks switched over on suspend, resume, or wake.
+  The pending wait is a uniform capability; a suspending construct already registers its own wakeup
+  through its own call, so re-establishing it is that same construct's business, dispatched
+  uniformly. A kind switch on the execution path reintroduces the source-language timing concept the
+  engine is forbidden to know (invariant 7, `scheduling.md`).
+
+- **A second authoritative copy of the wait's state** -- a blocked-operation object that duplicates
+  the deadline / observable / target the suspending construct already holds, kept in sync with it.
+  The wait's state has one home (the construct's own retained state); the pending wait is the
+  capability to re-establish from that home, not a mirror of it. Two copies is the registration
+  double-encoding forbidden by invariant 4, one level up.
+
+- **Scheduling placement folded into the disposition** -- a `Runnable(region)` that pins which
+  region or queue a runnable activation must be restored to. `Runnable` is the semantic entitlement
+  to run; the region is the engine's placement, chosen when the activation is scheduled (resume
+  places a runnable-suspended activation into the active region, LRM 9.7). A disposition that
+  carries region lets scheduler placement leak into activation semantics (invariant 7).
+
+- **`Suspended` modeled as a new kind of wait, or the disposition split across independent fields**
+  -- a suspended activation given its own wait target to re-fire, or its state inferred from
+  execution flags plus registration-emptiness plus queue membership plus pending-wait presence, each
+  separately authoritative. Suspension saves the prior disposition; the disposition is one
+  authoritative state its resources must agree with (invariant 7).
+
 - **A fork branch modeled as a task the parent awaits.** A branch has its own process identity, is
   owned by the spawning process's lineage, and reports to a join state under a join-mode condition;
   `join_none` has no parent wait at all. Reusing task-enable ownership for a branch conflates the
@@ -206,7 +264,11 @@ state. That the first two coincide for a branch is not a collapse of the relatio
 The C++ backend realizes an activation as a coroutine frame. Its activation token is the coroutine
 promise's non-templated base (the scheduler holds a pointer to it); its completion slot is the typed
 result the promise carries; a task enable is `co_await` of the activation, with symmetric transfer
-realizing the continuation and `await_resume` consuming the terminal outcome. The promise base, the
-`coroutine_handle`, and symmetric transfer are this realization's mechanics; the activation,
-completion slot, registration set, and join state are the model they realize. A future LIR / LLVM
-backend realizes the same model with coroutine intrinsics and explicit control edges instead.
+realizing the continuation and `await_resume` consuming the terminal outcome. A suspending construct
+realizes a pending wait by the state it retains to re-establish itself -- a delay its absolute
+deadline, an event control its observables and edges -- reached uniformly through the pending-wait
+capability. The promise base, the `coroutine_handle`, and symmetric transfer are this realization's
+mechanics; the activation, completion slot, registration set, disposition, and pending wait are the
+model they realize. A future LIR / LLVM backend realizes the same model with coroutine intrinsics
+and explicit control edges instead, the pending wait re-established by re-issuing the construct's
+own wakeup-registration call rather than re-entering the suspended body.

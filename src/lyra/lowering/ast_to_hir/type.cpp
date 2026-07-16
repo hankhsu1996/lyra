@@ -7,10 +7,13 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/Compilation.h>
 #include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -35,6 +38,44 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+// A class the runtime library defines and every unit imports by reference is a
+// direct member of the built-in `std` package (LRM 9.7 `process` is the first
+// Lyra supports). Keying on the declaring package plus the name -- rather than
+// a bare name match anywhere -- is what makes this the library declaration's
+// identity, not a user class that happens to be named `process`.
+auto DetectImportedRuntimeClass(const slang::ast::ClassType& cls)
+    -> std::optional<support::ImportedRuntimeClass> {
+  const slang::ast::Scope* scope = cls.getParentScope();
+  if (scope == nullptr) {
+    return std::nullopt;
+  }
+  const auto& std_package = scope->getCompilation().getStdPackage();
+  if (scope != static_cast<const slang::ast::Scope*>(&std_package)) {
+    return std::nullopt;
+  }
+  if (cls.name == "process") {
+    return support::ImportedRuntimeClass::kProcess;
+  }
+  return std::nullopt;
+}
+
+// An enum nested in an imported runtime class (LRM 9.7 `process::state`) is a
+// value the runtime returns and the program compares, with no unit-emitted enum
+// declaration behind it. It lowers to its underlying integral type.
+auto EnumBelongsToImportedRuntimeClass(const slang::ast::EnumType& enum_type)
+    -> bool {
+  const slang::ast::Scope* scope = enum_type.getParentScope();
+  if (scope == nullptr) {
+    return false;
+  }
+  const slang::ast::Symbol& owner = scope->asSymbol();
+  if (owner.kind != slang::ast::SymbolKind::ClassType) {
+    return false;
+  }
+  return DetectImportedRuntimeClass(owner.as<slang::ast::ClassType>())
+      .has_value();
+}
 
 auto LowerScalarAtom(slang::ast::ScalarType::Kind k) -> hir::BitAtom {
   switch (k) {
@@ -309,8 +350,11 @@ auto TranslateTypeData(
       return hir::TypeData{*std::move(pa)};
     }
     case slang::ast::SymbolKind::EnumType: {
-      auto e = LowerEnum(
-          canonical.as<slang::ast::EnumType>(), decl_span, unit_lowerer);
+      const auto& enum_type = canonical.as<slang::ast::EnumType>();
+      if (EnumBelongsToImportedRuntimeClass(enum_type)) {
+        return TranslateTypeData(unit_lowerer, enum_type.baseType, decl_span);
+      }
+      auto e = LowerEnum(enum_type, decl_span, unit_lowerer);
       if (!e.has_value()) {
         return std::unexpected(std::move(e.error()));
       }
@@ -337,8 +381,11 @@ auto TranslateTypeData(
     case slang::ast::SymbolKind::NullType:
       return hir::TypeData{hir::NullType{}};
     case slang::ast::SymbolKind::ClassType: {
-      auto class_id_or = unit_lowerer.InternClass(
-          canonical.as<slang::ast::ClassType>(), decl_span);
+      const auto& class_type = canonical.as<slang::ast::ClassType>();
+      if (const auto imported = DetectImportedRuntimeClass(class_type)) {
+        return hir::TypeData{hir::ImportedClassHandleType{.klass = *imported}};
+      }
+      auto class_id_or = unit_lowerer.InternClass(class_type, decl_span);
       if (!class_id_or) {
         return std::unexpected(std::move(class_id_or.error()));
       }

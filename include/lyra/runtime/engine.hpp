@@ -159,8 +159,11 @@ class Engine {
   void RegisterProcesses();
   // Runs a suspended frame's owning process against the engine's execution
   // context. Resuming demands that context, so a body always executes with its
-  // own process identity published.
-  auto ResumeProcess(CoroutineHandle handle) -> bool;
+  // own process identity published. On completion the terminal transition
+  // drains the process's `await` waiters into `woken` for the caller to
+  // schedule.
+  auto ResumeProcess(
+      CoroutineHandle handle, std::vector<CoroutineHandle>& woken) -> bool;
   void RunProcess(CoroutineHandle handle);
   void DrainRunnableQueue(RegistrationList& queue);
 
