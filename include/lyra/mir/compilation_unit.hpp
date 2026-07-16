@@ -42,6 +42,10 @@ struct BuiltinMirTypes {
   TypeId time;
   TypeId services;
   TypeId scope_ptr;
+  // The object type an imported runtime-library class handle (LRM 9.7
+  // `process`) references. A fixed library class named by its qualified name,
+  // exactly as the scope class is.
+  TypeId process_object;
   TypeId files;
   TypeId diagnostic;
   TypeId channel_cancellation;
@@ -116,6 +120,9 @@ struct CompilationUnit {
                     ExternalClassType{
                         .qualified_name = "lyra::runtime::Scope"}),
                 PointerOwnership::kBorrowed),
+            .process_object = types.Intern(
+                ExternalClassType{
+                    .qualified_name = "lyra::runtime::RuntimeProcess"}),
             .files = types.Intern(FilesType{}),
             .diagnostic = types.Intern(DiagnosticType{}),
             .channel_cancellation = types.Intern(

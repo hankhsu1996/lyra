@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
@@ -63,7 +64,7 @@ class ForkGroup {
 // ready iff every needed completion already arrived (which a zero-branch fork
 // or a `join_any` with an immediate finisher can produce); otherwise the parent
 // parks on the group.
-class JoinAwaitable {
+class JoinAwaitable : public PendingWait {
  public:
   explicit JoinAwaitable(std::shared_ptr<ForkGroup> group)
       : group_(std::move(group)) {
@@ -74,11 +75,26 @@ class JoinAwaitable {
   }
 
   template <class P>
-  void await_suspend(std::coroutine_handle<P> parent) noexcept {
-    group_->ParkParent(&parent.promise());
+  void await_suspend(std::coroutine_handle<P> parent) {
+    CoroutineHandle token = &parent.promise();
+    group_->ParkParent(token);
+    token->process->BlockLeaf(token, this);
   }
 
   void await_resume() const noexcept {
+  }
+
+  // A join condition is monotonic (LRM 9.3.2): branch completions accumulate
+  // during suspension. On resume, if the threshold is now met the parent is
+  // runnable; otherwise re-park on the group. No engine services are needed.
+  // NOLINTNEXTLINE(readability-named-parameter)
+  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+      -> PendingWaitOutcome override {
+    if (!group_->NeedsPark()) {
+      return PendingWaitOutcome::kRunnable;
+    }
+    group_->ParkParent(activation);
+    return PendingWaitOutcome::kReblocked;
   }
 
  private:
@@ -141,7 +157,7 @@ void SpawnAll(RuntimeServices& services, Branches... branches) {
 // process; the frame parked on it is the one that ran `wait fork` (the task
 // frame when `wait fork` sits in a task), so it is armed through the suspending
 // handle rather than the process's own body.
-class WaitForkAwaitable {
+class WaitForkAwaitable : public PendingWait {
  public:
   explicit WaitForkAwaitable(RuntimeServices& services) : services_(&services) {
   }
@@ -151,11 +167,29 @@ class WaitForkAwaitable {
   }
 
   template <class P>
-  void await_suspend(std::coroutine_handle<P> waiter) const {
-    services_->CurrentProcess().ArmWaitFork(&waiter.promise());
+  void await_suspend(std::coroutine_handle<P> waiter) {
+    CoroutineHandle token = &waiter.promise();
+    services_->CurrentProcess().ArmWaitFork(token);
+    token->process->BlockLeaf(token, this);
   }
 
   void await_resume() const noexcept {
+  }
+
+  // `wait fork` waits on the executing process's own immediate children (LRM
+  // 9.6.1), a monotonic condition. On resume, if every immediate child has
+  // terminated the process is runnable; otherwise re-park on its own condition.
+  // The target is the process owning the waiting frame, not the resumer's
+  // current process, so it is read from the activation.
+  // NOLINTNEXTLINE(readability-named-parameter)
+  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+      -> PendingWaitOutcome override {
+    RuntimeProcess& process = activation->Process();
+    if (process.HasNoLiveChild()) {
+      return PendingWaitOutcome::kRunnable;
+    }
+    process.ArmWaitFork(activation);
+    return PendingWaitOutcome::kReblocked;
   }
 
  private:
@@ -172,7 +206,11 @@ inline auto WaitFork(RuntimeServices& services) -> WaitForkAwaitable {
 // `wait fork`, it reads the executing process (LRM 9.5), so a `disable fork`
 // inside a task reaches the descendants the enclosing process owns.
 inline void DisableFork(RuntimeServices& services) {
-  services.CurrentProcess().DisableDescendants();
+  std::vector<CoroutineHandle> woken;
+  services.CurrentProcess().DisableDescendants(woken);
+  for (CoroutineHandle waiter : woken) {
+    services.ScheduleNextDelta(waiter);
+  }
 }
 
 }  // namespace lyra::runtime

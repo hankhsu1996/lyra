@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
 #include <variant>
 
 #include "lyra/hir/class_id.hpp"
@@ -9,6 +11,7 @@
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::hir {
@@ -52,8 +55,17 @@ struct BuiltinMethodRef {
   support::BuiltinFn method;
 };
 
+// Calls a method the runtime library provides for an imported class (LRM 9.7
+// `process`). A bodyless external callable named by its library identity; the
+// receiver is present for an instance method and absent for a static one.
+struct ImportedMethodRef {
+  support::ImportedRuntimeMethod method =
+      support::ImportedRuntimeMethod::kProcessSelf;
+  std::optional<ExprId> receiver = std::nullopt;
+};
+
 using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, SystemSubroutineRef,
-    BuiltinMethodRef, ForeignImportRef>;
+    BuiltinMethodRef, ForeignImportRef, ImportedMethodRef>;
 
 }  // namespace lyra::hir

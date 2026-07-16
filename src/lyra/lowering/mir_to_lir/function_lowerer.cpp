@@ -211,6 +211,12 @@ auto LowerCallTarget(
                               s.slot);
                       return lir::CallTarget{lir::ForeignTarget{
                           .symbol = decl.external.foreign_name}};
+                    },
+                    [&](const mir::ImportedRuntimeCallTarget&)
+                        -> diag::Result<lir::CallTarget> {
+                      return Unsupported(
+                          "mir_to_lir: an imported runtime-library method call "
+                          "is not yet lowerable to LIR");
                     }},
                 d.target);
           },

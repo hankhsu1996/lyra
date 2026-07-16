@@ -190,13 +190,13 @@ auto Scope::Services() -> RuntimeServices& {
 
 void Scope::RegisterInitial(Coroutine<void> coroutine) {
   processes_.push_back(
-      std::make_unique<RuntimeProcess>(
+      std::make_shared<RuntimeProcess>(
           ProcessKind::kInitial, std::move(coroutine)));
 }
 
 void Scope::RegisterFinal(Coroutine<void> coroutine) {
   processes_.push_back(
-      std::make_unique<RuntimeProcess>(
+      std::make_shared<RuntimeProcess>(
           ProcessKind::kFinal, std::move(coroutine)));
 }
 

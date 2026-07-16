@@ -1,0 +1,13 @@
+id: cpp.process_suspend_resume
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    suspended_seen: 1
+    not_progressed: 1
+    resumed_ran: 1

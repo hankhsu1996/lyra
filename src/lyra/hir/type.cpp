@@ -58,6 +58,9 @@ auto Type::Kind() const -> TypeKind {
           [](const RealTimeType&) { return TypeKind::kRealTime; },
           [](const ChandleType&) { return TypeKind::kChandle; },
           [](const ClassHandleType&) { return TypeKind::kClassHandle; },
+          [](const ImportedClassHandleType&) {
+            return TypeKind::kImportedClassHandle;
+          },
           [](const NullType&) { return TypeKind::kNull; },
           [](const VoidType&) { return TypeKind::kVoid; },
       },
@@ -134,6 +137,7 @@ auto Type::IsValueChangeObservable() const -> bool {
     case TypeKind::kEvent:
     case TypeKind::kChandle:
     case TypeKind::kClassHandle:
+    case TypeKind::kImportedClassHandle:
     case TypeKind::kNull:
     case TypeKind::kVoid:
       return false;

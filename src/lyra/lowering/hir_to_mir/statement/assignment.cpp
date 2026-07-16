@@ -32,6 +32,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -467,6 +468,10 @@ auto LowerExprStmt(
           process.EnclosingScopeLowerer()
               .LookupHirSubroutine(struct_ref->hops, struct_ref->subroutine)
               .kind == hir::SubroutineKind::kTask;
+    } else if (
+        const auto* imported =
+            std::get_if<hir::ImportedMethodRef>(&call->callee)) {
+      suspends = support::ImportedRuntimeMethodSuspends(imported->method);
     }
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));

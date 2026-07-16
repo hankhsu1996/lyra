@@ -511,6 +511,11 @@ class MirDumper {
                   s.owner.value, s.slot.value, callable.name,
                   callable.external.foreign_name);
             },
+            [](const ImportedRuntimeCallTarget& i) -> std::string {
+              return std::format(
+                  "imported_runtime=\"{}\"",
+                  support::ImportedRuntimeMethodSymbol(i.method));
+            },
         },
         target);
   }

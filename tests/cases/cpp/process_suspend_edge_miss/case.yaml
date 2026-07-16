@@ -1,0 +1,12 @@
+id: cpp.process_suspend_edge_miss
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    suspended_seen: 1
+    woke_count: 1

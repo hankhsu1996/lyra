@@ -4,6 +4,8 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/event.hpp"
+#include "lyra/runtime/pending_wait.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/packed_array.hpp"
 
@@ -13,7 +15,7 @@ namespace lyra::runtime {
 // "waiting for an event" state -- the coroutine simply suspends, and the
 // producer schedules it again on trigger through the same construct-neutral
 // verb every other wait uses, so the engine has no event-specific code path.
-class EventAwaitable {
+class EventAwaitable : public PendingWait {
  public:
   explicit EventAwaitable(RuntimeEvent& event) : event_(&event) {
   }
@@ -23,11 +25,23 @@ class EventAwaitable {
   }
 
   template <class P>
-  void await_suspend(std::coroutine_handle<P> handle) noexcept {
-    event_->AddWaiter(&handle.promise());
+  void await_suspend(std::coroutine_handle<P> handle) {
+    CoroutineHandle token = &handle.promise();
+    event_->AddWaiter(token);
+    token->process->BlockLeaf(token, this);
   }
 
   static void await_resume() noexcept {
+  }
+
+  // A named-event trigger is instantaneous (LRM 15.5): a trigger during
+  // suspension is missed, so resume re-subscribes for the next one. No engine
+  // services are needed; the capability signature carries them uniformly.
+  // NOLINTNEXTLINE(readability-named-parameter)
+  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+      -> PendingWaitOutcome override {
+    event_->AddWaiter(activation);
+    return PendingWaitOutcome::kReblocked;
   }
 
  private:

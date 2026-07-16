@@ -228,6 +228,11 @@ class HirDumper {
               return std::format(
                   "ClassHandleType(class=Class[{}])", c.class_id.value);
             },
+            [](const ImportedClassHandleType& c) -> std::string {
+              return std::format(
+                  "ImportedClassHandleType(class={})",
+                  support::ImportedRuntimeClassName(c.klass));
+            },
             [](const NullType&) -> std::string { return "NullType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
         },
@@ -554,6 +559,14 @@ class HirDumper {
               return std::format(
                   "ForeignImport[{}](hops={}) \"{}\"", f.id.value, f.hops.value,
                   decl.name);
+            },
+            [](const ImportedMethodRef& i) -> std::string {
+              return std::format(
+                  "ImportedMethod \"{}\"{}",
+                  support::ImportedRuntimeMethodSymbol(i.method),
+                  i.receiver.has_value()
+                      ? std::format(" recv=Expr[{}]", i.receiver->value)
+                      : std::string{});
             },
         },
         callee);

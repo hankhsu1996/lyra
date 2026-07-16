@@ -167,9 +167,11 @@ void Engine::DrainRunnableQueue(RegistrationList& queue) {
   queue.SpliceBackOnto(queues_.draining);
   while (Registration* queued = queues_.draining.PopFront()) {
     CoroutineHandle handle = queued->activation;
-    // The activation is running, not waiting: it holds no membership until its
-    // body parks again.
+    // The activation is running, not waiting: it holds no membership and no
+    // pending wait until its body parks again (the wait that led here is
+    // consumed).
     handle->RevokeRegistrations();
+    handle->pending_wait = nullptr;
     RunProcess(handle);
   }
 }
@@ -231,7 +233,11 @@ void Engine::ExecuteFinalProcesses() {
   while (Registration* queued = queues_.finals.PopFront()) {
     CoroutineHandle handle = queued->activation;
     handle->RevokeRegistrations();
-    const bool completed = ResumeProcess(handle);
+    // A `final` block is never an `await` target (LRM 9.7 restricts targets to
+    // initial / always / fork), so its terminal transition drains no waiters;
+    // the collector stays empty.
+    std::vector<CoroutineHandle> woken;
+    const bool completed = ResumeProcess(handle, woken);
     if (completed) {
       continue;
     }
@@ -292,12 +298,14 @@ auto Engine::IsRunnablePhase() const -> bool {
          phase_ == SchedulerPhase::kReactive;
 }
 
-auto Engine::ResumeProcess(CoroutineHandle handle) -> bool {
+auto Engine::ResumeProcess(
+    CoroutineHandle handle, std::vector<CoroutineHandle>& woken) -> bool {
   // Capture the owning process before resuming, since `handle` may be an
   // enabled task's frame that is destroyed as control returns up the enable
-  // chain.
+  // chain. On completion the terminal transition drains the process's own
+  // `await` waiters into `woken` atomically.
   RuntimeProcess& process = handle->Process();
-  return process.ResumeWith(execution_context_, handle);
+  return process.ResumeWith(execution_context_, handle, woken);
 }
 
 void Engine::RunProcess(CoroutineHandle handle) {
@@ -312,16 +320,22 @@ void Engine::RunProcess(CoroutineHandle handle) {
   // No wait dispatch: each awaitable has already arranged its own wakeup path
   // during await_suspend.
   RuntimeProcess& process = handle->Process();
-  if (!ResumeProcess(handle)) {
+  std::vector<CoroutineHandle> woken;
+  if (!ResumeProcess(handle, woken)) {
     return;
   }
-  // A terminating process is the last live child its parent was waiting on iff
-  // the parent's `wait fork` condition now holds (LRM 9.6.1); wake the parked
-  // waiter before releasing, while the just-terminated node is still linked.
+  // Terminal transition already settled the process and drained its own `await`
+  // waiters into `woken` (LRM 9.7) atomically. Add the surviving-boundary
+  // effect -- the parent's `wait fork` waiter if this was the last live child
+  // (LRM 9.6.1) -- while the node is still linked, then schedule. The
+  // activation layer names who became runnable; the engine schedules.
   if (RuntimeProcess* parent = process.Parent(); parent != nullptr) {
     if (CoroutineHandle waiter = parent->TakeWaitForkWaiterIfSatisfied()) {
-      ScheduleNextDelta(waiter);
+      woken.push_back(waiter);
     }
+  }
+  for (CoroutineHandle waiter : woken) {
+    ScheduleNextDelta(waiter);
   }
   // Releasing destroys `process` and every ancestor the release leaves with no
   // lineage to retain, so no statement may follow it here.
@@ -358,8 +372,11 @@ void Engine::ScheduleNextDelta(CoroutineHandle handle) {
   // Every satisfied wait comes back through this verb, so it is also where the
   // wait ends: the activation is runnable now, and nothing it was parked on --
   // the sibling observables of an `@(a or b)`, the event it waited for -- may
-  // fire it a second time.
+  // fire it a second time. The pending wait is consumed here too, so a suspend
+  // in the woken-but-not-yet-resumed window saves a runnable disposition (a
+  // re-queue on resume), not a blocked one (a re-establish).
   handle->RevokeRegistrations();
+  handle->pending_wait = nullptr;
   handle->Park(queues_.next_delta);
 }
 
@@ -368,7 +385,7 @@ void Engine::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
 }
 
 void Engine::Spawn(Coroutine<void> coroutine) {
-  auto child = std::make_unique<RuntimeProcess>(
+  auto child = std::make_shared<RuntimeProcess>(
       ProcessKind::kSpawned, std::move(coroutine));
   const CoroutineHandle handle = child->TopHandle();
   execution_context_.CurrentProcess().AdoptChild(std::move(child));

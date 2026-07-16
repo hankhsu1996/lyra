@@ -4,6 +4,8 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/pending_wait.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/packed_array.hpp"
 
@@ -29,7 +31,7 @@ inline auto ScaleToGlobalTicks(
 // current slot; `#N>0` scales to the engine's global tick and enqueues at that
 // future SimTime. The engine does not know about delays as a category -- it
 // only sees a process arriving in a queue at the right time.
-class DelayAwaitable {
+class DelayAwaitable : public PendingWait {
  public:
   DelayAwaitable(
       RuntimeServices& services, SimDuration duration,
@@ -44,24 +46,46 @@ class DelayAwaitable {
   }
 
   template <class P>
-  void await_suspend(std::coroutine_handle<P> handle) noexcept {
+  void await_suspend(std::coroutine_handle<P> handle) {
     CoroutineHandle token = &handle.promise();
-    if (duration_ == 0) {
-      services_->ScheduleInactive(token);
-    } else {
-      const SimDuration global_ticks = ScaleToGlobalTicks(
-          duration_, precision_power_, services_->GlobalPrecisionPower());
-      services_->ScheduleAtTime(services_->Now() + global_ticks, token);
-    }
+    Arm(token);
+    token->process->BlockLeaf(token, this);
   }
 
   static void await_resume() noexcept {
   }
 
+  // A delay's deadline is absolute (LRM 9.7): on resume, if it has transpired
+  // the process is runnable, otherwise it re-parks for the remaining time.
+  auto Reestablish(RuntimeServices& services, CoroutineHandle activation)
+      -> PendingWaitOutcome override {
+    if (services.Now() >= deadline_) {
+      return PendingWaitOutcome::kRunnable;
+    }
+    services.ScheduleAtTime(deadline_, activation);
+    return PendingWaitOutcome::kReblocked;
+  }
+
  private:
+  // Fixes the absolute deadline and parks: `#0` on the inactive region of this
+  // slot (its deadline is this time, so a resume finds it transpired), `#N` at
+  // the scaled future time.
+  void Arm(CoroutineHandle token) {
+    if (duration_ == 0) {
+      deadline_ = services_->Now();
+      services_->ScheduleInactive(token);
+    } else {
+      const SimDuration global_ticks = ScaleToGlobalTicks(
+          duration_, precision_power_, services_->GlobalPrecisionPower());
+      deadline_ = services_->Now() + global_ticks;
+      services_->ScheduleAtTime(deadline_, token);
+    }
+  }
+
   RuntimeServices* services_;
   SimDuration duration_;
   std::int8_t precision_power_;
+  SimTime deadline_ = 0;
 };
 
 inline auto Delay(

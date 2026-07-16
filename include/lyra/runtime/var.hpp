@@ -9,7 +9,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
@@ -231,9 +233,9 @@ inline void SubscribeValueChange(
 // in `await_suspend`, where the frame that must be resumed is in hand: a wait
 // inside an enabled task has to resume the task's frame, not the enabling
 // process's, and only the language knows which frame is awaiting.
-class ValueChangeWaitAwaitable {
+class EventControlAwaitable : public PendingWait {
  public:
-  explicit ValueChangeWaitAwaitable(std::span<const Trigger> triggers)
+  explicit EventControlAwaitable(std::span<const Trigger> triggers)
       : triggers_(triggers.begin(), triggers.end()) {
   }
 
@@ -243,10 +245,23 @@ class ValueChangeWaitAwaitable {
 
   template <class P>
   void await_suspend(std::coroutine_handle<P> handle) {
-    SubscribeValueChange(&handle.promise(), triggers_);
+    CoroutineHandle token = &handle.promise();
+    SubscribeValueChange(token, triggers_);
+    token->process->BlockLeaf(token, this);
   }
 
   static void await_resume() noexcept {
+  }
+
+  // An edge / value-change is not a level: a change during suspension is missed
+  // (LRM 9.7 resensitize), so resume re-subscribes and waits for the next one.
+  // Re-subscribing needs no engine services, but the capability signature
+  // carries them uniformly.
+  // NOLINTNEXTLINE(readability-named-parameter)
+  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+      -> PendingWaitOutcome override {
+    SubscribeValueChange(activation, triggers_);
+    return PendingWaitOutcome::kReblocked;
   }
 
  private:
@@ -260,8 +275,8 @@ class ValueChangeWaitAwaitable {
 // ask the runtime which process is running.
 inline auto WaitAny(
     RuntimeServices&,  // NOLINT(readability-named-parameter)
-    std::span<const Trigger> triggers) -> ValueChangeWaitAwaitable {
-  return ValueChangeWaitAwaitable{triggers};
+    std::span<const Trigger> triggers) -> EventControlAwaitable {
+  return EventControlAwaitable{triggers};
 }
 
 // Builds the per-leaf classifier that the Observable invokes per waiter.

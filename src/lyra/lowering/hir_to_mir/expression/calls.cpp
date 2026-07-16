@@ -41,6 +41,7 @@
 #include "lyra/mir/foreign_export_wrapper.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -1141,6 +1142,57 @@ auto LowerForeignImportCall(
 
 }  // namespace
 
+// A call to a method the runtime library provides for an imported class (LRM
+// 9.7 `process`) lowers to a direct call on the library symbol. An instance
+// method passes its receiver handle as the leading argument; whether the
+// engine services handle follows is a per-method fact. The receiver is passed
+// as the managed handle itself, not a borrowed object pointer -- the runtime
+// reads the process identity from the handle. A suspending method (`await`) is
+// wrapped in an await by the statement lowering, the same as a task enable.
+template <ExprLowerer Lowerer>
+auto LowerImportedMethodCall(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const hir::ImportedMethodRef& m, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto& block = *frame.current_block;
+  std::vector<mir::ExprId> args;
+  args.reserve(c.arguments.size() + 1);
+
+  if (m.receiver.has_value()) {
+    auto receiver_or =
+        lowerer.LowerExpr(lowerer.HirExprs().Get(*m.receiver), frame);
+    if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+    args.push_back(block.exprs.Add(*std::move(receiver_or)));
+  }
+  // A static method (no receiver) threads the services handle as its leading
+  // argument; an instance method threads it after the receiver when the method
+  // needs the engine -- to schedule, or to identify the calling process.
+  if (support::ImportedRuntimeMethodTakesServices(m.method)) {
+    args.push_back(
+        block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame)));
+  }
+
+  for (const auto& arg : c.arguments) {
+    if (!arg.has_value()) {
+      throw InternalError("LowerImportedMethodCall: argument elided");
+    }
+    auto arg_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*arg), frame);
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    args.push_back(block.exprs.Add(*std::move(arg_or)));
+  }
+
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target =
+                          mir::ImportedRuntimeCallTarget{.method = m.method},
+                      .qualification = std::nullopt},
+              .arguments = std::move(args)},
+      .type = result_type};
+}
+
 template <ExprLowerer Lowerer>
 auto LowerHirCallExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -1176,6 +1228,9 @@ auto LowerHirCallExpr(
           },
           [&](const hir::ForeignImportRef& imp) -> diag::Result<mir::Expr> {
             return LowerForeignImportCall(lowerer, frame, c, imp, result_type);
+          },
+          [&](const hir::ImportedMethodRef& im) -> diag::Result<mir::Expr> {
+            return LowerImportedMethodCall(lowerer, frame, c, im, result_type);
           },
       },
       c.callee);

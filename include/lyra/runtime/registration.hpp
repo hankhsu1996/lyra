@@ -8,9 +8,12 @@ namespace lyra::runtime {
 
 struct PromiseBase;
 
-// The scheduling token: an activation's payload-neutral execution core, naming
-// it without naming the value it completes with. The scheduler holds this and
-// nothing else.
+// The C++ realization of the payload-neutral activation token: a handle to an
+// activation's execution core, naming it without naming the value it completes
+// with. The scheduler holds this and nothing else. That it is a `PromiseBase*`
+// today is the C++ backend's realization; a future LIR/LLVM backend realizes
+// the same token concept differently, so no layer above the runtime names this
+// type.
 using CoroutineHandle = PromiseBase*;
 
 // One membership: a target -- a value-change observable, a named event, a join

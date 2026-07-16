@@ -20,6 +20,7 @@
 #include "lyra/mir/struct_construct.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::mir {
 
@@ -158,18 +159,28 @@ struct MethodTarget {
   auto operator==(const MethodTarget&) const -> bool = default;
 };
 
-// The target of a `Direct` call -- the symbol identity. Three identity
-// spaces: user-declared class methods (`MethodTarget`, an
-// owner-qualified method identity), built-in runtime entries
-// (closed-namespace `BuiltinFn`), and class-level static callables
-// (`StaticCallableTarget`, which names its own owner -- a DPI-C import's
-// external symbol, a receiver-less associated callable). All three are
-// owner-qualified references; none is recovered from the receiver's runtime
-// type. These collapse into one `CallableId` once the method and
-// static-callable declarations share one callable-declaration shape; the
-// owner survives that collapse.
-using DirectTarget =
-    std::variant<MethodTarget, support::BuiltinFn, StaticCallableTarget>;
+// The target of a call to a method the runtime library provides for an imported
+// class (LRM 9.7 `process`). A bodyless external callable whose implementation
+// is a runtime symbol; the identity names the method, and the backend renders
+// the call mechanically to that symbol -- no per-unit declaration and no
+// per-method backend branch. A receiver, if the method has one, is `args[0]`.
+struct ImportedRuntimeCallTarget {
+  support::ImportedRuntimeMethod method;
+
+  auto operator==(const ImportedRuntimeCallTarget&) const -> bool = default;
+};
+
+// The target of a `Direct` call -- the symbol identity. Four identity spaces:
+// user-declared class methods (`MethodTarget`, an owner-qualified method
+// identity), built-in runtime entries (closed-namespace `BuiltinFn`),
+// class-level static callables (`StaticCallableTarget`, which names its own
+// owner -- a DPI-C import's external symbol, a receiver-less associated
+// callable), and methods the runtime library provides for an imported class
+// (`ImportedRuntimeCallTarget`). None is recovered from the receiver's runtime
+// type.
+using DirectTarget = std::variant<
+    MethodTarget, support::BuiltinFn, StaticCallableTarget,
+    ImportedRuntimeCallTarget>;
 
 // A direct call to a named symbol. The single shape for every direct
 // invocation -- user method, built-in instance method, type-qualified

@@ -106,6 +106,19 @@ class UnitLowerer {
     return class_object_type_map_[hir_id.value];
   }
 
+  // The pointee object type a managed handle to an imported runtime-library
+  // class names. Each imported class is a fixed library class, so its object
+  // type is a well-known type interned once on the unit.
+  [[nodiscard]] auto ImportedRuntimeObjectType(
+      support::ImportedRuntimeClass klass) const -> mir::TypeId {
+    switch (klass) {
+      case support::ImportedRuntimeClass::kProcess:
+        return unit_.builtins.process_object;
+    }
+    throw InternalError(
+        "UnitLowerer::ImportedRuntimeObjectType: unknown imported class");
+  }
+
   // Mints a collision-free class name for one generate scope, tagged by its
   // arm kind (`loop` / `then` / `else` / ...). The name is only an
   // implementation handle for the emitted type -- a generate scope's runtime
