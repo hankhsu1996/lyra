@@ -561,25 +561,41 @@ auto LowerMethodCall(
     const hir::MethodCallRef& m, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  auto receiver_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(m.receiver), frame);
-  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
   auto& types = lowerer.Owner().Unit().types;
-  const mir::TypeId object_type =
-      std::get<mir::ManagedRefType>(types.Get(receiver_or->type).data).pointee;
+
   // The method's declaring class is stated on the HIR node; the receiver's
   // runtime class is only used to type the self parameter (which pairs with
-  // the target's own arena entry through C++ member lookup).
+  // the target's own arena entry through C++ member lookup). For a super
+  // call HIR already sets `class_id` to the base's identity.
   const mir::ClassId owner_class = lowerer.Owner().TranslateClass(m.class_id);
   const mir::MethodId method_slot{m.method.value};
-  const mir::ExprId handle_id = block.exprs.Add(*std::move(receiver_or));
-  const mir::ExprId object_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::DerefExpr{.pointer = handle_id}, .type = object_type});
-  const mir::TypeId self_pointer_type =
-      types.PointerTo(object_type, mir::PointerOwnership::kBorrowed);
-  const mir::ExprId receiver_ptr =
-      block.exprs.Add(mir::MakeAddressOfExpr(object_id, self_pointer_type));
+
+  // The receiver pointer origin depends only on whether the source supplied
+  // an explicit handle. A `HandleReceiver` evaluates the handle expression
+  // then derefs the managed wrapper to reach the object; both
+  // `ImplicitSelfReceiver` and `SuperReceiver` read the enclosing method's
+  // own self binding, which is already a borrowed pointer to the object.
+  // The super arm shares the self read here because it differs only in
+  // dispatch semantics, decided below.
+  mir::ExprId receiver_ptr{};
+  if (const auto* handle = std::get_if<hir::HandleReceiver>(&m.receiver)) {
+    auto handle_or =
+        lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
+    if (!handle_or) return std::unexpected(std::move(handle_or.error()));
+    const mir::TypeId object_type =
+        std::get<mir::ManagedRefType>(types.Get(handle_or->type).data).pointee;
+    const mir::ExprId handle_id = block.exprs.Add(*std::move(handle_or));
+    const mir::ExprId object_id = block.exprs.Add(
+        mir::Expr{
+            .data = mir::DerefExpr{.pointer = handle_id}, .type = object_type});
+    const mir::TypeId self_pointer_type =
+        types.PointerTo(object_type, mir::PointerOwnership::kBorrowed);
+    receiver_ptr =
+        block.exprs.Add(mir::MakeAddressOfExpr(object_id, self_pointer_type));
+  } else {
+    receiver_ptr = block.exprs.Add(
+        MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  }
 
   std::vector<mir::ExprId> user_args;
   user_args.reserve(c.arguments.size());
@@ -592,14 +608,22 @@ auto LowerMethodCall(
     user_args.push_back(block.exprs.Add(*std::move(arg_or)));
   }
 
-  // Cross-class dispatch role is queried through the shape store, not the
-  // unit's class registry: while any peer body is lowering the registry is
-  // one-way `Define`, so a `Get` there would leak lowering order into the
-  // reading site.
+  // A super call (LRM 8.15) is a dispatch fact independent of the callee's
+  // virtual role: the source demands the base's implementation regardless
+  // of the receiver's dynamic type, so it lowers as `Direct` on the base's
+  // method. The backend's uniform owner-qualified render skips dynamic
+  // dispatch mechanically. Every other receiver form defers to the
+  // callee's own dispatch role: `Virtual` when the target participates in
+  // a slot, `Direct` otherwise. Cross-class dispatch role is queried
+  // through the shape store, not the unit's class registry: while any peer
+  // body is lowering the registry is one-way `Define`, so a `Get` there
+  // would leak lowering order into the reading site.
+  const bool through_super =
+      std::holds_alternative<hir::SuperReceiver>(m.receiver);
   const auto& method_sig = lowerer.Owner()
                                .GetClassShape(owner_class)
                                .method_signatures.Get(method_slot);
-  if (method_sig.virtual_dispatch.has_value()) {
+  if (!through_super && method_sig.virtual_dispatch.has_value()) {
     const auto [canonical_owner, canonical_slot] = CanonicalIntraUnitSlot(
         owner_class, method_slot, *method_sig.virtual_dispatch);
     return mir::Expr{

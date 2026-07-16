@@ -209,9 +209,14 @@ auto LowerNewClassExpr(
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   if (nc.isSuperClass) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedClassFeature,
-        "super.new is not yet supported");
+    // A `super.new(...)` is a construction-protocol fact that AST-to-HIR
+    // lifts onto the enclosing class declaration; the statement wrapping it
+    // in the ctor body lowers as empty. Reaching this expression-position
+    // path means the source placed `super.new` somewhere the LRM forbids
+    // (LRM 8.7 restricts it to the first ctor statement).
+    throw InternalError(
+        "AST->HIR super.new: NewClassExpression outside the first-statement "
+        "position of a derived constructor body");
   }
   std::vector<hir::ExprId> arguments;
   if (const auto* call = nc.constructorCall(); call != nullptr) {

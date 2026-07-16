@@ -540,9 +540,21 @@ class HirDumper {
                   u.subroutine.value, u.hops.value, decl.name);
             },
             [](const MethodCallRef& m) -> std::string {
+              const std::string recv = std::visit(
+                  Overloaded{
+                      [](const HandleReceiver& h) {
+                        return std::format("Expr[{}]", h.expr.value);
+                      },
+                      [](const ImplicitSelfReceiver&) {
+                        return std::string{"<self>"};
+                      },
+                      [](const SuperReceiver&) {
+                        return std::string{"<super>"};
+                      }},
+                  m.receiver);
               return std::format(
-                  "Method class=Class[{}] index={} recv=Expr[{}]",
-                  m.class_id.value, m.method.value, m.receiver.value);
+                  "Method class=Class[{}] index={} recv={}", m.class_id.value,
+                  m.method.value, recv);
             },
             [](const SystemSubroutineRef& s) -> std::string {
               const auto& desc = support::LookupSystemSubroutine(s.id);
@@ -870,6 +882,14 @@ class HirDumper {
           "Method", i, c.methods.Get(MethodId{static_cast<std::uint32_t>(i)}));
     }
     DumpSubroutine("Constructor", 0, c.constructor);
+    if (c.base_call.has_value()) {
+      std::string args;
+      for (std::size_t i = 0; i < c.base_call->arguments.size(); ++i) {
+        if (i != 0) args += ", ";
+        args += std::format("Expr[{}]", c.base_call->arguments[i].value);
+      }
+      Line(std::format("BaseCall: ({})", args));
+    }
     Dedent();
   }
 
