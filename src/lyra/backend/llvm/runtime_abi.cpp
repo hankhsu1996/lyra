@@ -24,6 +24,10 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "packed";
     case ValueDomain::kString:
       return "string";
+    case ValueDomain::kReal:
+      return "real";
+    case ValueDomain::kShortReal:
+      return "shortreal";
   }
   throw InternalError("llvm codegen: unknown value domain");
 }
@@ -37,6 +41,11 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           // which read its declared members, need more than that.
           [](const lir::EnumType&) { return ValueDomain::kPacked; },
           [](const lir::StringType&) { return ValueDomain::kString; },
+          // `real` and `realtime` are one host-precision value (LRM 6.12.1);
+          // `shortreal` is the single-precision one.
+          [](const lir::RealType&) { return ValueDomain::kReal; },
+          [](const lir::RealTimeType&) { return ValueDomain::kReal; },
+          [](const lir::ShortRealType&) { return ValueDomain::kShortReal; },
           [](const auto&) -> ValueDomain {
             throw InternalError(
                 "llvm codegen: value type has no runtime library domain");
@@ -136,6 +145,29 @@ auto RuntimeAbi::PackedConst() -> llvm::FunctionCallee {
       "lyra_rt_packed_const", types_->Ptr(),
       {llvm::Type::getInt64Ty(*ctx_), llvm::Type::getInt32Ty(*ctx_),
        llvm::Type::getInt1Ty(*ctx_), llvm::Type::getInt1Ty(*ctx_)});
+}
+
+auto RuntimeAbi::RealConst(ValueDomain domain) -> llvm::FunctionCallee {
+  llvm::Type* host = domain == ValueDomain::kShortReal
+                         ? llvm::Type::getFloatTy(*ctx_)
+                         : llvm::Type::getDoubleTy(*ctx_);
+  return Get(
+      std::format("lyra_rt_{}_const", ValueDomainName(domain)), types_->Ptr(),
+      {host});
+}
+
+auto RuntimeAbi::RealFromInt(ValueDomain domain) -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_{}_from_int64", ValueDomainName(domain)),
+      types_->Ptr(), {llvm::Type::getInt64Ty(*ctx_)});
+}
+
+auto RuntimeAbi::RealReshape(ValueDomain dst, ValueDomain src)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format(
+          "lyra_rt_{}_from_{}", ValueDomainName(dst), ValueDomainName(src)),
+      types_->Ptr(), {types_->Ptr()});
 }
 
 auto RuntimeAbi::MakeSegment() -> llvm::FunctionCallee {

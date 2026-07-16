@@ -22,6 +22,7 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/real.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -150,6 +151,8 @@ using lyra::value::PackedArray;
 using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;
 using lyra::value::PrintValueItem;
+using lyra::value::Real;
+using lyra::value::ShortReal;
 using lyra::value::String;
 using lyra::value::TimeFormat;
 
@@ -326,6 +329,32 @@ void lyra_rt_cell_string_initialize(void* cell, const void* prototype) {
 void lyra_rt_cell_string_set(void* cell, void* services, const void* value) {
   static_cast<Var<String>*>(cell)->Set(
       *static_cast<RuntimeServices*>(services), Read<String>(value));
+}
+
+auto lyra_rt_cell_real_get(void* cell) -> const void* {
+  return &static_cast<Var<Real>*>(cell)->Get();
+}
+
+void lyra_rt_cell_real_initialize(void* cell, const void* prototype) {
+  static_cast<Var<Real>*>(cell)->Initialize(Read<Real>(prototype));
+}
+
+void lyra_rt_cell_real_set(void* cell, void* services, const void* value) {
+  static_cast<Var<Real>*>(cell)->Set(
+      *static_cast<RuntimeServices*>(services), Read<Real>(value));
+}
+
+auto lyra_rt_cell_shortreal_get(void* cell) -> const void* {
+  return &static_cast<Var<ShortReal>*>(cell)->Get();
+}
+
+void lyra_rt_cell_shortreal_initialize(void* cell, const void* prototype) {
+  static_cast<Var<ShortReal>*>(cell)->Initialize(Read<ShortReal>(prototype));
+}
+
+void lyra_rt_cell_shortreal_set(void* cell, void* services, const void* value) {
+  static_cast<Var<ShortReal>*>(cell)->Set(
+      *static_cast<RuntimeServices*>(services), Read<ShortReal>(value));
 }
 
 // A procedural local whose value crosses a suspension. The cell is allocated in
@@ -662,5 +691,210 @@ auto lyra_rt_make_print_value_item_string(const void* value, const void* spec)
     -> void* {
   return Own(
       PrintItem(PrintValueItem(Read<String>(value), Read<FormatSpec>(spec))));
+}
+
+auto lyra_rt_real_add(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) + Read<Real>(rhs));
+}
+
+auto lyra_rt_real_sub(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) - Read<Real>(rhs));
+}
+
+auto lyra_rt_real_mul(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) * Read<Real>(rhs));
+}
+
+auto lyra_rt_real_div(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) / Read<Real>(rhs));
+}
+
+auto lyra_rt_real_neg(const void* operand) -> void* {
+  return Own(-Read<Real>(operand));
+}
+
+auto lyra_rt_real_inc(const void* operand) -> void* {
+  Real value = Read<Real>(operand);
+  ++value;
+  return Own(std::move(value));
+}
+
+auto lyra_rt_real_dec(const void* operand) -> void* {
+  Real value = Read<Real>(operand);
+  --value;
+  return Own(std::move(value));
+}
+
+auto lyra_rt_real_eq(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) == Read<Real>(rhs));
+}
+
+auto lyra_rt_real_ne(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) != Read<Real>(rhs));
+}
+
+auto lyra_rt_real_lt(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) < Read<Real>(rhs));
+}
+
+auto lyra_rt_real_le(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) <= Read<Real>(rhs));
+}
+
+auto lyra_rt_real_gt(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) > Read<Real>(rhs));
+}
+
+auto lyra_rt_real_ge(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<Real>(lhs) >= Read<Real>(rhs));
+}
+
+auto lyra_rt_real_to_bool(const void* operand) -> bool {
+  return static_cast<bool>(Read<Real>(operand));
+}
+
+auto lyra_rt_real_pow(const void* base, const void* exponent) -> void* {
+  return Own(Read<Real>(base).Pow(Read<Real>(exponent)));
+}
+
+auto lyra_rt_real_round(const void* value) -> std::int64_t {
+  return Read<Real>(value).Round();
+}
+
+auto lyra_rt_real_const(double value) -> void* {
+  return Own(Real{value});
+}
+
+auto lyra_rt_real_from_int64(std::int64_t value) -> void* {
+  return Own(Real::FromInt64(value));
+}
+
+auto lyra_rt_real_from_shortreal(const void* value) -> void* {
+  return Own(Real{Read<ShortReal>(value)});
+}
+
+auto lyra_rt_real_from_real(const void* value) -> void* {
+  return Own(Read<Real>(value));
+}
+
+auto lyra_rt_activation_frame_alloc_real() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<Real>>();
+}
+
+void lyra_rt_activation_frame_store_real(void* cell, const void* value) {
+  static_cast<ActivationValueCell<Real>*>(cell)->Store(Read<Real>(value));
+}
+
+auto lyra_rt_activation_frame_load_real(const void* cell) -> void* {
+  return Own(static_cast<const ActivationValueCell<Real>*>(cell)->Get());
+}
+
+auto lyra_rt_make_print_value_item_real(const void* value, const void* spec)
+    -> void* {
+  return Own(
+      PrintItem(PrintValueItem(Read<Real>(value), Read<FormatSpec>(spec))));
+}
+
+auto lyra_rt_shortreal_add(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) + Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_sub(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) - Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_mul(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) * Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_div(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) / Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_neg(const void* operand) -> void* {
+  return Own(-Read<ShortReal>(operand));
+}
+
+auto lyra_rt_shortreal_inc(const void* operand) -> void* {
+  ShortReal value = Read<ShortReal>(operand);
+  ++value;
+  return Own(std::move(value));
+}
+
+auto lyra_rt_shortreal_dec(const void* operand) -> void* {
+  ShortReal value = Read<ShortReal>(operand);
+  --value;
+  return Own(std::move(value));
+}
+
+auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) == Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) != Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) < Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_le(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) <= Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_gt(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) > Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_ge(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ShortReal>(lhs) >= Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_to_bool(const void* operand) -> bool {
+  return static_cast<bool>(Read<ShortReal>(operand));
+}
+
+auto lyra_rt_shortreal_pow(const void* base, const void* exponent) -> void* {
+  return Own(Read<ShortReal>(base).Pow(Read<ShortReal>(exponent)));
+}
+
+auto lyra_rt_shortreal_round(const void* value) -> std::int64_t {
+  return Read<ShortReal>(value).Round();
+}
+
+auto lyra_rt_shortreal_const(float value) -> void* {
+  return Own(ShortReal{value});
+}
+
+auto lyra_rt_shortreal_from_int64(std::int64_t value) -> void* {
+  return Own(ShortReal::FromInt64(value));
+}
+
+auto lyra_rt_shortreal_from_real(const void* value) -> void* {
+  return Own(ShortReal{Read<Real>(value)});
+}
+
+auto lyra_rt_activation_frame_alloc_shortreal() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<ShortReal>>();
+}
+
+void lyra_rt_activation_frame_store_shortreal(void* cell, const void* value) {
+  static_cast<ActivationValueCell<ShortReal>*>(cell)->Store(
+      Read<ShortReal>(value));
+}
+
+auto lyra_rt_activation_frame_load_shortreal(const void* cell) -> void* {
+  return Own(static_cast<const ActivationValueCell<ShortReal>*>(cell)->Get());
+}
+
+auto lyra_rt_make_print_value_item_shortreal(
+    const void* value, const void* spec) -> void* {
+  return Own(PrintItem(
+      PrintValueItem(Read<ShortReal>(value), Read<FormatSpec>(spec))));
 }
 }

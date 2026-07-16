@@ -23,7 +23,7 @@ the stretch that made it.
       handle the generated frame holds. A store copies into it; a load copies out; the store
       decision is made where storage placement belongs and the backend realizes it as an ordinary
       call, so it stays mechanical. Complete for the value domains the backend realizes today
-      (packed and string). Contracts and rationale:
+      (packed, string, and the real family -- real, shortreal, realtime). Contracts and rationale:
       `../decisions/cross-suspension-value-storage.md`,
       `../decisions/activation-frame-and-transient-scope.md`.
 
@@ -39,8 +39,14 @@ yet. Each is another instance of the same lifetime question, so the first to lan
 extends the activation frame or the backend adopts one lifetime discipline (a traced heap,
 ownership, or native in-frame layout) for every value.
 
-- [ ] **The remaining value domains** (reals, enumerations, aggregates, containers) -- not realized
-      on the execution backend at all yet, so no cross-suspension case exists for them.
+- [x] **The scalar real family** (real, shortreal, realtime) -- realized on the execution backend as
+      a value domain alongside packed and string: arithmetic, comparison, the integer/real
+      conversions, and real formatting run, a real signal member is an observable cell, and a real
+      procedural local crosses a suspension as an activation-frame value. It extended the activation
+      frame with another domain rather than forcing a new lifetime discipline, since a real is a
+      non-managed value like a packed one.
+- [ ] **The remaining value domains** (aggregates, containers) -- not realized on the execution
+      backend at all yet, so no cross-suspension case exists for them.
 - [ ] **A managed value (class handle) across a suspension.** A traceable frame and precise
       reclamation, none of which is implemented: the managed reference is realized as a
       reference-counted handle that does not reclaim cycles, and only in the C++ backend. Contract:

@@ -6,6 +6,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/real.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -22,6 +23,12 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           return;
         case ValueDomain::kString:
           object_.emplace<Var<value::String>>();
+          return;
+        case ValueDomain::kReal:
+          object_.emplace<Var<value::Real>>();
+          return;
+        case ValueDomain::kShortReal:
+          object_.emplace<Var<value::ShortReal>>();
           return;
         case ValueDomain::kNone:
           throw InternalError(

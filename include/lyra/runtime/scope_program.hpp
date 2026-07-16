@@ -79,7 +79,13 @@ struct ScopeProgram {
 // has no domain at all. It grows when the runtime gains a value type, never to
 // mirror the source language. `kNone` is the domain of storage that carries no
 // value of its own, such as a box holding a borrowed handle.
-enum class ValueDomain : std::uint8_t { kNone, kPacked, kString };
+enum class ValueDomain : std::uint8_t {
+  kNone,
+  kPacked,
+  kString,
+  kReal,
+  kShortReal,
+};
 
 // How a member's storage is realized. A borrowed handle is a box holding a
 // pointer the instance does not own, the storage behind a companion reference
