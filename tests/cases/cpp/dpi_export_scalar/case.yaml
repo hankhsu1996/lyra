@@ -1,0 +1,13 @@
+id: cpp.dpi_export_scalar
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  link_sources: [dpi.c]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      r=42

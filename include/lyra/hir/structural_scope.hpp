@@ -11,6 +11,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -245,6 +246,7 @@ struct StructuralScope {
   // per-subroutine body lowering, which assumes every entry here has a body).
   base::Arena<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
   base::Arena<ForeignImportDecl, ForeignImportId> foreign_imports;
+  std::vector<ForeignExportDecl> foreign_exports;
   base::Arena<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
   std::vector<TypeAliasDecl> type_aliases;
 

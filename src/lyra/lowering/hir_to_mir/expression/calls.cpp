@@ -13,6 +13,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/with_clause_id.hpp"
@@ -37,6 +38,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/foreign_export_wrapper.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -1186,5 +1188,81 @@ template auto LowerHirCallExpr(
     const StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::CallExpr& c, diag::SourceSpan span, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
+
+auto SynthesizeForeignExportWrapper(
+    UnitLowerer& module, const WalkFrame& ctor_frame, mir::ClassId class_id,
+    mir::MethodId method_id, const hir::ForeignExportDecl& export_decl,
+    std::string instance_name) -> mir::ForeignExportWrapper {
+  mir::CompilationUnit& unit = module.Unit();
+  const mir::Class& mir_class = *ctor_frame.current_class;
+  const mir::TypeId self_ptr = mir_class.self_pointer_type;
+
+  mir::CallableCode code;
+  CallableBindings bindings(unit, code);
+
+  // The receiver the exported method runs against is recovered by the backend's
+  // wrapper shell from the running design, not passed by the foreign caller
+  // (LRM 35.5.3), so it is a body local rather than a parameter.
+  const mir::LocalId self_local = bindings.Declare(
+      BindingOriginId::Receiver(),
+      mir::LocalDecl{.name = "self", .type = self_ptr});
+
+  std::vector<mir::LocalId> params;
+  std::vector<mir::TypeId> carrier_types;
+  params.reserve(export_decl.params.size());
+  carrier_types.reserve(export_decl.params.size());
+  for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
+    const mir::TypeId carrier_type =
+        CarrierTypeId(unit, export_decl.params[i].carrier);
+    carrier_types.push_back(carrier_type);
+    params.push_back(bindings.DeclareAnonymous(
+        mir::LocalDecl{
+            .name = "arg" + std::to_string(i), .type = carrier_type}));
+  }
+
+  const WalkFrame body_frame =
+      ctor_frame.WithBlock(&code.body).WithBindings(&bindings);
+
+  std::vector<mir::ExprId> call_args;
+  call_args.reserve(export_decl.params.size() + 1);
+  call_args.push_back(
+      code.body.exprs.Add(mir::MakeLocalRefExpr(self_local, self_ptr)));
+  for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
+    const mir::ExprId carrier_ref =
+        code.body.exprs.Add(mir::MakeLocalRefExpr(params[i], carrier_types[i]));
+    call_args.push_back(code.body.exprs.Add(MarshalCarrierToSv(
+        module, body_frame, carrier_ref, export_decl.params[i].carrier,
+        module.TranslateType(export_decl.params[i].sv_type))));
+  }
+
+  const mir::TypeId method_result_type =
+      mir_class.methods.Get(method_id).code.result_type;
+  const mir::ExprId method_call = code.body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target =
+                              mir::MethodTarget{
+                                  .owner = class_id, .slot = method_id}},
+                  .arguments = std::move(call_args)},
+          .type = method_result_type});
+
+  const mir::ExprId ret_carrier = MarshalSvToCarrier(
+      unit, code.body, method_call,
+      support::ScalarCarrier{export_decl.ret_abi});
+  code.body.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
+
+  code.params = std::move(params);
+  code.result_type =
+      CarrierTypeId(unit, support::ScalarCarrier{export_decl.ret_abi});
+
+  return mir::ForeignExportWrapper{
+      .foreign_name = export_decl.foreign_name,
+      .instance_name = std::move(instance_name),
+      .code = std::move(code),
+      .self_local = self_local};
+}
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -85,10 +85,6 @@ auto Compile(
   // frontend, never another unit's lowered artifacts.
   const bool want_mir = stop_after >= StopAfter::kMir;
   const bool want_lir = stop_after >= StopAfter::kLir;
-  if (auto ok = lowering::ast_to_hir::RejectDpiExports(facts); !ok) {
-    sink.Report(std::move(ok.error()));
-    return result;
-  }
   const auto packages = lowering::ast_to_hir::CollectPackages(facts);
   const auto bodies = lowering::ast_to_hir::CollectUnitBodies(facts);
 

@@ -1,6 +1,9 @@
 #pragma once
 
+#include <string_view>
+
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
@@ -32,5 +35,14 @@ auto LowerSubroutineDecl(
 auto LowerForeignImport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<hir::ForeignImportDecl>;
+
+// Lowers an `export "DPI-C"` binding (LRM 35.5) into a hir::ForeignExportDecl:
+// the C linkage name and the ABI projection of the exported subroutine's
+// signature. The subroutine keeps its ordinary body and is lowered separately
+// as a method; this record drives the foreign-linkage wrapper. `foreign_name`
+// is the C identifier slang resolved for the export.
+auto LowerForeignExport(
+    UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
+    std::string_view foreign_name) -> diag::Result<hir::ForeignExportDecl>;
 
 }  // namespace lyra::lowering::ast_to_hir

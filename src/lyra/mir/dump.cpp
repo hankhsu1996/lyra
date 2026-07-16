@@ -841,6 +841,15 @@ class MirDumper {
       Dedent();
     }
 
+    if (!s.foreign_export_wrappers.empty()) {
+      Line("ForeignExportWrappers:");
+      Indent();
+      for (std::size_t i = 0; i < s.foreign_export_wrappers.size(); ++i) {
+        DumpForeignExportWrapper(s.foreign_export_wrappers[i], i);
+      }
+      Dedent();
+    }
+
     Line("Constructor:");
     Indent();
     Line(std::format("Method: #{}", s.constructor.method.value));
@@ -937,6 +946,25 @@ class MirDumper {
     Indent();
     DumpCallableBody(decl.invoke);
     Dedent();
+    Dedent();
+  }
+
+  void DumpForeignExportWrapper(
+      const ForeignExportWrapper& w, std::size_t index) {
+    Line(
+        std::format(
+            R"([{}] c_name="{}" instance="{}" : Type[{}])", index,
+            w.foreign_name, w.instance_name, w.code.result_type.value));
+    Indent();
+    const auto& self = w.code.locals.Get(w.self_local);
+    Line(std::format(R"(Self "{}" : Type[{}])", self.name, self.type.value));
+    for (std::size_t i = 0; i < w.code.params.size(); ++i) {
+      const auto& param = w.code.locals.Get(w.code.params[i]);
+      Line(
+          std::format(
+              "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
+    }
+    DumpCallableBody(w.code);
     Dedent();
   }
 

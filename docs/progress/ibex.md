@@ -98,14 +98,15 @@ full support.
       sub-instance's `localparam` or enum value through a dotted path (the `MHPMCounterNum` accessor
       in the DPI block). A hierarchically reached compile-time constant resolves to its value
       independent of the path, matching a same-scope reference to the same constant.
-- [ ] **DPI-C import and export** -- `import "DPI-C"` binds an SV subroutine name to a foreign C
-      implementation and `export "DPI-C"` exposes an SV subroutine to C (LRM 35.4, 35.5). Lyra emits
-      no C ABI, so both are rejected with a diagnostic rather than silently lowered (a DPI import
-      would otherwise become an empty subroutine returning a default on every call). This is the
-      current full-top frontier: `ibex_simple_system` exports `mhpmcounter_num` / `mhpmcounter_get`
-      to the Verilator C++ testbench -- unneeded by the pure-SV `ibex_simple_system_tb` run, but the
-      unmodified source still declares them. Real support is tracked in `dpi.md`; the module-scoped
-      export here is its D4a.
+- [ ] **DPI-C export** -- `export "DPI-C"` exposes an SV subroutine to C (LRM 35.5). Lyra emits no C
+      ABI for the export direction, so it is rejected with a diagnostic. This is the current
+      full-top frontier, and it recurs across the design: `ibex_simple_system` exports
+      `mhpmcounter_num` / `mhpmcounter_get`, and `ibex_if_stage` exports the icache scramble-key
+      helper `simutil_get_scramble_key`, both to the Verilator C++ testbench -- unneeded by the
+      pure-SV `ibex_simple_system_tb` run, but the unmodified source still declares them.
+      `import "DPI-C"` lowers; the accepted Ibex sources exercise no import (the DPI imports in the
+      tree are DV-only crypto models outside the run's file list). Real support is tracked in
+      `dpi.md`; the module-scoped export here is its D4a.
 - [ ] **Hierarchical reference reaching a module instance from a nested generate scope** -- a dotted
       reference, written inside a conditional or loop generate block, that descends into a module
       instance owned by an enclosing scope (the RVFI trap logic in `ibex_core`,
@@ -118,8 +119,8 @@ full support.
       the plusargs source (`+`-prefixed argv entries flow through `lyra run` to the built program).
       `ibex_tracer` can now be enabled by a real trace-enable plusarg. Real (`%e` / `%f` / `%g`)
       conversions remain out of scope.
-- [ ] **A procedural statement form in ibex_cs_registers** -- one unsupported statement shape,
-      recorded for follow-up once isolated.
+- [x] **A procedural statement form in ibex_cs_registers** -- the module lowers and emits C++
+      end-to-end as its own top.
 - [x] **Constant of an unpacked array type** -- an elaboration-time `localparam` array referenced
       (and element-selected) in an expression. An unpacked struct or union constant is still
       blocked, but on unpacked-struct / union _type_ support rather than on constant
@@ -127,9 +128,8 @@ full support.
 - [x] **Reduction operator over a `$bits`-derived part-select in a continuous assign** -- a
       structural (continuous-assign) right-hand side that applies a reduction operator to a
       part-select whose width comes from `$bits` (the `ibex_top` parity check,
-      `assign unused = ^busy_q[$bits(mubi_t)-1:1]`). `$bits` lowers to an elaboration constant
-      (`query-functions.md` Q1) and the mixed-domain part-select bound reads correctly
-      (`operators.md` W14).
+      `assign unused = ^busy_q[$bits(mubi_t)-1:1]`). `$bits` lowers to an elaboration constant and
+      the mixed-domain part-select bound reads correctly (`operators.md` W14).
 - [ ] Further structural-expression forms surfaced as later passes get deeper (recorded here as
       discovery continues).
 

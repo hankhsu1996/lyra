@@ -62,11 +62,6 @@ class LowerCompilationFacts {
 auto CollectUnitBodies(const LowerCompilationFacts& facts)
     -> std::vector<const slang::ast::InstanceBodySymbol*>;
 
-// Rejects a design that exports a subroutine over DPI-C (LRM 35.5): Lyra emits
-// no C-export ABI, so the export contract cannot be honored. Runs once per
-// compilation, before any unit lowers.
-auto RejectDpiExports(const LowerCompilationFacts& facts) -> diag::Result<void>;
-
 // Lowers one unit body to its HIR. Independent of every other unit: it reads
 // only this body and the shared frontend, so units may be lowered in any order.
 auto LowerUnit(
