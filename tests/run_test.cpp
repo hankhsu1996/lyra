@@ -211,6 +211,32 @@ auto WriteNestedSuspensionSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// The real-family value domain end to end: a real and a shortreal constant, a
+// shortreal-to-real reshape, an integer-to-real conversion, a real accumulated
+// across suspensions (so it is an activation-frame value), a real comparison, a
+// real-to-integer round, and real formatting. Exercises the scalar real domain
+// the same way the integral and string domains are exercised elsewhere.
+auto WriteRealFamilySource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  initial begin\n"
+      << "    real r = 0.0;\n"
+      << "    shortreal s = 2.5;\n"
+      << "    int n = 3;\n"
+      << "    real from_int = n;\n"
+      << "    real widened = s;\n"
+      << "    for (int i = 0; i < n; i = i + 1) begin\n"
+      << "      #1;\n"
+      << "      r = r + 1.5;\n"
+      << "    end\n"
+      << "    if (r > 4.0)\n"
+      << "      $display(\"r=%0.2f widened=%0.2f from_int=%0.2f\", r, "
+         "widened, from_int);\n"
+      << "    $display(\"rounded=%0d sum=%0.2f\", int'(r), r + from_int);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -474,6 +500,37 @@ TEST(LyraRun, JitAndCppAgreeOnNestedSuspension) {
       "i=0 inner_sum=12 total=12\n"
       "i=1 inner_sum=12 total=24\n"
       "final total=24\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnRealFamily) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteRealFamilySource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "r=4.50 widened=2.50 from_int=3.00\n"
+      "rounded=5 sum=7.50\n")
       << "stdout: " << jit.stdout_text;
 }
 

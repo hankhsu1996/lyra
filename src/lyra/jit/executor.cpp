@@ -141,6 +141,12 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_cell_string_get", &lyra_rt_cell_string_get);
   add("lyra_rt_cell_string_initialize", &lyra_rt_cell_string_initialize);
   add("lyra_rt_cell_string_set", &lyra_rt_cell_string_set);
+  add("lyra_rt_cell_real_get", &lyra_rt_cell_real_get);
+  add("lyra_rt_cell_real_initialize", &lyra_rt_cell_real_initialize);
+  add("lyra_rt_cell_real_set", &lyra_rt_cell_real_set);
+  add("lyra_rt_cell_shortreal_get", &lyra_rt_cell_shortreal_get);
+  add("lyra_rt_cell_shortreal_initialize", &lyra_rt_cell_shortreal_initialize);
+  add("lyra_rt_cell_shortreal_set", &lyra_rt_cell_shortreal_set);
   add("lyra_rt_activation_frame_alloc_packed",
       &lyra_rt_activation_frame_alloc_packed);
   add("lyra_rt_activation_frame_alloc_string",
@@ -227,6 +233,61 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_make_print_value_item_packed);
   add("lyra_rt_make_print_value_item_string",
       &lyra_rt_make_print_value_item_string);
+  add("lyra_rt_real_add", &lyra_rt_real_add);
+  add("lyra_rt_real_sub", &lyra_rt_real_sub);
+  add("lyra_rt_real_mul", &lyra_rt_real_mul);
+  add("lyra_rt_real_div", &lyra_rt_real_div);
+  add("lyra_rt_real_neg", &lyra_rt_real_neg);
+  add("lyra_rt_real_inc", &lyra_rt_real_inc);
+  add("lyra_rt_real_dec", &lyra_rt_real_dec);
+  add("lyra_rt_real_eq", &lyra_rt_real_eq);
+  add("lyra_rt_real_ne", &lyra_rt_real_ne);
+  add("lyra_rt_real_lt", &lyra_rt_real_lt);
+  add("lyra_rt_real_le", &lyra_rt_real_le);
+  add("lyra_rt_real_gt", &lyra_rt_real_gt);
+  add("lyra_rt_real_ge", &lyra_rt_real_ge);
+  add("lyra_rt_real_to_bool", &lyra_rt_real_to_bool);
+  add("lyra_rt_real_pow", &lyra_rt_real_pow);
+  add("lyra_rt_real_round", &lyra_rt_real_round);
+  add("lyra_rt_real_const", &lyra_rt_real_const);
+  add("lyra_rt_real_from_int64", &lyra_rt_real_from_int64);
+  add("lyra_rt_real_from_shortreal", &lyra_rt_real_from_shortreal);
+  add("lyra_rt_real_from_real", &lyra_rt_real_from_real);
+  add("lyra_rt_activation_frame_alloc_real",
+      &lyra_rt_activation_frame_alloc_real);
+  add("lyra_rt_activation_frame_store_real",
+      &lyra_rt_activation_frame_store_real);
+  add("lyra_rt_activation_frame_load_real",
+      &lyra_rt_activation_frame_load_real);
+  add("lyra_rt_make_print_value_item_real",
+      &lyra_rt_make_print_value_item_real);
+  add("lyra_rt_shortreal_add", &lyra_rt_shortreal_add);
+  add("lyra_rt_shortreal_sub", &lyra_rt_shortreal_sub);
+  add("lyra_rt_shortreal_mul", &lyra_rt_shortreal_mul);
+  add("lyra_rt_shortreal_div", &lyra_rt_shortreal_div);
+  add("lyra_rt_shortreal_neg", &lyra_rt_shortreal_neg);
+  add("lyra_rt_shortreal_inc", &lyra_rt_shortreal_inc);
+  add("lyra_rt_shortreal_dec", &lyra_rt_shortreal_dec);
+  add("lyra_rt_shortreal_eq", &lyra_rt_shortreal_eq);
+  add("lyra_rt_shortreal_ne", &lyra_rt_shortreal_ne);
+  add("lyra_rt_shortreal_lt", &lyra_rt_shortreal_lt);
+  add("lyra_rt_shortreal_le", &lyra_rt_shortreal_le);
+  add("lyra_rt_shortreal_gt", &lyra_rt_shortreal_gt);
+  add("lyra_rt_shortreal_ge", &lyra_rt_shortreal_ge);
+  add("lyra_rt_shortreal_to_bool", &lyra_rt_shortreal_to_bool);
+  add("lyra_rt_shortreal_pow", &lyra_rt_shortreal_pow);
+  add("lyra_rt_shortreal_round", &lyra_rt_shortreal_round);
+  add("lyra_rt_shortreal_const", &lyra_rt_shortreal_const);
+  add("lyra_rt_shortreal_from_int64", &lyra_rt_shortreal_from_int64);
+  add("lyra_rt_shortreal_from_real", &lyra_rt_shortreal_from_real);
+  add("lyra_rt_activation_frame_alloc_shortreal",
+      &lyra_rt_activation_frame_alloc_shortreal);
+  add("lyra_rt_activation_frame_store_shortreal",
+      &lyra_rt_activation_frame_store_shortreal);
+  add("lyra_rt_activation_frame_load_shortreal",
+      &lyra_rt_activation_frame_load_shortreal);
+  add("lyra_rt_make_print_value_item_shortreal",
+      &lyra_rt_make_print_value_item_shortreal);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
@@ -262,6 +323,10 @@ auto AbiDomain(backend::llvm_backend::ValueDomain domain)
       return runtime::ValueDomain::kPacked;
     case backend::llvm_backend::ValueDomain::kString:
       return runtime::ValueDomain::kString;
+    case backend::llvm_backend::ValueDomain::kReal:
+      return runtime::ValueDomain::kReal;
+    case backend::llvm_backend::ValueDomain::kShortReal:
+      return runtime::ValueDomain::kShortReal;
   }
   throw InternalError("jit executor: unknown value domain");
 }
