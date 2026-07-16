@@ -6,6 +6,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -60,10 +61,21 @@ struct ConstructorDecl {
   std::vector<FieldInit> member_inits;
 };
 
-// The structural portion of a class declaration: the fields a peer needs to
+// The declaration-facing view of a method: the facts a peer's body lowering
+// needs to know about this method while its own body is being lowered. The
+// method's body itself is not here; the finished `MethodDecl` on the class
+// carries the body once every body composes. `virtual_dispatch` is here so
+// a peer that calls this method picks between direct and virtual invocation
+// from a stated fact, with no dependency on which class's body lowered
+// first.
+struct MethodSignature {
+  std::optional<VirtualDispatchRole> virtual_dispatch;
+};
+
+// The structural portion of a class declaration: the facts a peer needs to
 // read about a class while its own body is being lowered. Each field has the
 // same semantics as the same-named field on `Class`; the executable parts
-// (`constructor`, `methods`) are not represented here.
+// (`constructor`, method bodies) are not represented here.
 struct ClassShape {
   std::string name;
   std::optional<ClassRef> base;
@@ -71,6 +83,7 @@ struct ClassShape {
   TimeResolution time_resolution;
   base::Arena<ParamDecl, ParamId> ctor_prefix_params;
   base::Arena<FieldDecl, FieldId> fields;
+  base::Arena<MethodSignature, MethodId> method_signatures;
   std::vector<ClassId> contained;
   std::vector<TypeAliasDecl> type_aliases;
   // Whether the class occupies a node of the runtime object tree -- a module
@@ -111,6 +124,12 @@ struct Class {
   // inside this class by iterating this list -- no walk over the body tree.
   std::vector<StructId> structs;
   base::Arena<MethodDecl, MethodId> methods;
+  // The runtime-callback adapters this class owns -- callables whose
+  // identity is a plain function pointer the runtime holds, semantically
+  // distinct from the instance methods above. Referenced from the class's
+  // generated-behavior constant by `FunctionRef`; never called through a
+  // MIR CallExpr. Empty for a class that has no runtime callback surface.
+  base::Arena<AbiAdapter, AbiAdapterId> abi_adapters;
   // The class-level static constants this class owns, emitted as static
   // members. A runtime scope's generated-behavior record is one such constant;
   // the constructor forwards its address to the runtime base through the

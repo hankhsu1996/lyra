@@ -1,0 +1,12 @@
+id: cpp.class_virtual_via_base_handle
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    through_base_handle: 200
+    through_derived_handle: 200

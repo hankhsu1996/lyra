@@ -269,7 +269,7 @@ auto LowerContinuousAssign(
   return mir::MethodDecl{
       .name = std::move(name),
       .code = std::move(code),
-      .overrides = std::nullopt,
+      .virtual_dispatch = std::nullopt,
       .visibility = mir::MethodVisibility::kInternal};
 }
 

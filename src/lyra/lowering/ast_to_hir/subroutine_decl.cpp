@@ -255,7 +255,9 @@ auto LowerSubroutineDecl(
       .result_type = *return_type_or,
       .params = std::move(params),
       .result_var = result_var,
-      .body = std::move(body)};
+      .body = std::move(body),
+      .is_virtual = false,
+      .overrides = std::nullopt};
 }
 
 // Lowers a DPI-C import declaration (LRM 35.4) to a bodyless external callable.

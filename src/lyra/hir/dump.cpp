@@ -537,7 +537,7 @@ class HirDumper {
             [](const MethodCallRef& m) -> std::string {
               return std::format(
                   "Method class=Class[{}] index={} recv=Expr[{}]",
-                  m.class_id.value, m.method_index, m.receiver.value);
+                  m.class_id.value, m.method.value, m.receiver.value);
             },
             [](const SystemSubroutineRef& s) -> std::string {
               const auto& desc = support::LookupSystemSubroutine(s.id);
@@ -853,7 +853,8 @@ class HirDumper {
       }
     }
     for (std::size_t i = 0; i < c.methods.size(); ++i) {
-      DumpSubroutine("Method", i, c.methods[i]);
+      DumpSubroutine(
+          "Method", i, c.methods.Get(MethodId{static_cast<std::uint32_t>(i)}));
     }
     DumpSubroutine("Constructor", 0, c.constructor);
     Dedent();

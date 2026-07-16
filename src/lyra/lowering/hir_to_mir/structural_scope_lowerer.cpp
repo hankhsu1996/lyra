@@ -1391,7 +1391,7 @@ auto InstallGeneratedDefinition(
   const mir::TypeId void_type = unit.builtins.void_type;
   const auto make_adapter =
       [&](std::string name,
-          std::optional<mir::MethodId> body) -> mir::MethodId {
+          std::optional<mir::MethodId> body) -> mir::AbiAdapterId {
     mir::CallableCode code;
     const mir::LocalId self =
         code.locals.Add(mir::LocalDecl{.name = "self", .type = scope_ptr});
@@ -1417,17 +1417,14 @@ auto InstallGeneratedDefinition(
               .type = void_type});
       code.body.AppendStmt(mir::ExprStmt{.expr = call});
     }
-    return cls.methods.Add(
-        mir::MethodDecl{
-            .name = std::move(name),
-            .code = std::move(code),
-            .overrides = std::nullopt,
-            .visibility = mir::MethodVisibility::kInternal});
+    return cls.abi_adapters.Add(
+        mir::AbiAdapter{.name = std::move(name), .code = std::move(code)});
   };
-  const mir::MethodId resolve_abi =
+  const mir::AbiAdapterId resolve_abi =
       make_adapter("ResolveStateAbi", resolve_body);
-  const mir::MethodId init_abi = make_adapter("InitializeStateAbi", init_body);
-  const mir::MethodId create_abi =
+  const mir::AbiAdapterId init_abi =
+      make_adapter("InitializeStateAbi", init_body);
+  const mir::AbiAdapterId create_abi =
       make_adapter("CreateProcessesAbi", create_body);
 
   mir::StaticConstantDecl def;
@@ -1451,10 +1448,10 @@ auto InstallGeneratedDefinition(
             .data = mir::MachineIntLiteral{.value = value},
             .type = unit.builtins.machine_int64});
   };
-  const auto func_ref = [&](mir::MethodId m) {
+  const auto func_ref = [&](mir::AbiAdapterId a) {
     return ex.Add(
         mir::Expr{
-            .data = mir::FunctionRef{.callable = m},
+            .data = mir::FunctionRef{.adapter = a},
             .type = intern(mir::RuntimeLibraryKind::kScopeEntry)});
   };
 
@@ -1474,7 +1471,7 @@ auto InstallGeneratedDefinition(
       {metadata, func_ref(resolve_abi), func_ref(init_abi),
        func_ref(create_abi)});
   if (is_unit) {
-    const mir::MethodId construct_abi =
+    const mir::AbiAdapterId construct_abi =
         make_adapter("ConstructAbi", std::nullopt);
     def.value = construct(
         mir::RuntimeLibraryKind::kUnitDefinition,
@@ -1534,7 +1531,7 @@ void FinalizeConstructor(
       mir::MethodDecl{
           .name = "<ctor>",
           .code = std::move(ctor_code),
-          .overrides = std::nullopt,
+          .virtual_dispatch = std::nullopt,
           .visibility = mir::MethodVisibility::kInternal});
   cls.constructor = mir::ConstructorDecl{
       .method = ctor_method_id,
@@ -2048,7 +2045,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::MethodDecl{
             .name = std::move(name),
             .code = std::move(code),
-            .overrides = std::nullopt,
+            .virtual_dispatch = std::nullopt,
             .visibility = mir::MethodVisibility::kInternal});
   };
   const std::optional<mir::MethodId> resolve_body =

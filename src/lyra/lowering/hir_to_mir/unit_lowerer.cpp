@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
@@ -41,14 +42,26 @@ auto UnitLowerer::Run() -> diag::Result<mir::CompilationUnit> {
     MapType(hir_id, mir_id);
   }
 
+  // Two-stage class lowering. Stage 1 publishes every class's shape so a
+  // peer body reads any cross-class fact from the shape store, not from a
+  // sibling lowerer's in-progress state. Stage 2 composes each class's
+  // executable form and commits it to the unit. Neither stage observes the
+  // other's iteration order.
+  std::vector<ClassDeclLowerer> class_lowerers;
+  class_lowerers.reserve(hir_->classes.size());
   for (std::size_t i = 0; i < hir_->classes.size(); ++i) {
     const hir::ClassId hir_id{static_cast<std::uint32_t>(i)};
-    ClassDeclLowerer class_lowerer(
+    class_lowerers.emplace_back(
         *this, TranslateClass(hir_id), ClassObjectType(hir_id),
         hir_->classes.Get(hir_id));
-    auto class_or = class_lowerer.Run();
-    if (!class_or) return std::unexpected(std::move(class_or.error()));
-    unit_.DefineClass(TranslateClass(hir_id), *std::move(class_or));
+  }
+  for (auto& class_lowerer : class_lowerers) {
+    auto r = class_lowerer.DeclareShape();
+    if (!r) return std::unexpected(std::move(r.error()));
+  }
+  for (auto& class_lowerer : class_lowerers) {
+    auto r = class_lowerer.PopulateBodies();
+    if (!r) return std::unexpected(std::move(r.error()));
   }
 
   // Two-sweep structural lowering: the first sweep mints every class identity

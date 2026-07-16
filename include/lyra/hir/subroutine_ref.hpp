@@ -1,11 +1,11 @@
 #pragma once
 
-#include <cstdint>
 #include <variant>
 
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
+#include "lyra/hir/method_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -30,11 +30,12 @@ struct ForeignImportRef {
 
 // Calls an instance method (LRM 8.6) on `receiver`, an expression yielding the
 // class handle the call dispatches through. `class_id` names the declaring
-// class and `method_index` is the method's declaration-order position in it.
+// class and `method` is the method's declaration-order position in that
+// class's HIR method arena.
 struct MethodCallRef {
   ExprId receiver;
   ClassId class_id;
-  std::uint32_t method_index;
+  MethodId method;
 };
 
 // Calls a `$xxx` system subroutine. The id resolves through

@@ -1,10 +1,15 @@
 #pragma once
 
+#include <optional>
+#include <vector>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -22,6 +27,13 @@ namespace lyra::lowering::hir_to_mir {
 // A class method body names only its receiver and its own locals, so it is
 // lowered inside no structural scope -- its body lowerer carries a null
 // enclosing scope, never an owner that stands in for one.
+//
+// The lowering runs in two stages. `DeclareShape` publishes the class's
+// structural facts -- fields, method signatures, canonical dispatch role --
+// so peers can query them by id while their own bodies lower. `PopulateBodies`
+// then composes the executable `mir::Class`. The stages run independently
+// per class; every class's shape is published before any body lowers, so a
+// body's cross-class reference always resolves against a settled shape.
 class ClassDeclLowerer {
  public:
   ClassDeclLowerer(
@@ -33,16 +45,32 @@ class ClassDeclLowerer {
         hir_class_(&hir_class) {
   }
 
-  // Builds and returns the class object. The caller, which owns the class
-  // registry and holds the pre-declared identity, defines the returned object
-  // into the unit.
-  auto Run() -> diag::Result<mir::Class>;
+  // Publishes this class's `ClassShape` to the module's shape store so peer
+  // body lowering can read every fact it might need -- the base reference,
+  // the field arena, each method's dispatch role -- without waiting for any
+  // sibling class's body to lower.
+  auto DeclareShape() -> diag::Result<void>;
+
+  // Composes the class from the already-published shape plus every body,
+  // and commits it to the compilation unit. Any cross-class query the
+  // bodies make resolves against the shape store, never against another
+  // class's still-in-progress state.
+  auto PopulateBodies() -> diag::Result<void>;
 
  private:
   UnitLowerer* owner_;
   mir::ClassId class_id_;
   mir::TypeId object_type_;
   const hir::ClassDecl* hir_class_;
+
+  // Storage layout the shape stage settles and the body stage reuses: the
+  // property field ids in declaration order, and the per-callable
+  // static-storage plans whose placements name the exact field ids the
+  // published shape declares.
+  std::vector<mir::FieldId> field_ids_;
+  ProceduralScopeMaterializationTable class_scopes_;
+  std::vector<CallableStoragePlan> method_plans_;
+  std::optional<CallableStoragePlan> ctor_plan_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

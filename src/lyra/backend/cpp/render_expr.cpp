@@ -168,9 +168,8 @@ auto RenderRealLiteralExpr(
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
-  // Every callable body is a static function over the explicit receiver `self`
-  // (its `locals[0]`), so a local reference renders as its own name -- `self`
-  // included, which is just the first parameter's name.
+  // Every local -- including `self` (`locals[0]`), which the method emit
+  // seeds from `this` -- renders as its declared name.
   return view.Local(ref).name;
 }
 
@@ -893,7 +892,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             const mir::Class& cls = view.Class();
             return std::format(
                 "&{}::{}", ToCppName(cls.name),
-                cls.methods.Get(fr.callable).name);
+                cls.abi_adapters.Get(fr.adapter).name);
           },
           [&](const mir::StaticConstantRef& r) -> std::string {
             const mir::Class& cls = view.Class();

@@ -6,7 +6,6 @@
 #include <string_view>
 #include <variant>
 
-#include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -414,13 +413,12 @@ struct CalleeRender {
   std::size_t leading_arg_count;
 };
 
-// Renders a `Direct` callee whose target is a user-declared method. The target
-// states its owning class explicitly, so the emitted qualification names the
-// declaring class arena without deriving it from the receiver's runtime type
-// (which may differ from the declaring class when the method is inherited).
-// The `self` receiver stays an ordinary leading argument. No qualification is
-// allowed today -- cross-class explicit qualification is gated on SV class
-// support.
+// Renders a `Direct` callee whose target is a user-declared method. The method
+// renders as a C++ instance member function, so the emitted callee text is
+// `(receiver)->name` -- the receiver rides as `arguments[0]` in MIR and is
+// consumed here rather than passed as an ordinary argument. No qualification
+// is allowed today -- cross-class explicit qualification is gated on SV
+// class support.
 auto RenderDirectMethodCall(
     const ScopeView& view, const mir::CallExpr& call,
     const mir::MethodTarget& method,
@@ -433,10 +431,12 @@ auto RenderDirectMethodCall(
     throw InternalError("Direct method call expects a receiver argument");
   }
   const auto& cls = view.Unit().GetClass(method.owner);
+  const mir::Expr& receiver = view.Expr(call.arguments[0]);
   return {
       .expr = std::format(
-          "{}::{}", ToCppName(cls.name), cls.methods.Get(method.slot).name),
-      .leading_arg_count = 0};
+          "({})->{}", RenderExpr(view, receiver),
+          cls.methods.Get(method.slot).name),
+      .leading_arg_count = 1};
 }
 
 // Renders a `Direct` callee whose target is a `BuiltinFn`. Picks one of
@@ -518,6 +518,14 @@ auto RenderCalleePart(
             return {
                 .expr =
                     std::format("({})", RenderExpr(view, view.Expr(i.closure))),
+                .leading_arg_count = 0};
+          },
+          [&](const mir::Virtual& v) -> CalleeRender {
+            const auto& cls = view.Unit().GetClass(v.owner_class);
+            return {
+                .expr = std::format(
+                    "({})->{}", RenderExpr(view, view.Expr(v.receiver)),
+                    cls.methods.Get(v.slot).name),
                 .leading_arg_count = 0};
           },
           [&](const mir::Construct&) -> CalleeRender {

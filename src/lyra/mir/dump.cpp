@@ -472,6 +472,23 @@ class MirDumper {
     throw InternalError("MirDumper: unknown BinaryOp");
   }
 
+  [[nodiscard]] auto FormatVirtualDispatchRole(
+      const VirtualDispatchRole& role) const -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const IntroducesVirtualSlot&) -> std::string {
+              return "IntroducesSlot";
+            },
+            [this](const OverridesIntraUnitSlot& o) -> std::string {
+              const auto& owner = unit_->GetClass(o.slot_owner);
+              const auto& method = owner.methods.Get(o.slot_id);
+              return std::format(
+                  "OverridesIntraUnitSlot[Class[{}].{}(Method[{}])]",
+                  o.slot_owner.value, method.name, o.slot_id.value);
+            }},
+        role);
+  }
+
   [[nodiscard]] auto FormatDirectTarget(const DirectTarget& target) const
       -> std::string {
     return std::visit(
@@ -522,6 +539,14 @@ class MirDumper {
               return std::format("Indirect[closure=Expr[{}]]", i.closure.value);
             },
             [](const Construct&) -> std::string { return "Construct"; },
+            [this](const Virtual& v) -> std::string {
+              const auto& owner = unit_->GetClass(v.owner_class);
+              const auto& method = owner.methods.Get(v.slot);
+              return std::format(
+                  "Virtual[recv=Expr[{}] slot=Class[{}].{}(Method[{}])]",
+                  v.receiver.value, v.owner_class.value, method.name,
+                  v.slot.value);
+            },
         },
         callee);
   }
@@ -682,7 +707,7 @@ class MirDumper {
             },
             [](const FunctionRef& fr) -> std::string {
               return std::format(
-                  "FunctionRef callable=Method[{}]", fr.callable.value);
+                  "FunctionRef adapter=AbiAdapter[{}]", fr.adapter.value);
             },
             [](const StaticConstantRef& r) -> std::string {
               return std::format(
@@ -793,6 +818,16 @@ class MirDumper {
       DumpMethod(s.methods.Get(mid), i);
     }
     Dedent();
+
+    if (!s.abi_adapters.empty()) {
+      Line("AbiAdapters:");
+      Indent();
+      for (std::size_t i = 0; i < s.abi_adapters.size(); ++i) {
+        DumpAbiAdapter(
+            s.abi_adapters.Get(AbiAdapterId{static_cast<std::uint32_t>(i)}), i);
+      }
+      Dedent();
+    }
 
     if (!s.static_callables.empty()) {
       Line("StaticCallables:");
@@ -914,21 +949,11 @@ class MirDumper {
         std::format(
             "Visibility: {}",
             d.visibility == MethodVisibility::kPublic ? "public" : "internal"));
-    if (d.overrides.has_value()) {
-      const auto& ref = std::get<RuntimeLibraryMethodRef>(*d.overrides);
-      std::string_view target = "Resolve";
-      switch (ref.method) {
-        case RuntimeMethod::kResolve:
-          target = "Resolve";
-          break;
-        case RuntimeMethod::kInitialize:
-          target = "Initialize";
-          break;
-        case RuntimeMethod::kActivate:
-          target = "Activate";
-          break;
-      }
-      Line(std::format("Overrides: {}", target));
+    if (d.virtual_dispatch.has_value()) {
+      Line(
+          std::format(
+              "VirtualDispatch: {}",
+              FormatVirtualDispatchRole(*d.virtual_dispatch)));
     }
     for (std::size_t i = 0; i < d.code.params.size(); ++i) {
       const auto& param = d.code.locals.Get(d.code.params[i]);
@@ -937,6 +962,21 @@ class MirDumper {
               "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
     }
     DumpCallableBody(d.code);
+    Dedent();
+  }
+
+  void DumpAbiAdapter(const AbiAdapter& a, std::size_t index) {
+    Line(
+        std::format(
+            "[{}] \"{}\" : Type[{}]", index, a.name, a.code.result_type.value));
+    Indent();
+    for (std::size_t i = 0; i < a.code.params.size(); ++i) {
+      const auto& param = a.code.locals.Get(a.code.params[i]);
+      Line(
+          std::format(
+              "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
+    }
+    DumpCallableBody(a.code);
     Dedent();
   }
 

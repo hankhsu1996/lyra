@@ -1,10 +1,10 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
 #include <variant>
 
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/method_id.hpp"
 
 namespace lyra::mir {
 
@@ -35,28 +35,39 @@ struct ExternalClassRef {
 // target-language name). A consumer reads each arm directly.
 using ClassRef = std::variant<IntraUnitClassRef, ExternalClassRef>;
 
-// A lifecycle hook the runtime base declares and a derived object may override.
-// `kResolve` / `kInitialize` / `kActivate` are the post-construction phases the
-// engine invokes (binding cross-instance references, running variable
-// initializers, registering processes). Constant properties -- time precision
-// (LRM 3.14.2) and def-name (LRM 23.8) -- are not hooks: they are immutable
-// scope metadata read as data, not generated bodies.
-enum class RuntimeMethod : std::uint8_t {
-  kResolve,
-  kInitialize,
-  kActivate,
+// A method that introduces a new virtual dispatch slot on the class it
+// declares -- LRM 8.20 `virtual function` first appearance in an inheritance
+// chain. The slot's canonical identity is this method's own declaration
+// identity: as long as a dispatch slot carries no state beyond what the
+// introducer's declaration already holds (a name, a signature, participation
+// in dispatch), aliasing "slot identity" to "introducer's (class, method)"
+// is a chosen simplification, not a natural fact. When a slot gains
+// independent metadata -- a pure/abstract requirement, a final marker,
+// interface conformance -- a distinct `SlotId` becomes the right shape.
+struct IntroducesVirtualSlot {
+  auto operator==(const IntroducesVirtualSlot&) const -> bool = default;
 };
 
-// A reference to a runtime-library method.
-struct RuntimeLibraryMethodRef {
-  RuntimeMethod method;
+// A method that overrides a virtual dispatch slot declared by a class of this
+// same compilation unit -- LRM 8.20. The stored (`slot_owner`, `slot_id`) is
+// the slot's canonical identity: the class and method-arena position where
+// the slot was originally introduced, invariant across every override in the
+// chain. A call site names the slot in one read; no consumer walks an
+// override chain to derive it.
+struct OverridesIntraUnitSlot {
+  ClassId slot_owner;
+  MethodId slot_id;
 
-  auto operator==(const RuntimeLibraryMethodRef&) const -> bool = default;
+  auto operator==(const OverridesIntraUnitSlot&) const -> bool = default;
 };
 
-// A reference to the base method an instance method overrides, resolved to a
-// declaration rather than a textual name. A consumer reads the override target
-// through one path; the only base method is a runtime-library virtual.
-using OverriddenMethodRef = std::variant<RuntimeLibraryMethodRef>;
+// A method's participation in the class-object dispatch table (LRM 8.20). A
+// non-participating method (a regular direct-only callable) carries no value
+// of this optional; a participating method carries the arm whose payload
+// names the slot's canonical identity: an introducer names itself, an
+// intra-unit override names the introducing (class, method) pair. A
+// consumer reads the slot's identity in one step.
+using VirtualDispatchRole =
+    std::variant<IntroducesVirtualSlot, OverridesIntraUnitSlot>;
 
 }  // namespace lyra::mir
