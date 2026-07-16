@@ -12,7 +12,9 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
 
@@ -31,7 +33,9 @@ auto RunDesignHost(int argc, char** argv, RootBuilder builder) -> int {
   options.plusargs = std::move(plusargs);
   Engine engine{std::move(options)};
   auto root = builder(engine.Services());
+  Scope* root_scope = root.get();
   engine.BindDesign(std::move(root));
+  AmbientRunContext run_context{root_scope};
   return RunSimulation(engine);
 }
 

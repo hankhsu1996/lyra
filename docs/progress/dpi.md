@@ -31,12 +31,16 @@ orchestration.
 
 ## Actionable
 
-Two frontiers are open. On the C++ backend the import surface (D1-D3) is in, so export (D4) is the
-next C++-backend deliverable, then DPI tasks (D5). On the execution backend scalar import (D10) is
-in: a foreign call lowers to an external-linkage symbol and the by-value carriers marshal. The rest
-of the import surface (D11) is blocked, and not by anything DPI owns: by-pointer marshaling is
-expressed as a closure, which that backend does not yet lower at all (`architecture-reset.md`). D4
-is the actionable DPI item today.
+Two frontiers are open. On the C++ backend the import surface (D1-D3) is in, and the scalar export
+call chain (D4) runs: a scalar input-only export executes end to end through the import -> export
+chain, its wrapper marshaling the C arguments and recovering the exported subroutine's single
+top-level instance from the running design. What remains for the export surface is instance-bound
+dispatch beyond that single instance via `svSetScope` and receiver-less package / `$unit` scope
+(D4a), 4-state / by-pointer / output marshaling (D4b), the generated ABI header and export linkage
+(D9), then DPI tasks (D5). On the execution backend scalar import (D10) is in: a foreign call lowers
+to an external-linkage symbol and the by-value carriers marshal. The rest of the import surface
+(D11) is blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a closure,
+which that backend does not yet lower at all (`architecture-reset.md`).
 
 ## Sub-Steps
 
@@ -72,16 +76,22 @@ here (see the design record); a design that declares an export only for such an 
 accepted, records its metadata, and can have its ABI header generated, but is not claimed callable
 from an external main.
 
-- [ ] D4 -- Package / `$unit`-scoped export with foreign-linkage wrappers: scalar 2-state, `real`,
-      and `string` (LRM 35.5). Generated ABI header and driver linkage of the user C that calls the
-      export. Rides on the package unit and package callable established in `packages.md` (PK1-PK2).
-- [ ] D4a -- Module-scoped export with instance-bound dispatch (LRM 35.5.3): the exported subroutine
-      reads the state of the specific instance the foreign call targets, so the wrapper resolves
-      that instance's context from the scope the foreign side set. This is the `mhpmcounter_num` /
-      `mhpmcounter_get` shape in the Ibex bring-up; the pure-SV Ibex run never calls them, so this
-      closes the construct, not the Ibex external-driver usage.
-- [ ] D4b -- 4-state and by-pointer packed export marshaling, including indirect return for return
-      types that need hidden result storage.
+- [x] D4 -- The scalar export foreign-linkage wrapper and the import -> export call chain under Lyra
+      as the driver (LRM 35.5): a scalar, input-only export executes end to end. The wrapper
+      marshals the C arguments, recovers the exported subroutine's instance from the running design
+      (the single top-level instance), calls the method, and marshals the result back. The
+      subroutine keeps its ordinary body; the wrapper's marshaling is stated in MIR so a backend
+      renders it mechanically, and only the receiver recovery and the external linkage are the
+      backend's shell.
+- [ ] D4a -- Instance-bound dispatch beyond the single top-level instance (LRM 35.5.3): the wrapper
+      resolves the specific instance the foreign call targets from the scope the foreign side set
+      (`svSetScope`), rather than the single-instance recovery above, and a receiver-less package /
+      `$unit`-scoped export needs no instance at all (riding on the package unit and package
+      callable in `packages.md`, PK1-PK2). This is the `mhpmcounter_num` / `mhpmcounter_get` shape
+      in the Ibex bring-up; the pure-SV Ibex run never calls them, so this closes the construct, not
+      the Ibex external-driver usage.
+- [ ] D4b -- 4-state and by-pointer packed export marshaling, including output / inout arguments and
+      indirect return for return types that need hidden result storage.
 
 ### DPI tasks
 
