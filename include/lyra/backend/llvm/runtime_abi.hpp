@@ -29,7 +29,13 @@ class CodeGenTypes;
 // -- and a source type with no runtime realization has no domain at all. It
 // grows only when the runtime library gains a value type, never to mirror the
 // source language's type kinds.
-enum class ValueDomain : std::uint8_t { kPacked, kString, kReal, kShortReal };
+enum class ValueDomain : std::uint8_t {
+  kPacked,
+  kString,
+  kReal,
+  kShortReal,
+  kChandle,
+};
 
 auto ValueDomainName(ValueDomain domain) -> std::string_view;
 

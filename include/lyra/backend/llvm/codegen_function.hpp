@@ -41,7 +41,9 @@ class CodeGenFunction {
   auto LowerAggregate(const lir::AggregateInstr& agg, lir::TypeId result_type)
       -> llvm::Value*;
   auto LowerBinary(const lir::BinaryInstr& binary) -> llvm::Value*;
+  auto LowerMachineBinary(const lir::BinaryInstr& binary) -> llvm::Value*;
   auto LowerUnary(const lir::UnaryInstr& unary) -> llvm::Value*;
+  auto LowerMachineUnary(const lir::UnaryInstr& unary) -> llvm::Value*;
   auto LowerBoolCast(const lir::BoolCastInstr& cast) -> llvm::Value*;
   auto LowerIntCast(const lir::IntCastInstr& cast, lir::TypeId result_type)
       -> llvm::Value*;
@@ -70,6 +72,7 @@ class CodeGenFunction {
   auto LowerIntConst(const lir::IntConst& constant) -> llvm::Value*;
   auto LowerStrConst(const lir::StrConst& constant) -> llvm::Value*;
   auto LowerRealConst(const lir::RealConst& constant) -> llvm::Value*;
+  auto LowerNullConst(const lir::NullConst& constant) -> llvm::Value*;
   void LowerTerminator(const lir::Terminator& terminator);
 
   auto BuiltinCallee(

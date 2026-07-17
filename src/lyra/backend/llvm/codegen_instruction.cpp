@@ -108,17 +108,70 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
 
 auto CodeGenFunction::LowerBinary(const lir::BinaryInstr& binary)
     -> llvm::Value* {
-  const ValueDomain domain = DomainOf(OperandType(binary.lhs));
+  const lir::TypeId operand_type = OperandType(binary.lhs);
+  // Machine-typed operands are native values, not value-domain handles: their
+  // operator is a machine instruction, not a runtime-library call. This is how
+  // the reduced predicates a real- or string-family `&&` / `||` / `<->`
+  // composes (machine booleans) are combined before `from_bool` widens the
+  // result back to a 1-bit packed.
+  if (std::holds_alternative<lir::MachineIntType>(
+          module_->Unit().types.Get(operand_type).data)) {
+    return LowerMachineBinary(binary);
+  }
+  const ValueDomain domain = DomainOf(operand_type);
   return builder_.CreateCall(
       module_->Runtime().Binary(domain, binary.op),
       {LowerOperand(binary.lhs), LowerOperand(binary.rhs)});
 }
 
+auto CodeGenFunction::LowerMachineBinary(const lir::BinaryInstr& binary)
+    -> llvm::Value* {
+  llvm::Value* lhs = LowerOperand(binary.lhs);
+  llvm::Value* rhs = LowerOperand(binary.rhs);
+  // The only binary operators that reach machine values compose machine
+  // booleans: `&&` and `||` combine two predicates, and `<->` arrives as an
+  // equality of the two predicates. Every other operator acts on a value
+  // domain, never on a machine value.
+  switch (binary.op) {
+    case lir::BinaryOp::kLogicalAnd:
+      return builder_.CreateAnd(lhs, rhs);
+    case lir::BinaryOp::kLogicalOr:
+      return builder_.CreateOr(lhs, rhs);
+    case lir::BinaryOp::kEquality:
+      return builder_.CreateICmpEQ(lhs, rhs);
+    default:
+      throw InternalError(
+          "llvm codegen: binary operator does not apply to machine values");
+  }
+}
+
 auto CodeGenFunction::LowerUnary(const lir::UnaryInstr& unary) -> llvm::Value* {
-  const ValueDomain domain = DomainOf(OperandType(unary.operand));
+  const lir::TypeId operand_type = OperandType(unary.operand);
+  // A machine-typed operand is a native value, not a value-domain handle: its
+  // operator is a machine instruction, not a runtime-library call. This is how
+  // the reduced predicate a real- or chandle-family `!` produces (a machine
+  // boolean) is negated before `from_bool` widens it back to a 1-bit packed.
+  if (std::holds_alternative<lir::MachineIntType>(
+          module_->Unit().types.Get(operand_type).data)) {
+    return LowerMachineUnary(unary);
+  }
+  const ValueDomain domain = DomainOf(operand_type);
   return builder_.CreateCall(
       module_->Runtime().Unary(domain, unary.op),
       {LowerOperand(unary.operand)});
+}
+
+auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
+    -> llvm::Value* {
+  llvm::Value* operand = LowerOperand(unary.operand);
+  switch (unary.op) {
+    case lir::UnaryOp::kLogicalNot:
+      return builder_.CreateICmpEQ(
+          operand, llvm::ConstantInt::get(operand->getType(), 0));
+    default:
+      throw InternalError(
+          "llvm codegen: machine-typed unary operator is not lowerable");
+  }
 }
 
 auto CodeGenFunction::LowerBoolCast(const lir::BoolCastInstr& cast)
@@ -258,6 +311,9 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
           [&](const lir::RealConst& c) -> llvm::Value* {
             return LowerRealConst(c);
           },
+          [&](const lir::NullConst& c) -> llvm::Value* {
+            return LowerNullConst(c);
+          },
           [&](const lir::FuncRef& f) -> llvm::Value* {
             return module_->MethodFunction(f.method.class_id, f.method.index);
           }},
@@ -313,6 +369,15 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
   return builder_.CreateCall(
       module_->Runtime().RealConst(domain),
       {llvm::ConstantFP::get(host, constant.value)});
+}
+
+// A null value is the host null pointer, a native LLVM constant. Every
+// pointer-like domain (chandle, class handle, pointer) shares it: the value is
+// the pointer, so its null needs no runtime constructor.
+auto CodeGenFunction::LowerNullConst(const lir::NullConst& constant)
+    -> llvm::Value* {
+  return llvm::ConstantPointerNull::get(
+      llvm::cast<llvm::PointerType>(module_->Types().Map(constant.type)));
 }
 
 auto CodeGenFunction::BuiltinCallee(

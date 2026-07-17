@@ -256,6 +256,17 @@ auto lyra_rt_activation_frame_load_shortreal(const void* cell) -> void*;
 auto lyra_rt_make_print_value_item_shortreal(
     const void* value, const void* spec) -> void*;
 
+// The `chandle` domain (LRM 6.14). A chandle is a pointer, so the domain
+// carries its value inline: each operand IS the chandle value, not a handle to
+// a runtime-owned value object. LRM 6.14 admits only the equality family (which
+// yields a packed 1-bit) and the boolean test; there is no arithmetic, no
+// ordering, no format entry, and no runtime constructor -- a null chandle is
+// the host null pointer, a native constant.
+auto lyra_rt_chandle_eq(void* lhs, void* rhs) -> void*;
+auto lyra_rt_chandle_ne(void* lhs, void* rhs) -> void*;
+auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void*;
+auto lyra_rt_chandle_to_bool(void* operand) -> bool;
+
 // Builds one conversion's format specification, and the print item that pairs a
 // value with it. Each field arrives as a packed value, as the value model
 // routes every compile-time scalar.

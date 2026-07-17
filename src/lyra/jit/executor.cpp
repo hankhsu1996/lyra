@@ -288,6 +288,10 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_activation_frame_load_shortreal);
   add("lyra_rt_make_print_value_item_shortreal",
       &lyra_rt_make_print_value_item_shortreal);
+  add("lyra_rt_chandle_eq", &lyra_rt_chandle_eq);
+  add("lyra_rt_chandle_ne", &lyra_rt_chandle_ne);
+  add("lyra_rt_chandle_case_equal", &lyra_rt_chandle_case_equal);
+  add("lyra_rt_chandle_to_bool", &lyra_rt_chandle_to_bool);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
@@ -327,6 +331,8 @@ auto AbiDomain(backend::llvm_backend::ValueDomain domain)
       return runtime::ValueDomain::kReal;
     case backend::llvm_backend::ValueDomain::kShortReal:
       return runtime::ValueDomain::kShortReal;
+    case backend::llvm_backend::ValueDomain::kChandle:
+      return runtime::ValueDomain::kChandle;
   }
   throw InternalError("jit executor: unknown value domain");
 }
@@ -348,6 +354,14 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
     return runtime::MemberStorageDescriptor{
         .kind = runtime::MemberStorageKind::kBorrowedHandle,
         .domain = runtime::ValueDomain::kNone};
+  }
+  // A chandle member is a value the instance owns but no process subscribes to
+  // (LRM 6.14), stored inline in its slot rather than behind an observable
+  // cell.
+  if (std::holds_alternative<lir::ChandleType>(data)) {
+    return runtime::MemberStorageDescriptor{
+        .kind = runtime::MemberStorageKind::kInlineValue,
+        .domain = runtime::ValueDomain::kChandle};
   }
   throw InternalError("jit executor: member type has no storage realization");
 }

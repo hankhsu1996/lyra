@@ -45,6 +45,12 @@ ownership, or native in-frame layout) for every value.
       procedural local crosses a suspension as an activation-frame value. It extended the activation
       frame with another domain rather than forcing a new lifetime discipline, since a real is a
       non-managed value like a packed one.
+- [x] **The chandle** (LRM 6.14) -- realized on the execution backend as a pointer-like value
+      domain: the value is the pointer itself, carried inline rather than behind a handle to a
+      runtime-owned object. A chandle defaults to null, assigns from null and from another chandle,
+      takes the equality and case-equality families and the boolean test, and lives in a member slot
+      as an owned inline value (not an observable cell, since no process subscribes to it). This is
+      the first bare-pointer value domain; a class handle later reuses the shape.
 - [ ] **The remaining value domains** (aggregates, containers) -- not realized on the execution
       backend at all yet, so no cross-suspension case exists for them.
 - [ ] **A managed value (class handle) across a suspension.** A traceable frame and precise

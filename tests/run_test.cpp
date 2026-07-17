@@ -237,6 +237,38 @@ auto WriteRealFamilySource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+auto WriteChandleSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  chandle h;\n"
+      << "  chandle g;\n"
+      << "  initial begin\n"
+      << "    $display(\"h_null=%0d not_h=%0d\", h == null, !h);\n"
+      << "    g = h;\n"
+      << "    $display(\"g_eq_h=%0d g_ne_h=%0d\", g == h, g != h);\n"
+      << "    $display(\"g_ceq_h=%0d g_cne_h=%0d\", g === h, g !== h);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+auto WriteLogicalOperatorSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  real a;\n"
+      << "  real b;\n"
+      << "  string s;\n"
+      << "  initial begin\n"
+      << "    a = 1.0;\n"
+      << "    b = 0.0;\n"
+      << "    s = \"x\";\n"
+      << "    $display(\"and=%0d or=%0d\", a && b, a || b);\n"
+      << "    $display(\"equiv=%0d impl=%0d\", a <-> b, a -> b);\n"
+      << "    $display(\"not_a=%0d not_b=%0d\", !a, !b);\n"
+      << "    $display(\"str=%0d\", (s.len() > 0) && a);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -531,6 +563,71 @@ TEST(LyraRun, JitAndCppAgreeOnRealFamily) {
       jit.stdout_text,
       "r=4.50 widened=2.50 from_int=3.00\n"
       "rounded=5 sum=7.50\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnChandle) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteChandleSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "h_null=1 not_h=1\n"
+      "g_eq_h=1 g_ne_h=0\n"
+      "g_ceq_h=1 g_cne_h=0\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnLogicalOperators) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteLogicalOperatorSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "and=0 or=1\n"
+      "equiv=0 impl=0\n"
+      "not_a=0 not_b=1\n"
+      "str=1\n")
       << "stdout: " << jit.stdout_text;
 }
 

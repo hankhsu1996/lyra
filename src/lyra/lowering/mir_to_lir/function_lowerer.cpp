@@ -1033,6 +1033,10 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return lir::Operand{lir::RealConst{
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
+          [&](const mir::NullLiteral&) -> diag::Result<lir::Operand> {
+            return lir::Operand{
+                lir::NullConst{.type = unit_->TranslateType(type)}};
+          },
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Operand> {
             const std::optional<LocalBinding>& binding = locals_[ref.var.value];
             if (!binding.has_value()) {
@@ -1138,8 +1142,17 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
               return Unsupported(
                   "mir_to_lir: unary operator has no direct realization");
             }
+            // A logical-not over a machine boolean -- the reduced predicate a
+            // real- or chandle-family `!` produces before `from_bool` widens it
+            // back -- stays a machine boolean; its surface 1-bit type is
+            // restored by the enclosing `from_bool`.
+            const lir::TypeId result_type =
+                (*op == lir::UnaryOp::kLogicalNot &&
+                 lir::OperandType(fn_, *operand) == unit_->MachineBoolType())
+                    ? unit_->MachineBoolType()
+                    : unit_->TranslateType(type);
             return Emit(
-                unit_->TranslateType(type),
+                result_type,
                 lir::UnaryInstr{.op = *op, .operand = *std::move(operand)});
           },
           [&](const mir::BinaryExpr& bin) -> diag::Result<lir::Operand> {
@@ -1156,8 +1169,17 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!rhs) {
               return rhs;
             }
+            // A logical or equality operator composing machine booleans -- the
+            // reduced predicates a real- or string-family `&&` / `||` / `<->`
+            // builds before `from_bool` widens the result back -- stays a
+            // machine boolean; its surface 1-bit type is restored by the
+            // enclosing `from_bool`.
+            const lir::TypeId result_type =
+                lir::OperandType(fn_, *lhs) == unit_->MachineBoolType()
+                    ? unit_->MachineBoolType()
+                    : unit_->TranslateType(type);
             return Emit(
-                unit_->TranslateType(type),
+                result_type,
                 lir::BinaryInstr{
                     .op = *op, .lhs = *std::move(lhs), .rhs = *std::move(rhs)});
           },

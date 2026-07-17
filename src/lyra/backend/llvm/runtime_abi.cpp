@@ -28,6 +28,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "real";
     case ValueDomain::kShortReal:
       return "shortreal";
+    case ValueDomain::kChandle:
+      return "chandle";
   }
   throw InternalError("llvm codegen: unknown value domain");
 }
@@ -46,6 +48,10 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::RealType&) { return ValueDomain::kReal; },
           [](const lir::RealTimeType&) { return ValueDomain::kReal; },
           [](const lir::ShortRealType&) { return ValueDomain::kShortReal; },
+          // A chandle (LRM 6.14) is a pointer-sized value carried inline: the
+          // domain's handle is the chandle value itself, not a reference to a
+          // runtime-owned value object.
+          [](const lir::ChandleType&) { return ValueDomain::kChandle; },
           [](const auto&) -> ValueDomain {
             throw InternalError(
                 "llvm codegen: value type has no runtime library domain");

@@ -72,6 +72,14 @@ struct RealConst {
   TypeId type;
 };
 
+// A null value, the sole literal of the pointer-like types: a chandle (LRM
+// 6.14), a class handle (LRM 8.4), a pointer. It carries only its type -- there
+// is no payload, since every such value's null is the host null pointer -- and
+// the type names the domain the surrounding operator reads it in.
+struct NullConst {
+  TypeId type;
+};
+
 // The code address of a method, as a value. A closure is built from a code
 // reference plus its environment, so a method's address is an operand, not a
 // call target.
@@ -83,7 +91,8 @@ struct FuncRef {
 // A constant or code reference is an operand rather than a value of its own
 // because it has no storage and no dataflow origin to name -- it is
 // materialized at the use site.
-using Operand = std::variant<Use, IntConst, StrConst, RealConst, FuncRef>;
+using Operand =
+    std::variant<Use, IntConst, StrConst, RealConst, NullConst, FuncRef>;
 
 // A runtime-library entry. A static factory is named by its type namespace as
 // well as its function -- `String::FromPackedArray` and `PackedArray::FromInt`

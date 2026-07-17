@@ -242,6 +242,7 @@ class LirDumper {
             [](const RealConst& c) -> std::string {
               return std::format("real:{}", c.value);
             },
+            [](const NullConst&) -> std::string { return "null"; },
             [](const FuncRef& f) -> std::string {
               return std::format(
                   "funcref {}.{}", f.method.class_id.value, f.method.index);
