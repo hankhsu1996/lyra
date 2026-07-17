@@ -20,6 +20,7 @@
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/value/chandle.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
@@ -145,6 +146,7 @@ using lyra::runtime::SubscribeValueChange;
 using lyra::runtime::Trigger;
 using lyra::runtime::UnitDefinition;
 using lyra::runtime::Var;
+using lyra::value::Chandle;
 using lyra::value::Format;
 using lyra::value::FormatSpec;
 using lyra::value::PackedArray;
@@ -896,5 +898,21 @@ auto lyra_rt_make_print_value_item_shortreal(
     const void* value, const void* spec) -> void* {
   return Own(PrintItem(
       PrintValueItem(Read<ShortReal>(value), Read<FormatSpec>(spec))));
+}
+
+auto lyra_rt_chandle_eq(void* lhs, void* rhs) -> void* {
+  return Own(Chandle{lhs} == Chandle{rhs});
+}
+
+auto lyra_rt_chandle_ne(void* lhs, void* rhs) -> void* {
+  return Own(Chandle{lhs} != Chandle{rhs});
+}
+
+auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void* {
+  return Own(Chandle{lhs}.CaseEqual(Chandle{rhs}));
+}
+
+auto lyra_rt_chandle_to_bool(void* operand) -> bool {
+  return static_cast<bool>(Chandle{operand});
 }
 }

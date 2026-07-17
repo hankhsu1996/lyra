@@ -30,10 +30,19 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
         case ValueDomain::kShortReal:
           object_.emplace<Var<value::ShortReal>>();
           return;
+        case ValueDomain::kChandle:
+          throw InternalError(
+              "MemberStorage: a chandle is not observable storage");
         case ValueDomain::kNone:
           throw InternalError(
               "MemberStorage: an observable cell needs a value domain");
       }
+    case MemberStorageKind::kInlineValue:
+      if (descriptor.domain == ValueDomain::kChandle) {
+        object_.emplace<value::Chandle>();
+        return;
+      }
+      throw InternalError("MemberStorage: unsupported inline-value domain");
   }
   throw InternalError("MemberStorage: unknown member storage kind");
 }

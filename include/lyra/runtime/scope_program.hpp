@@ -85,15 +85,19 @@ enum class ValueDomain : std::uint8_t {
   kString,
   kReal,
   kShortReal,
+  kChandle,
 };
 
 // How a member's storage is realized. A borrowed handle is a box holding a
 // pointer the instance does not own, the storage behind a companion reference
 // to another scope. An observable cell is the subscribable variable a process
-// reads, writes, and waits on.
+// reads, writes, and waits on. An inline value is a value the instance owns but
+// no process subscribes to -- a chandle (LRM 6.14), whose pointer-sized value
+// lives in the member slot and is read and written directly.
 enum class MemberStorageKind : std::uint8_t {
   kBorrowedHandle,
-  kObservableCell
+  kObservableCell,
+  kInlineValue,
 };
 
 struct MemberStorageDescriptor {
