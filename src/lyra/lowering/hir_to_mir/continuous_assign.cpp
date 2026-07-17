@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 
-#include <algorithm>
 #include <expected>
 #include <format>
 #include <optional>
@@ -32,13 +31,12 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The MIR value type behind a resolved-net LHS, paired with the LHS target's
-// stable identity. Only a bare direct or routed reference may name a net
-// target: a select or other computed LHS is a variable path even if its root
-// sits on a net (whose runtime protocol still forbids a direct write).
+// The MIR value type behind a resolved-net LHS. Only a bare direct or routed
+// reference may name a net target: a select or other computed LHS is a
+// variable path even if its root sits on a net (whose runtime protocol still
+// forbids a direct write).
 struct ResolvedNetLhs {
   mir::TypeId value_type;
-  ContinuousWriteTarget target;
 };
 
 // Answers "is this LHS a resolved-net cell" at the type level, without
@@ -59,7 +57,7 @@ auto ClassifyLhsAsResolvedNet(
     const auto* resolved = std::get_if<mir::ResolvedType>(
         &unit.types.Get(endpoint.cell_type).data);
     if (resolved == nullptr) return std::nullopt;
-    return ResolvedNetLhs{.value_type = resolved->value, .target = ref->var};
+    return ResolvedNetLhs{.value_type = resolved->value};
   }
   if (const auto* rr = std::get_if<hir::RoutedRef>(&prim->data)) {
     const BoundEndpoint endpoint =
@@ -67,7 +65,7 @@ auto ClassifyLhsAsResolvedNet(
     const auto* resolved = std::get_if<mir::ResolvedType>(
         &unit.types.Get(endpoint.cell_type).data);
     if (resolved == nullptr) return std::nullopt;
-    return ResolvedNetLhs{.value_type = resolved->value, .target = rr->id};
+    return ResolvedNetLhs{.value_type = resolved->value};
   }
   return std::nullopt;
 }
@@ -160,31 +158,24 @@ auto AttachDriver(
 // wait, matching LRM 9.2.2.2's "evaluate at time 0" requirement for inferred
 // sensitivity. The write is chosen by LHS type: a resolved-net cell is
 // driven through a driver handle attached at Resolve; every other observable
-// cell is written directly. Same-scope multi-driver on one net is rejected
-// against `driven_nets`, which the caller carries across its loop.
+// cell is written directly.
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
-    std::string name, const hir::ContinuousAssign& src,
-    ContinuousAssignDrivenNets& driven_nets) -> diag::Result<mir::MethodDecl> {
+    std::string name, const hir::ContinuousAssign& src)
+    -> diag::Result<mir::MethodDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
 
-  // A resolved-net target acquires a driver handle in Resolve, installed as
-  // a field on the enclosing class; the body updates that handle every
-  // iteration. A non-net LHS falls through to the direct observable write,
-  // with no Resolve-phase acquisition. Multi-driver rejection runs before
-  // the install so a duplicate never leaves side effects behind.
+  // A resolved-net target acquires its own driver handle in Resolve, installed
+  // as a field on the enclosing class; the body updates that handle every
+  // iteration. Several assignments to one net each install an independent
+  // driver and the net resolves them. A non-net LHS falls through to the
+  // direct observable write, with no Resolve-phase acquisition.
   std::optional<AttachedDriver> attached;
   if (const auto net =
           ClassifyLhsAsResolvedNet(lowerer, resolve_frame, src.lhs)) {
-    if (std::ranges::find(driven_nets, net->target) != driven_nets.end()) {
-      return diag::Fail(
-          src.span, diag::DiagCode::kUnsupportedContinuousAssignForm,
-          "a net with more than one driver is not yet supported");
-    }
-    driven_nets.push_back(net->target);
     auto net_access_or =
         lowerer.LowerLhsExpr(hir_scope.exprs.Get(src.lhs), resolve_frame);
     if (!net_access_or) {

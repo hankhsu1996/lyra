@@ -1262,6 +1262,43 @@ auto PackedArray::CasexEquals(const PackedArray& other) const -> PackedArray {
   return OneBitResult(true, type_.is_four_state);
 }
 
+auto PackedArray::ResolveTriState(const PackedArray& other) const
+    -> PackedArray {
+  RequireSameStorageDomain(*this, other, "ResolveTriState");
+  const auto words = WordCountForBits(type_.bit_width);
+  const auto a_val = ValueWords();
+  const auto b_val = other.ValueWords();
+  const auto a_unk = UnknownWords();
+  const auto b_unk = other.UnknownWords();
+  const auto top_mask = MaskForWidth(type_.bit_width - ((words - 1U) * 64U));
+  std::vector<std::uint64_t> res_val(words, 0U);
+  std::vector<std::uint64_t> res_unk(words, 0U);
+  for (std::size_t w = 0; w < words; ++w) {
+    const std::uint64_t av = a_val[w];
+    const std::uint64_t bv = b_val[w];
+    const std::uint64_t au = w < a_unk.size() ? a_unk[w] : 0U;
+    const std::uint64_t bu = w < b_unk.size() ? b_unk[w] : 0U;
+    // Lyra encoding (see packed.cpp): Z = (value=0, unknown=1) and is the
+    // resolution identity; equal contributions pass through; any remaining
+    // disagreement is a conflict resolving to X = (value=1, unknown=1).
+    const std::uint64_t a_z = ~av & au;
+    const std::uint64_t b_z = ~bv & bu;
+    const std::uint64_t eq = ~(av ^ bv) & ~(au ^ bu);
+    const std::uint64_t take_b = a_z;
+    const std::uint64_t take_a = ~a_z & (b_z | eq);
+    const std::uint64_t conflict = ~a_z & ~b_z & ~eq;
+    std::uint64_t v = (take_b & bv) | (take_a & av) | conflict;
+    std::uint64_t u = (take_b & bu) | (take_a & au) | conflict;
+    if (w + 1U == words) {
+      v &= top_mask;
+      u &= top_mask;
+    }
+    res_val[w] = v;
+    res_unk[w] = u;
+  }
+  return FromWords(res_val, res_unk, type_);
+}
+
 auto PackedArray::ExtractBits(
     const PackedArray& lsb_bit, std::span<const PackedRange> dims) const
     -> PackedArray {
