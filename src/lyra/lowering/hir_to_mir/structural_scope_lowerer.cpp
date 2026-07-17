@@ -853,13 +853,8 @@ auto InstallPortConnections(
         .rhs = is_input ? pc.peer : cell.cell,
         .sensitivity_list = pc.sensitivity};
     std::string name = std::format("process_{}", mir_class.methods.size());
-    // A port connection is single-driver by construction (LRM 23.3.3),
-    // so no port pair here can duplicate another's target; a fresh dedup
-    // set per iteration exists only to satisfy the lowering's API.
-    ContinuousAssignDrivenNets driven_nets;
     auto method_or = LowerContinuousAssign(
-        lowerer, frame, resolve_frame, init_frame, std::move(name), assign,
-        driven_nets);
+        lowerer, frame, resolve_frame, init_frame, std::move(name), assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     const mir::MethodId body = mir_class.methods.Add(std::move(*method_or));
     AppendProcessRegistration(unit_lowerer, activate_frame, body, false);
@@ -2009,18 +2004,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // already bound.
   InstallRoutedRefs(lowerer, resolve_frame);
 
-  // Scope-local multi-driver dedup. Two continuous assigns in this scope
-  // whose LHS reaches the same resolved-net target address the same net;
-  // the lowering registers each net target into `driven_nets` and rejects
-  // a duplicate. Design-global driver-count validation is a Seal-barrier
-  // concern; this set catches only the trivially detectable same-scope
-  // case.
-  ContinuousAssignDrivenNets driven_nets;
   for (const auto& ca : hir_scope.continuous_assigns) {
     std::string name = std::format("process_{}", mir_class.methods.size());
     auto method_or = LowerContinuousAssign(
-        lowerer, ctor_frame, resolve_frame, init_frame, std::move(name), ca,
-        driven_nets);
+        lowerer, ctor_frame, resolve_frame, init_frame, std::move(name), ca);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     const mir::MethodId body = mir_class.methods.Add(std::move(*method_or));
     AppendProcessRegistration(unit_lowerer, activate_frame, body, false);

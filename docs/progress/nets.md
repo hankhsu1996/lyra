@@ -50,7 +50,7 @@ This workstream reasons from these and does not restate them:
       width), so a read before any driver attaches is valid rather than an uninitialized cell. This
       is the net facet of the port work in `hierarchy.md` (E5) and clears the first full-testbench
       wall in `ibex.md`.
-- [ ] N3 -- Multi-driver `wire` / `tri` resolution (LRM 6.6.1, Table 6-2): two or more drivers on
+- [x] N3 -- Multi-driver `wire` / `tri` resolution (LRM 6.6.1, Table 6-2): two or more drivers on
       one net -- local continuous assignments, sources arriving across ports, or both -- resolve
       under the tri-state truth table, where agreement passes through, conflict yields `x`, and
       all-high-impedance yields `z`. This is the N>=2 case of the resolver; the N=0 undriven value
