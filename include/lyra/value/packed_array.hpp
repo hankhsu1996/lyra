@@ -396,6 +396,12 @@ class PackedArray {
   // operand is a wildcard; remaining bits must match on the value plane.
   // Returns a deterministic 1-bit result.
   [[nodiscard]] auto CasexEquals(const PackedArray& other) const -> PackedArray;
+  // LRM 6.6.1 Table 6-2 tri-state resolution of two driver contributions: Z
+  // (the resolution identity) defers to the other, equal drivers pass through,
+  // and a 0/1 conflict yields X. Associative and commutative, so a net folds
+  // its drivers in any order.
+  [[nodiscard]] auto ResolveTriState(const PackedArray& other) const
+      -> PackedArray;
 
   // Low-level bit-level primitives. `ExtractBits` reads `bit_width` contiguous
   // bits starting at `lsb_bit`. `AssignSlice` writes those bits with the LRM

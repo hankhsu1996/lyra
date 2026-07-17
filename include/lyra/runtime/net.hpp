@@ -27,24 +27,21 @@ struct DriveContribution {
   DriveStrength strength{};
 };
 
-// Resolution policy for `wire` / `tri` nets (LRM 6.6.1). A net's value is the
-// resolution of its drivers' current contributions: one driver resolves to its
-// value, no driver yields the undriven value. A net carrying more than one
-// driver is rejected at lowering, so reaching the multi-contribution case here
-// is an invariant violation, not a runtime condition.
+// Resolution policy for `wire` / `tri` nets (LRM 6.6.1, Table 6-2). A net's
+// value is the resolution of its drivers' current contributions, folded under
+// the tri-state truth table. The undriven value seeds the fold: with no driver
+// it is the result, and because high-impedance is the resolution identity a
+// single driver folds to its own value while additional drivers combine, a
+// 0/1 conflict resolving to `x`.
 struct WireResolver {
   [[nodiscard]] static auto Resolve(
       const std::vector<DriveContribution<value::PackedArray>>& slots,
       const value::PackedArray& undriven) -> value::PackedArray {
-    if (slots.empty()) {
-      return undriven;
+    value::PackedArray resolved = undriven;
+    for (const auto& slot : slots) {
+      resolved = resolved.ResolveTriState(slot.value);
     }
-    if (slots.size() == 1) {
-      return slots.front().value;
-    }
-    throw InternalError(
-        "WireResolver::Resolve: more than one driver contribution; the "
-        "lowering rejects multi-driver nets");
+    return resolved;
   }
 
   // The empty-driver value of a `wire` / `tri` net: high-impedance at the
