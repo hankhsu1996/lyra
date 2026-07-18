@@ -51,6 +51,7 @@ class UnitLowerer {
   // is minted once and reused.
   auto BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId;
   auto MachineBoolType() -> lir::TypeId;
+  auto VoidType() -> lir::TypeId;
 
   // The LIR method slot a class's callable lowers to. The LIR method list holds
   // a class's bodied callables in arena order; a DPI-C import (external) takes
@@ -81,6 +82,7 @@ class UnitLowerer {
   std::unordered_map<mir::ClassId, std::vector<std::optional<lir::MethodRef>>>
       method_slot_memo_;
   std::optional<lir::TypeId> machine_bool_type_;
+  std::optional<lir::TypeId> void_type_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as
   // the unit's failure at `Run`, so translation stays non-throwing and
   // total-shaped while an unmirrored type is still a clean diagnostic, not a

@@ -86,6 +86,7 @@ enum class ValueDomain : std::uint8_t {
   kReal,
   kShortReal,
   kChandle,
+  kTuple,
 };
 
 // How a member's storage is realized. A borrowed handle is a box holding a

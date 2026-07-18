@@ -143,6 +143,13 @@ auto UnitLowerer::MachineBoolType() -> lir::TypeId {
   return *machine_bool_type_;
 }
 
+auto UnitLowerer::VoidType() -> lir::TypeId {
+  if (!void_type_.has_value()) {
+    void_type_ = out_.types.Add(lir::Type{.data = lir::VoidType{}});
+  }
+  return *void_type_;
+}
+
 auto UnitLowerer::LowerBase(const mir::ClassRef& base) -> lir::Base {
   return std::visit(
       Overloaded{

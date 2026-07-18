@@ -7,6 +7,7 @@
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -33,7 +34,7 @@ class MemberStorage {
  private:
   std::variant<
       void*, Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
-      Var<value::ShortReal>, value::Chandle>
+      Var<value::ShortReal>, value::Chandle, Var<value::RuntimeTuple>>
       object_;
 };
 
