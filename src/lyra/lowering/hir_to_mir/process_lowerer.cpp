@@ -172,7 +172,7 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
 }
 
 auto LowerStraightLineProcess(ProcessLowerer& process)
-    -> diag::Result<mir::MethodDecl> {
+    -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::CallableCode code;
   CallableBindings bindings(process.Owner().Unit(), code);
@@ -190,11 +190,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
   // makes that return a coroutine completion.
   code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.result_type = process.Owner().Unit().builtins.coroutine_void;
-  return mir::MethodDecl{
-      .name = std::string{process.CallableName()},
-      .code = std::move(code),
-      .virtual_dispatch = std::nullopt,
-      .visibility = process.Visibility()};
+  return code;
 }
 
 // Wraps the body in a `forever` loop. `implicit_sensitivity`, if present, is
@@ -204,7 +200,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
 auto LowerForeverProcess(
     ProcessLowerer& process,
     const std::vector<hir::SensitivityEntry>* implicit_sensitivity)
-    -> diag::Result<mir::MethodDecl> {
+    -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::CallableCode code;
   CallableBindings bindings(process.Owner().Unit(), code);
@@ -236,17 +232,13 @@ auto LowerForeverProcess(
           .scope = body_scope_id});
   code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.result_type = process.Owner().Unit().builtins.coroutine_void;
-  return mir::MethodDecl{
-      .name = std::string{process.CallableName()},
-      .code = std::move(code),
-      .virtual_dispatch = std::nullopt,
-      .visibility = process.Visibility()};
+  return code;
 }
 
 }  // namespace
 
 auto ProcessLowerer::Run(const hir::Process& src)
-    -> diag::Result<mir::MethodDecl> {
+    -> diag::Result<mir::CallableCode> {
   switch (src.kind) {
     case hir::ProcessKind::kInitial:
     case hir::ProcessKind::kFinal:
@@ -262,14 +254,21 @@ auto ProcessLowerer::Run(const hir::Process& src)
 }
 
 auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
-    -> diag::Result<mir::MethodDecl> {
+    -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = owner_ctor_frame_;
   mir::CallableCode code;
   CallableBindings bindings(owner_->Unit(), code);
-  const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{
-          .name = "self", .type = parent.current_class->self_pointer_type});
+  std::vector<mir::LocalId> params;
+  // The receiver is a property of the body's context: a body in an owner class
+  // is an instance method and takes `self` as its first parameter (LRM 8.6); a
+  // body in a namespace context (a package function, LRM 26.3) has no owner
+  // class and so no receiver.
+  if (parent.current_class != nullptr) {
+    params.push_back(bindings.Declare(
+        BindingOriginId::Receiver(),
+        mir::LocalDecl{
+            .name = "self", .type = parent.current_class->self_pointer_type}));
+  }
   // A task body suspends on timing controls, so its call protocol is the
   // coroutine one; a function body executes synchronously.
   const bool body_is_coroutine = src.kind == hir::SubroutineKind::kTask;
@@ -282,7 +281,6 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // final value rides the completion payload (copy-out at completion, not a
   // live alias); an `inout` is both an input parameter and a payload component.
   // Every formal is a binding in the callable, identified by its HIR id.
-  std::vector<mir::LocalId> params{self_id};
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.Get(param.var);
     const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
@@ -375,11 +373,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
 
   code.params = std::move(params);
   code.result_type = result_type;
-  return mir::MethodDecl{
-      .name = src.name,
-      .code = std::move(code),
-      .virtual_dispatch = std::nullopt,
-      .visibility = Visibility()};
+  return code;
 }
 
 auto ProcessLowerer::RegisterConstructorFormals(

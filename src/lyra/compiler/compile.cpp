@@ -27,7 +27,7 @@ namespace {
 // downstream never carries these source-language concepts.
 auto BuildUnitMetadata(const mir::CompilationUnit& unit)
     -> ElaboratedUnitMetadata {
-  const mir::Class& root = unit.GetClass(unit.root);
+  const mir::Class& root = unit.GetClass(*unit.root);
   return ElaboratedUnitMetadata{
       .def_name = root.name,
       .time_precision_power = root.time_resolution.precision_power};
@@ -93,10 +93,13 @@ auto Compile(
   std::vector<lir::CompilationUnit> lir_units;
   std::vector<ElaboratedUnitMetadata> unit_metadata;
   hir_units.reserve(packages.size() + bodies.size());
-  mir_units.reserve(bodies.size());
+  mir_units.reserve(packages.size() + bodies.size());
   lir_units.reserve(bodies.size());
   unit_metadata.reserve(bodies.size());
 
+  // A package is a namespace unit (LRM 26): a backend emits it as its own
+  // artifact so a caller of a package function links against it, but it has no
+  // executable body, so it lowers only to MIR and never joins the LIR path.
   for (const auto* package : packages) {
     auto hir_or = lowering::ast_to_hir::LowerPackageUnit(facts, *package);
     if (!hir_or) {
@@ -104,6 +107,17 @@ auto Compile(
       return result;
     }
     hir_units.push_back(*std::move(hir_or));
+    if (!want_mir) {
+      continue;
+    }
+    lowering::hir_to_mir::UnitLowerer lowerer(
+        hir_units.back(), result.artifacts.parse->diag_sources);
+    auto mir_or = lowerer.RunPackage();
+    if (!mir_or) {
+      sink.Report(std::move(mir_or.error()));
+      return result;
+    }
+    mir_units.push_back(*std::move(mir_or));
   }
 
   for (const auto* body : bodies) {
@@ -119,7 +133,7 @@ auto Compile(
 
     lowering::hir_to_mir::UnitLowerer lowerer(
         hir_units.back(), result.artifacts.parse->diag_sources);
-    auto mir_or = lowerer.Run();
+    auto mir_or = lowerer.RunModule();
     if (!mir_or) {
       sink.Report(std::move(mir_or.error()));
       return result;
@@ -153,7 +167,7 @@ auto Compile(
         BuildRootHirUnit(result.artifacts.top_unit_names);
     lowering::hir_to_mir::UnitLowerer root_lowerer(
         root_hir, result.artifacts.parse->diag_sources);
-    auto root_mir = root_lowerer.Run();
+    auto root_mir = root_lowerer.RunModule();
     if (!root_mir) {
       sink.Report(std::move(root_mir.error()));
       return result;

@@ -580,6 +580,11 @@ class HirDumper {
                       ? std::format(" recv=Expr[{}]", i.receiver->value)
                       : std::string{});
             },
+            [](const ExternalUnitSubroutineRef& e) -> std::string {
+              return std::format(
+                  "ExternalUnitSubroutine \"{}::{}\"", e.unit_name,
+                  e.subroutine_name);
+            },
         },
         callee);
   }

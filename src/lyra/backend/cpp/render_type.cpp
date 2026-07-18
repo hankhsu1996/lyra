@@ -61,28 +61,27 @@ auto RenderPackedType(const mir::PackedArrayType& pa) -> std::string {
       four_state_lit);
 }
 
-auto RenderEnumClassName(const mir::Class& owner_class, mir::TypeId id)
+auto RenderEnumClassName(const mir::CompilationUnit& unit, mir::TypeId id)
     -> std::string {
-  // First TypeAlias targeting `id` supplies the canonical class name. SV
-  // identifiers are valid C++ identifiers, so the alias name flows directly.
-  for (const auto& alias : owner_class.type_aliases) {
-    if (alias.target == id) {
-      return alias.name;
-    }
+  // The enum's source name, when a typedef gave it one. SV identifiers are
+  // valid C++ identifiers, so the name flows directly; an anonymous enum falls
+  // back to a name synthesized from its id.
+  const auto it = unit.nominal_type_names.find(id);
+  if (it != unit.nominal_type_names.end()) {
+    return it->second;
   }
   return std::format("lyra_anon_enum_{}", id.value);
 }
 
-auto RenderTypeAsCpp(
-    const mir::CompilationUnit& unit, const mir::Class& owner_class,
-    mir::TypeId type_id) -> std::string {
+auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
+    -> std::string {
   return std::visit(
       Overloaded{
           [](const mir::PackedArrayType&) -> std::string {
             return std::string{"lyra::value::PackedArray"};
           },
           [&](const mir::EnumType&) -> std::string {
-            return RenderEnumClassName(owner_class, type_id);
+            return RenderEnumClassName(unit, type_id);
           },
           [](const mir::StringType&) -> std::string {
             return std::string{"lyra::value::String"};
@@ -133,23 +132,23 @@ auto RenderTypeAsCpp(
           [&](const mir::UnpackedArrayType& ua) -> std::string {
             return std::format(
                 "lyra::value::UnpackedArray<{}>",
-                RenderTypeAsCpp(unit, owner_class, ua.element_type));
+                RenderTypeAsCpp(unit, ua.element_type));
           },
           [&](const mir::DynamicArrayType& da) -> std::string {
             return std::format(
                 "lyra::value::DynamicArray<{}>",
-                RenderTypeAsCpp(unit, owner_class, da.element_type));
+                RenderTypeAsCpp(unit, da.element_type));
           },
           [&](const mir::QueueType& q) -> std::string {
             return std::format(
                 "lyra::value::Queue<{}>",
-                RenderTypeAsCpp(unit, owner_class, q.element_type));
+                RenderTypeAsCpp(unit, q.element_type));
           },
           [&](const mir::AssociativeArrayType& a) -> std::string {
             return std::format(
                 "lyra::value::AssociativeArray<{}, {}>",
-                RenderTypeAsCpp(unit, owner_class, a.key_type),
-                RenderTypeAsCpp(unit, owner_class, a.element_type));
+                RenderTypeAsCpp(unit, a.key_type),
+                RenderTypeAsCpp(unit, a.element_type));
           },
           [](const mir::WildcardIndexType&) -> std::string {
             return "lyra::value::WildcardKey";
@@ -219,12 +218,11 @@ auto RenderTypeAsCpp(
           [&](const mir::CoroutineType& c) -> std::string {
             return std::format(
                 "lyra::runtime::Coroutine<{}>",
-                RenderTypeAsCpp(unit, owner_class, c.payload));
+                RenderTypeAsCpp(unit, c.payload));
           },
           [&](const mir::RefType& r) -> std::string {
             std::string ref = std::format(
-                "lyra::runtime::Ref<{}>",
-                RenderTypeAsCpp(unit, owner_class, r.pointee));
+                "lyra::runtime::Ref<{}>", RenderTypeAsCpp(unit, r.pointee));
             return r.mutability == mir::Mutability::kReadOnly
                        ? std::format("const {}", ref)
                        : ref;
@@ -233,7 +231,7 @@ auto RenderTypeAsCpp(
             return std::string{"void"};
           },
           [&](const mir::PointerType& p) -> std::string {
-            std::string inner = RenderTypeAsCpp(unit, owner_class, p.pointee);
+            std::string inner = RenderTypeAsCpp(unit, p.pointee);
             switch (p.ownership) {
               case mir::PointerOwnership::kUnique:
                 return std::format("std::unique_ptr<{}>", inner);
@@ -254,19 +252,17 @@ auto RenderTypeAsCpp(
           },
           [&](const mir::ManagedRefType& m) -> std::string {
             return std::format(
-                "lyra::runtime::GcRef<{}>",
-                RenderTypeAsCpp(unit, owner_class, m.pointee));
+                "lyra::runtime::GcRef<{}>", RenderTypeAsCpp(unit, m.pointee));
           },
           [&](const mir::VectorType& v) -> std::string {
             return std::format(
-                "std::vector<{}>",
-                RenderTypeAsCpp(unit, owner_class, v.element));
+                "std::vector<{}>", RenderTypeAsCpp(unit, v.element));
           },
           [&](const mir::TupleType& t) -> std::string {
             std::string inners;
             for (std::size_t i = 0; i < t.elements.size(); ++i) {
               if (i != 0) inners += ", ";
-              inners += RenderTypeAsCpp(unit, owner_class, t.elements[i]);
+              inners += RenderTypeAsCpp(unit, t.elements[i]);
             }
             return std::format("lyra::value::Tuple<{}>", inners);
           },
@@ -274,24 +270,23 @@ auto RenderTypeAsCpp(
             std::string inners;
             for (std::size_t i = 0; i < u.elements.size(); ++i) {
               if (i != 0) inners += ", ";
-              inners += RenderTypeAsCpp(unit, owner_class, u.elements[i]);
+              inners += RenderTypeAsCpp(unit, u.elements[i]);
             }
             return std::format("lyra::value::Union<{}>", inners);
           },
           [&](const mir::ObservableType& o) -> std::string {
             return std::format(
-                "lyra::runtime::Var<{}>",
-                RenderTypeAsCpp(unit, owner_class, o.value));
+                "lyra::runtime::Var<{}>", RenderTypeAsCpp(unit, o.value));
           },
           [&](const mir::ResolvedType& r) -> std::string {
             return std::format(
                 "lyra::runtime::ResolvedNet<{}, lyra::runtime::WireResolver>",
-                RenderTypeAsCpp(unit, owner_class, r.value));
+                RenderTypeAsCpp(unit, r.value));
           },
           [&](const mir::DriverType& d) -> std::string {
             return std::format(
                 "lyra::runtime::Driver<{}, lyra::runtime::WireResolver>",
-                RenderTypeAsCpp(unit, owner_class, d.value));
+                RenderTypeAsCpp(unit, d.value));
           },
           [](const auto&) -> std::string {
             throw InternalError(

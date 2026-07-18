@@ -533,17 +533,17 @@ auto LowerBuiltinMethodCall(
 // canonical id at class lowering -- so this is a one-arm dispatch, never a
 // chain walk.
 auto CanonicalIntraUnitSlot(
-    mir::ClassId self_owner, mir::MethodId self_slot,
+    mir::ClassId self_owner, mir::CallableId self_slot,
     const mir::VirtualDispatchRole& role)
-    -> std::pair<mir::ClassId, mir::MethodId> {
+    -> std::pair<mir::ClassId, mir::CallableId> {
   return std::visit(
       Overloaded{
           [&](const mir::IntroducesVirtualSlot&)
-              -> std::pair<mir::ClassId, mir::MethodId> {
+              -> std::pair<mir::ClassId, mir::CallableId> {
             return {self_owner, self_slot};
           },
           [](const mir::OverridesIntraUnitSlot& s)
-              -> std::pair<mir::ClassId, mir::MethodId> {
+              -> std::pair<mir::ClassId, mir::CallableId> {
             return {s.slot_owner, s.slot_id};
           }},
       role);
@@ -569,7 +569,7 @@ auto LowerMethodCall(
   // the target's own arena entry through C++ member lookup). For a super
   // call HIR already sets `class_id` to the base's identity.
   const mir::ClassId owner_class = lowerer.Owner().TranslateClass(m.class_id);
-  const mir::MethodId method_slot{m.method.value};
+  const mir::CallableId method_slot{m.method.value};
 
   // The receiver pointer origin depends only on whether the source supplied
   // an explicit handle. A `HandleReceiver` evaluates the handle expression
@@ -623,7 +623,7 @@ auto LowerMethodCall(
       std::holds_alternative<hir::SuperReceiver>(m.receiver);
   const auto& method_sig = lowerer.Owner()
                                .GetClassShape(owner_class)
-                               .method_signatures.Get(method_slot);
+                               .callable_signatures.Get(method_slot);
   if (!through_super && method_sig.virtual_dispatch.has_value()) {
     const auto [canonical_owner, canonical_slot] = CanonicalIntraUnitSlot(
         owner_class, method_slot, *method_sig.virtual_dispatch);
@@ -649,7 +649,7 @@ auto LowerMethodCall(
               .callee =
                   mir::Direct{
                       .target =
-                          mir::MethodTarget{
+                          mir::CallableTarget{
                               .owner = owner_class, .slot = method_slot},
                       .qualification = std::nullopt},
               .arguments = std::move(direct_args)},
@@ -895,7 +895,7 @@ auto BuildBufferDataCall(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportInputsOnly(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target,
+    const mir::ExternalCallable& decl, mir::CallableTarget target,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
@@ -946,7 +946,7 @@ auto LowerForeignImportInputsOnly(
 template <ExprLowerer Lowerer>
 auto PopulateForeignImportBoundary(
     Lowerer& lowerer, ClosureBuilder& closure, const hir::CallExpr& c,
-    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target)
+    const mir::ExternalCallable& decl, mir::CallableTarget target)
     -> diag::Result<std::optional<mir::LocalId>> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
@@ -1119,7 +1119,7 @@ auto PopulateForeignImportBoundary(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportSequenced(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target,
+    const mir::ExternalCallable& decl, mir::CallableTarget target,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
@@ -1157,7 +1157,7 @@ auto LowerForeignImportSequenced(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportTask(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target)
+    const mir::ExternalCallable& decl, mir::CallableTarget target)
     -> diag::Result<mir::Expr> {
   auto& unit = lowerer.Owner().Unit();
   ClosureBuilder closure(unit, frame);
@@ -1201,11 +1201,14 @@ auto LowerForeignImportCall(
   // directly.
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::EnclosingHops hops{.value = ref.hops.value};
-  const mir::StaticCallableTarget target{
+  const mir::CallableTarget target{
       .owner = EnclosingClassIdAtHops(frame, unit, hops),
-      .slot = mir::StaticCallableId{ref.id.value}};
-  const mir::StaticCallableDecl& decl =
-      frame.EnclosingClassAtHops(hops).static_callables.Get(target.slot);
+      .slot = mir::CallableId{ref.id.value}};
+  const mir::CallableDecl& callable =
+      frame.EnclosingClassAtHops(hops).callables.Get(target.slot);
+  // A DPI import always resolves to the external implementation form; its ABI
+  // projection drives the marshaling below.
+  const auto& decl = std::get<mir::ExternalCallable>(callable.impl);
 
   if (decl.is_task) {
     return LowerForeignImportTask(lowerer, frame, c, decl, target);
@@ -1217,6 +1220,41 @@ auto LowerForeignImportCall(
   }
   return LowerForeignImportInputsOnly(
       lowerer, frame, c, decl, target, result_type);
+}
+
+// A call to a package subroutine (LRM 26.3): a receiver-less callable of
+// another compilation unit, reached by name. No receiver is prepended, and the
+// arguments are input-only (the AST-to-HIR producer rejects output / inout /
+// ref formals), so each actual lowers as a plain value.
+template <ExprLowerer Lowerer>
+auto LowerExternalUnitSubroutineCall(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const hir::ExternalUnitSubroutineRef& ref, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  const auto& hir_exprs = lowerer.HirExprs();
+  auto& block = *frame.current_block;
+  lowerer.Owner().Unit().AddExternalCallableUnit(ref.unit_name);
+  std::vector<mir::ExprId> args;
+  args.reserve(c.arguments.size());
+  for (const auto& argument : c.arguments) {
+    if (!argument.has_value()) {
+      throw InternalError("package call argument unexpectedly elided");
+    }
+    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*argument), frame);
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    args.push_back(block.exprs.Add(*std::move(arg_or)));
+  }
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target =
+                          mir::ExternalUnitCallableTarget{
+                              .unit_name = ref.unit_name,
+                              .callable_name = ref.subroutine_name}},
+              .arguments = std::move(args)},
+      .type = result_type};
 }
 
 }  // namespace
@@ -1311,6 +1349,11 @@ auto LowerHirCallExpr(
           [&](const hir::ImportedMethodRef& im) -> diag::Result<mir::Expr> {
             return LowerImportedMethodCall(lowerer, frame, c, im, result_type);
           },
+          [&](const hir::ExternalUnitSubroutineRef& ext)
+              -> diag::Result<mir::Expr> {
+            return LowerExternalUnitSubroutineCall(
+                lowerer, frame, c, ext, result_type);
+          },
       },
       c.callee);
 }
@@ -1361,7 +1404,7 @@ auto ExportParamType(
 
 auto SynthesizeForeignExportWrapper(
     UnitLowerer& module, const WalkFrame& ctor_frame, mir::ClassId class_id,
-    mir::MethodId method_id, const hir::ForeignExportDecl& export_decl,
+    mir::CallableId method_id, const hir::ForeignExportDecl& export_decl,
     std::string instance_name) -> mir::ForeignExportWrapper {
   mir::CompilationUnit& unit = module.Unit();
   const mir::Class& mir_class = *ctor_frame.current_class;
@@ -1445,7 +1488,8 @@ auto SynthesizeForeignExportWrapper(
   }
 
   const mir::TypeId payload_type =
-      mir_class.methods.Get(method_id).code.result_type;
+      std::get<mir::InternalCallable>(mir_class.callables.Get(method_id).impl)
+          .code.result_type;
   const mir::ExprId method_call = body.exprs.Add(
       mir::Expr{
           .data =
@@ -1453,7 +1497,7 @@ auto SynthesizeForeignExportWrapper(
                   .callee =
                       mir::Direct{
                           .target =
-                              mir::MethodTarget{
+                              mir::CallableTarget{
                                   .owner = class_id, .slot = method_id}},
                   .arguments = std::move(call_args)},
           .type = payload_type});

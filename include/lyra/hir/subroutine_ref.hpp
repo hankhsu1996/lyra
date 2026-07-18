@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 
 #include "lyra/hir/class_id.hpp"
@@ -91,8 +92,20 @@ struct ImportedMethodRef {
   std::optional<ExprId> receiver = std::nullopt;
 };
 
+// Calls a subroutine that belongs to another compilation unit -- a package
+// function or task (LRM 26.3), reached by name. The target lives outside this
+// unit, so it carries no unit-local id: the referring unit names the package
+// and the subroutine by name and resolves against that interface at link time,
+// the way an instantiated child names its unit, and never through an
+// enclosing-scope hop within this unit.
+struct ExternalUnitSubroutineRef {
+  std::string unit_name;
+  std::string subroutine_name;
+};
+
 using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, SystemSubroutineRef,
-    BuiltinMethodRef, ForeignImportRef, ImportedMethodRef>;
+    BuiltinMethodRef, ForeignImportRef, ImportedMethodRef,
+    ExternalUnitSubroutineRef>;
 
 }  // namespace lyra::hir

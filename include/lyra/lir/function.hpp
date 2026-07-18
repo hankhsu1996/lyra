@@ -1,7 +1,9 @@
 #pragma once
 
 #include <compare>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <variant>
@@ -329,3 +331,12 @@ auto OperandType(const Function& fn, const Operand& operand)
     -> std::optional<TypeId>;
 
 }  // namespace lyra::lir
+
+// A `ValueId` is a value identity, so it keys hashed containers directly rather
+// than being unwrapped to its raw integer at the use site.
+template <>
+struct std::hash<lyra::lir::ValueId> {
+  auto operator()(lyra::lir::ValueId id) const noexcept -> std::size_t {
+    return std::hash<std::uint32_t>{}(id.value);
+  }
+};

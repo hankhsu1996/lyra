@@ -131,12 +131,12 @@ auto TranslatePackedArray(const mir::PackedArrayType& pa)
 }  // namespace
 
 auto UnitLowerer::TranslateType(mir::TypeId id) -> lir::TypeId {
-  if (const auto it = type_memo_.find(id.value); it != type_memo_.end()) {
+  if (const auto it = type_memo_.find(id); it != type_memo_.end()) {
     return it->second;
   }
   lir::TypeData data = TranslateTypeData(mir_->types.Get(id));
   const lir::TypeId lir_id = out_.types.Add(lir::Type{.data = std::move(data)});
-  type_memo_.emplace(id.value, lir_id);
+  type_memo_.emplace(id, lir_id);
   return lir_id;
 }
 

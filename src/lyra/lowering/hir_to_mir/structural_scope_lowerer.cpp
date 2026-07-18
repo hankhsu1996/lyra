@@ -756,7 +756,7 @@ void InstallRoutedRefs(
 // registration callees, not one tagged call.
 void AppendProcessRegistration(
     UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
-    mir::MethodId body, bool is_final) {
+    mir::CallableId body, bool is_final) {
   mir::Block& block = *activate_frame.current_block;
   const mir::TypeId self_ptr_type =
       activate_frame.current_class->self_pointer_type;
@@ -769,7 +769,7 @@ void AppendProcessRegistration(
                   .callee =
                       mir::Direct{
                           .target =
-                              mir::MethodTarget{
+                              mir::CallableTarget{
                                   .owner = activate_frame.current_class_id,
                                   .slot = body}},
                   .arguments = {body_self}},
@@ -852,11 +852,11 @@ auto InstallPortConnections(
         .lhs = is_input ? cell.cell : pc.peer,
         .rhs = is_input ? pc.peer : cell.cell,
         .sensitivity_list = pc.sensitivity};
-    std::string name = std::format("process_{}", mir_class.methods.size());
+    std::string name = std::format("process_{}", mir_class.callables.size());
     auto method_or = LowerContinuousAssign(
         lowerer, frame, resolve_frame, init_frame, std::move(name), assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
-    const mir::MethodId body = mir_class.methods.Add(std::move(*method_or));
+    const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
     AppendProcessRegistration(unit_lowerer, activate_frame, body, false);
   }
   return {};
@@ -1044,11 +1044,18 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   shape.time_resolution = hir_scope.time_resolution;
 
   AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
+  // An enum carries no name of its own, so a typedef naming one records that
+  // name at the unit -- keyed by the enum's id, first typedef winning -- the
+  // one place a backend resolves the emitted name against, shared by every
+  // scope. A typedef of an already-named type (a scalar alias resolves to its
+  // underlying type, a struct carries its own name) adds nothing a backend
+  // consults, so it is not recorded.
   for (const auto& alias : hir_scope.type_aliases) {
-    shape.type_aliases.push_back(
-        mir::TypeAliasDecl{
-            .name = alias.name,
-            .target = unit_lowerer.TranslateType(alias.target)});
+    const mir::TypeId target = unit_lowerer.TranslateType(alias.target);
+    if (std::holds_alternative<mir::EnumType>(
+            unit_lowerer.Unit().types.Get(target).data)) {
+      unit_lowerer.Unit().nominal_type_names.try_emplace(target, alias.name);
+    }
   }
 
   for (std::size_t i = 0; i < hir_scope.structural_data_objects.size(); ++i) {
@@ -1085,14 +1092,16 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
   DeclareRoutedRefSlots(lowerer, shape);
 
-  // Reserve each subroutine's MIR id before any body lowers, so a call in
-  // one body resolves a forward or mutual reference to a peer (LRM 13.7).
-  // The id reserved here is the index the decl will occupy when it is later
-  // added to the class's methods arena.
+  // Reserve each subroutine's MIR id before any body lowers, so a call in one
+  // body resolves a forward or mutual reference to a peer (LRM 13.7). The id is
+  // the index the decl will occupy in the class's callable arena; the DPI-C
+  // imports are the arena's first entries, so a subroutine sits past them.
+  const auto callable_prefix =
+      static_cast<std::uint32_t>(hir_scope.foreign_imports.size());
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
     lowerer.MapStructuralSubroutine(
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)},
-        mir::MethodId{static_cast<std::uint32_t>(i)});
+        mir::CallableId{callable_prefix + static_cast<std::uint32_t>(i)});
   }
 
   // Recursively declare every owned generate child's class shape; each child
@@ -1232,11 +1241,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         sub_self_object, mir::PointerOwnership::kBorrowed);
     sub_shape.time_resolution = hir_scope.time_resolution;
     AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), sub_shape);
-    // Carry the enclosing structural scope's type aliases (typedefs declared
-    // at module / generate level) so the cpp renderer can name those types
-    // when emitting a static's slot inside this nested class. C++ enclosing-
-    // class scope lookup makes the alias usable unqualified at the use site.
-    sub_shape.type_aliases = shape.type_aliases;
     sub_shapes[i] = std::move(sub_shape);
   }
 
@@ -1377,9 +1381,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 auto InstallGeneratedDefinition(
     mir::CompilationUnit& unit, mir::Class& cls, mir::ClassId cls_id,
     bool is_unit, mir::CallableCode& ctor_code,
-    std::optional<mir::MethodId> resolve_body,
-    std::optional<mir::MethodId> init_body,
-    std::optional<mir::MethodId> create_body) -> std::vector<mir::ExprId> {
+    std::optional<mir::CallableId> resolve_body,
+    std::optional<mir::CallableId> init_body,
+    std::optional<mir::CallableId> create_body) -> std::vector<mir::ExprId> {
   if (!cls.is_scope_tree_node) {
     return {};
   }
@@ -1388,7 +1392,7 @@ auto InstallGeneratedDefinition(
   const mir::TypeId void_type = unit.builtins.void_type;
   const auto make_adapter =
       [&](std::string name,
-          std::optional<mir::MethodId> body) -> mir::AbiAdapterId {
+          std::optional<mir::CallableId> body) -> mir::AbiAdapterId {
     mir::CallableCode code;
     const mir::LocalId self =
         code.locals.Add(mir::LocalDecl{.name = "self", .type = scope_ptr});
@@ -1408,7 +1412,7 @@ auto InstallGeneratedDefinition(
                       .callee =
                           mir::Direct{
                               .target =
-                                  mir::MethodTarget{
+                                  mir::CallableTarget{
                                       .owner = cls_id, .slot = *body}},
                       .arguments = {typed}},
               .type = void_type});
@@ -1524,14 +1528,8 @@ void FinalizeConstructor(
     }
     base_init_opt = mir::BaseInit{.args = std::move(base_args)};
   }
-  const mir::MethodId ctor_method_id = cls.methods.Add(
-      mir::MethodDecl{
-          .name = "<ctor>",
-          .code = std::move(ctor_code),
-          .virtual_dispatch = std::nullopt,
-          .visibility = mir::MethodVisibility::kInternal});
   cls.constructor = mir::ConstructorDecl{
-      .method = ctor_method_id,
+      .code = std::move(ctor_code),
       .base_init = std::move(base_init_opt),
       .member_inits = {}};
 }
@@ -1552,12 +1550,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   mir_class.time_resolution = shape.time_resolution;
   mir_class.fields = shape.fields;
   mir_class.contained = shape.contained;
-  mir_class.type_aliases = shape.type_aliases;
 
   // A DPI-C import declares no body, so it never enters the subroutine body
   // machinery below. Its ABI projection and foreign name were resolved once at
-  // AST-to-HIR; here they translate straight into the class's static-callable
-  // namespace, the external-symbol callable the import call lowers against.
+  // AST-to-HIR; here they translate straight into a receiver-less external
+  // callable of the class, the callable the import call lowers against. The
+  // imports are the class's first callables, so a body-bearing subroutine sits
+  // past them (its reserved id accounts for the import count).
   for (std::size_t i = 0; i < hir_scope.foreign_imports.size(); ++i) {
     const hir::ForeignImportDecl& imp = hir_scope.foreign_imports.Get(
         hir::ForeignImportId{static_cast<std::uint32_t>(i)});
@@ -1570,15 +1569,21 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               .carrier = p.carrier,
               .direction = p.direction});
     }
-    mir_class.static_callables.Add(
-        mir::StaticCallableDecl{
+    mir_class.callables.Add(
+        mir::CallableDecl{
             .name = imp.name,
-            .params = std::move(params),
-            .ret_sv_type = unit_lowerer.TranslateType(imp.ret_sv_type),
-            .ret_abi = imp.ret_abi,
-            .is_task = imp.is_task,
-            .external = mir::ExternalSymbol{
-                .foreign_name = imp.foreign_name, .is_pure = imp.is_pure}});
+            .impl =
+                mir::ExternalCallable{
+                    .params = std::move(params),
+                    .ret_sv_type = unit_lowerer.TranslateType(imp.ret_sv_type),
+                    .ret_abi = imp.ret_abi,
+                    .is_task = imp.is_task,
+                    .external =
+                        mir::ExternalSymbol{
+                            .foreign_name = imp.foreign_name,
+                            .is_pure = imp.is_pure}},
+            .virtual_dispatch = std::nullopt,
+            .visibility = mir::CallableVisibility::kInternal});
   }
 
   const mir::TypeId void_type = unit_lowerer.Unit().builtins.void_type;
@@ -1814,7 +1819,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     sub_class.time_resolution = sub_shape.time_resolution;
     sub_class.fields = sub_shape.fields;
     sub_class.contained = sub_shape.contained;
-    sub_class.type_aliases = sub_shape.type_aliases;
 
     mir::CallableCode sub_ctor_code;
     CallableBindings sub_ctor_bindings(unit_lowerer.Unit(), sub_ctor_code);
@@ -1934,13 +1938,18 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
     ProcessLowerer subroutine_lowerer(
         unit_lowerer, &lowerer, hir_scope.time_resolution, src.body, src.name,
-        exported_names.contains(src.name) ? mir::MethodVisibility::kPublic
-                                          : mir::MethodVisibility::kInternal,
         ctor_frame, subroutine_storage_plans_[i]);
-    auto decl_or = subroutine_lowerer.Run(src);
-    if (!decl_or) return std::unexpected(std::move(decl_or.error()));
-    const mir::MethodId added = mir_class.methods.Add(*std::move(decl_or));
-    if (added.value != i) {
+    auto code_or = subroutine_lowerer.Run(src);
+    if (!code_or) return std::unexpected(std::move(code_or.error()));
+    const mir::CallableId added = mir_class.callables.Add(
+        mir::CallableDecl{
+            .name = src.name,
+            .impl = mir::InternalCallable{.code = *std::move(code_or)},
+            .virtual_dispatch = std::nullopt,
+            .visibility = exported_names.contains(src.name)
+                              ? mir::CallableVisibility::kPublic
+                              : mir::CallableVisibility::kInternal});
+    if (added.value != hir_scope.foreign_imports.size() + i) {
       throw InternalError(
           "StructuralScopeLowerer::PopulateBodies: subroutine added out of "
           "mapped id order");
@@ -1953,17 +1962,19 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
   }
 
-  // Each exported subroutine (LRM 35.5) already lowered as a method above, in
-  // structural-subroutine id order, so its method id is its index. The wrapper
-  // is synthesized to call that method on the instance recovered from the
+  // Each exported subroutine (LRM 35.5) already lowered as a callable above, in
+  // structural-subroutine id order past the leading DPI imports, so its
+  // callable id is the import count plus its subroutine index. The wrapper is
+  // synthesized to call that callable on the instance recovered from the
   // running design, named here by the class's own instance identity.
   for (const hir::ForeignExportDecl& export_decl : hir_scope.foreign_exports) {
-    std::optional<mir::MethodId> method_id;
+    std::optional<mir::CallableId> method_id;
     for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
       if (hir_scope.structural_subroutines
               .Get(hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)})
               .name == export_decl.sv_name) {
-        method_id = mir::MethodId{static_cast<std::uint32_t>(i)};
+        method_id = mir::CallableId{
+            static_cast<std::uint32_t>(hir_scope.foreign_imports.size() + i)};
         break;
       }
     }
@@ -1980,14 +1991,18 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {
     const auto& p =
         hir_scope.processes.Get(hir::ProcessId{static_cast<std::uint32_t>(i)});
-    std::string name = std::format("process_{}", mir_class.methods.size());
+    std::string name = std::format("process_{}", mir_class.callables.size());
     ProcessLowerer process_lowerer(
-        unit_lowerer, &lowerer, hir_scope.time_resolution, p.body,
-        std::move(name), mir::MethodVisibility::kInternal, ctor_frame,
-        process_storage_plans_[i]);
-    auto decl_or = process_lowerer.Run(p);
-    if (!decl_or) return std::unexpected(std::move(decl_or.error()));
-    const mir::MethodId body = mir_class.methods.Add(*std::move(decl_or));
+        unit_lowerer, &lowerer, hir_scope.time_resolution, p.body, name,
+        ctor_frame, process_storage_plans_[i]);
+    auto code_or = process_lowerer.Run(p);
+    if (!code_or) return std::unexpected(std::move(code_or.error()));
+    const mir::CallableId body = mir_class.callables.Add(
+        mir::CallableDecl{
+            .name = std::move(name),
+            .impl = mir::InternalCallable{.code = *std::move(code_or)},
+            .virtual_dispatch = std::nullopt,
+            .visibility = mir::CallableVisibility::kInternal});
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body, p.kind == hir::ProcessKind::kFinal);
     for (const auto& pending :
@@ -2006,11 +2021,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   InstallRoutedRefs(lowerer, resolve_frame);
 
   for (const auto& ca : hir_scope.continuous_assigns) {
-    std::string name = std::format("process_{}", mir_class.methods.size());
+    std::string name = std::format("process_{}", mir_class.callables.size());
     auto method_or = LowerContinuousAssign(
         lowerer, ctor_frame, resolve_frame, init_frame, std::move(name), ca);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
-    const mir::MethodId body = mir_class.methods.Add(std::move(*method_or));
+    const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
     AppendProcessRegistration(unit_lowerer, activate_frame, body, false);
   }
 
@@ -2056,26 +2071,26 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // typed as this class. The body is added under its plain name; the runtime
   // reaches it through a per-phase ABI adapter installed in the scope's
   // definition.
-  const auto add_body = [&](mir::Block& block, mir::CallableCode& code,
-                            mir::LocalId self,
-                            std::string name) -> std::optional<mir::MethodId> {
+  const auto add_body =
+      [&](mir::Block& block, mir::CallableCode& code, mir::LocalId self,
+          std::string name) -> std::optional<mir::CallableId> {
     if (block.root_stmts.empty()) {
       return std::nullopt;
     }
     code.params = {self};
     code.result_type = void_type;
-    return mir_class.methods.Add(
-        mir::MethodDecl{
+    return mir_class.callables.Add(
+        mir::CallableDecl{
             .name = std::move(name),
-            .code = std::move(code),
+            .impl = mir::InternalCallable{.code = std::move(code)},
             .virtual_dispatch = std::nullopt,
-            .visibility = mir::MethodVisibility::kInternal});
+            .visibility = mir::CallableVisibility::kInternal});
   };
-  const std::optional<mir::MethodId> resolve_body =
+  const std::optional<mir::CallableId> resolve_body =
       add_body(resolve_block, resolve_code, resolve_self_id, "ResolveState");
-  const std::optional<mir::MethodId> init_body = add_body(
+  const std::optional<mir::CallableId> init_body = add_body(
       initialize_block, initialize_code, init_self_id, "InitializeState");
-  const std::optional<mir::MethodId> create_body = add_body(
+  const std::optional<mir::CallableId> create_body = add_body(
       activate_block, activate_code, activate_self_id, "CreateProcesses");
 
   const bool is_unit = parent_ == nullptr;

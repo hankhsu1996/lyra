@@ -1,9 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
+#include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_decl.hpp"
@@ -14,6 +20,7 @@
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_id.hpp"
 #include "lyra/mir/type_interner.hpp"
 
 namespace lyra::mir {
@@ -62,14 +69,34 @@ struct BuiltinMirTypes {
 };
 
 struct CompilationUnit {
+  // The unit's own name -- its module, package, or interface name. A backend
+  // names the unit's emitted artifact from this, so a unit whose root is a
+  // namespace rather than a class (a package) still has a stable identity
+  // independent of any member.
+  std::string name;
   TypeInterner types;
   BuiltinMirTypes builtins;
   // Every class declaration of this unit, owned here exactly once and reached
   // by its identity, with a declare-then-define lifecycle so a class can be
   // named before its body is built. `root` identifies the unit's top class, the
-  // module declaration.
+  // module or interface declaration; it is absent for a package, whose root is
+  // a namespace that owns no instance.
   base::Registry<Class, ClassId> classes;
-  ClassId root{};
+  std::optional<ClassId> root;
+  // Callables the unit's namespace owns directly rather than through one of its
+  // classes -- a package's functions and tasks (LRM 26.3), receiver-less and
+  // bodied. A class's own callables live on that class; these are the
+  // unit-level namespace's, one scope up.
+  base::Arena<CallableDecl, CallableId> callables;
+  // The source name of each nominal type that carries none of its own, keyed by
+  // that type's id. An enum is the case: it has no intrinsic name (an anonymous
+  // enum has none, a multi-typedef enum has several), so a `typedef` names it
+  // and that name lives here, first typedef winning. An anonymous enum has no
+  // entry and renders a synthesized name. A struct is not here -- it carries
+  // its own name in its declaration. This is the unit-level fact a backend
+  // resolves an enum's emitted name against, the peer of the struct registry's
+  // name.
+  std::unordered_map<TypeId, std::string> nominal_type_names;
   // Every compiler-generated nominal struct of this unit -- a promoted
   // automatic scope's storage. Its `StructId` is the struct's type identity; a
   // backend derives the C++ emission host from the struct's lexical synthesis
@@ -81,6 +108,13 @@ struct CompilationUnit {
   // is its own callable-value category, not a struct.
   base::Registry<ClosureDecl, ClosureId> closures;
   std::vector<DeferredCheckSite> deferred_check_sites;
+  // Names of other compilation units this unit calls a receiver-less callable
+  // of -- a package function or task (LRM 26.3). A cross-unit call carries no
+  // value-typed object of the target unit, so unlike an instantiation it
+  // interns no `ExternalUnitObjectType`; a backend reads this dependency list
+  // to emit the include and link edge to each called unit. Recorded once per
+  // distinct unit name.
+  std::vector<std::string> external_callable_units;
 
   CompilationUnit()
       : builtins{
@@ -193,6 +227,17 @@ struct CompilationUnit {
 
   void DefineClosure(ClosureId id, ClosureDecl value) {
     closures.Define(id, std::move(value));
+  }
+
+  // Records a cross-unit callable dependency, deduplicated. Called from
+  // HIR-to-MIR when a call names a receiver-less callable of another unit.
+  void AddExternalCallableUnit(std::string unit_name) {
+    for (const std::string& existing : external_callable_units) {
+      if (existing == unit_name) {
+        return;
+      }
+    }
+    external_callable_units.push_back(std::move(unit_name));
   }
 
   // Backing-vector position is the id, matching TypeId / LocalId.

@@ -420,28 +420,38 @@ struct CalleeRender {
   std::size_t leading_arg_count;
 };
 
-// Renders a `Direct` callee whose target is a user-declared method as
-// `(receiver)->Owner::name`, an owner-qualified C++ member call. The owner
-// prefix is a fixed function of the target's `owner`: for a non-virtual
-// method the qualifier is redundant (C++ resolves the same either way);
-// for a virtual method reached through Direct (LRM 8.15 super) the prefix
-// forces C++ to bypass the vtable, which is precisely what the Direct arm
-// names. Emitting it unconditionally keeps render a fixed function of one
-// MIR node -- no branch on `qualification`, no arm-dependent syntactic
-// shape -- while still producing the correct instruction sequence in every
-// case.
-auto RenderDirectMethodCall(
+// Renders a `Direct` callee naming an owner-qualified callable this class owns
+// -- an instance method or a DPI-C import, both one `CallableDecl` arena. A
+// DPI-C import (external) is a global `extern "C"` symbol reached by its
+// foreign linkage name, with no receiver absorbed. An instance method renders
+// as `(receiver)->Owner::name`, an owner-qualified C++ member call: the owner
+// prefix is a fixed function of the target's `owner`, redundant for a
+// non-virtual method and, for a virtual method reached through Direct (LRM 8.15
+// super), forcing C++ to bypass the vtable -- precisely what the Direct arm
+// names. The receiver is `arguments[0]`, absorbed into the callee text, so one
+// leading argument is consumed. No qualification is allowed today --
+// cross-class explicit qualification is gated on SV class support.
+auto RenderDirectCallableCall(
     const ScopeView& view, const mir::CallExpr& call,
-    const mir::MethodTarget& method) -> CalleeRender {
+    const mir::CallableTarget& target,
+    const std::optional<mir::ScopeQualifier>& qualification) -> CalleeRender {
+  if (qualification.has_value()) {
+    throw InternalError(
+        "Direct callable call: qualification is not yet implemented");
+  }
+  const auto& cls = view.Unit().GetClass(target.owner);
+  const auto& callable = cls.callables.Get(target.slot);
+  if (const auto* ext = std::get_if<mir::ExternalCallable>(&callable.impl)) {
+    return {.expr = ext->external.foreign_name, .leading_arg_count = 0};
+  }
   if (call.arguments.empty()) {
     throw InternalError("Direct method call expects a receiver argument");
   }
-  const auto& cls = view.Unit().GetClass(method.owner);
   const mir::Expr& receiver = view.Expr(call.arguments[0]);
   return {
       .expr = std::format(
           "({})->{}::{}", RenderExpr(view, receiver), ToCppName(cls.name),
-          cls.methods.Get(method.slot).name),
+          callable.name),
       .leading_arg_count = 1};
 }
 
@@ -458,7 +468,7 @@ auto RenderDirectBuiltinCall(
     const auto& tq = std::get<mir::TypeQualifier>(*qualification);
     return {
         .expr = std::format(
-            "{}::{}", RenderTypeAsCpp(view.Unit(), view.Class(), tq.type),
+            "{}::{}", RenderTypeAsCpp(view.Unit(), tq.type),
             BuiltinFnCppName(id)),
         .leading_arg_count = 0};
   }
@@ -483,19 +493,17 @@ auto RenderDirectBuiltinCall(
       .leading_arg_count = 1};
 }
 
-// Renders a `Direct` callee whose target is a class-level static callable.
-// The target names the class whose associated namespace declares it, which need
-// not be the class being rendered -- an import declared in the module is called
-// from a generate block's class. Today that callable is a DPI-C import: a
-// global `extern "C"` symbol reached by its foreign linkage name, with no
-// receiver and no qualifier, so the callee text is the bare foreign name and no
-// leading argument is absorbed into it.
-auto RenderDirectStaticCallableCall(
-    const ScopeView& view, const mir::StaticCallableTarget& target)
+// Renders a `Direct` callee whose target is a receiver-less callable of another
+// compilation unit -- a package function or task (LRM 26.3). The unit's C++
+// peer is a namespace, so the callee is the free qualified form
+// `unit_name::callable_name`, with no receiver and no leading argument
+// absorbed.
+auto RenderDirectExternalUnitCall(const mir::ExternalUnitCallableTarget& target)
     -> CalleeRender {
-  const auto& callable =
-      view.Unit().GetClass(target.owner).static_callables.Get(target.slot);
-  return {.expr = callable.external.foreign_name, .leading_arg_count = 0};
+  return {
+      .expr = std::format(
+          "{}::{}", ToCppName(target.unit_name), target.callable_name),
+      .leading_arg_count = 0};
 }
 
 // Renders a call to a method the runtime library provides for an imported class
@@ -519,15 +527,16 @@ auto RenderCalleePart(
           [&](const mir::Direct& d) -> CalleeRender {
             return std::visit(
                 Overloaded{
-                    [&](const mir::MethodTarget& m) {
-                      return RenderDirectMethodCall(view, call, m);
+                    [&](const mir::CallableTarget& t) {
+                      return RenderDirectCallableCall(
+                          view, call, t, d.qualification);
                     },
                     [&](const support::BuiltinFn& id) {
                       return RenderDirectBuiltinCall(
                           view, call, id, d.qualification);
                     },
-                    [&](const mir::StaticCallableTarget& s) {
-                      return RenderDirectStaticCallableCall(view, s);
+                    [&](const mir::ExternalUnitCallableTarget& e) {
+                      return RenderDirectExternalUnitCall(e);
                     },
                     [&](const mir::ImportedRuntimeCallTarget& i) {
                       return RenderDirectImportedRuntimeCall(i);
@@ -546,7 +555,7 @@ auto RenderCalleePart(
             return {
                 .expr = std::format(
                     "({})->{}", RenderExpr(view, view.Expr(v.receiver)),
-                    cls.methods.Get(v.slot).name),
+                    cls.callables.Get(v.slot).name),
                 .leading_arg_count = 0};
           },
           [&](const mir::Construct&) -> CalleeRender {
@@ -562,7 +571,7 @@ auto RenderCalleePart(
               return {
                   .expr = std::format(
                       "std::make_unique<{}>",
-                      RenderTypeAsCpp(view.Unit(), view.Class(), ptr->pointee)),
+                      RenderTypeAsCpp(view.Unit(), ptr->pointee)),
                   .leading_arg_count = 0};
             }
             if (const auto* ptr =
@@ -572,7 +581,7 @@ auto RenderCalleePart(
               return {
                   .expr = std::format(
                       "std::make_shared<{}>",
-                      RenderTypeAsCpp(view.Unit(), view.Class(), ptr->pointee)),
+                      RenderTypeAsCpp(view.Unit(), ptr->pointee)),
                   .leading_arg_count = 0};
             }
             // A managed reference result is a class `new`: allocate on the
@@ -583,12 +592,11 @@ auto RenderCalleePart(
               return {
                   .expr = std::format(
                       "lyra::runtime::GcNew<{}>",
-                      RenderTypeAsCpp(
-                          view.Unit(), view.Class(), managed->pointee)),
+                      RenderTypeAsCpp(view.Unit(), managed->pointee)),
                   .leading_arg_count = 0};
             }
             return {
-                .expr = RenderTypeAsCpp(view.Unit(), view.Class(), result_type),
+                .expr = RenderTypeAsCpp(view.Unit(), result_type),
                 .leading_arg_count = 0};
           },
       },
@@ -610,7 +618,7 @@ auto RenderMakeQueueConcatCall(
       std::get<mir::QueueType>(view.Unit().types.Get(result_type).data);
   std::string out = std::format(
       "lyra::value::MakeQueueConcat<{}>({}, {}",
-      RenderTypeAsCpp(view.Unit(), view.Class(), queue_ty.element_type),
+      RenderTypeAsCpp(view.Unit(), queue_ty.element_type),
       RenderExpr(view, view.Expr(call.arguments[0])),
       RenderExpr(view, view.Expr(call.arguments[1])));
   for (std::size_t i = 2; i < call.arguments.size(); ++i) {
