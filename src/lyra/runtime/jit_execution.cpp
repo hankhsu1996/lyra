@@ -27,7 +27,9 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_value.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -158,6 +160,7 @@ using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;
 using lyra::value::PrintValueItem;
 using lyra::value::Real;
+using lyra::value::RuntimeDynamicArray;
 using lyra::value::RuntimeTuple;
 using lyra::value::RuntimeValue;
 using lyra::value::ShortReal;
@@ -592,6 +595,14 @@ auto lyra_rt_packed_reduction_xnor(const void* value) -> void* {
   return Own(Read<PackedArray>(value).ReductionXnor());
 }
 
+// Materializes a borrowed packed view (a container element or slice read) into
+// an owning value. On the execution backend a container access already copies
+// the element out, so this is an idempotent copy that keeps the ownership shape
+// the source-level `to_owned` names.
+auto lyra_rt_packed_to_owned(const void* value) -> void* {
+  return Own(Read<PackedArray>(value).ToOwned());
+}
+
 auto lyra_rt_string_from_packed_array(const void* bits) -> void* {
   return Own(String::FromPackedArray(Read<PackedArray>(bits)));
 }
@@ -922,31 +933,39 @@ auto lyra_rt_chandle_to_bool(void* operand) -> bool {
   return static_cast<bool>(Chandle{operand});
 }
 
-auto lyra_rt_tuple_component_packed(const void* value) -> void* {
+// Boxes a value-domain handle into a type-erased `RuntimeValue`, the element of
+// an aggregate (an unpacked struct component, a dynamic-array element). The
+// domain rides in the symbol name, so the generated side never inspects the
+// value's runtime representation.
+auto lyra_rt_value_box_packed(const void* value) -> void* {
   return Own(RuntimeValue{Read<PackedArray>(value)});
 }
 
-auto lyra_rt_tuple_component_string(const void* value) -> void* {
+auto lyra_rt_value_box_string(const void* value) -> void* {
   return Own(RuntimeValue{Read<String>(value)});
 }
 
-auto lyra_rt_tuple_component_real(const void* value) -> void* {
+auto lyra_rt_value_box_real(const void* value) -> void* {
   return Own(RuntimeValue{Read<Real>(value)});
 }
 
-auto lyra_rt_tuple_component_shortreal(const void* value) -> void* {
+auto lyra_rt_value_box_shortreal(const void* value) -> void* {
   return Own(RuntimeValue{Read<ShortReal>(value)});
 }
 
 // A chandle's handle is the pointer it carries, not a pointer to a runtime
-// object, so its component boxes the pointer directly rather than reading a
-// value object out of it.
-auto lyra_rt_tuple_component_chandle(void* value) -> void* {
+// object, so its box wraps the pointer directly rather than reading a value
+// object out of it.
+auto lyra_rt_value_box_chandle(void* value) -> void* {
   return Own(RuntimeValue{Chandle{value}});
 }
 
-auto lyra_rt_tuple_component_tuple(const void* value) -> void* {
+auto lyra_rt_value_box_tuple(const void* value) -> void* {
   return Own(RuntimeValue{Read<RuntimeTuple>(value)});
+}
+
+auto lyra_rt_value_box_dynarray(const void* value) -> void* {
+  return Own(RuntimeValue{Read<RuntimeDynamicArray>(value)});
 }
 
 auto lyra_rt_tuple_make(LyraSpan components) -> void* {
@@ -1033,5 +1052,127 @@ void lyra_rt_activation_frame_store_tuple(void* cell, const void* value) {
 auto lyra_rt_activation_frame_load_tuple(const void* cell) -> void* {
   return Own(
       static_cast<const ActivationValueCell<RuntimeTuple>*>(cell)->Get());
+}
+
+auto lyra_rt_dynarray_default(const void* prototype) -> void* {
+  return Own(RuntimeDynamicArray(Read<RuntimeValue>(prototype)));
+}
+
+auto lyra_rt_dynarray_new(const void* size, const void* prototype) -> void* {
+  return Own(RuntimeDynamicArray(
+      Read<PackedArray>(size), Read<RuntimeValue>(prototype)));
+}
+
+auto lyra_rt_dynarray_new_copy(
+    const void* size, const void* prototype, const void* src) -> void* {
+  return Own(RuntimeDynamicArray(
+      Read<PackedArray>(size), Read<RuntimeValue>(prototype),
+      Read<RuntimeDynamicArray>(src)));
+}
+
+// The literal's elements arrive already boxed into `RuntimeValue`s (the domain
+// rode the boxing entry's name at the assembly site), so the array collects
+// them directly -- the same shape as `lyra_rt_tuple_make`.
+auto lyra_rt_dynarray_from_literal(const void* prototype, LyraSpan elements)
+    -> void* {
+  std::span<RuntimeValue*> handles(
+      static_cast<RuntimeValue**>(elements.data), elements.count);
+  std::vector<RuntimeValue> collected;
+  collected.reserve(elements.count);
+  for (RuntimeValue* handle : handles) {
+    collected.push_back(std::move(*handle));
+  }
+  return Own(
+      RuntimeDynamicArray(Read<RuntimeValue>(prototype), std::move(collected)));
+}
+
+// Reads element `index`, copying it out across the opaque-handle boundary as a
+// handle of the element's own domain (a chandle's handle is the pointer it
+// carries). An out-of-range index reads the element default (LRM 7.4.5).
+auto lyra_rt_dynarray_element(const void* array, const void* index) -> void* {
+  const RuntimeValue& element =
+      Read<RuntimeDynamicArray>(array).Element(Read<PackedArray>(index));
+  return std::visit(
+      [](const auto& value) -> void* {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, Chandle>) {
+          return value.Ptr();
+        } else {
+          return Own(value);
+        }
+      },
+      element.value);
+}
+
+// The functional element write (LRM 7.4.6): yields a new array with element
+// `index` replaced. The incoming value is a handle of the element domain, boxed
+// into the erased representation by the domain the element default names.
+auto lyra_rt_dynarray_with_element(
+    const void* array, const void* index, void* value) -> void* {
+  const auto& source = Read<RuntimeDynamicArray>(array);
+  RuntimeValue boxed = std::visit(
+      [&](const auto& prototype) -> RuntimeValue {
+        using T = std::decay_t<decltype(prototype)>;
+        if constexpr (std::is_same_v<T, Chandle>) {
+          return RuntimeValue{Chandle{value}};
+        } else {
+          return RuntimeValue{Read<T>(value)};
+        }
+      },
+      source.ElementDefault().value);
+  return Own(source.WithElement(Read<PackedArray>(index), std::move(boxed)));
+}
+
+auto lyra_rt_dynarray_delete(const void* array) -> void* {
+  return Own(Read<RuntimeDynamicArray>(array).Delete());
+}
+
+auto lyra_rt_dynarray_size(const void* array) -> void* {
+  return Own(Read<RuntimeDynamicArray>(array).Size());
+}
+
+auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeDynamicArray>(lhs) == Read<RuntimeDynamicArray>(rhs));
+}
+
+auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeDynamicArray>(lhs) != Read<RuntimeDynamicArray>(rhs));
+}
+
+auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void* {
+  return Own(
+      Read<RuntimeDynamicArray>(lhs).CaseEqual(Read<RuntimeDynamicArray>(rhs)));
+}
+
+auto lyra_rt_cell_dynarray_get(void* cell) -> const void* {
+  return &static_cast<Var<RuntimeDynamicArray>*>(cell)->Get();
+}
+
+void lyra_rt_cell_dynarray_initialize(void* cell, const void* prototype) {
+  static_cast<Var<RuntimeDynamicArray>*>(cell)->Initialize(
+      Read<RuntimeDynamicArray>(prototype));
+}
+
+void lyra_rt_cell_dynarray_set(void* cell, void* services, const void* value) {
+  static_cast<Var<RuntimeDynamicArray>*>(cell)->Set(
+      *static_cast<RuntimeServices*>(services),
+      Read<RuntimeDynamicArray>(value));
+}
+
+auto lyra_rt_activation_frame_alloc_dynarray() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<RuntimeDynamicArray>>();
+}
+
+void lyra_rt_activation_frame_store_dynarray(void* cell, const void* value) {
+  static_cast<ActivationValueCell<RuntimeDynamicArray>*>(cell)->Store(
+      Read<RuntimeDynamicArray>(value));
+}
+
+auto lyra_rt_activation_frame_load_dynarray(const void* cell) -> void* {
+  return Own(
+      static_cast<const ActivationValueCell<RuntimeDynamicArray>*>(cell)
+          ->Get());
 }
 }

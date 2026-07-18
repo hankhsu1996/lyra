@@ -1,13 +1,13 @@
 #include "lyra/value/runtime_tuple.hpp"
 
+#include <algorithm>
 #include <cstddef>
-#include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/runtime_value.hpp"
 
 namespace lyra::value {
 
@@ -50,59 +50,13 @@ auto RequireSameCount(std::size_t a_count, std::size_t b_count) -> void {
   }
 }
 
-auto SameDomain(const RuntimeValue& a, const RuntimeValue& b) -> void {
-  if (a.value.index() != b.value.index()) {
-    throw InternalError(
-        "RuntimeTuple: comparing components of different runtime domains");
-  }
-}
-
-auto ComponentEqual(const RuntimeValue& a, const RuntimeValue& b)
-    -> PackedArray {
-  SameDomain(a, b);
-  return std::visit(
-      [&](const auto& lhs) -> PackedArray {
-        using T = std::decay_t<decltype(lhs)>;
-        return lhs == std::get<T>(b.value);
-      },
-      a.value);
-}
-
-auto ComponentCaseEqual(const RuntimeValue& a, const RuntimeValue& b)
-    -> PackedArray {
-  SameDomain(a, b);
-  return std::visit(
-      [&](const auto& lhs) -> PackedArray {
-        using T = std::decay_t<decltype(lhs)>;
-        if constexpr (std::is_same_v<T, Real> || std::is_same_v<T, ShortReal>) {
-          throw InternalError(
-              "RuntimeTuple::CaseEqual: === is not defined on a real component "
-              "(LRM Table 11-1)");
-        } else {
-          return lhs.CaseEqual(std::get<T>(b.value));
-        }
-      },
-      a.value);
-}
-
-auto ComponentBitIdentical(const RuntimeValue& a, const RuntimeValue& b)
-    -> bool {
-  SameDomain(a, b);
-  return std::visit(
-      [&](const auto& lhs) -> bool {
-        using T = std::decay_t<decltype(lhs)>;
-        return lhs.IsBitIdentical(std::get<T>(b.value));
-      },
-      a.value);
-}
-
 }  // namespace
 
 auto RuntimeTuple::operator==(const RuntimeTuple& other) const -> PackedArray {
   RequireSameCount(components_.size(), other.components_.size());
   PackedArray result = PackedArray::Bit(true);
   for (std::size_t i = 0; i < components_.size(); ++i) {
-    result = result && ComponentEqual(components_[i], other.components_[i]);
+    result = result && RuntimeValueEqual(components_[i], other.components_[i]);
   }
   return result;
 }
@@ -115,7 +69,8 @@ auto RuntimeTuple::CaseEqual(const RuntimeTuple& other) const -> PackedArray {
   RequireSameCount(components_.size(), other.components_.size());
   PackedArray result = PackedArray::Bit(true);
   for (std::size_t i = 0; i < components_.size(); ++i) {
-    result = result && ComponentCaseEqual(components_[i], other.components_[i]);
+    result =
+        result && RuntimeValueCaseEqual(components_[i], other.components_[i]);
   }
   return result;
 }
@@ -125,7 +80,7 @@ auto RuntimeTuple::IsBitIdentical(const RuntimeTuple& other) const -> bool {
     return false;
   }
   for (std::size_t i = 0; i < components_.size(); ++i) {
-    if (!ComponentBitIdentical(components_[i], other.components_[i])) {
+    if (!RuntimeValueBitIdentical(components_[i], other.components_[i])) {
       return false;
     }
   }
@@ -133,15 +88,9 @@ auto RuntimeTuple::IsBitIdentical(const RuntimeTuple& other) const -> bool {
 }
 
 auto RuntimeTuple::HasUnknown() const -> bool {
-  for (const RuntimeValue& component : components_) {
-    const bool unknown = std::visit(
-        [](const auto& value) -> bool { return value.HasUnknown(); },
-        component.value);
-    if (unknown) {
-      return true;
-    }
-  }
-  return false;
+  return std::ranges::any_of(components_, [](const RuntimeValue& component) {
+    return RuntimeValueHasUnknown(component);
+  });
 }
 
 auto RuntimeTuple::IsUnknown() const -> PackedArray {

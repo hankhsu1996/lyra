@@ -13,6 +13,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -99,6 +100,22 @@ class FunctionLowerer {
   // and, when the owner is an observable cell, the whole-cell update fires.
   auto LowerComponentAssign(
       const mir::Block& block, const mir::AssignExpr& assign)
+      -> diag::Result<lir::Operand>;
+  // A write to one element of a value container (`arr[i] = x`). The container
+  // is a value reached by an opaque handle, so the element write is a
+  // functional whole-value update: read the whole container, produce a new one
+  // with the element replaced, store it back through the container's owner --
+  // the runtime-library counterpart of `LowerComponentAssign`'s static value
+  // instructions, for a dynamic, runtime-indexed selector.
+  auto LowerElementAssign(
+      const mir::Block& block, const mir::AssignExpr& assign)
+      -> diag::Result<lir::Operand>;
+  // A receiver-mutating value-container method (`arr.delete()`). The container
+  // value cannot be mutated in place through a shared handle, so the method is
+  // a functional operation whose result is stored back through the receiver's
+  // owner, the same whole-value read / update / write as an element write.
+  auto LowerMutatingCall(
+      const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn)
       -> diag::Result<lir::Operand>;
   // Reads / writes the whole value of a product-write chain's root. The root is
   // an ordinary place, or the mutate proxy of an observable cell -- reached by

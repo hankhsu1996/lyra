@@ -32,6 +32,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "chandle";
     case ValueDomain::kTuple:
       return "tuple";
+    case ValueDomain::kDynArray:
+      return "dynarray";
   }
   throw InternalError("llvm codegen: unknown value domain");
 }
@@ -58,6 +60,10 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           // realization is a type-erased product value carried inline behind an
           // opaque handle, like every other value domain.
           [](const lir::TupleType&) { return ValueDomain::kTuple; },
+          // A dynamic array (LRM 7.5) is MIR's `DynamicArrayType`; its runtime
+          // realization is a type-erased container carried behind an opaque
+          // handle, like every other value domain.
+          [](const lir::DynamicArrayType&) { return ValueDomain::kDynArray; },
           [](const auto&) -> ValueDomain {
             throw InternalError(
                 "llvm codegen: value type has no runtime library domain");
@@ -281,9 +287,9 @@ auto RuntimeAbi::ToBool(ValueDomain domain) -> llvm::FunctionCallee {
       llvm::Type::getInt1Ty(*ctx_), {types_->Ptr()});
 }
 
-auto RuntimeAbi::TupleComponent(ValueDomain domain) -> llvm::FunctionCallee {
+auto RuntimeAbi::ValueBox(ValueDomain domain) -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_tuple_component_{}", ValueDomainName(domain)),
+      std::format("lyra_rt_value_box_{}", ValueDomainName(domain)),
       types_->Ptr(), {types_->Ptr()});
 }
 
@@ -301,6 +307,27 @@ auto RuntimeAbi::TupleUpdate() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_tuple_update", types_->Ptr(),
       {types_->Ptr(), llvm::Type::getInt64Ty(*ctx_), types_->Ptr()});
+}
+
+auto RuntimeAbi::MakeDynamicArrayDefault() -> llvm::FunctionCallee {
+  return Get("lyra_rt_dynarray_default", types_->Ptr(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::MakeDynamicArrayNew() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dynarray_new", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::MakeDynamicArrayNewCopy() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dynarray_new_copy", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::MakeDynamicArrayFromLiteral() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dynarray_from_literal", types_->Ptr(),
+      {types_->Ptr(), types_->Span()});
 }
 
 auto RuntimeAbi::MakeFormatSpec(std::size_t field_count)

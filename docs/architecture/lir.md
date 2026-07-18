@@ -256,7 +256,13 @@ value-aggregate family: a packed slice, a container element, and a union member 
 sub-accesses, so a sub-write is a functional whole-value update, never a store into an independently
 addressable sub-place -- a static, structural selector (a struct component) may ride a dedicated
 value instruction, a dynamic, runtime-indexed one (a container element) a runtime-library call, but
-the principle that a value sub-write produces a new whole value is the same.
+the principle that a value sub-write produces a new whole value is the same. A whole-value mutating
+method on a value receiver -- a container's `delete`, a queue's `push` -- follows the same rule: it
+is realized as a functional operation whose result is stored back through the receiver's owner, not
+an in-place mutation of the value. How a target keeps value semantics for such a store is below LIR:
+a target with language-level value copies may fulfill it by mutating a private copy in place, while
+one whose container value is reached through a shared handle must produce a new value, so the model
+LIR states -- a new whole value written back to the owner -- holds for both.
 
 LIR carries the fact that a packed value is two-state or four-state; it does not carry how a
 four-state value is stored. The canonical encoding of a four-state value -- value bits plus a state
