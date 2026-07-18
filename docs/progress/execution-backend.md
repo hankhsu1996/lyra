@@ -51,8 +51,20 @@ ownership, or native in-frame layout) for every value.
       takes the equality and case-equality families and the boolean test, and lives in a member slot
       as an owned inline value (not an observable cell, since no process subscribes to it). This is
       the first bare-pointer value domain; a class handle later reuses the shape.
-- [ ] **The remaining value domains** (aggregates, containers) -- not realized on the execution
-      backend at all yet, so no cross-suspension case exists for them.
+- [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product value
+      domain: a runtime-owned product that owns its components by value and crosses as an opaque
+      handle, so the generated side never inspects a component's representation. It default-
+      constructs member-wise, builds from an assignment pattern, copies with value semantics, takes
+      the equality and case-equality families, reads and writes a component (including a nested
+      product and a string component), lives in a member slot as a whole-cell observable signal
+      whose partial write fires subscribers, and crosses a suspension as an activation-frame value.
+      A component write is a whole-value rebuild stored back through the value's owner, so an
+      observable partial write never bypasses the cell's update semantics -- the aggregate
+      partial-update protocol a container reuses later.
+- [ ] **The remaining value domains** (unpacked array, dynamic array, queue, associative array) --
+      not realized on the execution backend yet. Each is a homogeneous or keyed collection whose
+      element count is a runtime quantity, so unlike the fixed-arity struct its element operations
+      are runtime loops rather than generated-code expansions.
 - [ ] **A managed value (class handle) across a suspension.** A traceable frame and precise
       reclamation, none of which is implemented: the managed reference is realized as a
       reference-counted handle that does not reclaim cycles, and only in the C++ backend. Contract:

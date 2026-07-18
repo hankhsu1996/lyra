@@ -30,6 +30,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "shortreal";
     case ValueDomain::kChandle:
       return "chandle";
+    case ValueDomain::kTuple:
+      return "tuple";
   }
   throw InternalError("llvm codegen: unknown value domain");
 }
@@ -52,6 +54,10 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           // domain's handle is the chandle value itself, not a reference to a
           // runtime-owned value object.
           [](const lir::ChandleType&) { return ValueDomain::kChandle; },
+          // An unpacked struct (LRM 7.2) is MIR's product type; its runtime
+          // realization is a type-erased product value carried inline behind an
+          // opaque handle, like every other value domain.
+          [](const lir::TupleType&) { return ValueDomain::kTuple; },
           [](const auto&) -> ValueDomain {
             throw InternalError(
                 "llvm codegen: value type has no runtime library domain");
@@ -273,6 +279,28 @@ auto RuntimeAbi::ToBool(ValueDomain domain) -> llvm::FunctionCallee {
   return Get(
       std::format("lyra_rt_{}_to_bool", ValueDomainName(domain)),
       llvm::Type::getInt1Ty(*ctx_), {types_->Ptr()});
+}
+
+auto RuntimeAbi::TupleComponent(ValueDomain domain) -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_tuple_component_{}", ValueDomainName(domain)),
+      types_->Ptr(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::TupleMake() -> llvm::FunctionCallee {
+  return Get("lyra_rt_tuple_make", types_->Ptr(), {types_->Span()});
+}
+
+auto RuntimeAbi::TupleExtract() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_tuple_extract", types_->Ptr(),
+      {types_->Ptr(), llvm::Type::getInt64Ty(*ctx_)});
+}
+
+auto RuntimeAbi::TupleUpdate() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_tuple_update", types_->Ptr(),
+      {types_->Ptr(), llvm::Type::getInt64Ty(*ctx_), types_->Ptr()});
 }
 
 auto RuntimeAbi::MakeFormatSpec(std::size_t field_count)

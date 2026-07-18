@@ -164,8 +164,9 @@ void VerifyInstr(
             }
           },
           [](const CallInstr&) {}, [](const AggregateInstr&) {},
-          [](const BinaryInstr&) {}, [](const UnaryInstr&) {},
-          [](const BoolCastInstr&) {}},
+          [](const AggregateExtractInstr&) {},
+          [](const AggregateUpdateInstr&) {}, [](const BinaryInstr&) {},
+          [](const UnaryInstr&) {}, [](const BoolCastInstr&) {}},
       instr.data);
 }
 

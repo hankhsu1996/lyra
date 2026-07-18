@@ -292,6 +292,27 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_chandle_ne", &lyra_rt_chandle_ne);
   add("lyra_rt_chandle_case_equal", &lyra_rt_chandle_case_equal);
   add("lyra_rt_chandle_to_bool", &lyra_rt_chandle_to_bool);
+  add("lyra_rt_tuple_component_packed", &lyra_rt_tuple_component_packed);
+  add("lyra_rt_tuple_component_string", &lyra_rt_tuple_component_string);
+  add("lyra_rt_tuple_component_real", &lyra_rt_tuple_component_real);
+  add("lyra_rt_tuple_component_shortreal", &lyra_rt_tuple_component_shortreal);
+  add("lyra_rt_tuple_component_chandle", &lyra_rt_tuple_component_chandle);
+  add("lyra_rt_tuple_component_tuple", &lyra_rt_tuple_component_tuple);
+  add("lyra_rt_tuple_make", &lyra_rt_tuple_make);
+  add("lyra_rt_tuple_extract", &lyra_rt_tuple_extract);
+  add("lyra_rt_tuple_update", &lyra_rt_tuple_update);
+  add("lyra_rt_tuple_eq", &lyra_rt_tuple_eq);
+  add("lyra_rt_tuple_ne", &lyra_rt_tuple_ne);
+  add("lyra_rt_tuple_case_equal", &lyra_rt_tuple_case_equal);
+  add("lyra_rt_cell_tuple_get", &lyra_rt_cell_tuple_get);
+  add("lyra_rt_cell_tuple_initialize", &lyra_rt_cell_tuple_initialize);
+  add("lyra_rt_cell_tuple_set", &lyra_rt_cell_tuple_set);
+  add("lyra_rt_activation_frame_alloc_tuple",
+      &lyra_rt_activation_frame_alloc_tuple);
+  add("lyra_rt_activation_frame_store_tuple",
+      &lyra_rt_activation_frame_store_tuple);
+  add("lyra_rt_activation_frame_load_tuple",
+      &lyra_rt_activation_frame_load_tuple);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
@@ -333,6 +354,8 @@ auto AbiDomain(backend::llvm_backend::ValueDomain domain)
       return runtime::ValueDomain::kShortReal;
     case backend::llvm_backend::ValueDomain::kChandle:
       return runtime::ValueDomain::kChandle;
+    case backend::llvm_backend::ValueDomain::kTuple:
+      return runtime::ValueDomain::kTuple;
   }
   throw InternalError("jit executor: unknown value domain");
 }

@@ -1,11 +1,14 @@
 #include "lyra/runtime/jit_execution.hpp"
 
 #include <coroutine>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/time.hpp"
@@ -24,6 +27,7 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -154,6 +158,8 @@ using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;
 using lyra::value::PrintValueItem;
 using lyra::value::Real;
+using lyra::value::RuntimeTuple;
+using lyra::value::RuntimeValue;
 using lyra::value::ShortReal;
 using lyra::value::String;
 using lyra::value::TimeFormat;
@@ -914,5 +920,118 @@ auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void* {
 
 auto lyra_rt_chandle_to_bool(void* operand) -> bool {
   return static_cast<bool>(Chandle{operand});
+}
+
+auto lyra_rt_tuple_component_packed(const void* value) -> void* {
+  return Own(RuntimeValue{Read<PackedArray>(value)});
+}
+
+auto lyra_rt_tuple_component_string(const void* value) -> void* {
+  return Own(RuntimeValue{Read<String>(value)});
+}
+
+auto lyra_rt_tuple_component_real(const void* value) -> void* {
+  return Own(RuntimeValue{Read<Real>(value)});
+}
+
+auto lyra_rt_tuple_component_shortreal(const void* value) -> void* {
+  return Own(RuntimeValue{Read<ShortReal>(value)});
+}
+
+// A chandle's handle is the pointer it carries, not a pointer to a runtime
+// object, so its component boxes the pointer directly rather than reading a
+// value object out of it.
+auto lyra_rt_tuple_component_chandle(void* value) -> void* {
+  return Own(RuntimeValue{Chandle{value}});
+}
+
+auto lyra_rt_tuple_component_tuple(const void* value) -> void* {
+  return Own(RuntimeValue{Read<RuntimeTuple>(value)});
+}
+
+auto lyra_rt_tuple_make(LyraSpan components) -> void* {
+  std::span<RuntimeValue*> handles(
+      static_cast<RuntimeValue**>(components.data), components.count);
+  std::vector<RuntimeValue> collected;
+  collected.reserve(components.count);
+  for (RuntimeValue* handle : handles) {
+    collected.push_back(std::move(*handle));
+  }
+  return Own(RuntimeTuple(std::move(collected)));
+}
+
+auto lyra_rt_tuple_extract(const void* tuple, std::int64_t index) -> void* {
+  const RuntimeValue& component =
+      Read<RuntimeTuple>(tuple).Component(static_cast<std::size_t>(index));
+  return std::visit(
+      [](const auto& value) -> void* {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, Chandle>) {
+          return value.Ptr();
+        } else {
+          return Own(value);
+        }
+      },
+      component.value);
+}
+
+auto lyra_rt_tuple_update(const void* tuple, std::int64_t index, void* value)
+    -> void* {
+  RuntimeTuple result = Read<RuntimeTuple>(tuple);
+  const auto slot = static_cast<std::size_t>(index);
+  RuntimeValue replacement = std::visit(
+      [&](const auto& current) -> RuntimeValue {
+        using T = std::decay_t<decltype(current)>;
+        if constexpr (std::is_same_v<T, Chandle>) {
+          return RuntimeValue{Chandle{value}};
+        } else {
+          return RuntimeValue{Read<T>(value)};
+        }
+      },
+      result.Component(slot).value);
+  result.SetComponent(slot, std::move(replacement));
+  return Own(std::move(result));
+}
+
+auto lyra_rt_tuple_eq(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeTuple>(lhs) == Read<RuntimeTuple>(rhs));
+}
+
+auto lyra_rt_tuple_ne(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeTuple>(lhs) != Read<RuntimeTuple>(rhs));
+}
+
+auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeTuple>(lhs).CaseEqual(Read<RuntimeTuple>(rhs)));
+}
+
+auto lyra_rt_cell_tuple_get(void* cell) -> const void* {
+  return &static_cast<Var<RuntimeTuple>*>(cell)->Get();
+}
+
+void lyra_rt_cell_tuple_initialize(void* cell, const void* prototype) {
+  static_cast<Var<RuntimeTuple>*>(cell)->Initialize(
+      Read<RuntimeTuple>(prototype));
+}
+
+void lyra_rt_cell_tuple_set(void* cell, void* services, const void* value) {
+  static_cast<Var<RuntimeTuple>*>(cell)->Set(
+      *static_cast<RuntimeServices*>(services), Read<RuntimeTuple>(value));
+}
+
+auto lyra_rt_activation_frame_alloc_tuple() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<RuntimeTuple>>();
+}
+
+void lyra_rt_activation_frame_store_tuple(void* cell, const void* value) {
+  static_cast<ActivationValueCell<RuntimeTuple>*>(cell)->Store(
+      Read<RuntimeTuple>(value));
+}
+
+auto lyra_rt_activation_frame_load_tuple(const void* cell) -> void* {
+  return Own(
+      static_cast<const ActivationValueCell<RuntimeTuple>*>(cell)->Get());
 }
 }

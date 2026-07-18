@@ -269,6 +269,53 @@ auto WriteLogicalOperatorSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// Exercises the unpacked-struct value domain end to end: default value,
+// assignment-pattern construction, whole-value copy with value semantics, the
+// equality families, component read and write (including a nested product and a
+// string component), a struct local that crosses a suspension, and partial
+// writes to an observable struct signal that a reader reacts to.
+auto WriteStructSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  typedef struct { int a; int b; } Pair;\n"
+      << "  typedef struct { Pair p; int c; string s; } Nest;\n"
+      << "  Pair s;\n"
+      << "  Pair t;\n"
+      << "  Nest n;\n"
+      << "  Pair sig;\n"
+      << "  int mirror = 0;\n"
+      << "  always_comb mirror = sig.a * 100 + sig.b;\n"
+      << "  initial begin\n"
+      << "    $display(\"def a=%0d b=%0d\", s.a, s.b);\n"
+      << "    s = '{a: 3, b: 7};\n"
+      << "    $display(\"con a=%0d b=%0d\", s.a, s.b);\n"
+      << "    t = s;\n"
+      << "    s.a = 100;\n"
+      << "    $display(\"copy t.a=%0d s.a=%0d\", t.a, s.a);\n"
+      << "    t = '{a: 100, b: 7};\n"
+      << "    $display(\"eq=%0d ne=%0d ceq=%0d\", s == t, s != t, s === t);\n"
+      << "    t.b = 8;\n"
+      << "    $display(\"eq2=%0d\", s == t);\n"
+      << "    n = '{p: '{a: 1, b: 2}, c: 9, s: \"hi\"};\n"
+      << "    n.p.b = 20;\n"
+      << "    n.s = \"bye\";\n"
+      << "    $display(\"nest a=%0d b=%0d c=%0d s=%s\", n.p.a, n.p.b, n.c, "
+         "n.s);\n"
+      << "    begin\n"
+      << "      automatic Pair loc = '{a: 42, b: 43};\n"
+      << "      #1;\n"
+      << "      $display(\"xsusp a=%0d b=%0d\", loc.a, loc.b);\n"
+      << "    end\n"
+      << "    sig = '{a: 1, b: 2};\n"
+      << "    #1;\n"
+      << "    $display(\"whole mirror=%0d\", mirror);\n"
+      << "    sig.a = 7;\n"
+      << "    #1;\n"
+      << "    $display(\"partial mirror=%0d sig.a=%0d\", mirror, sig.a);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -628,6 +675,44 @@ TEST(LyraRun, JitAndCppAgreeOnLogicalOperators) {
       "equiv=0 impl=0\n"
       "not_a=0 not_b=1\n"
       "str=1\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnStruct) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteStructSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "def a=0 b=0\n"
+      "con a=3 b=7\n"
+      "copy t.a=3 s.a=100\n"
+      "eq=1 ne=0 ceq=1\n"
+      "eq2=0\n"
+      "nest a=1 b=20 c=9 s=bye\n"
+      "xsusp a=42 b=43\n"
+      "whole mirror=102\n"
+      "partial mirror=702 sig.a=7\n")
       << "stdout: " << jit.stdout_text;
 }
 
