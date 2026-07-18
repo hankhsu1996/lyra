@@ -411,7 +411,9 @@ class HirDumper {
               return std::format("ProceduralVar[{}]", r.var.value);
             },
             [](const ClassPropertyRef& r) -> std::string {
-              return std::format("ClassProperty[{}]", r.field_index);
+              return std::format(
+                  "ClassProperty[Class[{}].{}]", r.owner.value,
+                  r.field_index.value);
             },
             [](const RoutedRef& r) -> std::string {
               return std::format("RoutedRef[{}]", r.id.value);
@@ -733,13 +735,13 @@ class HirDumper {
             [](const MemberAccessExpr& sel) -> std::string {
               return std::format(
                   "MemberAccessExpr base=Expr[{}] field={}",
-                  sel.base_value.value, sel.field_index);
+                  sel.base_value.value, sel.field_index.value);
             },
             [](const ClassPropertyAccessExpr& sel) -> std::string {
               return std::format(
                   "ClassPropertyAccessExpr base=Expr[{}] owner=Class[{}] "
                   "field={}",
-                  sel.base_value.value, sel.owner.value, sel.field_index);
+                  sel.base_value.value, sel.owner.value, sel.field_index.value);
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -873,14 +875,13 @@ class HirDumper {
     Line(std::format("[{}] class \"{}\"", index, c.name));
     Indent();
     for (const auto& field : c.fields) {
-      if (field.initializer.has_value()) {
-        Line(
-            std::format(
-                "{}:Type[{}] = Expr[{}]", field.name, field.type.value,
-                field.initializer->value));
-      } else {
-        Line(std::format("{}:Type[{}]", field.name, field.type.value));
-      }
+      Line(std::format("{}:Type[{}]", field.name, field.type.value));
+    }
+    for (const auto& init : c.field_inits) {
+      Line(
+          std::format(
+              "FieldInit target=Field[{}] value=Expr[{}]", init.target.value,
+              init.value.value));
     }
     for (std::size_t i = 0; i < c.methods.size(); ++i) {
       DumpSubroutine(
@@ -1001,11 +1002,19 @@ class HirDumper {
 
   void DumpSubroutine(
       std::string_view label, std::size_t index, const SubroutineDecl& d) {
+    std::string flags;
+    if (d.is_virtual) flags += " virtual";
+    if (d.is_prototype) flags += " prototype";
+    if (d.overrides.has_value()) {
+      flags += std::format(
+          " overrides=Class[{}].Method[{}]", d.overrides->class_id.value,
+          d.overrides->method.value);
+    }
     Line(
         std::format(
-            "{}[{}] {} \"{}\" : Type[{}]", label, index,
+            "{}[{}] {} \"{}\" : Type[{}]{}", label, index,
             d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
-            d.result_type.value));
+            d.result_type.value, flags));
     Indent();
     for (std::size_t i = 0; i < d.params.size(); ++i) {
       const auto& param = d.params[i];
@@ -1017,7 +1026,9 @@ class HirDumper {
     if (d.result_var.has_value()) {
       Line(std::format("Result var=ProceduralVar[{}]", d.result_var->value));
     }
-    DumpProceduralBody(d.body);
+    if (!d.is_prototype) {
+      DumpProceduralBody(d.body);
+    }
     Dedent();
   }
 

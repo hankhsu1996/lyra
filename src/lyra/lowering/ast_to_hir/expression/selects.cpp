@@ -163,20 +163,6 @@ auto LowerRangeSelectExpr(
   };
 }
 
-auto ClassPropertyIndex(const slang::ast::ClassPropertySymbol& prop)
-    -> std::uint32_t {
-  const auto* scope = prop.getParentScope();
-  std::uint32_t index = 0;
-  for (const auto& member :
-       scope->membersOfType<slang::ast::ClassPropertySymbol>()) {
-    if (&member == &prop) {
-      return index;
-    }
-    ++index;
-  }
-  throw InternalError("ClassPropertyIndex: property not found in its class");
-}
-
 template <ExprLowerer Lowerer>
 auto LowerMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame,
@@ -194,7 +180,8 @@ auto LowerMemberAccessExpr(
             hir::MemberAccessExpr{
                 .base_value = base_id,
                 .field_index =
-                    sel.member.as<slang::ast::FieldSymbol>().fieldIndex,
+                    hir::FieldId{
+                        sel.member.as<slang::ast::FieldSymbol>().fieldIndex},
             },
         .span = span,
     };
@@ -211,7 +198,7 @@ auto LowerMemberAccessExpr(
             hir::ClassPropertyAccessExpr{
                 .base_value = base_id,
                 .owner = *owner_id,
-                .field_index = ClassPropertyIndex(prop),
+                .field_index = lowerer.Owner().LookupClassPropertyFieldId(prop),
             },
         .span = span,
     };

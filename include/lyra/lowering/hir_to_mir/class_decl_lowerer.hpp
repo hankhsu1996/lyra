@@ -7,9 +7,7 @@
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -64,10 +62,11 @@ class ClassDeclLowerer {
   const hir::ClassDecl* hir_class_;
 
   // Storage layout the shape stage settles and the body stage reuses: the
-  // property field ids in declaration order, and the per-callable
-  // static-storage plans whose placements name the exact field ids the
-  // published shape declares.
-  std::vector<mir::FieldId> field_ids_;
+  // per-callable static-storage plans whose placements name the exact field
+  // ids the published shape declares. Property field ids are not stored --
+  // they are the same identity as the HIR field ids the class carries, so
+  // any consumer reaches a mir field id from a hir field id through
+  // `UnitLowerer::TranslateField`.
   ProceduralScopeMaterializationTable class_scopes_;
   std::vector<CallableStoragePlan> method_plans_;
   std::optional<CallableStoragePlan> ctor_plan_;

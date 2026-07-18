@@ -75,21 +75,34 @@ struct InternalCallable {
   CallableCode code;
 };
 
+// A pure virtual class method's prototype (LRM 8.21): the source declared the
+// method without a body. `code` still carries the signature -- the receiver,
+// the named parameters, and the result type -- so a backend can emit the
+// declaration, but `code.body` is a default-constructed empty `Block` that no
+// consumer traverses. Only a virtual class method can carry this arm, so a
+// callable with `impl = PurePrototype` always has `virtual_dispatch` set. A
+// bodyless prototype and a legal empty body (LRM 8.21 note) are distinct
+// forms body emptiness alone cannot separate.
+struct PurePrototype {
+  CallableCode code;
+};
+
 // A named callable a class or a package namespace owns. Every SystemVerilog
 // function and task, every process body, every synthesized lifecycle body, and
 // every DPI-C import is this one concept, distinguished only by its
-// implementation form (an SV body or a foreign symbol), whether its signature
-// carries a receiver, and how a referencing site reaches it -- a direct call, a
-// constructor-time process registration, an engine-dispatched lifecycle hook.
-// The receiver is not a kind of callable: an instance method carries `self` as
-// its first parameter, a static callable omits it. `virtual_dispatch`, when
-// present, states this callable's role in the class's dispatch table (LRM 8.20)
-// -- introducing a new slot or overriding an ancestor's -- so a backend renders
-// the marker off stated structure, never re-deriving virtualness by name; it is
-// absent for a direct-only callable (every static callable and DPI import).
+// implementation form (an SV body, a foreign symbol, or a pure virtual
+// prototype), whether its signature carries a receiver, and how a referencing
+// site reaches it -- a direct call, a constructor-time process registration,
+// an engine-dispatched lifecycle hook. The receiver is not a kind of
+// callable: an instance method carries `self` as its first parameter, a
+// static callable omits it. `virtual_dispatch`, when present, states this
+// callable's role in the class's dispatch table (LRM 8.20) -- introducing a
+// new slot or overriding an ancestor's -- so a backend renders the marker off
+// stated structure, never re-deriving virtualness by name; it is absent for a
+// direct-only callable (every static callable and DPI import).
 struct CallableDecl {
   std::string name;
-  std::variant<InternalCallable, ExternalCallable> impl;
+  std::variant<InternalCallable, ExternalCallable, PurePrototype> impl;
   std::optional<VirtualDispatchRole> virtual_dispatch;
   CallableVisibility visibility;
 };

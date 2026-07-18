@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -18,6 +19,7 @@
 #include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -186,6 +188,26 @@ class UnitLowerer {
         "owning class was not interned before this lookup");
   }
 
+  // Records the HIR `FieldId` a class property received when its owning
+  // class's `InternClass` added it to the field arena. A downstream
+  // `handle.field` access reads the id in O(1) through this lookup instead
+  // of re-walking the property list at every reference site.
+  void RegisterClassPropertyFieldId(
+      const slang::ast::ClassPropertySymbol& prop, hir::FieldId id) {
+    class_property_field_ids_.emplace(&prop, id);
+  }
+
+  [[nodiscard]] auto LookupClassPropertyFieldId(
+      const slang::ast::ClassPropertySymbol& prop) const -> hir::FieldId {
+    if (const auto it = class_property_field_ids_.find(&prop);
+        it != class_property_field_ids_.end()) {
+      return it->second;
+    }
+    throw InternalError(
+        "UnitLowerer::LookupClassPropertyFieldId: property has no recorded "
+        "id; the owning class was not interned before this lookup");
+  }
+
   // Facts.
   [[nodiscard]] auto SourceMapper() const
       -> const frontend::SlangSourceMapper& {
@@ -307,6 +329,8 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
   std::unordered_map<const slang::ast::SubroutineSymbol*, hir::MethodId>
       method_cache_;
+  std::unordered_map<const slang::ast::ClassPropertySymbol*, hir::FieldId>
+      class_property_field_ids_;
   StructuralDataObjectBindings structural_data_object_bindings_;
   SubroutineBindings subroutine_bindings_;
   ForeignImportBindings foreign_import_bindings_;
