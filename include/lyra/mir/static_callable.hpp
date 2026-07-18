@@ -47,11 +47,18 @@ struct ExternalSymbol {
 // -- `DpiScalarAbi`, not the full carrier variant, which makes a vector return
 // unrepresentable. The SV semantic signature stays on the frontend where type
 // checking ran; MIR carries only what marshaling and linkage need.
+//
+// `is_task` marks a task rather than a function (LRM 35.5): a task carries no
+// SV return value, its call is a suspension point the caller awaits, and its
+// foreign symbol returns the DPI disable-acknowledgment `int` (LRM 35.8) that
+// the call discards. A `void`-returning function also has no return value, so
+// the task distinction cannot be recovered from the return alone.
 struct StaticCallableDecl {
   std::string name;
   std::vector<ForeignParam> params;
   TypeId ret_sv_type;
   support::DpiScalarAbi ret_abi;
+  bool is_task;
   ExternalSymbol external;
 };
 

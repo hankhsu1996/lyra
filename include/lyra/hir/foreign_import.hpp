@@ -21,14 +21,16 @@ struct DpiParamAbi {
 
 // A subroutine declared `import "DPI-C"` (LRM 35.4). It has no SV body, so it
 // is a bodyless external callable, not a body-bearing structural subroutine.
-// The foreign linkage name, the pure property, and the ABI projection of the
-// signature are resolved once here (where slang types are available) and are
-// the sole downstream source for the import; no layer below reads slang.
+// The foreign linkage name, the pure property, whether it is a task or a
+// function (LRM 35.5), and the ABI projection of the signature are resolved
+// once here (where slang types are available) and are the sole downstream
+// source for the import; no layer below reads slang.
 // Lowered to a MIR static external callable at HIR-to-MIR.
 struct ForeignImportDecl {
   std::string name;
   std::string foreign_name;
   bool is_pure = false;
+  bool is_task = false;
   support::DpiScalarAbi ret_abi = support::DpiScalarAbi::kVoid;
   TypeId ret_sv_type{};
   std::vector<DpiParamAbi> params;

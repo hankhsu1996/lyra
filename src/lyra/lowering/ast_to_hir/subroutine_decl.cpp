@@ -353,23 +353,21 @@ auto ClassifyDpiParams(
 // It has no SV body, so it is not a `SubroutineDecl`; the caller records it
 // among the scope's foreign imports, not its subroutines. The ABI
 // classification and the foreign name are resolved once here and never
-// re-derived downstream. Input-only scalar functions are accepted; the
-// remaining forms are located diagnostics.
+// re-derived downstream. A function or a task is accepted; a task carries no
+// return, so its `void` return classifies as `kVoid` through the same path. A
+// `context` import remains a located diagnostic, its scope surface a separate
+// concern.
 auto LowerForeignImport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<hir::ForeignImportDecl> {
   const auto& mapper = unit_lowerer.SourceMapper();
   const auto loc = mapper.PointSpanOf(sym.location);
-  if (sym.subroutineKind == slang::ast::SubroutineKind::Task) {
-    return diag::Fail(
-        loc, diag::DiagCode::kUnsupportedDpi,
-        "DPI-C import task is not yet supported");
-  }
   if (sym.flags.has(slang::ast::MethodFlags::DPIContext)) {
     return diag::Fail(
         loc, diag::DiagCode::kUnsupportedDpi,
         "DPI-C context import is not yet supported");
   }
+  const bool is_task = sym.subroutineKind == slang::ast::SubroutineKind::Task;
   auto ret_abi = ClassifyDpiScalarResult(sym.getReturnType(), loc);
   if (!ret_abi) return std::unexpected(std::move(ret_abi.error()));
   auto ret_type = unit_lowerer.InternType(sym.getReturnType(), loc);
@@ -382,6 +380,7 @@ auto LowerForeignImport(
       .name = std::string{sym.name},
       .foreign_name = ResolveImportCName(sym),
       .is_pure = sym.flags.has(slang::ast::MethodFlags::Pure),
+      .is_task = is_task,
       .ret_abi = *ret_abi,
       .ret_sv_type = *ret_type,
       .params = std::move(*abi_params)};
