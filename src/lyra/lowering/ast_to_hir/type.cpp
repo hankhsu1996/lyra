@@ -592,15 +592,22 @@ auto UnitLowerer::InternClass(
     if (prop.getParentScope() != &cls) {
       continue;
     }
+    auto prop_type = InternType(prop.getType(), span);
+    if (!prop_type) return std::unexpected(std::move(prop_type.error()));
+    // LRM 8.9 / 8.10 keyword position: `static <T> x` marks a type-associated
+    // property, whose storage is one cell owned by the class rather than a
+    // per-instance member. Instance properties and static properties live in
+    // disjoint arenas because their identity spaces do not overlap and each
+    // downstream reference form names one or the other.
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "static class properties are not yet supported");
+      const hir::StaticPropertyId static_id = decl.static_properties.Add(
+          hir::ClassStaticProperty{
+              .name = std::string(prop.name), .type = *prop_type});
+      RegisterClassPropertyStaticId(prop, static_id);
+      continue;
     }
-    auto field_type = InternType(prop.getType(), span);
-    if (!field_type) return std::unexpected(std::move(field_type.error()));
     const hir::FieldId field_id = decl.fields.Add(
-        hir::ClassField{.name = std::string(prop.name), .type = *field_type});
+        hir::ClassField{.name = std::string(prop.name), .type = *prop_type});
     RegisterClassPropertyFieldId(prop, field_id);
   }
   std::optional<hir::SubroutineDecl> user_constructor;
@@ -635,11 +642,6 @@ auto UnitLowerer::InternClass(
       decl.base_call = std::move(ctor_or->base_call);
       continue;
     }
-    if (method.flags.has(slang::ast::MethodFlags::Static)) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "static class methods are not yet supported");
-    }
     if (method.subroutineKind == slang::ast::SubroutineKind::Task) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedClassFeature,
@@ -647,45 +649,55 @@ auto UnitLowerer::InternClass(
     }
     auto method_decl = LowerSubroutineDecl(*this, method, WalkFrame{});
     if (!method_decl) return std::unexpected(std::move(method_decl.error()));
+    // Source-level facts on a class method: `static` (LRM 8.10) makes the
+    // signature receiver-less; `virtual` (LRM 8.20) puts the method in the
+    // class's dispatch table. Slang enforces at declaration that static and
+    // virtual are mutually exclusive, so the override / dispatch wiring
+    // below runs only for non-static methods.
+    method_decl->is_static = method.flags.has(slang::ast::MethodFlags::Static);
     method_decl->is_virtual =
         method.flags.has(slang::ast::MethodFlags::Virtual);
-    // The frontend has already matched signature, direction, return type, and
-    // any other LRM 8.20 override compatibility rule when it resolved this
-    // reference; the HIR consumes it as an already-resolved identity. Its
-    // base's methods were interned earlier by the recursive `InternClass`
-    // above, so their HIR identities are already in the cache the lookup
-    // reads.
-    if (const auto* overridden = method.getOverride(); overridden != nullptr) {
-      const auto& base_class =
-          overridden->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-      auto base_class_id = InternClass(base_class, span);
-      if (!base_class_id)
-        return std::unexpected(std::move(base_class_id.error()));
-      method_decl->overrides = hir::MethodRef{
-          .class_id = *base_class_id, .method = LookupMethodId(*overridden)};
-    } else if (const auto* pure_base =
-                   FindOverriddenPureInBaseChain(cls, method.name);
-               pure_base != nullptr) {
-      // Slang leaves the override link unset when the base method is a pure
-      // virtual prototype (LRM 8.21); wire it here so downstream dispatch
-      // canonicalizes to the base's slot rather than treating this method
-      // as a fresh introducer.
-      const auto& base_class =
-          pure_base->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-      auto base_class_id = InternClass(base_class, span);
-      if (!base_class_id)
-        return std::unexpected(std::move(base_class_id.error()));
-      const auto* proto_stub = pure_base->getSubroutine();
-      if (proto_stub == nullptr) {
-        throw InternalError(
-            "UnitLowerer::InternClass: pure virtual prototype has no stub "
-            "subroutine slang normally materializes");
+    if (!method_decl->is_static) {
+      // The frontend has already matched signature, direction, return type,
+      // and any other LRM 8.20 override compatibility rule when it resolved
+      // this reference; the HIR consumes it as an already-resolved identity.
+      // Its base's methods were interned earlier by the recursive
+      // `InternClass` above, so their HIR identities are already in the
+      // cache the lookup reads.
+      if (const auto* overridden = method.getOverride();
+          overridden != nullptr) {
+        const auto& base_class = overridden->getParentScope()
+                                     ->asSymbol()
+                                     .as<slang::ast::ClassType>();
+        auto base_class_id = InternClass(base_class, span);
+        if (!base_class_id)
+          return std::unexpected(std::move(base_class_id.error()));
+        method_decl->overrides = hir::MethodRef{
+            .class_id = *base_class_id, .method = LookupMethodId(*overridden)};
+      } else if (const auto* pure_base =
+                     FindOverriddenPureInBaseChain(cls, method.name);
+                 pure_base != nullptr) {
+        // Slang leaves the override link unset when the base method is a
+        // pure virtual prototype (LRM 8.21); wire it here so downstream
+        // dispatch canonicalizes to the base's slot rather than treating
+        // this method as a fresh introducer.
+        const auto& base_class =
+            pure_base->getParentScope()->asSymbol().as<slang::ast::ClassType>();
+        auto base_class_id = InternClass(base_class, span);
+        if (!base_class_id)
+          return std::unexpected(std::move(base_class_id.error()));
+        const auto* proto_stub = pure_base->getSubroutine();
+        if (proto_stub == nullptr) {
+          throw InternalError(
+              "UnitLowerer::InternClass: pure virtual prototype has no stub "
+              "subroutine slang normally materializes");
+        }
+        method_decl->overrides = hir::MethodRef{
+            .class_id = *base_class_id, .method = LookupMethodId(*proto_stub)};
+        // An override of a base virtual method is itself virtual (LRM 8.20),
+        // even when the derived declaration omits the `virtual` keyword.
+        method_decl->is_virtual = true;
       }
-      method_decl->overrides = hir::MethodRef{
-          .class_id = *base_class_id, .method = LookupMethodId(*proto_stub)};
-      // An override of a base virtual method is itself virtual (LRM 8.20),
-      // even when the derived declaration omits the `virtual` keyword.
-      method_decl->is_virtual = true;
     }
     const hir::MethodId method_id = decl.methods.Add(*std::move(method_decl));
     RegisterMethodId(method, method_id);
@@ -765,11 +777,29 @@ auto UnitLowerer::InternClass(
   ProcessLowerer init_lowerer(*this, cls);
   const WalkFrame init_frame = WalkFrame{}.WithProceduralBody(
       &constructor.body, &constructor.body.exprs);
+  // A static property initializer (LRM 8.9 / 10.5) runs once at design init,
+  // not per instance, so its expression lands in the class's `static_init`
+  // arena rather than the constructor body's. It cannot read a per-instance
+  // formal or `self`, and the lowering routes that no such receiver is in
+  // scope; a downstream initializer that names another static property of
+  // the same class reads it as `Cls::other_prop` (a `StaticPropertyRef`),
+  // never through the constructor's receiver.
+  const WalkFrame static_init_frame = WalkFrame{}.WithProceduralBody(
+      &decl.static_init, &decl.static_init.exprs);
   for (const auto& prop :
        cls.membersOfType<slang::ast::ClassPropertySymbol>()) {
     if (prop.getParentScope() != &cls) continue;
     const auto* init = prop.getInitializer();
     if (init == nullptr) continue;
+    if (prop.lifetime == slang::ast::VariableLifetime::Static) {
+      auto init_expr = init_lowerer.LowerExpr(*init, static_init_frame);
+      if (!init_expr) return std::unexpected(std::move(init_expr.error()));
+      decl.static_property_inits.push_back(
+          hir::StaticPropertyInit{
+              .target = LookupClassPropertyStaticId(prop),
+              .value = decl.static_init.exprs.Add(*std::move(init_expr))});
+      continue;
+    }
     auto init_expr = init_lowerer.LowerExpr(*init, init_frame);
     if (!init_expr) return std::unexpected(std::move(init_expr.error()));
     decl.field_inits.push_back(

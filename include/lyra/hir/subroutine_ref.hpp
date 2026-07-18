@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -103,9 +102,22 @@ struct ExternalUnitSubroutineRef {
   std::string subroutine_name;
 };
 
+// Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
+// because a static method has no receiver -- neither an explicit handle, an
+// implicit self, nor a super qualifier -- and encoding it as a receiver-
+// optional variant of `MethodCallRef` would admit an invalid state. `owner`
+// names the class that declares the method; `method` is its position within
+// that class's method arena. Under inheritance, `Derived::inherited_static()`
+// still names the base as `owner` -- the method lives on the base's arena --
+// mirroring the owner-qualified rule for inherited instance access.
+struct StaticMethodCallRef {
+  ClassId class_id;
+  MethodId method;
+};
+
 using SubroutineRef = std::variant<
-    StructuralSubroutineRef, MethodCallRef, SystemSubroutineRef,
-    BuiltinMethodRef, ForeignImportRef, ImportedMethodRef,
+    StructuralSubroutineRef, MethodCallRef, StaticMethodCallRef,
+    SystemSubroutineRef, BuiltinMethodRef, ForeignImportRef, ImportedMethodRef,
     ExternalUnitSubroutineRef>;
 
 }  // namespace lyra::hir

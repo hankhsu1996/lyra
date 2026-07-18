@@ -9,6 +9,8 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
+#include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -24,6 +26,19 @@ struct ClassField {
   TypeId type;
 };
 
+// A class static property (LRM 8.9): a named type-associated storage cell
+// the class owns, shared by every instance. Distinct from `ClassField` (an
+// instance member replicated per object) because a static property is one
+// cell owned by the type, not a field the instance member set includes.
+// The declared `= value` initializer, when the source writes one, is a
+// design-init fact (LRM 10.5) and lives on `ClassDecl.static_property_inits`
+// -- it runs once before any initial or always procedure, not inside the
+// constructor.
+struct ClassStaticProperty {
+  std::string name;
+  TypeId type;
+};
+
 // A source-written property initializer (LRM 8.7): the assignment that
 // runs against the receiver during construction, before the user
 // constructor body, on the property named by `target`. `value` lives in
@@ -32,6 +47,19 @@ struct ClassField {
 // the body would.
 struct FieldInit {
   FieldId target;
+  ExprId value;
+};
+
+// A source-written static property initializer (LRM 8.9 / 10.5): the
+// assignment that runs once at design init, before any initial or always
+// procedure, on the static property named by `target`. Distinct from
+// `FieldInit` because the timing is class-level program startup, not
+// per-instance construction. `value` lives in the class's `static_init`
+// body arena, an arena separate from the constructor body's, because the
+// initializer cannot read a per-instance formal or self and must not share
+// the constructor body's expression identities.
+struct StaticPropertyInit {
+  StaticPropertyId target;
   ExprId value;
 };
 
@@ -74,14 +102,32 @@ struct BaseCall {
 // arena. Only fields the source declared with an explicit `= value` appear
 // here; a field without one takes its type's Table 7-1 default at
 // construction.
+//
+// `static_properties` peers with `fields` but stores type-associated cells
+// (LRM 8.9), not instance members. Inherited static properties are reached
+// through the base's registry entry, same as inherited instance fields.
+//
+// `static_init` is the class-level design-init body (LRM 10.5): the arena
+// hosting each static property's initializer expression tree, kept separate
+// from the constructor body because the initializer runs once at program
+// startup, not per instance construction. It is a bare `ProceduralBody` --
+// no `self`, no receiver -- because the code carries no per-instance context.
+//
+// `static_property_inits` pairs each source-written `= value` initializer
+// with its static property in source order; expressions live in
+// `static_init.exprs`. A static property without a source initializer takes
+// its type's Table 7-1 default and does not appear here.
 struct ClassDecl {
   std::string name;
   std::optional<ClassId> base;
   base::Arena<ClassField, FieldId> fields;
+  base::Arena<ClassStaticProperty, StaticPropertyId> static_properties;
   base::Arena<SubroutineDecl, MethodId> methods;
   SubroutineDecl constructor;
   std::optional<BaseCall> base_call;
   std::vector<FieldInit> field_inits;
+  ProceduralBody static_init;
+  std::vector<StaticPropertyInit> static_property_inits;
 };
 
 }  // namespace lyra::hir
