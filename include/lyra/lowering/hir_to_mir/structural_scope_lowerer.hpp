@@ -264,7 +264,7 @@ class StructuralScopeLowerer {
   }
 
   void MapStructuralSubroutine(
-      hir::StructuralSubroutineId hir_id, mir::MethodId mir_id) {
+      hir::StructuralSubroutineId hir_id, mir::CallableId mir_id) {
     if (hir_id.value != structural_subroutine_map_.size()) {
       throw InternalError(
           "StructuralScopeLowerer::MapStructuralSubroutine: HIR "
@@ -279,7 +279,7 @@ class StructuralScopeLowerer {
     const StructuralSubroutineRef ref =
         LookupStructuralSubroutineAtHops(hops, hir_id);
     return mir::Direct{
-        .target = mir::MethodTarget{.owner = ref.owner, .slot = ref.method}};
+        .target = mir::CallableTarget{.owner = ref.owner, .slot = ref.slot}};
   }
 
   // Records the parent's borrowed companion handle for one instance member, in
@@ -376,10 +376,10 @@ class StructuralScopeLowerer {
 
   // The owner-qualified identity of a structural subroutine reached by
   // `hops` steps up the scope chain: the class that owns the subroutine's
-  // method arena and the slot within that arena.
+  // callable arena and the slot within that arena.
   struct StructuralSubroutineRef {
     mir::ClassId owner;
-    mir::MethodId method;
+    mir::CallableId slot;
   };
 
   [[nodiscard]] auto LookupStructuralSubroutineAtHops(
@@ -392,8 +392,7 @@ class StructuralScopeLowerer {
             "unmapped HIR subroutine");
       }
       return StructuralSubroutineRef{
-          .owner = class_id_,
-          .method = structural_subroutine_map_[hir_id.value]};
+          .owner = class_id_, .slot = structural_subroutine_map_[hir_id.value]};
     }
     if (parent_ == nullptr) {
       throw InternalError(
@@ -409,7 +408,7 @@ class StructuralScopeLowerer {
   std::string name_;
   const hir::StructuralScope* hir_scope_;
   std::vector<mir::FieldId> structural_data_object_map_;
-  std::vector<mir::MethodId> structural_subroutine_map_;
+  std::vector<mir::CallableId> structural_subroutine_map_;
   std::vector<RoutedRefMeta> routed_ref_targets_;
   std::vector<GenerateBindings> generate_map_;
   // The parent's borrowed companion handle per instance member (nullopt for an

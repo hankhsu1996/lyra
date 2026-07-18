@@ -100,11 +100,19 @@ auto RewriteLhsRootWithMutate(
       "projection over one");
 }
 
+auto LhsRootIsObservableCell(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    mir::ExprId lhs_id) -> bool {
+  const mir::ExprId root_id = FindLhsRootId(unit, block, lhs_id);
+  return mir::IsObservableCellType(
+      unit.types.Get(block.exprs.Get(root_id).type));
+}
+
 auto BuildObservableAssignExpr(
     const mir::CompilationUnit& unit, mir::Block& block,
-    mir::ExprId services_id, mir::ExprId lhs_id, mir::ExprId rhs_id,
-    std::optional<mir::BinaryOp> compound_op, mir::TypeId result_type,
-    mir::TypeId void_type) -> mir::Expr {
+    std::optional<mir::ExprId> services_id, mir::ExprId lhs_id,
+    mir::ExprId rhs_id, std::optional<mir::BinaryOp> compound_op,
+    mir::TypeId result_type, mir::TypeId void_type) -> mir::Expr {
   // A plain store carries the right-hand side to the destination's full
   // declared representation before it reaches the cell (LRM 10.6.1), for every
   // value family. The front end already converts width, signedness, and state
@@ -122,23 +130,28 @@ auto BuildObservableAssignExpr(
     rhs_id = ConvertToType(unit, block, rhs_id, dst_value_type);
   }
   const mir::ExprId root_id = FindLhsRootId(unit, block, lhs_id);
-  const bool root_is_cell =
-      mir::IsObservableCellType(unit.types.Get(block.exprs.Get(root_id).type));
-  if (!root_is_cell) {
+  if (!LhsRootIsObservableCell(unit, block, lhs_id)) {
     return mir::Expr{
         .data =
             mir::AssignExpr{
                 .target = lhs_id, .compound_op = compound_op, .value = rhs_id},
         .type = result_type};
   }
+  // The write is observable, so it notifies through a services value the caller
+  // must have supplied.
+  if (!services_id.has_value()) {
+    throw InternalError(
+        "BuildObservableAssignExpr: an observable write requires a services "
+        "value");
+  }
   const bool whole_var_simple_write =
       (root_id == lhs_id) && !compound_op.has_value();
   if (whole_var_simple_write) {
     return mir::MakeObservableSetCallExpr(
-        lhs_id, services_id, rhs_id, void_type);
+        lhs_id, *services_id, rhs_id, void_type);
   }
   const mir::ExprId rewritten =
-      RewriteLhsRootWithMutate(unit, block, lhs_id, services_id);
+      RewriteLhsRootWithMutate(unit, block, lhs_id, *services_id);
   return mir::Expr{
       .data =
           mir::AssignExpr{

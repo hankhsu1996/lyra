@@ -20,9 +20,10 @@ inside a package ride on the class workstream and are out of scope here.
 
 ## Actionable
 
-PK1 (compile-time contents) and PK2 (the package as a first-class unit, carrying functions) are both
-actionable. PK1 is the smaller entry point; PK2 is the load-bearing architectural cut that PK3
-onward build on.
+PK1 (compile-time contents) and PK2 (the package as a first-class unit, carrying functions) are
+done: a package function with input arguments is now called across the unit boundary on the C++
+backend. PK3 (package variables) is the next actionable step; it reuses the package-as-unit
+foundation PK2 established.
 
 ## Sub-Steps
 
@@ -30,18 +31,23 @@ The `PK*` IDs are stable references. They do not impose a total order; the inlin
 real dependencies. PK2 establishes the package as a lyra compilation unit, which PK3 and the
 callable-bearing part of PK4 reuse; PK1 is independent of it.
 
-- [ ] PK1 -- Package compile-time contents referenced from another unit: a localparam / parameter, a
+- [x] PK1 -- Package compile-time contents referenced from another unit: a localparam / parameter, a
       typedef, and an enum constant, reached by explicit `pkg::item` or brought into scope by
       `import`. These fold to a value or intern as a type at elaboration in the referencing unit,
       the way a C++ `constexpr` or `using` does, so they manifest no cross-unit entity and need no
       package unit. The item locks this behavior with coverage across the reference forms and the
       item kinds.
-- [ ] PK2 -- A package becomes a first-class lyra compilation unit, and package functions and tasks
+- [x] PK2 -- A package becomes a first-class lyra compilation unit, and package functions and tasks
       are called from other units (LRM 26.3). A `pkg::func()` is the first cross-unit subroutine
       call: it targets a receiver-less (static) callable owned by another unit's namespace, resolved
       and linked by name, exactly as an instantiated child names its unit by name. Establishes the
-      package-as-unit collection and lowering that PK3 reuses. Argument passing and return reuse the
-      subroutine boundary already established for unit-local subroutines.
+      package-as-unit collection and lowering that PK3 reuses. The C++ backend emits a package as a
+      namespace of free functions, and a package function whose signature or body names a
+      package-declared enum or typedef resolves it against the namespace's own type declarations,
+      emitted into the namespace. Input arguments and the return value work. Remaining increments: a
+      package function with an output / inout / ref argument; a call from one package function to a
+      sibling; and a DPI-C import declared inside a package (LRM 35.4), which is rejected with a
+      diagnostic rather than mis-emitted.
 - [ ] PK3 -- Package variables. A package variable is static storage owned by the namespace -- one
       program-global cell, shared, not a member of any instance -- read and written from other units
       by name. It is the same type-associated storage a class static property uses, not a
@@ -59,7 +65,7 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
 
 ## Blocked
 
-Nothing blocked. PK1 and PK2 are both actionable now.
+Nothing blocked. PK3 is actionable now.
 
 ## Out of Scope
 

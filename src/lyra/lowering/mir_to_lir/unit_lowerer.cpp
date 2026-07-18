@@ -2,17 +2,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
+#include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
-#include "lyra/mir/method.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -31,7 +33,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       return std::unexpected(std::move(cls.error()));
     }
     const lir::ClassId added = out_.classes.Add(*std::move(cls));
-    if (id.value == mir_->root.value) {
+    if (mir_->root.has_value() && id.value == mir_->root->value) {
       out_.root = added;
     }
   }
@@ -59,19 +61,31 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
   }
 
   auto constructor =
-      FunctionLowerer(
-          *this, mir::GetConstructorCode(cls), "constructor", class_id)
+      FunctionLowerer(*this, cls.constructor.code, "constructor", class_id)
           .Run();
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
   }
   out.constructor = *std::move(constructor);
 
-  for (std::size_t i = 0; i < cls.methods.size(); ++i) {
-    const mir::MethodId mid{static_cast<std::uint32_t>(i)};
-    if (mid == cls.constructor.method) continue;
-    const mir::MethodDecl& method = cls.methods.Get(mid);
-    auto fn = FunctionLowerer(*this, method.code, method.name, class_id).Run();
+  // Only bodied callables become LIR functions, appended in arena order; a
+  // DPI-C import (external) is a foreign symbol reached by a `ForeignTarget`,
+  // so it takes no slot here. `Callee` resolution reaches a method through the
+  // same slot assignment `MethodSlot` memoizes, so each append must land
+  // exactly on the slot it assigns.
+  const mir::ClassId owner{class_id.value};
+  for (std::size_t i = 0; i < cls.callables.size(); ++i) {
+    const mir::CallableId cid{static_cast<std::uint32_t>(i)};
+    const mir::CallableDecl& callable = cls.callables.Get(cid);
+    const auto* internal = std::get_if<mir::InternalCallable>(&callable.impl);
+    if (internal == nullptr) continue;
+    if (out.methods.size() != MethodSlot(owner, cid).index) {
+      throw InternalError(
+          "mir_to_lir: LIR method slot diverged from the callable arena "
+          "compaction");
+    }
+    auto fn =
+        FunctionLowerer(*this, internal->code, callable.name, class_id).Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
@@ -80,8 +94,32 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
   return out;
 }
 
+auto UnitLowerer::MethodSlot(mir::ClassId owner, mir::CallableId callable)
+    -> lir::MethodRef {
+  auto it = method_slot_memo_.find(owner);
+  if (it == method_slot_memo_.end()) {
+    const mir::Class& cls = mir_->GetClass(owner);
+    std::vector<std::optional<lir::MethodRef>> slots(cls.callables.size());
+    std::uint32_t index = 0;
+    for (std::uint32_t i = 0; i < cls.callables.size(); ++i) {
+      if (std::holds_alternative<mir::InternalCallable>(
+              cls.callables.Get(mir::CallableId{i}).impl)) {
+        slots[i] = lir::MethodRef{
+            .class_id = lir::ClassId{owner.value}, .index = index++};
+      }
+    }
+    it = method_slot_memo_.emplace(owner, std::move(slots)).first;
+  }
+  if (callable.value >= it->second.size() ||
+      !it->second[callable.value].has_value()) {
+    throw InternalError(
+        "mir_to_lir: callable has no LIR method slot in its class");
+  }
+  return *it->second[callable.value];
+}
+
 auto UnitLowerer::BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId {
-  const auto it = pointer_memo_.find(pointee.value);
+  const auto it = pointer_memo_.find(pointee);
   if (it != pointer_memo_.end()) {
     return it->second;
   }
@@ -91,7 +129,7 @@ auto UnitLowerer::BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId {
               .pointee = pointee,
               .ownership = lir::PointerOwnership::kBorrowed,
               .mutability = lir::Mutability::kMutable}});
-  pointer_memo_.emplace(pointee.value, id);
+  pointer_memo_.emplace(pointee, id);
   return id;
 }
 

@@ -225,8 +225,15 @@ auto ApplyAssignEffect(
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   if (kind == hir::AssignKind::kBlocking) {
-    const mir::ExprId services_id =
-        block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+    // Only an observable-cell write notifies subscribers, so only it reaches a
+    // services value; a plain-local write carries none. This is what lets a
+    // receiver-less callable -- whose locals are never observable -- lower an
+    // assignment without a receiver to reach services through.
+    const std::optional<mir::ExprId> services_id =
+        LhsRootIsObservableCell(process.Owner().Unit(), block, target_in_outer)
+            ? std::optional{block.exprs.Add(
+                  BuildServicesCallExpr(process.Owner(), frame))}
+            : std::nullopt;
     return effect_fn(block, target_in_outer, operands_in_outer, services_id);
   }
   if (!IsExprRootedAtStructuralDataObject(block, target_in_outer)) {
@@ -272,7 +279,7 @@ auto LowerObservableAssign(
   return ApplyAssignEffect(
       process, frame, a.kind, span, lhs_id, operands,
       [&](mir::Block& blk, mir::ExprId target, std::span<const mir::ExprId> ops,
-          mir::ExprId services) -> mir::Expr {
+          std::optional<mir::ExprId> services) -> mir::Expr {
         return BuildObservableAssignExpr(
             process.Owner().Unit(), blk, services, target, ops[0], compound_op,
             result_type, void_type);
@@ -311,7 +318,7 @@ auto BuildNbaSubmitClosureExpr(
   return BuildDeferredAssignClosure(
       unit_lowerer, frame, lhs_in_outer, operands,
       [&](mir::Block& blk, mir::ExprId target, std::span<const mir::ExprId> ops,
-          mir::ExprId services) -> mir::Expr {
+          std::optional<mir::ExprId> services) -> mir::Expr {
         return BuildObservableAssignExpr(
             unit_lowerer.Unit(), blk, services, target, ops[0], std::nullopt,
             rhs_type, unit_lowerer.Unit().builtins.void_type);

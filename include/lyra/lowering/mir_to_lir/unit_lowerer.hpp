@@ -1,13 +1,14 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/type_query.hpp"
@@ -51,6 +52,15 @@ class UnitLowerer {
   auto BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId;
   auto MachineBoolType() -> lir::TypeId;
 
+  // The LIR method slot a class's callable lowers to. The LIR method list holds
+  // a class's bodied callables in arena order; a DPI-C import (external) takes
+  // a `CallableId` but no method slot, so the slots compact past it. Each
+  // class's slots are assigned once and memoized: the first query builds the
+  // class's table, later queries read it. Throws if `callable` is not a method
+  // of `owner` (an external, or an out-of-range id).
+  auto MethodSlot(mir::ClassId owner, mir::CallableId callable)
+      -> lir::MethodRef;
+
  private:
   auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
   // Records `what` (a human phrase like "a closure") as the unit's first
@@ -63,8 +73,13 @@ class UnitLowerer {
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;
-  std::unordered_map<std::uint32_t, lir::TypeId> type_memo_;
-  std::unordered_map<std::uint32_t, lir::TypeId> pointer_memo_;
+  std::unordered_map<mir::TypeId, lir::TypeId> type_memo_;
+  std::unordered_map<lir::TypeId, lir::TypeId> pointer_memo_;
+  // Per-class map from a callable to the compacted LIR method slot it occupies,
+  // built lazily on first `MethodSlot` query. Keyed by class id; a callable
+  // that is not a method (an external) has no slot.
+  std::unordered_map<mir::ClassId, std::vector<std::optional<lir::MethodRef>>>
+      method_slot_memo_;
   std::optional<lir::TypeId> machine_bool_type_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as
   // the unit's failure at `Run`, so translation stays non-throwing and

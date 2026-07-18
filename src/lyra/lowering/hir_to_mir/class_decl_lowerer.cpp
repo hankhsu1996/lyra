@@ -24,12 +24,12 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/method_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -61,7 +61,7 @@ auto CanonicalizeVirtualDispatch(
     }
     const mir::ClassId base_mir_class =
         unit_lowerer.TranslateClass(base_ref.class_id);
-    const mir::MethodId base_mir_slot{base_ref.method.value};
+    const mir::CallableId base_mir_slot{base_ref.method.value};
     return std::visit(
         Overloaded{
             [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualDispatchRole {
@@ -127,9 +127,8 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
       .time_resolution = {},
       .ctor_prefix_params = {},
       .fields = {},
-      .method_signatures = {},
+      .callable_signatures = {},
       .contained = {},
-      .type_aliases = {},
       .is_scope_tree_node = false,
       .is_final = false};
 
@@ -158,12 +157,12 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
       PlanStaticStorage(
           unit_lowerer, "<ctor>", hir_class.constructor.body, shape.fields));
 
-  // Method signatures publish each method's canonical dispatch role. Peer
+  // Callable signatures publish each method's canonical dispatch role. Peer
   // body lowering that names one of this class's methods reads this to pick
   // between direct and virtual invocation, with no cross-class MIR read.
   for (const auto& method : hir_class.methods) {
-    shape.method_signatures.Add(
-        mir::MethodSignature{
+    shape.callable_signatures.Add(
+        mir::CallableSignature{
             .virtual_dispatch =
                 CanonicalizeVirtualDispatch(unit_lowerer, method)});
   }
@@ -188,14 +187,13 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       .constructor = {},
       .contained = shape.contained,
       .structs = {},
-      .methods = {},
+      .callables = {},
       .abi_adapters = {},
       .static_constants = {},
-      .static_callables = {},
-      .type_aliases = shape.type_aliases};
+      .foreign_export_wrappers = {}};
 
-  // The constructor's callable code is built in a local first, then handed
-  // to the class's method storage last so its id sits after every
+  // The constructor's callable code is built in a local first, then added to
+  // the class's callable arena last so its id sits after every
   // declaration-ordered SV method -- each SV method keeps its natural
   // declaration index.
   mir::CallableCode ctor_code;
@@ -213,7 +211,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   const hir::SubroutineDecl& ctor = hir_class.constructor;
   ProcessLowerer ctor_lowerer(
       unit_lowerer, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
-      mir::MethodVisibility::kInternal, frame, *ctor_plan_);
+      frame, *ctor_plan_);
 
   // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
   // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
@@ -278,10 +276,11 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
     ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 
-  // Each instance method (LRM 8.6) is lowered as a callable this class owns:
-  // it resolves the body's `self` to the managed handle, and the method's
-  // declaration-order position becomes its `MethodId`, so a call site naming
-  // the index reaches the same method. SV classes do not have a separate
+  // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
+  // resolves the body's `self` to the managed handle, and the method's
+  // declaration-order position becomes its slot in the callable arena, so a
+  // call site naming the index reaches the same method. SV classes do not have
+  // a separate
   // Initialize lifecycle phase, so a method's pending static initializers
   // integrate into this class's constructor block (matching the per-instance
   // storage shape used for class-method statics).
@@ -293,14 +292,19 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
         WalkFrame{}.WithClass(&mir_class, class_id_, method_link);
     ProcessLowerer method_lowerer(
         unit_lowerer, nullptr, mir_class.time_resolution, method.body,
-        method.name, mir::MethodVisibility::kPublic, method_owner_frame,
-        method_plans_[i]);
-    auto method_or = method_lowerer.Run(method);
-    if (!method_or) return std::unexpected(std::move(method_or.error()));
-    method_or->virtual_dispatch =
-        shape.method_signatures.Get(mir::MethodId{method_id.value})
-            .virtual_dispatch;
-    mir_class.methods.Add(*std::move(method_or));
+        method.name, method_owner_frame, method_plans_[i]);
+    auto method_code_or = method_lowerer.Run(method);
+    if (!method_code_or) {
+      return std::unexpected(std::move(method_code_or.error()));
+    }
+    mir_class.callables.Add(
+        mir::CallableDecl{
+            .name = method.name,
+            .impl = mir::InternalCallable{.code = *std::move(method_code_or)},
+            .virtual_dispatch =
+                shape.callable_signatures.Get(mir::CallableId{method_id.value})
+                    .virtual_dispatch,
+            .visibility = mir::CallableVisibility::kPublic});
     for (const auto& pending : method_lowerer.TakePendingStaticInitializers()) {
       auto integ = IntegratePendingStaticInitializer(
           method_lowerer, method.body, frame, pending);
@@ -321,14 +325,8 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
 
   ctor_code.params = std::move(ctor_params);
   ctor_code.result_type = unit_lowerer.Unit().builtins.void_type;
-  const mir::MethodId ctor_method_id = mir_class.methods.Add(
-      mir::MethodDecl{
-          .name = "<ctor>",
-          .code = std::move(ctor_code),
-          .virtual_dispatch = std::nullopt,
-          .visibility = mir::MethodVisibility::kInternal});
   mir_class.constructor = mir::ConstructorDecl{
-      .method = ctor_method_id,
+      .code = std::move(ctor_code),
       .base_init = std::move(base_init),
       .member_inits = {}};
 

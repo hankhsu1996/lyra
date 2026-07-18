@@ -32,15 +32,18 @@ enum class StopAfter : std::uint8_t { kParse, kHir, kMir, kLir };
 struct CompileArtifacts {
   std::optional<frontend::ParseResult> parse;
   std::optional<std::vector<hir::CompilationUnit>> hir_units;
+  // Every unit a backend emits: the source module units and the package units
+  // (LRM 26). A package has no executable body, so `mir_units` is a superset of
+  // the executable units `lir_units` covers -- the two are not co-indexed.
   std::optional<std::vector<mir::CompilationUnit>> mir_units;
   // The synthesized design-root unit, present exactly when `mir_units` is. Its
   // constructor elaborates the design by building the top-level units as its
   // owned children. It is a compiler output distinct from the source units, so
   // the host constructs it directly rather than searching the source set.
   std::optional<mir::CompilationUnit> root_unit;
-  // The executable body of each source unit, co-indexed with `mir_units`. Each
-  // LIR unit is self-contained -- it owns its own type graph and holds no
-  // reference back to the MIR it was lowered from.
+  // The executable body of each executable source unit (every module; no
+  // package). Each LIR unit is self-contained -- it owns its own type graph and
+  // holds no reference back to the MIR it was lowered from.
   std::optional<std::vector<lir::CompilationUnit>> lir_units;
   // The definition metadata of each compiled unit, co-indexed with `lir_units`:
   // a compiled unit is its executable body plus these immutable source-level

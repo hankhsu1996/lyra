@@ -21,10 +21,10 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/method.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -69,47 +69,52 @@ class ProcessLowerer {
   // for the structural scope this body sits inside; its registries resolve
   // every reference to an enclosing-scope declaration. It is null for a
   // class method body, which sits inside no structural scope. `callable_name`
-  // is the synthesized identifier the enclosing scope chose for this
-  // callable (LRM processes are anonymous, so the caller passes
-  // `"process_N"`; methods pass the user-given name). `owner_ctor_frame` is
-  // the enclosing class's constructor-time frame -- the base frame each
-  // body lowering extends with its own block / bindings, carrying the
-  // owner-class context (self pointer type, scope chain) into body lowering.
-  // `visibility` is the access the produced method declares (public for a
-  // class instance method, internal for a scope's processes and
-  // subroutines). `storage_plan` is the planner's per-callable storage plan
-  // -- static placements and the shared scope materialization table that
-  // chain queries route through.
+  // is the synthesized identifier the enclosing scope chose for this callable
+  // (`"process_N"`, or a user-given name); it names any per-callable artifact
+  // the body emits (a promoted activation scope's struct), not the produced
+  // declaration -- the caller attaches the declaration's own name.
+  // `owner_ctor_frame` is the enclosing class's constructor-time frame -- the
+  // base frame each body lowering extends with its own block / bindings,
+  // carrying the owner-class context (self pointer type, scope chain) into body
+  // lowering. A frame with no owner class is a namespace context: the produced
+  // body carries no `self`. `storage_plan` is the planner's per-callable
+  // storage plan -- static placements and the shared scope materialization
+  // table that chain queries route through. The produced value is the
+  // callable's `CallableCode`; the name and visibility a referencing site
+  // attaches belong to the declaration the caller wraps the code in, not to the
+  // lowering.
   ProcessLowerer(
       UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
-      std::string callable_name, mir::MethodVisibility visibility,
-      WalkFrame owner_ctor_frame, const CallableStoragePlan& storage_plan)
+      std::string callable_name, WalkFrame owner_ctor_frame,
+      const CallableStoragePlan& storage_plan)
       : owner_(&unit_lowerer),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
         time_resolution_(time_resolution),
         hir_body_(&hir_body),
         callable_name_(std::move(callable_name)),
-        visibility_(visibility),
         owner_ctor_frame_(std::move(owner_ctor_frame)),
         storage_plan_(&storage_plan) {
   }
 
   // Lowers an entire HIR process (initial / final / always / always_ff /
-  // always_comb / always_latch) into its `mir::MethodDecl`. Any static
-  // initializers the body defers to the Initialize phase accumulate on the
-  // lowerer; the caller drains them through `TakePendingStaticInitializers`
-  // after `Run` returns and integrates them into the owning class's
-  // Initialize block.
-  auto Run(const hir::Process& src) -> diag::Result<mir::MethodDecl>;
+  // always_comb / always_latch) into its callable code -- a coroutine body the
+  // caller registers. Any static initializers the body defers to the Initialize
+  // phase accumulate on the lowerer; the caller drains them through
+  // `TakePendingStaticInitializers` after `Run` returns and integrates them
+  // into the owning class's Initialize block.
+  auto Run(const hir::Process& src) -> diag::Result<mir::CallableCode>;
 
-  // Lowers a HIR subroutine declaration into a `mir::MethodDecl`.
-  // Pre-registers the formal params as body locals so call references resolve,
-  // then walks the body. Functions with a non-void result close with a
-  // trailing `return` of the implicit result variable. Deferred static
-  // initializers are drained the same way as for a process body.
-  auto Run(const hir::SubroutineDecl& src) -> diag::Result<mir::MethodDecl>;
+  // Lowers a HIR subroutine declaration into its callable code. Pre-registers
+  // the formal params as body locals so call references resolve, then walks the
+  // body. A function with a non-void result closes with a trailing `return` of
+  // the implicit result variable. The leading `self` parameter is seeded only
+  // when the body sits in an owner class (an instance method, LRM 8.6); a body
+  // in a namespace context (a package function, LRM 26.3) carries no receiver.
+  // Deferred static initializers are drained the same way as for a process
+  // body.
+  auto Run(const hir::SubroutineDecl& src) -> diag::Result<mir::CallableCode>;
 
   // Registers each of the constructor's input formals as a MIR body local,
   // appending its `LocalId` to `params`. Split from body-statement lowering
@@ -250,18 +255,11 @@ class ProcessLowerer {
     return binding;
   }
 
-  // The synthesized identifier for the callable being lowered (e.g.
-  // `"process_3"`, or a method's user-given name). Used as the produced
-  // method's name and as a prefix for any per-callable artifact the body
-  // emits (e.g. a lifetime-extended activation scope).
+  // The synthesized identifier for the callable being lowered (`"process_3"`,
+  // or a user-given name), used as a prefix for any per-callable artifact the
+  // body emits (e.g. a lifetime-extended activation scope's struct).
   [[nodiscard]] auto CallableName() const -> std::string_view {
     return callable_name_;
-  }
-
-  // The access the produced method declares, carried onto every `MethodDecl`
-  // this lowerer returns.
-  [[nodiscard]] auto Visibility() const -> mir::MethodVisibility {
-    return visibility_;
   }
 
   // The owner class's constructor-time frame -- the base each body lowering
@@ -345,7 +343,6 @@ class ProcessLowerer {
   TimeResolution time_resolution_;
   const hir::ProceduralBody* hir_body_;
   std::string callable_name_;
-  mir::MethodVisibility visibility_;
   WalkFrame owner_ctor_frame_;
   // Per-callable storage plan owned by the enclosing scope's lowerer;
   // borrowed here for the body lowering's lifetime.

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <unordered_map>
 #include <vector>
 
@@ -104,7 +103,7 @@ class CodeGenFunction {
   const lir::Function* fn_;
   llvm::Function* value_;
   llvm::IRBuilder<> builder_;
-  std::unordered_map<std::uint32_t, llvm::Value*> values_;
+  std::unordered_map<lir::ValueId, llvm::Value*> values_;
   std::vector<llvm::BasicBlock*> blocks_;
   // A coroutine body's ramp state: the coroutine identity (which names the
   // frame to release) and its handle, plus the blocks every suspension and

@@ -7,21 +7,18 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/mir/abi_adapter_id.hpp"
+#include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/foreign_export_wrapper.hpp"
-#include "lyra/mir/method.hpp"
-#include "lyra/mir/method_id.hpp"
 #include "lyra/mir/param.hpp"
-#include "lyra/mir/static_callable.hpp"
-#include "lyra/mir/static_callable_id.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/struct_id.hpp"
-#include "lyra/mir/type_alias.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -49,34 +46,33 @@ struct BaseInit {
   std::vector<ExprId> args;
 };
 
-// The class's construction protocol -- distinct from the callable code that
-// runs the constructor body. The body is an ordinary callable stored beside
-// the other class methods, reached by the `method` index; construction facts
-// the body does not itself express -- how the base is initialized and how a
-// field gets its pre-body initializer -- live here. A consumer that emits
-// construction reads `base_init` and `member_inits` in declaration order,
-// then descends into the method body.
+// The class's construction protocol. The constructor is a bare body block the
+// class owns directly, not a member of the callable arena: it is never a call
+// target and never dispatches, so it carries no callable identity. `code` runs
+// the constructor body; the construction facts the body does not itself express
+// -- how the base is initialized and how a field gets its pre-body initializer
+// -- live alongside it. A consumer that emits construction reads `base_init`
+// and `member_inits` in declaration order, then descends into `code`.
 struct ConstructorDecl {
-  MethodId method;
+  CallableCode code;
   std::optional<BaseInit> base_init;
   std::vector<FieldInit> member_inits;
 };
 
-// The declaration-facing view of a method: the facts a peer's body lowering
-// needs to know about this method while its own body is being lowered. The
-// method's body itself is not here; the finished `MethodDecl` on the class
-// carries the body once every body composes. `virtual_dispatch` is here so
-// a peer that calls this method picks between direct and virtual invocation
-// from a stated fact, with no dependency on which class's body lowered
-// first.
-struct MethodSignature {
+// The declaration-facing view of a callable: the facts a peer's body lowering
+// needs to know about it while its own body is being lowered. The callable's
+// body itself is not here; the finished `CallableDecl` on the class carries the
+// body once every body composes. `virtual_dispatch` is here so a peer that
+// calls this callable picks between direct and virtual invocation from a stated
+// fact, with no dependency on which class's body lowered first.
+struct CallableSignature {
   std::optional<VirtualDispatchRole> virtual_dispatch;
 };
 
 // The structural portion of a class declaration: the facts a peer needs to
 // read about a class while its own body is being lowered. Each field has the
 // same semantics as the same-named field on `Class`; the executable parts
-// (`constructor`, method bodies) are not represented here.
+// (`constructor`, callable bodies) are not represented here.
 struct ClassShape {
   std::string name;
   std::optional<ClassRef> base;
@@ -84,9 +80,8 @@ struct ClassShape {
   TimeResolution time_resolution;
   base::Arena<ParamDecl, ParamId> ctor_prefix_params;
   base::Arena<FieldDecl, FieldId> fields;
-  base::Arena<MethodSignature, MethodId> method_signatures;
+  base::Arena<CallableSignature, CallableId> callable_signatures;
   std::vector<ClassId> contained;
-  std::vector<TypeAliasDecl> type_aliases;
   // Whether the class occupies a node of the runtime object tree -- a module
   // instance, a named generate scope, or a named procedural block. A backend
   // that walks the tree for emission uses this to skip classes that emit
@@ -108,9 +103,8 @@ struct Class {
   // minimum (LRM 3.14.3) and so delays scale to it.
   TimeResolution time_resolution;
   base::Arena<FieldDecl, FieldId> fields;
-  // The class's construction protocol. The callable code that runs the ctor
-  // body is stored beside the other methods; base and per-field
-  // initialization not expressible in that body live on the protocol itself.
+  // The class's construction protocol: the constructor body together with the
+  // base and per-field initialization not expressible in that body.
   ConstructorDecl constructor;
   // The classes this one structurally owns -- the children it builds and, for a
   // backend that nests, emits inside itself. Each names a registry identity, in
@@ -124,44 +118,29 @@ struct Class {
   // identities, parallel to `contained`. A backend that nests emits each struct
   // inside this class by iterating this list -- no walk over the body tree.
   std::vector<StructId> structs;
-  base::Arena<MethodDecl, MethodId> methods;
-  // The runtime-callback adapters this class owns -- callables whose
-  // identity is a plain function pointer the runtime holds, semantically
-  // distinct from the instance methods above. Referenced from the class's
-  // generated-behavior constant by `FunctionRef`; never called through a
-  // MIR CallExpr. Empty for a class that has no runtime callback surface.
+  // Every callable this class owns, in one arena: instance methods (LRM 8.6),
+  // process and lifecycle bodies, and the receiver-less static callables (a
+  // DPI-C import, LRM 35.4; a static method). An instance method carries `self`
+  // as its first parameter and a static callable omits it, but both are one
+  // `CallableDecl` reached by one `CallableId` -- the receiver is a property of
+  // the signature, not a separate declaration space. The constructor is not
+  // here: it is a bare body block on the protocol, never a call target.
+  base::Arena<CallableDecl, CallableId> callables;
+  // The runtime-callback adapters this class owns -- callables whose identity
+  // is a plain function pointer the runtime holds, semantically distinct from
+  // the instance callables above. Referenced from the class's
+  // generated-behavior constant by `FunctionRef`; never called through a MIR
+  // `CallExpr`. Empty for a class that has no runtime callback surface.
   base::Arena<AbiAdapter, AbiAdapterId> abi_adapters;
   // The class-level static constants this class owns, emitted as static
   // members. A runtime scope's generated-behavior record is one such constant;
   // the constructor forwards its address to the runtime base through the
   // construction protocol.
   base::Arena<StaticConstantDecl, StaticConstantId> static_constants;
-  // The class-level static callables this class owns -- receiver-less callables
-  // in its associated namespace, the callable peer of the static constants. A
-  // DPI-C import (LRM 35.4) lives here as an external-symbol callable; nothing
-  // in the instance method arena is one. Empty for a class that declares no
-  // static callable.
-  base::Arena<StaticCallableDecl, StaticCallableId> static_callables;
   // The foreign-linkage wrappers this class exposes -- one per `export "DPI-C"`
-  // of one of its methods (LRM 35.5). Each is an external entry a backend
+  // of one of its callables (LRM 35.5). Each is an external entry a backend
   // materializes beside the class; empty for a class that exports nothing.
   std::vector<ForeignExportWrapper> foreign_export_wrappers;
-  std::vector<TypeAliasDecl> type_aliases;
-
-  void AddTypeAlias(TypeAliasDecl decl) {
-    type_aliases.push_back(std::move(decl));
-  }
 };
-
-// The ctor's callable code. A convenience for consumers that read the ctor
-// as an opaque callable rather than dereferencing the construction
-// protocol's method index by hand.
-//
-// Read-only: the arena backing the method is append-only, and the ctor is
-// finalized before insertion, so any post-add mutation would violate value
-// immutability.
-inline auto GetConstructorCode(const Class& c) -> const CallableCode& {
-  return c.methods.Get(c.constructor.method).code;
-}
 
 }  // namespace lyra::mir
