@@ -1576,6 +1576,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .params = std::move(params),
             .ret_sv_type = unit_lowerer.TranslateType(imp.ret_sv_type),
             .ret_abi = imp.ret_abi,
+            .is_task = imp.is_task,
             .external = mir::ExternalSymbol{
                 .foreign_name = imp.foreign_name, .is_pure = imp.is_pure}});
   }

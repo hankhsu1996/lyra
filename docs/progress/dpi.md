@@ -25,23 +25,24 @@ out-of-scope external-driver boundary -- is recorded in `../decisions/dpi-foreig
 
 Done when the LRM 35 surface reproduces on both backends: import (pure and context, every argument
 direction, the full DPI type surface including 4-state, wide packed, `chandle`, and open arrays),
-export (package / `$unit`-scoped and module-scoped instance-bound), DPI tasks (non-suspending and
-suspending, both directions), the `svdpi` context surface, a generated ABI header, and link-input
-orchestration.
+export (package / `$unit`-scoped and module-scoped instance-bound), DPI tasks (both directions,
+including a foreign task that consumes simulation time and the disable protocol), the `svdpi`
+context surface, a generated ABI header, and link-input orchestration.
 
 ## Actionable
 
-Two frontiers are open. On the C++ backend the import surface (D1-D3) is in, and the export
-marshaling surface (D4, D4b) runs: an export executes end to end through the import -> export chain
-across every argument direction and both value families -- by-value scalars, by-pointer scalar
-`output` / `inout`, and canonical 2-state / 4-state packed vectors -- with its wrapper recovering
-the exported subroutine's single top-level instance from the running design. What remains for the
-export surface is instance-bound dispatch beyond that single instance via `svSetScope` and
-receiver-less package / `$unit` scope (D4a), the generated ABI header and export linkage (D9), then
-DPI tasks (D5). On the execution backend scalar import (D10) is in: a foreign call lowers to an
-external-linkage symbol and the by-value carriers marshal. The rest of the import surface (D11) is
-blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a closure, which that
-backend does not yet lower at all (`architecture-reset.md`).
+Two frontiers are open. On the C++ backend the function import surface (D1-D3) is in, the export
+marshaling surface (D4, D4b) runs -- an export executes end to end through the import -> export
+chain across every argument direction and both value families (by-value scalars, by-pointer scalar
+`output` / `inout`, and canonical 2-state / 4-state packed vectors), its wrapper recovering the
+exported subroutine's single top-level instance from the running design -- and the import task (D5)
+runs: SV calls a foreign C task under the uniform task protocol. What remains is instance-bound
+export dispatch beyond that single instance via `svSetScope` and receiver-less package / `$unit`
+scope (D4a), the generated ABI header and export linkage (D9), the export task (D6), and
+foreign-boundary suspension (D6b). On the execution backend scalar import (D10) is in: a foreign
+call lowers to an external-linkage symbol and the by-value carriers marshal. The rest of the import
+surface (D11) is blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a
+closure, which that backend does not yet lower at all (`architecture-reset.md`).
 
 ## Sub-Steps
 
@@ -103,11 +104,23 @@ from an external main.
 
 ### DPI tasks
 
-- [ ] D5 -- Non-suspending DPI tasks (LRM 35.5.2), import and export. Reuses the immediate-call
-      path; a task keeps its task call protocol and is never rewritten into a function.
-- [ ] D6 -- Suspending DPI tasks: a foreign task that consumes simulation time, including the
-      disable protocol (LRM 35.9). Rides on the timing and suspension machinery (`scheduling.md`,
-      `processes.md`).
+A DPI task rides the same task call protocol as any SV task (LRM 13.4.4): the call is a suspension
+point, lowered to a coroutine the caller awaits. A task is classified by kind, never by whether it
+consumes time -- a task that consumes no simulation time is the trivial case of one that does, on
+the same protocol, not a separate path. The two items below are the boundary directions; the runtime
+machinery that lets a foreign task actually suspend across the C boundary, with the disable
+protocol, extends the same awaitable and is tracked as D6b.
+
+- [x] D5 -- DPI import task (LRM 35.5.2): SV calls a foreign C task. The call rides the uniform task
+      protocol -- a coroutine the caller awaits -- with the actuals marshaled in and the writeback
+      arguments marshaled back; a task that consumes no time completes within the await.
+- [ ] D6 -- DPI export task: foreign C calls an SV task through its foreign-linkage wrapper, driving
+      the exported task's coroutine body to completion and marshaling its writebacks back across the
+      boundary.
+- [ ] D6b -- Foreign-boundary suspension: a foreign task that actually consumes simulation time,
+      yielded across the C boundary, with the disable protocol (LRM 35.9). This extends the task
+      awaitable's runtime; the call protocol and lowering are unchanged from D5 / D6. Rides on the
+      timing and suspension machinery (`scheduling.md`, `processes.md`).
 
 ### Context and the svdpi surface
 
@@ -148,7 +161,7 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
       the buffer constructors and the canonical-plane marshaling primitives. A `real` import rides
       on the real value domain, not on this item.
 - [ ] D12 -- Export and DPI tasks on the execution backend, once the C++-backend export and task
-      items (D4-D6) define the shape.
+      items (D4-D6b) define the shape.
 
 ## Design record
 

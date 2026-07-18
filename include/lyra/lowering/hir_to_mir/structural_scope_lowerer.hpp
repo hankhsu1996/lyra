@@ -146,6 +146,25 @@ class StructuralScopeLowerer {
         hir::StructuralHops{.value = hops.value - 1}, id);
   }
 
+  // Resolve a DPI-C import reference to its HIR declaration by walking `hops`
+  // scopes outward. The import's task-or-function kind decides whether its call
+  // site is a suspension point (LRM 35.8), which the statement lowering reads
+  // from here.
+  [[nodiscard]] auto LookupForeignImport(
+      hir::StructuralHops hops, hir::ForeignImportId id) const
+      -> const hir::ForeignImportDecl& {
+    if (hops.value == 0) {
+      return hir_scope_->foreign_imports.Get(id);
+    }
+    if (parent_ == nullptr) {
+      throw InternalError(
+          "StructuralScopeLowerer::LookupForeignImport: hops walk ran "
+          "past the root scope");
+    }
+    return parent_->LookupForeignImport(
+        hir::StructuralHops{.value = hops.value - 1}, id);
+  }
+
   void AddRoutedRefTarget(mir::FieldId target, mir::TypeId slot_type) {
     routed_ref_targets_.push_back(
         RoutedRefMeta{.target = target, .slot_type = slot_type});
