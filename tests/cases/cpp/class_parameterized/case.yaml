@@ -1,0 +1,23 @@
+id: cpp.class_parameterized
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    vec8_incr1: 1
+    vec8_incr2: 2
+    vec16_incr1: 1
+    vec8_count_final: 2
+    vec16_count_final: 1
+    vec8_data: 0xCD
+    vec16_data: 0xDEAD
+    box_int_made: 1
+    box_byte_made: 1
+    box_int_value: 42
+    box_byte_value: 7
+    derived_x: 5
+    derived_y: 6
