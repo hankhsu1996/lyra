@@ -37,7 +37,15 @@ class UnitLowerer {
       : hir_(&hir), source_manager_(&source_manager) {
   }
 
-  auto Run() -> diag::Result<mir::CompilationUnit>;
+  // Lowers a module unit: a scope whose root is an object type, so its body
+  // (variables, processes, instances, subroutines) composes the unit's top
+  // class. The synthesized design-root unit lowers this way too.
+  auto RunModule() -> diag::Result<mir::CompilationUnit>;
+
+  // Lowers a package unit (LRM 26): a namespace whose root is not an object
+  // type. Its functions and tasks lower to receiver-less callables owned by the
+  // unit's namespace, so the produced unit has no root class.
+  auto RunPackage() -> diag::Result<mir::CompilationUnit>;
 
   // Access to the in-progress compilation unit. The const overload is the
   // read-only view downstream consumers see once lowering finishes; the mutable
@@ -166,6 +174,12 @@ class UnitLowerer {
   }
 
  private:
+  // Mints every class identity, interns every HIR type, and lowers every HIR
+  // class body into the unit. Shared prologue of `Run` and `RunPackage`: both a
+  // module and a package own the same declaration kinds; they differ only in
+  // whether the root scope becomes a top class or a set of namespace callables.
+  auto PopulateTypesAndClasses() -> diag::Result<void>;
+
   [[nodiscard]] auto TranslateTypeData(const hir::TypeData& data) const
       -> mir::TypeData;
 

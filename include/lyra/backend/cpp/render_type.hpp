@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-#include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/dpi_abi.hpp"
@@ -20,12 +20,11 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto DpiScalarCarrierCppType(support::DpiScalarAbi abi)
     -> std::string_view;
 
-// Renders a MIR type as the corresponding C++ type expression. `owner_class`
-// is the class that lexically declares the field whose type is being rendered;
-// `ObjectType::target` ids are resolved against its nested classes.
+// Renders a MIR type as the corresponding C++ type expression. A nominal type
+// name (an enum) is resolved against the unit's own type declarations, the same
+// way a struct name is resolved through the unit's struct registry.
 [[nodiscard]] auto RenderTypeAsCpp(
-    const mir::CompilationUnit& unit, const mir::Class& owner_class,
-    mir::TypeId type_id) -> std::string;
+    const mir::CompilationUnit& unit, mir::TypeId type_id) -> std::string;
 
 // Renders a MIR class reference as the target C++ type expression naming
 // that class. Intra-unit refs go through the unit's class registry; external
@@ -40,15 +39,15 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto RenderPackedType(const mir::PackedArrayType& pa)
     -> std::string;
 
-// Renders the emitted C++ class name for a MIR enum type. The name is
-// derived from the first TypeAlias declaration targeting `id` in
-// `owner_class` (so a `typedef enum {...} foo;` makes the class `foo`);
-// when no alias is found, falls back to a numeric internal name.
+// Renders the emitted C++ class name for a MIR enum type. The name is the first
+// unit type declaration targeting `id` (so a `typedef enum {...} foo;` makes
+// the class `foo`); when none exists, falls back to a numeric internal name.
 //
-// EnumType itself carries no name (an enum and its typedef are orthogonal:
-// an anonymous enum has none, a multi-typedef enum has many). Lookup lives
-// here, not on the type.
+// EnumType itself carries no name (an enum and its typedef are orthogonal: an
+// anonymous enum has none, a multi-typedef enum has many), so the name is not
+// on the type; it is a unit-level fact, resolved by this lookup like a struct
+// name.
 [[nodiscard]] auto RenderEnumClassName(
-    const mir::Class& owner_class, mir::TypeId id) -> std::string;
+    const mir::CompilationUnit& unit, mir::TypeId id) -> std::string;
 
 }  // namespace lyra::backend::cpp

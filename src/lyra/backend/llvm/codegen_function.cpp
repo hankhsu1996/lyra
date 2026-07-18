@@ -33,7 +33,7 @@ auto CodeGenFunction::IsCoroutine() const -> bool {
 
 void CodeGenFunction::Run() {
   for (std::uint32_t i = 0; i < fn_->params.size(); ++i) {
-    values_.emplace(fn_->params[i].value, value_->getArg(i));
+    values_.emplace(fn_->params[i], value_->getArg(i));
   }
 
   // Every block exists before any is filled, so a branch resolves its successor
@@ -64,7 +64,7 @@ void CodeGenFunction::Run() {
     const lir::Local& local = fn_->values.Get(id);
     if (local.kind == lir::LocalKind::kPlace) {
       values_.emplace(
-          i, builder_.CreateAlloca(module_->Types().Map(local.type)));
+          id, builder_.CreateAlloca(module_->Types().Map(local.type)));
     }
   }
   if (IsCoroutine()) {
@@ -74,7 +74,7 @@ void CodeGenFunction::Run() {
   for (std::uint32_t i = 0; i < fn_->blocks.size(); ++i) {
     builder_.SetInsertPoint(blocks_[i]);
     for (const lir::Instr& instr : fn_->blocks[i].instrs) {
-      values_.emplace(instr.result.value, LowerInstr(instr));
+      values_.emplace(instr.result, LowerInstr(instr));
     }
     LowerTerminator(fn_->blocks[i].terminator);
   }

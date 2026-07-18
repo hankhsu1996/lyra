@@ -50,13 +50,16 @@ class MirDumper {
     Dedent();
     Line("Class:");
     Indent();
-    DumpClass(unit.root, unit.GetClass(unit.root));
+    if (unit.root.has_value()) {
+      DumpClass(*unit.root, unit.GetClass(*unit.root));
+    }
     // A class reached by a handle is not a child of the runtime tree, so it is
     // not dumped under the root; a runtime tree node is reached by the root
     // walk's Contained recursion instead.
     for (std::size_t i = 0; i < unit.classes.size(); ++i) {
       const ClassId id{static_cast<std::uint32_t>(i)};
-      if (id == unit.root || !unit.classes.IsDefined(id)) {
+      if ((unit.root.has_value() && id == *unit.root) ||
+          !unit.classes.IsDefined(id)) {
         continue;
       }
       const Class& cls = unit.GetClass(id);
@@ -66,6 +69,16 @@ class MirDumper {
       DumpClass(id, cls);
     }
     Dedent();
+    // A rootless unit (a package) owns its callables directly in the namespace.
+    if (!unit.callables.empty()) {
+      Line("Callables:");
+      Indent();
+      for (std::size_t i = 0; i < unit.callables.size(); ++i) {
+        DumpCallable(
+            unit.callables.Get(CallableId{static_cast<std::uint32_t>(i)}), i);
+      }
+      Dedent();
+    }
     if (unit.structs.size() > 0) {
       Line("Structs:");
       Indent();
@@ -485,10 +498,10 @@ class MirDumper {
             },
             [this](const OverridesIntraUnitSlot& o) -> std::string {
               const auto& owner = unit_->GetClass(o.slot_owner);
-              const auto& method = owner.methods.Get(o.slot_id);
+              const auto& callable = owner.callables.Get(o.slot_id);
               return std::format(
-                  "OverridesIntraUnitSlot[Class[{}].{}(Method[{}])]",
-                  o.slot_owner.value, method.name, o.slot_id.value);
+                  "OverridesIntraUnitSlot[Class[{}].{}(Callable[{}])]",
+                  o.slot_owner.value, callable.name, o.slot_id.value);
             }},
         role);
   }
@@ -497,30 +510,25 @@ class MirDumper {
       -> std::string {
     return std::visit(
         Overloaded{
-            [this](const MethodTarget& m) -> std::string {
-              const auto& owner = unit_->GetClass(m.owner);
-              const auto& method = owner.methods.Get(m.slot);
+            [this](const CallableTarget& c) -> std::string {
+              const auto& callable =
+                  unit_->GetClass(c.owner).callables.Get(c.slot);
               return std::format(
-                  R"(method=Class[{}].{} "{}")", m.owner.value, m.slot.value,
-                  method.name);
+                  R"(callable=Class[{}].{} "{}")", c.owner.value, c.slot.value,
+                  callable.name);
             },
             [](const support::BuiltinFn& id) -> std::string {
               return std::format("builtin=\"{}\"", support::BuiltinFnName(id));
-            },
-            [this](const StaticCallableTarget& s) -> std::string {
-              const auto& callable =
-                  unit_->GetClass(s.owner).static_callables.Get(s.slot);
-              return std::format(
-                  R"(static_callable=Class[{}].{} "{}" c_name="{}")",
-                  s.owner.value, s.slot.value, callable.name,
-                  callable.external.foreign_name);
             },
             [](const ImportedRuntimeCallTarget& i) -> std::string {
               return std::format(
                   "imported_runtime=\"{}\"",
                   support::ImportedRuntimeMethodSymbol(i.method));
             },
-        },
+            [](const ExternalUnitCallableTarget& e) -> std::string {
+              return std::format(
+                  R"(external_unit={}::{})", e.unit_name, e.callable_name);
+            }},
         target);
   }
 
@@ -550,10 +558,10 @@ class MirDumper {
             [](const Construct&) -> std::string { return "Construct"; },
             [this](const Virtual& v) -> std::string {
               const auto& owner = unit_->GetClass(v.owner_class);
-              const auto& method = owner.methods.Get(v.slot);
+              const auto& callable = owner.callables.Get(v.slot);
               return std::format(
-                  "Virtual[recv=Expr[{}] slot=Class[{}].{}(Method[{}])]",
-                  v.receiver.value, v.owner_class.value, method.name,
+                  "Virtual[recv=Expr[{}] slot=Class[{}].{}(Callable[{}])]",
+                  v.receiver.value, v.owner_class.value, callable.name,
                   v.slot.value);
             },
         },
@@ -819,12 +827,11 @@ class MirDumper {
     DumpFieldList(s.fields);
     Dedent();
 
-    Line("Methods:");
+    Line("Callables:");
     Indent();
-    for (std::size_t i = 0; i < s.methods.size(); ++i) {
-      const MethodId mid{static_cast<std::uint32_t>(i)};
-      if (mid == s.constructor.method) continue;
-      DumpMethod(s.methods.Get(mid), i);
+    for (std::size_t i = 0; i < s.callables.size(); ++i) {
+      DumpCallable(
+          s.callables.Get(CallableId{static_cast<std::uint32_t>(i)}), i);
     }
     Dedent();
 
@@ -834,18 +841,6 @@ class MirDumper {
       for (std::size_t i = 0; i < s.abi_adapters.size(); ++i) {
         DumpAbiAdapter(
             s.abi_adapters.Get(AbiAdapterId{static_cast<std::uint32_t>(i)}), i);
-      }
-      Dedent();
-    }
-
-    if (!s.static_callables.empty()) {
-      Line("StaticCallables:");
-      Indent();
-      for (std::size_t i = 0; i < s.static_callables.size(); ++i) {
-        DumpStaticCallable(
-            s.static_callables.Get(
-                StaticCallableId{static_cast<std::uint32_t>(i)}),
-            i);
       }
       Dedent();
     }
@@ -861,7 +856,6 @@ class MirDumper {
 
     Line("Constructor:");
     Indent();
-    Line(std::format("Method: #{}", s.constructor.method.value));
     if (s.constructor.base_init.has_value()) {
       Line("BaseInit:");
       Indent();
@@ -887,7 +881,7 @@ class MirDumper {
     }
     Line("Body:");
     Indent();
-    DumpCallableBody(GetConstructorCode(s));
+    DumpCallableBody(s.constructor.code);
     Dedent();
     Dedent();
 
@@ -906,24 +900,58 @@ class MirDumper {
     }
   }
 
-  void DumpStaticCallable(const StaticCallableDecl& c, std::size_t index) {
-    Line(
-        std::format(
-            R"(StaticCallable[{}] "{}" external c_name="{}"{} ret={} : {})",
-            index, c.name, c.external.foreign_name,
-            c.external.is_pure ? " pure" : "",
-            support::DpiScalarAbiName(c.ret_abi),
-            FormatVarType(c.ret_sv_type)));
-    Indent();
-    for (std::size_t i = 0; i < c.params.size(); ++i) {
-      Line(
-          std::format(
-              "Param[{}] {} {} : {}", i,
-              support::DpiDirectionName(c.params[i].direction),
-              support::DpiCarrierName(c.params[i].carrier),
-              FormatVarType(c.params[i].sv_type)));
-    }
-    Dedent();
+  void DumpCallable(const CallableDecl& d, std::size_t index) {
+    std::visit(
+        Overloaded{
+            [&](const InternalCallable& in) {
+              Line(
+                  std::format(
+                      "[{}] \"{}\" : Type[{}]", index, d.name,
+                      in.code.result_type.value));
+              Indent();
+              Line(
+                  std::format(
+                      "Visibility: {}",
+                      d.visibility == CallableVisibility::kPublic
+                          ? "public"
+                          : "internal"));
+              if (d.virtual_dispatch.has_value()) {
+                Line(
+                    std::format(
+                        "VirtualDispatch: {}",
+                        FormatVirtualDispatchRole(*d.virtual_dispatch)));
+              }
+              for (std::size_t i = 0; i < in.code.params.size(); ++i) {
+                const auto& param = in.code.locals.Get(in.code.params[i]);
+                Line(
+                    std::format(
+                        "Param[{}] \"{}\" : Type[{}]", i, param.name,
+                        param.type.value));
+              }
+              DumpCallableBody(in.code);
+              Dedent();
+            },
+            [&](const ExternalCallable& ext) {
+              Line(
+                  std::format(
+                      R"([{}] "{}" external c_name="{}"{}{} ret={} : {})",
+                      index, d.name, ext.external.foreign_name,
+                      ext.external.is_pure ? " pure" : "",
+                      ext.is_task ? " task" : "",
+                      support::DpiScalarAbiName(ext.ret_abi),
+                      FormatVarType(ext.ret_sv_type)));
+              Indent();
+              for (std::size_t i = 0; i < ext.params.size(); ++i) {
+                Line(
+                    std::format(
+                        "Param[{}] {} {} : {}", i,
+                        support::DpiDirectionName(ext.params[i].direction),
+                        support::DpiCarrierName(ext.params[i].carrier),
+                        FormatVarType(ext.params[i].sv_type)));
+              }
+              Dedent();
+            }},
+        d.impl);
   }
 
   void DumpStruct(StructId id, const StructDecl& decl) {
@@ -974,31 +1002,6 @@ class MirDumper {
               "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
     }
     DumpCallableBody(w.code);
-    Dedent();
-  }
-
-  void DumpMethod(const MethodDecl& d, std::size_t index) {
-    Line(
-        std::format(
-            "[{}] \"{}\" : Type[{}]", index, d.name, d.code.result_type.value));
-    Indent();
-    Line(
-        std::format(
-            "Visibility: {}",
-            d.visibility == MethodVisibility::kPublic ? "public" : "internal"));
-    if (d.virtual_dispatch.has_value()) {
-      Line(
-          std::format(
-              "VirtualDispatch: {}",
-              FormatVirtualDispatchRole(*d.virtual_dispatch)));
-    }
-    for (std::size_t i = 0; i < d.code.params.size(); ++i) {
-      const auto& param = d.code.locals.Get(d.code.params[i]);
-      Line(
-          std::format(
-              "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
-    }
-    DumpCallableBody(d.code);
     Dedent();
   }
 

@@ -21,9 +21,11 @@ non-conforming code, not as a relaxation of the contract.
   units.
 - The set of inputs one unit's emission may depend on: its own MIR, the interfaces of the units it
   instantiates, and the runtime SDK.
-- The contract that a cross-unit reference is realized at construction through the SDK / object
-  graph, and that the referrer's emitted artifact never embeds another unit's storage layout and
-  never names a unit it does not instantiate.
+- The contract that a cross-unit reference into another unit's per-instance layout is realized at
+  construction through the SDK / object graph, that a cross-unit call of a package's receiver-less
+  callable (which has no per-instance layout) is instead a direct link-time symbol, and that either
+  way the referrer's emitted artifact never embeds another unit's storage layout and never names a
+  unit it neither instantiates nor calls.
 - The role of the runtime SDK as the substrate that stands in for link-time symbol resolution and
   (under LLVM) intrinsics.
 
@@ -42,11 +44,13 @@ non-conforming code, not as a relaxation of the contract.
    each unit's code as a self-contained artifact. No emitted artifact contains the bodies of more
    than one unit, and none enumerates "all units." The program is formed by linking the per-unit
    artifacts. This is what keeps compilation parallel and incremental (`north_star.md` inv 3, 4).
-2. **A unit's emission depends only on itself, the interfaces it instantiates, and the SDK.** The
-   inputs to emitting unit U are: U's own MIR; the interface (name, parameters, ports) of each unit
-   U instantiates; and the runtime SDK. U's artifact never depends on a unit it does not
-   instantiate, and never on another unit's body or internal layout (`compilation_unit_model.md` inv
-   8).
+2. **A unit's emission depends only on itself, the interfaces of the units it references, and the
+   SDK.** The inputs to emitting unit U are: U's own MIR; the interface (name, parameters, ports for
+   an instantiated unit; declared callables for a called package) of each unit U references -- one
+   it instantiates, or one it calls a receiver-less callable of (LRM 26.3); and the runtime SDK. U's
+   artifact never depends on a unit it neither instantiates nor calls, and never on another unit's
+   body or internal layout (`compilation_unit_model.md` inv 8, which already scopes this to a unit U
+   "instantiates or references").
 3. **The runtime SDK is the link-time-resolution substrate.** Cross-unit operations the referrer
    cannot resolve from its own inputs are expressed as SDK operations. In the C++ backend the SDK is
    the runtime library; under LLVM its operations become intrinsics the linker resolves. A backend
@@ -95,9 +99,11 @@ non-conforming code, not as a relaxation of the contract.
 - An emitted artifact that contains more than one unit's bodies, or that enumerates all units (a
   global "wiring" file). This is the canonical violation: it serializes otherwise-independent
   compilation and reintroduces an undeclared whole-design dependency.
-- A referrer's artifact that names, includes, or casts to the type of a unit it does not instantiate
-  -- in particular, an opaque-segment realization naming the target unit's internal type, member, or
-  field.
+- A referrer's artifact that names, includes, or casts to the type of a unit it neither instantiates
+  nor calls -- in particular, an opaque-segment realization naming the target unit's internal type,
+  member, or field. Naming a called package's own declared callable is not this shape: a package
+  exposes only namespace-level declarations and no instance layout, so a caller reaches its callable
+  by the same by-name link every ordinary symbol uses, never by the target's internal layout.
 - Embedding another unit's storage offset in the referrer's own emitted output. An opaque segment is
   by-name through the SDK; a layout-visible segment uses a stable in-artifact member identity, not
   an offset.
@@ -140,6 +146,15 @@ resolve code, not as type payload -- `backend_contract.md` keeps render mechanic
 in `top`'s artifact. The final segment (`child -> x`) is opaque because `x` lives in `child`'s unit.
 The route alternates typed and opaque segments cleanly; the sealed endpoint is one access point
 regardless.
+
+**Cross-unit package call.** `r = pkg::add_base(23);`, where `pkg` is a package the caller neither
+instantiates nor owns. Unlike the references above, this reaches no object and no per-instance cell:
+a package has no instance layout, only namespace-level declarations, so its callable is an ordinary
+link-time symbol. The caller's artifact renders the direct qualified call and includes the package's
+own emitted header; the linker binds the symbol. There is no runtime object-graph traversal and so
+no SDK step -- the SDK exists to resolve a reference into another unit's per-instance layout, which
+a package does not have. This is the one cross-unit reference realized by a plain linked name rather
+than the SDK, and it is sound precisely because there is no instance identity to resolve.
 
 Any artifact that aggregates multiple units' bodies into one is forbidden, however a build step
 packages the emitted sources: the per-unit artifact boundary and the segment-classification rules

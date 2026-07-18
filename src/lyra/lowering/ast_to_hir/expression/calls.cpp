@@ -17,6 +17,7 @@
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -164,6 +165,23 @@ auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
     return support::ImportedRuntimeMethod::kProcessResume;
   }
   return std::nullopt;
+}
+
+// The package a subroutine is declared directly in (LRM 26.2), or null when the
+// subroutine belongs to this compilation unit. A package subroutine's target
+// lives across the unit boundary and is reached by name, not through an
+// enclosing-scope binding of this unit.
+auto EnclosingPackage(const slang::ast::SubroutineSymbol& sym)
+    -> const slang::ast::PackageSymbol* {
+  const slang::ast::Scope* scope = sym.getParentScope();
+  if (scope == nullptr) {
+    return nullptr;
+  }
+  const slang::ast::Symbol& owner = scope->asSymbol();
+  if (owner.kind != slang::ast::SymbolKind::Package) {
+    return nullptr;
+  }
+  return &owner.as<slang::ast::PackageSymbol>();
 }
 
 }  // namespace
@@ -621,6 +639,33 @@ auto LowerCallExpr(
                         .hops = *import_hops, .id = import_binding->import_id},
                 .arguments = std::move(arg_ids),
             },
+        .span = span,
+    };
+  }
+
+  // A subroutine declared in a package belongs to another compilation unit
+  // (LRM 26.3). It is reached by name across the unit boundary rather than
+  // through an enclosing-scope binding of this unit.
+  if (const auto* pkg = EnclosingPackage(*sym)) {
+    for (const auto* formal : sym->getArguments()) {
+      if (formal->direction != slang::ast::ArgumentDirection::In) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "package subroutine with output / inout / ref arguments is not yet "
+            "supported");
+      }
+    }
+    auto result_type = unit_lowerer.InternType(*call.type, span);
+    if (!result_type) return std::unexpected(std::move(result_type.error()));
+    return hir::Expr{
+        .type = *result_type,
+        .data =
+            hir::CallExpr{
+                .callee =
+                    hir::ExternalUnitSubroutineRef{
+                        .unit_name = std::string{pkg->name},
+                        .subroutine_name = std::string{sym->name}},
+                .arguments = std::move(arg_ids)},
         .span = span,
     };
   }

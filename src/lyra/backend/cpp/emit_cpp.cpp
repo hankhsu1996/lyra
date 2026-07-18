@@ -38,7 +38,7 @@ auto RenderField(
     const ScopeView& ctor_view, const mir::FieldDecl& field, std::size_t indent)
     -> std::string {
   const auto& unit = ctor_view.Unit();
-  const std::string type = RenderTypeAsCpp(unit, ctor_view.Class(), field.type);
+  const std::string type = RenderTypeAsCpp(unit, field.type);
   return std::format("{}{} {}{{}};\n", Indent(indent), type, field.name);
 }
 
@@ -56,22 +56,22 @@ auto RenderFieldList(
   return out;
 }
 
-auto RenderMethodParam(
-    const mir::CompilationUnit& unit, const mir::Class& s,
-    const mir::LocalDecl& param) -> std::string {
+auto RenderCallableParam(
+    const mir::CompilationUnit& unit, const mir::LocalDecl& param)
+    -> std::string {
   // Every formal is a value parameter: an `input` by value (LRM 13.5.1), a
   // `ref` / `const ref` whose `RefType` already renders as `(const) Ref<T>` so
   // the reference value carries the aliasing (LRM 13.5.2). `output` / `inout`
   // are not parameters -- they ride the completion payload.
-  return std::format("{} {}", RenderTypeAsCpp(unit, s, param.type), param.name);
+  return std::format("{} {}", RenderTypeAsCpp(unit, param.type), param.name);
 }
 
-// The C++ specifier this method's dispatch role prefixes its declaration
-// with: `virtual` when the method introduces a new dispatch slot on this
+// The C++ specifier this callable's dispatch role prefixes its declaration
+// with: `virtual` when the callable introduces a new dispatch slot on this
 // class, empty otherwise; the source of virtualness for an override is the
 // slot the base already declares, which the `override` suffix records
 // separately.
-auto VirtualPrefix(const mir::MethodDecl& m) -> std::string_view {
+auto VirtualPrefix(const mir::CallableDecl& m) -> std::string_view {
   if (!m.virtual_dispatch.has_value()) return "";
   if (std::holds_alternative<mir::IntroducesVirtualSlot>(*m.virtual_dispatch)) {
     return "virtual ";
@@ -79,11 +79,11 @@ auto VirtualPrefix(const mir::MethodDecl& m) -> std::string_view {
   return "";
 }
 
-// The trailing specifier attached after the return type when this method
+// The trailing specifier attached after the return type when this callable
 // fills an inherited dispatch slot: `override` records that the base's slot
 // resolves through this implementation, so a name-only compilation cannot
 // silently disagree with the intended override target.
-auto OverrideSuffix(const mir::MethodDecl& m) -> std::string_view {
+auto OverrideSuffix(const mir::CallableDecl& m) -> std::string_view {
   if (!m.virtual_dispatch.has_value()) return "";
   if (std::holds_alternative<mir::IntroducesVirtualSlot>(*m.virtual_dispatch)) {
     return "";
@@ -91,28 +91,31 @@ auto OverrideSuffix(const mir::MethodDecl& m) -> std::string_view {
   return " override";
 }
 
-// The renderer for a class instance method: a C++ instance member function.
-// `this` is what MIR calls `self`, seeded through a one-line adapter so the
-// body's expressions resolve receiver-relative references uniformly. The
-// method's dispatch role decorates the declaration with `virtual` or
-// `override` where applicable.
-auto RenderMethod(
+// The renderer for a class-owned callable -- an instance method, a process or
+// lifecycle body. Each is a C++ instance member function: `this` is what MIR
+// calls `self`, seeded through a one-line adapter so the body's expressions
+// resolve receiver-relative references uniformly. The callable's dispatch role
+// decorates the declaration with `virtual` or `override` where applicable. A
+// namespace's receiver-less callable renders through the free-function path
+// instead.
+auto RenderClassCallable(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
-    const mir::Class& s, const mir::MethodDecl& m, std::size_t indent)
+    const mir::Class& s, const mir::CallableDecl& m, std::size_t indent)
     -> std::string {
+  const mir::CallableCode& code = std::get<mir::InternalCallable>(m.impl).code;
   const ScopeView body_view = (parent_struct_view == nullptr)
-                                  ? ScopeView::ForRoot(unit, s, m.code)
-                                  : parent_struct_view->WithClass(s, m.code);
+                                  ? ScopeView::ForRoot(unit, s, code)
+                                  : parent_struct_view->WithClass(s, code);
 
-  const std::string ret = RenderTypeAsCpp(unit, s, m.code.result_type);
-  const mir::LocalId self_local = m.code.params[0];
-  const auto& self_decl = m.code.locals.Get(self_local);
-  const std::string self_type = RenderTypeAsCpp(unit, s, self_decl.type);
+  const std::string ret = RenderTypeAsCpp(unit, code.result_type);
+  const mir::LocalId self_local = code.params[0];
+  const auto& self_decl = code.locals.Get(self_local);
+  const std::string self_type = RenderTypeAsCpp(unit, self_decl.type);
 
   std::string sig = std::format("{}auto {}(", VirtualPrefix(m), m.name);
-  for (std::size_t i = 1; i < m.code.params.size(); ++i) {
+  for (std::size_t i = 1; i < code.params.size(); ++i) {
     if (i != 1) sig += ", ";
-    sig += RenderMethodParam(unit, s, m.code.locals.Get(m.code.params[i]));
+    sig += RenderCallableParam(unit, code.locals.Get(code.params[i]));
   }
   sig += std::format(") -> {}{}", ret, OverrideSuffix(m));
 
@@ -137,11 +140,11 @@ auto RenderAbiAdapter(
                                   ? ScopeView::ForRoot(unit, s, a.code)
                                   : parent_struct_view->WithClass(s, a.code);
 
-  const std::string ret = RenderTypeAsCpp(unit, s, a.code.result_type);
+  const std::string ret = RenderTypeAsCpp(unit, a.code.result_type);
   std::string sig = std::format("static auto {}(", a.name);
   for (std::size_t i = 0; i < a.code.params.size(); ++i) {
     if (i != 0) sig += ", ";
-    sig += RenderMethodParam(unit, s, a.code.locals.Get(a.code.params[i]));
+    sig += RenderCallableParam(unit, a.code.locals.Get(a.code.params[i]));
   }
   sig += std::format(") -> {}", ret);
 
@@ -177,9 +180,9 @@ auto RenderConstructor(
   // so a body-local `self` reference resolves the same way it does in every
   // other method render.
   const auto& unit = scope_view.Unit();
-  const auto& ctor_code = mir::GetConstructorCode(s);
+  const auto& ctor_code = s.constructor.code;
   const auto render_typed_name = [&](mir::TypeId type, std::string_view name) {
-    return std::format("{} {}", RenderTypeAsCpp(unit, s, type), name);
+    return std::format("{} {}", RenderTypeAsCpp(unit, type), name);
   };
 
   std::vector<std::string> sig_args;
@@ -250,14 +253,14 @@ auto RenderConstructor(
       RenderBlockStatements(scope_view, indent + 1));
 }
 
-auto VisibilityKeyword(mir::MethodVisibility visibility) -> std::string_view {
+auto VisibilityKeyword(mir::CallableVisibility visibility) -> std::string_view {
   switch (visibility) {
-    case mir::MethodVisibility::kPublic:
+    case mir::CallableVisibility::kPublic:
       return "public";
-    case mir::MethodVisibility::kInternal:
+    case mir::CallableVisibility::kInternal:
       return "private";
   }
-  throw InternalError("VisibilityKeyword: unknown MethodVisibility");
+  throw InternalError("VisibilityKeyword: unknown CallableVisibility");
 }
 
 // A compiler-generated struct emits as a plain struct of value-init fields. It
@@ -282,10 +285,10 @@ auto RenderStaticConstant(
     const ScopeView& parent_view, const mir::Class& s,
     const mir::StaticConstantDecl& c, std::size_t indent) -> std::string {
   const ScopeView view =
-      parent_view.WithClass(s, mir::GetConstructorCode(s)).WithBlock(c.body);
+      parent_view.WithClass(s, s.constructor.code).WithBlock(c.body);
   return std::format(
       "\n{0}static constexpr {1} {2} = {3};\n", Indent(indent),
-      RenderTypeAsCpp(parent_view.Unit(), s, c.type), c.name,
+      RenderTypeAsCpp(parent_view.Unit(), c.type), c.name,
       RenderExpr(view, view.Expr(c.value)));
 }
 
@@ -297,8 +300,8 @@ auto RenderScopeAsClass(
   // class (one hop above the child).
   const ScopeView this_anchor =
       (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, mir::GetConstructorCode(s))
-          : parent_struct_view->WithClass(s, mir::GetConstructorCode(s));
+          ? ScopeView::ForRoot(unit, s, s.constructor.code)
+          : parent_struct_view->WithClass(s, s.constructor.code);
 
   std::string out;
   out += Indent(indent) + "class " + ToCppName(s.name);
@@ -335,35 +338,37 @@ auto RenderScopeAsClass(
   }
   out += RenderFieldList(this_anchor, s.fields, indent + 1);
 
-  // Each method declares its access -- a class instance method is the object's
-  // public callable surface, a scope's processes and lifecycle hooks are
-  // internal -- and the access specifier follows that stated visibility,
-  // coalescing a run of methods that share one. The ctor lives in the same
-  // method storage but is emitted separately with C++ mem-init-list syntax,
-  // so it is skipped here.
-  std::optional<mir::MethodVisibility> open_section;
-  for (std::size_t i = 0; i < s.methods.size(); ++i) {
-    const mir::MethodId mid{static_cast<std::uint32_t>(i)};
-    if (mid == s.constructor.method) continue;
-    const auto& sub = s.methods.Get(mid);
-    if (open_section != sub.visibility) {
-      open_section = sub.visibility;
+  // Each callable declares its access -- a class instance method is the
+  // object's public callable surface, a scope's processes and lifecycle hooks
+  // are internal -- and the access specifier follows that stated visibility,
+  // coalescing a run of callables that share one. The constructor is not in
+  // this arena; it was emitted above with C++ mem-init-list syntax.
+  std::optional<mir::CallableVisibility> open_section;
+  for (std::size_t i = 0; i < s.callables.size(); ++i) {
+    const mir::CallableId cid{static_cast<std::uint32_t>(i)};
+    const auto& callable = s.callables.Get(cid);
+    // An external (DPI-C import) callable is a global `extern "C"` symbol, not
+    // a class member; it is emitted as a prototype outside the class.
+    if (!std::holds_alternative<mir::InternalCallable>(callable.impl)) continue;
+    if (open_section != callable.visibility) {
+      open_section = callable.visibility;
       out += std::format(
-          "\n{} {}:\n", Indent(indent), VisibilityKeyword(sub.visibility));
+          "\n{} {}:\n", Indent(indent), VisibilityKeyword(callable.visibility));
     }
     out += "\n";
-    out += RenderMethod(parent_struct_view, unit, s, sub, indent + 1);
+    out +=
+        RenderClassCallable(parent_struct_view, unit, s, callable, indent + 1);
   }
 
   // The class's runtime-callback adapters. Each renders as a static member
   // whose address decays to a plain function pointer for the runtime
   // callback table; the class never exposes them on its public surface.
   if (!s.abi_adapters.empty()) {
-    if (open_section != mir::MethodVisibility::kInternal) {
-      open_section = mir::MethodVisibility::kInternal;
+    if (open_section != mir::CallableVisibility::kInternal) {
+      open_section = mir::CallableVisibility::kInternal;
       out += std::format(
           "\n{} {}:\n", Indent(indent),
-          VisibilityKeyword(mir::MethodVisibility::kInternal));
+          VisibilityKeyword(mir::CallableVisibility::kInternal));
     }
     for (std::size_t i = 0; i < s.abi_adapters.size(); ++i) {
       const auto& a =
@@ -399,14 +404,18 @@ auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
   for (std::size_t i = 0; i < unit.classes.size(); ++i) {
     const mir::ClassId id{static_cast<std::uint32_t>(i)};
     if (!unit.classes.IsDefined(id)) continue;
-    for (const auto& callable : unit.GetClass(id).static_callables) {
+    for (const auto& callable : unit.GetClass(id).callables) {
+      const auto* ext = std::get_if<mir::ExternalCallable>(&callable.impl);
+      if (ext == nullptr) {
+        continue;
+      }
       std::string params;
-      for (std::size_t p = 0; p < callable.params.size(); ++p) {
+      for (std::size_t p = 0; p < ext->params.size(); ++p) {
         if (p != 0) params += ", ";
         const bool writes_back =
-            support::DpiDirectionWritesBack(callable.params[p].direction);
-        if (const auto* scalar = std::get_if<support::ScalarCarrier>(
-                &callable.params[p].carrier)) {
+            support::DpiDirectionWritesBack(ext->params[p].direction);
+        if (const auto* scalar =
+                std::get_if<support::ScalarCarrier>(&ext->params[p].carrier)) {
           // A by-value scalar crosses by value for input, by pointer for a
           // writeback direction.
           params += std::string{DpiScalarCarrierCppType(scalar->abi)};
@@ -415,18 +424,17 @@ auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
           // A canonical vector always crosses by pointer to its chunk buffer;
           // an input is read-only (`const`).
           const auto& vec =
-              std::get<support::VectorCarrier>(callable.params[p].carrier);
+              std::get<support::VectorCarrier>(ext->params[p].carrier);
           if (!writes_back) params += "const ";
           params += vec.four_state ? "svLogicVecVal*" : "svBitVecVal*";
         }
       }
       const std::string_view ret_type =
-          callable.is_task
-              ? DpiScalarCarrierCppType(support::DpiScalarAbi::kInt)
-              : DpiScalarCarrierCppType(callable.ret_abi);
+          ext->is_task ? DpiScalarCarrierCppType(support::DpiScalarAbi::kInt)
+                       : DpiScalarCarrierCppType(ext->ret_abi);
       out += std::format(
                  R"(extern "C" {} {}({});)", ret_type,
-                 callable.external.foreign_name, params) +
+                 ext->external.foreign_name, params) +
              "\n";
     }
   }
@@ -436,14 +444,22 @@ auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
 auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
     -> std::vector<std::string> {
   std::vector<std::string> names;
+  const auto add = [&](const std::string& name) {
+    if (std::ranges::find(names, name) == names.end()) {
+      names.push_back(name);
+    }
+  };
+  // A unit an instance is built from names its unit through the child object's
+  // `ExternalUnitObjectType`; a unit a receiver-less callable is called from
+  // names its unit in the call-dependency list, since a call interns no such
+  // type. Both are external units this unit's artifact includes.
   for (const auto& t : unit.types) {
-    const auto* ext = std::get_if<mir::ExternalUnitObjectType>(&t.data);
-    if (ext == nullptr) {
-      continue;
+    if (const auto* ext = std::get_if<mir::ExternalUnitObjectType>(&t.data)) {
+      add(ext->unit_name);
     }
-    if (std::ranges::find(names, ext->unit_name) == names.end()) {
-      names.push_back(ext->unit_name);
-    }
+  }
+  for (const std::string& name : unit.external_callable_units) {
+    add(name);
   }
   return names;
 }
@@ -462,14 +478,14 @@ auto RenderForeignExportWrapper(
     const mir::ForeignExportWrapper& w) -> std::string {
   const ScopeView body_view = ScopeView::ForRoot(unit, s, w.code);
   const mir::LocalDecl& self_decl = w.code.locals.Get(w.self_local);
-  const std::string self_type = RenderTypeAsCpp(unit, s, self_decl.type);
+  const std::string self_type = RenderTypeAsCpp(unit, self_decl.type);
 
   std::string sig = std::format(
-      "extern \"C\" {} {}(", RenderTypeAsCpp(unit, s, w.code.result_type),
+      "extern \"C\" {} {}(", RenderTypeAsCpp(unit, w.code.result_type),
       w.foreign_name);
   for (std::size_t i = 0; i < w.code.params.size(); ++i) {
     if (i != 0) sig += ", ";
-    sig += RenderMethodParam(unit, s, w.code.locals.Get(w.code.params[i]));
+    sig += RenderCallableParam(unit, w.code.locals.Get(w.code.params[i]));
   }
   sig += ")";
 
@@ -499,10 +515,12 @@ auto RenderForeignExportWrappers(const mir::CompilationUnit& unit)
   return out;
 }
 
-auto RenderScopeHeaderFile(
-    const mir::CompilationUnit& unit, const mir::Class& s) -> std::string {
+// The include preamble every emitted unit header shares: the standard library,
+// the Lyra runtime and value libraries the rendered bodies call into, and one
+// include per external unit this unit references (instantiated or called), so a
+// cross-unit name resolves against the other unit's emitted header.
+auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   std::string out;
-  out += "#pragma once\n";
   out += "#include <array>\n";
   out += "#include <cmath>\n";
   out += "#include <cstdint>\n";
@@ -544,12 +562,18 @@ auto RenderScopeHeaderFile(
   for (const auto& name : CollectExternalUnitNames(unit)) {
     out += std::format("#include \"{}.hpp\"\n", ToCppName(name));
   }
-  out += "\n";
-  if (const std::string foreign_decls = RenderForeignImportDeclarations(unit);
-      !foreign_decls.empty()) {
-    out += foreign_decls;
-    out += "\n";
-  }
+  return out;
+}
+
+// The unit's named type definitions, rendered as C++ definitions: each enum in
+// the unit's type universe as an `Enum<>` class under its source name. A pure
+// typedef (a scalar alias, a struct alias) needs no definition -- it resolved
+// to its underlying type before MIR, so it is not a distinct type here. A
+// caller places the result inside the unit's C++ peer: a class's header region
+// for a rooted unit, the namespace block for a rootless one.
+auto RenderUnitTypeDeclarations(const mir::CompilationUnit& unit)
+    -> std::string {
+  std::string out;
   bool any_enum = false;
   for (std::size_t i = 0; i < unit.types.size(); ++i) {
     const mir::TypeId type_id{static_cast<std::uint32_t>(i)};
@@ -557,7 +581,7 @@ auto RenderScopeHeaderFile(
         std::get_if<mir::EnumType>(&unit.types.Get(type_id).data);
     if (enum_type == nullptr) continue;
     any_enum = true;
-    const auto class_name = RenderEnumClassName(s, type_id);
+    const auto class_name = RenderEnumClassName(unit, type_id);
     const auto& base = enum_type->base;
     out += std::format(
         "class {} final : public lyra::value::Enum<{}> {{\n", class_name,
@@ -578,19 +602,21 @@ auto RenderScopeHeaderFile(
   if (any_enum) {
     out += "\n";
   }
-  // SV `typedef <target> <alias>;` -> C++ `using <alias> = <target>;`. Skip
-  // aliases whose name already matches the emitted class (the first typedef
-  // for a given target supplies the class name itself).
-  bool any_alias = false;
-  for (const auto& alias : s.type_aliases) {
-    std::string target = RenderTypeAsCpp(unit, s, alias.target);
-    if (alias.name == target) continue;
-    out += std::format("using {} = {};\n", alias.name, target);
-    any_alias = true;
-  }
-  if (any_alias) {
+  return out;
+}
+
+auto RenderScopeHeaderFile(
+    const mir::CompilationUnit& unit, const mir::Class& s) -> std::string {
+  std::string out;
+  out += "#pragma once\n";
+  out += RenderUnitIncludes(unit);
+  out += "\n";
+  if (const std::string foreign_decls = RenderForeignImportDeclarations(unit);
+      !foreign_decls.empty()) {
+    out += foreign_decls;
     out += "\n";
   }
+  out += RenderUnitTypeDeclarations(unit);
 
   // A SystemVerilog class is a free-standing registry object with no structural
   // parent, so it is not reached by the scope tree's `contained` walk. Emit
@@ -631,11 +657,58 @@ auto RenderScopeHeaderFile(
   return out;
 }
 
+// A callable the unit's namespace owns, rendered as a free function (LRM 26.3
+// for a package): no receiver, no enclosing class, so its body renders against
+// a classless scope view and its types resolve against the namespace's own
+// declarations. `inline` because the definition sits in the header every caller
+// includes.
+auto RenderNamespaceCallable(
+    const mir::CompilationUnit& unit, const std::string& name,
+    const mir::CallableCode& code) -> std::string {
+  const ScopeView body_view = ScopeView::ForNamespace(unit, code);
+  const std::string ret = RenderTypeAsCpp(unit, code.result_type);
+  std::string sig = std::format("inline auto {}(", name);
+  for (std::size_t i = 0; i < code.params.size(); ++i) {
+    if (i != 0) sig += ", ";
+    sig += RenderCallableParam(unit, code.locals.Get(code.params[i]));
+  }
+  sig += std::format(") -> {}", ret);
+
+  std::string out;
+  out += std::format("{} {{\n", sig);
+  out += RenderBlockStatements(body_view, 1);
+  out += "}\n";
+  return out;
+}
+
+// A unit whose root is a namespace rather than a class (a package): its C++
+// peer is a namespace holding the unit's type declarations and its
+// receiver-less callables. It owns no runtime object, so there is no scope-tree
+// construction.
+auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
+    -> std::string {
+  std::string out;
+  out += "#pragma once\n";
+  out += RenderUnitIncludes(unit);
+  out += "\n";
+  out += std::format("namespace {} {{\n\n", ToCppName(unit.name));
+  out += RenderUnitTypeDeclarations(unit);
+  for (std::size_t i = 0; i < unit.callables.size(); ++i) {
+    const auto& callable =
+        unit.callables.Get(mir::CallableId{static_cast<std::uint32_t>(i)});
+    const auto& code = std::get<mir::InternalCallable>(callable.impl).code;
+    out += RenderNamespaceCallable(unit, callable.name, code);
+    out += "\n";
+  }
+  out += std::format("}}  // namespace {}\n", ToCppName(unit.name));
+  return out;
+}
+
 auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
-  const auto& root_class = root.GetClass(root.root);
+  const auto& root_class = root.GetClass(*root.root);
   const std::string root_cpp_name = ToCppName(root_class.name);
   const std::string segment_cpp =
-      RenderTypeAsCpp(root, root_class, root.builtins.hierarchy_segment);
+      RenderTypeAsCpp(root, root.builtins.hierarchy_segment);
 
   // Every invariant host-boundary concern -- argv parsing, engine
   // construction, bind, scheduler drive, exception mapping -- lives in
@@ -677,10 +750,14 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
 }  // namespace
 
 auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact {
-  const auto& root = unit.GetClass(unit.root);
+  // A rooted unit names its top class as the root and emits as that class; a
+  // rootless unit has no root class and emits as a namespace of its type
+  // declarations and free functions.
   return {
-      .relpath = std::format("{}.hpp", ToCppName(root.name)),
-      .content = RenderScopeHeaderFile(unit, root)};
+      .relpath = std::format("{}.hpp", ToCppName(unit.name)),
+      .content = unit.root.has_value()
+                     ? RenderScopeHeaderFile(unit, unit.GetClass(*unit.root))
+                     : RenderNamespaceUnitHeaderFile(unit)};
 }
 
 auto EmitCppHostMain(const mir::CompilationUnit& root) -> CppArtifact {

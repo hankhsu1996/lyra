@@ -185,32 +185,37 @@ auto LowerCallTarget(
             }
             return std::visit(
                 Overloaded{
-                    [&](const mir::MethodTarget& m)
+                    [&](const mir::CallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
+                      // An internal callable lowers to a direct method call; a
+                      // DPI-C import (external) to its foreign symbol. The
+                      // target names its own owner, so either is reached
+                      // without a receiver to recover it from.
+                      const mir::CallableDecl& decl =
+                          unit.Mir().GetClass(t.owner).callables.Get(t.slot);
+                      if (const auto* ext =
+                              std::get_if<mir::ExternalCallable>(&decl.impl)) {
+                        return lir::CallTarget{lir::ForeignTarget{
+                            .symbol = ext->external.foreign_name}};
+                      }
                       if (qualifier.has_value()) {
                         return Unsupported(
                             "mir_to_lir: a qualified method call is not yet "
                             "lowerable to LIR");
                       }
                       return lir::CallTarget{lir::MethodTarget{
-                          .method = lir::MethodRef{
-                              .class_id = lir::ClassId{m.owner.value},
-                              .index = m.slot.value}}};
+                          .method = unit.MethodSlot(t.owner, t.slot)}};
                     },
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{
                           lir::BuiltinTarget{.fn = fn, .qualifier = qualifier}};
                     },
-                    [&](const mir::StaticCallableTarget& s)
+                    [&](const mir::ExternalUnitCallableTarget&)
                         -> diag::Result<lir::CallTarget> {
-                      // The target names its own owner, so the symbol is
-                      // reached without a receiver to recover it from.
-                      const mir::StaticCallableDecl& decl =
-                          unit.Mir().GetClass(s.owner).static_callables.Get(
-                              s.slot);
-                      return lir::CallTarget{lir::ForeignTarget{
-                          .symbol = decl.external.foreign_name}};
+                      return Unsupported(
+                          "mir_to_lir: a cross-unit package subroutine call is "
+                          "not yet lowerable to LIR");
                     },
                     [&](const mir::ImportedRuntimeCallTarget&)
                         -> diag::Result<lir::CallTarget> {
@@ -849,10 +854,10 @@ auto FunctionLowerer::LowerCall(
   if (std::holds_alternative<mir::CoroutineType>(
           unit_->Mir().types.Get(type).data)) {
     const auto* direct = std::get_if<mir::Direct>(&call.callee);
-    const auto* method = direct != nullptr
-                             ? std::get_if<mir::MethodTarget>(&direct->target)
-                             : nullptr;
-    if (method == nullptr) {
+    const auto* callable =
+        direct != nullptr ? std::get_if<mir::CallableTarget>(&direct->target)
+                          : nullptr;
+    if (callable == nullptr) {
       return Unsupported(
           "mir_to_lir: a coroutine value from a non-method callee is not yet "
           "lowerable to LIR");
@@ -861,9 +866,7 @@ auto FunctionLowerer::LowerCall(
     ctor_args.reserve(args.size() + 1);
     ctor_args.emplace_back(
         lir::FuncRef{
-            .method = lir::MethodRef{
-                .class_id = lir::ClassId{method->owner.value},
-                .index = method->slot.value}});
+            .method = unit_->MethodSlot(callable->owner, callable->slot)});
     for (lir::Operand& arg : args) {
       ctor_args.emplace_back(std::move(arg));
     }

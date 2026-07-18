@@ -133,7 +133,7 @@ auto RenderIntegerLiteralExpr(
   auto body = RenderPackedArrayIntegerLiteral(ty.AsIntegralPacked(), lit.value);
   if (ty.IsEnum()) {
     return std::format(
-        "{}{{{}}}", RenderEnumClassName(view.Class(), expr.type), body);
+        "{}{{{}}}", RenderEnumClassName(view.Unit(), expr.type), body);
   }
   return body;
 }
@@ -304,8 +304,7 @@ auto RenderIntCastExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::IntCastExpr& cast)
     -> std::string {
   return std::format(
-      "static_cast<{}>({})",
-      RenderTypeAsCpp(view.Unit(), view.Class(), expr.type),
+      "static_cast<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
       RenderExpr(view, view.Expr(cast.operand)));
 }
 
@@ -571,8 +570,7 @@ auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
 auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
     -> std::string {
   return std::format(
-      "{} {}", RenderTypeAsCpp(view.Unit(), view.Class(), bind.type),
-      bind.name);
+      "{} {}", RenderTypeAsCpp(view.Unit(), bind.type), bind.name);
 }
 
 // A struct value renders as C++ aggregate initialization, one designated
@@ -613,8 +611,8 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
   const mir::ClosureDecl& decl = view.Unit().GetClosure(construct.closure);
   const mir::CallableCode& code = decl.invoke;
 
-  const std::string return_clause = std::format(
-      " -> {}", RenderTypeAsCpp(view.Unit(), view.Class(), code.result_type));
+  const std::string return_clause =
+      std::format(" -> {}", RenderTypeAsCpp(view.Unit(), code.result_type));
 
   const ScopeView body_view = view.WithClosure(code);
   const std::string body =
@@ -636,7 +634,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
       }
       const mir::FieldDecl& field = decl.fields.Get(field_id);
       params_text += std::format(
-          "{} {}", RenderTypeAsCpp(view.Unit(), view.Class(), field.type),
+          "{} {}", RenderTypeAsCpp(view.Unit(), field.type),
           ClosureCaptureCppName(decl, field_id));
       args_text += RenderExpr(
           view, view.Expr(construct.field_inits[field_id.value].value));
@@ -725,8 +723,7 @@ auto RenderArrayLiteralExpr(
       },
       container_ty.data);
   std::string out = std::format(
-      "std::array<{}, {}>{{",
-      RenderTypeAsCpp(view.Unit(), view.Class(), elem_type_id),
+      "std::array<{}, {}>{{", RenderTypeAsCpp(view.Unit(), elem_type_id),
       a.elements.size());
   for (std::size_t i = 0; i < a.elements.size(); ++i) {
     if (i != 0) out += ", ";
@@ -742,8 +739,8 @@ auto RenderArrayLiteralExpr(
 auto RenderTupleExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::TupleExpr& t)
     -> std::string {
-  std::string out = std::format(
-      "{}{{", RenderTypeAsCpp(view.Unit(), view.Class(), expr.type));
+  std::string out =
+      std::format("{}{{", RenderTypeAsCpp(view.Unit(), expr.type));
   for (std::size_t i = 0; i < t.components.size(); ++i) {
     if (i != 0) out += ", ";
     out += RenderExpr(view, view.Expr(t.components[i]));
@@ -809,8 +806,8 @@ auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
 auto RenderPointerCastExpr(
     const ScopeView& view, const mir::PointerCastExpr& cast, mir::TypeId dest)
     -> std::string {
-  return "static_cast<" + RenderTypeAsCpp(view.Unit(), view.Class(), dest) +
-         ">(" + RenderExpr(view, view.Expr(cast.operand)) + ")";
+  return "static_cast<" + RenderTypeAsCpp(view.Unit(), dest) + ">(" +
+         RenderExpr(view, view.Expr(cast.operand)) + ")";
 }
 
 }  // namespace
@@ -926,9 +923,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::UnionExpr& u) -> std::string {
             return std::format(
-                "{}::Make<{}>({})",
-                RenderTypeAsCpp(view.Unit(), view.Class(), expr.type), u.index,
-                RenderExpr(view, view.Expr(u.value)));
+                "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
+                u.index, RenderExpr(view, view.Expr(u.value)));
           },
           [&](const mir::UnionGetExpr& g) -> std::string {
             return std::format(

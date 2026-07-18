@@ -45,9 +45,8 @@ auto RenderLocalDeclStmt(
   const auto& lv = view.Code().locals.Get(s.target);
   const auto& init_expr = view.Block().exprs.Get(s.init);
   return std::format(
-      "{}{} {} = {};\n", Indent(indent),
-      RenderTypeAsCpp(view.Unit(), view.Class(), lv.type), lv.name,
-      RenderExpr(view, init_expr));
+      "{}{} {} = {};\n", Indent(indent), RenderTypeAsCpp(view.Unit(), lv.type),
+      lv.name, RenderExpr(view, init_expr));
 }
 
 auto RenderExprStmt(

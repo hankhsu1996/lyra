@@ -3,8 +3,8 @@
 #include <string>
 #include <variant>
 
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/method_id.hpp"
 
 namespace lyra::mir {
 
@@ -50,13 +50,13 @@ struct IntroducesVirtualSlot {
 
 // A method that overrides a virtual dispatch slot declared by a class of this
 // same compilation unit -- LRM 8.20. The stored (`slot_owner`, `slot_id`) is
-// the slot's canonical identity: the class and method-arena position where
+// the slot's canonical identity: the class and callable-arena position where
 // the slot was originally introduced, invariant across every override in the
 // chain. A call site names the slot in one read; no consumer walks an
 // override chain to derive it.
 struct OverridesIntraUnitSlot {
   ClassId slot_owner;
-  MethodId slot_id;
+  CallableId slot_id;
 
   auto operator==(const OverridesIntraUnitSlot&) const -> bool = default;
 };

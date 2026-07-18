@@ -861,6 +861,32 @@ enough to warrant its own focused review.
       touches how a unit definition is published and filled; it warrants its own review rather than
       riding along with a value-domain or storage cut.
 
+- [ ] R59 -- An enum is a nominal type, the way a struct or a class is. Every other named type
+      carries its name on a nominal declaration reached from the type by id -- a struct's name is
+      `GetStruct(struct_id).name`, a class's is `GetClass(class_id).name` -- so the backend renders
+      both through one uniform lookup. The enum is the lone exception: it is a structurally-interned
+      value type (`EnumType{base, members}`) with no nominal identity and no name. Because it is
+      interned by structure, two identical enum declarations collapse to one type -- contra LRM
+      6.19, where each enum declaration is a distinct type -- so no one source name can live on it.
+      The emitted name is instead a unit-level side lookup keyed by the enum's `TypeId`
+      (`nominal_type_names`), populated by an enum-only branch in the HIR-to-MIR typedef pass and
+      consumed by a dedicated enum-name renderer rather than the uniform struct / class path. That
+      side table is not a stray smell to patch: it is the correct consequence of structural
+      interning -- one shared interned enum backs several typedefs, so it has no single intrinsic
+      name. Target shape: an enum is interned by declaration identity, its name and member set live
+      on a nominal enum declaration reached from the type by id, and `RenderTypeAsCpp` resolves an
+      enum's name the same way it resolves a struct's or a class's; the unit side table, the
+      enum-only typedef branch, and the dedicated enum-name renderer all retire, and distinct enum
+      declarations become distinct types. The enum's value representation -- its base packed shape
+      -- stays intrinsic to the value type (an enum value is a packed integer, not a reference like
+      a struct / class instance), so the integral-packed value helpers that read an enum's base
+      without the unit are untouched; this cut is nominal identity and name, not moving the value
+      representation onto the declaration. **Blocker**: none unlanded, but it is a cross-layer
+      type-interning change -- HIR and MIR both intern enums structurally today, and the source name
+      is currently captured only after canonicalization has stripped the naming typedef, so the name
+      must be resolved at declaration time -- large and cross-cutting enough to warrant its own
+      focused review.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

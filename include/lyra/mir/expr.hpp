@@ -8,14 +8,13 @@
 
 #include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local_ref.hpp"
-#include "lyra/mir/method_id.hpp"
-#include "lyra/mir/static_callable_id.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/struct_construct.hpp"
 #include "lyra/mir/unary_op.hpp"
@@ -127,36 +126,25 @@ struct TypeQualifier {
 
 using ScopeQualifier = std::variant<TypeQualifier>;
 
-// Identity of a class-level static callable at a call site: the class whose
-// associated namespace declares it, and the slot within that class. A
-// receiver-less callable has no receiver to name its owner, so the owner is
-// part of the symbol identity rather than recovered from an operand -- which
-// is what lets a call reach an associated callable of an enclosing class
-// (a DPI-C import declared in the module, called from a generate block) and,
-// later, a static method of another class.
-struct StaticCallableTarget {
-  ClassId owner;
-  StaticCallableId slot;
-
-  auto operator==(const StaticCallableTarget&) const -> bool = default;
-};
-
-// Identity of a concrete instance method: the class whose method arena
-// declares (or implements) the method, and the slot within that arena. Owner
-// is the declaring class, not the receiver's class; the two coincide when the
-// receiver's class declares the method itself and diverge when the method is
-// inherited from a base. A backend reads the slot's name and signature from
-// this stated owner rather than deriving them from the receiver's type.
+// Identity of a concrete callable at a call site: the class whose callable
+// arena declares (or implements) it, and the slot within that arena. Owner is
+// the declaring class, not the receiver's class; the two coincide when the
+// receiver's class declares the callable itself and diverge when it is
+// inherited from a base. A receiver-less callable (a DPI-C import declared in a
+// module, a static class method) has no receiver to recover its owner from, so
+// the owner is part of the symbol identity the same way; the target shape does
+// not split on whether the signature carries `self`. A backend reads the slot's
+// name and signature from this stated owner rather than deriving them from the
+// receiver's type.
 //
-// This target is a concrete direct method identity, and a virtual call site
-// does not name a `MethodTarget`; virtual dispatch is a separate reference
-// form -- a logical dispatch slot -- that a receiver and slot together
-// identify.
-struct MethodTarget {
+// This target is a concrete direct callable identity; a virtual call site does
+// not name a `CallableTarget`; virtual dispatch is a separate reference form --
+// a logical dispatch slot -- that a receiver and slot together identify.
+struct CallableTarget {
   ClassId owner;
-  MethodId slot;
+  CallableId slot;
 
-  auto operator==(const MethodTarget&) const -> bool = default;
+  auto operator==(const CallableTarget&) const -> bool = default;
 };
 
 // The target of a call to a method the runtime library provides for an imported
@@ -170,17 +158,31 @@ struct ImportedRuntimeCallTarget {
   auto operator==(const ImportedRuntimeCallTarget&) const -> bool = default;
 };
 
-// The target of a `Direct` call -- the symbol identity. Four identity spaces:
-// user-declared class methods (`MethodTarget`, an owner-qualified method
-// identity), built-in runtime entries (closed-namespace `BuiltinFn`),
-// class-level static callables (`StaticCallableTarget`, which names its own
-// owner -- a DPI-C import's external symbol, a receiver-less associated
-// callable), and methods the runtime library provides for an imported class
-// (`ImportedRuntimeCallTarget`). None is recovered from the receiver's runtime
-// type.
+// Identity of a receiver-less callable owned by another compilation unit's
+// namespace -- a package function or task (LRM 26.3) reached from this unit.
+// The target lives outside this unit, so it carries no unit-local id: it names
+// the owning unit and the callable by name, resolved against that unit's
+// interface at link time, exactly as `ExternalUnitObjectType` names an
+// instantiated child. A backend renders it as the free qualified form
+// `unit_name::callable_name(args)`.
+struct ExternalUnitCallableTarget {
+  std::string unit_name;
+  std::string callable_name;
+
+  auto operator==(const ExternalUnitCallableTarget&) const -> bool = default;
+};
+
+// The target of a `Direct` call -- the symbol identity. The identity spaces: an
+// owner-qualified callable of this unit (`CallableTarget` -- an instance
+// method, a receiver-less static callable, or a DPI-C import, all one arena), a
+// built-in runtime entry (closed-namespace `BuiltinFn`), a method the runtime
+// library provides for an imported class (`ImportedRuntimeCallTarget`,
+// LRM 9.7), and a receiver-less callable of another compilation unit
+// (`ExternalUnitCallableTarget`, named across the unit boundary). None is
+// recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
-    MethodTarget, support::BuiltinFn, StaticCallableTarget,
-    ImportedRuntimeCallTarget>;
+    CallableTarget, support::BuiltinFn, ImportedRuntimeCallTarget,
+    ExternalUnitCallableTarget>;
 
 // A direct call to a named symbol. The single shape for every direct
 // invocation -- user method, built-in instance method, type-qualified
@@ -219,7 +221,7 @@ struct Indirect {
 struct Virtual {
   ExprId receiver;
   ClassId owner_class;
-  MethodId slot;
+  CallableId slot;
 };
 
 // Constructs a value of the call's result data type from the positional

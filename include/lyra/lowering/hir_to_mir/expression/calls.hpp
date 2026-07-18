@@ -14,10 +14,10 @@
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/foreign_export_wrapper.hpp"
-#include "lyra/mir/method_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -42,7 +42,7 @@ auto LowerHirCallExpr(
 // the receiver from.
 auto SynthesizeForeignExportWrapper(
     UnitLowerer& module, const WalkFrame& ctor_frame, mir::ClassId class_id,
-    mir::MethodId method_id, const hir::ForeignExportDecl& export_decl,
+    mir::CallableId method_id, const hir::ForeignExportDecl& export_decl,
     std::string instance_name) -> mir::ForeignExportWrapper;
 
 }  // namespace lyra::lowering::hir_to_mir

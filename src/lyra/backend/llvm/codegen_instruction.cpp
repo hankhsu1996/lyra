@@ -76,7 +76,7 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
       use != nullptr &&
       fn_->values.Get(use->value).kind == lir::LocalKind::kPlace;
   if (is_place_local) {
-    address = values_.at(use->value.value);
+    address = values_.at(use->value);
   } else {
     if (step == place.chain.end() ||
         !std::holds_alternative<lir::DerefProjection>(*step)) {
@@ -300,7 +300,7 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
   return std::visit(
       Overloaded{
           [&](const lir::Use& use) -> llvm::Value* {
-            return values_.at(use.value.value);
+            return values_.at(use.value);
           },
           [&](const lir::IntConst& c) -> llvm::Value* {
             return LowerIntConst(c);

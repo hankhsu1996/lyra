@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <unordered_map>
 
 #include <llvm/IR/DerivedTypes.h>
@@ -39,7 +38,7 @@ class CodeGenTypes {
   const lir::CompilationUnit* unit_;
   llvm::PointerType* ptr_ty_;
   llvm::StructType* span_ty_;
-  std::unordered_map<std::uint32_t, llvm::Type*> cache_;
+  std::unordered_map<lir::TypeId, llvm::Type*> cache_;
 };
 
 }  // namespace lyra::backend::llvm_backend

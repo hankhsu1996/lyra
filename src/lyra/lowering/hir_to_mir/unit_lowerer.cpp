@@ -7,19 +7,25 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/callable.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-auto UnitLowerer::Run() -> diag::Result<mir::CompilationUnit> {
-  WalkFrame root_frame;
+auto UnitLowerer::PopulateTypesAndClasses() -> diag::Result<void> {
+  unit_.name = hir_->name;
 
   // Every class identity is minted before any type is translated, so a class
   // handle type resolves to the managed-reference pointee that names it while
@@ -63,6 +69,14 @@ auto UnitLowerer::Run() -> diag::Result<mir::CompilationUnit> {
     auto r = class_lowerer.PopulateBodies();
     if (!r) return std::unexpected(std::move(r.error()));
   }
+  return {};
+}
+
+auto UnitLowerer::RunModule() -> diag::Result<mir::CompilationUnit> {
+  WalkFrame root_frame;
+  if (auto prologue = PopulateTypesAndClasses(); !prologue) {
+    return std::unexpected(std::move(prologue.error()));
+  }
 
   // Two-sweep structural lowering: the first sweep mints every class identity
   // and publishes its shape; the second lowers every body and commits the
@@ -74,6 +88,59 @@ auto UnitLowerer::Run() -> diag::Result<mir::CompilationUnit> {
   if (!body_r) return std::unexpected(std::move(body_r.error()));
 
   unit_.root = *top_r;
+  return std::move(unit_);
+}
+
+auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
+  if (auto prologue = PopulateTypesAndClasses(); !prologue) {
+    return std::unexpected(std::move(prologue.error()));
+  }
+
+  // A package's root scope holds no processes, no structural data, and no
+  // instances -- only its functions and tasks (LRM 26.2). Each lowers to a
+  // receiver-less callable owned by the unit's namespace, so a package produces
+  // no root class and never enters the structural-scope body machinery.
+  // A package function reaches no static storage and no enclosing scope, so it
+  // lowers against an empty storage plan and no enclosing-scope lowerer. The
+  // frame has no owner class, so the produced body carries no `self`.
+  const CallableStoragePlan empty_storage_plan;
+  const hir::StructuralScope& scope = hir_->root_scope;
+
+  // An enum the package declares carries no name of its own, so the typedef
+  // naming it records that name at the unit for the backend to resolve against;
+  // a typedef of an already-named type records nothing (see the same rule in
+  // the structural path).
+  for (const hir::TypeAliasDecl& alias : scope.type_aliases) {
+    const mir::TypeId target = TranslateType(alias.target);
+    if (std::holds_alternative<mir::EnumType>(unit_.types.Get(target).data)) {
+      unit_.nominal_type_names.try_emplace(target, alias.name);
+    }
+  }
+  // A DPI-C import declared in a package (LRM 35.4) has no lowering here yet;
+  // it would otherwise drop silently, since only the subroutines below are
+  // walked.
+  if (!scope.foreign_imports.empty()) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedExpressionForm,
+        "a DPI-C import declared in a package is not yet supported");
+  }
+  for (std::size_t i = 0; i < scope.structural_subroutines.size(); ++i) {
+    const hir::SubroutineDecl& src = scope.structural_subroutines.Get(
+        hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
+    ProcessLowerer subroutine_lowerer(
+        *this, nullptr, scope.time_resolution, src.body, src.name, WalkFrame{},
+        empty_storage_plan);
+    auto code_or = subroutine_lowerer.Run(src);
+    if (!code_or) return std::unexpected(std::move(code_or.error()));
+    unit_.callables.Add(
+        mir::CallableDecl{
+            .name = src.name,
+            .impl = mir::InternalCallable{.code = *std::move(code_or)},
+            .virtual_dispatch = std::nullopt,
+            .visibility = mir::CallableVisibility::kInternal});
+  }
+
+  unit_.root = std::nullopt;
   return std::move(unit_);
 }
 

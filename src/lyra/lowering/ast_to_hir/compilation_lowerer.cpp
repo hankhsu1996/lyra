@@ -65,7 +65,17 @@ auto LowerUnit(
 
 auto CollectPackages(const LowerCompilationFacts& facts)
     -> std::vector<const slang::ast::PackageSymbol*> {
-  return facts.Compilation().getPackages();
+  // `getPackages` includes the built-in `std` package (LRM 6.7.1); the runtime
+  // provides its contents, so the compiler never lowers or emits it. `std` is a
+  // reserved package name, so matching it excludes exactly the built-in. Only
+  // user-declared packages are compiled.
+  std::vector<const slang::ast::PackageSymbol*> packages;
+  for (const auto* package : facts.Compilation().getPackages()) {
+    if (package->name != "std") {
+      packages.push_back(package);
+    }
+  }
+  return packages;
 }
 
 auto LowerPackageUnit(

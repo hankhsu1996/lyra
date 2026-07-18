@@ -18,12 +18,12 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/method.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -163,7 +163,7 @@ auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
     std::string name, const hir::ContinuousAssign& src)
-    -> diag::Result<mir::MethodDecl> {
+    -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
@@ -257,11 +257,11 @@ auto LowerContinuousAssign(
   code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
-  return mir::MethodDecl{
+  return mir::CallableDecl{
       .name = std::move(name),
-      .code = std::move(code),
+      .impl = mir::InternalCallable{.code = std::move(code)},
       .virtual_dispatch = std::nullopt,
-      .visibility = mir::MethodVisibility::kInternal};
+      .visibility = mir::CallableVisibility::kInternal};
 }
 
 }  // namespace lyra::lowering::hir_to_mir
