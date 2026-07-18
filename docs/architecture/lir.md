@@ -223,14 +223,40 @@ runtime-library call -- the cell's get / set / mutate, because HIR-to-MIR expres
 way -- and lowers as a call, the same as any other. Whether a plain-value member's place becomes a
 load or a store, and at what address, is the physical layer's question, not LIR's.
 
-A member access always yields a place. What the use site does with that place -- read the value it
-holds, write a value into it, or name where it lives -- is the use site's decision, never a property
-of the access. Some storage has no first-class value in LIR at all: a storage cell, a scope, an
-object-tree node. Such a type is address-only, and every operation over it consumes its address, so
-loading or storing a place of that type is a lowering defect. Address-only is a fact about the
-storage object, not about how values are represented: a packed value reached through an opaque
-handle is an ordinary first-class value, and a place holding one is loaded and stored like any
-other. The cell that holds it is what may only be addressed.
+An object member access -- reaching a member of an object through its receiver -- always yields a
+place. What the use site does with that place -- read the value it holds, write a value into it, or
+name where it lives -- is the use site's decision, never a property of the access. Some storage has
+no first-class value in LIR at all: a storage cell, a scope, an object-tree node. Such a type is
+address-only, and every operation over it consumes its address, so loading or storing a place of
+that type is a lowering defect. Address-only is a fact about the storage object, not about how
+values are represented: a packed value reached through an opaque handle is an ordinary first-class
+value, and a place holding one is loaded and stored like any other. The cell that holds it is what
+may only be addressed.
+
+A place denotes independently addressable storage -- storage with an identity of its own -- not
+merely something a source-level assignment can target. Assignability and place-ness are different
+questions: in a value language, `s.b = x` on a struct is assignable but names no independent
+storage, because the struct is a value and `s.b` is a part of it, not a location. So the place
+vocabulary is for mutable, independently addressable storage (a local that needs an address, an
+object member reached through its receiver, the referent of a dereference); a value aggregate is not
+that. An unpacked struct -- the heterogeneous product value (see `mir.md`) -- reached through an
+opaque handle is a first-class value, but its interior is not a place the way an object's members
+are: value semantics forbid mutating a component in place, because the change would be visible
+through every copy of the struct. So a component is reached by value projection, not by an
+addressable sub-place. Reading a component extracts it from the product value; writing a component
+produces a new product value equal to the old one with that component replaced, which is then stored
+whole into the struct's own storage -- a component write is a whole-value store of a functional
+update, uniform whether the struct lives in a local or in an observable cell. This is the
+value-aggregate counterpart of the object member's place: an object member is mutable addressable
+storage, so it is a place loaded and stored in place; a struct component is an immutable value part,
+so it is a pair of value operations, an extract and an insert (the aggregate peers of LLVM's
+`extractvalue` / `insertvalue`). The two look different because the value / reference distinction is
+real, not because one is a special case of the other. The same principle governs the rest of the
+value-aggregate family: a packed slice, a container element, and a union member are value
+sub-accesses, so a sub-write is a functional whole-value update, never a store into an independently
+addressable sub-place -- a static, structural selector (a struct component) may ride a dedicated
+value instruction, a dynamic, runtime-indexed one (a container element) a runtime-library call, but
+the principle that a value sub-write produces a new whole value is the same.
 
 LIR carries the fact that a packed value is two-state or four-state; it does not carry how a
 four-state value is stored. The canonical encoding of a four-state value -- value bits plus a state

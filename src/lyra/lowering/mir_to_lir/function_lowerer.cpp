@@ -123,17 +123,17 @@ auto PlacedLocal(const mir::Block& block, mir::ExprId id)
 // A value type whose runtime realization is an opaque handle into transient
 // storage the boundary releases at each suspension: a packed value (or the
 // enumeration and packed struct/union projections that share its shape), a
-// string, or a real-family value (real / shortreal / realtime). A local of such
-// a type that a suspending body reads across a suspension needs
-// activation-stable storage, because its handle cannot outlive the stretch that
-// produced it. A pointer, a reference, an object handle, or a machine scalar is
-// not one of these -- it is stable across a suspension on its own -- so it is
-// unaffected.
+// string, a real-family value (real / shortreal / realtime), or an unpacked
+// struct product value. A local of such a type that a suspending body reads
+// across a suspension needs activation-stable storage, because its handle
+// cannot outlive the stretch that produced it. A pointer, a reference, an
+// object handle, or a machine scalar is not one of these -- it is stable across
+// a suspension on its own -- so it is unaffected.
 auto IsActivationValueType(const mir::Type& type) -> bool {
   const mir::TypeKind kind = type.Kind();
   return type.IsIntegralPacked() || kind == mir::TypeKind::kString ||
          kind == mir::TypeKind::kReal || kind == mir::TypeKind::kShortReal ||
-         kind == mir::TypeKind::kRealTime;
+         kind == mir::TypeKind::kRealTime || kind == mir::TypeKind::kTuple;
 }
 
 // Marks every local the canonical lowering needs an address for: one that is
@@ -888,6 +888,14 @@ auto FunctionLowerer::LowerCall(
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
+  // A write to a product component is not a place store: the product is an
+  // opaque value, so the component write is a whole-value rebuild stored back
+  // through the product's owner.
+  if (std::holds_alternative<mir::TupleGetExpr>(
+          block.exprs.Get(assign.target).data)) {
+    return LowerComponentAssign(block, assign);
+  }
+
   const lir::TypeId type =
       unit_->TranslateType(block.exprs.Get(assign.target).type);
 
@@ -942,6 +950,177 @@ auto FunctionLowerer::LowerAssign(
   }
   Store(*std::move(place), written);
   return written;
+}
+
+namespace {
+
+struct MutateCell {
+  mir::ExprId cell;
+  mir::ExprId services;
+};
+
+// Detects the observable-cell mutate proxy a partial write to an observable
+// cell roots in -- a dereference of a `kMutate` call -- and returns its cell
+// and services argument expressions. An ordinary place root yields nothing.
+auto MutateCellOf(const mir::Block& block, mir::ExprId id)
+    -> std::optional<MutateCell> {
+  const auto* deref = std::get_if<mir::DerefExpr>(&block.exprs.Get(id).data);
+  if (deref == nullptr) {
+    return std::nullopt;
+  }
+  const auto* call =
+      std::get_if<mir::CallExpr>(&block.exprs.Get(deref->pointer).data);
+  if (call == nullptr) {
+    return std::nullopt;
+  }
+  const auto* direct = std::get_if<mir::Direct>(&call->callee);
+  if (direct == nullptr) {
+    return std::nullopt;
+  }
+  const auto* fn = std::get_if<support::BuiltinFn>(&direct->target);
+  if (fn == nullptr || *fn != support::BuiltinFn::kMutate) {
+    return std::nullopt;
+  }
+  return MutateCell{.cell = call->arguments[0], .services = call->arguments[1]};
+}
+
+}  // namespace
+
+auto FunctionLowerer::ReadWholeValue(const mir::Block& block, mir::ExprId id)
+    -> diag::Result<lir::Operand> {
+  if (const std::optional<MutateCell> mutate = MutateCellOf(block, id)) {
+    auto cell = LowerArgument(block, mutate->cell);
+    if (!cell) {
+      return std::unexpected(std::move(cell.error()));
+    }
+    return Emit(
+        unit_->TranslateType(block.exprs.Get(id).type),
+        lir::CallInstr{
+            .target =
+                lir::BuiltinTarget{
+                    .fn = support::BuiltinFn::kGet, .qualifier = std::nullopt},
+            .args = {*std::move(cell)}});
+  }
+  return LowerExpr(block, id);
+}
+
+auto FunctionLowerer::WriteWholeValue(
+    const mir::Block& block, mir::ExprId id, lir::Operand value)
+    -> diag::Result<lir::Operand> {
+  if (const std::optional<MutateCell> mutate = MutateCellOf(block, id)) {
+    auto cell = LowerArgument(block, mutate->cell);
+    if (!cell) {
+      return std::unexpected(std::move(cell.error()));
+    }
+    auto services = LowerExpr(block, mutate->services);
+    if (!services) {
+      return std::unexpected(std::move(services.error()));
+    }
+    Emit(
+        unit_->VoidType(),
+        lir::CallInstr{
+            .target =
+                lir::BuiltinTarget{
+                    .fn = support::BuiltinFn::kSet, .qualifier = std::nullopt},
+            .args = {*std::move(cell), *std::move(services), value}});
+    return value;
+  }
+  if (const std::optional<lir::Operand> handle =
+          ActivationValueHandleForTarget(block, id)) {
+    StoreActivationValue(*handle, value);
+    return value;
+  }
+  auto place = LowerPlace(block, id);
+  if (!place) {
+    return std::unexpected(std::move(place.error()));
+  }
+  Store(*std::move(place), value);
+  return value;
+}
+
+auto FunctionLowerer::LowerComponentAssign(
+    const mir::Block& block, const mir::AssignExpr& assign)
+    -> diag::Result<lir::Operand> {
+  // Walk the component-projection chain from the target down to its storage
+  // root, collecting each level's component index and product type.
+  struct Level {
+    std::uint32_t index;
+    lir::TypeId tuple_type;
+    lir::TypeId component_type;
+  };
+  std::vector<Level> levels;
+  mir::ExprId cursor = assign.target;
+  while (true) {
+    const mir::Expr& expr = block.exprs.Get(cursor);
+    const auto* get = std::get_if<mir::TupleGetExpr>(&expr.data);
+    if (get == nullptr) {
+      break;
+    }
+    levels.push_back(
+        Level{
+            .index = static_cast<std::uint32_t>(get->index),
+            .tuple_type =
+                unit_->TranslateType(block.exprs.Get(get->tuple).type),
+            .component_type = unit_->TranslateType(expr.type)});
+    cursor = get->tuple;
+  }
+  std::ranges::reverse(levels);
+  const mir::ExprId root = cursor;
+
+  auto root_value = ReadWholeValue(block, root);
+  if (!root_value) {
+    return std::unexpected(std::move(root_value.error()));
+  }
+
+  // The product value at each chain level, descending from the root toward the
+  // component being written.
+  std::vector<lir::Operand> tuples;
+  tuples.reserve(levels.size());
+  tuples.push_back(*std::move(root_value));
+  for (std::size_t depth = 1; depth < levels.size(); ++depth) {
+    tuples.push_back(Emit(
+        levels[depth].tuple_type,
+        lir::AggregateExtractInstr{
+            .aggregate = tuples[depth - 1],
+            .selector = lir::TupleElement{.index = levels[depth - 1].index}}));
+  }
+
+  auto rhs = LowerExpr(block, assign.value);
+  if (!rhs) {
+    return std::unexpected(std::move(rhs.error()));
+  }
+  const std::size_t leaf = levels.size() - 1;
+  lir::Operand leaf_value = *std::move(rhs);
+  if (assign.compound_op.has_value()) {
+    const std::optional<lir::BinaryOp> op =
+        TranslateBinaryOp(*assign.compound_op);
+    if (!op) {
+      return Unsupported(
+          "mir_to_lir: compound assignment operator has no direct realization");
+    }
+    lir::Operand old = Emit(
+        levels[leaf].component_type,
+        lir::AggregateExtractInstr{
+            .aggregate = tuples[leaf],
+            .selector = lir::TupleElement{.index = levels[leaf].index}});
+    leaf_value = Emit(
+        levels[leaf].component_type,
+        lir::BinaryInstr{
+            .op = *op, .lhs = std::move(old), .rhs = std::move(leaf_value)});
+  }
+
+  // Rebuild the whole value from the written component outward.
+  lir::Operand rebuilt = std::move(leaf_value);
+  for (std::size_t depth = levels.size(); depth-- > 0;) {
+    rebuilt = Emit(
+        levels[depth].tuple_type,
+        lir::AggregateUpdateInstr{
+            .aggregate = tuples[depth],
+            .selector = lir::TupleElement{.index = levels[depth].index},
+            .replacement = std::move(rebuilt)});
+  }
+
+  return WriteWholeValue(block, root, std::move(rebuilt));
 }
 
 auto FunctionLowerer::LowerIncDec(
@@ -1077,6 +1256,32 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return Emit(
                 unit_->TranslateType(type),
                 lir::AggregateInstr{.elements = std::move(elements)});
+          },
+          [&](const mir::TupleExpr& tuple) -> diag::Result<lir::Operand> {
+            std::vector<lir::Operand> components;
+            components.reserve(tuple.components.size());
+            for (const mir::ExprId component : tuple.components) {
+              auto lowered = LowerExpr(block, component);
+              if (!lowered) {
+                return std::unexpected(std::move(lowered.error()));
+              }
+              components.push_back(*std::move(lowered));
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::AggregateInstr{.elements = std::move(components)});
+          },
+          [&](const mir::TupleGetExpr& get) -> diag::Result<lir::Operand> {
+            auto tuple = LowerExpr(block, get.tuple);
+            if (!tuple) {
+              return std::unexpected(std::move(tuple.error()));
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::AggregateExtractInstr{
+                    .aggregate = *std::move(tuple),
+                    .selector = lir::TupleElement{
+                        .index = static_cast<std::uint32_t>(get.index)}});
           },
           [&](const mir::PointerCastExpr& c) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, c.operand);

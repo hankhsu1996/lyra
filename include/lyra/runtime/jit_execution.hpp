@@ -267,6 +267,38 @@ auto lyra_rt_chandle_ne(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_to_bool(void* operand) -> bool;
 
+// The unpacked-struct domain (LRM 7.2), MIR's product type. A struct value is a
+// runtime-owned product carried behind an opaque handle. It owns its components
+// by value, so construction copies each component in and access copies out; the
+// generated side only ever holds handles, never the product's internal storage.
+//
+// A component crosses as a handle of its own domain. Assembly first boxes each
+// into a component of the product (the domain rides in the symbol name, as
+// every other domain-parametric entry does), then `make` collects the
+// components into the product value. `extract` copies component `index` back
+// out; `update` returns a copy of the product with component `index` replaced
+// -- a value operation, never an in-place write, so value semantics hold even
+// when the product is shared.
+auto lyra_rt_tuple_component_packed(const void* value) -> void*;
+auto lyra_rt_tuple_component_string(const void* value) -> void*;
+auto lyra_rt_tuple_component_real(const void* value) -> void*;
+auto lyra_rt_tuple_component_shortreal(const void* value) -> void*;
+auto lyra_rt_tuple_component_chandle(void* value) -> void*;
+auto lyra_rt_tuple_component_tuple(const void* value) -> void*;
+auto lyra_rt_tuple_make(LyraSpan components) -> void*;
+auto lyra_rt_tuple_extract(const void* tuple, std::int64_t index) -> void*;
+auto lyra_rt_tuple_update(const void* tuple, std::int64_t index, void* value)
+    -> void*;
+auto lyra_rt_tuple_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_tuple_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_cell_tuple_get(void* cell) -> const void*;
+void lyra_rt_cell_tuple_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_tuple_set(void* cell, void* services, const void* value);
+auto lyra_rt_activation_frame_alloc_tuple() -> void*;
+void lyra_rt_activation_frame_store_tuple(void* cell, const void* value);
+auto lyra_rt_activation_frame_load_tuple(const void* cell) -> void*;
+
 // Builds one conversion's format specification, and the print item that pairs a
 // value with it. Each field arrives as a packed value, as the value model
 // routes every compile-time scalar.

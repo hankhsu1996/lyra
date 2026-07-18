@@ -7,6 +7,7 @@
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -29,6 +30,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           return;
         case ValueDomain::kShortReal:
           object_.emplace<Var<value::ShortReal>>();
+          return;
+        case ValueDomain::kTuple:
+          object_.emplace<Var<value::RuntimeTuple>>();
           return;
         case ValueDomain::kChandle:
           throw InternalError(

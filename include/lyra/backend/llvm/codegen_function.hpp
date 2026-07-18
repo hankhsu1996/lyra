@@ -39,6 +39,13 @@ class CodeGenFunction {
       -> llvm::FunctionCallee;
   auto LowerAggregate(const lir::AggregateInstr& agg, lir::TypeId result_type)
       -> llvm::Value*;
+  auto LowerTupleAggregate(
+      const lir::AggregateInstr& agg, const lir::TupleType& tuple)
+      -> llvm::Value*;
+  auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
+      -> llvm::Value*;
+  auto LowerAggregateUpdate(const lir::AggregateUpdateInstr& update)
+      -> llvm::Value*;
   auto LowerBinary(const lir::BinaryInstr& binary) -> llvm::Value*;
   auto LowerMachineBinary(const lir::BinaryInstr& binary) -> llvm::Value*;
   auto LowerUnary(const lir::UnaryInstr& unary) -> llvm::Value*;

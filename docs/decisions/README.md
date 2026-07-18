@@ -34,6 +34,9 @@ the detail lives in the entry itself.
   fixed-size unpacked array.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is the
   generic product type (MIR `TupleType`), positional access, defaults synthesized at lowering.
+- [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend every
+  aggregate is a runtime-owned opaque value (erasure), not structurally monomorphized; the choice is
+  below LIR, and LIR's aggregate operations stay realization-agnostic.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;

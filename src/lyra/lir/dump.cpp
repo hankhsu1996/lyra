@@ -93,6 +93,18 @@ class LirDumper {
             [&](const AggregateInstr& agg) -> std::string {
               return std::format("aggregate({})", FormatOperands(agg.elements));
             },
+            [&](const AggregateExtractInstr& extract) -> std::string {
+              return std::format(
+                  "aggregate_extract {}, {}", FormatOperand(extract.aggregate),
+                  FormatSelector(extract.selector));
+            },
+            [&](const AggregateUpdateInstr& update) -> std::string {
+              return std::format(
+                  "aggregate_update {}, {}, {}",
+                  FormatOperand(update.aggregate),
+                  FormatSelector(update.selector),
+                  FormatOperand(update.replacement));
+            },
             [&](const LoadInstr& load) -> std::string {
               return std::format("load {}", FormatPlace(load.place));
             },
@@ -222,6 +234,15 @@ class LirDumper {
           step);
     }
     return out;
+  }
+
+  [[nodiscard]] static auto FormatSelector(const AggregateSelector& selector)
+      -> std::string {
+    return std::visit(
+        Overloaded{[](const TupleElement& e) {
+          return std::format("element {}", e.index);
+        }},
+        selector);
   }
 
   [[nodiscard]] static auto FormatOperand(const Operand& op) -> std::string {

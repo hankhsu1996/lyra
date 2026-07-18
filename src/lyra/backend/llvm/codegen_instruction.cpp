@@ -29,6 +29,12 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr) -> llvm::Value* {
           [&](const lir::AggregateInstr& agg) -> llvm::Value* {
             return LowerAggregate(agg, result_type);
           },
+          [&](const lir::AggregateExtractInstr& extract) -> llvm::Value* {
+            return LowerAggregateExtract(extract);
+          },
+          [&](const lir::AggregateUpdateInstr& update) -> llvm::Value* {
+            return LowerAggregateUpdate(update);
+          },
           [&](const lir::LoadInstr& load) -> llvm::Value* {
             return builder_.CreateLoad(
                 module_->Types().Map(result_type),
@@ -271,11 +277,14 @@ auto CodeGenFunction::ForeignCallee(
 // are stored into contiguous storage and named by a {pointer, length} span.
 auto CodeGenFunction::LowerAggregate(
     const lir::AggregateInstr& agg, lir::TypeId result_type) -> llvm::Value* {
-  const auto* array = std::get_if<lir::UnpackedArrayType>(
-      &module_->Unit().types.Get(result_type).data);
+  const auto& result_data = module_->Unit().types.Get(result_type).data;
+  if (const auto* tuple = std::get_if<lir::TupleType>(&result_data)) {
+    return LowerTupleAggregate(agg, *tuple);
+  }
+  const auto* array = std::get_if<lir::UnpackedArrayType>(&result_data);
   if (array == nullptr) {
     throw InternalError(
-        "llvm codegen: aggregate result is not an unpacked array");
+        "llvm codegen: aggregate result is not an unpacked array or tuple");
   }
   auto* storage_ty = llvm::ArrayType::get(
       module_->Types().Map(array->element_type), agg.elements.size());
@@ -293,6 +302,67 @@ auto CodeGenFunction::LowerAggregate(
           llvm::Type::getInt64Ty(module_->Context()), agg.elements.size()),
       {1});
   return span;
+}
+
+// A product value is assembled by boxing each component into a product
+// component -- the component's domain names the box entry -- then collecting
+// the boxed components into the product. The component domains come from the
+// result product type, so the generated side never inspects the components'
+// runtime representation.
+auto CodeGenFunction::LowerTupleAggregate(
+    const lir::AggregateInstr& agg, const lir::TupleType& tuple)
+    -> llvm::Value* {
+  llvm::Type* handle_ty = module_->Types().Ptr();
+  auto* storage_ty = llvm::ArrayType::get(handle_ty, agg.elements.size());
+  llvm::Value* storage = builder_.CreateAlloca(storage_ty);
+  for (std::uint32_t i = 0; i < agg.elements.size(); ++i) {
+    const ValueDomain domain =
+        ValueDomainOf(module_->Unit(), tuple.elements[i]);
+    llvm::Value* boxed = builder_.CreateCall(
+        module_->Runtime().TupleComponent(domain),
+        {LowerOperand(agg.elements[i])});
+    llvm::Value* slot =
+        builder_.CreateConstInBoundsGEP2_64(storage_ty, storage, 0, i);
+    builder_.CreateStore(boxed, slot);
+  }
+  llvm::Value* span = llvm::UndefValue::get(module_->Types().Span());
+  span = builder_.CreateInsertValue(span, storage, {0});
+  span = builder_.CreateInsertValue(
+      span,
+      llvm::ConstantInt::get(
+          llvm::Type::getInt64Ty(module_->Context()), agg.elements.size()),
+      {1});
+  return builder_.CreateCall(module_->Runtime().TupleMake(), {span});
+}
+
+auto CodeGenFunction::LowerAggregateExtract(
+    const lir::AggregateExtractInstr& extract) -> llvm::Value* {
+  llvm::Value* aggregate = LowerOperand(extract.aggregate);
+  return std::visit(
+      Overloaded{[&](const lir::TupleElement& element) -> llvm::Value* {
+        return builder_.CreateCall(
+            module_->Runtime().TupleExtract(),
+            {aggregate,
+             llvm::ConstantInt::get(
+                 llvm::Type::getInt64Ty(module_->Context()), element.index)});
+      }},
+      extract.selector);
+}
+
+auto CodeGenFunction::LowerAggregateUpdate(
+    const lir::AggregateUpdateInstr& update) -> llvm::Value* {
+  llvm::Value* aggregate = LowerOperand(update.aggregate);
+  llvm::Value* replacement = LowerOperand(update.replacement);
+  return std::visit(
+      Overloaded{[&](const lir::TupleElement& element) -> llvm::Value* {
+        return builder_.CreateCall(
+            module_->Runtime().TupleUpdate(),
+            {aggregate,
+             llvm::ConstantInt::get(
+                 llvm::Type::getInt64Ty(module_->Context()), element.index),
+             replacement});
+      }},
+      update.selector);
 }
 
 auto CodeGenFunction::LowerOperand(const lir::Operand& operand)

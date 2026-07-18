@@ -35,6 +35,7 @@ enum class ValueDomain : std::uint8_t {
   kReal,
   kShortReal,
   kChandle,
+  kTuple,
 };
 
 auto ValueDomainName(ValueDomain domain) -> std::string_view;
@@ -159,6 +160,17 @@ class RuntimeAbi {
 
   // Reduces a value to the machine boolean a conditional branch tests.
   auto ToBool(ValueDomain domain) -> llvm::FunctionCallee;
+
+  // The product-value entries. A component crosses as a handle of its own
+  // domain, and boxing one into a product component rides the domain in the
+  // symbol name, as every domain-parametric entry does. Extract and update are
+  // value operations: update yields a new product with one component replaced,
+  // never an in-place write, so value semantics hold even when the product is
+  // shared.
+  auto TupleComponent(ValueDomain domain) -> llvm::FunctionCallee;
+  auto TupleMake() -> llvm::FunctionCallee;
+  auto TupleExtract() -> llvm::FunctionCallee;
+  auto TupleUpdate() -> llvm::FunctionCallee;
 
   // Builds the format specification of one conversion, and the print item that
   // pairs a value with it. A specification is written either as a bare

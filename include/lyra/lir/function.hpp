@@ -155,6 +155,43 @@ struct AggregateInstr {
   std::vector<Operand> elements;
 };
 
+// Names a subvalue within an aggregate value. A `TupleElement` selects a
+// product component by its declaration-order position -- the static, structural
+// selector an unpacked struct uses. Other aggregate families (a packed slice, a
+// union member) add their own selectors here; a dynamic, runtime-indexed access
+// (a dynamic array or queue element) is a runtime-library call, not one of
+// these, because its bounds and index are runtime values, not a static
+// projection.
+struct TupleElement {
+  std::uint32_t index;
+};
+
+using AggregateSelector = std::variant<TupleElement>;
+
+// Extracts a subvalue of an aggregate value, named by `selector`. The aggregate
+// is a value, reached by value: the subvalue is copied out, not aliased. This
+// is the read half of value-aggregate access, the peer of LLVM's
+// `extractvalue`; it is distinct from a place projection, which reaches
+// independently addressable storage. The result's type is the selected
+// subvalue's type.
+struct AggregateExtractInstr {
+  Operand aggregate;
+  AggregateSelector selector;
+};
+
+// Produces an aggregate value equal to `aggregate` with the subvalue at
+// `selector` replaced by `replacement`. A pure value operation -- it never
+// mutates the operand -- so a component write is a whole-value store of the
+// result, and value semantics hold even when the operand is shared. The peer of
+// LLVM's `insertvalue`; a value aggregate has no independently addressable
+// interior, so a subvalue write is this functional update, not a store into a
+// sub-place. The result's type is the operand's aggregate type.
+struct AggregateUpdateInstr {
+  Operand aggregate;
+  AggregateSelector selector;
+  Operand replacement;
+};
+
 // A class-local logical member identity: the member's stable declaration-order
 // slot in its class's member list, carried over from the MIR field it lowers
 // from. It is meaningful only together with the base's class/object type --
@@ -253,8 +290,9 @@ struct IntCastInstr {
 };
 
 using InstrData = std::variant<
-    CallInstr, AggregateInstr, LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr,
-    UnaryInstr, BoolCastInstr, PointerCastInstr, IntCastInstr>;
+    CallInstr, AggregateInstr, AggregateExtractInstr, AggregateUpdateInstr,
+    LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr, UnaryInstr, BoolCastInstr,
+    PointerCastInstr, IntCastInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

@@ -92,6 +92,23 @@ class FunctionLowerer {
       -> diag::Result<lir::Operand>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
+  // A write to one component of a product value (`s.f = x`). The chain of
+  // component projections is rebuilt bottom-up as pure functional-update values
+  // over the product's current whole value, then the rebuilt whole value is
+  // stored back through the product's storage owner -- so value semantics hold
+  // and, when the owner is an observable cell, the whole-cell update fires.
+  auto LowerComponentAssign(
+      const mir::Block& block, const mir::AssignExpr& assign)
+      -> diag::Result<lir::Operand>;
+  // Reads / writes the whole value of a product-write chain's root. The root is
+  // an ordinary place, or the mutate proxy of an observable cell -- reached by
+  // its whole-cell get / set so a component write never bypasses the cell's
+  // update semantics.
+  auto ReadWholeValue(const mir::Block& block, mir::ExprId id)
+      -> diag::Result<lir::Operand>;
+  auto WriteWholeValue(
+      const mir::Block& block, mir::ExprId id, lir::Operand value)
+      -> diag::Result<lir::Operand>;
   auto LowerIncDec(const mir::Block& block, const mir::IncDecExpr& inc_dec)
       -> diag::Result<lir::Operand>;
   auto LowerConditional(
