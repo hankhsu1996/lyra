@@ -456,7 +456,7 @@ auto LowerHirClassPropertyAccessExpr(
       base_id,
       mir::FieldTarget{
           .owner = unit_lowerer.TranslateClass(sel.owner),
-          .slot = unit_lowerer.TranslateField(sel.field_index)},
+          .slot = UnitLowerer::TranslateField(sel.field_index)},
       result_type);
 }
 
@@ -588,7 +588,7 @@ auto LowerHirClassPropertyAccessExprLhs(
       base_id,
       mir::FieldTarget{
           .owner = unit_lowerer.TranslateClass(sel.owner),
-          .slot = unit_lowerer.TranslateField(sel.field_index)},
+          .slot = UnitLowerer::TranslateField(sel.field_index)},
       result_type);
 }
 

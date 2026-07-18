@@ -420,17 +420,19 @@ struct CalleeRender {
   std::size_t leading_arg_count;
 };
 
-// Renders a `Direct` callee naming an owner-qualified callable this class owns
-// -- an instance method or a DPI-C import, both one `CallableDecl` arena. A
-// DPI-C import (external) is a global `extern "C"` symbol reached by its
-// foreign linkage name, with no receiver absorbed. An instance method renders
-// as `(receiver)->Owner::name`, an owner-qualified C++ member call: the owner
-// prefix is a fixed function of the target's `owner`, redundant for a
-// non-virtual method and, for a virtual method reached through Direct (LRM 8.15
-// super), forcing C++ to bypass the vtable -- precisely what the Direct arm
-// names. The receiver is `arguments[0]`, absorbed into the callee text, so one
-// leading argument is consumed. No qualification is allowed today --
-// cross-class explicit qualification is gated on SV class support.
+// Renders a `Direct` callee naming an owner-qualified callable this class
+// owns -- an instance method (LRM 8.6), a static method (LRM 8.10), or a
+// DPI-C import, all one arena. A DPI-C import (external) is a global
+// `extern "C"` symbol reached by its foreign linkage name, no receiver
+// absorbed. An instance callable renders as `(receiver)->Owner::name`, an
+// owner-qualified C++ member call: the owner prefix is a fixed function of
+// the target's owner, redundant for a non-virtual method and, for a virtual
+// method reached through Direct (LRM 8.15 super), forcing C++ to bypass the
+// vtable. The receiver is the first argument, absorbed into the callee
+// text, so one leading argument is consumed. A static callable renders as
+// the free type-qualified form `Owner::name`, with no receiver argument
+// absorbed. No qualification is allowed today -- cross-class explicit
+// qualification is gated on SV class support.
 auto RenderDirectCallableCall(
     const ScopeView& view, const mir::CallExpr& call,
     const mir::CallableTarget& target,
@@ -443,6 +445,19 @@ auto RenderDirectCallableCall(
   const auto& callable = cls.callables.Get(target.slot);
   if (const auto* ext = std::get_if<mir::ExternalCallable>(&callable.impl)) {
     return {.expr = ext->external.foreign_name, .leading_arg_count = 0};
+  }
+  // Instance vs static (LRM 8.10) reads off the target's signature: an
+  // instance call binds the receiver as `(recv)->Owner::name(rest)`, a
+  // static call is the free type-qualified form `Owner::name(args)` with no
+  // receiver absorbed.
+  const mir::CallableCode& code =
+      std::holds_alternative<mir::PurePrototype>(callable.impl)
+          ? std::get<mir::PurePrototype>(callable.impl).code
+          : std::get<mir::InternalCallable>(callable.impl).code;
+  if (!code.HasReceiver(cls.self_pointer_type)) {
+    return {
+        .expr = std::format("{}::{}", ToCppName(cls.name), callable.name),
+        .leading_arg_count = 0};
   }
   if (call.arguments.empty()) {
     throw InternalError("Direct method call expects a receiver argument");

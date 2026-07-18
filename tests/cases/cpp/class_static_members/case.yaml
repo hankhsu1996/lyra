@@ -1,0 +1,17 @@
+id: cpp.class_static_members
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    counter_at_start: 0
+    first_id: 1
+    second_id_via_qualified: 2
+    third_id_via_handle: 3
+    fourth_id_via_derived: 4
+    counter_after_all: 4
+    counter_via_derived: 4

@@ -94,11 +94,18 @@ each stage establishes, not how.
       distinct and remain distinct end-to-end.
 
 - [ ] Interface-class conformance: a class may conform to several interfaces, a relation distinct
-      from its single concrete base and carrying no second instance storage. Type-associated static
-      storage and static methods, where a static method has no receiver. Parameterized-class
+      from its single concrete base and carrying no second instance storage. Parameterized-class
       specialization: a generic declaration plus, per specialization, a distinct materialized object
       record, its identity aligned with compilation-unit specialization (a stable id within a unit,
       a by-name canonical key across units) -- the same shape a parameterized module uses.
+
+- [x] Type-associated static storage and static methods (LRM 8.9 / 8.10): a static property is one
+      cell owned by the type, distinct from a per-instance field replicated on every object; a
+      static method has no receiver and cannot be virtual. Each layer keeps the two categories in
+      disjoint arenas -- an instance member and a type-associated one never share identity space --
+      and the initializer of a static property runs once at design init (LRM 10.5), before any
+      initial or always procedure, from a class-level body separate from the per-instance
+      constructor.
 
 ## Managed-object lifetime: current implementation status
 

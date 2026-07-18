@@ -29,6 +29,16 @@ struct CallableCode {
   TypeId result_type;
   base::Arena<LocalDecl, LocalId> locals;
   Block body;
+
+  // Whether the signature declares a receiver: `params[0]`, if present, is
+  // typed as the enclosing class's self-pointer. The single structural check
+  // that both the code-declaration render and the call-site render read to
+  // pick between the instance form (with receiver) and the static form
+  // (without), without any side flag restating what the params list already
+  // fixes.
+  [[nodiscard]] auto HasReceiver(TypeId self_pointer_type) const -> bool {
+    return !params.empty() && locals.Get(params[0]).type == self_pointer_type;
+  }
 };
 
 }  // namespace lyra::mir

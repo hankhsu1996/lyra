@@ -79,6 +79,13 @@ struct MethodRef {
 // truth: a bodyless prototype and a legal empty body (LRM 8.21 note) are
 // distinct forms that emptiness alone cannot separate. Only class methods
 // carry it; free subroutines and processes always ship a body.
+//
+// `is_static` records that the source declared this method with the `static`
+// keyword (LRM 8.10) -- the method has no receiver, cannot be virtual, and
+// cannot be a constructor. At HIR-to-MIR this bit decides whether the lowered
+// `CallableCode.params` prepends `self`: instance methods do, static methods
+// omit it. Only class methods carry it; free subroutines and processes are
+// never static in this sense.
 struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
@@ -88,6 +95,7 @@ struct SubroutineDecl {
   ProceduralBody body;
   bool is_virtual = false;
   bool is_prototype = false;
+  bool is_static = false;
   std::optional<MethodRef> overrides;
 };
 

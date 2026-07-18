@@ -656,6 +656,42 @@ auto LowerMethodCall(
       .type = result_type};
 }
 
+// Lowers a static class method call (LRM 8.10). The signature has no `self`
+// so the MIR call carries exactly the user's arguments; the callee is a
+// direct owner-qualified target with no dispatch role.
+template <ExprLowerer Lowerer>
+auto LowerStaticMethodCall(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const hir::StaticMethodCallRef& m, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto& block = *frame.current_block;
+  const mir::ClassId owner_class = lowerer.Owner().TranslateClass(m.class_id);
+  const mir::CallableId method_slot{m.method.value};
+
+  std::vector<mir::ExprId> args;
+  args.reserve(c.arguments.size());
+  for (const auto& arg : c.arguments) {
+    if (!arg.has_value()) {
+      throw InternalError("LowerStaticMethodCall: argument elided");
+    }
+    auto arg_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*arg), frame);
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    args.push_back(block.exprs.Add(*std::move(arg_or)));
+  }
+
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target =
+                          mir::CallableTarget{
+                              .owner = owner_class, .slot = method_slot},
+                      .qualification = std::nullopt},
+              .arguments = std::move(args)},
+      .type = result_type};
+}
+
 // The type a value has once it is marshaled to a DPI-C carrier (LRM 35.5.6,
 // Table H.1). The carrier classifies the *formal*'s ABI; the value that crosses
 // is an ordinary machine value, so it is typed as one -- an integer of the
@@ -1339,6 +1375,9 @@ auto LowerHirCallExpr(
           },
           [&](const hir::MethodCallRef& m) -> diag::Result<mir::Expr> {
             return LowerMethodCall(lowerer, frame, c, m, result_type);
+          },
+          [&](const hir::StaticMethodCallRef& s) -> diag::Result<mir::Expr> {
+            return LowerStaticMethodCall(lowerer, frame, c, s, result_type);
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);

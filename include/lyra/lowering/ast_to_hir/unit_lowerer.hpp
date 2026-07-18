@@ -208,6 +208,28 @@ class UnitLowerer {
         "id; the owning class was not interned before this lookup");
   }
 
+  // Peer of the field-id registry on the type-associated axis. Records the
+  // HIR `StaticPropertyId` a static class property (LRM 8.9) received when
+  // its owning class's `InternClass` added it to the static-property arena,
+  // so a downstream `Cls::prop` or `handle.prop` (static-lifetime) access
+  // reads the id in O(1) rather than re-walking the arena.
+  void RegisterClassPropertyStaticId(
+      const slang::ast::ClassPropertySymbol& prop, hir::StaticPropertyId id) {
+    class_property_static_ids_.emplace(&prop, id);
+  }
+
+  [[nodiscard]] auto LookupClassPropertyStaticId(
+      const slang::ast::ClassPropertySymbol& prop) const
+      -> hir::StaticPropertyId {
+    if (const auto it = class_property_static_ids_.find(&prop);
+        it != class_property_static_ids_.end()) {
+      return it->second;
+    }
+    throw InternalError(
+        "UnitLowerer::LookupClassPropertyStaticId: static property has no "
+        "recorded id; the owning class was not interned before this lookup");
+  }
+
   // Facts.
   [[nodiscard]] auto SourceMapper() const
       -> const frontend::SlangSourceMapper& {
@@ -331,6 +353,9 @@ class UnitLowerer {
       method_cache_;
   std::unordered_map<const slang::ast::ClassPropertySymbol*, hir::FieldId>
       class_property_field_ids_;
+  std::unordered_map<
+      const slang::ast::ClassPropertySymbol*, hir::StaticPropertyId>
+      class_property_static_ids_;
   StructuralDataObjectBindings structural_data_object_bindings_;
   SubroutineBindings subroutine_bindings_;
   ForeignImportBindings foreign_import_bindings_;

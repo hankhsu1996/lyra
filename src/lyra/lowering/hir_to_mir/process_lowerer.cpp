@@ -259,11 +259,12 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   mir::CallableCode code;
   CallableBindings bindings(owner_->Unit(), code);
   std::vector<mir::LocalId> params;
-  // The receiver is a property of the body's context: a body in an owner class
-  // is an instance method and takes `self` as its first parameter (LRM 8.6); a
-  // body in a namespace context (a package function, LRM 26.3) has no owner
-  // class and so no receiver.
-  if (parent.current_class != nullptr) {
+  // The receiver is a signature-level fact. An instance method (LRM 8.6)
+  // takes `self` as its first parameter; a package function (LRM 26.3) has
+  // no owner class and so no receiver; a static class method (LRM 8.10)
+  // has an owner class but its signature omits `self`.
+  const bool has_receiver = parent.current_class != nullptr && !src.is_static;
+  if (has_receiver) {
     params.push_back(bindings.Declare(
         BindingOriginId::Receiver(),
         mir::LocalDecl{

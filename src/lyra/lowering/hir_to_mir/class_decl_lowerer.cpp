@@ -106,6 +106,53 @@ auto PlanStaticStorage(
   return placements;
 }
 
+// Lowers the class's design-init body (LRM 8.9 / 10.5): a receiver-less,
+// formal-less callable code the runtime invokes once at program startup,
+// before any initial or always procedure runs. Each source-written static
+// property initializer lowers to an `AssignExpr(StaticPropertyRef, value)`
+// statement in declaration order; a static property without a source
+// initializer takes its type's Table 7-1 default and gets no statement here.
+auto LowerStaticInit(
+    UnitLowerer& unit_lowerer, const hir::ClassDecl& hir_class,
+    mir::Class& mir_class, mir::ClassId class_id)
+    -> diag::Result<mir::CallableCode> {
+  mir::CallableCode code;
+  CallableBindings bindings(unit_lowerer.Unit(), code);
+  code.params = {};
+  code.result_type = unit_lowerer.Unit().builtins.void_type;
+  mir::Block& block = code.body;
+  ScopeChainNode link{};
+  const WalkFrame frame = WalkFrame{}
+                              .WithClass(&mir_class, class_id, link)
+                              .WithBlock(&block)
+                              .WithBindings(&bindings);
+  const CallableStoragePlan plan;
+  ProcessLowerer lowerer(
+      unit_lowerer, nullptr, mir_class.time_resolution, hir_class.static_init,
+      "<static_init>", frame, plan);
+
+  for (const hir::StaticPropertyInit& init : hir_class.static_property_inits) {
+    const hir::Expr& hir_value = hir_class.static_init.exprs.Get(init.value);
+    auto value_or = lowerer.LowerExpr(hir_value, frame);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
+
+    const mir::StaticPropertyId mir_prop_id =
+        UnitLowerer::TranslateStaticProperty(init.target);
+    const mir::TypeId prop_type =
+        mir_class.static_properties.Get(mir_prop_id).type;
+    const mir::ExprId target = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::StaticPropertyRef{.owner = class_id, .prop = mir_prop_id},
+            .type = prop_type});
+    const mir::ExprId assign =
+        block.exprs.Add(mir::MakeAssignExpr(target, value_id, prop_type));
+    block.AppendStmt(mir::ExprStmt{.expr = assign});
+  }
+  return code;
+}
+
 }  // namespace
 
 auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
@@ -128,6 +175,7 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
       .time_resolution = {},
       .ctor_prefix_params = {},
       .fields = {},
+      .static_properties = {},
       .callable_signatures = {},
       .contained = {},
       .is_scope_tree_node = false,
@@ -142,6 +190,15 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
   for (const auto& field : hir_class.fields) {
     const mir::TypeId field_type = unit_lowerer.TranslateType(field.type);
     shape.fields.Add(mir::FieldDecl{.name = field.name, .type = field_type});
+  }
+
+  // Static properties (LRM 8.9) enter the shape's type-associated arena in
+  // declaration order. `TranslateStaticProperty` is positional today, so the
+  // MIR arena index equals the HIR one.
+  for (const auto& sp : hir_class.static_properties) {
+    const mir::TypeId sp_type = unit_lowerer.TranslateType(sp.type);
+    shape.static_properties.Add(
+        mir::StaticPropertyDecl{.name = sp.name, .type = sp_type});
   }
 
   // Each SV method's static-lifetime locals get their per-instance slot on
@@ -192,6 +249,8 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       .callables = {},
       .abi_adapters = {},
       .static_constants = {},
+      .static_properties = shape.static_properties,
+      .static_init = {},
       .foreign_export_wrappers = {}};
 
   // The constructor's callable code is built in a local first, then added to
@@ -266,7 +325,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   for (std::size_t i = 0; i < hir_class.fields.size(); ++i) {
     const hir::FieldId hir_field_id{static_cast<std::uint32_t>(i)};
     const hir::ClassField& field = hir_class.fields.Get(hir_field_id);
-    const mir::FieldId mir_field_id = unit_lowerer.TranslateField(hir_field_id);
+    const mir::FieldId mir_field_id = UnitLowerer::TranslateField(hir_field_id);
     const mir::TypeId field_type = mir_class.fields.Get(mir_field_id).type;
     mir::ExprId value_id{};
     if (const auto it = initializer_of.find(hir_field_id);
@@ -379,6 +438,12 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       .code = std::move(ctor_code),
       .base_init = std::move(base_init),
       .member_inits = {}};
+
+  auto static_init_or =
+      LowerStaticInit(unit_lowerer, hir_class, mir_class, class_id_);
+  if (!static_init_or)
+    return std::unexpected(std::move(static_init_or.error()));
+  mir_class.static_init = *std::move(static_init_or);
 
   unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));
   return {};

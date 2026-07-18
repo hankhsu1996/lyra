@@ -7,6 +7,7 @@
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 
@@ -63,6 +64,23 @@ struct ClassPropertyRef {
   FieldId field_index;
 
   auto operator==(const ClassPropertyRef&) const -> bool = default;
+};
+
+// A reference to a class static property (LRM 8.9), the type-associated
+// storage counterpart to `ClassPropertyRef`. `owner` names the class that
+// declares the property; `prop` is its position within that class's
+// static-property arena. A static property is one cell owned by the type, not
+// a member replicated into each instance, so this reference carries no
+// receiver: the source form `Cls::prop`, an unqualified use inside a method
+// of the same class, and `p.prop` where the resolved target happens to be
+// static all resolve to the same cell and the same reference shape.
+// Under inheritance, `Derived::inherited_prop` still names the base class as
+// `owner` -- the property lives on the base's arena.
+struct StaticPropertyRef {
+  ClassId owner;
+  StaticPropertyId prop;
+
+  auto operator==(const StaticPropertyRef&) const -> bool = default;
 };
 
 // A reference to a `with`-clause iteration value (LRM 7.12.4), named by the

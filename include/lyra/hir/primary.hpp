@@ -44,7 +44,7 @@ struct NullLiteral {};
 // tag.
 using Primary = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
-    DirectMemberRef, ProceduralVarRef, ClassPropertyRef, RoutedRef,
-    IterationBindingRef>;
+    DirectMemberRef, ProceduralVarRef, ClassPropertyRef, StaticPropertyRef,
+    RoutedRef, IterationBindingRef>;
 
 }  // namespace lyra::hir

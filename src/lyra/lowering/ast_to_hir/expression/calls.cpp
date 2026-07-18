@@ -574,6 +574,47 @@ auto LowerCallExpr(
     };
   }
 
+  // A static class method call (LRM 8.10): the target has no receiver, so it
+  // lowers to `StaticMethodCallRef` rather than `MethodCallRef` -- a `handle`-
+  // qualified call to a static method still discards the handle because the
+  // callee never observes it (LRM 8.10 "no access to non-static members").
+  // The declaring class comes from slang's resolved callee, so an inherited
+  // static call reaches the base's arena the same way an instance-method
+  // call does under LRM 8.13.
+  if (sym->flags.has(slang::ast::MethodFlags::Static) &&
+      sym->getParentScope() != nullptr &&
+      sym->getParentScope()->asSymbol().kind ==
+          slang::ast::SymbolKind::ClassType) {
+    for (const auto* formal : sym->getArguments()) {
+      if (formal->direction != slang::ast::ArgumentDirection::In) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedClassFeature,
+            "static class methods with output / inout / ref arguments are not "
+            "yet supported");
+      }
+    }
+    const auto& declaring_class =
+        sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
+    auto class_id = unit_lowerer.InternClass(declaring_class, span);
+    if (!class_id) return std::unexpected(std::move(class_id.error()));
+    auto static_result_type = unit_lowerer.InternType(*call.type, span);
+    if (!static_result_type) {
+      return std::unexpected(std::move(static_result_type.error()));
+    }
+    return hir::Expr{
+        .type = *static_result_type,
+        .data =
+            hir::CallExpr{
+                .callee =
+                    hir::StaticMethodCallRef{
+                        .class_id = *class_id,
+                        .method = unit_lowerer.LookupMethodId(*sym)},
+                .arguments = std::move(arg_ids),
+            },
+        .span = span,
+    };
+  }
+
   // Instance-method call (LRM 8.6): three source shapes -- `h.foo()`,
   // implicit-`this` `foo()` from inside a class body, and `super.foo()` --
   // all lower to one `MethodCallRef` distinguished by which `MethodReceiver`

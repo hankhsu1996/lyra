@@ -192,6 +192,21 @@ auto LowerMemberAccessExpr(
         prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
     auto owner_id = lowerer.Owner().InternClass(declaring_class, span);
     if (!owner_id) return std::unexpected(std::move(owner_id.error()));
+    // LRM 8.9 permits reaching a static property through a handle
+    // (`p.static_prop`), and LRM 8.3 says accessing a static member through a
+    // null handle is legal because no per-instance dereference is required.
+    // The lowered reference form carries no receiver -- a type-associated
+    // property has no per-instance context to reach -- so the base handle
+    // expression `p` is not retained here; nothing downstream would consume
+    // it, and fabricating a receiver to stand in for "no instance" would
+    // conflict with the receiver-of-instance-methods-only rule.
+    if (prop.lifetime == slang::ast::VariableLifetime::Static) {
+      return hir::MakeRefExpr(
+          hir::StaticPropertyRef{
+              .owner = *owner_id,
+              .prop = lowerer.Owner().LookupClassPropertyStaticId(prop)},
+          *type_id, span);
+    }
     return hir::Expr{
         .type = *type_id,
         .data =

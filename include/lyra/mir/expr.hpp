@@ -16,6 +16,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/static_constant_id.hpp"
+#include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/struct_construct.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -466,6 +467,20 @@ struct StaticConstantRef {
   StaticConstantId constant;
 };
 
+// A place naming a class's static property (`Class::name`, LRM 8.9): the
+// mutable type-associated storage cell counterpart to `StaticConstantRef`.
+// `owner` is the class whose static-property arena declares the cell (a
+// derived source access like `Derived::inherited_prop` still names the base
+// class here, mirroring the owner-qualification rule for inherited instance
+// access). `Expr::type` is the property's type; as a place it appears
+// wherever a `FieldAccessExpr` on a class instance would but without the
+// receiver operand, and it is legal both as an rvalue and as an `AssignExpr`
+// target.
+struct StaticPropertyRef {
+  ClassId owner;
+  StaticPropertyId prop;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     MachineIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
@@ -473,7 +488,8 @@ using ExprData = std::variant<
     MoveExpr, PointerCastExpr, IntCastExpr, FieldAccessExpr,
     StructConstructExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
     ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr, UnionExpr,
-    UnionGetExpr, UnionGetRefExpr, FunctionRef, StaticConstantRef>;
+    UnionGetExpr, UnionGetRefExpr, FunctionRef, StaticConstantRef,
+    StaticPropertyRef>;
 
 struct Expr {
   ExprData data;
