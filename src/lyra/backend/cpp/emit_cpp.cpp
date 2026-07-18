@@ -387,8 +387,10 @@ auto RenderScopeAsClass(
 // import's foreign symbol as a C-linkage prototype over its ABI carrier types
 // (LRM 35.4 / 35.5.6). An output / inout argument crosses by pointer, so its
 // carrier type gains a trailing `*` (a scalar `int` -> `int*`, a `const char*`
-// string -> `const char**`); an input argument crosses by value. Emitted before
-// the classes that call them so a foreign call resolves against a declared
+// string -> `const char**`); an input argument crosses by value. A task's
+// foreign symbol returns the DPI disable-acknowledgment `int` (LRM 35.8), which
+// the call discards; a function returns its result carrier. Emitted before the
+// classes that call them so a foreign call resolves against a declared
 // signature; the definitions come from the user's linked C. Empty when the unit
 // declares no import.
 auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
@@ -418,9 +420,12 @@ auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
           params += vec.four_state ? "svLogicVecVal*" : "svBitVecVal*";
         }
       }
+      const std::string_view ret_type =
+          callable.is_task
+              ? DpiScalarCarrierCppType(support::DpiScalarAbi::kInt)
+              : DpiScalarCarrierCppType(callable.ret_abi);
       out += std::format(
-                 R"(extern "C" {} {}({});)",
-                 DpiScalarCarrierCppType(callable.ret_abi),
+                 R"(extern "C" {} {}({});)", ret_type,
                  callable.external.foreign_name, params) +
              "\n";
     }

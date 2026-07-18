@@ -460,6 +460,12 @@ auto LowerExprStmt(
         const auto* imported =
             std::get_if<hir::ImportedMethodRef>(&call->callee)) {
       suspends = support::ImportedRuntimeMethodSuspends(imported->method);
+    } else if (
+        const auto* foreign =
+            std::get_if<hir::ForeignImportRef>(&call->callee)) {
+      suspends = process.EnclosingScopeLowerer()
+                     .LookupForeignImport(foreign->hops, foreign->id)
+                     .is_task;
     }
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));

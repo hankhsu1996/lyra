@@ -886,10 +886,12 @@ auto BuildBufferDataCall(
               carrier_type, mir::PointerOwnership::kBorrowed)});
 }
 
-// The all-input import call: every actual crosses by value, so the call is a
-// plain expression -- no statement sequencing, no boundary temps. Each actual
-// is marshaled to its ABI carrier, the foreign symbol is called over the
-// carriers, and a non-void result is marshaled back to the declared SV type.
+// The all-input function import call: every actual crosses by value, so the
+// call is a plain expression -- no statement sequencing, no boundary temps.
+// Each actual is marshaled to its ABI carrier, the foreign symbol is called
+// over the carriers, and a non-void result is marshaled back to the declared SV
+// type. A task never reaches here; its await needs a coroutine, so it always
+// sequences.
 template <ExprLowerer Lowerer>
 auto LowerForeignImportInputsOnly(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -932,25 +934,25 @@ auto LowerForeignImportInputsOnly(
       result_type);
 }
 
-// The general import call: at least one actual needs a boundary temp -- an
-// output / inout of any carrier, or a canonical vector of any direction (a
-// vector crosses by pointer even as an input). The call sequences copy-in, the
-// by-pointer foreign call, copy-back into each writeback actual's cell, and the
-// marshaled return -- a statement sequence yielding a value, so it lowers to an
-// immediately-invoked closure, uniform for void / valued and statement /
-// expression position. A by-value scalar input still crosses by value with no
-// temp.
+// Populates `closure`'s body with the DPI import boundary: each actual
+// marshaled to its carrier -- a by-value scalar input crossing by value, a
+// writeback direction or a canonical vector of any direction seeded into a
+// boundary temp passed by pointer -- then the foreign call, then the copy-back
+// of each writeback into its actual's cell. A valued call captures its carrier
+// result in a temp, returned so the caller marshals it after the copy-backs; a
+// void call (including a task, whose foreign symbol's disable-ack `int` is
+// discarded) is a bare statement and returns no temp. Shared by the function
+// and task import lowerings, which differ only in how they finish the closure.
 template <ExprLowerer Lowerer>
-auto LowerForeignImportSequenced(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+auto PopulateForeignImportBoundary(
+    Lowerer& lowerer, ClosureBuilder& closure, const hir::CallExpr& c,
+    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target)
+    -> diag::Result<std::optional<mir::LocalId>> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
   const mir::TypeId void_t = unit.builtins.void_type;
 
-  ClosureBuilder closure(unit, frame);
   mir::Block& body = closure.Body();
   const WalkFrame& cframe = closure.Frame();
 
@@ -1105,17 +1107,64 @@ auto LowerForeignImportSequenced(
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
   }
 
-  if (is_void) {
+  return ret_temp;
+}
+
+// The general function import call: at least one actual needs a boundary temp
+// -- an output / inout of any carrier, or a canonical vector of any direction
+// (a vector crosses by pointer even as an input). The boundary is a statement
+// sequence yielding a value, so it lowers to an immediately-invoked closure,
+// uniform for void / valued and statement / expression position. A by-value
+// scalar input still crosses by value with no temp.
+template <ExprLowerer Lowerer>
+auto LowerForeignImportSequenced(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto& unit_lowerer = lowerer.Owner();
+  auto& unit = unit_lowerer.Unit();
+
+  ClosureBuilder closure(unit, frame);
+  auto ret_temp =
+      PopulateForeignImportBoundary(lowerer, closure, c, decl, target);
+  if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
+
+  if (!ret_temp->has_value()) {
     return BuildClosureCallExpr(
         unit, *frame.current_block, closure.BuildVoid());
   }
+  mir::Block& body = closure.Body();
+  const WalkFrame& cframe = closure.Frame();
+  const mir::TypeId call_type =
+      CarrierTypeId(unit, support::ScalarCarrier{decl.ret_abi});
   const mir::ExprId ret_ref =
-      body.exprs.Add(mir::MakeLocalRefExpr(*ret_temp, call_type));
+      body.exprs.Add(mir::MakeLocalRefExpr(**ret_temp, call_type));
   const mir::ExprId result_id = body.exprs.Add(MarshalCarrierToSv(
       unit_lowerer, cframe, ret_ref, support::ScalarCarrier{decl.ret_abi},
       result_type));
   return BuildClosureCallExpr(
       unit, *frame.current_block, closure.Build(result_id));
+}
+
+// The task import call (LRM 35.5.2): the same boundary as a function, but a
+// task has no SV return, so the closure finishes as a coroutine -- the
+// awaitable the caller drives, the same call protocol as a native task enable
+// (LRM 35.8), uniform whether or not the foreign side consumes time. The
+// boundary always sequences through the closure, even all-input, because the
+// await needs a coroutine to drive. The coroutine closure is returned directly,
+// not called: it renders self-invoking to a `Coroutine`, and the statement
+// lowering awaits it.
+template <ExprLowerer Lowerer>
+auto LowerForeignImportTask(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const mir::StaticCallableDecl& decl, mir::StaticCallableTarget target)
+    -> diag::Result<mir::Expr> {
+  auto& unit = lowerer.Owner().Unit();
+  ClosureBuilder closure(unit, frame);
+  auto ret_temp =
+      PopulateForeignImportBoundary(lowerer, closure, c, decl, target);
+  if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
+  return closure.BuildCoroutine();
 }
 
 // The compilation-unit identity of the class `hops` enclosing levels up. A
@@ -1134,10 +1183,12 @@ auto EnclosingClassIdAtHops(
 
 // LRM 35.4 import call: an ordinary call to the external static callable,
 // wrapped in boundary marshaling. The carriers and directions are read from the
-// callable's own declaration, resolved once at its declaration lowering. A call
-// whose every actual is a by-value scalar input is a plain expression; a call
-// with any actual that needs a boundary temp (an output / inout, or a canonical
-// vector of any direction) sequences through a closure.
+// callable's own declaration, resolved once at its declaration lowering. A task
+// call is a coroutine the caller awaits, so it always sequences through a
+// closure; a function call whose every actual is a by-value scalar input is a
+// plain expression, and one with any actual that needs a boundary temp (an
+// output / inout, or a canonical vector of any direction) sequences through a
+// closure.
 template <ExprLowerer Lowerer>
 auto LowerForeignImportCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -1156,6 +1207,9 @@ auto LowerForeignImportCall(
   const mir::StaticCallableDecl& decl =
       frame.EnclosingClassAtHops(hops).static_callables.Get(target.slot);
 
+  if (decl.is_task) {
+    return LowerForeignImportTask(lowerer, frame, c, decl, target);
+  }
   const bool needs_temp = std::ranges::any_of(decl.params, NeedsBoundaryTemp);
   if (needs_temp) {
     return LowerForeignImportSequenced(
