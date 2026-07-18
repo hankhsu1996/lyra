@@ -11,6 +11,7 @@
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/field_id.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
 #include "lyra/hir/inside_item.hpp"
 #include "lyra/hir/primary.hpp"
@@ -123,7 +124,7 @@ struct RangeSelectExpr {
 // is carried on the access.
 struct MemberAccessExpr {
   ExprId base_value;
-  std::uint32_t field_index;
+  FieldId field_index;
 };
 
 // Class property access (LRM 8.4 / 8.13): `owner` names the class that
@@ -135,7 +136,7 @@ struct MemberAccessExpr {
 struct ClassPropertyAccessExpr {
   ExprId base_value;
   ClassId owner;
-  std::uint32_t field_index;
+  FieldId field_index;
 };
 
 struct ConcatExpr {

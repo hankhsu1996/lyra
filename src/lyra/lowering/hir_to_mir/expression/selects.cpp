@@ -409,7 +409,8 @@ auto LowerHirMemberAccessExpr(
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
     return mir::Expr{
-        .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
+        .data =
+            mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index.value},
         .type = result_type};
   }
   if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
@@ -419,19 +420,20 @@ auto LowerHirMemberAccessExpr(
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
     return mir::Expr{
         .data =
-            mir::UnionGetExpr{.union_value = base_id, .index = sel.field_index},
+            mir::UnionGetExpr{
+                .union_value = base_id, .index = sel.field_index.value},
         .type = result_type};
   }
   const auto& fields =
       GetAggregateFields(unit_lowerer.Hir().types.Get(base_hir_expr.type));
-  if (sel.field_index >= fields.size()) {
+  if (sel.field_index.value >= fields.size()) {
     throw InternalError("LowerHirMemberAccessExpr: field_index out of range");
   }
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
-      unit_lowerer, block, fields[sel.field_index], base_id, result_type,
+      unit_lowerer, block, fields[sel.field_index.value], base_id, result_type,
       AccessSide::kRead);
 }
 
@@ -454,7 +456,7 @@ auto LowerHirClassPropertyAccessExpr(
       base_id,
       mir::FieldTarget{
           .owner = unit_lowerer.TranslateClass(sel.owner),
-          .slot = mir::FieldId{sel.field_index}},
+          .slot = unit_lowerer.TranslateField(sel.field_index)},
       result_type);
 }
 
@@ -534,7 +536,8 @@ auto LowerHirMemberAccessExprLhs(
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
     return mir::Expr{
-        .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
+        .data =
+            mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index.value},
         .type = result_type};
   }
   // LRM 7.3: an unpacked union member write is the write-side access form
@@ -549,12 +552,12 @@ auto LowerHirMemberAccessExprLhs(
     return mir::Expr{
         .data =
             mir::UnionGetRefExpr{
-                .union_value = base_id, .index = sel.field_index},
+                .union_value = base_id, .index = sel.field_index.value},
         .type = result_type};
   }
   const auto& fields =
       GetAggregateFields(unit_lowerer.Hir().types.Get(base_hir_expr.type));
-  if (sel.field_index >= fields.size()) {
+  if (sel.field_index.value >= fields.size()) {
     throw InternalError(
         "LowerHirMemberAccessExprLhs: field_index out of range");
   }
@@ -562,7 +565,7 @@ auto LowerHirMemberAccessExprLhs(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
-      unit_lowerer, block, fields[sel.field_index], base_id, result_type,
+      unit_lowerer, block, fields[sel.field_index.value], base_id, result_type,
       AccessSide::kLhs);
 }
 
@@ -585,7 +588,7 @@ auto LowerHirClassPropertyAccessExprLhs(
       base_id,
       mir::FieldTarget{
           .owner = unit_lowerer.TranslateClass(sel.owner),
-          .slot = mir::FieldId{sel.field_index}},
+          .slot = unit_lowerer.TranslateField(sel.field_index)},
       result_type);
 }
 

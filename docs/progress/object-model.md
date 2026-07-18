@@ -87,8 +87,11 @@ each stage establishes, not how.
       when the source wrote `super.new(args)`, an empty-args implicit forward otherwise -- so a
       backend never resorts to its target language's default-construction convention.
 
-- [ ] Pure-virtual and abstract classes (LRM 8.21): a virtual method with no body is a contract the
-      derived must fill, and a class carrying such a slot is not directly constructible.
+- [x] Pure-virtual and abstract classes (LRM 8.21): a virtual method with no body is a contract the
+      derived must fill, and a class carrying such a slot is not directly constructible. Each layer
+      states the "declared, no source body" fact as a structural property of the method, orthogonal
+      to whether the source separately wrote an empty body -- the two forms are semantically
+      distinct and remain distinct end-to-end.
 
 - [ ] Interface-class conformance: a class may conform to several interfaces, a relation distinct
       from its single concrete base and carrying no second instance storage. Type-associated static

@@ -69,6 +69,16 @@ struct MethodRef {
 // resolved reference to the base method this one overrides -- carried as an
 // already-resolved identity so downstream consumers never repeat the name and
 // signature matching the frontend has done.
+//
+// `is_prototype` records that the source declared this method as a pure
+// virtual prototype (LRM 8.21 `pure virtual function ...;`) -- the signature
+// exists but the source supplied no body. `body.procedural_vars` still
+// carries the parameter var arena so a backend can emit the declaration,
+// but every other body field (stmts, exprs, root_stmt, root_scope) is left
+// at construction default and never consumed. This bit is source-level
+// truth: a bodyless prototype and a legal empty body (LRM 8.21 note) are
+// distinct forms that emptiness alone cannot separate. Only class methods
+// carry it; free subroutines and processes always ship a body.
 struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
@@ -77,6 +87,7 @@ struct SubroutineDecl {
   std::optional<ProceduralVarId> result_var;
   ProceduralBody body;
   bool is_virtual = false;
+  bool is_prototype = false;
   std::optional<MethodRef> overrides;
 };
 

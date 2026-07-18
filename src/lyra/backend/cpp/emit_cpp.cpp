@@ -97,20 +97,20 @@ auto OverrideSuffix(const mir::CallableDecl& m) -> std::string_view {
 // resolve receiver-relative references uniformly. The callable's dispatch role
 // decorates the declaration with `virtual` or `override` where applicable. A
 // namespace's receiver-less callable renders through the free-function path
-// instead.
+// instead. A pure virtual prototype (LRM 8.21, MIR `PurePrototype`) is
+// rendered as a bodyless declaration suffixed with `= 0`; C++ then treats
+// the enclosing class as abstract without any class-level marker required.
 auto RenderClassCallable(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::CallableDecl& m, std::size_t indent)
     -> std::string {
-  const mir::CallableCode& code = std::get<mir::InternalCallable>(m.impl).code;
-  const ScopeView body_view = (parent_struct_view == nullptr)
-                                  ? ScopeView::ForRoot(unit, s, code)
-                                  : parent_struct_view->WithClass(s, code);
-
+  // A pure virtual prototype (LRM 8.21) exposes only the signature; body
+  // rendering is skipped in favor of a `= 0` marker on the declaration.
+  const mir::CallableCode& code =
+      std::holds_alternative<mir::PurePrototype>(m.impl)
+          ? std::get<mir::PurePrototype>(m.impl).code
+          : std::get<mir::InternalCallable>(m.impl).code;
   const std::string ret = RenderTypeAsCpp(unit, code.result_type);
-  const mir::LocalId self_local = code.params[0];
-  const auto& self_decl = code.locals.Get(self_local);
-  const std::string self_type = RenderTypeAsCpp(unit, self_decl.type);
 
   std::string sig = std::format("{}auto {}(", VirtualPrefix(m), m.name);
   for (std::size_t i = 1; i < code.params.size(); ++i) {
@@ -118,6 +118,17 @@ auto RenderClassCallable(
     sig += RenderCallableParam(unit, code.locals.Get(code.params[i]));
   }
   sig += std::format(") -> {}{}", ret, OverrideSuffix(m));
+
+  if (std::holds_alternative<mir::PurePrototype>(m.impl)) {
+    return std::format("{}{} = 0;\n", Indent(indent), sig);
+  }
+
+  const ScopeView body_view = (parent_struct_view == nullptr)
+                                  ? ScopeView::ForRoot(unit, s, code)
+                                  : parent_struct_view->WithClass(s, code);
+  const mir::LocalId self_local = code.params[0];
+  const auto& self_decl = code.locals.Get(self_local);
+  const std::string self_type = RenderTypeAsCpp(unit, self_decl.type);
 
   std::string out;
   out += std::format("{}{} {{\n", Indent(indent), sig);
@@ -294,6 +305,35 @@ auto RenderStaticConstant(
 
 auto RenderScopeAsClass(
     const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
+    const ScopeView* parent_struct_view) -> std::string;
+
+// Renders a class and every intra-unit base it depends on into `out`, in
+// an order that guarantees each base is a complete C++ type before its
+// derived (C++ requires base completeness at derivation). The interning
+// walk sets the registry order, which may reach a derived class first, so
+// this walker climbs the base chain first and marks visited classes in
+// `emitted`. Skips runtime-tree-node classes; those emit through the
+// scope-tree walk.
+void RenderClassInDependencyOrder(
+    const mir::CompilationUnit& unit, mir::ClassId id,
+    std::vector<bool>& emitted, std::string& out) {
+  if (emitted[id.value]) return;
+  if (!unit.classes.IsDefined(id)) return;
+  const mir::Class& cls = unit.GetClass(id);
+  if (cls.is_scope_tree_node) return;
+  if (cls.base.has_value()) {
+    if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&*cls.base)) {
+      RenderClassInDependencyOrder(unit, intra->class_id, emitted, out);
+    }
+  }
+  if (emitted[id.value]) return;
+  emitted[id.value] = true;
+  out += RenderScopeAsClass(unit, cls, 0, nullptr);
+  out += "\n";
+}
+
+auto RenderScopeAsClass(
+    const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
     const ScopeView* parent_struct_view) -> std::string {
   // `this_anchor` is bound to `s.constructor` so it doubles as the view for
   // rendering the constructor body. Children's bodies use it as their enclosing
@@ -342,14 +382,16 @@ auto RenderScopeAsClass(
   // object's public callable surface, a scope's processes and lifecycle hooks
   // are internal -- and the access specifier follows that stated visibility,
   // coalescing a run of callables that share one. The constructor is not in
-  // this arena; it was emitted above with C++ mem-init-list syntax.
+  // this arena; it was emitted above with C++ mem-init-list syntax. An
+  // external (DPI-C import) callable is a global `extern "C"` symbol, not a
+  // class member; it is emitted as a prototype outside the class. A pure
+  // virtual prototype (LRM 8.21) is a class member and renders inline with
+  // its `= 0` marker.
   std::optional<mir::CallableVisibility> open_section;
   for (std::size_t i = 0; i < s.callables.size(); ++i) {
     const mir::CallableId cid{static_cast<std::uint32_t>(i)};
     const auto& callable = s.callables.Get(cid);
-    // An external (DPI-C import) callable is a global `extern "C"` symbol, not
-    // a class member; it is emitted as a prototype outside the class.
-    if (!std::holds_alternative<mir::InternalCallable>(callable.impl)) continue;
+    if (std::holds_alternative<mir::ExternalCallable>(callable.impl)) continue;
     if (open_section != callable.visibility) {
       open_section = callable.visibility;
       out += std::format(
@@ -618,38 +660,17 @@ auto RenderScopeHeaderFile(
   }
   out += RenderUnitTypeDeclarations(unit);
 
-  // A SystemVerilog class is a free-standing registry object with no structural
-  // parent, so it is not reached by the scope tree's `contained` walk. Emit
-  // every non-tree-node class before the scope tree that may reference it
-  // through a handle or `new`. (The scope objects -- the module and its
-  // generate scopes -- are runtime tree nodes emitted by the tree walk below.)
-  //
-  // C++ requires a base class to be a complete type at the point of a derived
-  // class's declaration, so an intra-unit base must render before its derived
-  // class. Registry order is set by the interning walk, which may reach the
-  // derived class first (via `Derived h;` before `class Base` is seen), so
-  // the emission order climbs each class's base chain first.
+  // A SystemVerilog class is a free-standing registry object with no
+  // structural parent, so it is not reached by the scope tree's `contained`
+  // walk. Emit every non-tree-node class before the scope tree that may
+  // reference it through a handle or `new`. (The scope objects -- the module
+  // and its generate scopes -- are runtime tree nodes emitted by the tree
+  // walk below.) The dependency-order walker inside handles base-before-
+  // derived ordering.
   std::vector<bool> emitted(unit.classes.size(), false);
-  const std::function<void(mir::ClassId)> emit_class =
-      [&](mir::ClassId id) -> void {
-    if (emitted[id.value]) return;
-    if (!unit.classes.IsDefined(id)) return;
-    const mir::Class& cls = unit.GetClass(id);
-    if (cls.is_scope_tree_node) {
-      return;
-    }
-    if (cls.base.has_value()) {
-      if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&*cls.base)) {
-        emit_class(intra->class_id);
-      }
-    }
-    if (emitted[id.value]) return;
-    emitted[id.value] = true;
-    out += RenderScopeAsClass(unit, cls, 0, nullptr);
-    out += "\n";
-  };
   for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    emit_class(mir::ClassId{static_cast<std::uint32_t>(i)});
+    RenderClassInDependencyOrder(
+        unit, mir::ClassId{static_cast<std::uint32_t>(i)}, emitted, out);
   }
 
   out += RenderScopeAsClass(unit, s, 0, nullptr);

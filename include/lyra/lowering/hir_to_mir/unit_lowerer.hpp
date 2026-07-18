@@ -11,10 +11,12 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/field_id.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -105,6 +107,16 @@ class UnitLowerer {
       throw InternalError("UnitLowerer::TranslateClass: unmapped HIR class");
     }
     return class_map_[hir_id.value];
+  }
+
+  // Translates a HIR class field's identity to its MIR counterpart. Peer to
+  // `TranslateClass` / `TranslateType`: the layer-boundary crossing is one
+  // named function so a consumer never has to know that the HIR and MIR
+  // field arenas presently share value semantics (fields are appended in
+  // lockstep during the shape pass), and a later divergence rewires the
+  // mapping in one place without touching any consumer.
+  [[nodiscard]] auto TranslateField(hir::FieldId hir_id) const -> mir::FieldId {
+    return mir::FieldId{.value = hir_id.value};
   }
 
   [[nodiscard]] auto ClassObjectType(hir::ClassId hir_id) const -> mir::TypeId {

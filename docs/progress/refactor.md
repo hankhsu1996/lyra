@@ -887,6 +887,47 @@ enough to warrant its own focused review.
       must be resolved at declaration time -- large and cross-cutting enough to warrant its own
       focused review.
 
+- [ ] R60 -- The C++ backend's value-emission entries name runtime library identifiers directly and
+      inject prologue statements the MIR does not state. `../architecture/backend_contract.md`
+      confines every runtime library type literal to the type-mapping dispatch and confines every
+      runtime library identifier (wrapper type, helper function, helper struct, method spelling) to
+      "MIR types and MIR calls that map onto them", with a bounded exception only for a leaf literal
+      materializing its own value. The current backend violates this in three related ways -- render
+      composes the identifier as a string, render fabricates the operation the identifier realizes,
+      and render injects a receiver-recovery or initialization statement that the callable body does
+      not carry. The pattern shows up in enough render entries that a fix is not one edit, but the
+      shape is uniform: the runtime library form of every MIR primitive is stated in one central
+      mapping (the peer of the type-mapping dispatch, extended to value forms), and every prologue
+      statement the wrapper needs sits in the MIR body as an ordinary statement the render walks.
+      Concrete sites today:
+  - Aggregate value-build primitives (`ConcatExpr`, `ReplicationExpr`) render as inline
+    `lyra::value::PackedArray::Concat(...)` / `PackedArray::Replicate(...)` / `ReplicateString(...)`
+    string composition in value-emission entries, with the runtime library identifier spelled at the
+    render site rather than derived from a single mapping.
+  - The queue-concatenation builder renders as inline `lyra::value::MakeQueueConcat<...>(...)` with
+    element spread/append wrapped by `QSpread(...)` / `QElem(...)` at the render site.
+  - Class construction of a managed reference renders as inline `lyra::runtime::GcNew<...>` from a
+    Construct call whose result type is `ManagedRefType`.
+  - The DPI-C foreign-export wrapper injects a prologue statement
+    `Self self = static_cast<Self>(lyra::runtime::ResolveExportInstance("..."));` around the
+    wrapper's body; the receiver recovery is not a MIR statement in the wrapper's body block, so a
+    second backend must re-derive that it needs one and where.
+  - The instance-method render injects `Self self = this;` before the body -- another prologue the
+    MIR body does not state, so every method-form callable's `self` binding is a render-side
+    convention rather than a stated MIR fact.
+  - The compilation unit's enum types render through hand-composed
+    `class E final : public lyra::value::Enum<E> { ... };` in the header, with the runtime library
+    type spelled directly and the class boilerplate structured only by the render text. The enum
+    declaration form belongs behind the type-mapping dispatch or as its own emission concept, not a
+    hand-written template. **Target shape**: one mapping per axis. A runtime library type is named
+    exactly once, in type mapping (already the shape today). A runtime library operation is named
+    exactly once, in a peer value-form dispatch a value-emission entry looks up by MIR primitive
+    kind. A prologue statement -- receiver recovery, self binding -- is a MIR statement in the
+    callable body a HIR-to-MIR lowering emits, so render walks it like any other statement.
+    **Blocker**: none for individual sites, but the value-form dispatch is a new backend surface
+    that pays off only when several sites route through it; scope the cut so at least the queue /
+    packed / managed-new forms land together with the dispatch table itself.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

@@ -508,6 +508,34 @@ auto TranslateTypeData(
 // initialization every class performs. It is modeled as a constructor with no
 // formals and an empty body; the initialization itself is composed onto the
 // body separately, the same way it is for a user-written constructor.
+// Looks up the given method name in `derived_cls`'s base chain for a pure
+// virtual prototype (LRM 8.21) an implementation on `derived_cls` should
+// override. Slang's `checkForOverride` establishes a
+// `SubroutineSymbol::getOverride()` link only when the base method is itself
+// a `SubroutineSymbol`; when the base declares the method as `pure virtual`
+// (a `MethodPrototypeSymbol`), slang leaves the derived method's
+// `overrides` unset, so this lookup re-establishes the link. Slang's own
+// `Scope::find` already flattens the ancestor chain by unwrapping the
+// `TransparentMember` wrappers each inheriting scope inserts, so one query
+// on the immediate base scope reaches the actual declaration wherever it
+// sits in the chain.
+auto FindOverriddenPureInBaseChain(
+    const slang::ast::ClassType& derived_cls, std::string_view method_name)
+    -> const slang::ast::MethodPrototypeSymbol* {
+  const auto* base_type = derived_cls.getBaseClass();
+  if (base_type == nullptr) return nullptr;
+  const auto& base_cls =
+      base_type->getCanonicalType().as<slang::ast::ClassType>();
+  const auto* found = base_cls.find(method_name);
+  if (found == nullptr ||
+      found->kind != slang::ast::SymbolKind::MethodPrototype) {
+    return nullptr;
+  }
+  const auto& proto = found->as<slang::ast::MethodPrototypeSymbol>();
+  if (!proto.flags.has(slang::ast::MethodFlags::Pure)) return nullptr;
+  return &proto;
+}
+
 auto SynthesizeDefaultConstructor(hir::TypeId void_type, diag::SourceSpan span)
     -> hir::SubroutineDecl {
   hir::ProceduralBody body;
@@ -571,11 +599,9 @@ auto UnitLowerer::InternClass(
     }
     auto field_type = InternType(prop.getType(), span);
     if (!field_type) return std::unexpected(std::move(field_type.error()));
-    decl.fields.push_back(
-        hir::ClassField{
-            .name = std::string(prop.name),
-            .type = *field_type,
-            .initializer = std::nullopt});
+    const hir::FieldId field_id = decl.fields.Add(
+        hir::ClassField{.name = std::string(prop.name), .type = *field_type});
+    RegisterClassPropertyFieldId(prop, field_id);
   }
   std::optional<hir::SubroutineDecl> user_constructor;
   for (const auto& method : cls.membersOfType<slang::ast::SubroutineSymbol>()) {
@@ -614,11 +640,6 @@ auto UnitLowerer::InternClass(
           span, diag::DiagCode::kUnsupportedClassFeature,
           "static class methods are not yet supported");
     }
-    if (method.flags.has(slang::ast::MethodFlags::Pure)) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "pure virtual class methods are not yet supported");
-    }
     if (method.subroutineKind == slang::ast::SubroutineKind::Task) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedClassFeature,
@@ -642,9 +663,92 @@ auto UnitLowerer::InternClass(
         return std::unexpected(std::move(base_class_id.error()));
       method_decl->overrides = hir::MethodRef{
           .class_id = *base_class_id, .method = LookupMethodId(*overridden)};
+    } else if (const auto* pure_base =
+                   FindOverriddenPureInBaseChain(cls, method.name);
+               pure_base != nullptr) {
+      // Slang leaves the override link unset when the base method is a pure
+      // virtual prototype (LRM 8.21); wire it here so downstream dispatch
+      // canonicalizes to the base's slot rather than treating this method
+      // as a fresh introducer.
+      const auto& base_class =
+          pure_base->getParentScope()->asSymbol().as<slang::ast::ClassType>();
+      auto base_class_id = InternClass(base_class, span);
+      if (!base_class_id)
+        return std::unexpected(std::move(base_class_id.error()));
+      const auto* proto_stub = pure_base->getSubroutine();
+      if (proto_stub == nullptr) {
+        throw InternalError(
+            "UnitLowerer::InternClass: pure virtual prototype has no stub "
+            "subroutine slang normally materializes");
+      }
+      method_decl->overrides = hir::MethodRef{
+          .class_id = *base_class_id, .method = LookupMethodId(*proto_stub)};
+      // An override of a base virtual method is itself virtual (LRM 8.20),
+      // even when the derived declaration omits the `virtual` keyword.
+      method_decl->is_virtual = true;
     }
     const hir::MethodId method_id = decl.methods.Add(*std::move(method_decl));
     RegisterMethodId(method, method_id);
+  }
+
+  // A pure virtual method (LRM 8.21 `pure virtual function ...;`) lands in
+  // slang as a `MethodPrototypeSymbol`, not a `SubroutineSymbol`, because it
+  // has no body. Its signature still occupies a class-owned method slot the
+  // dispatch table introduces and every extended concrete class must fill,
+  // so it enters the same `methods` arena that carries ordinary instance
+  // methods; the record is marked `is_prototype` so the backend renders it
+  // as a C++ pure declaration (`= 0;`) instead of a body.
+  for (const auto& proto :
+       cls.membersOfType<slang::ast::MethodPrototypeSymbol>()) {
+    if (proto.getParentScope() != &cls) {
+      continue;
+    }
+    if (!proto.flags.has(slang::ast::MethodFlags::Pure)) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "extern / out-of-block class method prototypes are not yet "
+          "supported");
+    }
+    if (proto.subroutineKind == slang::ast::SubroutineKind::Task) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "pure virtual class task prototypes are not yet supported");
+    }
+    auto proto_decl = LowerMethodPrototypeDecl(*this, proto);
+    if (!proto_decl) return std::unexpected(std::move(proto_decl.error()));
+    // A middle abstract class re-declaring an ancestor's pure virtual method
+    // as another `pure virtual` produces a prototype whose overrides link
+    // slang exposes as a `Symbol*` (either the ancestor prototype's stub or
+    // another prototype). Translate the reachable stub form to the HIR
+    // identity registered when that ancestor was interned.
+    if (const auto* overridden = proto.getOverride(); overridden != nullptr) {
+      const slang::ast::SubroutineSymbol* overridden_sub = nullptr;
+      if (overridden->kind == slang::ast::SymbolKind::Subroutine) {
+        overridden_sub = &overridden->as<slang::ast::SubroutineSymbol>();
+      } else if (overridden->kind == slang::ast::SymbolKind::MethodPrototype) {
+        overridden_sub =
+            overridden->as<slang::ast::MethodPrototypeSymbol>().getSubroutine();
+      }
+      if (overridden_sub != nullptr) {
+        const auto& base_class = overridden_sub->getParentScope()
+                                     ->asSymbol()
+                                     .as<slang::ast::ClassType>();
+        auto base_class_id = InternClass(base_class, span);
+        if (!base_class_id)
+          return std::unexpected(std::move(base_class_id.error()));
+        proto_decl->overrides = hir::MethodRef{
+            .class_id = *base_class_id,
+            .method = LookupMethodId(*overridden_sub)};
+      }
+    }
+    const hir::MethodId method_id = decl.methods.Add(*std::move(proto_decl));
+    // Register the prototype's stub subroutine so a downstream override
+    // walker or the `FindOverriddenPureInBaseChain` fallback can translate
+    // the prototype to its HIR method identity through the same
+    // `SubroutineSymbol`-keyed registry every other override lookup uses.
+    if (const auto* proto_stub = proto.getSubroutine(); proto_stub != nullptr) {
+      RegisterMethodId(*proto_stub, method_id);
+    }
   }
 
   hir::SubroutineDecl constructor =
@@ -661,16 +765,17 @@ auto UnitLowerer::InternClass(
   ProcessLowerer init_lowerer(*this, cls);
   const WalkFrame init_frame = WalkFrame{}.WithProceduralBody(
       &constructor.body, &constructor.body.exprs);
-  std::size_t field_index = 0;
   for (const auto& prop :
        cls.membersOfType<slang::ast::ClassPropertySymbol>()) {
-    if (const auto* init = prop.getInitializer(); init != nullptr) {
-      auto init_expr = init_lowerer.LowerExpr(*init, init_frame);
-      if (!init_expr) return std::unexpected(std::move(init_expr.error()));
-      decl.fields[field_index].initializer =
-          constructor.body.exprs.Add(*std::move(init_expr));
-    }
-    ++field_index;
+    if (prop.getParentScope() != &cls) continue;
+    const auto* init = prop.getInitializer();
+    if (init == nullptr) continue;
+    auto init_expr = init_lowerer.LowerExpr(*init, init_frame);
+    if (!init_expr) return std::unexpected(std::move(init_expr.error()));
+    decl.field_inits.push_back(
+        hir::FieldInit{
+            .target = LookupClassPropertyFieldId(prop),
+            .value = constructor.body.exprs.Add(*std::move(init_expr))});
   }
   decl.constructor = std::move(constructor);
 
