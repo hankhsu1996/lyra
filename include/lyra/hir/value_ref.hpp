@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <variant>
 
+#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/field_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/with_clause_id.hpp"
@@ -49,11 +51,16 @@ struct ProceduralVarRef {
 };
 
 // A reference to a class property (LRM 8.4) from within an instance method
-// body, where the property is named without an explicit handle and reaches the
-// invoking object through the method's receiver. `field_index` is the
-// property's declaration-order position in the enclosing class.
+// body, where the property is named without an explicit handle and reaches
+// the invoking object through the method's receiver. `owner` is the class
+// that declares the property, and `field_index` is its declaration-order
+// position within that class's property arena. Under inheritance (LRM 8.13)
+// a bare name may resolve to a property declared on an ancestor class, so
+// identity is owner-qualified rather than derived from the enclosing method
+// body's class.
 struct ClassPropertyRef {
-  std::uint32_t field_index;
+  ClassId owner;
+  FieldId field_index;
 
   auto operator==(const ClassPropertyRef&) const -> bool = default;
 };

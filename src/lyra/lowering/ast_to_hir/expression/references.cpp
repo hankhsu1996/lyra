@@ -219,10 +219,15 @@ auto MakeClassPropertyRefExpr(
     -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
+  const auto& owner_class =
+      sym.getParentScope()->asSymbol().as<slang::ast::ClassType>();
+  auto owner_id = unit_lowerer.InternClass(owner_class, span);
+  if (!owner_id) return std::unexpected(std::move(owner_id.error()));
   return hir::MakeRefExpr(
       hir::ClassPropertyRef{
-          .field_index =
-              ClassPropertyIndex(sym.as<slang::ast::ClassPropertySymbol>())},
+          .owner = *owner_id,
+          .field_index = unit_lowerer.LookupClassPropertyFieldId(
+              sym.as<slang::ast::ClassPropertySymbol>())},
       *type_id, span);
 }
 

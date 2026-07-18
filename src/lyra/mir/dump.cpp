@@ -950,6 +950,33 @@ class MirDumper {
                         FormatVarType(ext.params[i].sv_type)));
               }
               Dedent();
+            },
+            [&](const PurePrototype& proto) {
+              Line(
+                  std::format(
+                      "[{}] \"{}\" : Type[{}] prototype", index, d.name,
+                      proto.code.result_type.value));
+              Indent();
+              Line(
+                  std::format(
+                      "Visibility: {}",
+                      d.visibility == CallableVisibility::kPublic
+                          ? "public"
+                          : "internal"));
+              if (d.virtual_dispatch.has_value()) {
+                Line(
+                    std::format(
+                        "VirtualDispatch: {}",
+                        FormatVirtualDispatchRole(*d.virtual_dispatch)));
+              }
+              for (std::size_t i = 0; i < proto.code.params.size(); ++i) {
+                const auto& param = proto.code.locals.Get(proto.code.params[i]);
+                Line(
+                    std::format(
+                        "Param[{}] \"{}\" : Type[{}]", i, param.name,
+                        param.type.value));
+              }
+              Dedent();
             }},
         d.impl);
   }

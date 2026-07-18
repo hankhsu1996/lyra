@@ -323,6 +323,59 @@ auto LowerConstructorDecl(
       .base_call = std::move(result_or->base_call)};
 }
 
+auto LowerMethodPrototypeDecl(
+    UnitLowerer& unit_lowerer, const slang::ast::MethodPrototypeSymbol& proto)
+    -> diag::Result<hir::SubroutineDecl> {
+  const auto& mapper = unit_lowerer.SourceMapper();
+
+  auto return_type_or = unit_lowerer.InternType(
+      proto.getReturnType(), mapper.PointSpanOf(proto.location));
+  if (!return_type_or) {
+    return std::unexpected(std::move(return_type_or.error()));
+  }
+
+  hir::ProceduralBody body;
+  ProcessLowerer lowerer(unit_lowerer, proto);
+
+  // A pure virtual prototype has no body to walk, but it still has parameter
+  // vars whose types the signature must expose. The scope accumulators are
+  // written into by `AddProceduralVar` and discarded on return -- a prototype
+  // has no lexical body scope for downstream consumers to attach to.
+  std::vector<hir::ProceduralVarId> root_declarations;
+  std::vector<hir::ProceduralScopeId> root_children;
+  const WalkFrame body_frame =
+      WalkFrame{}
+          .WithProceduralBody(&body, &body.exprs)
+          .WithProceduralScopeAccumulators(&root_declarations, &root_children);
+
+  std::vector<hir::SubroutineParam> params;
+  params.reserve(proto.getArguments().size());
+  for (const auto* formal : proto.getArguments()) {
+    auto formal_type_or = unit_lowerer.InternType(
+        formal->getType(), mapper.PointSpanOf(formal->location));
+    if (!formal_type_or) {
+      return std::unexpected(std::move(formal_type_or.error()));
+    }
+    const hir::ProceduralVarId var =
+        lowerer.AddProceduralVar(body_frame, body, *formal, *formal_type_or);
+    params.push_back(
+        hir::SubroutineParam{
+            .var = var, .direction = ParamDirectionOf(*formal)});
+  }
+
+  return hir::SubroutineDecl{
+      .name = std::string{proto.name},
+      .kind = ToHirSubroutineKind(proto.subroutineKind),
+      .result_type = *return_type_or,
+      .params = std::move(params),
+      .result_var = std::nullopt,
+      .body = std::move(body),
+      .is_virtual = true,
+      .is_prototype = true,
+      .overrides = std::nullopt,
+  };
+}
+
 // Classifies each formal argument's ABI projection (LRM 35.5.6): its direction,
 // C ABI carrier, and SV type. Import and export declarations project their
 // arguments identically, so both build their parameter list here.

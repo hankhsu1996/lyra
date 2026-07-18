@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -135,11 +136,12 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
   // Property fields come first in declaration order (LRM 8.4), so an SV
   // reference to a property by its declaration index reaches the same shape
   // slot regardless of what static-lifetime storage the class also owns.
-  field_ids_.reserve(hir_class.fields.size());
+  // The returned mir field id at position `i` equals `TranslateField` of
+  // the hir field id `i`, so no side vector is kept -- every consumer
+  // resolves a hir field id through the same layer-boundary translation.
   for (const auto& field : hir_class.fields) {
     const mir::TypeId field_type = unit_lowerer.TranslateType(field.type);
-    field_ids_.push_back(shape.fields.Add(
-        mir::FieldDecl{.name = field.name, .type = field_type}));
+    shape.fields.Add(mir::FieldDecl{.name = field.name, .type = field_type});
   }
 
   // Each SV method's static-lifetime locals get their per-instance slot on
@@ -251,13 +253,26 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   // the receiver -- and one without takes its type's Table 7-1 default. The
   // ordering is the single declaration-order pass because an initializer may
   // read an earlier property whose own initialization has already run.
+  // Index the source-declared initializers by their target so the per-field
+  // loop below reads each one in O(1). The class-level `field_inits` list
+  // stays the sparse "only fields the source wrote" form, mirroring
+  // `mir::ConstructorDecl::member_inits`; the dense per-field iteration is a
+  // consumer concern this lookup encapsulates.
+  std::unordered_map<hir::FieldId, hir::ExprId> initializer_of;
+  initializer_of.reserve(hir_class.field_inits.size());
+  for (const hir::FieldInit& init : hir_class.field_inits) {
+    initializer_of.emplace(init.target, init.value);
+  }
   for (std::size_t i = 0; i < hir_class.fields.size(); ++i) {
-    const hir::ClassField& field = hir_class.fields[i];
-    const mir::TypeId field_type = mir_class.fields.Get(field_ids_[i]).type;
+    const hir::FieldId hir_field_id{static_cast<std::uint32_t>(i)};
+    const hir::ClassField& field = hir_class.fields.Get(hir_field_id);
+    const mir::FieldId mir_field_id = unit_lowerer.TranslateField(hir_field_id);
+    const mir::TypeId field_type = mir_class.fields.Get(mir_field_id).type;
     mir::ExprId value_id{};
-    if (field.initializer.has_value()) {
-      auto value_or = ctor_lowerer.LowerExpr(
-          ctor.body.exprs.Get(*field.initializer), frame);
+    if (const auto it = initializer_of.find(hir_field_id);
+        it != initializer_of.end()) {
+      auto value_or =
+          ctor_lowerer.LowerExpr(ctor.body.exprs.Get(it->second), frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
       value_id = ctor_block.exprs.Add(*std::move(value_or));
     } else {
@@ -269,7 +284,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::MakeFieldAccessExpr(
             self_ref,
-            mir::FieldTarget{.owner = class_id_, .slot = field_ids_[i]},
+            mir::FieldTarget{.owner = class_id_, .slot = mir_field_id},
             field_type));
     const mir::ExprId assign =
         ctor_block.exprs.Add(mir::MakeAssignExpr(target, value_id, field_type));
@@ -284,9 +299,46 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   // Initialize lifecycle phase, so a method's pending static initializers
   // integrate into this class's constructor block (matching the per-instance
   // storage shape used for class-method statics).
+  //
+  // A pure virtual prototype (LRM 8.21) has no source-defined body to walk;
+  // its MIR record still carries the signature -- receiver, named parameters,
+  // and result type -- so the backend can emit the class's declaration, but
+  // no callable body is produced. The `PurePrototype` variant arm of
+  // `CallableDecl::impl` states the shape structurally.
   for (std::size_t i = 0; i < hir_class.methods.size(); ++i) {
     const hir::MethodId method_id{static_cast<std::uint32_t>(i)};
     const auto& method = hir_class.methods.Get(method_id);
+    const auto method_dispatch =
+        shape.callable_signatures.Get(mir::CallableId{method_id.value})
+            .virtual_dispatch;
+    if (method.is_prototype) {
+      mir::CallableCode proto_code;
+      CallableBindings proto_bindings(unit_lowerer.Unit(), proto_code);
+      const mir::LocalId proto_self_id = proto_bindings.Declare(
+          BindingOriginId::Receiver(),
+          mir::LocalDecl{.name = "self", .type = shape.self_pointer_type});
+      std::vector<mir::LocalId> proto_params{proto_self_id};
+      proto_params.reserve(method.params.size() + 1);
+      for (const auto& hir_param : method.params) {
+        const auto& hir_var = method.body.procedural_vars.Get(hir_param.var);
+        const mir::TypeId param_type = unit_lowerer.TranslateType(hir_var.type);
+        const mir::LocalId param_id = proto_bindings.Declare(
+            BindingOriginId::Procedural(hir_param.var),
+            mir::LocalDecl{.name = hir_var.name, .type = param_type});
+        proto_params.push_back(param_id);
+      }
+      proto_code.params = std::move(proto_params);
+      proto_code.result_type = unit_lowerer.TranslateType(method.result_type);
+      // proto_code.body stays default-constructed (empty Block); the
+      // `PurePrototype` variant arm is what marks the shape as bodyless.
+      mir_class.callables.Add(
+          mir::CallableDecl{
+              .name = method.name,
+              .impl = mir::PurePrototype{.code = std::move(proto_code)},
+              .virtual_dispatch = method_dispatch,
+              .visibility = mir::CallableVisibility::kPublic});
+      continue;
+    }
     ScopeChainNode method_link{};
     const WalkFrame method_owner_frame =
         WalkFrame{}.WithClass(&mir_class, class_id_, method_link);
@@ -301,9 +353,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
         mir::CallableDecl{
             .name = method.name,
             .impl = mir::InternalCallable{.code = *std::move(method_code_or)},
-            .virtual_dispatch =
-                shape.callable_signatures.Get(mir::CallableId{method_id.value})
-                    .virtual_dispatch,
+            .virtual_dispatch = method_dispatch,
             .visibility = mir::CallableVisibility::kPublic});
     for (const auto& pending : method_lowerer.TakePendingStaticInitializers()) {
       auto integ = IntegratePendingStaticInitializer(

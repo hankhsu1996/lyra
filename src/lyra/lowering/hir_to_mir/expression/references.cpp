@@ -255,8 +255,8 @@ auto LowerHirPrimaryExprProc(
             return mir::MakeFieldAccessExpr(
                 self_ref,
                 mir::FieldTarget{
-                    .owner = frame.current_class_id,
-                    .slot = mir::FieldId{.value = r.field_index}},
+                    .owner = process.Owner().TranslateClass(r.owner),
+                    .slot = process.Owner().TranslateField(r.field_index)},
                 result_type);
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {

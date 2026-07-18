@@ -5,8 +5,6 @@
 // MemberAccess (LRM 11.5.2 struct/union member access). Both procedural and
 // structural contexts.
 
-#include <cstdint>
-
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
@@ -23,12 +21,6 @@ class ClassPropertySymbol;
 namespace lyra::lowering::ast_to_hir {
 
 class ProcessLowerer;
-
-// A class property's declaration-order index among its class's properties
-// (LRM 8.4), matching the order the HIR ClassDecl registers its fields, so the
-// index identifies the same property on either side.
-auto ClassPropertyIndex(const slang::ast::ClassPropertySymbol& prop)
-    -> std::uint32_t;
 
 // LRM 7.10 `$` (UnboundedLiteral) in a queue index / slice bound. Resolves to
 // the queue's last index via the base bound on the walk frame. A queue is a

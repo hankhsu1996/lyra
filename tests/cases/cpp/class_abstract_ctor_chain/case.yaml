@@ -1,0 +1,12 @@
+id: cpp.class_abstract_ctor_chain
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    stored_seed: 42
+    computed_rank: 84

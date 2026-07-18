@@ -1,0 +1,13 @@
+id: cpp.class_pure_virtual_dispatch
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    from_leaf_direct: 43
+    from_base_to_leaf: 43
+    from_base_to_leaf2: 12

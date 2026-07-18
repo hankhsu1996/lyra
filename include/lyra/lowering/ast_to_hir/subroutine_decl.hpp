@@ -12,6 +12,7 @@
 
 namespace slang::ast {
 class Expression;
+class MethodPrototypeSymbol;
 class SubroutineSymbol;
 }  // namespace slang::ast
 
@@ -48,6 +49,18 @@ auto LowerConstructorDecl(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame, const slang::ast::Expression* base_call_ast)
     -> diag::Result<ConstructorAndBaseCall>;
+
+// Lowers a slang `pure virtual` class method prototype (LRM 8.21) into a
+// hir::SubroutineDecl with `is_prototype = true` and `is_virtual = true`.
+// The signature -- return type, parameter list, and the parameter binding
+// arena -- is populated so a backend can emit the C++ pure declaration; the
+// body arenas are left at construction default. The caller records the
+// result in the owning class's method arena, exactly like an ordinary
+// instance method, and sets `overrides` if slang identified the prototype
+// as re-declaring an existing pure slot in an abstract descendant.
+auto LowerMethodPrototypeDecl(
+    UnitLowerer& unit_lowerer, const slang::ast::MethodPrototypeSymbol& proto)
+    -> diag::Result<hir::SubroutineDecl>;
 
 // Lowers a slang `import "DPI-C"` subroutine (LRM 35.4) into a bodyless
 // hir::ForeignImportDecl: the resolved foreign name, the pure property, and the
