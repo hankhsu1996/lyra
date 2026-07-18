@@ -32,6 +32,7 @@
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
@@ -567,7 +568,7 @@ auto UnitLowerer::InternClass(
   class_cache_.emplace(&cls, id);
 
   hir::ClassDecl decl;
-  decl.name = std::string(cls.name);
+  decl.name = SpecializationName(cls);
 
   // Base class (LRM 8.13). Slang exposes the base as a `ClassType*` on the
   // derived class and flattens inherited members into the derived's member

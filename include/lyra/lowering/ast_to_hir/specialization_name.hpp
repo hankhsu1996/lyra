@@ -3,6 +3,7 @@
 #include <string>
 
 namespace slang::ast {
+class ClassType;
 class InstanceBodySymbol;
 class InstanceSymbol;
 }  // namespace slang::ast
@@ -23,5 +24,16 @@ auto SpecializationName(const slang::ast::InstanceBodySymbol& body)
 
 // Resolves the instance to its canonical body and names that specialization.
 auto SpecializationName(const slang::ast::InstanceSymbol& inst) -> std::string;
+
+// The compiled identity of a SystemVerilog class specialization (LRM 8.25):
+// the generic class name plus a content hash of its resolved parameter
+// bindings when the class is parameterized, or the bare class name when it
+// is not. Two specializations of one generic class denote the same type iff
+// every value binding is equal and every type binding is a matching type
+// (LRM 8.25 uniqueness rule); slang deduplicates on that rule, so distinct
+// bindings arrive as distinct ClassType instances and produce distinct
+// names. Bare `C` and empty-override `C #()` resolve to the same slang
+// ClassType and thus name the same specialization.
+auto SpecializationName(const slang::ast::ClassType& cls) -> std::string;
 
 }  // namespace lyra::lowering::ast_to_hir

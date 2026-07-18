@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include <slang/ast/Symbol.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
@@ -30,10 +32,11 @@ auto Fnv1a64(std::string_view bytes) -> std::uint64_t {
 
 // Position-free encoding of one binding: the parameter name, then its resolved
 // value or resolved type, on the same value/type split slang uses to decide
-// canonical-body equivalence (ParameterSymbolBase::allMatching).
-void EncodeBinding(
-    const slang::ast::ParameterSymbolBase& param, std::string& out) {
-  const slang::ast::Symbol& symbol = param.symbol;
+// canonical-body equivalence (ParameterSymbolBase::allMatching). The parameter
+// arrives as its concrete Symbol so this serves both spaces slang exposes
+// bindings through -- a module body's ParameterSymbolBase span (`.symbol` per
+// entry) and a class specialization's genericParameters (a Symbol span).
+void EncodeBinding(const slang::ast::Symbol& symbol, std::string& out) {
   out += symbol.name;
   out += '=';
   if (symbol.kind == slang::ast::SymbolKind::Parameter) {
@@ -57,7 +60,7 @@ auto SpecializationName(const slang::ast::InstanceBodySymbol& body)
   }
   std::string encoding;
   for (const auto* param : params) {
-    EncodeBinding(*param, encoding);
+    EncodeBinding(param->symbol, encoding);
   }
   return std::format("{}__{:016x}", name, Fnv1a64(encoding));
 }
@@ -65,6 +68,18 @@ auto SpecializationName(const slang::ast::InstanceBodySymbol& body)
 auto SpecializationName(const slang::ast::InstanceSymbol& inst) -> std::string {
   const auto* canonical = inst.getCanonicalBody();
   return SpecializationName(canonical != nullptr ? *canonical : inst.body);
+}
+
+auto SpecializationName(const slang::ast::ClassType& cls) -> std::string {
+  std::string name{cls.name};
+  if (cls.genericClass == nullptr) {
+    return name;
+  }
+  std::string encoding;
+  for (const auto* sym : cls.genericParameters) {
+    EncodeBinding(*sym, encoding);
+  }
+  return std::format("{}__{:016x}", name, Fnv1a64(encoding));
 }
 
 }  // namespace lyra::lowering::ast_to_hir
