@@ -139,6 +139,20 @@ the awaiter consumes, not of the scheduler.
    with one authoritative owner; the registration set, the pending wait, and run-queue membership
    are resources that must agree with it, never independent truths that drift._
 
+8. **Publishing an activation's terminal outcome commits that it runs no more user code.** A
+   consumer that reads the outcome, or a waiter woken by the activation's completion, may reclaim
+   shared state the activation touched, so the terminal state and the waiter wakeups are published
+   only after the body has run its last statement. When an activation cannot be torn down
+   synchronously -- its frame is executing (a process disabling itself or an ancestor), or a foreign
+   call must unwind cooperatively across a boundary the runtime does not own -- termination is a
+   two-step transition: a request first revokes the activation's scheduler participation and records
+   the cause, and the outcome is published only once the body reaches a safe boundary. The request
+   is not the outcome; between them the activation is un-nameable by any scheduler structure yet
+   still live. _Consequence: `Cancelled` may be requested while a frame is still running, but is
+   settled -- frame released, waiters drained -- only at a safe boundary. Settling on the request,
+   publishing the outcome before the body stops, lets a waiter observe a terminated activation that
+   is still executing._
+
 ## Boundary to Adjacent Layers
 
 - **To the scheduler (`scheduling.md`).** The activation exposes a token the engine parks on a

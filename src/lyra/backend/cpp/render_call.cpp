@@ -285,6 +285,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "WriteCanonicalLogicVec";
     case support::BuiltinFn::kDpiBufferData:
       return "Data";
+    case support::BuiltinFn::kRunExportedTaskToCompletion:
+      return "RunExportedTaskToCompletion";
     case support::BuiltinFn::kFromSvLogic:
       return "FromSvLogic";
     case support::BuiltinFn::kFromInt:
@@ -401,6 +403,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kDisableFork:
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
+    case support::BuiltinFn::kRunExportedTaskToCompletion:
       return "lyra::runtime";
     default:
       return "";

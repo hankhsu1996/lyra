@@ -64,21 +64,25 @@ inline auto ProcessStatus(const GcRef<RuntimeProcess>& self)
 // descendant subprocesses. Each terminated node is marked KILLED and its frame
 // released, so nothing can resume it, and every process awaiting one is woken.
 //
-// The subtree terminated here must be off the calling process's C++ stack:
-// releasing a frame destroys it, and a running coroutine cannot destroy the
-// frame it is executing in. Killing the calling process or one of its ancestors
-// is therefore rejected. "Request termination now" and "destroy the current
-// frame now" are distinct; supporting self / ancestor kill needs a deferred
-// safe-boundary termination (mark, unwind the calling body to the engine's
-// resume boundary, tear the frame down there) rather than this synchronous
-// destroy, so it is not yet supported.
+// Killing the calling process or one of its ancestors is a deferred,
+// safe-boundary termination: a running coroutine cannot destroy the frame it is
+// executing in, and that frame is somewhere in the killed subtree. Every
+// off-path node (each parked at a safe boundary) is torn down synchronously,
+// while the chain that owns the running frame is kept linked so it stays alive;
+// the running process's own termination is requested (registrations revoked,
+// cause recorded) and its body is unwound to the engine's resume boundary,
+// where the terminal state is published and the retained chain released.
 inline void ProcessKill(
     const GcRef<RuntimeProcess>& self, RuntimeServices& services) {
   RuntimeProcess& target = *self;
-  if (target.IsSelfOrAncestorOf(services.CurrentProcess())) {
-    throw InternalError(
-        "process::kill on the calling process or one of its ancestors is not "
-        "yet supported");
+  RuntimeProcess& caller = services.CurrentProcess();
+  if (target.IsSelfOrAncestorOf(caller)) {
+    std::vector<CoroutineHandle> woken;
+    target.TerminateSubtreeDeferringRunning(caller, woken);
+    for (CoroutineHandle waiter : woken) {
+      services.ScheduleNextDelta(waiter);
+    }
+    UnwindForProcessTermination();
   }
   std::vector<CoroutineHandle> woken;
   target.TerminateSubtreeKilled(woken);

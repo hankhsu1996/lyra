@@ -1,5 +1,8 @@
 #pragma once
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/coroutine.hpp"
+
 namespace lyra::runtime {
 
 class Scope;
@@ -40,5 +43,25 @@ class AmbientRunContext {
 // design root registered under `instance_name`. The exported subroutine is a
 // method of that instance, so the wrapper needs the instance as its receiver.
 auto ResolveExportInstance(const char* instance_name) -> Scope*;
+
+// Runs an exported SV task's body to completion synchronously and hands back
+// its completion payload. A foreign C caller of an exported task (LRM 35.8) is
+// not a coroutine, so it cannot `co_await` the body the way an SV enabler does;
+// its wrapper enters the body here. The body is resumed once: a task that
+// consumes no simulation time runs straight to `final_suspend`, which -- with
+// no continuation to transfer to -- lands on `noop_coroutine` and reports
+// `done`. A body that suspends across the foreign boundary is the timing /
+// disable case (LRM 35.9), which the boundary does not yet carry, so it is
+// reported rather than left to hang.
+template <class T>
+auto RunExportedTaskToCompletion(Coroutine<T> task) -> T {
+  task.Handle().resume();
+  if (!task.Done()) {
+    throw InternalError(
+        "a DPI-C exported task that suspends across the foreign boundary is "
+        "not yet supported");
+  }
+  return task.Handle().promise().Take();
+}
 
 }  // namespace lyra::runtime

@@ -96,6 +96,29 @@ void RuntimeProcess::TerminateSubtreeKilled(
   }
 }
 
+void RuntimeProcess::TerminateSubtreeDeferringRunning(
+    RuntimeProcess& running, std::vector<CoroutineHandle>& woken) {
+  // Off-path children are killed and severed synchronously; the one child on
+  // the path down to `running` is kept linked and recursed into, so the chain
+  // that owns `running` survives until `running` settles at its safe boundary.
+  std::erase_if(children_, [&](const std::shared_ptr<RuntimeProcess>& child) {
+    if (child->IsSelfOrAncestorOf(running)) {
+      child->TerminateSubtreeDeferringRunning(running, woken);
+      return false;
+    }
+    child->parent_ = nullptr;
+    child->TerminateSubtreeKilled(woken);
+    return true;
+  });
+  if (this == &running) {
+    RequestTermination(ProcessTerminationCause::kKilled);
+    return;
+  }
+  if (execution_state_ != ProcessExecutionState::kTerminated) {
+    SettleTerminated(ProcessTerminationCause::kKilled, woken);
+  }
+}
+
 auto RuntimeProcess::IsSelfOrAncestorOf(const RuntimeProcess& other) const
     -> bool {
   for (const RuntimeProcess* node = &other; node != nullptr;
@@ -145,6 +168,22 @@ void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
   }
 }
 
+void RuntimeProcess::RequestTermination(ProcessTerminationCause cause) {
+  if (execution_state_ == ProcessExecutionState::kTerminated ||
+      termination_requested_) {
+    return;
+  }
+  termination_requested_ = true;
+  termination_cause_ = cause;
+  // Detach the leaf from whatever holds it -- a wait target or a run queue --
+  // by explicit revoke. The frame is not destroyed here (it is still going to
+  // unwind) to revoke its registrations implicitly, so revoking now is what
+  // keeps a settled-later frame un-nameable in between.
+  if (current_leaf_ != nullptr) {
+    current_leaf_->RevokeRegistrations();
+  }
+}
+
 void RuntimeProcess::SettleTerminated(
     ProcessTerminationCause cause, std::vector<CoroutineHandle>& woken) {
   execution_state_ = ProcessExecutionState::kTerminated;
@@ -183,6 +222,22 @@ auto RuntimeProcess::ResumeWith(
   if (!coroutine_.Done()) {
     execution_state_ = ProcessExecutionState::kWaiting;
     return false;
+  }
+  // Phase 2 of a deferred termination: the body requested its own termination
+  // (LRM 9.6 / 9.7) and has now unwound to this safe boundary. Under a pending
+  // request the unwind must be the termination sentinel: consume it here, and
+  // let any other fault raised while unwinding propagate rather than be
+  // swallowed. Then publish the recorded cause atomically -- terminal state,
+  // frame release, waiter drain.
+  if (termination_requested_) {
+    if (std::exception_ptr fault = coroutine_.Handle().promise().TakeFault()) {
+      try {
+        std::rethrow_exception(fault);
+      } catch (const ProcessTerminationUnwind&) {
+      }
+    }
+    SettleTerminated(termination_cause_, woken);
+    return true;
   }
   // A task's exception has propagated up the enable chain into this top-level
   // frame regardless of which frame threw. Take the fault out before releasing

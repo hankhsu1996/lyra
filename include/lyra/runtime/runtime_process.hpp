@@ -35,6 +35,29 @@ enum class ProcessTerminationCause : std::uint8_t {
   kKilled,
 };
 
+// The sentinel that unwinds the calling process's own body to the engine's
+// resume boundary. A running frame cannot be destroyed synchronously, so `kill`
+// / `disable` targeting the calling process records the terminal cause and
+// throws this: the body's destructors run and control returns to the resume
+// boundary, where the terminal state is published and the frame released.
+//
+// It is structured control flow, not an error: no base, no message, thrown only
+// by `UnwindForProcessTermination` after a termination request is recorded, and
+// consumed only at the resume boundary under that pending request. It travels
+// the coroutine's completion channel (the promise's unhandled-exception slot),
+// not a `catch` around a resume. It must never cross a boundary the runtime
+// does not own: a foreign (`extern "C"`) frame has no C++ unwind contract, so a
+// termination that must pass through foreign code uses the LRM cooperative
+// return protocol to reach a simulator-owned boundary first, and only unwinds
+// there.
+struct ProcessTerminationUnwind final {};
+
+// The sole throw site for the termination sentinel, so every delivery is one
+// auditable point. Call only after the termination cause has been recorded.
+[[noreturn]] inline void UnwindForProcessTermination() {
+  throw ProcessTerminationUnwind{};
+}
+
 // A node of the dynamic process lineage (LRM 9.5) and, while its body runs, the
 // owner of the coroutine frame executing it. The two lifetimes are distinct:
 // the frame is released the moment the body terminates, whereas the node
@@ -191,11 +214,43 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // own children but still linked to its parent; the caller drops that link.
   void TerminateSubtreeKilled(std::vector<CoroutineHandle>& woken);
 
+  // Terminates this subtree (LRM 9.7 `kill` / LRM 9.6 `disable`) when it
+  // contains `running` -- the calling process, whose frame is executing and so
+  // cannot be destroyed synchronously. Every off-path subtree is killed and
+  // severed synchronously as usual; the single chain of nodes from this one
+  // down to `running` is settled but kept linked, so `running` stays owned
+  // until it unwinds to its safe boundary. `running` itself is only
+  // termination-requested (phase 1), not settled: its terminal state is
+  // published, and the whole retained chain released, when its body reaches the
+  // resume boundary. The caller unwinds `running` after this returns.
+  void TerminateSubtreeDeferringRunning(
+      RuntimeProcess& running, std::vector<CoroutineHandle>& woken);
+
   // Whether `other` is this process or a descendant of it -- i.e. whether
   // terminating this subtree would tear down `other`'s frame. `kill` consults
-  // it against the calling process to reject killing the running frame.
+  // it against the calling process to route it to the deferred self / ancestor
+  // path.
   [[nodiscard]] auto IsSelfOrAncestorOf(const RuntimeProcess& other) const
       -> bool;
+
+  // Phase 1 of a deferred, safe-boundary termination (LRM 9.6 / 9.7): the
+  // calling process cannot destroy the frame it is running in, so termination
+  // is split. This records the terminal cause and revokes the leaf's scheduler
+  // participation -- nothing can wake it -- but does NOT publish the terminal
+  // state or drain waiters, because the body is still going to run its unwind.
+  // The terminal state, frame release, and waiter drain happen atomically later
+  // (phase 2), when the body has unwound to a safe boundary.
+  // Publishing nothing here is the point: an observer of `status()` or a
+  // termination waiter never sees the process terminated while its body may
+  // still run user code. Exactly-once -- a re-request on an already-requested
+  // or terminated process is a no-op.
+  void RequestTermination(ProcessTerminationCause cause);
+
+  // Whether a deferred termination has been requested but not yet published --
+  // the window between phase 1 and phase 2, during which the body unwinds.
+  [[nodiscard]] auto TerminationRequested() const -> bool {
+    return termination_requested_;
+  }
 
   // Unlinks this process from its parent's lineage, dropping the parent's
   // ownership of it (a surviving `process` handle keeps the node alive as a
@@ -234,6 +289,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   ProcessExecutionState execution_state_ = ProcessExecutionState::kCreated;
   ProcessTerminationCause termination_cause_ =
       ProcessTerminationCause::kCompleted;
+  // Set when a deferred termination is requested (phase 1) and consumed at the
+  // resume boundary (phase 2): pending while the body unwinds.
+  bool termination_requested_ = false;
   RuntimeProcess* parent_ = nullptr;
   std::vector<std::shared_ptr<RuntimeProcess>> children_;
   // The `wait fork` condition holds at most one activation: the frame that
