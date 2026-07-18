@@ -12,11 +12,13 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/field_id.hpp"
+#include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -115,8 +117,19 @@ class UnitLowerer {
   // field arenas presently share value semantics (fields are appended in
   // lockstep during the shape pass), and a later divergence rewires the
   // mapping in one place without touching any consumer.
-  [[nodiscard]] auto TranslateField(hir::FieldId hir_id) const -> mir::FieldId {
+  [[nodiscard]] static auto TranslateField(hir::FieldId hir_id)
+      -> mir::FieldId {
     return mir::FieldId{.value = hir_id.value};
+  }
+
+  // Translates a HIR class static property's identity to its MIR counterpart.
+  // Peer of `TranslateField` on the type-associated axis; the HIR and MIR
+  // static-property arenas are appended in lockstep during class lowering, so
+  // the mapping is positional today. Kept as a named function so a later
+  // divergence rewires here without touching any consumer.
+  [[nodiscard]] static auto TranslateStaticProperty(
+      hir::StaticPropertyId hir_id) -> mir::StaticPropertyId {
+    return mir::StaticPropertyId{.value = hir_id.value};
   }
 
   [[nodiscard]] auto ClassObjectType(hir::ClassId hir_id) const -> mir::TypeId {

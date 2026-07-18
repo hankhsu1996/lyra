@@ -731,6 +731,11 @@ class MirDumper {
                   "StaticConstantRef constant=StaticConstant[{}]",
                   r.constant.value);
             },
+            [](const StaticPropertyRef& r) -> std::string {
+              return std::format(
+                  "StaticPropertyRef owner=Class[{}] prop=StaticProperty[{}]",
+                  r.owner.value, r.prop.value);
+            },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
                   "ClosureExpr closure=Closure[{}] field_inits={}",

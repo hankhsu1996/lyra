@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
-#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -56,6 +55,21 @@ auto RenderFieldList(
   return out;
 }
 
+// A class static property (LRM 8.9) renders as an `inline static` member of
+// the C++ class: one cell owned by the type, value-initialized at
+// program-startup time before any process runs, which matches LRM 10.5's
+// "before any initial or always" ordering natively. The declaration is
+// bare `<type> <name>{}`; a source-declared initializer, when present,
+// arrives as a class-level assignment statement in the design-init body,
+// never baked into the declaration.
+auto RenderClassStaticProperty(
+    const mir::CompilationUnit& unit, const mir::StaticPropertyDecl& sp,
+    std::size_t indent) -> std::string {
+  const std::string type = RenderTypeAsCpp(unit, sp.type);
+  return std::format(
+      "{}inline static {} {}{{}};\n", Indent(indent), type, sp.name);
+}
+
 auto RenderCallableParam(
     const mir::CompilationUnit& unit, const mir::LocalDecl& param)
     -> std::string {
@@ -91,15 +105,17 @@ auto OverrideSuffix(const mir::CallableDecl& m) -> std::string_view {
   return " override";
 }
 
-// The renderer for a class-owned callable -- an instance method, a process or
-// lifecycle body. Each is a C++ instance member function: `this` is what MIR
-// calls `self`, seeded through a one-line adapter so the body's expressions
-// resolve receiver-relative references uniformly. The callable's dispatch role
-// decorates the declaration with `virtual` or `override` where applicable. A
-// namespace's receiver-less callable renders through the free-function path
-// instead. A pure virtual prototype (LRM 8.21, MIR `PurePrototype`) is
-// rendered as a bodyless declaration suffixed with `= 0`; C++ then treats
-// the enclosing class as abstract without any class-level marker required.
+// The renderer for a class-owned callable -- an instance method (LRM 8.6),
+// a static method (LRM 8.10), a process, or a lifecycle body. An instance
+// callable renders as a C++ instance member function whose body opens with
+// a one-line `self = this` adapter, so the body's expressions resolve
+// receiver-relative references uniformly. A static callable renders with
+// the `static` keyword and no receiver alias. The callable's dispatch role
+// decorates the declaration with `virtual` or `override` where applicable.
+// A pure virtual prototype (LRM 8.21) is rendered as a bodyless declaration
+// suffixed with `= 0`; C++ then treats the enclosing class as abstract
+// without any class-level marker required. A namespace's receiver-less
+// callable renders through the free-function path instead.
 auto RenderClassCallable(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::CallableDecl& m, std::size_t indent)
@@ -111,10 +127,18 @@ auto RenderClassCallable(
           ? std::get<mir::PurePrototype>(m.impl).code
           : std::get<mir::InternalCallable>(m.impl).code;
   const std::string ret = RenderTypeAsCpp(unit, code.result_type);
+  // Instance vs static (LRM 8.10) is a signature-level fact carried by the
+  // presence of a self-typed `params[0]`. The C++ `static` prefix and the
+  // body's receiver-alias are gated on the same check so no side flag
+  // restates what the signature already fixes.
+  const bool has_receiver = code.HasReceiver(s.self_pointer_type);
+  const std::size_t user_params_start = has_receiver ? 1 : 0;
+  const std::string_view static_prefix = has_receiver ? "" : "static ";
 
-  std::string sig = std::format("{}auto {}(", VirtualPrefix(m), m.name);
-  for (std::size_t i = 1; i < code.params.size(); ++i) {
-    if (i != 1) sig += ", ";
+  std::string sig =
+      std::format("{}{}auto {}(", static_prefix, VirtualPrefix(m), m.name);
+  for (std::size_t i = user_params_start; i < code.params.size(); ++i) {
+    if (i != user_params_start) sig += ", ";
     sig += RenderCallableParam(unit, code.locals.Get(code.params[i]));
   }
   sig += std::format(") -> {}{}", ret, OverrideSuffix(m));
@@ -126,14 +150,16 @@ auto RenderClassCallable(
   const ScopeView body_view = (parent_struct_view == nullptr)
                                   ? ScopeView::ForRoot(unit, s, code)
                                   : parent_struct_view->WithClass(s, code);
-  const mir::LocalId self_local = code.params[0];
-  const auto& self_decl = code.locals.Get(self_local);
-  const std::string self_type = RenderTypeAsCpp(unit, self_decl.type);
 
   std::string out;
   out += std::format("{}{} {{\n", Indent(indent), sig);
-  out += std::format(
-      "{}{} {} = this;\n", Indent(indent + 1), self_type, self_decl.name);
+  if (has_receiver) {
+    const mir::LocalId self_local = code.params[0];
+    const auto& self_decl = code.locals.Get(self_local);
+    const std::string self_type = RenderTypeAsCpp(unit, self_decl.type);
+    out += std::format(
+        "{}{} {} = this;\n", Indent(indent + 1), self_type, self_decl.name);
+  }
   out += RenderBlockStatements(body_view, indent + 1);
   out += std::format("{}}}\n", Indent(indent));
   return out;
@@ -303,6 +329,32 @@ auto RenderStaticConstant(
       RenderExpr(view, view.Expr(c.value)));
 }
 
+// The class-level design-init body (LRM 8.9 / 10.5): renders as a static
+// class method whose body assigns each static property its source-declared
+// initial value, plus an `inline static const` sentinel whose initializer
+// invokes it. C++ evaluates `inline static` variables at program-startup
+// time, before `main` and before any process, which realizes the LRM
+// "before any initial or always" ordering without a runtime hook. When the
+// class declared no source initializers the body is empty and nothing is
+// emitted -- the properties' value-init on their inline declarations
+// already covers the type-default case.
+auto RenderClassStaticInit(
+    const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent)
+    -> std::string {
+  if (s.static_init.body.root_stmts.empty()) return "";
+  const ScopeView view = ScopeView::ForRoot(unit, s, s.static_init);
+  std::string out;
+  out += std::format(
+      "{}static auto __static_init__() -> void {{\n", Indent(indent));
+  out += RenderBlockStatements(view, indent + 1);
+  out += std::format("{}}}\n", Indent(indent));
+  out += std::format(
+      "{}inline static const int __static_init_trigger__ = "
+      "(__static_init__(), 0);\n",
+      Indent(indent));
+  return out;
+}
+
 auto RenderScopeAsClass(
     const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
     const ScopeView* parent_struct_view) -> std::string;
@@ -378,6 +430,17 @@ auto RenderScopeAsClass(
   }
   out += RenderFieldList(this_anchor, s.fields, indent + 1);
 
+  // Type-associated storage (LRM 8.9): one cell per class, value-initialized
+  // by C++ at program-startup time so the type-default case needs no
+  // explicit statement. A source-declared initializer is separately emitted
+  // through the `static_init` body below.
+  if (!s.static_properties.empty()) {
+    out += "\n";
+  }
+  for (const mir::StaticPropertyDecl& sp : s.static_properties) {
+    out += RenderClassStaticProperty(unit, sp, indent + 1);
+  }
+
   // Each callable declares its access -- a class instance method is the
   // object's public callable surface, a scope's processes and lifecycle hooks
   // are internal -- and the access specifier follows that stated visibility,
@@ -424,6 +487,17 @@ auto RenderScopeAsClass(
   // them), each emitted as a static member.
   for (const mir::StaticConstantDecl& c : s.static_constants) {
     out += RenderStaticConstant(this_anchor, s, c, indent + 1);
+  }
+
+  // The class's design-init body (LRM 8.9 / 10.5). Renders only when the
+  // source declared at least one static property initializer; otherwise the
+  // value-init on each `inline static` declaration above already realizes
+  // the type-default case.
+  const std::string static_init_text =
+      RenderClassStaticInit(unit, s, indent + 1);
+  if (!static_init_text.empty()) {
+    out += "\n";
+    out += static_init_text;
   }
 
   out += std::format("{}}};\n", Indent(indent));

@@ -415,6 +415,10 @@ class HirDumper {
                   "ClassProperty[Class[{}].{}]", r.owner.value,
                   r.field_index.value);
             },
+            [](const StaticPropertyRef& r) -> std::string {
+              return std::format(
+                  "StaticProperty[Class[{}].{}]", r.owner.value, r.prop.value);
+            },
             [](const RoutedRef& r) -> std::string {
               return std::format("RoutedRef[{}]", r.id.value);
             },
@@ -557,6 +561,11 @@ class HirDumper {
               return std::format(
                   "Method class=Class[{}] index={} recv={}", m.class_id.value,
                   m.method.value, recv);
+            },
+            [](const StaticMethodCallRef& s) -> std::string {
+              return std::format(
+                  "StaticMethod class=Class[{}] index={}", s.class_id.value,
+                  s.method.value);
             },
             [](const SystemSubroutineRef& s) -> std::string {
               const auto& desc = support::LookupSystemSubroutine(s.id);

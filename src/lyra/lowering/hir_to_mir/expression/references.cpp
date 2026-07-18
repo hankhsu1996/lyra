@@ -256,8 +256,17 @@ auto LowerHirPrimaryExprProc(
                 self_ref,
                 mir::FieldTarget{
                     .owner = process.Owner().TranslateClass(r.owner),
-                    .slot = process.Owner().TranslateField(r.field_index)},
+                    .slot = UnitLowerer::TranslateField(r.field_index)},
                 result_type);
+          },
+          [&](const hir::StaticPropertyRef& r) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::StaticPropertyRef{
+                        .owner = process.Owner().TranslateClass(r.owner),
+                        .prop = UnitLowerer::TranslateStaticProperty(r.prop),
+                    },
+                .type = result_type};
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
             return LowerReferenceRouteExpr(
@@ -303,6 +312,11 @@ auto LowerHirPrimaryExprStructural(
           [](const hir::ClassPropertyRef&) -> mir::Expr {
             throw InternalError(
                 "LowerHirPrimaryExprStructural: HIR ClassPropertyRef does not "
+                "appear in structural expressions");
+          },
+          [](const hir::StaticPropertyRef&) -> mir::Expr {
+            throw InternalError(
+                "LowerHirPrimaryExprStructural: HIR StaticPropertyRef does not "
                 "appear in structural expressions");
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
