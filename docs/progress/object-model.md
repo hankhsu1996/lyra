@@ -93,11 +93,26 @@ each stage establishes, not how.
       to whether the source separately wrote an empty body -- the two forms are semantically
       distinct and remain distinct end-to-end.
 
-- [ ] Interface-class conformance: a class may conform to several interfaces, a relation distinct
-      from its single concrete base and carrying no second instance storage. Parameterized-class
-      specialization: a generic declaration plus, per specialization, a distinct materialized object
-      record, its identity aligned with compilation-unit specialization (a stable id within a unit,
-      a by-name canonical key across units) -- the same shape a parameterized module uses.
+- [ ] Interface-class conformance (LRM 8.26): a class may conform to several interfaces, a relation
+      distinct from its single concrete base and carrying no second instance storage. Each
+      conformance is a pure-virtual method contract the class must satisfy; a shared behaviour among
+      unrelated concrete hierarchies is expressed as conformance to one interface class, not as a
+      shared base.
+
+- [x] Parameterized-class specialization (LRM 8.25): a generic class plus, per distinct set of
+      parameter bindings, a materialized class record. Matching specializations of one generic
+      definition are the same type; distinct bindings produce distinct classes with per-
+      specialization instance layout, static-property cells, and inheritance edge. Rides on the same
+      identity mechanism a parameterized module uses -- generic-def name plus a canonical content
+      encoding of the bindings.
+
+- [ ] Cross-unit class ownership: a class is owned by the compilation unit that declares it, and a
+      reference from another unit reaches it by name -- the same by-name resolution package
+      callables already use. The class-copied-into-each-referring-unit shape (which today duplicates
+      a package class into every unit that names it) is out. This is what lets LRM 8.25's
+      package-scope rule -- matching specializations of a package generic class are one type
+      throughout the system -- hold across compilation units, and it applies uniformly to
+      non-parameterized and parameterized classes.
 
 - [x] Type-associated static storage and static methods (LRM 8.9 / 8.10): a static property is one
       cell owned by the type, distinct from a per-instance field replicated on every object; a
