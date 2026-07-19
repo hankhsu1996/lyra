@@ -224,13 +224,26 @@ auto ApplyAssignEffect(
     std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
+  // Only an observable-cell write notifies subscribers, so only it reaches a
+  // services value; a plain-local write carries none.
+  const bool target_is_observable_cell =
+      LhsRootIsObservableCell(process.Owner().Unit(), block, target_in_outer);
+  // Firing subscribers needs the runtime services, reached through the
+  // callable's `self`. A receiver-less callable (a package function or task,
+  // LRM 26.3) has no `self`, so it cannot yet write an observable cell -- which
+  // for it is a package variable (LRM 26.2). Reading one is fine (a read needs
+  // no services); writing awaits threading the services into a receiver-less
+  // callable. Reject cleanly here rather than reach for a receiver that is not
+  // there.
+  if (target_is_observable_cell && frame.current_class == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedAssignmentTarget,
+        "writing a package variable from a package subroutine is not yet "
+        "supported");
+  }
   if (kind == hir::AssignKind::kBlocking) {
-    // Only an observable-cell write notifies subscribers, so only it reaches a
-    // services value; a plain-local write carries none. This is what lets a
-    // receiver-less callable -- whose locals are never observable -- lower an
-    // assignment without a receiver to reach services through.
     const std::optional<mir::ExprId> services_id =
-        LhsRootIsObservableCell(process.Owner().Unit(), block, target_in_outer)
+        target_is_observable_cell
             ? std::optional{block.exprs.Add(
                   BuildServicesCallExpr(process.Owner(), frame))}
             : std::nullopt;

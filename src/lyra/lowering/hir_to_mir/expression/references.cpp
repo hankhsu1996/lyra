@@ -148,6 +148,26 @@ auto LowerReferenceRouteExpr(
       frame, lowerer.Owner().Unit(), BindEndpoint(lowerer, frame, route));
 }
 
+// A package variable (LRM 26.2) is reached by name, never through a
+// `self`-based route: the same by-name form serves a referrer in another unit
+// and the package's own callable reading its own variable. The result is the
+// variable's observable-cell type, so the dispatcher wraps the read in `kGet`
+// and a write in `kSet`, exactly as an intra-unit signal's cell. A referrer in
+// another unit records the dependency so the backend emits the include and link
+// edge; a package's own reference to its own variable records nothing.
+auto LowerExternalUnitValueRefExpr(
+    mir::CompilationUnit& unit, const hir::ExternalUnitValueRef& r,
+    mir::TypeId value_type) -> mir::Expr {
+  if (r.unit_name != unit.name) {
+    unit.AddExternalReferencedUnit(r.unit_name);
+  }
+  return mir::Expr{
+      .data =
+          mir::ExternalUnitVariableRef{
+              .unit_name = r.unit_name, .variable_name = r.variable_name},
+      .type = unit.types.ObservableCellOf(value_type)};
+}
+
 auto LowerProceduralVarRefExpr(
     ProcessLowerer& process, const WalkFrame& frame,
     const hir::ProceduralVarRef& l, mir::TypeId type) -> mir::Expr {
@@ -275,6 +295,10 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);
           },
+          [&](const hir::ExternalUnitValueRef& r) -> mir::Expr {
+            return LowerExternalUnitValueRefExpr(
+                process.Owner().Unit(), r, result_type);
+          },
       },
       p);
 }
@@ -325,6 +349,10 @@ auto LowerHirPrimaryExprStructural(
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);
+          },
+          [&](const hir::ExternalUnitValueRef& r) -> mir::Expr {
+            return LowerExternalUnitValueRefExpr(
+                lowerer.Owner().Unit(), r, result_type);
           },
       },
       p);

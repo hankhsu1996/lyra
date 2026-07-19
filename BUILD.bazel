@@ -242,10 +242,12 @@ cc_library(
 
 cc_library(
     name = "unit_metadata",
+    srcs = ["src/lyra/compiler/unit_metadata.cpp"],
     hdrs = ["include/lyra/compiler/unit_metadata.hpp"],
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
+    deps = [":mir"],
 )
 
 cc_library(
@@ -272,8 +274,14 @@ cc_library(
 
 cc_library(
     name = "compiler",
-    srcs = ["src/lyra/compiler/compile.cpp"],
-    hdrs = ["include/lyra/compiler/compile.hpp"],
+    srcs = glob(
+        ["src/lyra/compiler/*.cpp"],
+        exclude = ["src/lyra/compiler/unit_metadata.cpp"],
+    ),
+    hdrs = glob(
+        ["include/lyra/compiler/*.hpp"],
+        exclude = ["include/lyra/compiler/unit_metadata.hpp"],
+    ),
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
@@ -293,19 +301,11 @@ cc_library(
 
 cc_library(
     name = "driver",
-    srcs = [
-        "src/lyra/driver/cpp_build.cpp",
-        "src/lyra/driver/dpi_link.cpp",
-        "src/lyra/driver/pch.cpp",
-        "src/lyra/driver/runtime_export.cpp",
-    ],
-    hdrs = [
-        "include/lyra/driver/cpp_build.hpp",
-        "include/lyra/driver/dpi_link.hpp",
-        "include/lyra/driver/pch.hpp",
-        "include/lyra/driver/project_layout.hpp",
-        "include/lyra/driver/runtime_export.hpp",
-    ],
+    srcs = glob(
+        ["src/lyra/driver/*.cpp"],
+        exclude = ["src/lyra/driver/cli.cpp"],
+    ),
+    hdrs = glob(["include/lyra/driver/*.hpp"]),
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],

@@ -1,0 +1,14 @@
+id: cpp.package_variables
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    init_read: 5
+    fn_read: 10
+    after_write: 7
+    mirror: 8

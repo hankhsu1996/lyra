@@ -566,15 +566,16 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
     }
   };
   // A unit an instance is built from names its unit through the child object's
-  // `ExternalUnitObjectType`; a unit a receiver-less callable is called from
-  // names its unit in the call-dependency list, since a call interns no such
-  // type. Both are external units this unit's artifact includes.
+  // `ExternalUnitObjectType`; a unit whose namespace symbol is reached by name
+  // names its unit in the reference-dependency list, since such a reference
+  // interns no such type. Both are external units this unit's artifact
+  // includes.
   for (const auto& t : unit.types) {
     if (const auto* ext = std::get_if<mir::ExternalUnitObjectType>(&t.data)) {
       add(ext->unit_name);
     }
   }
-  for (const std::string& name : unit.external_callable_units) {
+  for (const std::string& name : unit.external_referenced_units) {
     add(name);
   }
   return names;
@@ -789,6 +790,20 @@ auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
   out += "\n";
   out += std::format("namespace {} {{\n\n", ToCppName(unit.name));
   out += RenderUnitTypeDeclarations(unit);
+  // A package variable is one program-global observable cell (LRM 26.2). C++17
+  // `inline` gives it a single definition across every translation unit that
+  // includes the header, matching the header-only, link-by-name model the
+  // namespace callables use. It is declared before the callables because the
+  // synthesized `Initialize` callable, itself one of them, references it.
+  for (std::size_t i = 0; i < unit.static_variables.size(); ++i) {
+    const auto& var = unit.static_variables.Get(
+        mir::StaticVariableId{static_cast<std::uint32_t>(i)});
+    out += std::format(
+        "inline {} {}{{}};\n", RenderTypeAsCpp(unit, var.type), var.name);
+  }
+  if (unit.static_variables.size() != 0) {
+    out += "\n";
+  }
   for (std::size_t i = 0; i < unit.callables.size(); ++i) {
     const auto& callable =
         unit.callables.Get(mir::CallableId{static_cast<std::uint32_t>(i)});

@@ -14,9 +14,19 @@
 namespace slang::ast {
 class HierarchicalValueExpression;
 class NamedValueExpression;
+class PackageSymbol;
+class ValueSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
+
+// A variable declared directly in a package scope (LRM 26.2), or nullptr
+// otherwise. A package variable is reached by name across the unit boundary,
+// the way a package subroutine call is; both the value-reference path and the
+// sensitivity path detect it here so a package variable read and a wait on its
+// change agree on the by-name form.
+auto EnclosingPackageOfValue(const slang::ast::ValueSymbol& value)
+    -> const slang::ast::PackageSymbol*;
 
 auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,

@@ -2,6 +2,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <string>
 #include <variant>
 
 #include "lyra/hir/class_id.hpp"
@@ -9,6 +10,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 
 namespace lyra::hir {
@@ -94,11 +96,38 @@ struct IterationBindingRef {
   auto operator==(const IterationBindingRef&) const -> bool = default;
 };
 
+// A reference to a variable that belongs to another compilation unit's
+// namespace -- a package variable (LRM 26.2), reached by name. Like
+// `ExternalUnitSubroutineRef` for a call, it carries no unit-local id: a
+// package has no instance and no receiver, so its variable is named and
+// resolved against the target unit's interface at link time, never through a
+// `self`-based route within any unit. The same by-name form serves a referrer
+// in another unit and the package's own callable reading its own variable,
+// since neither has a receiver to reach it through. One form serves read,
+// write, and observation.
+struct ExternalUnitValueRef {
+  std::string unit_name;
+  std::string variable_name;
+  // The variable's value type. Carried on the node so it is self-describing: a
+  // sensitivity leaf reaches the observed cell's type from the reference alone,
+  // with no enclosing expression to type it.
+  TypeId value_type;
+
+  auto operator==(const ExternalUnitValueRef&) const -> bool = default;
+};
+
 // A reader-relative reference to a value: either a direct member of the
 // reader's own scope, or a routed reference sealed to a per-instance endpoint
 // in the resolve phase. One route serves every consumer of the reference --
 // value read, value write, and change observation -- so the name is neutral to
 // the consumer, not owned by sensitivity.
 using ReferenceRoute = std::variant<DirectMemberRef, RoutedRef>;
+
+// What a sensitivity leaf watches: a reader-relative route to an intra-unit
+// observable cell, or a by-name reference to a package variable's one
+// program-global cell (LRM 26.2). A package variable's change wakes the process
+// the same way an intra-unit signal's does, but it is reached by name, not
+// through a route, since a package has no per-instance storage to route to.
+using SensitivityTarget = std::variant<ReferenceRoute, ExternalUnitValueRef>;
 
 }  // namespace lyra::hir

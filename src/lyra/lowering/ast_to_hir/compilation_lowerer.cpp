@@ -9,7 +9,6 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -41,8 +40,6 @@ struct UnitCollector
   }
 };
 
-}  // namespace
-
 auto CollectUnitBodies(const LowerCompilationFacts& facts)
     -> std::vector<const slang::ast::InstanceBodySymbol*> {
   const auto& root = facts.Compilation().getRoot();
@@ -60,7 +57,11 @@ auto LowerUnit(
   const LoweringFacts unit_facts(
       facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
   UnitLowerer lowerer(unit_facts, body, SpecializationName(body));
-  return lowerer.Run();
+  auto unit = lowerer.Run();
+  if (unit) {
+    unit->kind = hir::UnitKind::kModule;
+  }
+  return unit;
 }
 
 auto CollectPackages(const LowerCompilationFacts& facts)
@@ -85,7 +86,36 @@ auto LowerPackageUnit(
   const LoweringFacts unit_facts(
       facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
   UnitLowerer lowerer(unit_facts, package, std::string{package.name});
-  return lowerer.Run();
+  auto unit = lowerer.Run();
+  if (unit) {
+    unit->kind = hir::UnitKind::kPackage;
+  }
+  return unit;
+}
+
+}  // namespace
+
+auto LowerCompilationToHir(const LowerCompilationFacts& facts)
+    -> diag::Result<std::vector<hir::CompilationUnit>> {
+  std::vector<hir::CompilationUnit> units;
+  const auto packages = CollectPackages(facts);
+  const auto bodies = CollectUnitBodies(facts);
+  units.reserve(packages.size() + bodies.size());
+  for (const auto* package : packages) {
+    auto unit = LowerPackageUnit(facts, *package);
+    if (!unit) {
+      return std::unexpected(std::move(unit.error()));
+    }
+    units.push_back(*std::move(unit));
+  }
+  for (const auto* body : bodies) {
+    auto unit = LowerUnit(facts, *body);
+    if (!unit) {
+      return std::unexpected(std::move(unit.error()));
+    }
+    units.push_back(*std::move(unit));
+  }
+  return units;
 }
 
 auto TopLevelUnitNames(slang::ast::Compilation& compilation)

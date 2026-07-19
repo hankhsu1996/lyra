@@ -435,6 +435,10 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
                 "{}::{}", ToCppName(owner_cls.name),
                 owner_cls.static_properties.Get(r.prop).name);
           },
+          [&](const mir::ExternalUnitVariableRef& r) -> std::string {
+            return std::format(
+                "{}::{}", ToCppName(r.unit_name), r.variable_name);
+          },
           // HIR-to-MIR lowers an LHS selector chain to write-form nodes -- a
           // container-access `CallExpr` with a write callee (per
           // `mir::IsContainerAccessCall`), a `UnionGetRefExpr`, a
@@ -908,6 +912,10 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::format(
                 "{}::{}", ToCppName(owner_cls.name),
                 owner_cls.static_properties.Get(r.prop).name);
+          },
+          [&](const mir::ExternalUnitVariableRef& r) -> std::string {
+            return std::format(
+                "{}::{}", ToCppName(r.unit_name), r.variable_name);
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);

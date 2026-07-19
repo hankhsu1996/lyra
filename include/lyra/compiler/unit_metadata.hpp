@@ -3,6 +3,10 @@
 #include <cstdint>
 #include <string>
 
+namespace lyra::mir {
+struct CompilationUnit;
+}  // namespace lyra::mir
+
 namespace lyra::compiler {
 
 // The immutable, source-level metadata of one compiled design unit, held apart
@@ -18,5 +22,13 @@ struct ElaboratedUnitMetadata {
   std::string def_name;
   std::int8_t time_precision_power = 0;
 };
+
+// A unit's definition metadata is a source-level fact known once elaboration
+// fixes the unit's root scope: its def name is the root's name, its precision
+// the root's declared resolution. Derived from MIR so the executable body
+// downstream never carries these source-language concepts. The unit must have a
+// root class (a module or the design root, not a package).
+auto BuildUnitMetadata(const mir::CompilationUnit& unit)
+    -> ElaboratedUnitMetadata;
 
 }  // namespace lyra::compiler

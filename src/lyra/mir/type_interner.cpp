@@ -7,6 +7,7 @@
 #include <utility>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
@@ -155,6 +156,67 @@ auto TypeInterner::Intern(TypeData data) -> TypeId {
   const TypeId id = storage_.Add(Type{.data = data});
   index_.emplace(std::move(data), id);
   return id;
+}
+
+auto TypeInterner::ObservableCellOf(TypeId value_type) -> TypeId {
+  // Exhaustive over TypeKind with no default: a MIR type added later fails to
+  // compile here until it is classified, rather than silently defaulting to
+  // non-observable -- which would leave a new value type's writes firing no
+  // subscribers, a bug no test would obviously catch.
+  switch (Get(value_type).Kind()) {
+    // A SystemVerilog value-storage data object (LRM 6.5): a variable of one of
+    // these is an observable signal, so it is wrapped in the cell that fires
+    // subscribers on change.
+    case TypeKind::kPackedArray:
+    case TypeKind::kEnum:
+    case TypeKind::kUnpackedArray:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
+    case TypeKind::kString:
+    case TypeKind::kReal:
+    case TypeKind::kShortReal:
+    case TypeKind::kRealTime:
+    case TypeKind::kTuple:
+    case TypeKind::kUnion:
+      return Intern(ObservableType{.value = value_type});
+    // Not value storage, so its own declaration shape is its storage and it is
+    // not wrapped: a handle or container (pointer, managed / borrowed
+    // reference, vector, chandle), an object (a class instance or an
+    // instantiated child), a named event (LRM 15 -- it carries its own
+    // subscribe mechanism), a runtime facade (services, files, diagnostics, a
+    // runtime-library type), a coroutine result, a machine primitive (a machine
+    // int / float / C string used at an ABI boundary), a compiler-generated
+    // promoted scope struct or closure, an internal index, `void`, and the
+    // observable / net-cell wrappers themselves, which are already storage
+    // cells.
+    case TypeKind::kWildcardIndex:
+    case TypeKind::kMachineCString:
+    case TypeKind::kMachineInt:
+    case TypeKind::kMachineFloat:
+    case TypeKind::kEvent:
+    case TypeKind::kChandle:
+    case TypeKind::kVoid:
+    case TypeKind::kObject:
+    case TypeKind::kExternalUnitObject:
+    case TypeKind::kExternalClass:
+    case TypeKind::kServices:
+    case TypeKind::kFiles:
+    case TypeKind::kDiagnostic:
+    case TypeKind::kRuntimeLibrary:
+    case TypeKind::kCoroutine:
+    case TypeKind::kReference:
+    case TypeKind::kPointer:
+    case TypeKind::kManagedRef:
+    case TypeKind::kVector:
+    case TypeKind::kObservable:
+    case TypeKind::kResolved:
+    case TypeKind::kDriver:
+    case TypeKind::kStruct:
+    case TypeKind::kClosure:
+      return value_type;
+  }
+  throw InternalError("TypeInterner::ObservableCellOf: unhandled TypeKind");
 }
 
 }  // namespace lyra::mir

@@ -17,6 +17,7 @@
 #include "lyra/mir/deferred_check_site.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
@@ -26,6 +27,22 @@
 namespace lyra::mir {
 
 struct DeferredCheckSite {};
+
+// A unit-level static variable: a named mutable value the unit's namespace owns
+// with static storage -- one program-global cell, shared across the whole
+// simulation, not a member of any instance (LRM 26.2 package variables, LRM
+// 6.21 static lifetime). The mutable, observable counterpart of a
+// `StaticConstantDecl`: a backend emits it as a namespace-scope observable cell
+// and every reference reaches it by name (`unit::name`), the storage dual of
+// the unit's receiver-less callables. `type` is the observable-cell type; the
+// declared value type is its inner value. The initializer is not here: it runs
+// in the unit's synthesized initializer at time zero (LRM 10.5), the way a
+// class member's initializer runs in its Initialize phase, never as a field on
+// the declaration.
+struct StaticVariableDecl {
+  std::string name;
+  TypeId type;
+};
 
 // Named TypeIds the lowering and rendering reuse. Most are language or runtime
 // atomic types (the literal `int` type, the 1-bit selector type, the `void`
@@ -88,6 +105,12 @@ struct CompilationUnit {
   // bodied. A class's own callables live on that class; these are the
   // unit-level namespace's, one scope up.
   base::Arena<CallableDecl, CallableId> callables;
+  // Static variables the unit's namespace owns directly rather than through one
+  // of its classes -- a package's variables (LRM 26.2), one program-global cell
+  // each, shared and reached by name. A class's own static storage lives on
+  // that class; these are the unit-level namespace's, one scope up. Their
+  // initializers run in the unit's synthesized initializer at time zero.
+  base::Arena<StaticVariableDecl, StaticVariableId> static_variables;
   // The source name of each nominal type that carries none of its own, keyed by
   // that type's id. An enum is the case: it has no intrinsic name (an anonymous
   // enum has none, a multi-typedef enum has several), so a `typedef` names it
@@ -108,13 +131,24 @@ struct CompilationUnit {
   // is its own callable-value category, not a struct.
   base::Registry<ClosureDecl, ClosureId> closures;
   std::vector<DeferredCheckSite> deferred_check_sites;
-  // Names of other compilation units this unit calls a receiver-less callable
-  // of -- a package function or task (LRM 26.3). A cross-unit call carries no
+  // Names of other compilation units this unit reaches a namespace-level symbol
+  // of by name -- a package function or task called (LRM 26.3), or a package
+  // variable read or written (LRM 26.2). Such a reference carries no
   // value-typed object of the target unit, so unlike an instantiation it
   // interns no `ExternalUnitObjectType`; a backend reads this dependency list
-  // to emit the include and link edge to each called unit. Recorded once per
-  // distinct unit name.
-  std::vector<std::string> external_callable_units;
+  // to emit the include and link edge to each referenced unit. Recorded once
+  // per distinct unit name.
+  std::vector<std::string> external_referenced_units;
+  // The packages whose variables this package's variable initializers read
+  // directly (LRM 26.2 / 10.5) -- the by-name dependency the design root uses
+  // to pick a stable value-initialization order. It records only reads written
+  // directly in an initializer expression; a read reached through a called
+  // function does not contribute yet. This is a preference, not a correctness
+  // input: every cell is installed with its default before any initializer
+  // runs, so a missed or cyclic dependency only means a read observes a
+  // default, never an uninstalled cell. Empty for a non-package unit and for a
+  // package with no initializer that reads another package's variable.
+  std::vector<std::string> direct_initializer_package_reads;
 
   CompilationUnit()
       : builtins{
@@ -229,15 +263,16 @@ struct CompilationUnit {
     closures.Define(id, std::move(value));
   }
 
-  // Records a cross-unit callable dependency, deduplicated. Called from
-  // HIR-to-MIR when a call names a receiver-less callable of another unit.
-  void AddExternalCallableUnit(std::string unit_name) {
-    for (const std::string& existing : external_callable_units) {
+  // Records a cross-unit namespace-symbol dependency, deduplicated. Called from
+  // HIR-to-MIR when a reference names a receiver-less callable or a static
+  // variable of another unit.
+  void AddExternalReferencedUnit(std::string unit_name) {
+    for (const std::string& existing : external_referenced_units) {
       if (existing == unit_name) {
         return;
       }
     }
-    external_callable_units.push_back(std::move(unit_name));
+    external_referenced_units.push_back(std::move(unit_name));
   }
 
   // Backing-vector position is the id, matching TypeId / LocalId.

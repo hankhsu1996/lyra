@@ -481,6 +481,20 @@ struct StaticPropertyRef {
   StaticPropertyId prop;
 };
 
+// A place naming a static variable of another compilation unit's namespace by
+// name (`unit_name::variable_name`) -- a package variable (LRM 26.2) read or
+// written from this unit. The reference kind for a package variable is uniform:
+// a package has no instance and no receiver, so its variable is reached by name
+// whether the referrer is another unit or the package's own callable, never
+// through a `self`-based field access. `Expr::type` is the variable's
+// observable-cell type, so a read wraps it in `Get` and a write in `Set`,
+// exactly as an intra-unit signal's cell does. The storage dual of
+// `ExternalUnitCallableTarget`.
+struct ExternalUnitVariableRef {
+  std::string unit_name;
+  std::string variable_name;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     MachineIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
@@ -489,7 +503,7 @@ using ExprData = std::variant<
     StructConstructExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
     ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr, UnionExpr,
     UnionGetExpr, UnionGetRefExpr, FunctionRef, StaticConstantRef,
-    StaticPropertyRef>;
+    StaticPropertyRef, ExternalUnitVariableRef>;
 
 struct Expr {
   ExprData data;

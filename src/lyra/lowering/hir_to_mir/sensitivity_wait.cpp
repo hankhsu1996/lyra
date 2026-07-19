@@ -4,7 +4,9 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -29,8 +31,33 @@ auto BuildTriggerExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)
     -> mir::ExprId {
-  const mir::ExprId observable_ptr = EndpointObservablePtr(
-      block, frame, unit, BindEndpoint(lowerer, frame, entry.ref));
+  // The leaf watches either an intra-unit cell reached through its route, or a
+  // package variable's one program-global cell reached by name (LRM 26.2). Both
+  // resolve to a borrowed pointer to the observable cell the runtime subscribes
+  // to; only the way the cell is reached differs.
+  const mir::ExprId observable_ptr = std::visit(
+      Overloaded{
+          [&](const hir::ReferenceRoute& route) -> mir::ExprId {
+            return EndpointObservablePtr(
+                block, frame, unit, BindEndpoint(lowerer, frame, route));
+          },
+          [&](const hir::ExternalUnitValueRef& pkg) -> mir::ExprId {
+            unit.AddExternalReferencedUnit(pkg.unit_name);
+            const mir::TypeId cell_type = unit.types.ObservableCellOf(
+                lowerer.Owner().TranslateType(pkg.value_type));
+            const mir::ExprId cell = block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::ExternalUnitVariableRef{
+                            .unit_name = pkg.unit_name,
+                            .variable_name = pkg.variable_name},
+                    .type = cell_type});
+            const mir::TypeId ptr_type = unit.types.PointerTo(
+                cell_type, mir::PointerOwnership::kBorrowed);
+            return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
+          },
+      },
+      entry.ref);
   const std::int64_t lsb_bit_offset =
       entry.footprint.has_value()
           ? static_cast<std::int64_t>(entry.footprint->first)

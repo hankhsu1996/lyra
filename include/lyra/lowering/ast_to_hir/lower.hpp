@@ -10,11 +10,6 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 
-namespace slang::ast {
-class InstanceBodySymbol;
-class PackageSymbol;
-}  // namespace slang::ast
-
 namespace lyra::lowering::ast_to_hir {
 
 // Driver-supplied facts threaded into AST-to-HIR lowering. `Compilation&` is
@@ -55,33 +50,13 @@ class LowerCompilationFacts {
   bool disable_assertions_;
 };
 
-// The distinct unit bodies reachable from the tops, deduped to one canonical
-// body per specialization -- the work-list for per-unit lowering. A module
-// instantiated many times appears once; the descent is transitive, so a unit
-// reached only through instantiation is included though it is not a top.
-auto CollectUnitBodies(const LowerCompilationFacts& facts)
-    -> std::vector<const slang::ast::InstanceBodySymbol*>;
-
-// Lowers one unit body to its HIR. Independent of every other unit: it reads
-// only this body and the shared frontend, so units may be lowered in any order.
-auto LowerUnit(
-    const LowerCompilationFacts& facts,
-    const slang::ast::InstanceBodySymbol& body)
-    -> diag::Result<hir::CompilationUnit>;
-
-// The packages the design declares (LRM 26). A package is a namespace
-// compilation unit: it owns declarations reached by name from other units, and
-// unlike a module it is never instantiated, so the list comes from the
-// declaration set, not the instance tree.
-auto CollectPackages(const LowerCompilationFacts& facts)
-    -> std::vector<const slang::ast::PackageSymbol*>;
-
-// Lowers one package to its HIR unit. Like `LowerUnit`, it reads only the
-// package's own scope and the shared frontend.
-auto LowerPackageUnit(
-    const LowerCompilationFacts& facts,
-    const slang::ast::PackageSymbol& package)
-    -> diag::Result<hir::CompilationUnit>;
+// Lowers the whole compilation to its HIR units: every package the design
+// declares, then every distinct module body reachable from the tops, each
+// tagged with its `UnitKind`. Each unit is lowered independently -- it reads
+// only its own scope and the shared frontend -- so the result is a flat set of
+// self-contained units with no cross-unit HIR references.
+auto LowerCompilationToHir(const LowerCompilationFacts& facts)
+    -> diag::Result<std::vector<hir::CompilationUnit>>;
 
 // A top-level block is an auto-promoted, uninstantiated module. These names
 // are a subset of the compiled units: a unit reached only through

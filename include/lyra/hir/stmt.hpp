@@ -195,7 +195,7 @@ struct DelayControl {
 // event control `@(posedge ...)` / `@(negedge ...)` / `@(edge ...)` set the
 // per-leaf edge.
 struct SensitivityEntry {
-  ReferenceRoute ref;
+  SensitivityTarget ref;
   std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
   support::EventEdge edge_kind = support::EventEdge::kAnyChange;
 };

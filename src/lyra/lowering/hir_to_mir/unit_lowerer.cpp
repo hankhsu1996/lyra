@@ -1,28 +1,172 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
+#include "lyra/mir/local.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+namespace {
+
+// Lowers a package's variables (LRM 26.2) into unit-level static storage and
+// synthesizes the two receiver-less callables that bring them up at time zero:
+// `Install` installs every cell's declared representation and default (no
+// services -- nothing to fire before any process), and `Initialize` runs each
+// LRM 10.5 value initializer through its cell (taking the services, since a
+// package has no `self` to reach them through). The design root installs every
+// package before initializing any, so a value initializer always reaches
+// installed storage. A package variable is reached by name (`unit::name`), so a
+// variable initializer's references to sibling or other-package variables lower
+// through the same by-name path with no enclosing scope or receiver; the
+// other-package reads are recorded as the unit's initializer dependency.
+auto PopulatePackageStaticVariables(
+    UnitLowerer& unit_lowerer, const hir::StructuralScope& scope)
+    -> diag::Result<void> {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+
+  mir::CallableCode install_code;
+  install_code.result_type = unit.builtins.void_type;
+  mir::Block& install_block = install_code.body;
+  const WalkFrame install_frame = WalkFrame{}.WithBlock(&install_block);
+
+  mir::CallableCode value_code;
+  value_code.result_type = unit.builtins.void_type;
+  const mir::LocalId services_local = value_code.locals.Add(
+      mir::LocalDecl{.name = "services", .type = unit.builtins.services});
+  value_code.params.push_back(services_local);
+  mir::Block& value_block = value_code.body;
+  const WalkFrame value_frame = WalkFrame{}.WithBlock(&value_block);
+
+  // The package root scope is an ExprLowerer over its own expressions: a
+  // variable initializer's operands are literals, operators, and by-name
+  // package symbols, none of which reach a class or a `self`.
+  const StructuralScopeLowerer expr_lowerer(
+      unit_lowerer, nullptr, unit.name, scope);
+
+  const auto make_cell = [&](mir::Block& block, const std::string& name,
+                             mir::TypeId cell_type) -> mir::ExprId {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::ExternalUnitVariableRef{
+                    .unit_name = unit.name, .variable_name = name},
+            .type = cell_type});
+  };
+
+  for (std::size_t i = 0; i < scope.structural_data_objects.size(); ++i) {
+    const hir::StructuralDataObjectId hir_id{static_cast<std::uint32_t>(i)};
+    const hir::StructuralDataObjectDecl& d =
+        scope.structural_data_objects.Get(hir_id);
+    const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
+    if (var == nullptr) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          "a net declared in a package is not supported");
+    }
+    const mir::TypeId value_type = unit_lowerer.TranslateType(d.type);
+    const mir::TypeId cell_type = unit.types.ObservableCellOf(value_type);
+    if (!mir::IsObservableCellType(unit.types.Get(cell_type))) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          "a package variable of this type is not yet supported");
+    }
+    unit.static_variables.Add(
+        mir::StaticVariableDecl{.name = d.name, .type = cell_type});
+
+    // Phase 1: install the cell's declared representation and default.
+    const mir::ExprId prototype = install_block.exprs.Add(
+        BuildDefaultValueFromHir(unit_lowerer, install_frame, d.type));
+    install_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = install_block.exprs.Add(
+                mir::MakeObservableInitializeCallExpr(
+                    make_cell(install_block, d.name, cell_type), prototype,
+                    unit.builtins.void_type))});
+
+    // Phase 2: a user initializer (LRM 10.5) writes the value through the cell;
+    // the services comes from the callable's parameter, since there is no
+    // `self`.
+    if (var->initializer.has_value()) {
+      auto value_or = expr_lowerer.LowerExpr(
+          scope.exprs.Get(*var->initializer), value_frame);
+      if (!value_or) return std::unexpected(std::move(value_or.error()));
+      const mir::ExprId value_id = value_block.exprs.Add(*std::move(value_or));
+      const mir::ExprId services_ref = value_block.exprs.Add(
+          mir::MakeLocalRefExpr(services_local, unit.builtins.services));
+      value_block.AppendStmt(
+          mir::ExprStmt{
+              .expr = value_block.exprs.Add(
+                  mir::MakeObservableSetCallExpr(
+                      make_cell(value_block, d.name, cell_type), services_ref,
+                      value_id, unit.builtins.void_type))});
+    }
+  }
+
+  // A package with variables always installs them.
+  if (!install_block.root_stmts.empty()) {
+    unit.callables.Add(
+        mir::CallableDecl{
+            .name = std::string{kPackageInstallCallableName},
+            .impl = mir::InternalCallable{.code = std::move(install_code)},
+            .virtual_dispatch = std::nullopt,
+            .visibility = mir::CallableVisibility::kInternal});
+  }
+  // Only a package with a value initializer needs the initialize callable. Its
+  // direct other-package variable reads are the by-name dependency the design
+  // root orders on: scan the initializer body for cross-package cell
+  // references.
+  if (!value_block.root_stmts.empty()) {
+    std::unordered_set<std::string> reads;
+    for (std::size_t i = 0; i < value_block.exprs.size(); ++i) {
+      const auto& data =
+          value_block.exprs.Get(mir::ExprId{static_cast<std::uint32_t>(i)})
+              .data;
+      if (const auto* ref = std::get_if<mir::ExternalUnitVariableRef>(&data);
+          ref != nullptr && ref->unit_name != unit.name) {
+        reads.insert(ref->unit_name);
+      }
+    }
+    unit.direct_initializer_package_reads.assign(reads.begin(), reads.end());
+    std::ranges::sort(unit.direct_initializer_package_reads);
+    unit.callables.Add(
+        mir::CallableDecl{
+            .name = std::string{kPackageInitializeCallableName},
+            .impl = mir::InternalCallable{.code = std::move(value_code)},
+            .virtual_dispatch = std::nullopt,
+            .visibility = mir::CallableVisibility::kInternal});
+  }
+  return {};
+}
+
+}  // namespace
 
 auto UnitLowerer::PopulateTypesAndClasses() -> diag::Result<void> {
   unit_.name = hir_->name;
@@ -73,6 +217,16 @@ auto UnitLowerer::PopulateTypesAndClasses() -> diag::Result<void> {
 }
 
 auto UnitLowerer::RunModule() -> diag::Result<mir::CompilationUnit> {
+  return LowerModuleUnit({});
+}
+
+auto UnitLowerer::RunDesignRoot(PackageInitializationPlan package_init_plan)
+    -> diag::Result<mir::CompilationUnit> {
+  return LowerModuleUnit(std::move(package_init_plan));
+}
+
+auto UnitLowerer::LowerModuleUnit(PackageInitializationPlan package_init_plan)
+    -> diag::Result<mir::CompilationUnit> {
   WalkFrame root_frame;
   if (auto prologue = PopulateTypesAndClasses(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
@@ -80,8 +234,11 @@ auto UnitLowerer::RunModule() -> diag::Result<mir::CompilationUnit> {
 
   // Two-sweep structural lowering: the first sweep mints every class identity
   // and publishes its shape; the second lowers every body and commits the
-  // composed class to the unit.
-  StructuralScopeLowerer root(*this, nullptr, hir_->name, hir_->root_scope);
+  // composed class to the unit. The design root's package initialization plan
+  // rides on the root scope's lowering and is empty for a source module.
+  StructuralScopeLowerer root(
+      *this, nullptr, hir_->name, hir_->root_scope,
+      std::move(package_init_plan));
   auto top_r = root.DeclareShape();
   if (!top_r) return std::unexpected(std::move(top_r.error()));
   auto body_r = root.PopulateBodies(root_frame);
@@ -96,13 +253,14 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
     return std::unexpected(std::move(prologue.error()));
   }
 
-  // A package's root scope holds no processes, no structural data, and no
-  // instances -- only its functions and tasks (LRM 26.2). Each lowers to a
-  // receiver-less callable owned by the unit's namespace, so a package produces
-  // no root class and never enters the structural-scope body machinery.
-  // A package function reaches no static storage and no enclosing scope, so it
-  // lowers against an empty storage plan and no enclosing-scope lowerer. The
-  // frame has no owner class, so the produced body carries no `self`.
+  // A package's root scope holds no processes and no instances -- only its
+  // variables, functions, and tasks (LRM 26.2). Each function and task lowers
+  // to a receiver-less callable, and each variable to unit-level static
+  // storage, so a package produces no root class and never enters the
+  // structural-scope body machinery. A package function reaches no static
+  // storage and no enclosing scope, so it lowers against an empty storage plan
+  // and no enclosing-scope lowerer. The frame has no owner class, so the
+  // produced body carries no `self`.
   const CallableStoragePlan empty_storage_plan;
   const hir::StructuralScope& scope = hir_->root_scope;
 
@@ -138,6 +296,10 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
             .impl = mir::InternalCallable{.code = *std::move(code_or)},
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
+  }
+
+  if (auto vars = PopulatePackageStaticVariables(*this, scope); !vars) {
+    return std::unexpected(std::move(vars.error()));
   }
 
   unit_.root = std::nullopt;

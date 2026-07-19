@@ -20,10 +20,12 @@ inside a package ride on the class workstream and are out of scope here.
 
 ## Actionable
 
-PK1 (compile-time contents) and PK2 (the package as a first-class unit, carrying functions) are
-done: a package function with input arguments is now called across the unit boundary on the C++
-backend. PK3 (package variables) is the next actionable step; it reuses the package-as-unit
-foundation PK2 established.
+PK1 (compile-time contents), PK2 (the package as a first-class unit, carrying functions), and PK3
+(package variables) are done on the C++ backend: a package variable is declared with an initializer,
+initialized once at time zero before the top modules, and read and written from another unit by
+name, including waking a process on its change. The one remaining increment is a package subroutine
+writing a package variable, rejected with a diagnostic rather than mis-emitted. PK4 (the import
+forms and the LRM 26.3 name-search rules) is the next actionable step.
 
 ## Sub-Steps
 
@@ -48,10 +50,25 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       package function with an output / inout / ref argument; a call from one package function to a
       sibling; and a DPI-C import declared inside a package (LRM 35.4), which is rejected with a
       diagnostic rather than mis-emitted.
-- [ ] PK3 -- Package variables. A package variable is static storage owned by the namespace -- one
+- [x] PK3 -- Package variables. A package variable is static storage owned by the namespace -- one
       program-global cell, shared, not a member of any instance -- read and written from other units
       by name. It is the same type-associated storage a class static property uses, not a
-      package-specific singleton object.
+      package-specific singleton object. The variable is reached by name uniformly (a referrer in
+      another unit and the package's own function agree on the by-name form, since neither has a
+      receiver), and a process may wake on its change. Initialization (LRM 10.5) runs at time zero,
+      driven by the design root before the top modules initialize, in two design-wide passes: every
+      package's cells are installed with their declared type and default first, then every package's
+      value initializers run, so an initializer that reads another package's variable always reaches
+      installed storage. The relative order of initializers is unspecified by the LRM; the design
+      root picks a stable, best-effort order (a dependency before its dependent where a direct read
+      makes it known) as a quality-of-implementation choice, and an unknown or cyclic dependency
+      degrades to reading a default, never a crash. Remaining increments: a package function or task
+      writing a package variable (needs the runtime services threaded into a receiver-less callable;
+      rejected with a diagnostic until then, though reading one from a subroutine works); an
+      initializer read reached through a called function does not yet contribute to the preferred
+      order; and two packages that reference each other's symbols still produce circular emitted
+      headers (a header-only emission limit, shared with cross-package subroutine calls, not
+      specific to variables).
 - [ ] PK4 -- The `import` forms for the remaining item kinds and the LRM 26.3 name-search and
       shadowing rules. An import brings a name into a scope's lookup; it does not create a new kind
       of reference, so a name resolved through an import lowers identically to the explicit
@@ -65,7 +82,7 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
 
 ## Blocked
 
-Nothing blocked. PK3 is actionable now.
+Nothing blocked. PK4 is actionable now.
 
 ## Out of Scope
 

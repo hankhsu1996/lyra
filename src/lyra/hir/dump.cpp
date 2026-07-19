@@ -428,6 +428,10 @@ class HirDumper {
                                      : "Index";
               return std::format("Iteration[{}].{}", r.clause.value, role);
             },
+            [](const ExternalUnitValueRef& r) -> std::string {
+              return std::format(
+                  "ExternalUnitValue({}::{})", r.unit_name, r.variable_name);
+            },
         },
         p);
   }
@@ -443,6 +447,20 @@ class HirDumper {
             },
         },
         ref);
+  }
+
+  static auto FormatSensitivityTarget(const SensitivityTarget& target)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const ReferenceRoute& route) -> std::string {
+              return FormatReferenceRoute(route);
+            },
+            [](const ExternalUnitValueRef& r) -> std::string {
+              return std::format("var={}::{}", r.unit_name, r.variable_name);
+            },
+        },
+        target);
   }
 
   static auto FormatFootprint(
@@ -489,7 +507,7 @@ class HirDumper {
                   if (j != 0) out += ", ";
                   const auto& r = e.triggers[i].sensitivity_list[j];
                   out += std::format(
-                      "{{{} bits={} edge={}}}", FormatReferenceRoute(r.ref),
+                      "{{{} bits={} edge={}}}", FormatSensitivityTarget(r.ref),
                       FormatFootprint(r.footprint),
                       FormatEventEdge(r.edge_kind));
                 }
@@ -504,7 +522,7 @@ class HirDumper {
                 if (i != 0) out += ", ";
                 const auto& r = ie.sensitivity_list[i];
                 out += std::format(
-                    "{{{} bits={} edge={}}}", FormatReferenceRoute(r.ref),
+                    "{{{} bits={} edge={}}}", FormatSensitivityTarget(r.ref),
                     FormatFootprint(r.footprint), FormatEventEdge(r.edge_kind));
               }
               out += "]";
@@ -1104,7 +1122,7 @@ class HirDumper {
       for (const auto& r : p.implicit_sensitivity_list) {
         Line(
             std::format(
-                "{} bits={}", FormatReferenceRoute(r.ref),
+                "{} bits={}", FormatSensitivityTarget(r.ref),
                 FormatFootprint(r.footprint)));
       }
       Dedent();
@@ -1156,7 +1174,7 @@ class HirDumper {
       for (const auto& r : ca.sensitivity_list) {
         Line(
             std::format(
-                "{} bits={}", FormatReferenceRoute(r.ref),
+                "{} bits={}", FormatSensitivityTarget(r.ref),
                 FormatFootprint(r.footprint)));
       }
       Dedent();
@@ -1532,7 +1550,7 @@ class HirDumper {
                 if (i != 0) sens += ", ";
                 const auto& r = w.sensitivity_list[i];
                 sens += std::format(
-                    "{{{} bits={}}}", FormatReferenceRoute(r.ref),
+                    "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
                     FormatFootprint(r.footprint));
               }
               sens += "]";

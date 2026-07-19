@@ -27,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
@@ -57,31 +58,6 @@ void AttachRuntimeScopeCtorPrefix(
       mir::ParamDecl{.name = "segment", .type = builtins.hierarchy_segment});
   shape.ctor_prefix_params.Add(
       mir::ParamDecl{.name = "services", .type = builtins.services});
-}
-
-// Wrap a value type in `ObservableType` iff it is a SystemVerilog value-storage
-// data type (LRM 6.5 / 7.x). Handle / wrapper types (pointer / vector / object
-// / external ref / external unit object) and named events (LRM 15 -- carry
-// their own subscribe mechanism) pass through unwrapped.
-auto MaybeWrapObservable(UnitLowerer& unit_lowerer, mir::TypeId t)
-    -> mir::TypeId {
-  const auto& data = unit_lowerer.Unit().types.Get(t).data;
-  const bool wrap = std::holds_alternative<mir::PackedArrayType>(data) ||
-                    std::holds_alternative<mir::EnumType>(data) ||
-                    std::holds_alternative<mir::StringType>(data) ||
-                    std::holds_alternative<mir::RealType>(data) ||
-                    std::holds_alternative<mir::ShortRealType>(data) ||
-                    std::holds_alternative<mir::RealTimeType>(data) ||
-                    std::holds_alternative<mir::UnpackedArrayType>(data) ||
-                    std::holds_alternative<mir::DynamicArrayType>(data) ||
-                    std::holds_alternative<mir::QueueType>(data) ||
-                    std::holds_alternative<mir::AssociativeArrayType>(data) ||
-                    std::holds_alternative<mir::TupleType>(data) ||
-                    std::holds_alternative<mir::UnionType>(data);
-  if (!wrap) {
-    return t;
-  }
-  return unit_lowerer.Unit().types.Intern(mir::ObservableType{.value = t});
 }
 
 struct GenerateChildSpec {
@@ -300,10 +276,11 @@ void DeclareRoutedRefSlots(
       }
     }
     const mir::TypeId value = unit_lowerer.TranslateType(cu.recipe.type);
-    const mir::TypeId leaf = cu.target_net_type.has_value()
-                                 ? unit_lowerer.Unit().types.Intern(
-                                       mir::ResolvedType{.value = value})
-                                 : MaybeWrapObservable(unit_lowerer, value);
+    const mir::TypeId leaf =
+        cu.target_net_type.has_value()
+            ? unit_lowerer.Unit().types.Intern(
+                  mir::ResolvedType{.value = value})
+            : unit_lowerer.Unit().types.ObservableCellOf(value);
     const mir::TypeId slot_type = unit_lowerer.Unit().types.PointerTo(
         leaf, mir::PointerOwnership::kBorrowed);
     const mir::FieldId slot = shape.fields.Add(
@@ -1083,7 +1060,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         return unit_lowerer.Unit().types.Intern(
             mir::ResolvedType{.value = mir_value_type});
       }
-      return MaybeWrapObservable(unit_lowerer, mir_value_type);
+      return unit_lowerer.Unit().types.ObservableCellOf(mir_value_type);
     }();
     const mir::FieldId mir_id = shape.fields.Add(
         mir::FieldDecl{.name = d.name, .type = mir_field_type});
@@ -1312,7 +1289,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       const std::string mangled =
           std::format("{}__{}_{}", callable_name, v.name, var_id.value);
       const mir::TypeId type = unit_lowerer.TranslateType(v.type);
-      const mir::TypeId field_type = MaybeWrapObservable(unit_lowerer, type);
+      const mir::TypeId field_type =
+          unit_lowerer.Unit().types.ObservableCellOf(type);
       mir::FieldDecl field_decl{.name = mangled, .type = field_type};
       // The source-name registration follows the var's lexical scope, not its
       // physical owner. Only a static in a named block is hierarchically
@@ -1793,6 +1771,44 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               .type = void_type});
       ctor_block.AppendStmt(mir::ExprStmt{.expr = call});
     }
+  }
+
+  // The design root's Initialize phase brings up the packages' variables (LRM
+  // 26.2 / 10.5). A package owns no runtime tree node, so the root calls its
+  // receiver-less callables here, before the top modules initialize -- this
+  // scope's Initialize runs parent-first, and the design root is every module's
+  // ancestor. It runs design-wide in two passes: install every package's cells
+  // (their declared type and default), then run every package's value
+  // initializers, so a value initializer that reads another package's variable
+  // always reaches installed storage. The plan is resolved by the whole-design
+  // assembly and realized here; this scope carries it only for the design root,
+  // so a source unit's scope and a nested scope both leave it empty.
+  const auto call_package = [&](const std::string& pkg,
+                                std::string_view callable,
+                                std::vector<mir::ExprId> args) {
+    unit_lowerer.Unit().AddExternalReferencedUnit(pkg);
+    const mir::ExprId call = initialize_block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target =
+                                mir::ExternalUnitCallableTarget{
+                                    .unit_name = pkg,
+                                    .callable_name = std::string{callable}}},
+                    .arguments = std::move(args)},
+            .type = void_type});
+    initialize_block.AppendStmt(mir::ExprStmt{.expr = call});
+  };
+  for (const std::string& pkg : package_init_plan_.install_order) {
+    call_package(pkg, kPackageInstallCallableName, {});
+  }
+  for (const std::string& pkg : package_init_plan_.value_initialize_order) {
+    const mir::ExprId services = initialize_block.exprs.Add(
+        mir::MakeServicesCallExpr(
+            init_self_read(), unit_lowerer.Unit().builtins.services));
+    call_package(pkg, kPackageInitializeCallableName, {services});
   }
 
   // Build each materialized procedural-storage scope's class: copy its

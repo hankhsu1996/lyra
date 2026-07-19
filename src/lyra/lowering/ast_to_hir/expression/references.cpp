@@ -8,9 +8,11 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/HierarchicalReference.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -256,6 +258,24 @@ auto RouteRefExpr(
       route);
 }
 
+// Lowers a reference to a package variable as an `ExternalUnitValueRef` naming
+// the package and the variable. The same by-name form serves a referrer in
+// another unit and the package's own callable reading its own variable; neither
+// has a receiver to route through.
+auto LowerExternalUnitValueRef(
+    UnitLowerer& unit_lowerer, const slang::ast::PackageSymbol& pkg,
+    const slang::ast::ValueSymbol& value, const slang::ast::Type& type,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto type_id = unit_lowerer.InternType(type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::MakeRefExpr(
+      hir::ExternalUnitValueRef{
+          .unit_name = std::string{pkg.name},
+          .variable_name = std::string{value.name},
+          .value_type = *type_id},
+      *type_id, span);
+}
+
 // Lowers a reference to a structural signal (a variable or net of an enclosing
 // scope) through the one reference-route translator. Shared by the procedural
 // and structural named-value paths once each has ruled out the non-signal forms
@@ -277,6 +297,15 @@ auto LowerStructuralSignalRef(
 }
 
 }  // namespace
+
+auto EnclosingPackageOfValue(const slang::ast::ValueSymbol& value)
+    -> const slang::ast::PackageSymbol* {
+  const slang::ast::Scope* scope = value.getParentScope();
+  if (scope == nullptr) return nullptr;
+  const slang::ast::Symbol& owner = scope->asSymbol();
+  if (owner.kind != slang::ast::SymbolKind::Package) return nullptr;
+  return &owner.as<slang::ast::PackageSymbol>();
+}
 
 auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,
@@ -313,9 +342,13 @@ auto LowerNamedValueProc(
         return hir::MakeRefExpr(
             hir::ProceduralVarRef{.var = *local}, type, span);
       }
+      const auto& value = sym.as<slang::ast::ValueSymbol>();
+      if (const auto* pkg = EnclosingPackageOfValue(value)) {
+        return LowerExternalUnitValueRef(
+            unit_lowerer, *pkg, value, *named.type, span);
+      }
       return LowerStructuralSignalRef(
-          unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
-          span);
+          unit_lowerer, frame, value, *named.type, span);
     }
     // A net (LRM 6.5) is always a structural signal, never a procedural local.
     case Referent::kNetStorage:
@@ -366,10 +399,14 @@ auto LowerHierarchicalValue(
           "supported");
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
+      const auto& value = target.as<slang::ast::ValueSymbol>();
+      if (const auto* pkg = EnclosingPackageOfValue(value)) {
+        return LowerExternalUnitValueRef(
+            unit_lowerer, *pkg, value, *hve.type, span);
+      }
       auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
-      auto route = unit_lowerer.TranslateReferenceRoute(
-          frame, target.as<slang::ast::ValueSymbol>());
+      auto route = unit_lowerer.TranslateReferenceRoute(frame, value);
       if (!route) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -397,10 +434,15 @@ auto LowerNamedValueStructural(
     case Referent::kEnumConstant:
       return MakeEnumConstantExpr(unit_lowerer, sym, *named.type, span);
     case Referent::kVariableStorage:
-    case Referent::kNetStorage:
+    case Referent::kNetStorage: {
+      const auto& value = sym.as<slang::ast::ValueSymbol>();
+      if (const auto* pkg = EnclosingPackageOfValue(value)) {
+        return LowerExternalUnitValueRef(
+            unit_lowerer, *pkg, value, *named.type, span);
+      }
       return LowerStructuralSignalRef(
-          unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
-          span);
+          unit_lowerer, frame, value, *named.type, span);
+    }
     // A class property has no structural (non-procedural) meaning: it is only
     // reachable through a method receiver, so outside a method it is rejected
     // alongside the genuinely unsupported kinds.
