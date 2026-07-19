@@ -1269,7 +1269,7 @@ auto LowerExternalUnitSubroutineCall(
     -> diag::Result<mir::Expr> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
-  lowerer.Owner().Unit().AddExternalCallableUnit(ref.unit_name);
+  lowerer.Owner().Unit().AddExternalReferencedUnit(ref.unit_name);
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size());
   for (const auto& argument : c.arguments) {
