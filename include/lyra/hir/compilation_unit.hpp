@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -12,6 +13,14 @@
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
+
+// Which SystemVerilog compilation-unit form a `CompilationUnit` models: a
+// module (LRM 23), whose root scope is an object type composing a top class, or
+// a package (LRM 26), a namespace whose declarations are reached by name and
+// which has no instance root. The distinction is intrinsic to the source
+// construct, so it travels on the unit rather than being re-inferred from its
+// scope shape at each stage that must branch on it.
+enum class UnitKind : std::uint8_t { kModule, kPackage };
 
 // Canonical TypeIds for primitives the lowering frequently materializes
 // (literal int type, void result of system tasks, etc.). Populated by
@@ -30,6 +39,7 @@ struct BuiltinHirTypes {
 
 struct CompilationUnit {
   std::string name;
+  UnitKind kind = UnitKind::kModule;
   base::Arena<Type, TypeId> types;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;

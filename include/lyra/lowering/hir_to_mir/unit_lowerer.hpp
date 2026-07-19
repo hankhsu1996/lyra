@@ -14,6 +14,7 @@
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -43,8 +44,17 @@ class UnitLowerer {
 
   // Lowers a module unit: a scope whose root is an object type, so its body
   // (variables, processes, instances, subroutines) composes the unit's top
-  // class. The synthesized design-root unit lowers this way too.
+  // class.
   auto RunModule() -> diag::Result<mir::CompilationUnit>;
+
+  // Lowers the synthetic design-root unit. It is a module in every respect
+  // except that its Initialize phase also installs and initializes the
+  // packages' variables (LRM 26.2 / 10.5). The plan is a whole-design fact the
+  // assembly resolves and passes in; the lowering only realizes it into
+  // cross-unit calls, so this special input stays at the design-root boundary
+  // and never reaches a source unit's lowering.
+  auto RunDesignRoot(PackageInitializationPlan package_init_plan)
+      -> diag::Result<mir::CompilationUnit>;
 
   // Lowers a package unit (LRM 26): a namespace whose root is not an object
   // type. Its functions and tasks lower to receiver-less callables owned by the
@@ -199,6 +209,13 @@ class UnitLowerer {
   }
 
  private:
+  // Lowers a scope whose root is an object type into the unit's top class. The
+  // package initialization plan is empty for a source module and carries the
+  // design root's resolved plan (LRM 26.2 / 10.5), which the root scope's
+  // Initialize phase realizes into cross-unit install and initialize calls.
+  auto LowerModuleUnit(PackageInitializationPlan package_init_plan)
+      -> diag::Result<mir::CompilationUnit>;
+
   // Mints every class identity, interns every HIR type, and lowers every HIR
   // class body into the unit. Shared prologue of `Run` and `RunPackage`: both a
   // module and a package own the same declaration kinds; they differ only in

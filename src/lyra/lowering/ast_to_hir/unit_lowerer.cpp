@@ -15,6 +15,7 @@
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -29,6 +30,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -466,6 +468,23 @@ auto UnitLowerer::TranslateSensitivityReads(
     const std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint =
         read_type.isIntegral() && !read_type.isEnum() ? read.footprint
                                                       : std::nullopt;
+    // A package variable is watched the same way, but by name: it has no
+    // reader-relative route, so it wakes the process through a reference to its
+    // one program-global cell (LRM 26.2), the observation dual of reading it.
+    if (const auto* pkg = EnclosingPackageOfValue(*value)) {
+      auto value_type =
+          InternType(read_type, SourceMapper().PointSpanOf(value->location));
+      if (!value_type) continue;
+      out.push_back(
+          hir::SensitivityEntry{
+              .ref =
+                  hir::ExternalUnitValueRef{
+                      .unit_name = std::string{pkg->name},
+                      .variable_name = std::string{value->name},
+                      .value_type = *value_type},
+              .footprint = footprint});
+      continue;
+    }
     if (auto ref = TranslateReferenceRoute(frame, *value)) {
       out.push_back(
           hir::SensitivityEntry{

@@ -4,51 +4,17 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/compiler/design_root.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
+#include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
-#include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/structural_scope.hpp"
-#include "lyra/lir/verify.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
-#include "lyra/lowering/mir_to_lir/lower.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
-
-namespace {
-
-// A unit's definition metadata is a source-level fact known once elaboration
-// fixes the unit's root scope: its def name is the root's name, its precision
-// the root's declared resolution. Derived from MIR here, so the executable body
-// downstream never carries these source-language concepts.
-auto BuildUnitMetadata(const mir::CompilationUnit& unit)
-    -> ElaboratedUnitMetadata {
-  const mir::Class& root = unit.GetClass(*unit.root);
-  return ElaboratedUnitMetadata{
-      .def_name = root.name,
-      .time_precision_power = root.time_resolution.precision_power};
-}
-
-// The design-root unit is a module whose only members are the top-level units,
-// instantiated as its owned children. Its constructor then elaborates the
-// design through the same owned-child construction any parent uses for a
-// submodule, so no code path is special-cased for the top level.
-auto BuildRootHirUnit(const std::vector<std::string>& top_names)
-    -> hir::CompilationUnit {
-  hir::CompilationUnit root{std::string{kDesignRootUnitName}};
-  for (const auto& name : top_names) {
-    root.root_scope.instance_members.Add(
-        hir::InstanceMemberDecl{
-            .instance_name = name, .target_unit = name, .array_dims = {}});
-  }
-  return root;
-}
-
-}  // namespace
 
 auto Compile(
     const frontend::CompilationInput& input, diag::DiagnosticSink& sink,
@@ -67,7 +33,6 @@ auto Compile(
   if (!result.slang_ok) {
     return result;
   }
-
   if (stop_after == StopAfter::kParse) {
     return result;
   }
@@ -80,112 +45,67 @@ auto Compile(
   result.artifacts.top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(
       *result.artifacts.parse->compilation);
 
-  // Each unit runs its whole lowering pipeline (HIR -> MIR -> LIR) as an
-  // independent vertical: a unit reads only its own body and the shared
-  // frontend, never another unit's lowered artifacts.
+  // Step 1: lower the whole compilation to a flat set of self-contained HIR
+  // units -- every package, then every module body -- each tagged with its
+  // kind.
+  auto hir_units = lowering::ast_to_hir::LowerCompilationToHir(facts);
+  if (!hir_units) {
+    sink.Report(std::move(hir_units.error()));
+    return result;
+  }
+
+  // Step 2: lower each unit down its own vertical (HIR -> MIR -> LIR),
+  // independently -- a unit reads only itself and the shared frontend. The
+  // parallel result vectors preserve the output contract: `mir_units` is a
+  // superset of `lir_units`, since a package lowers to MIR but has no
+  // executable body, and `unit_metadata` stays co-indexed with `lir_units`.
   const bool want_mir = stop_after >= StopAfter::kMir;
   const bool want_lir = stop_after >= StopAfter::kLir;
-  const auto packages = lowering::ast_to_hir::CollectPackages(facts);
-  const auto bodies = lowering::ast_to_hir::CollectUnitBodies(facts);
-
-  std::vector<hir::CompilationUnit> hir_units;
   std::vector<mir::CompilationUnit> mir_units;
   std::vector<lir::CompilationUnit> lir_units;
   std::vector<ElaboratedUnitMetadata> unit_metadata;
-  hir_units.reserve(packages.size() + bodies.size());
-  mir_units.reserve(packages.size() + bodies.size());
-  lir_units.reserve(bodies.size());
-  unit_metadata.reserve(bodies.size());
-
-  // A package is a namespace unit (LRM 26): a backend emits it as its own
-  // artifact so a caller of a package function links against it, but it has no
-  // executable body, so it lowers only to MIR and never joins the LIR path.
-  for (const auto* package : packages) {
-    auto hir_or = lowering::ast_to_hir::LowerPackageUnit(facts, *package);
-    if (!hir_or) {
-      sink.Report(std::move(hir_or.error()));
+  mir_units.reserve(hir_units->size());
+  lir_units.reserve(hir_units->size());
+  unit_metadata.reserve(hir_units->size());
+  for (const auto& hir_unit : *hir_units) {
+    auto unit = LowerUnitPipeline(
+        hir_unit, stop_after, result.artifacts.parse->diag_sources);
+    if (!unit) {
+      sink.Report(std::move(unit.error()));
       return result;
     }
-    hir_units.push_back(*std::move(hir_or));
-    if (!want_mir) {
-      continue;
+    if (unit->mir) {
+      mir_units.push_back(*std::move(unit->mir));
     }
-    lowering::hir_to_mir::UnitLowerer lowerer(
-        hir_units.back(), result.artifacts.parse->diag_sources);
-    auto mir_or = lowerer.RunPackage();
-    if (!mir_or) {
-      sink.Report(std::move(mir_or.error()));
-      return result;
+    if (unit->lir) {
+      lir_units.push_back(*std::move(unit->lir));
     }
-    mir_units.push_back(*std::move(mir_or));
+    if (unit->metadata) {
+      unit_metadata.push_back(*std::move(unit->metadata));
+    }
   }
 
-  for (const auto* body : bodies) {
-    auto hir_or = lowering::ast_to_hir::LowerUnit(facts, *body);
-    if (!hir_or) {
-      sink.Report(std::move(hir_or.error()));
-      return result;
-    }
-    hir_units.push_back(*std::move(hir_or));
-    if (!want_mir) {
-      continue;
-    }
-
-    lowering::hir_to_mir::UnitLowerer lowerer(
-        hir_units.back(), result.artifacts.parse->diag_sources);
-    auto mir_or = lowerer.RunModule();
-    if (!mir_or) {
-      sink.Report(std::move(mir_or.error()));
-      return result;
-    }
-    mir_units.push_back(*std::move(mir_or));
-    if (!want_lir) {
-      continue;
-    }
-
-    auto lir_or = lowering::mir_to_lir::LowerUnit(mir_units.back());
-    if (!lir_or) {
-      sink.Report(std::move(lir_or.error()));
-      return result;
-    }
-    lir_units.push_back(*std::move(lir_or));
-    lir::Verify(lir_units.back());
-    unit_metadata.push_back(BuildUnitMetadata(mir_units.back()));
-  }
-
-  // The design-root unit is synthesized after the source units it instantiates,
-  // so it references them by the same cross-unit-by-name link every submodule
-  // instantiation uses. It is a distinct compiler output, not one of the source
-  // units, so it is held apart rather than mixed into `mir_units`. Its
-  // constructor elaborates the design through the same owned-child construction
-  // any parent uses, lowered like any other unit.
+  // Step 3: link the units into the design. The one whole-design step -- it
+  // reads across the units to synthesize the design root and resolve the
+  // package initialization plan -- so it stands apart from the per-unit
+  // lowering above.
   std::optional<mir::CompilationUnit> root_unit;
   std::optional<lir::CompilationUnit> root_lir_unit;
   std::optional<ElaboratedUnitMetadata> root_metadata;
   if (want_mir) {
-    const hir::CompilationUnit root_hir =
-        BuildRootHirUnit(result.artifacts.top_unit_names);
-    lowering::hir_to_mir::UnitLowerer root_lowerer(
-        root_hir, result.artifacts.parse->diag_sources);
-    auto root_mir = root_lowerer.RunModule();
-    if (!root_mir) {
-      sink.Report(std::move(root_mir.error()));
+    auto design_root = LinkDesign(
+        mir_units, result.artifacts.top_unit_names, stop_after,
+        result.artifacts.parse->diag_sources);
+    if (!design_root) {
+      sink.Report(std::move(design_root.error()));
       return result;
     }
-    root_unit = *std::move(root_mir);
-    if (want_lir) {
-      auto root_lir = lowering::mir_to_lir::LowerUnit(*root_unit);
-      if (!root_lir) {
-        sink.Report(std::move(root_lir.error()));
-        return result;
-      }
-      root_lir_unit = *std::move(root_lir);
-      lir::Verify(*root_lir_unit);
-      root_metadata = BuildUnitMetadata(*root_unit);
-    }
+    root_unit = std::move(design_root->mir);
+    root_lir_unit = std::move(design_root->lir);
+    root_metadata = std::move(design_root->metadata);
   }
 
-  result.artifacts.hir_units = std::move(hir_units);
+  result.artifacts.hir_units = std::move(*hir_units);
   if (want_mir) {
     result.artifacts.mir_units = std::move(mir_units);
     result.artifacts.root_unit = std::move(root_unit);
@@ -196,7 +116,6 @@ auto Compile(
     result.artifacts.root_lir_unit = std::move(root_lir_unit);
     result.artifacts.root_metadata = std::move(root_metadata);
   }
-
   return result;
 }
 

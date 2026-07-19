@@ -46,10 +46,11 @@ non-conforming code, not as a relaxation of the contract.
    artifacts. This is what keeps compilation parallel and incremental (`north_star.md` inv 3, 4).
 2. **A unit's emission depends only on itself, the interfaces of the units it references, and the
    SDK.** The inputs to emitting unit U are: U's own MIR; the interface (name, parameters, ports for
-   an instantiated unit; declared callables for a called package) of each unit U references -- one
-   it instantiates, or one it calls a receiver-less callable of (LRM 26.3); and the runtime SDK. U's
-   artifact never depends on a unit it neither instantiates nor calls, and never on another unit's
-   body or internal layout (`compilation_unit_model.md` inv 8, which already scopes this to a unit U
+   an instantiated unit; declared callables and variables for a referenced package) of each unit U
+   references -- one it instantiates, one it calls a receiver-less callable of (LRM 26.3), or one it
+   reads or writes a static variable of by name (LRM 26.2); and the runtime SDK. U's artifact never
+   depends on a unit it neither instantiates nor references, and never on another unit's body or
+   internal layout (`compilation_unit_model.md` inv 8, which already scopes this to a unit U
    "instantiates or references").
 3. **The runtime SDK is the link-time-resolution substrate.** Cross-unit operations the referrer
    cannot resolve from its own inputs are expressed as SDK operations. In the C++ backend the SDK is
@@ -155,6 +156,20 @@ own emitted header; the linker binds the symbol. There is no runtime object-grap
 no SDK step -- the SDK exists to resolve a reference into another unit's per-instance layout, which
 a package does not have. This is the one cross-unit reference realized by a plain linked name rather
 than the SDK, and it is sound precisely because there is no instance identity to resolve.
+
+**Cross-unit package variable.** `x = pkg::cnt;` or `pkg::cnt = 7;` (LRM 26.2) is the storage
+counterpart of the call. A package variable is one program-global cell, not a per-instance member,
+so it too is an ordinary link-time symbol: the caller renders the direct qualified access and
+includes the package's header, and the linker binds the one definition. Reading, writing, and waking
+on the cell's change all reach that same linked cell directly -- there is no route, no per-instance
+endpoint to seal, and no SDK step, again because a package has no instance identity. Its LRM 10.5
+initialization is not a per-instance constructor action but two receiver-less callables the design
+root invokes during the Initialize phase, before the top modules initialize: one installs every
+package's cells (declared type and default) design-wide, then one runs each package's value
+initializers -- so a value initializer that reads another package's cell always reaches installed
+storage. The LRM leaves the relative order of initializers unspecified; the design root chooses a
+stable, best-effort order, and a cell whose dependency is unknown or cyclic reads a default rather
+than failing.
 
 Any artifact that aggregates multiple units' bodies into one is forbidden, however a build step
 packages the emitted sources: the per-unit artifact boundary and the segment-classification rules

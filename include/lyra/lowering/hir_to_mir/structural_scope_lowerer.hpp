@@ -14,6 +14,7 @@
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
+#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -72,11 +73,13 @@ class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      std::string name, const hir::StructuralScope& hir_scope)
+      std::string name, const hir::StructuralScope& hir_scope,
+      PackageInitializationPlan package_init_plan = {})
       : owner_(&unit_lowerer),
         parent_(parent),
         name_(std::move(name)),
-        hir_scope_(&hir_scope) {
+        hir_scope_(&hir_scope),
+        package_init_plan_(std::move(package_init_plan)) {
   }
 
   // Mints this class's identity, builds its structural shape, publishes the
@@ -407,6 +410,14 @@ class StructuralScopeLowerer {
   const StructuralScopeLowerer* parent_;
   std::string name_;
   const hir::StructuralScope* hir_scope_;
+  // The design root's plan for bringing up package variables in its Initialize
+  // phase (LRM 26.2 / 10.5): install every package's cells, then run every
+  // package's value initializers in the resolved order. Non-empty only on the
+  // design root's own scope -- the sole scope whose elaboration spans the whole
+  // design; the lowering only realizes the resolved plan into cross-unit calls
+  // and never re-derives it. Every source unit's scope and every nested scope
+  // leaves it empty.
+  PackageInitializationPlan package_init_plan_;
   std::vector<mir::FieldId> structural_data_object_map_;
   std::vector<mir::CallableId> structural_subroutine_map_;
   std::vector<RoutedRefMeta> routed_ref_targets_;

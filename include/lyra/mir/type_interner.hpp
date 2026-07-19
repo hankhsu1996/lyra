@@ -86,6 +86,17 @@ class TypeInterner {
             .mutability = mutability});
   }
 
+  // The observable-cell type for a variable of `value_type`: a SystemVerilog
+  // value-storage data object (LRM 6.5) is an observable cell, so its writes
+  // fire subscribers and its reads / writes go through the cell protocol; any
+  // other type -- a handle, a container, an object, a named event (which
+  // carries its own subscribe mechanism), a runtime facade, a machine primitive
+  // -- is its own storage and passes through unwrapped. This is the
+  // constructing counterpart of the pure observable-cell queries: it interns
+  // the wrapper, so it lives on the interner rather than beside those
+  // value-type predicates.
+  auto ObservableCellOf(TypeId value_type) -> TypeId;
+
  private:
   base::Arena<Type, TypeId> storage_;
   std::unordered_map<TypeData, TypeId, SemanticTypeHash, SemanticTypeEqual>
