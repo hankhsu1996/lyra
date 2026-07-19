@@ -311,4 +311,68 @@ auto UnitLowerer::NextGenerateScopeName(std::string_view arm_tag)
   return std::format("gen{}_{}", next_generate_scope_name_++, arm_tag);
 }
 
+auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
+    -> mir::TypeId {
+  unit_.AddExternalClassUnit(ref.unit_name);
+  return unit_.types.Intern(
+      mir::ExternalClassType{
+          .qualified_name =
+              std::format("{}::{}", ref.unit_name, ref.class_name)});
+}
+
+auto UnitLowerer::MakeExternalClassBaseRef(const hir::ExternalClassRef& ref)
+    -> mir::ClassRef {
+  unit_.AddExternalClassUnit(ref.unit_name);
+  return mir::ClassRef{mir::ExternalClassRef{
+      .qualified_name = std::format("{}::{}", ref.unit_name, ref.class_name)}};
+}
+
+auto UnitLowerer::MakeExternalFieldTarget(
+    const hir::ExternalClassPropertyTarget& target)
+    -> mir::ExternalFieldTarget {
+  unit_.AddExternalClassUnit(target.unit_name);
+  return mir::ExternalFieldTarget{
+      .unit_name = target.unit_name,
+      .class_name = target.class_name,
+      .field_name = target.property_name};
+}
+
+auto UnitLowerer::MakeExternalStaticPropertyRef(
+    const hir::ExternalStaticPropertyTarget& target)
+    -> mir::ExternalStaticPropertyRef {
+  unit_.AddExternalClassUnit(target.unit_name);
+  return mir::ExternalStaticPropertyRef{
+      .unit_name = target.unit_name,
+      .class_name = target.class_name,
+      .property_name = target.property_name};
+}
+
+auto UnitLowerer::MakeExternalMethodTarget(
+    const hir::ExternalClassMethodTarget& target)
+    -> mir::ExternalUnitClassMethodTarget {
+  unit_.AddExternalClassUnit(target.unit_name);
+  return mir::ExternalUnitClassMethodTarget{
+      .unit_name = target.unit_name,
+      .class_name = target.class_name,
+      .method_name = target.method_name};
+}
+
+auto UnitLowerer::MakeExternalMethodOverride(
+    const hir::ExternalClassMethodTarget& target)
+    -> mir::OverridesExternalSlot {
+  unit_.AddExternalClassUnit(target.unit_name);
+  return mir::OverridesExternalSlot{
+      .unit_name = target.unit_name,
+      .class_name = target.class_name,
+      .method_name = target.method_name};
+}
+
+auto UnitLowerer::MakeExternalCallableTarget(
+    const hir::ExternalUnitSubroutineRef& ref)
+    -> mir::ExternalUnitCallableTarget {
+  unit_.AddExternalReferencedUnit(ref.unit_name);
+  return mir::ExternalUnitCallableTarget{
+      .unit_name = ref.unit_name, .callable_name = ref.subroutine_name};
+}
+
 }  // namespace lyra::lowering::hir_to_mir

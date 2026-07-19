@@ -5,10 +5,8 @@
 #include <string>
 #include <variant>
 
-#include "lyra/hir/class_id.hpp"
-#include "lyra/hir/field_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/procedural_var.hpp"
-#include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/with_clause_id.hpp"
@@ -55,32 +53,30 @@ struct ProceduralVarRef {
 
 // A reference to a class property (LRM 8.4) from within an instance method
 // body, where the property is named without an explicit handle and reaches
-// the invoking object through the method's receiver. `owner` is the class
-// that declares the property, and `field_index` is its declaration-order
-// position within that class's property arena. Under inheritance (LRM 8.13)
-// a bare name may resolve to a property declared on an ancestor class, so
-// identity is owner-qualified rather than derived from the enclosing method
-// body's class.
+// the invoking object through the method's receiver. `target` names the
+// declaring class and the slot within its property arena. Owner-qualified
+// (not derived from the enclosing method body's class) because under
+// inheritance (LRM 8.13) a bare name may resolve to a property declared on
+// an ancestor class. The external arm is used when the property's declaring
+// class lives in another compilation unit.
 struct ClassPropertyRef {
-  ClassId owner;
-  FieldId field_index;
+  ClassPropertyTarget target;
 
   auto operator==(const ClassPropertyRef&) const -> bool = default;
 };
 
-// A reference to a class static property (LRM 8.9), the type-associated
-// storage counterpart to `ClassPropertyRef`. `owner` names the class that
-// declares the property; `prop` is its position within that class's
-// static-property arena. A static property is one cell owned by the type, not
-// a member replicated into each instance, so this reference carries no
-// receiver: the source form `Cls::prop`, an unqualified use inside a method
-// of the same class, and `p.prop` where the resolved target happens to be
-// static all resolve to the same cell and the same reference shape.
-// Under inheritance, `Derived::inherited_prop` still names the base class as
-// `owner` -- the property lives on the base's arena.
+// A reference to a class static property (LRM 8.9). `target` names the
+// declaring class and the slot within its static-property arena. A static
+// property is one cell owned by the type, not a member replicated into each
+// instance, so this reference carries no receiver: the source form
+// `Cls::prop`, an unqualified use inside a method of the same class, and
+// `p.prop` where the resolved target happens to be static all resolve to the
+// same cell and the same reference shape. Under inheritance,
+// `Derived::inherited_prop` still names the base class -- the property lives
+// on the base's arena. The external arm is used when the declaring class
+// lives in another compilation unit.
 struct StaticPropertyRef {
-  ClassId owner;
-  StaticPropertyId prop;
+  StaticPropertyTarget target;
 
   auto operator==(const StaticPropertyRef&) const -> bool = default;
 };

@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
@@ -119,7 +119,7 @@ struct BaseCall {
 // its type's Table 7-1 default and does not appear here.
 struct ClassDecl {
   std::string name;
-  std::optional<ClassId> base;
+  std::optional<ClassRef> base;
   base::Arena<ClassField, FieldId> fields;
   base::Arena<ClassStaticProperty, StaticPropertyId> static_properties;
   base::Arena<SubroutineDecl, MethodId> methods;

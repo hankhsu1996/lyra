@@ -272,20 +272,36 @@ auto LowerHirPrimaryExprProc(
                 frame.current_class->self_pointer_type;
             const mir::ExprId self_ref = frame.current_block->exprs.Add(
                 MakeSelfRefExpr(frame, self_type));
+            if (const auto* local =
+                    std::get_if<hir::LocalClassPropertyTarget>(&r.target)) {
+              return mir::MakeFieldAccessExpr(
+                  self_ref,
+                  mir::FieldTarget{
+                      .owner = process.Owner().TranslateClass(local->owner),
+                      .slot = UnitLowerer::TranslateField(local->field)},
+                  result_type);
+            }
             return mir::MakeFieldAccessExpr(
                 self_ref,
-                mir::FieldTarget{
-                    .owner = process.Owner().TranslateClass(r.owner),
-                    .slot = UnitLowerer::TranslateField(r.field_index)},
+                process.Owner().MakeExternalFieldTarget(
+                    std::get<hir::ExternalClassPropertyTarget>(r.target)),
                 result_type);
           },
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {
+            if (const auto* local =
+                    std::get_if<hir::LocalStaticPropertyTarget>(&r.target)) {
+              return mir::Expr{
+                  .data =
+                      mir::StaticPropertyRef{
+                          .owner = process.Owner().TranslateClass(local->owner),
+                          .prop =
+                              UnitLowerer::TranslateStaticProperty(local->prop),
+                      },
+                  .type = result_type};
+            }
             return mir::Expr{
-                .data =
-                    mir::StaticPropertyRef{
-                        .owner = process.Owner().TranslateClass(r.owner),
-                        .prop = UnitLowerer::TranslateStaticProperty(r.prop),
-                    },
+                .data = process.Owner().MakeExternalStaticPropertyRef(
+                    std::get<hir::ExternalStaticPropertyTarget>(r.target)),
                 .type = result_type};
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {

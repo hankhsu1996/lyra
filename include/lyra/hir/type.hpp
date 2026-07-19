@@ -6,7 +6,7 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -207,10 +207,11 @@ struct VoidType {};
 
 // LRM 8.3 class handle: the type of a variable that refers to a class object.
 // Null is a legal value, the object is reached through the handle, and the
-// referenced class is named by its declaration id (resolved through the unit's
-// class registry).
+// referenced class is named by a `ClassRef`: a local declaration id when the
+// class is declared by this unit, or a by-name reference resolved against
+// another unit's interface when the class is declared elsewhere.
 struct ClassHandleType {
-  ClassId class_id;
+  ClassRef class_ref;
 };
 
 // LRM 8.3 class handle whose referenced class is an imported runtime-library

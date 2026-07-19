@@ -502,6 +502,11 @@ class MirDumper {
               return std::format(
                   "OverridesIntraUnitSlot[Class[{}].{}(Callable[{}])]",
                   o.slot_owner.value, callable.name, o.slot_id.value);
+            },
+            [](const OverridesExternalSlot& e) -> std::string {
+              return std::format(
+                  "OverridesExternalSlot[{}::{}::{}]", e.unit_name,
+                  e.class_name, e.method_name);
             }},
         role);
   }
@@ -528,6 +533,11 @@ class MirDumper {
             [](const ExternalUnitCallableTarget& e) -> std::string {
               return std::format(
                   R"(external_unit={}::{})", e.unit_name, e.callable_name);
+            },
+            [](const ExternalUnitClassMethodTarget& e) -> std::string {
+              return std::format(
+                  "external_class_method={}::{}::{}", e.unit_name, e.class_name,
+                  e.method_name);
             }},
         target);
   }
@@ -711,6 +721,11 @@ class MirDumper {
                           },
                           [](const FieldId& id) -> std::string {
                             return std::format("Field[{}]", id.value);
+                          },
+                          [](const ExternalFieldTarget& t) -> std::string {
+                            return std::format(
+                                "External[{}::{}::{}]", t.unit_name,
+                                t.class_name, t.field_name);
                           }},
                       m.field));
             },
@@ -740,6 +755,11 @@ class MirDumper {
               return std::format(
                   "ExternalUnitVariableRef unit={} variable={}", r.unit_name,
                   r.variable_name);
+            },
+            [](const ExternalStaticPropertyRef& r) -> std::string {
+              return std::format(
+                  "ExternalStaticPropertyRef external={}::{}::{}", r.unit_name,
+                  r.class_name, r.property_name);
             },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(

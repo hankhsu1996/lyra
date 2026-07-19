@@ -229,15 +229,16 @@ auto LowerNewClassExpr(
     }
   }
   const auto& cls = nc.type->getCanonicalType().as<slang::ast::ClassType>();
-  auto class_id = unit_lowerer.InternClass(cls, span);
-  if (!class_id) return std::unexpected(std::move(class_id.error()));
+  auto class_ref = unit_lowerer.ResolveClassRef(cls, span);
+  if (!class_ref) return std::unexpected(std::move(class_ref.error()));
   auto type_id = unit_lowerer.InternType(*nc.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
       .data =
           hir::ClassNewExpr{
-              .class_id = *class_id, .arguments = std::move(arguments)},
+              .class_ref = *std::move(class_ref),
+              .arguments = std::move(arguments)},
       .span = span,
   };
 }

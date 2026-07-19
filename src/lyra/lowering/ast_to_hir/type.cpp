@@ -386,11 +386,12 @@ auto TranslateTypeData(
       if (const auto imported = DetectImportedRuntimeClass(class_type)) {
         return hir::TypeData{hir::ImportedClassHandleType{.klass = *imported}};
       }
-      auto class_id_or = unit_lowerer.InternClass(class_type, decl_span);
-      if (!class_id_or) {
-        return std::unexpected(std::move(class_id_or.error()));
+      auto class_ref_or = unit_lowerer.ResolveClassRef(class_type, decl_span);
+      if (!class_ref_or) {
+        return std::unexpected(std::move(class_ref_or.error()));
       }
-      return hir::TypeData{hir::ClassHandleType{.class_id = *class_id_or}};
+      return hir::TypeData{
+          hir::ClassHandleType{.class_ref = *std::move(class_ref_or)}};
     }
     case slang::ast::SymbolKind::VoidType:
       return hir::TypeData{hir::VoidType{}};
@@ -556,25 +557,145 @@ auto SynthesizeDefaultConstructor(hir::TypeId void_type, diag::SourceSpan span)
       .overrides = std::nullopt};
 }
 
+// Walks a class's parent-scope chain to find the compilation-unit-level
+// symbol that owns its declaration -- a package (LRM 26), a module body
+// (LRM 23.2), or an interface body (LRM 25). A class nested in another
+// class or in a generate block still hits the enclosing module or package
+// body first, which is the ownership boundary. Returns null when the class
+// has no such ancestor (only expected for imported runtime-library classes,
+// which never reach this helper).
+auto DeclaringCompilationUnit(const slang::ast::ClassType& cls)
+    -> const slang::ast::Symbol* {
+  const slang::ast::Scope* scope = cls.getParentScope();
+  while (scope != nullptr) {
+    const slang::ast::Symbol& owner = scope->asSymbol();
+    if (owner.kind == slang::ast::SymbolKind::Package ||
+        owner.kind == slang::ast::SymbolKind::InstanceBody) {
+      return &owner;
+    }
+    scope = owner.getParentScope();
+  }
+  return nullptr;
+}
+
+// The name a compilation unit publishes for itself: a package's declared
+// name, or a module body's specialization name (the same name that unit
+// registers its own artifact under). A consumer reaching a class of this
+// unit by name uses this name for the unit component of the reference; the
+// class component is `SpecializationName(cls)`, computed on both sides
+// deterministically without a shared table.
+auto CompilationUnitName(const slang::ast::Symbol& unit) -> std::string {
+  if (unit.kind == slang::ast::SymbolKind::Package) {
+    return std::string(unit.name);
+  }
+  if (unit.kind == slang::ast::SymbolKind::InstanceBody) {
+    return SpecializationName(unit.as<slang::ast::InstanceBodySymbol>());
+  }
+  throw InternalError(
+      "CompilationUnitName: symbol is not a package or module body");
+}
+
 }  // namespace
 
-auto UnitLowerer::InternClass(
+auto UnitLowerer::MakeClassMethodTarget(
+    const hir::ClassRef& class_ref,
+    const slang::ast::SubroutineSymbol& method) const
+    -> hir::ClassMethodTarget {
+  if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
+    return hir::LocalClassMethodTarget{
+        .owner = local->class_id, .method = LookupMethodId(method)};
+  }
+  const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
+  return hir::ExternalClassMethodTarget{
+      .unit_name = ext.unit_name,
+      .class_name = ext.class_name,
+      .method_name = std::string(method.name)};
+}
+
+auto UnitLowerer::MakeClassPropertyTarget(
+    const hir::ClassRef& class_ref,
+    const slang::ast::ClassPropertySymbol& prop) const
+    -> hir::ClassPropertyTarget {
+  if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
+    return hir::LocalClassPropertyTarget{
+        .owner = local->class_id, .field = LookupClassPropertyFieldId(prop)};
+  }
+  const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
+  return hir::ExternalClassPropertyTarget{
+      .unit_name = ext.unit_name,
+      .class_name = ext.class_name,
+      .property_name = std::string(prop.name)};
+}
+
+auto UnitLowerer::MakeStaticPropertyTarget(
+    const hir::ClassRef& class_ref,
+    const slang::ast::ClassPropertySymbol& prop) const
+    -> hir::StaticPropertyTarget {
+  if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
+    return hir::LocalStaticPropertyTarget{
+        .owner = local->class_id, .prop = LookupClassPropertyStaticId(prop)};
+  }
+  const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
+  return hir::ExternalStaticPropertyTarget{
+      .unit_name = ext.unit_name,
+      .class_name = ext.class_name,
+      .property_name = std::string(prop.name)};
+}
+
+auto UnitLowerer::ResolveClassRef(
     const slang::ast::ClassType& cls, diag::SourceSpan span)
-    -> diag::Result<hir::ClassId> {
+    -> diag::Result<hir::ClassRef> {
+  // A class this unit has already classified reads its `ClassRef` straight
+  // from the cache. Only the first reference to a class runs the boundary
+  // walk that answers "which CU declares it?" and stores the result.
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return it->second;
   }
+  const slang::ast::Symbol* decl_unit = DeclaringCompilationUnit(cls);
+  if (decl_unit == nullptr) {
+    throw InternalError(
+        "UnitLowerer::ResolveClassRef: class has no compilation-unit-level "
+        "declaring scope");
+  }
+  if (decl_unit != &scope_->asSymbol()) {
+    const auto [it, _] = class_cache_.emplace(
+        &cls, hir::ClassRef{hir::ExternalClassRef{
+                  .unit_name = CompilationUnitName(*decl_unit),
+                  .class_name = SpecializationName(cls)}});
+    return it->second;
+  }
+  // A local class not yet minted (e.g. a class nested inside a generate
+  // block, which the top-level scope walk does not reach): mint it lazily
+  // now, so a reference and the pre-pass both converge on the same identity
+  // regardless of which route saw the class first.
+  auto id_or = InternLocalClass(cls, span);
+  if (!id_or) return std::unexpected(std::move(id_or.error()));
+  return hir::ClassRef{hir::LocalClassRef{.class_id = *id_or}};
+}
+
+auto UnitLowerer::InternLocalClass(
+    const slang::ast::ClassType& cls, diag::SourceSpan span)
+    -> diag::Result<hir::ClassId> {
+  // Idempotent: a repeat call for the same class returns the id the first
+  // mint installed. The cache entry is populated before body population, so a
+  // cyclic reference during that population -- a class that names itself in
+  // one of its member types, or a mutually-referential pair -- resolves
+  // against a stable id already visible to peer lookups.
+  if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
+    return std::get<hir::LocalClassRef>(it->second).class_id;
+  }
   const hir::ClassId id = unit_.classes.Declare();
-  class_cache_.emplace(&cls, id);
+  class_cache_.emplace(&cls, hir::ClassRef{hir::LocalClassRef{.class_id = id}});
 
   hir::ClassDecl decl;
   decl.name = SpecializationName(cls);
 
   // Base class (LRM 8.13). Slang exposes the base as a `ClassType*` on the
   // derived class and flattens inherited members into the derived's member
-  // list; the base is registered here to reach it by identity, and each
-  // member iteration below filters by parent scope so only members declared
-  // on this class enter its arena.
+  // list; the base is reached through the class-reference translator because
+  // it may live in another compilation unit, and each member iteration below
+  // filters by parent scope so only members declared on this class enter
+  // its arena.
   if (const auto* base_type = cls.getBaseClass()) {
     const auto& base_class =
         base_type->getCanonicalType().as<slang::ast::ClassType>();
@@ -583,9 +704,9 @@ auto UnitLowerer::InternClass(
           span, diag::DiagCode::kUnsupportedClassFeature,
           "interface class conformance is not yet supported");
     }
-    auto base_id = InternClass(base_class, span);
-    if (!base_id) return std::unexpected(std::move(base_id.error()));
-    decl.base = *base_id;
+    auto base_ref = ResolveClassRef(base_class, span);
+    if (!base_ref) return std::unexpected(std::move(base_ref.error()));
+    decl.base = *std::move(base_ref);
   }
 
   for (const auto& prop :
@@ -662,19 +783,18 @@ auto UnitLowerer::InternClass(
       // The frontend has already matched signature, direction, return type,
       // and any other LRM 8.20 override compatibility rule when it resolved
       // this reference; the HIR consumes it as an already-resolved identity.
-      // Its base's methods were interned earlier by the recursive
-      // `InternClass` above, so their HIR identities are already in the
-      // cache the lookup reads.
+      // The base link the class shape carries has resolved a `LocalClassRef`
+      // for a same-unit base or an `ExternalClassRef` for a cross-unit base;
+      // the override target follows the same axis, owner-qualified in either
+      // case.
       if (const auto* overridden = method.getOverride();
           overridden != nullptr) {
         const auto& base_class = overridden->getParentScope()
                                      ->asSymbol()
                                      .as<slang::ast::ClassType>();
-        auto base_class_id = InternClass(base_class, span);
-        if (!base_class_id)
-          return std::unexpected(std::move(base_class_id.error()));
-        method_decl->overrides = hir::MethodRef{
-            .class_id = *base_class_id, .method = LookupMethodId(*overridden)};
+        auto base_ref = ResolveClassRef(base_class, span);
+        if (!base_ref) return std::unexpected(std::move(base_ref.error()));
+        method_decl->overrides = MakeClassMethodTarget(*base_ref, *overridden);
       } else if (const auto* pure_base =
                      FindOverriddenPureInBaseChain(cls, method.name);
                  pure_base != nullptr) {
@@ -684,17 +804,15 @@ auto UnitLowerer::InternClass(
         // this method as a fresh introducer.
         const auto& base_class =
             pure_base->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-        auto base_class_id = InternClass(base_class, span);
-        if (!base_class_id)
-          return std::unexpected(std::move(base_class_id.error()));
+        auto base_ref = ResolveClassRef(base_class, span);
+        if (!base_ref) return std::unexpected(std::move(base_ref.error()));
         const auto* proto_stub = pure_base->getSubroutine();
         if (proto_stub == nullptr) {
           throw InternalError(
-              "UnitLowerer::InternClass: pure virtual prototype has no stub "
-              "subroutine slang normally materializes");
+              "UnitLowerer::InternLocalClass: pure virtual prototype has no "
+              "stub subroutine slang normally materializes");
         }
-        method_decl->overrides = hir::MethodRef{
-            .class_id = *base_class_id, .method = LookupMethodId(*proto_stub)};
+        method_decl->overrides = MakeClassMethodTarget(*base_ref, *proto_stub);
         // An override of a base virtual method is itself virtual (LRM 8.20),
         // even when the derived declaration omits the `virtual` keyword.
         method_decl->is_virtual = true;
@@ -746,12 +864,10 @@ auto UnitLowerer::InternClass(
         const auto& base_class = overridden_sub->getParentScope()
                                      ->asSymbol()
                                      .as<slang::ast::ClassType>();
-        auto base_class_id = InternClass(base_class, span);
-        if (!base_class_id)
-          return std::unexpected(std::move(base_class_id.error()));
-        proto_decl->overrides = hir::MethodRef{
-            .class_id = *base_class_id,
-            .method = LookupMethodId(*overridden_sub)};
+        auto base_ref = ResolveClassRef(base_class, span);
+        if (!base_ref) return std::unexpected(std::move(base_ref.error()));
+        proto_decl->overrides =
+            MakeClassMethodTarget(*base_ref, *overridden_sub);
       }
     }
     const hir::MethodId method_id = decl.methods.Add(*std::move(proto_decl));

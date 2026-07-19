@@ -224,8 +224,8 @@ auto MakeClassPropertyRefExpr(
   const auto& prop = sym.as<slang::ast::ClassPropertySymbol>();
   const auto& owner_class =
       sym.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-  auto owner_id = unit_lowerer.InternClass(owner_class, span);
-  if (!owner_id) return std::unexpected(std::move(owner_id.error()));
+  auto owner_ref = unit_lowerer.ResolveClassRef(owner_class, span);
+  if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
   // LRM 8.9: a static-lifetime property is one cell owned by the class, so
   // its reference form carries neither the enclosing method's receiver nor
   // a fabricated stand-in -- a type-associated cell has no per-instance
@@ -234,14 +234,12 @@ auto MakeClassPropertyRefExpr(
   if (prop.lifetime == slang::ast::VariableLifetime::Static) {
     return hir::MakeRefExpr(
         hir::StaticPropertyRef{
-            .owner = *owner_id,
-            .prop = unit_lowerer.LookupClassPropertyStaticId(prop)},
+            .target = unit_lowerer.MakeStaticPropertyTarget(*owner_ref, prop)},
         *type_id, span);
   }
   return hir::MakeRefExpr(
       hir::ClassPropertyRef{
-          .owner = *owner_id,
-          .field_index = unit_lowerer.LookupClassPropertyFieldId(prop)},
+          .target = unit_lowerer.MakeClassPropertyTarget(*owner_ref, prop)},
       *type_id, span);
 }
 

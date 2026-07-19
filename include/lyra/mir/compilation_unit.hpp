@@ -139,6 +139,14 @@ struct CompilationUnit {
   // to emit the include and link edge to each referenced unit. Recorded once
   // per distinct unit name.
   std::vector<std::string> external_referenced_units;
+  // Names of other compilation units this unit references a class of (LRM 8,
+  // as a handle type, a `new` target, a field / method / static access, or a
+  // super-extended base). A backend reads this list -- a separate axis from
+  // `external_referenced_units`, because a package callable / variable and a
+  // class member of another unit are independent include edges -- to emit the
+  // include and link edge to each referenced unit. Recorded once per distinct
+  // unit name.
+  std::vector<std::string> external_class_units;
   // The packages whose variables this package's variable initializers read
   // directly (LRM 26.2 / 10.5) -- the by-name dependency the design root uses
   // to pick a stable value-initialization order. It records only reads written
@@ -273,6 +281,18 @@ struct CompilationUnit {
       }
     }
     external_referenced_units.push_back(std::move(unit_name));
+  }
+
+  // Records a cross-unit class-reference dependency, deduplicated. Called
+  // from HIR-to-MIR when a class handle type, a `new`, a field / method /
+  // static access, or a base extension names a class of another unit.
+  void AddExternalClassUnit(std::string unit_name) {
+    for (const std::string& existing : external_class_units) {
+      if (existing == unit_name) {
+        return;
+      }
+    }
+    external_class_units.push_back(std::move(unit_name));
   }
 
   // Backing-vector position is the id, matching TypeId / LocalId.

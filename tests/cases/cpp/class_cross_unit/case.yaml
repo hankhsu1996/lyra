@@ -1,0 +1,19 @@
+id: cpp.class_cross_unit
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    c1_value: 3
+    c2_value: 1
+    counter_made: 2
+    box_int_payload: 42
+    box_byte_payload: 7
+    box_int_count: 1
+    box_byte_count: 1
+    derived_x: 5
+    derived_y: 6

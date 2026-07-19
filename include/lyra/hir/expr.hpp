@@ -8,7 +8,7 @@
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
-#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
@@ -127,16 +127,15 @@ struct MemberAccessExpr {
   FieldId field_index;
 };
 
-// Class property access (LRM 8.4 / 8.13): `owner` names the class that
-// declares the property, and `field_index` is the slot within that class's
-// property arena. Under inheritance, the receiver's runtime class may not be
-// the declaring class -- the receiver reaches the object through a handle to
-// a class that extends `owner` -- so identity is owner-qualified rather than
-// derived from the receiver's type.
+// Class property access (LRM 8.4 / 8.13): `target` names the declaring
+// class and the slot within that class's property arena. Owner-qualified
+// because under inheritance the receiver's runtime class may not be the
+// declaring class -- the receiver reaches the object through a handle to a
+// class that extends the property owner. The external arm is used when the
+// declaring class lives in another compilation unit.
 struct ClassPropertyAccessExpr {
   ExprId base_value;
-  ClassId owner;
-  FieldId field_index;
+  ClassPropertyTarget target;
 };
 
 struct ConcatExpr {
@@ -186,11 +185,13 @@ struct DynamicArrayNewExpr {
 };
 
 // LRM 8.5 class object construction `new`. Allocates a new object of the named
-// class and runs its constructor, yielding a handle. The class is named by its
-// declaration id; `Expr::type` is the class handle type. `arguments` are the
+// class and runs its constructor, yielding a handle. The class is named by a
+// `ClassRef`: a local id when the class is declared by this unit, or a by-name
+// reference against another unit's interface when the class is declared
+// elsewhere. `Expr::type` is the class handle type. `arguments` are the
 // constructor actuals (LRM 8.7), empty for the default `new`.
 struct ClassNewExpr {
-  ClassId class_id;
+  ClassRef class_ref;
   std::vector<ExprId> arguments;
 };
 

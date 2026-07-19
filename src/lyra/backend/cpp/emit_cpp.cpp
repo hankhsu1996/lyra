@@ -567,8 +567,11 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
   };
   // A unit an instance is built from names its unit through the child object's
   // `ExternalUnitObjectType`; a unit whose namespace symbol is reached by name
-  // names its unit in the reference-dependency list, since such a reference
-  // interns no such type. Both are external units this unit's artifact
+  // (a receiver-less callable or a package variable) names its unit in the
+  // reference-dependency list, since such a reference interns no such type;
+  // a unit a class is referenced from -- as a handle, a `new`, a field /
+  // method / static access, or a base extension -- names its unit in the
+  // class-dependency list. All three are external units this unit's artifact
   // includes.
   for (const auto& t : unit.types) {
     if (const auto* ext = std::get_if<mir::ExternalUnitObjectType>(&t.data)) {
@@ -576,6 +579,9 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
     }
   }
   for (const std::string& name : unit.external_referenced_units) {
+    add(name);
+  }
+  for (const std::string& name : unit.external_class_units) {
     add(name);
   }
   return names;
@@ -779,9 +785,10 @@ auto RenderNamespaceCallable(
 }
 
 // A unit whose root is a namespace rather than a class (a package): its C++
-// peer is a namespace holding the unit's type declarations and its
-// receiver-less callables. It owns no runtime object, so there is no scope-tree
-// construction.
+// peer is a namespace holding the unit's type declarations, class
+// declarations (LRM 8 classes declared at package scope), and its
+// receiver-less callables. It owns no runtime object, so there is no scope-
+// tree construction.
 auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
     -> std::string {
   std::string out;
@@ -804,6 +811,17 @@ auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
   if (unit.static_variables.size() != 0) {
     out += "\n";
   }
+
+  // A package class is a free-standing registry object with no structural
+  // parent; a referring unit reaches it by name through the include, so it
+  // must be emitted here. The dependency-order walker handles base-before-
+  // derived ordering.
+  std::vector<bool> emitted(unit.classes.size(), false);
+  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
+    RenderClassInDependencyOrder(
+        unit, mir::ClassId{static_cast<std::uint32_t>(i)}, emitted, out);
+  }
+
   for (std::size_t i = 0; i < unit.callables.size(); ++i) {
     const auto& callable =
         unit.callables.Get(mir::CallableId{static_cast<std::uint32_t>(i)});

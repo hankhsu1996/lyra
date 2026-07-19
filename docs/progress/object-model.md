@@ -106,12 +106,11 @@ each stage establishes, not how.
       identity mechanism a parameterized module uses -- generic-def name plus a canonical content
       encoding of the bindings.
 
-- [ ] Cross-unit class ownership: a class is owned by the compilation unit that declares it, and a
+- [x] Cross-unit class ownership: a class is owned by the compilation unit that declares it, and a
       reference from another unit reaches it by name -- the same by-name resolution package
-      callables already use. The class-copied-into-each-referring-unit shape (which today duplicates
-      a package class into every unit that names it) is out. This is what lets LRM 8.25's
-      package-scope rule -- matching specializations of a package generic class are one type
-      throughout the system -- hold across compilation units, and it applies uniformly to
+      callables already use. The class-copied-into-each-referring-unit shape is out. This is what
+      lets LRM 8.25's package-scope rule -- matching specializations of a package generic class are
+      one type throughout the system -- hold across compilation units, and it applies uniformly to
       non-parameterized and parameterized classes.
 
 - [x] Type-associated static storage and static methods (LRM 8.9 / 8.10): a static property is one

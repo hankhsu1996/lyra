@@ -17,6 +17,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/field_id.hpp"
@@ -160,12 +161,58 @@ class UnitLowerer {
   // no frontend type to key the cache on, so it is added directly.
   auto AddComposedType(hir::TypeData data) -> hir::TypeId;
 
-  // Registers a class declaration on first encounter and returns its id,
-  // memoizing by slang class pointer. The id is declared before the body is
-  // built so a property whose type names the same class (a self-reference)
-  // resolves against a stable identity.
-  auto InternClass(const slang::ast::ClassType& cls, diag::SourceSpan span)
+  // Mints a class of this unit into the unit's class registry: allocates the
+  // `ClassId`, populates the shape, and returns the id. The caller carries the
+  // proof that the class belongs to this unit -- the pre-pass walks this
+  // unit's own scope, and a same-unit base link resolves through the reference
+  // translator before flowing back here -- so no parent-chain query runs. A
+  // repeat call for the same class is idempotent: the cache entry the first
+  // mint installed returns without re-work, which admits mutual reference
+  // during body population.
+  auto InternLocalClass(const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<hir::ClassId>;
+
+  // Translates a slang class pointer -- reached from an expression site or a
+  // base-class link -- into HIR's owner-qualified reference form. The result
+  // is a `LocalClassRef` when the class is declared by this unit, an
+  // `ExternalClassRef{unit_name, class_name}` when it is declared by another.
+  // Classification runs at most once per class per unit: the first encounter
+  // walks `cls.getParentScope()` up to the enclosing compilation unit and
+  // caches the answer; every later encounter reads it. A local class not yet
+  // interned is minted lazily on this path, so a body reads the same identity
+  // regardless of which route saw the class first. This is the sole
+  // AST-to-HIR site that walks slang's parent chain to answer "which CU
+  // declares this class?" -- the top-down mint path is walk-free by design.
+  auto ResolveClassRef(const slang::ast::ClassType& cls, diag::SourceSpan span)
+      -> diag::Result<hir::ClassRef>;
+
+  // Builds a class-method target from a class reference and the resolved
+  // callee symbol. Local when the class was interned by this unit -- the
+  // method's arena position is queryable through the `SubroutineSymbol`-keyed
+  // cache the interning populated. External when the class lives in another
+  // compilation unit -- the method is named by (declaring unit, class
+  // canonical name, method name), the same by-name form a cross-unit
+  // reference to any other class member uses.
+  [[nodiscard]] auto MakeClassMethodTarget(
+      const hir::ClassRef& class_ref,
+      const slang::ast::SubroutineSymbol& method) const
+      -> hir::ClassMethodTarget;
+
+  // The instance-property peer of `MakeClassMethodTarget`. Local when the
+  // class was interned by this unit; external when the class lives in another
+  // compilation unit, in which case the property is named by its source name.
+  [[nodiscard]] auto MakeClassPropertyTarget(
+      const hir::ClassRef& class_ref,
+      const slang::ast::ClassPropertySymbol& prop) const
+      -> hir::ClassPropertyTarget;
+
+  // The static-property peer of `MakeClassMethodTarget`. Local when the class
+  // was interned by this unit; external when the class lives in another
+  // compilation unit, in which case the property is named by its source name.
+  [[nodiscard]] auto MakeStaticPropertyTarget(
+      const hir::ClassRef& class_ref,
+      const slang::ast::ClassPropertySymbol& prop) const
+      -> hir::StaticPropertyTarget;
 
   // Records a frontend method symbol's HIR arena identity as the class
   // interning that owns it adds the method. Downstream consumers translate a
@@ -188,10 +235,10 @@ class UnitLowerer {
         "owning class was not interned before this lookup");
   }
 
-  // Records the HIR `FieldId` a class property received when its owning
-  // class's `InternClass` added it to the field arena. A downstream
-  // `handle.field` access reads the id in O(1) through this lookup instead
-  // of re-walking the property list at every reference site.
+  // Records the HIR `FieldId` a class property received when the owning
+  // class was minted. A downstream `handle.field` access reads the id in
+  // O(1) through this lookup instead of re-walking the property list at
+  // every reference site.
   void RegisterClassPropertyFieldId(
       const slang::ast::ClassPropertySymbol& prop, hir::FieldId id) {
     class_property_field_ids_.emplace(&prop, id);
@@ -208,11 +255,11 @@ class UnitLowerer {
         "id; the owning class was not interned before this lookup");
   }
 
-  // Peer of the field-id registry on the type-associated axis. Records the
-  // HIR `StaticPropertyId` a static class property (LRM 8.9) received when
-  // its owning class's `InternClass` added it to the static-property arena,
-  // so a downstream `Cls::prop` or `handle.prop` (static-lifetime) access
-  // reads the id in O(1) rather than re-walking the arena.
+  // Records the HIR `StaticPropertyId` a static class property (LRM 8.9)
+  // received when the owning class was minted, so a downstream `Cls::prop`
+  // or `handle.prop` (static-lifetime) access reads the id in O(1) rather
+  // than re-walking the arena. The type-associated storage counterpart to
+  // the instance-property registry above.
   void RegisterClassPropertyStaticId(
       const slang::ast::ClassPropertySymbol& prop, hir::StaticPropertyId id) {
     class_property_static_ids_.emplace(&prop, id);
@@ -307,6 +354,14 @@ class UnitLowerer {
   // it.
   [[nodiscard]] auto NextWithClauseId() -> hir::WithClauseId;
 
+  // Interns every class this unit declares -- a non-parameterized class as a
+  // single entry, and a parameterized class as one entry per live
+  // specialization slang deduplicated during elaboration. Runs before any
+  // body lowering so the unit's class registry is complete before any
+  // reference resolves; a specialization reached only from another unit
+  // still lands here, in its declaring unit.
+  auto InternOwnClassDeclarations() -> diag::Result<void>;
+
   // Builds a HIR Expr referring to a leaf reached by navigating `path` down
   // from `head`. `target` is the leaf value symbol (routed-ref dedup key);
   // `slot_owner_frame` is the frame whose `routed_refs` arena holds the slot
@@ -348,7 +403,13 @@ class UnitLowerer {
 
   // Registries.
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
-  std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
+  // The classification of every class this unit's lowering has resolved: the
+  // Local / External arm chosen by walking slang's parent chain to find the
+  // class's declaring compilation unit. Caching the classification -- not just
+  // the local id -- lets an external class's parent-chain walk run once per
+  // class per unit; a second reference to the same slang `ClassType` reads
+  // the answer, whether it is Local or External.
+  std::unordered_map<const slang::ast::ClassType*, hir::ClassRef> class_cache_;
   std::unordered_map<const slang::ast::SubroutineSymbol*, hir::MethodId>
       method_cache_;
   std::unordered_map<const slang::ast::ClassPropertySymbol*, hir::FieldId>
