@@ -10,14 +10,18 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/static_property_id.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type.hpp"
@@ -162,6 +166,39 @@ class UnitLowerer {
         "UnitLowerer::ImportedRuntimeObjectType: unknown imported class");
   }
 
+  // Cross-unit reference builders. Each converts a HIR-level cross-unit
+  // reference into its MIR peer AND records the referenced unit's name on
+  // the unit's cross-unit dependency list in one operation, so a caller
+  // never touches the raw dependency-list mutators. The class-side builders
+  // below record on the class dependency list; the trailing callable
+  // builder records on the callable dependency list, since a package
+  // callable and a class member of another unit are two independent
+  // include axes for a backend.
+  auto MakeExternalClassPointee(const hir::ExternalClassRef& ref)
+      -> mir::TypeId;
+
+  auto MakeExternalClassBaseRef(const hir::ExternalClassRef& ref)
+      -> mir::ClassRef;
+
+  auto MakeExternalFieldTarget(const hir::ExternalClassPropertyTarget& target)
+      -> mir::ExternalFieldTarget;
+
+  auto MakeExternalStaticPropertyRef(
+      const hir::ExternalStaticPropertyTarget& target)
+      -> mir::ExternalStaticPropertyRef;
+
+  auto MakeExternalMethodTarget(const hir::ExternalClassMethodTarget& target)
+      -> mir::ExternalUnitClassMethodTarget;
+
+  auto MakeExternalMethodOverride(const hir::ExternalClassMethodTarget& target)
+      -> mir::OverridesExternalSlot;
+
+  // Receiver-less callable of another compilation unit (LRM 26.3 package
+  // function or task). Recorded on the callable dependency list, not the
+  // class one.
+  auto MakeExternalCallableTarget(const hir::ExternalUnitSubroutineRef& ref)
+      -> mir::ExternalUnitCallableTarget;
+
   // Mints a collision-free class name for one generate scope, tagged by its
   // arm kind (`loop` / `then` / `else` / ...). The name is only an
   // implementation handle for the emitted type -- a generate scope's runtime
@@ -222,7 +259,7 @@ class UnitLowerer {
   // whether the root scope becomes a top class or a set of namespace callables.
   auto PopulateTypesAndClasses() -> diag::Result<void>;
 
-  [[nodiscard]] auto TranslateTypeData(const hir::TypeData& data) const
+  [[nodiscard]] auto TranslateTypeData(const hir::TypeData& data)
       -> mir::TypeData;
 
   const hir::CompilationUnit* hir_;

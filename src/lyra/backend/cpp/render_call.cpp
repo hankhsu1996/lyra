@@ -521,6 +521,37 @@ auto RenderDirectExternalUnitCall(const mir::ExternalUnitCallableTarget& target)
       .leading_arg_count = 0};
 }
 
+// Renders a `Direct` callee whose target is a class method of another
+// compilation unit (LRM 8.6 / 8.10 across the unit boundary). Instance
+// method: the receiver arrives as `arguments[0]` (a pointer to the object)
+// and the callee is `(receiver)->method`, so target-language name-lookup
+// resolves the method through the receiver's static type after the
+// declaring unit's header is included, and any virtual dispatch happens
+// through the target language's own vtable. Static method: no receiver in
+// the argument list, and the callee is the free qualified form
+// `unit::Class::method`. The two shapes are told apart by the receiver
+// argument -- an instance call always prepends a pointer-typed receiver.
+auto RenderDirectExternalUnitClassMethodCall(
+    const ScopeView& view, const mir::CallExpr& call,
+    const mir::ExternalUnitClassMethodTarget& target) -> CalleeRender {
+  const bool has_receiver_arg =
+      !call.arguments.empty() &&
+      std::holds_alternative<mir::PointerType>(
+          view.Unit().types.Get(view.Expr(call.arguments[0]).type).data);
+  if (!has_receiver_arg) {
+    return {
+        .expr = std::format(
+            "{}::{}::{}", ToCppName(target.unit_name),
+            ToCppName(target.class_name), target.method_name),
+        .leading_arg_count = 0};
+  }
+  return {
+      .expr = std::format(
+          "({})->{}", RenderExpr(view, view.Expr(call.arguments[0])),
+          target.method_name),
+      .leading_arg_count = 1};
+}
+
 // Renders a call to a method the runtime library provides for an imported class
 // (LRM 9.7 `process`). The callee is the runtime symbol named by the method
 // identity; every argument -- a receiver handle or the services handle -- is
@@ -552,6 +583,10 @@ auto RenderCalleePart(
                     },
                     [&](const mir::ExternalUnitCallableTarget& e) {
                       return RenderDirectExternalUnitCall(e);
+                    },
+                    [&](const mir::ExternalUnitClassMethodTarget& e) {
+                      return RenderDirectExternalUnitClassMethodCall(
+                          view, call, e);
                     },
                     [&](const mir::ImportedRuntimeCallTarget& i) {
                       return RenderDirectImportedRuntimeCall(i);

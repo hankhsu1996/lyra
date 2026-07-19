@@ -190,8 +190,8 @@ auto LowerMemberAccessExpr(
     const auto& prop = sel.member.as<slang::ast::ClassPropertySymbol>();
     const auto& declaring_class =
         prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto owner_id = lowerer.Owner().InternClass(declaring_class, span);
-    if (!owner_id) return std::unexpected(std::move(owner_id.error()));
+    auto owner_ref = lowerer.Owner().ResolveClassRef(declaring_class, span);
+    if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
     // LRM 8.9 permits reaching a static property through a handle
     // (`p.static_prop`), and LRM 8.3 says accessing a static member through a
     // null handle is legal because no per-instance dereference is required.
@@ -203,8 +203,8 @@ auto LowerMemberAccessExpr(
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
       return hir::MakeRefExpr(
           hir::StaticPropertyRef{
-              .owner = *owner_id,
-              .prop = lowerer.Owner().LookupClassPropertyStaticId(prop)},
+              .target =
+                  lowerer.Owner().MakeStaticPropertyTarget(*owner_ref, prop)},
           *type_id, span);
     }
     return hir::Expr{
@@ -212,8 +212,8 @@ auto LowerMemberAccessExpr(
         .data =
             hir::ClassPropertyAccessExpr{
                 .base_value = base_id,
-                .owner = *owner_id,
-                .field_index = lowerer.Owner().LookupClassPropertyFieldId(prop),
+                .target =
+                    lowerer.Owner().MakeClassPropertyTarget(*owner_ref, prop),
             },
         .span = span,
     };

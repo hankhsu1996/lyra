@@ -595,8 +595,8 @@ auto LowerCallExpr(
     }
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto class_id = unit_lowerer.InternClass(declaring_class, span);
-    if (!class_id) return std::unexpected(std::move(class_id.error()));
+    auto class_ref = unit_lowerer.ResolveClassRef(declaring_class, span);
+    if (!class_ref) return std::unexpected(std::move(class_ref.error()));
     auto static_result_type = unit_lowerer.InternType(*call.type, span);
     if (!static_result_type) {
       return std::unexpected(std::move(static_result_type.error()));
@@ -607,8 +607,8 @@ auto LowerCallExpr(
             hir::CallExpr{
                 .callee =
                     hir::StaticMethodCallRef{
-                        .class_id = *class_id,
-                        .method = unit_lowerer.LookupMethodId(*sym)},
+                        .target = unit_lowerer.MakeClassMethodTarget(
+                            *class_ref, *sym)},
                 .arguments = std::move(arg_ids),
             },
         .span = span,
@@ -634,8 +634,8 @@ auto LowerCallExpr(
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto class_id = unit_lowerer.InternClass(declaring_class, span);
-    if (!class_id) return std::unexpected(std::move(class_id.error()));
+    auto class_ref = unit_lowerer.ResolveClassRef(declaring_class, span);
+    if (!class_ref) return std::unexpected(std::move(class_ref.error()));
     auto method_result_type = unit_lowerer.InternType(*call.type, span);
     if (!method_result_type) {
       return std::unexpected(std::move(method_result_type.error()));
@@ -647,8 +647,8 @@ auto LowerCallExpr(
                 .callee =
                     hir::MethodCallRef{
                         .receiver = *std::move(receiver_or),
-                        .class_id = *class_id,
-                        .method = unit_lowerer.LookupMethodId(*sym)},
+                        .target = unit_lowerer.MakeClassMethodTarget(
+                            *class_ref, *sym)},
                 .arguments = std::move(arg_ids),
             },
         .span = span,

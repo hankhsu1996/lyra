@@ -45,6 +45,63 @@ auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
   return "join";
 }
 
+auto FormatClassRef(const ClassRef& ref) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const LocalClassRef& r) -> std::string {
+            return std::format("Class[{}]", r.class_id.value);
+          },
+          [](const ExternalClassRef& r) -> std::string {
+            return std::format(
+                "Class[external={}::{}]", r.unit_name, r.class_name);
+          }},
+      ref);
+}
+
+auto FormatClassPropertyTarget(const ClassPropertyTarget& target)
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const LocalClassPropertyTarget& t) -> std::string {
+            return std::format("Class[{}].{}", t.owner.value, t.field.value);
+          },
+          [](const ExternalClassPropertyTarget& t) -> std::string {
+            return std::format(
+                "Class[external={}::{}].{}", t.unit_name, t.class_name,
+                t.property_name);
+          }},
+      target);
+}
+
+auto FormatStaticPropertyTarget(const StaticPropertyTarget& target)
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const LocalStaticPropertyTarget& t) -> std::string {
+            return std::format("Class[{}].{}", t.owner.value, t.prop.value);
+          },
+          [](const ExternalStaticPropertyTarget& t) -> std::string {
+            return std::format(
+                "Class[external={}::{}].{}", t.unit_name, t.class_name,
+                t.property_name);
+          }},
+      target);
+}
+
+auto FormatClassMethodTarget(const ClassMethodTarget& target) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const LocalClassMethodTarget& t) -> std::string {
+            return std::format("Class[{}].{}", t.owner.value, t.method.value);
+          },
+          [](const ExternalClassMethodTarget& t) -> std::string {
+            return std::format(
+                "Class[external={}::{}].{}", t.unit_name, t.class_name,
+                t.method_name);
+          }},
+      target);
+}
+
 class HirDumper {
  public:
   auto Dump(const std::vector<CompilationUnit>& units) -> std::string {
@@ -226,7 +283,7 @@ class HirDumper {
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const ClassHandleType& c) -> std::string {
               return std::format(
-                  "ClassHandleType(class=Class[{}])", c.class_id.value);
+                  "ClassHandleType(class={})", FormatClassRef(c.class_ref));
             },
             [](const ImportedClassHandleType& c) -> std::string {
               return std::format(
@@ -412,12 +469,11 @@ class HirDumper {
             },
             [](const ClassPropertyRef& r) -> std::string {
               return std::format(
-                  "ClassProperty[Class[{}].{}]", r.owner.value,
-                  r.field_index.value);
+                  "ClassProperty[{}]", FormatClassPropertyTarget(r.target));
             },
             [](const StaticPropertyRef& r) -> std::string {
               return std::format(
-                  "StaticProperty[Class[{}].{}]", r.owner.value, r.prop.value);
+                  "StaticProperty[{}]", FormatStaticPropertyTarget(r.target));
             },
             [](const RoutedRef& r) -> std::string {
               return std::format("RoutedRef[{}]", r.id.value);
@@ -577,13 +633,12 @@ class HirDumper {
                       }},
                   m.receiver);
               return std::format(
-                  "Method class=Class[{}] index={} recv={}", m.class_id.value,
-                  m.method.value, recv);
+                  "Method target={} recv={}", FormatClassMethodTarget(m.target),
+                  recv);
             },
             [](const StaticMethodCallRef& s) -> std::string {
               return std::format(
-                  "StaticMethod class=Class[{}] index={}", s.class_id.value,
-                  s.method.value);
+                  "StaticMethod target={}", FormatClassMethodTarget(s.target));
             },
             [](const SystemSubroutineRef& s) -> std::string {
               const auto& desc = support::LookupSystemSubroutine(s.id);
@@ -766,9 +821,8 @@ class HirDumper {
             },
             [](const ClassPropertyAccessExpr& sel) -> std::string {
               return std::format(
-                  "ClassPropertyAccessExpr base=Expr[{}] owner=Class[{}] "
-                  "field={}",
-                  sel.base_value.value, sel.owner.value, sel.field_index.value);
+                  "ClassPropertyAccessExpr base=Expr[{}] target={}",
+                  sel.base_value.value, FormatClassPropertyTarget(sel.target));
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -824,8 +878,8 @@ class HirDumper {
                 args += std::format("Expr[{}]", n.arguments[i].value);
               }
               return std::format(
-                  "ClassNewExpr class=Class[{}] args=[{}]", n.class_id.value,
-                  args);
+                  "ClassNewExpr class={} args=[{}]",
+                  FormatClassRef(n.class_ref), args);
             },
             [](const AssociativeAssignmentPatternExpr& a) -> std::string {
               std::string entries;
@@ -1033,9 +1087,8 @@ class HirDumper {
     if (d.is_virtual) flags += " virtual";
     if (d.is_prototype) flags += " prototype";
     if (d.overrides.has_value()) {
-      flags += std::format(
-          " overrides=Class[{}].Method[{}]", d.overrides->class_id.value,
-          d.overrides->method.value);
+      flags +=
+          std::format(" overrides={}", FormatClassMethodTarget(*d.overrides));
     }
     Line(
         std::format(

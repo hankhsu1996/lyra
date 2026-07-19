@@ -15,6 +15,7 @@
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -47,6 +48,9 @@ UnitLowerer::UnitLowerer(
 auto UnitLowerer::Run() -> diag::Result<hir::CompilationUnit> {
   WalkFrame frame;
   DeclareStructuralIdentities(*scope_);
+  if (auto r = InternOwnClassDeclarations(); !r) {
+    return std::unexpected(std::move(r.error()));
+  }
   StructuralScopeLowerer root(*this, *scope_);
   auto root_scope_or = root.Run(frame);
   if (!root_scope_or) {
@@ -54,6 +58,37 @@ auto UnitLowerer::Run() -> diag::Result<hir::CompilationUnit> {
   }
   unit_.root_scope = *std::move(root_scope_or);
   return std::move(unit_);
+}
+
+auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
+  // A class is owned by the compilation unit that declares it. Slang exposes
+  // this unit's class declarations at scope level as one of two kinds: a
+  // `ClassType` for a non-parameterized declaration (LRM 8.3), or a
+  // `GenericClassDefSymbol` for a parameterized one (LRM 8.25), which carries
+  // one `ClassType` per live specialization slang deduplicated during
+  // elaboration. Minting them here before any body lowers keeps class
+  // identity queryable through the unit's registry from the moment any body
+  // resolves a reference, and gives a specialization reached only from
+  // another unit its home in the declaring unit.
+  for (const auto& member : scope_->members()) {
+    if (member.kind == slang::ast::SymbolKind::ClassType) {
+      const auto& cls = member.as<slang::ast::ClassType>();
+      const diag::SourceSpan span = SourceMapper().PointSpanOf(cls.location);
+      if (auto r = InternLocalClass(cls, span); !r) {
+        return std::unexpected(std::move(r.error()));
+      }
+    } else if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
+      const auto& def = member.as<slang::ast::GenericClassDefSymbol>();
+      const diag::SourceSpan span = SourceMapper().PointSpanOf(def.location);
+      for (const auto& spec : def.specializations()) {
+        const auto& cls = spec.getCanonicalType().as<slang::ast::ClassType>();
+        if (auto r = InternLocalClass(cls, span); !r) {
+          return std::unexpected(std::move(r.error()));
+        }
+      }
+    }
+  }
+  return {};
 }
 
 auto UnitLowerer::NextScopeFrameId() -> ScopeFrameId {

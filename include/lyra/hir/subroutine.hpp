@@ -5,8 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "lyra/hir/class_id.hpp"
-#include "lyra/hir/method_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -44,18 +43,6 @@ struct SubroutineParam {
   return direction == ParamDirection::kOutput ||
          direction == ParamDirection::kInOut;
 }
-
-// The declaration identity of a class instance method in HIR: a
-// (class, method) pair naming one entry in the owning class's method arena.
-// A frontend symbol translates to this identity at the AST-to-HIR boundary;
-// downstream consumers hold it as-is and never re-derive it from another
-// enumeration order.
-struct MethodRef {
-  ClassId class_id;
-  MethodId method;
-
-  auto operator==(const MethodRef&) const -> bool = default;
-};
 
 // LRM 13.4.1 implicit result variable: a non-void function implicitly declares
 // a body-local variable of the return type that the body reads and writes
@@ -96,7 +83,7 @@ struct SubroutineDecl {
   bool is_virtual = false;
   bool is_prototype = false;
   bool is_static = false;
-  std::optional<MethodRef> overrides;
+  std::optional<ClassMethodTarget> overrides;
 };
 
 }  // namespace lyra::hir

@@ -46,13 +46,23 @@ namespace {
 // method (both facts absent). Depth is bounded by inheritance depth; the
 // frontend guarantees the chain is acyclic (LRM 8.13).
 auto CanonicalizeVirtualDispatch(
-    const UnitLowerer& unit_lowerer, const hir::SubroutineDecl& method)
+    UnitLowerer& unit_lowerer, const hir::SubroutineDecl& method)
     -> std::optional<mir::VirtualDispatchRole> {
   if (method.overrides.has_value()) {
-    const hir::MethodRef& base_ref = *method.overrides;
+    if (const auto* ext =
+            std::get_if<hir::ExternalClassMethodTarget>(&*method.overrides)) {
+      // A slot introduced in another unit is canonically owned there; this
+      // unit records the override by the (unit, class, method) name triple
+      // and reaches the base's dispatch machinery through the link-time
+      // include of the declaring unit.
+      return mir::VirtualDispatchRole{
+          unit_lowerer.MakeExternalMethodOverride(*ext)};
+    }
+    const auto& local_ref =
+        std::get<hir::LocalClassMethodTarget>(*method.overrides);
     const hir::SubroutineDecl& base_method = unit_lowerer.Hir()
-                                                 .classes.Get(base_ref.class_id)
-                                                 .methods.Get(base_ref.method);
+                                                 .classes.Get(local_ref.owner)
+                                                 .methods.Get(local_ref.method);
     const auto base_role =
         CanonicalizeVirtualDispatch(unit_lowerer, base_method);
     if (!base_role.has_value()) {
@@ -61,8 +71,8 @@ auto CanonicalizeVirtualDispatch(
           "method the frontend did not classify as virtual");
     }
     const mir::ClassId base_mir_class =
-        unit_lowerer.TranslateClass(base_ref.class_id);
-    const mir::CallableId base_mir_slot{base_ref.method.value};
+        unit_lowerer.TranslateClass(local_ref.owner);
+    const mir::CallableId base_mir_slot{local_ref.method.value};
     return std::visit(
         Overloaded{
             [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualDispatchRole {
@@ -70,7 +80,9 @@ auto CanonicalizeVirtualDispatch(
                   .slot_owner = base_mir_class, .slot_id = base_mir_slot};
             },
             [](const mir::OverridesIntraUnitSlot& s)
-                -> mir::VirtualDispatchRole { return s; }},
+                -> mir::VirtualDispatchRole { return s; },
+            [](const mir::OverridesExternalSlot& e)
+                -> mir::VirtualDispatchRole { return e; }},
         *base_role);
   }
   if (method.is_virtual) {
@@ -164,8 +176,14 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
 
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {
-    base_ref = mir::ClassRef{mir::IntraUnitClassRef{
-        .class_id = unit_lowerer.TranslateClass(*hir_class.base)}};
+    if (const auto* local_base =
+            std::get_if<hir::LocalClassRef>(&*hir_class.base)) {
+      base_ref = mir::ClassRef{mir::IntraUnitClassRef{
+          .class_id = unit_lowerer.TranslateClass(local_base->class_id)}};
+    } else {
+      base_ref = unit_lowerer.MakeExternalClassBaseRef(
+          std::get<hir::ExternalClassRef>(*hir_class.base));
+    }
   }
 
   mir::ClassShape shape{

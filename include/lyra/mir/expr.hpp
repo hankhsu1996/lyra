@@ -173,17 +173,35 @@ struct ExternalUnitCallableTarget {
   auto operator==(const ExternalUnitCallableTarget&) const -> bool = default;
 };
 
+// Identity of a class method declared by another compilation unit -- an
+// instance method or a static method (LRM 8.6 / 8.10) on a class the referring
+// unit reaches by name. The declaring class carries no unit-local id here, so
+// the target names the declaring unit, the class's canonical (specialization)
+// name, and the method's source name, resolved against that unit's interface
+// at link time. A backend renders a static call as the qualified
+// `unit::Class::method(args)` and an instance call as `receiver->method(args)`
+// after including the declaring unit's header.
+struct ExternalUnitClassMethodTarget {
+  std::string unit_name;
+  std::string class_name;
+  std::string method_name;
+
+  auto operator==(const ExternalUnitClassMethodTarget&) const -> bool = default;
+};
+
 // The target of a `Direct` call -- the symbol identity. The identity spaces: an
 // owner-qualified callable of this unit (`CallableTarget` -- an instance
 // method, a receiver-less static callable, or a DPI-C import, all one arena), a
 // built-in runtime entry (closed-namespace `BuiltinFn`), a method the runtime
 // library provides for an imported class (`ImportedRuntimeCallTarget`,
-// LRM 9.7), and a receiver-less callable of another compilation unit
-// (`ExternalUnitCallableTarget`, named across the unit boundary). None is
-// recovered from the receiver's runtime type.
+// LRM 9.7), a receiver-less callable of another compilation unit
+// (`ExternalUnitCallableTarget`, named across the unit boundary), and a class
+// method of another compilation unit
+// (`ExternalUnitClassMethodTarget`, class-qualified across the unit boundary).
+// None is recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
     CallableTarget, support::BuiltinFn, ImportedRuntimeCallTarget,
-    ExternalUnitCallableTarget>;
+    ExternalUnitCallableTarget, ExternalUnitClassMethodTarget>;
 
 // A direct call to a named symbol. The single shape for every direct
 // invocation -- user method, built-in instance method, type-qualified
@@ -320,12 +338,31 @@ struct FieldTarget {
   auto operator==(const FieldTarget&) const -> bool = default;
 };
 
-// Which arena's field a `FieldAccessExpr` reaches. Two shapes because the
-// class case is the only one where "which arena" is a semantic decision:
+// Identity of a class field on a class declared by another compilation unit.
+// The declaring class carries no unit-local id here, so the field is named by
+// (declaring unit, class canonical name, field name). A backend reads the
+// field name and resolves the access through the target-language member
+// lookup, exactly as it resolves any other cross-unit reference.
+struct ExternalFieldTarget {
+  std::string unit_name;
+  std::string class_name;
+  std::string field_name;
+
+  auto operator==(const ExternalFieldTarget&) const -> bool = default;
+};
+
+// Which arena's field a `FieldAccessExpr` reaches. Three shapes because the
+// class case is where "which arena" is a semantic decision that also splits
+// on unit boundary:
 //
 // - `FieldTarget` (owner-qualified) is used when the receiver is a class
-//   instance. The receiver's runtime class type may not be the field's
-//   declaring class (inheritance), so the target states both.
+//   instance whose class this unit declares. The receiver's runtime class
+//   type may not be the field's declaring class (inheritance), so the target
+//   states both.
+//
+// - `ExternalFieldTarget` is used when the receiver's class lives in another
+//   compilation unit -- the declaring unit and class canonical name plus the
+//   field's source name, matched at link time.
 //
 // - Bare `FieldId` is used when the receiver is a struct value or a closure.
 //   These aggregates carry their arena identity in their own type payload
@@ -333,7 +370,7 @@ struct FieldTarget {
 //   in an inheritance chain, so the arena is uniquely determined by the
 //   receiver's type; stating it again would restate what the structural
 //   context already fixes.
-using FieldRef = std::variant<FieldTarget, FieldId>;
+using FieldRef = std::variant<FieldTarget, FieldId, ExternalFieldTarget>;
 
 // Field access through an explicit receiver expression. `receiver` evaluates to
 // a field-bearing value reached by pointer -- a class instance, a closure, or a
@@ -495,6 +532,17 @@ struct ExternalUnitVariableRef {
   std::string variable_name;
 };
 
+// A static property (LRM 8.9 / 8.10) declared on a class of another
+// compilation unit. Its owner has no unit-local id here; the property is
+// named by (declaring unit, class canonical name, property name). A backend
+// renders the access as the qualified `unit::Class::prop` after including
+// the declaring unit's header.
+struct ExternalStaticPropertyRef {
+  std::string unit_name;
+  std::string class_name;
+  std::string property_name;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     MachineIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
@@ -503,7 +551,7 @@ using ExprData = std::variant<
     StructConstructExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
     ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr, UnionExpr,
     UnionGetExpr, UnionGetRefExpr, FunctionRef, StaticConstantRef,
-    StaticPropertyRef, ExternalUnitVariableRef>;
+    StaticPropertyRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 struct Expr {
   ExprData data;

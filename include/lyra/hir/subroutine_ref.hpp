@@ -4,10 +4,9 @@
 #include <string>
 #include <variant>
 
-#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
-#include "lyra/hir/method_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -58,14 +57,14 @@ struct SuperReceiver {};
 using MethodReceiver =
     std::variant<HandleReceiver, ImplicitSelfReceiver, SuperReceiver>;
 
-// Calls an instance method (LRM 8.6). `class_id` names the declaring class
-// and `method` is the method's declaration-order position in that class's HIR
-// method arena. `receiver` states which of the three LRM-defined source
-// forms reached this call site.
+// Calls an instance method (LRM 8.6). `target` names the declaring class and
+// the method's declaration-order position in that class's method arena.
+// `receiver` states which of the three LRM-defined source forms reached this
+// call site. The external arm is used when the method's declaring class
+// lives in another compilation unit.
 struct MethodCallRef {
   MethodReceiver receiver;
-  ClassId class_id;
-  MethodId method;
+  ClassMethodTarget target;
 };
 
 // Calls a `$xxx` system subroutine. The id resolves through
@@ -105,14 +104,15 @@ struct ExternalUnitSubroutineRef {
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
 // because a static method has no receiver -- neither an explicit handle, an
 // implicit self, nor a super qualifier -- and encoding it as a receiver-
-// optional variant of `MethodCallRef` would admit an invalid state. `owner`
-// names the class that declares the method; `method` is its position within
-// that class's method arena. Under inheritance, `Derived::inherited_static()`
-// still names the base as `owner` -- the method lives on the base's arena --
-// mirroring the owner-qualified rule for inherited instance access.
+// optional variant of `MethodCallRef` would admit an invalid state. `target`
+// names the declaring class and the method's declaration-order position in
+// that class's method arena. Under inheritance,
+// `Derived::inherited_static()` still names the base -- the method lives on
+// the base's arena -- mirroring the owner-qualified rule for inherited
+// instance access. The external arm is used when the declaring class lives
+// in another compilation unit.
 struct StaticMethodCallRef {
-  ClassId class_id;
-  MethodId method;
+  ClassMethodTarget target;
 };
 
 using SubroutineRef = std::variant<
