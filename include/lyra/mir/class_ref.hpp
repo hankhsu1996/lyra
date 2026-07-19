@@ -61,13 +61,31 @@ struct OverridesIntraUnitSlot {
   auto operator==(const OverridesIntraUnitSlot&) const -> bool = default;
 };
 
+// A method that overrides a virtual dispatch slot introduced by a class in
+// another compilation unit -- LRM 8.20 across the unit boundary. The slot's
+// canonical identity carries no unit-local ids: it names the declaring unit,
+// the introducing class's canonical name, and the introducing method's source
+// name. A virtual slot has no independent name of its own; its canonical
+// identity in a by-name world is the introducing method's source name.
+// A backend renders the override through the target language's own virtual-
+// override machinery -- the same shape as an intra-unit override -- reached
+// by including the declaring unit's header.
+struct OverridesExternalSlot {
+  std::string unit_name;
+  std::string class_name;
+  std::string method_name;
+
+  auto operator==(const OverridesExternalSlot&) const -> bool = default;
+};
+
 // A method's participation in the class-object dispatch table (LRM 8.20). A
 // non-participating method (a regular direct-only callable) carries no value
 // of this optional; a participating method carries the arm whose payload
 // names the slot's canonical identity: an introducer names itself, an
-// intra-unit override names the introducing (class, method) pair. A
-// consumer reads the slot's identity in one step.
-using VirtualDispatchRole =
-    std::variant<IntroducesVirtualSlot, OverridesIntraUnitSlot>;
+// intra-unit override names the introducing (class, method) pair, a
+// cross-unit override names the introducing (unit, class, method) name
+// triple. A consumer reads the slot's identity in one step.
+using VirtualDispatchRole = std::variant<
+    IntroducesVirtualSlot, OverridesIntraUnitSlot, OverridesExternalSlot>;
 
 }  // namespace lyra::mir

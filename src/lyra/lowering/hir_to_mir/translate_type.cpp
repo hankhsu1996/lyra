@@ -100,7 +100,7 @@ auto FlattenPackedAggregate(
 
 }  // namespace
 
-auto UnitLowerer::TranslateTypeData(const hir::TypeData& data) const
+auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
     -> mir::TypeData {
   return std::visit(
       Overloaded{
@@ -237,10 +237,19 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data) const
           },
           [&](const hir::ClassHandleType& src) -> mir::TypeData {
             // A class handle is a managed reference to the class object: the
-            // pointee is the object type naming the class's registry identity,
-            // pre-interned when the class id was minted.
+            // pointee is the object type naming the class's registry identity
+            // (local) or the class's fully qualified name (external). The
+            // external arm routes through the unit-lowerer's builder so the
+            // cross-unit dependency is recorded in the same step as the type
+            // intern.
+            if (const auto* local =
+                    std::get_if<hir::LocalClassRef>(&src.class_ref)) {
+              return mir::ManagedRefType{
+                  .pointee = ClassObjectType(local->class_id)};
+            }
             return mir::ManagedRefType{
-                .pointee = ClassObjectType(src.class_id)};
+                .pointee = MakeExternalClassPointee(
+                    std::get<hir::ExternalClassRef>(src.class_ref))};
           },
           [&](const hir::ImportedClassHandleType& src) -> mir::TypeData {
             // A handle to an imported runtime-library class is the same managed

@@ -217,6 +217,12 @@ auto LowerCallTarget(
                           "mir_to_lir: a cross-unit package subroutine call is "
                           "not yet lowerable to LIR");
                     },
+                    [&](const mir::ExternalUnitClassMethodTarget&)
+                        -> diag::Result<lir::CallTarget> {
+                      return Unsupported(
+                          "mir_to_lir: a cross-unit class method call is not "
+                          "yet lowerable to LIR");
+                    },
                     [&](const mir::ImportedRuntimeCallTarget&)
                         -> diag::Result<lir::CallTarget> {
                       return Unsupported(
@@ -789,7 +795,13 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             const std::uint32_t slot = std::visit(
                 Overloaded{
                     [](const mir::FieldTarget& t) { return t.slot.value; },
-                    [](const mir::FieldId& id) { return id.value; }},
+                    [](const mir::FieldId& id) { return id.value; },
+                    [](const mir::ExternalFieldTarget&) -> std::uint32_t {
+                      throw InternalError(
+                          "mir_to_lir: cross-unit field access is not "
+                          "supported by the LIR path (LIR is not the target "
+                          "backend for cross-unit class references today)");
+                    }},
                 field.field);
             return lir::Place{
                 .base = *std::move(receiver),

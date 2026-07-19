@@ -371,6 +371,13 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
             return FieldAccess{
                 .name = cls.fields.Get(t.slot).name, .through_receiver = true};
           },
+          [&](const mir::ExternalFieldTarget& t) -> FieldAccess {
+            // Cross-unit class field: the declaring unit's header pulls the
+            // field name into scope through the include; the receiver reaches
+            // it by its source name, which the target-language compiler
+            // resolves against the receiver's static type.
+            return FieldAccess{.name = t.field_name, .through_receiver = true};
+          },
           [&](const mir::FieldId& id) -> FieldAccess {
             const mir::TypeId recv_type = view.Expr(m.receiver).type;
             const auto& recv_data = view.Unit().types.Get(recv_type).data;
@@ -438,6 +445,11 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::ExternalUnitVariableRef& r) -> std::string {
             return std::format(
                 "{}::{}", ToCppName(r.unit_name), r.variable_name);
+          },
+          [&](const mir::ExternalStaticPropertyRef& r) -> std::string {
+            return std::format(
+                "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
+                r.property_name);
           },
           // HIR-to-MIR lowers an LHS selector chain to write-form nodes -- a
           // container-access `CallExpr` with a write callee (per
@@ -916,6 +928,11 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::ExternalUnitVariableRef& r) -> std::string {
             return std::format(
                 "{}::{}", ToCppName(r.unit_name), r.variable_name);
+          },
+          [&](const mir::ExternalStaticPropertyRef& r) -> std::string {
+            return std::format(
+                "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
+                r.property_name);
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);
