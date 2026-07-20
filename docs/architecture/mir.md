@@ -350,3 +350,16 @@ already says `wrapper.<read>(...)` or `wrapper.<write>(...)`; the backend reads 
 it the same way it emits any other call. The wrapper type's target-language spelling and the method
 spellings are backend-internal -- `backend_contract.md` owns the rules that keep those out of
 value-emission sites.
+
+An assignment whose target is a place-producing access -- a container element, a struct component, a
+union member -- states an abstract update of the owning value: which owner, which selector, how many
+times the selector evaluates, the value written and its coercion, and that the owning value is the
+value updated. A place names where the write lands; it does not assert that the interior is
+independently addressable storage, an alias with its own identity, or a reference that outlives the
+owner. How that update keeps value semantics is a lower layer's concern: MIR-to-LIR legalizes a
+value-owned projection into explicit whole-value operations -- an extract and an insert, or a
+container primitive -- where the target's representation requires it (`lir.md`), and a backend may
+instead realize the same semantics by mutating private storage in place. A write-side selector whose
+name carries `Ref` marks the write side of the access, not a first-class interior reference; a
+reference that could escape the owner or alias it would be a distinct concept, not this target
+place.

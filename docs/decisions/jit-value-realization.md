@@ -75,6 +75,18 @@ The accurate framing, which documentation must not overstate into a final value 
    Native lowering of small scalars or simple packed values is a future option, not a split to make
    now.
 
+6. **A runtime value handle is immutable from the generated side's view; every apparent mutation is
+   functional.** A whole-value assignment carries a handle, which a copy may alias, so the runtime
+   value object behind it is never mutated in place through a possibly-shared handle. An operation
+   that appears to mutate a value -- a scalar compound-assign, a container element write, a
+   receiver-mutating container method (`delete`) -- produces a _new_ value handle, which is stored
+   back through the value's owner (its place, activation cell, or observable cell). This is what
+   makes handle aliasing safe: `b = a; a[i] = x;` leaves `b` intact because the element write
+   rebuilds `a`'s value and restores it to `a`'s storage, never touching the object `b` still holds.
+   The C++ backend reaches the same value semantics through the language's own value copies, so it
+   may mutate a local value object in place; the generated side, holding only handles, may not, and
+   never copies that in-place realization.
+
 ## Separate from the generated-behavior descriptor
 
 Value lifetime and ABI realization is one axis; the ownership of the generated-behavior record

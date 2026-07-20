@@ -22,9 +22,9 @@ the stretch that made it.
       activation frame, storage the running activation owns for its whole life and reaches through a
       handle the generated frame holds. A store copies into it; a load copies out; the store
       decision is made where storage placement belongs and the backend realizes it as an ordinary
-      call, so it stays mechanical. Complete for the value domains the backend realizes today
-      (packed, string, and the real family -- real, shortreal, realtime). Contracts and rationale:
-      `../decisions/cross-suspension-value-storage.md`,
+      call, so it stays mechanical. Complete for every non-managed value domain the backend realizes
+      today, aggregates included -- a struct or dynamic-array local crosses as one activation-frame
+      value. Contracts and rationale: `../decisions/cross-suspension-value-storage.md`,
       `../decisions/activation-frame-and-transient-scope.md`.
 
 - [x] **The storage lifetimes are named and separated.** The per-stretch transient scope, the
@@ -61,19 +61,58 @@ ownership, or native in-frame layout) for every value.
       A component write is a whole-value rebuild stored back through the value's owner, so an
       observable partial write never bypasses the cell's update semantics -- the aggregate
       partial-update protocol a container reuses later.
-- [ ] **The remaining value domains** (unpacked array, dynamic array, queue, associative array) --
-      not realized on the execution backend yet. Each is a homogeneous or keyed collection whose
-      element count is a runtime quantity, so unlike the fixed-arity struct its element operations
-      are runtime loops rather than generated-code expansions.
+- [x] **The dynamic array** (LRM 7.5) -- realized on the execution backend as a run-time-sized
+      container value domain, the first variable-size aggregate. It defaults to empty, builds from
+      `new[N]` / `new[N](src)` and an assignment pattern, copies with value semantics, takes the
+      equality and case-equality families, reports its size, reads and writes an element (an
+      out-of-range read yields the element default and an out-of-range write is discarded, LRM 7.4.5
+      / 7.4.6), empties under `delete`, lives in a member slot as a whole-cell observable signal
+      whose element write fires subscribers, and crosses a suspension as an activation-frame value.
+      An element write and `delete` are functional whole-value updates stored back through the owner
+      -- never an in-place mutation of a value reached through a possibly-shared handle -- so value
+      semantics hold across a copy; this is the mutating-container protocol the queue and
+      associative array reuse.
+- [ ] **The remaining collection domains** (unpacked array, queue, associative array) -- not
+      realized on the execution backend yet. Each is a homogeneous or keyed collection whose element
+      count is a runtime quantity; the dynamic array established the erased-container and
+      functional-update shape they follow.
 - [ ] **A managed value (class handle) across a suspension.** A traceable frame and precise
       reclamation, none of which is implemented: the managed reference is realized as a
       reference-counted handle that does not reclaim cycles, and only in the C++ backend. Contract:
       `../architecture/object_lifetime.md`.
 - [ ] **A reference, `output`, or `inout` argument aliasing a procedural local.** Taking the address
       of a suspending body's value local is not yet lowered.
-- [ ] **Native in-frame layout for value members** -- the baseline keeps runtime-owned cells; a
-      value's bytes in the generated frame is the deferred optimization
-      (`../decisions/jit-value-realization.md`).
+
+## Value realization: two tracks today, one native model deferred
+
+The value layer is realized two ways, and the breadth work above runs against this split:
+
+- The transitional C++ backend realizes each value type as a monomorphized target type -- the host
+  C++ compiler expands one concrete type per element type, and an aggregate interior is written in
+  place because that type owns real storage.
+- The execution backend realizes each value as an opaque handle into a runtime-owned, type-erased
+  object (`../decisions/jit-value-realization.md`, `../decisions/jit-aggregate-realization.md`): it
+  emits generated code with no host compiler to expand a template, so an aggregate is one erased
+  object and an interior write is a functional whole-value update.
+
+Both are correct and agree per source (the backend-agreement tests check this), but they are two
+implementations of the same value semantics. Every value domain added to the execution backend is a
+second implementation beside the C++ one, so the two-track maintenance grows as the breadth fills.
+This is deliberate, not overlooked: erasure is the uniform, correct baseline chosen so the
+value-domain breadth can be filled first, and the C++ backend is transitional.
+
+- [ ] **One native value model (physical value monomorphization).** The convergence that ends the
+      two-track split: the execution backend generates specialized native code per concrete type --
+      doing the type expansion itself, the way the host C++ compiler does it for the C++ backend --
+      so a value's bytes live inline and its operations are native, reproducing the value layer's
+      physical layout in generated code (`../decisions/jit-aggregate-realization.md` physical value
+      monomorphization; `../decisions/jit-value-realization.md` native in-frame layout, member
+      storage included). It is a deferred, value-model-wide endpoint gated behind the value-domain
+      breadth being broad, never a per-domain step; once it lands the value model is native on both
+      sides and the second implementation is no longer a separate track. A run-time-sized container
+      keeps runtime-owned storage regardless -- its element count is a runtime quantity -- so this
+      makes the fixed-arity aggregates and the element bytes native, not the container's own
+      storage.
 
 ## Deferred effects and concurrency
 

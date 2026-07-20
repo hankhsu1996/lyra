@@ -1,14 +1,10 @@
 #pragma once
 
 #include <cstddef>
-#include <variant>
 #include <vector>
 
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/real.hpp"
-#include "lyra/value/string.hpp"
 
 namespace lyra::value {
 
@@ -66,16 +62,6 @@ class RuntimeTuple {
 
  private:
   std::vector<RuntimeValue> components_;
-};
-
-// A type-erased runtime value: the payload one opaque JIT handle refers to. The
-// active alternative is the value's current runtime domain. This is a runtime
-// representation, not a compiler-IR value -- it is neither an MIR nor a LIR
-// value type. It closes over `RuntimeTuple`, so a struct component may itself
-// be a struct.
-struct RuntimeValue {
-  std::variant<PackedArray, String, Real, ShortReal, Chandle, RuntimeTuple>
-      value;
 };
 
 static_assert(LyraValue<RuntimeTuple>);

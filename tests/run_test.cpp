@@ -316,6 +316,52 @@ auto WriteStructSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+auto WriteDynArraySource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  int arr[];\n"
+      << "  int brr[];\n"
+      << "  int sig[];\n"
+      << "  int mirror = 0;\n"
+      << "  always_comb mirror = sig[0] * 100 + sig[1];\n"
+      << "  initial begin\n"
+      << "    $display(\"def size=%0d\", arr.size());\n"
+      << "    arr = new[3];\n"
+      << "    arr[0] = 5; arr[1] = 6; arr[2] = 7;\n"
+      << "    $display(\"new size=%0d a0=%0d a2=%0d\", arr.size(), arr[0], "
+         "arr[2]);\n"
+      << "    arr[9] = 99;\n"
+      << "    $display(\"oob r=%0d size=%0d\", arr[9], arr.size());\n"
+      << "    brr = arr;\n"
+      << "    arr[0] = 100;\n"
+      << "    $display(\"alias b0=%0d a0=%0d\", brr[0], arr[0]);\n"
+      << "    brr = '{5, 6, 7};\n"
+      << "    arr = '{5, 6, 7};\n"
+      << "    $display(\"eq=%0d ne=%0d ceq=%0d\", arr == brr, arr != brr, "
+         "arr === brr);\n"
+      << "    arr[2] = 8;\n"
+      << "    $display(\"eq2=%0d\", arr == brr);\n"
+      << "    arr = new[2](arr);\n"
+      << "    $display(\"resize size=%0d a0=%0d\", arr.size(), arr[0]);\n"
+      << "    brr = arr;\n"
+      << "    arr.delete();\n"
+      << "    $display(\"del a=%0d b=%0d\", arr.size(), brr.size());\n"
+      << "    begin\n"
+      << "      automatic int loc[] = '{42, 43};\n"
+      << "      #1;\n"
+      << "      $display(\"xsusp l0=%0d l1=%0d\", loc[0], loc[1]);\n"
+      << "    end\n"
+      << "    sig = new[2];\n"
+      << "    sig[0] = 1; sig[1] = 2;\n"
+      << "    #1;\n"
+      << "    $display(\"whole mirror=%0d\", mirror);\n"
+      << "    sig[0] = 7;\n"
+      << "    #1;\n"
+      << "    $display(\"partial mirror=%0d sig0=%0d\", mirror, sig[0]);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -713,6 +759,46 @@ TEST(LyraRun, JitAndCppAgreeOnStruct) {
       "xsusp a=42 b=43\n"
       "whole mirror=102\n"
       "partial mirror=702 sig.a=7\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnDynArray) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteDynArraySource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "def size=0\n"
+      "new size=3 a0=5 a2=7\n"
+      "oob r=0 size=3\n"
+      "alias b0=5 a0=100\n"
+      "eq=1 ne=0 ceq=1\n"
+      "eq2=0\n"
+      "resize size=2 a0=5\n"
+      "del a=0 b=2\n"
+      "xsusp l0=42 l1=43\n"
+      "whole mirror=102\n"
+      "partial mirror=702 sig0=7\n")
       << "stdout: " << jit.stdout_text;
 }
 

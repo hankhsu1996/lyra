@@ -19,6 +19,13 @@ enum class BuiltinFn : std::uint16_t {
   kElementRef,
   kSlice,
   kSliceRef,
+  // The functional element write for a value-container: yields a new container
+  // equal to the receiver with one element replaced (LRM 7.4.6). It is the
+  // value-model counterpart of the in-place `kElementRef` write, synthesized at
+  // MIR-to-LIR for a backend whose container value is reached by an opaque
+  // handle and so cannot write an element in place; it never arises from
+  // source.
+  kWithElement,
   // LRM 7.4.3 / 7.5 / 7.9 / 7.10.2. AA's `num` is an alias of `size`;
   // String's LRM 6.16.1 `len` is its own mandated spelling.
   kSize,

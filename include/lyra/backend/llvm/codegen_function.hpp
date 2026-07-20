@@ -42,6 +42,9 @@ class CodeGenFunction {
   auto LowerTupleAggregate(
       const lir::AggregateInstr& agg, const lir::TupleType& tuple)
       -> llvm::Value*;
+  auto LowerErasedDynamicArrayConstruct(
+      const lir::CallInstr& call, const lir::DynamicArrayType& type)
+      -> llvm::Value*;
   auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
       -> llvm::Value*;
   auto LowerAggregateUpdate(const lir::AggregateUpdateInstr& update)

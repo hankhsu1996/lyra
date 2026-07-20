@@ -207,6 +207,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_reduction_nand", &lyra_rt_packed_reduction_nand);
   add("lyra_rt_packed_reduction_nor", &lyra_rt_packed_reduction_nor);
   add("lyra_rt_packed_reduction_xnor", &lyra_rt_packed_reduction_xnor);
+  add("lyra_rt_packed_to_owned", &lyra_rt_packed_to_owned);
   add("lyra_rt_string_from_packed_array", &lyra_rt_string_from_packed_array);
   add("lyra_rt_string_string_cstr", &lyra_rt_string_string_cstr);
   add("lyra_rt_string_len", &lyra_rt_string_len);
@@ -292,12 +293,13 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_chandle_ne", &lyra_rt_chandle_ne);
   add("lyra_rt_chandle_case_equal", &lyra_rt_chandle_case_equal);
   add("lyra_rt_chandle_to_bool", &lyra_rt_chandle_to_bool);
-  add("lyra_rt_tuple_component_packed", &lyra_rt_tuple_component_packed);
-  add("lyra_rt_tuple_component_string", &lyra_rt_tuple_component_string);
-  add("lyra_rt_tuple_component_real", &lyra_rt_tuple_component_real);
-  add("lyra_rt_tuple_component_shortreal", &lyra_rt_tuple_component_shortreal);
-  add("lyra_rt_tuple_component_chandle", &lyra_rt_tuple_component_chandle);
-  add("lyra_rt_tuple_component_tuple", &lyra_rt_tuple_component_tuple);
+  add("lyra_rt_value_box_packed", &lyra_rt_value_box_packed);
+  add("lyra_rt_value_box_string", &lyra_rt_value_box_string);
+  add("lyra_rt_value_box_real", &lyra_rt_value_box_real);
+  add("lyra_rt_value_box_shortreal", &lyra_rt_value_box_shortreal);
+  add("lyra_rt_value_box_chandle", &lyra_rt_value_box_chandle);
+  add("lyra_rt_value_box_tuple", &lyra_rt_value_box_tuple);
+  add("lyra_rt_value_box_dynarray", &lyra_rt_value_box_dynarray);
   add("lyra_rt_tuple_make", &lyra_rt_tuple_make);
   add("lyra_rt_tuple_extract", &lyra_rt_tuple_extract);
   add("lyra_rt_tuple_update", &lyra_rt_tuple_update);
@@ -313,6 +315,26 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_activation_frame_store_tuple);
   add("lyra_rt_activation_frame_load_tuple",
       &lyra_rt_activation_frame_load_tuple);
+  add("lyra_rt_dynarray_default", &lyra_rt_dynarray_default);
+  add("lyra_rt_dynarray_new", &lyra_rt_dynarray_new);
+  add("lyra_rt_dynarray_new_copy", &lyra_rt_dynarray_new_copy);
+  add("lyra_rt_dynarray_from_literal", &lyra_rt_dynarray_from_literal);
+  add("lyra_rt_dynarray_element", &lyra_rt_dynarray_element);
+  add("lyra_rt_dynarray_with_element", &lyra_rt_dynarray_with_element);
+  add("lyra_rt_dynarray_delete", &lyra_rt_dynarray_delete);
+  add("lyra_rt_dynarray_size", &lyra_rt_dynarray_size);
+  add("lyra_rt_dynarray_eq", &lyra_rt_dynarray_eq);
+  add("lyra_rt_dynarray_ne", &lyra_rt_dynarray_ne);
+  add("lyra_rt_dynarray_case_equal", &lyra_rt_dynarray_case_equal);
+  add("lyra_rt_cell_dynarray_get", &lyra_rt_cell_dynarray_get);
+  add("lyra_rt_cell_dynarray_initialize", &lyra_rt_cell_dynarray_initialize);
+  add("lyra_rt_cell_dynarray_set", &lyra_rt_cell_dynarray_set);
+  add("lyra_rt_activation_frame_alloc_dynarray",
+      &lyra_rt_activation_frame_alloc_dynarray);
+  add("lyra_rt_activation_frame_store_dynarray",
+      &lyra_rt_activation_frame_store_dynarray);
+  add("lyra_rt_activation_frame_load_dynarray",
+      &lyra_rt_activation_frame_load_dynarray);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
@@ -356,6 +378,8 @@ auto AbiDomain(backend::llvm_backend::ValueDomain domain)
       return runtime::ValueDomain::kChandle;
     case backend::llvm_backend::ValueDomain::kTuple:
       return runtime::ValueDomain::kTuple;
+    case backend::llvm_backend::ValueDomain::kDynArray:
+      return runtime::ValueDomain::kDynArray;
   }
   throw InternalError("jit executor: unknown value domain");
 }

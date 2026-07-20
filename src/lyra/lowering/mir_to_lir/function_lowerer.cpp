@@ -38,6 +38,20 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
+// The builtin entry a call names directly, if any.
+auto DirectBuiltinFn(const mir::CallExpr& call)
+    -> std::optional<support::BuiltinFn> {
+  const auto* direct = std::get_if<mir::Direct>(&call.callee);
+  if (direct == nullptr) {
+    return std::nullopt;
+  }
+  const auto* fn = std::get_if<support::BuiltinFn>(&direct->target);
+  if (fn == nullptr) {
+    return std::nullopt;
+  }
+  return *fn;
+}
+
 // The place a place local names: its own storage, with nothing projected off
 // it.
 auto LocalPlace(lir::ValueId local) -> lir::Place {
@@ -123,17 +137,29 @@ auto PlacedLocal(const mir::Block& block, mir::ExprId id)
 // A value type whose runtime realization is an opaque handle into transient
 // storage the boundary releases at each suspension: a packed value (or the
 // enumeration and packed struct/union projections that share its shape), a
-// string, a real-family value (real / shortreal / realtime), or an unpacked
-// struct product value. A local of such a type that a suspending body reads
-// across a suspension needs activation-stable storage, because its handle
-// cannot outlive the stretch that produced it. A pointer, a reference, an
-// object handle, or a machine scalar is not one of these -- it is stable across
-// a suspension on its own -- so it is unaffected.
+// string, a real-family value (real / shortreal / realtime), an unpacked struct
+// product value, or a dynamic array. A local of such a type that a suspending
+// body reads across a suspension needs activation-stable storage, because its
+// handle cannot outlive the stretch that produced it. A pointer, a reference,
+// an object handle, or a machine scalar is not one of these -- it is stable
+// across a suspension on its own -- so it is unaffected.
 auto IsActivationValueType(const mir::Type& type) -> bool {
   const mir::TypeKind kind = type.Kind();
   return type.IsIntegralPacked() || kind == mir::TypeKind::kString ||
          kind == mir::TypeKind::kReal || kind == mir::TypeKind::kShortReal ||
-         kind == mir::TypeKind::kRealTime || kind == mir::TypeKind::kTuple;
+         kind == mir::TypeKind::kRealTime || kind == mir::TypeKind::kTuple ||
+         kind == mir::TypeKind::kDynamicArray;
+}
+
+// Whether mutating a value of this type -- writing one element, or a
+// receiver-mutating method -- must be a functional whole-value update stored
+// back through the owner rather than an in-place store. True for a value
+// container reached by an opaque handle (a dynamic array today, a queue and an
+// associative array later): its whole value crosses as a handle a copy may
+// share, so an in-place mutation would corrupt the copy. This is what routes
+// such a write off the place-store path.
+auto RequiresFunctionalMutation(const mir::Type& type) -> bool {
+  return type.Kind() == mir::TypeKind::kDynamicArray;
 }
 
 // Marks every local the canonical lowering needs an address for: one that is
@@ -847,6 +873,17 @@ auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
 auto FunctionLowerer::LowerCall(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
+  // A receiver-mutating method on a value container is not an in-place call:
+  // the container is an opaque handle, so it is a functional operation whose
+  // result is stored back through the receiver's owner.
+  if (const auto fn = DirectBuiltinFn(call);
+      fn.has_value() && support::IsMutatingBuiltinFn(*fn) &&
+      !call.arguments.empty() &&
+      RequiresFunctionalMutation(
+          unit_->Mir().types.Get(block.exprs.Get(call.arguments[0]).type))) {
+    return LowerMutatingCall(block, call, *fn);
+  }
+
   std::vector<lir::Operand> args;
   args.reserve(call.arguments.size());
   for (const mir::ExprId arg : call.arguments) {
@@ -906,6 +943,19 @@ auto FunctionLowerer::LowerAssign(
   if (std::holds_alternative<mir::TupleGetExpr>(
           block.exprs.Get(assign.target).data)) {
     return LowerComponentAssign(block, assign);
+  }
+
+  // A write to a value-container element (`arr[i] = x`) targets the container-
+  // access write reference. The container is likewise an opaque value, so the
+  // write is a functional whole-value update stored back through its owner.
+  if (const auto* call =
+          std::get_if<mir::CallExpr>(&block.exprs.Get(assign.target).data)) {
+    if (const auto fn = DirectBuiltinFn(*call);
+        fn == support::BuiltinFn::kElementRef &&
+        RequiresFunctionalMutation(
+            unit_->Mir().types.Get(block.exprs.Get(call->arguments[0]).type))) {
+      return LowerElementAssign(block, assign);
+    }
   }
 
   const lir::TypeId type =
@@ -1133,6 +1183,95 @@ auto FunctionLowerer::LowerComponentAssign(
   }
 
   return WriteWholeValue(block, root, std::move(rebuilt));
+}
+
+auto FunctionLowerer::LowerElementAssign(
+    const mir::Block& block, const mir::AssignExpr& assign)
+    -> diag::Result<lir::Operand> {
+  const auto& target =
+      std::get<mir::CallExpr>(block.exprs.Get(assign.target).data);
+  const mir::ExprId container = target.arguments[0];
+  const mir::ExprId index = target.arguments[1];
+  const lir::TypeId container_type =
+      unit_->TranslateType(block.exprs.Get(container).type);
+  const lir::TypeId element_type =
+      unit_->TranslateType(block.exprs.Get(assign.target).type);
+
+  auto array = ReadWholeValue(block, container);
+  if (!array) {
+    return std::unexpected(std::move(array.error()));
+  }
+  const lir::Operand array_value = *std::move(array);
+  auto index_value = LowerExpr(block, index);
+  if (!index_value) {
+    return std::unexpected(std::move(index_value.error()));
+  }
+  auto rhs = LowerExpr(block, assign.value);
+  if (!rhs) {
+    return std::unexpected(std::move(rhs.error()));
+  }
+
+  lir::Operand replacement = *std::move(rhs);
+  if (assign.compound_op.has_value()) {
+    const std::optional<lir::BinaryOp> op =
+        TranslateBinaryOp(*assign.compound_op);
+    if (!op) {
+      return Unsupported(
+          "mir_to_lir: compound assignment operator has no direct realization");
+    }
+    lir::Operand old = Emit(
+        element_type, lir::CallInstr{
+                          .target =
+                              lir::BuiltinTarget{
+                                  .fn = support::BuiltinFn::kElement,
+                                  .qualifier = std::nullopt},
+                          .args = {array_value, *index_value}});
+    replacement = Emit(
+        element_type,
+        lir::BinaryInstr{
+            .op = *op, .lhs = std::move(old), .rhs = std::move(replacement)});
+  }
+
+  lir::Operand updated = Emit(
+      container_type,
+      lir::CallInstr{
+          .target =
+              lir::BuiltinTarget{
+                  .fn = support::BuiltinFn::kWithElement,
+                  .qualifier = std::nullopt},
+          .args = {
+              array_value, *std::move(index_value), std::move(replacement)}});
+  return WriteWholeValue(block, container, std::move(updated));
+}
+
+auto FunctionLowerer::LowerMutatingCall(
+    const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn)
+    -> diag::Result<lir::Operand> {
+  const mir::ExprId receiver = call.arguments[0];
+  const lir::TypeId container_type =
+      unit_->TranslateType(block.exprs.Get(receiver).type);
+
+  auto value = ReadWholeValue(block, receiver);
+  if (!value) {
+    return std::unexpected(std::move(value.error()));
+  }
+  std::vector<lir::Operand> args;
+  args.reserve(call.arguments.size());
+  args.push_back(*std::move(value));
+  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
+    auto arg = LowerArgument(block, call.arguments[i]);
+    if (!arg) {
+      return std::unexpected(std::move(arg.error()));
+    }
+    args.push_back(*std::move(arg));
+  }
+
+  lir::Operand updated = Emit(
+      container_type,
+      lir::CallInstr{
+          .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
+          .args = std::move(args)});
+  return WriteWholeValue(block, receiver, std::move(updated));
 }
 
 auto FunctionLowerer::LowerIncDec(
