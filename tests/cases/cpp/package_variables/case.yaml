@@ -11,4 +11,7 @@ expect:
     init_read: 5
     fn_read: 10
     after_write: 7
-    mirror: 8
+    after_bump: 8
+    after_add: 12
+    after_sibling: 14
+    mirror: 14

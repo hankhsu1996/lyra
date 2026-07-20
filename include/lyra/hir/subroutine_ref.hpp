@@ -9,6 +9,7 @@
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
+#include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -95,10 +96,14 @@ struct ImportedMethodRef {
 // unit, so it carries no unit-local id: the referring unit names the package
 // and the subroutine by name and resolves against that interface at link time,
 // the way an instantiated child names its unit, and never through an
-// enclosing-scope hop within this unit.
+// enclosing-scope hop within this unit. `kind` is the callee's call protocol,
+// part of that interface: a task enable suspends the caller until completion
+// (LRM 13.3), so the call site awaits it, exactly as it does an intra-unit task
+// enable whose kind it reads from the callee's declaration.
 struct ExternalUnitSubroutineRef {
   std::string unit_name;
   std::string subroutine_name;
+  SubroutineKind kind;
 };
 
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`

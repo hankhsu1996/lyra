@@ -21,6 +21,7 @@
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/dpi_abi.hpp"
@@ -28,16 +29,6 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-auto ToHirSubroutineKind(slang::ast::SubroutineKind k) -> hir::SubroutineKind {
-  switch (k) {
-    case slang::ast::SubroutineKind::Function:
-      return hir::SubroutineKind::kFunction;
-    case slang::ast::SubroutineKind::Task:
-      return hir::SubroutineKind::kTask;
-  }
-  throw InternalError("ToHirSubroutineKind: unknown SubroutineKind");
-}
 
 // slang has no ConstRef direction (LRM 13.5.2): a `const ref` formal carries
 // direction Ref with the Const variable flag, so the const-ness must be read

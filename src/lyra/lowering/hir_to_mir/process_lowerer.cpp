@@ -259,16 +259,26 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   mir::CallableCode code;
   CallableBindings bindings(owner_->Unit(), code);
   std::vector<mir::LocalId> params;
-  // The receiver is a signature-level fact. An instance method (LRM 8.6)
-  // takes `self` as its first parameter; a package function (LRM 26.3) has
-  // no owner class and so no receiver; a static class method (LRM 8.10)
-  // has an owner class but its signature omits `self`.
+  // A callable's leading parameter is the ambient handle its body reaches
+  // enclosing state through. An instance method (LRM 8.6) takes `self`, the
+  // pointer to its object; a package callable (LRM 26.3) has no object and
+  // instead takes the engine services directly -- the receiver-less peer of
+  // `self`, through which it wakes a package variable's subscribers or suspends
+  // a task. A static class method (LRM 8.10) has an owner class but no object,
+  // so it takes neither. The handle is seeded for every callable of its form,
+  // never derived from whether the body happens to use it, so no call site
+  // re-derives the signature.
   const bool has_receiver = parent.current_class != nullptr && !src.is_static;
   if (has_receiver) {
     params.push_back(bindings.Declare(
         BindingOriginId::Receiver(),
         mir::LocalDecl{
             .name = "self", .type = parent.current_class->self_pointer_type}));
+  } else if (parent.current_class == nullptr) {
+    params.push_back(bindings.Declare(
+        BindingOriginId::Services(),
+        mir::LocalDecl{
+            .name = "services", .type = owner_->Unit().builtins.services}));
   }
   // A task body suspends on timing controls, so its call protocol is the
   // coroutine one; a function body executes synchronously.

@@ -185,6 +185,16 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
   throw InternalError("FromSlangSubroutineKind: unknown SubroutineKind");
 }
 
+auto ToHirSubroutineKind(slang::ast::SubroutineKind k) -> hir::SubroutineKind {
+  switch (k) {
+    case slang::ast::SubroutineKind::Function:
+      return hir::SubroutineKind::kFunction;
+    case slang::ast::SubroutineKind::Task:
+      return hir::SubroutineKind::kTask;
+  }
+  throw InternalError("ToHirSubroutineKind: unknown SubroutineKind");
+}
+
 auto LowerEnumMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn> {
   if (name == "first") return support::BuiltinFn::kEnumFirst;

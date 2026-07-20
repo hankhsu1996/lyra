@@ -705,7 +705,8 @@ auto LowerCallExpr(
                 .callee =
                     hir::ExternalUnitSubroutineRef{
                         .unit_name = std::string{pkg->name},
-                        .subroutine_name = std::string{sym->name}},
+                        .subroutine_name = std::string{sym->name},
+                        .kind = ToHirSubroutineKind(sym->subroutineKind)},
                 .arguments = std::move(arg_ids)},
         .span = span,
     };
