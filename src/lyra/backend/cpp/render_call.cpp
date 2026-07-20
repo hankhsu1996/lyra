@@ -689,6 +689,26 @@ auto RenderMakeQueueConcatCall(
   return out;
 }
 
+// Whether the call is to an imported foreign task (LRM 35.5.2). A foreign task
+// may consume simulation time, so its call runs on a fiber that can suspend
+// across the boundary rather than as a plain synchronous call; a foreign
+// function never does.
+auto IsForeignTaskCall(const ScopeView& view, const mir::CallExpr& call)
+    -> bool {
+  const auto* direct = std::get_if<mir::Direct>(&call.callee);
+  if (direct == nullptr) {
+    return false;
+  }
+  const auto* target = std::get_if<mir::CallableTarget>(&direct->target);
+  if (target == nullptr) {
+    return false;
+  }
+  const auto& callable =
+      view.Unit().GetClass(target->owner).callables.Get(target->slot);
+  const auto* external = std::get_if<mir::ExternalCallable>(&callable.impl);
+  return external != nullptr && external->is_task;
+}
+
 auto RenderCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> std::string {
@@ -705,7 +725,16 @@ auto RenderCallExpr(
     if (i != callee.leading_arg_count) args += ", ";
     args += RenderExpr(view, view.Expr(call.arguments[i]));
   }
-  return std::format("{}({})", callee.expr, args);
+  const std::string call_text = std::format("{}({})", callee.expr, args);
+
+  // A foreign task's call is awaited on a fiber so an exported task it reaches
+  // can suspend across the boundary; the call itself is the fiber's entry.
+  if (IsForeignTaskCall(view, call)) {
+    return std::format(
+        "co_await ::lyra::runtime::RunForeignTaskOnFiber([&] {{ {}; }})",
+        call_text);
+  }
+  return call_text;
 }
 
 }  // namespace lyra::backend::cpp

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/foreign_execution.hpp"
 
 namespace lyra::runtime {
 
@@ -44,22 +44,21 @@ class AmbientRunContext {
 // method of that instance, so the wrapper needs the instance as its receiver.
 auto ResolveExportInstance(const char* instance_name) -> Scope*;
 
-// Runs an exported SV task's body to completion synchronously and hands back
-// its completion payload. A foreign C caller of an exported task (LRM 35.8) is
-// not a coroutine, so it cannot `co_await` the body the way an SV enabler does;
-// its wrapper enters the body here. The body is resumed once: a task that
-// consumes no simulation time runs straight to `final_suspend`, which -- with
-// no continuation to transfer to -- lands on `noop_coroutine` and reports
-// `done`. A body that suspends across the foreign boundary is the timing /
-// disable case (LRM 35.9), which the boundary does not yet carry, so it is
-// reported rather than left to hang.
+// Runs an exported SV task's body to completion and hands back its completion
+// payload. A foreign C caller of an exported task (LRM 35.8) is not a
+// coroutine, so it cannot `co_await` the body the way an SV enabler does; its
+// wrapper drives the body here, on the fiber the foreign call runs on. The body
+// runs as the process that entered the foreign call (LRM 9.5). Each time it
+// suspends across the boundary -- a delay, an event, a wait -- the fiber yields
+// to the scheduler and the body continues when the scheduler drives the fiber
+// again; a body that consumes no simulation time completes on the first resume.
 template <class T>
 auto RunExportedTaskToCompletion(Coroutine<T> task) -> T {
+  task.Handle().promise().process = &CurrentForeignProcess();
   task.Handle().resume();
-  if (!task.Done()) {
-    throw InternalError(
-        "a DPI-C exported task that suspends across the foreign boundary is "
-        "not yet supported");
+  while (!task.Done()) {
+    YieldForeignExecution();
+    task.Handle().resume();
   }
   return task.Handle().promise().Take();
 }

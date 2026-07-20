@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/execution_context.hpp"
+#include "lyra/runtime/foreign_execution.hpp"
 #include "lyra/runtime/process_kind.hpp"
 
 namespace lyra::runtime {
@@ -168,6 +169,25 @@ void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
   }
 }
 
+auto RuntimeProcess::DriveForeignVehicle(ForeignExecution& fe) -> bool {
+  const ForeignExecutionGuard guard(*this, fe);
+  fe.Resume();
+  return fe.IsDone();
+}
+
+auto RuntimeProcess::EnterForeignExecution(
+    CoroutineHandle continuation, ForeignExecution& fe) -> bool {
+  foreign_continuation_ = continuation;
+  // The call returned without suspending: nothing snapshotted the vehicle, and
+  // the caller continues inline. If instead it suspended, an inner frame parked
+  // with this vehicle as its resume target, and the scheduler will drive it.
+  if (DriveForeignVehicle(fe)) {
+    foreign_continuation_ = nullptr;
+    return true;
+  }
+  return false;
+}
+
 void RuntimeProcess::RequestTermination(ProcessTerminationCause cause) {
   if (execution_state_ == ProcessExecutionState::kTerminated ||
       termination_requested_) {
@@ -217,7 +237,25 @@ auto RuntimeProcess::ResumeWith(
   execution_state_ = ProcessExecutionState::kRunning;
   {
     const ExecutionContextGuard guard(context, *this);
-    handle->self.resume();
+    // A leaf that blocked under a foreign call is resumed by driving its
+    // vehicle, which re-enters the native stack and continues the coroutine
+    // from within; a leaf blocked on the runtime's own stack is resumed
+    // directly by a symmetric transfer into its frame.
+    if (resume_target_ != nullptr) {
+      // The foreign call returned: its exported task completed internally to
+      // the vehicle, so what continues the process is the import frame that
+      // entered the call, resumed directly now that no vehicle is in the way.
+      // Otherwise an inner frame re-blocked and re-snapshotted the vehicle, so
+      // the process stays waiting on that new wait.
+      if (DriveForeignVehicle(*resume_target_)) {
+        current_leaf_ = foreign_continuation_;
+        resume_target_ = nullptr;
+        foreign_continuation_ = nullptr;
+        current_leaf_->self.resume();
+      }
+    } else {
+      handle->self.resume();
+    }
   }
   if (!coroutine_.Done()) {
     execution_state_ = ProcessExecutionState::kWaiting;

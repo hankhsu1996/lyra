@@ -12,6 +12,8 @@
 namespace lyra::runtime {
 
 class ExecutionContext;
+class ForeignExecution;
+class ForeignExecutionGuard;
 
 enum class ProcessExecutionState : std::uint8_t {
   kCreated,
@@ -156,10 +158,25 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   void BlockLeaf(CoroutineHandle leaf, PendingWait* wait) {
     current_leaf_ = leaf;
     leaf->pending_wait = wait;
+    // The vehicle carrying this thread when it blocks is the vehicle the
+    // scheduler must drive to resume it. It is retained past the block (unlike
+    // the registration), because resume runs from another process's context
+    // where the ambient vehicle is that caller's, not this leaf's.
+    resume_target_ = current_foreign_execution_;
   }
   [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
     return current_leaf_;
   }
+
+  // Enters `fe` -- the foreign call the SV frame `continuation` is making --
+  // and drives it to its first suspension or its return. `continuation` is the
+  // frame to resume once the whole foreign call returns. Returns true if the
+  // call returned without suspending (the caller continues inline), false if it
+  // suspended across the boundary (an inner SV frame blocked and snapshotted
+  // `fe` as its resume vehicle, so the scheduler resumes it later). The caller
+  // owns `fe` and must keep it alive until the call returns.
+  auto EnterForeignExecution(CoroutineHandle continuation, ForeignExecution& fe)
+      -> bool;
 
   // LRM 9.7 `suspend`: revoke the active leaf's scheduler participation -- a
   // detach, no scheduler verb -- and record the suspended state. The leaf's
@@ -267,6 +284,17 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   static void ReleaseTerminatedLineage(RuntimeProcess& process);
 
  private:
+  // The guard is the sole writer of the ambient foreign-execution vehicle,
+  // which it sets and restores around a foreign call.
+  friend class ForeignExecutionGuard;
+
+  // Drives `fe` for one stretch -- into its next suspension or its return --
+  // with the foreign-execution context installed for its duration, so an inner
+  // frame that blocks snapshots `fe` as its resume vehicle. Returns whether the
+  // call has returned. Every drive goes through here so that installation can
+  // never be forgotten.
+  auto DriveForeignVehicle(ForeignExecution& fe) -> bool;
+
   // The one indivisible terminal transition, and the sole writer of the
   // terminal state: a body can never be marked terminated while it still owns
   // the frame it ran in, nor terminated without its own `await` waiters being
@@ -286,6 +314,19 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // non-executing process has exactly one active leaf). Starts at the top frame
   // and follows the innermost parked frame as waits block it.
   CoroutineHandle current_leaf_ = nullptr;
+  // The foreign execution this thread is running under right now, valid only
+  // while a foreign call is on the stack; the guard sets and clears it. Null
+  // outside any foreign call, which is every plain-coroutine process.
+  ForeignExecution* current_foreign_execution_ = nullptr;
+  // The vehicle the scheduler drives to resume the active leaf, snapshotted
+  // from the ambient foreign execution when the leaf blocks and retained until
+  // it blocks again. Null means resume the coroutine frame directly.
+  ForeignExecution* resume_target_ = nullptr;
+  // The SV frame to resume once the outermost foreign call returns -- the
+  // import frame that entered it. An exported task suspends and completes
+  // internally to the fiber, so its completion is not what continues the
+  // process; this frame is. Null when no foreign call is outstanding.
+  CoroutineHandle foreign_continuation_ = nullptr;
   ProcessExecutionState execution_state_ = ProcessExecutionState::kCreated;
   ProcessTerminationCause termination_cause_ =
       ProcessTerminationCause::kCompleted;
