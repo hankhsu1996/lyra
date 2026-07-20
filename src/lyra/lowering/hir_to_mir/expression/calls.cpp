@@ -609,15 +609,28 @@ auto LowerMethodCall(
   }
 
   // Cross-unit instance method: no local shape store to query for the
-  // callee's dispatch role, so this site always lowers to a direct call
-  // naming the method by (unit, class, method) name. Virtual resolution
-  // rides on the target-language include of the declaring unit's header --
-  // the callee's own virtual machinery dispatches at the receiver's runtime
-  // class -- and a super qualifier crosses the boundary the same way, as
-  // an owner-scoped call the backend renders when the qualification arm
-  // is set.
+  // callee's dispatch role, so the HIR target's `is_virtual` fact -- read
+  // from the callee's frontend view when the target was minted -- decides
+  // between virtual dispatch (LRM 8.20) and static dispatch. A super
+  // qualifier always demands the base's implementation regardless of the
+  // callee's virtuality, so it lowers as a direct owner-qualified call
+  // even when the target is virtual.
   if (const auto* ext_target =
           std::get_if<hir::ExternalClassMethodTarget>(&m.target)) {
+    const bool through_super_ext =
+        std::holds_alternative<hir::SuperReceiver>(m.receiver);
+    if (!through_super_ext && ext_target->is_virtual) {
+      return mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Virtual{
+                          .receiver = receiver_ptr,
+                          .slot = lowerer.Owner().MakeExternalVirtualSlot(
+                              *ext_target)},
+                  .arguments = std::move(user_args)},
+          .type = result_type};
+    }
     std::vector<mir::ExprId> direct_args;
     direct_args.reserve(user_args.size() + 1);
     direct_args.push_back(receiver_ptr);
@@ -667,8 +680,10 @@ auto LowerMethodCall(
                 .callee =
                     mir::Virtual{
                         .receiver = receiver_ptr,
-                        .owner_class = canonical_owner,
-                        .slot = canonical_slot},
+                        .slot =
+                            mir::LocalVirtualSlot{
+                                .owner_class = canonical_owner,
+                                .slot = canonical_slot}},
                 .arguments = std::move(user_args)},
         .type = result_type};
   }

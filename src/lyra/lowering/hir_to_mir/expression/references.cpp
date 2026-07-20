@@ -272,19 +272,9 @@ auto LowerHirPrimaryExprProc(
                 frame.current_class->self_pointer_type;
             const mir::ExprId self_ref = frame.current_block->exprs.Add(
                 MakeSelfRefExpr(frame, self_type));
-            if (const auto* local =
-                    std::get_if<hir::LocalClassPropertyTarget>(&r.target)) {
-              return mir::MakeFieldAccessExpr(
-                  self_ref,
-                  mir::FieldTarget{
-                      .owner = process.Owner().TranslateClass(local->owner),
-                      .slot = UnitLowerer::TranslateField(local->field)},
-                  result_type);
-            }
             return mir::MakeFieldAccessExpr(
                 self_ref,
-                process.Owner().MakeExternalFieldTarget(
-                    std::get<hir::ExternalClassPropertyTarget>(r.target)),
+                process.Owner().TranslateClassPropertyTarget(r.target),
                 result_type);
           },
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {

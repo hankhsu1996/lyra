@@ -604,11 +604,22 @@ auto RenderCalleePart(
                 .leading_arg_count = 0};
           },
           [&](const mir::Virtual& v) -> CalleeRender {
-            const auto& cls = view.Unit().GetClass(v.owner_class);
+            const std::string method_name = std::visit(
+                Overloaded{
+                    [&](const mir::LocalVirtualSlot& l) -> std::string {
+                      return view.Unit()
+                          .GetClass(l.owner_class)
+                          .callables.Get(l.slot)
+                          .name;
+                    },
+                    [](const mir::ExternalVirtualSlot& e) -> std::string {
+                      return e.method_name;
+                    }},
+                v.slot);
             return {
                 .expr = std::format(
                     "({})->{}", RenderExpr(view, view.Expr(v.receiver)),
-                    cls.callables.Get(v.slot).name),
+                    method_name),
                 .leading_arg_count = 0};
           },
           [&](const mir::Construct&) -> CalleeRender {

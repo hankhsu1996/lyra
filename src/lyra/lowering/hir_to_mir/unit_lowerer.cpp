@@ -320,11 +320,19 @@ auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
               std::format("{}::{}", ref.unit_name, ref.class_name)});
 }
 
-auto UnitLowerer::MakeExternalClassBaseRef(const hir::ExternalClassRef& ref)
+auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)
     -> mir::ClassRef {
   unit_.AddExternalClassUnit(ref.unit_name);
   return mir::ClassRef{mir::ExternalClassRef{
       .qualified_name = std::format("{}::{}", ref.unit_name, ref.class_name)}};
+}
+
+auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef {
+  if (const auto* local = std::get_if<hir::LocalClassRef>(&ref)) {
+    return mir::ClassRef{
+        mir::IntraUnitClassRef{.class_id = TranslateClass(local->class_id)}};
+  }
+  return MakeExternalClassRef(std::get<hir::ExternalClassRef>(ref));
 }
 
 auto UnitLowerer::MakeExternalFieldTarget(
@@ -335,6 +343,17 @@ auto UnitLowerer::MakeExternalFieldTarget(
       .unit_name = target.unit_name,
       .class_name = target.class_name,
       .field_name = target.property_name};
+}
+
+auto UnitLowerer::TranslateClassPropertyTarget(
+    const hir::ClassPropertyTarget& target) -> mir::FieldRef {
+  if (const auto* local = std::get_if<hir::LocalClassPropertyTarget>(&target)) {
+    return mir::FieldRef{mir::FieldTarget{
+        .owner = TranslateClass(local->owner),
+        .slot = TranslateField(local->field)}};
+  }
+  return mir::FieldRef{MakeExternalFieldTarget(
+      std::get<hir::ExternalClassPropertyTarget>(target))};
 }
 
 auto UnitLowerer::MakeExternalStaticPropertyRef(
@@ -362,6 +381,15 @@ auto UnitLowerer::MakeExternalMethodOverride(
     -> mir::OverridesExternalSlot {
   unit_.AddExternalClassUnit(target.unit_name);
   return mir::OverridesExternalSlot{
+      .unit_name = target.unit_name,
+      .class_name = target.class_name,
+      .method_name = target.method_name};
+}
+
+auto UnitLowerer::MakeExternalVirtualSlot(
+    const hir::ExternalClassMethodTarget& target) -> mir::ExternalVirtualSlot {
+  unit_.AddExternalClassUnit(target.unit_name);
+  return mir::ExternalVirtualSlot{
       .unit_name = target.unit_name,
       .class_name = target.class_name,
       .method_name = target.method_name};
