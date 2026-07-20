@@ -666,8 +666,9 @@ class HirDumper {
             },
             [](const ExternalUnitSubroutineRef& e) -> std::string {
               return std::format(
-                  "ExternalUnitSubroutine \"{}::{}\"", e.unit_name,
-                  e.subroutine_name);
+                  "ExternalUnitSubroutine {} \"{}::{}\"",
+                  e.kind == SubroutineKind::kTask ? "task" : "function",
+                  e.unit_name, e.subroutine_name);
             },
         },
         callee);

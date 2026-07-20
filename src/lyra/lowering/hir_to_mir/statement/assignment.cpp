@@ -212,16 +212,20 @@ auto LowerDestructuringAssign(
 // A user subroutine whose formals include a non-`input` direction needs the
 // call desugared so the writebacks become explicit MIR statements; returns
 // its HIR declaration, or nullptr for a value-only call (system / builtin
-// callee, or an all-`input` user callee).
+// callee, or an all-`input` user callee). Only a structural callee is resolved
+// through the enclosing structural scope, so a package callable's body -- which
+// has no enclosing structural scope and can only reach input-only siblings --
+// short-circuits before reaching for one.
 auto SubroutineWithWritebacks(
-    const StructuralScopeLowerer& lowerer, const hir::CallExpr& call)
+    ProcessLowerer& process, const hir::CallExpr& call)
     -> const hir::SubroutineDecl* {
   const auto* ref = std::get_if<hir::StructuralSubroutineRef>(&call.callee);
   if (ref == nullptr) {
     return nullptr;
   }
   const hir::SubroutineDecl& decl =
-      lowerer.LookupHirSubroutine(ref->hops, ref->subroutine);
+      process.EnclosingScopeLowerer().LookupHirSubroutine(
+          ref->hops, ref->subroutine);
   for (const auto& param : decl.params) {
     if (hir::RequiresWriteback(param.direction)) {
       return &decl;
@@ -426,8 +430,7 @@ auto LowerExprStmt(
   // outputs), so the await result is void and the enclosing statement discards
   // it.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
-    if (const auto* decl =
-            SubroutineWithWritebacks(process.EnclosingScopeLowerer(), *call)) {
+    if (const auto* decl = SubroutineWithWritebacks(process, *call)) {
       return LowerSubroutineCallWithWritebacks(
           process, frame, std::move(label), *call,
           std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
@@ -466,6 +469,12 @@ auto LowerExprStmt(
       suspends = process.EnclosingScopeLowerer()
                      .LookupForeignImport(foreign->hops, foreign->id)
                      .is_task;
+    } else if (
+        const auto* ext =
+            std::get_if<hir::ExternalUnitSubroutineRef>(&call->callee)) {
+      // A cross-unit task enable (LRM 26.3) awaits, the same as an intra-unit
+      // one; the callee's kind rides its by-name reference.
+      suspends = ext->kind == hir::SubroutineKind::kTask;
     }
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));
@@ -496,8 +505,7 @@ auto LowerExprStmt(
         conv_target_type = rhs->type;
       }
       if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
-        if (const auto* decl = SubroutineWithWritebacks(
-                process.EnclosingScopeLowerer(), *call)) {
+        if (const auto* decl = SubroutineWithWritebacks(process, *call)) {
           if (!conv_target_type.has_value()) {
             return LowerSubroutineCallWithWritebacks(
                 process, frame, std::move(label), *call,

@@ -1337,9 +1337,12 @@ auto LowerForeignImportCall(
 }
 
 // A call to a package subroutine (LRM 26.3): a receiver-less callable of
-// another compilation unit, reached by name. No receiver is prepended, and the
-// arguments are input-only (the AST-to-HIR producer rejects output / inout /
-// ref formals), so each actual lowers as a plain value.
+// another compilation unit, reached by name. It takes no receiver but does take
+// the engine services as its leading argument -- the receiver-less peer of
+// `self`, so the callee body can wake a package variable's subscribers or
+// suspend. The remaining arguments are input-only (the AST-to-HIR producer
+// rejects output / inout / ref formals), so each actual lowers as a plain
+// value.
 template <ExprLowerer Lowerer>
 auto LowerExternalUnitSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -1348,7 +1351,11 @@ auto LowerExternalUnitSubroutineCall(
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size());
+  args.reserve(c.arguments.size() + 1);
+  // The caller supplies services from its own ambient handle: an instance
+  // body's `self`, or an enclosing package callable's own services parameter.
+  args.push_back(
+      block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame)));
   for (const auto& argument : c.arguments) {
     if (!argument.has_value()) {
       throw InternalError("package call argument unexpectedly elided");

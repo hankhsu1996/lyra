@@ -228,19 +228,6 @@ auto ApplyAssignEffect(
   // services value; a plain-local write carries none.
   const bool target_is_observable_cell =
       LhsRootIsObservableCell(process.Owner().Unit(), block, target_in_outer);
-  // Firing subscribers needs the runtime services, reached through the
-  // callable's `self`. A receiver-less callable (a package function or task,
-  // LRM 26.3) has no `self`, so it cannot yet write an observable cell -- which
-  // for it is a package variable (LRM 26.2). Reading one is fine (a read needs
-  // no services); writing awaits threading the services into a receiver-less
-  // callable. Reject cleanly here rather than reach for a receiver that is not
-  // there.
-  if (target_is_observable_cell && frame.current_class == nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedAssignmentTarget,
-        "writing a package variable from a package subroutine is not yet "
-        "supported");
-  }
   if (kind == hir::AssignKind::kBlocking) {
     const std::optional<mir::ExprId> services_id =
         target_is_observable_cell

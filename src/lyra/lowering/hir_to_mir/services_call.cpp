@@ -6,6 +6,8 @@
 
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -29,6 +31,14 @@ auto BuildServicesCallExpr(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame) -> mir::Expr {
   auto& body = *frame.current_block;
   const auto& builtins = unit_lowerer.Unit().builtins;
+  // A receiver-less callable (a package function or task, LRM 26.3) reaches the
+  // engine through its own leading services binding, not through a `self` it
+  // does not have. An instance callable derives the handle from its receiver.
+  if (frame.current_class == nullptr) {
+    const BodyBindingRef services =
+        frame.bindings->EnsureCarrier(BindingOriginId::Services());
+    return frame.bindings->MakeReadExpr(services, body);
+  }
   const mir::ExprId self_id = body.exprs.Add(
       MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return mir::MakeServicesCallExpr(self_id, builtins.services);

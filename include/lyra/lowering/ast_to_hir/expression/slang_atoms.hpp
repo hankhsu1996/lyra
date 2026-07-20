@@ -13,6 +13,7 @@
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -42,6 +43,8 @@ auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale;
 
 auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
     -> support::SystemSubroutineKind;
+
+auto ToHirSubroutineKind(slang::ast::SubroutineKind k) -> hir::SubroutineKind;
 
 auto LowerEnumMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn>;
