@@ -185,6 +185,25 @@ class MirDumper {
         ref);
   }
 
+  [[nodiscard]] auto FormatVirtualSlot(const VirtualSlot& s) const
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [this](const LocalVirtualSlot& l) -> std::string {
+              const auto& owner = unit_->GetClass(l.owner_class);
+              const auto& callable = owner.callables.Get(l.slot);
+              return std::format(
+                  "Class[{}].{}(Callable[{}])", l.owner_class.value,
+                  callable.name, l.slot.value);
+            },
+            [](const ExternalVirtualSlot& e) -> std::string {
+              return std::format(
+                  "External({}::{}::{})", e.unit_name, e.class_name,
+                  e.method_name);
+            }},
+        s);
+  }
+
   static auto FormatType(const Type& t) -> std::string {
     return std::visit(
         Overloaded{
@@ -567,12 +586,9 @@ class MirDumper {
             },
             [](const Construct&) -> std::string { return "Construct"; },
             [this](const Virtual& v) -> std::string {
-              const auto& owner = unit_->GetClass(v.owner_class);
-              const auto& callable = owner.callables.Get(v.slot);
               return std::format(
-                  "Virtual[recv=Expr[{}] slot=Class[{}].{}(Callable[{}])]",
-                  v.receiver.value, v.owner_class.value, callable.name,
-                  v.slot.value);
+                  "Virtual[recv=Expr[{}] slot={}]", v.receiver.value,
+                  FormatVirtualSlot(v.slot));
             },
         },
         callee);
@@ -835,11 +851,16 @@ class MirDumper {
 
   void DumpClass(ClassId id, const Class& s) {
     scope_stack_.push_back(&s);
-    Line(std::format("Class \"{}\" (#{})", s.name, id.value));
+    const std::string kind = s.is_interface_class ? "InterfaceClass" : "Class";
+    Line(std::format("{} \"{}\" (#{})", kind, s.name, id.value));
     Indent();
 
     if (s.base.has_value()) {
       Line(std::format("Base: {}", FormatClassRef(*s.base)));
+    }
+
+    for (const auto& impl : s.implements) {
+      Line(std::format("Implements: {}", FormatClassRef(impl)));
     }
 
     Line("Contained:");

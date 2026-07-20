@@ -177,11 +177,27 @@ class UnitLowerer {
   auto MakeExternalClassPointee(const hir::ExternalClassRef& ref)
       -> mir::TypeId;
 
-  auto MakeExternalClassBaseRef(const hir::ExternalClassRef& ref)
-      -> mir::ClassRef;
+  auto MakeExternalClassRef(const hir::ExternalClassRef& ref) -> mir::ClassRef;
+
+  // Convenience that dispatches a HIR class reference to its MIR peer: an
+  // intra-unit reference translates through the class registry, and a cross-
+  // unit one runs through `MakeExternalClassRef` so the external dependency
+  // is recorded in the same call. A caller that needs to name a class in any
+  // position (base, interface contract, receiver type) reads one entry point
+  // instead of visiting the variant itself.
+  auto TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef;
 
   auto MakeExternalFieldTarget(const hir::ExternalClassPropertyTarget& target)
       -> mir::ExternalFieldTarget;
+
+  // Convenience that dispatches a HIR class property reference to its MIR
+  // `FieldRef` peer: the intra-unit arm translates the owner class and the
+  // field slot through the class registry, the cross-unit arm runs through
+  // `MakeExternalFieldTarget` so the external dependency is recorded in the
+  // same call. A caller reading a class property reaches for one entry
+  // point instead of visiting the variant at each access site.
+  auto TranslateClassPropertyTarget(const hir::ClassPropertyTarget& target)
+      -> mir::FieldRef;
 
   auto MakeExternalStaticPropertyRef(
       const hir::ExternalStaticPropertyTarget& target)
@@ -192,6 +208,14 @@ class UnitLowerer {
 
   auto MakeExternalMethodOverride(const hir::ExternalClassMethodTarget& target)
       -> mir::OverridesExternalSlot;
+
+  // The virtual-call-site counterpart of `MakeExternalMethodTarget`: the
+  // referring unit reaches a slot introduced by a class in another
+  // compilation unit and dispatches through the target language's own
+  // virtual-call machinery reached by including the declaring unit's
+  // header. Records the class dependency so the header include is emitted.
+  auto MakeExternalVirtualSlot(const hir::ExternalClassMethodTarget& target)
+      -> mir::ExternalVirtualSlot;
 
   // Receiver-less callable of another compilation unit (LRM 26.3 package
   // function or task). Recorded on the callable dependency list, not the

@@ -400,8 +400,23 @@ auto RenderScopeAsClass(
   if (s.is_final) {
     out += " final";
   }
+  // Concrete base class first (LRM 8.13), then each interface contract
+  // (LRM 8.26). C++ handles the multi-base combination natively: an
+  // interface class carries no instance storage, so the multiple-inheritance
+  // does not introduce diamond storage; the target-language virtual-call
+  // machinery routes each vtable slot to the one implementation the class
+  // provides.
+  bool base_emitted = false;
+  const auto append_base = [&](const std::string& rendered) {
+    out += base_emitted ? ", public " : " : public ";
+    out += rendered;
+    base_emitted = true;
+  };
   if (s.base.has_value()) {
-    out += " : public " + RenderClassRefAsCpp(unit, *s.base);
+    append_base(RenderClassRefAsCpp(unit, *s.base));
+  }
+  for (const mir::ClassRef& iface : s.implements) {
+    append_base(RenderClassRefAsCpp(unit, iface));
   }
   out += " {\n";
   out += Indent(indent) + " public:\n";
@@ -421,7 +436,13 @@ auto RenderScopeAsClass(
     out += "\n";
   }
 
-  out += RenderConstructor(this_anchor, s, indent + 1);
+  // An interface class carries only pure virtual method contracts and no
+  // instance storage (LRM 8.26), so it has no constructor to emit; C++
+  // makes the class implicitly abstract by virtue of the pure virtual
+  // methods and forbids `new` on it.
+  if (!s.is_interface_class) {
+    out += RenderConstructor(this_anchor, s, indent + 1);
+  }
 
   // Members follow the constructor and methods. They are public so cross-unit
   // references can reach them directly.

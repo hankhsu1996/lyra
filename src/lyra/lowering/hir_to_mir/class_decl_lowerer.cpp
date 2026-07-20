@@ -176,19 +176,18 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
 
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {
-    if (const auto* local_base =
-            std::get_if<hir::LocalClassRef>(&*hir_class.base)) {
-      base_ref = mir::ClassRef{mir::IntraUnitClassRef{
-          .class_id = unit_lowerer.TranslateClass(local_base->class_id)}};
-    } else {
-      base_ref = unit_lowerer.MakeExternalClassBaseRef(
-          std::get<hir::ExternalClassRef>(*hir_class.base));
-    }
+    base_ref = unit_lowerer.TranslateClassRef(*hir_class.base);
+  }
+  std::vector<mir::ClassRef> implements;
+  implements.reserve(hir_class.implements.size());
+  for (const hir::ClassRef& iface : hir_class.implements) {
+    implements.push_back(unit_lowerer.TranslateClassRef(iface));
   }
 
   mir::ClassShape shape{
       .name = hir_class.name,
       .base = base_ref,
+      .implements = std::move(implements),
       .self_pointer_type = self_pointer_type,
       .time_resolution = {},
       .ctor_prefix_params = {},
@@ -197,7 +196,8 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
       .callable_signatures = {},
       .contained = {},
       .is_scope_tree_node = false,
-      .is_final = false};
+      .is_final = false,
+      .is_interface_class = hir_class.is_interface_class};
 
   // Property fields come first in declaration order (LRM 8.4), so an SV
   // reference to a property by its declaration index reaches the same shape
@@ -256,8 +256,10 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   mir::Class mir_class{
       .name = shape.name,
       .base = shape.base,
+      .implements = shape.implements,
       .is_scope_tree_node = shape.is_scope_tree_node,
       .is_final = shape.is_final,
+      .is_interface_class = shape.is_interface_class,
       .self_pointer_type = shape.self_pointer_type,
       .time_resolution = shape.time_resolution,
       .fields = shape.fields,

@@ -81,14 +81,38 @@ struct BaseCall {
 // position of its own. Each method (LRM 8.6) is a subroutine reached through
 // the instance, reading the receiver and the class's properties through it.
 //
+// `is_interface_class` marks an `interface class` declaration (LRM 8.26): a
+// class whose body carries only pure virtual method contracts -- no
+// instance storage, no constructor, no static storage. Interface classes
+// and regular classes share this one declaration form because their
+// object-model shape coincides: an interface class is a regular class
+// whose non-contract slots are empty by LRM 8.26 syntax. The bit is what
+// consumers read to route emission and dispatch; the "which slots are
+// empty" facts hold because the frontend admits only the LRM 8.26 syntax
+// for a class flagged interface.
+//
 // `base` names the class this one extends (LRM 8.13), absent when the class
 // extends no other. Only own members appear in `fields` / `methods`;
-// inherited members are reached through the base's registry entry.
+// inherited members are reached through the base's registry entry. An
+// interface class carries no concrete base -- its parent interface classes
+// live in `implements`.
 //
-// `constructor` is the class's `new` (LRM 8.7). Every class has one: the
-// user-written `function new` when the source declares it, otherwise a
-// synthesized empty constructor, matching the implicit `new` the LRM
-// provides when the source omits one.
+// `implements` names the interface classes this one commits to satisfying
+// (LRM 8.26.2): for a regular class, the source `implements` clause; for
+// an interface class, the source `extends` clause, which aggregates parent
+// interface class contracts into this one's requirement set. The two
+// source keywords land in one field because at the object-model layer
+// they name the same relation -- aggregate these interface classes' pure
+// virtual method contracts. Multiple entries are allowed (multiple
+// inheritance among interface class contracts is legal, LRM 8.26.2); the
+// concrete-base single-value rule stays with `base`.
+//
+// `constructor` is the class's `new` (LRM 8.7). Every regular class has
+// one: the user-written `function new` when the source declares it,
+// otherwise a synthesized empty constructor, matching the implicit `new`
+// the LRM provides when the source omits one. An interface class carries
+// a synthesized stub that no consumer invokes -- an interface class
+// object cannot be constructed (LRM 8.26.5).
 //
 // `base_call` peers with `constructor` because base-constructor forwarding
 // is a class-level construction fact, not a statement inside the ctor body
@@ -119,7 +143,9 @@ struct BaseCall {
 // its type's Table 7-1 default and does not appear here.
 struct ClassDecl {
   std::string name;
+  bool is_interface_class = false;
   std::optional<ClassRef> base;
+  std::vector<ClassRef> implements;
   base::Arena<ClassField, FieldId> fields;
   base::Arena<ClassStaticProperty, StaticPropertyId> static_properties;
   base::Arena<SubroutineDecl, MethodId> methods;

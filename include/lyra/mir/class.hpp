@@ -94,6 +94,14 @@ struct CallableSignature {
 struct ClassShape {
   std::string name;
   std::optional<ClassRef> base;
+  // Interface class contracts (LRM 8.26) this class commits to satisfying.
+  // Populated from the source `implements` clause of a regular class or
+  // the `extends` clause of an interface class; both source keywords name
+  // the same object-model relation -- aggregate these interface classes'
+  // pure virtual method contracts. Multiple entries are legal; the
+  // concrete-base single-value rule stays on `base`, and interface
+  // conformance introduces no instance storage.
+  std::vector<ClassRef> implements;
   TypeId self_pointer_type;
   TimeResolution time_resolution;
   base::Arena<ParamDecl, ParamId> ctor_prefix_params;
@@ -109,13 +117,21 @@ struct ClassShape {
   // Whether the class is final (LRM 8.13). A structural class always is; an
   // SV class carries the source-declared value.
   bool is_final = false;
+  // Whether this class is an `interface class` declaration (LRM 8.26): its
+  // body carries only pure virtual method contracts, no instance storage
+  // and no constructor. Consumers read the bit to render the class as an
+  // abstract target-language type and to route inheritance through the
+  // multi-base mechanism `implements` names.
+  bool is_interface_class = false;
 };
 
 struct Class {
   std::string name;
   std::optional<ClassRef> base;
+  std::vector<ClassRef> implements;
   bool is_scope_tree_node = false;
   bool is_final = false;
+  bool is_interface_class = false;
   TypeId self_pointer_type;
   // The class's resolved time unit and precision (LRM 3.14.2). The emitted
   // class exposes the precision so the engine can take the design-global
