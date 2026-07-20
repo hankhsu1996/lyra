@@ -400,6 +400,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "write_canonical_logic_vec";
     case BuiltinFn::kDpiBufferData:
       return "dpi_buffer_data";
+    case BuiltinFn::kRunExportedTaskToCompletion:
+      return "run_exported_task_to_completion";
     case BuiltinFn::kFromSvLogic:
       return "from_sv_logic";
     case BuiltinFn::kFromInt:

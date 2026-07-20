@@ -27,6 +27,7 @@
 #include "lyra/runtime/event.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/file_table.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/finish.hpp"             // IWYU pragma: keep
+#include "lyra/runtime/foreign_execution.hpp"  // IWYU pragma: keep
 #include "lyra/runtime/fork.hpp"               // IWYU pragma: keep
 #include "lyra/runtime/gc_ref.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/hierarchy_segment.hpp"  // IWYU pragma: keep

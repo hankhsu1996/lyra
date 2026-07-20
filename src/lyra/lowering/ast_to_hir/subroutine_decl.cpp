@@ -444,11 +444,6 @@ auto LowerForeignExport(
     std::string_view foreign_name) -> diag::Result<hir::ForeignExportDecl> {
   const auto& mapper = unit_lowerer.SourceMapper();
   const auto loc = mapper.PointSpanOf(sym.location);
-  if (sym.subroutineKind == slang::ast::SubroutineKind::Task) {
-    return diag::Fail(
-        loc, diag::DiagCode::kUnsupportedDpi,
-        "DPI-C export of a task is not yet supported");
-  }
   auto ret_abi = ClassifyDpiScalarResult(sym.getReturnType(), loc);
   if (!ret_abi) return std::unexpected(std::move(ret_abi.error()));
   auto ret_type = unit_lowerer.InternType(sym.getReturnType(), loc);

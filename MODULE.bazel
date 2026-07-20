@@ -42,6 +42,9 @@ bazel_dep(name = "llvm-project", version = "17.0.3.bcr.4")
 # CLI argument parsing
 bazel_dep(name = "argparse", version = "3.2.0")
 
+# Stackful fibers for suspending foreign (DPI) calls across simulation time
+bazel_dep(name = "boost.context", version = "1.89.0")
+
 # BuildBuddy RBE toolchain (Ubuntu 24.04 has GCC 13)
 bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
 

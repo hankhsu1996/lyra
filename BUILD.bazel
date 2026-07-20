@@ -102,6 +102,7 @@ cc_library(
         ":base",
         ":support",
         ":value",
+        "@boost.context//:boost.context",
     ],
 )
 

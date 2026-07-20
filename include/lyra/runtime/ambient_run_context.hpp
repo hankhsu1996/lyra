@@ -1,5 +1,8 @@
 #pragma once
 
+#include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/foreign_execution.hpp"
+
 namespace lyra::runtime {
 
 class Scope;
@@ -40,5 +43,24 @@ class AmbientRunContext {
 // design root registered under `instance_name`. The exported subroutine is a
 // method of that instance, so the wrapper needs the instance as its receiver.
 auto ResolveExportInstance(const char* instance_name) -> Scope*;
+
+// Runs an exported SV task's body to completion and hands back its completion
+// payload. A foreign C caller of an exported task (LRM 35.8) is not a
+// coroutine, so it cannot `co_await` the body the way an SV enabler does; its
+// wrapper drives the body here, on the fiber the foreign call runs on. The body
+// runs as the process that entered the foreign call (LRM 9.5). Each time it
+// suspends across the boundary -- a delay, an event, a wait -- the fiber yields
+// to the scheduler and the body continues when the scheduler drives the fiber
+// again; a body that consumes no simulation time completes on the first resume.
+template <class T>
+auto RunExportedTaskToCompletion(Coroutine<T> task) -> T {
+  task.Handle().promise().process = &CurrentForeignProcess();
+  task.Handle().resume();
+  while (!task.Done()) {
+    YieldForeignExecution();
+    task.Handle().resume();
+  }
+  return task.Handle().promise().Take();
+}
 
 }  // namespace lyra::runtime

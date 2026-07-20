@@ -1586,9 +1586,18 @@ auto SynthesizeForeignExportWrapper(
     call_args.push_back(body.exprs.Add(mir::MakeLocalRefExpr(sv_in, sv_type)));
   }
 
-  const mir::TypeId payload_type =
+  // An exported task lowers to a coroutine -- the result type is the call
+  // protocol -- while a function's result is its payload directly. The
+  // completion payload the writeback loop below destructures is that payload
+  // either way; for a task it is the coroutine's payload, reached past the
+  // protocol.
+  const mir::TypeId method_result_type =
       std::get<mir::InternalCallable>(mir_class.callables.Get(method_id).impl)
           .code.result_type;
+  const bool is_task = unit.types.IsCoroutine(method_result_type);
+  const mir::TypeId payload_type =
+      is_task ? unit.types.CoroutinePayload(method_result_type)
+              : method_result_type;
   const mir::ExprId method_call = body.exprs.Add(
       mir::Expr{
           .data =
@@ -1599,7 +1608,23 @@ auto SynthesizeForeignExportWrapper(
                               mir::CallableTarget{
                                   .owner = class_id, .slot = method_id}},
                   .arguments = std::move(call_args)},
-          .type = payload_type});
+          .type = method_result_type});
+
+  // The foreign caller is synchronous C and cannot await the task body, so the
+  // wrapper drives the coroutine to completion here; a function call already
+  // yields its payload.
+  const mir::ExprId completion_source =
+      is_task ? body.exprs.Add(
+                    mir::Expr{
+                        .data =
+                            mir::CallExpr{
+                                .callee =
+                                    mir::Direct{
+                                        .target = support::BuiltinFn::
+                                            kRunExportedTaskToCompletion},
+                                .arguments = {method_call}},
+                        .type = payload_type})
+              : method_call;
 
   // The completion payload's components, in the callee's payload order: the
   // function return (when non-void) first, then each `output` / `inout` formal
@@ -1638,9 +1663,9 @@ auto SynthesizeForeignExportWrapper(
     completion = bindings.DeclareAnonymous(
         mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
     body.AppendStmt(
-        mir::LocalDeclStmt{.target = *completion, .init = method_call});
+        mir::LocalDeclStmt{.target = *completion, .init = completion_source});
   } else {
-    body.AppendStmt(mir::ExprStmt{.expr = method_call});
+    body.AppendStmt(mir::ExprStmt{.expr = completion_source});
   }
   const auto component_value = [&](std::size_t k) -> mir::ExprId {
     return ProjectCompletionComponent(
@@ -1685,20 +1710,33 @@ auto SynthesizeForeignExportWrapper(
                 mir::MakeAssignExpr(place, carrier, void_type))});
   }
 
-  if (has_return) {
+  if (is_task) {
+    // An exported task carries no SV return; its foreign entry returns the DPI
+    // disable-acknowledgment int (LRM 35.8), 0 while no disable is active on
+    // the thread (LRM 35.9). The disable protocol is not yet modeled, so it is
+    // 0.
+    const mir::TypeId int_carrier = CarrierTypeId(
+        unit, support::ScalarCarrier{support::DpiScalarAbi::kInt});
+    body.AppendStmt(
+        mir::ReturnStmt{
+            .value = body.exprs.Add(
+                mir::Expr{
+                    .data = mir::MachineIntLiteral{.value = 0},
+                    .type = int_carrier})});
+    code.result_type = int_carrier;
+  } else if (has_return) {
     const mir::ExprId ret_carrier = MarshalSvToCarrier(
         unit, body, component_value(0),
         support::ScalarCarrier{export_decl.ret_abi});
     body.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
+    code.result_type =
+        CarrierTypeId(unit, support::ScalarCarrier{export_decl.ret_abi});
   } else {
     body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    code.result_type = void_type;
   }
 
   code.params = std::move(params);
-  code.result_type =
-      has_return
-          ? CarrierTypeId(unit, support::ScalarCarrier{export_decl.ret_abi})
-          : void_type;
 
   return mir::ForeignExportWrapper{
       .foreign_name = export_decl.foreign_name,
