@@ -36,6 +36,7 @@ enum class ValueDomain : std::uint8_t {
   kShortReal,
   kChandle,
   kTuple,
+  kDynArray,
 };
 
 auto ValueDomainName(ValueDomain domain) -> std::string_view;
@@ -161,16 +162,30 @@ class RuntimeAbi {
   // Reduces a value to the machine boolean a conditional branch tests.
   auto ToBool(ValueDomain domain) -> llvm::FunctionCallee;
 
-  // The product-value entries. A component crosses as a handle of its own
-  // domain, and boxing one into a product component rides the domain in the
-  // symbol name, as every domain-parametric entry does. Extract and update are
-  // value operations: update yields a new product with one component replaced,
-  // never an in-place write, so value semantics hold even when the product is
-  // shared.
-  auto TupleComponent(ValueDomain domain) -> llvm::FunctionCallee;
+  // Boxes a value-domain handle into a type-erased aggregate element. The
+  // domain rides in the symbol name, as every domain-parametric entry does.
+  // Shared by every aggregate family (a struct component, a dynamic-array
+  // element).
+  auto ValueBox(ValueDomain domain) -> llvm::FunctionCallee;
+
+  // The product-value entries. `Make` collects the boxed components; `Extract`
+  // and `Update` are value operations: update yields a new product with one
+  // component replaced, never an in-place write, so value semantics hold even
+  // when the product is shared.
   auto TupleMake() -> llvm::FunctionCallee;
   auto TupleExtract() -> llvm::FunctionCallee;
   auto TupleUpdate() -> llvm::FunctionCallee;
+
+  // The dynamic-array constructors (LRM 7.5.1 / 10.9.1): the empty array, the
+  // sized array, the sized-from-source array, and the assignment-pattern array.
+  // Each takes the element default as a boxed prototype; `New` / `NewCopy` lead
+  // with the size, `FromLiteral` follows the prototype with the boxed element
+  // span. Element read / functional update / delete / size resolve through the
+  // generic value-builtin path, not a dedicated entry here.
+  auto MakeDynamicArrayDefault() -> llvm::FunctionCallee;
+  auto MakeDynamicArrayNew() -> llvm::FunctionCallee;
+  auto MakeDynamicArrayNewCopy() -> llvm::FunctionCallee;
+  auto MakeDynamicArrayFromLiteral() -> llvm::FunctionCallee;
 
   // Builds the format specification of one conversion, and the print item that
   // pairs a value with it. A specification is written either as a bare

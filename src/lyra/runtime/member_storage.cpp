@@ -7,6 +7,7 @@
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/string.hpp"
 
@@ -33,6 +34,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           return;
         case ValueDomain::kTuple:
           object_.emplace<Var<value::RuntimeTuple>>();
+          return;
+        case ValueDomain::kDynArray:
+          object_.emplace<Var<value::RuntimeDynamicArray>>();
           return;
         case ValueDomain::kChandle:
           throw InternalError(

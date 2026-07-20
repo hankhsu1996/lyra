@@ -205,6 +205,10 @@ auto CodeGenFunction::LowerCall(
   // A construct that builds a child unit leads with the child's definition
   // reference, which the result type names rather than the operand list.
   if (const auto* construct = std::get_if<lir::ConstructTarget>(&call.target)) {
+    if (const auto* dynamic_array = std::get_if<lir::DynamicArrayType>(
+            &module_->Unit().types.Get(construct->result).data)) {
+      return LowerErasedDynamicArrayConstruct(call, *dynamic_array);
+    }
     if (llvm::Value* definition = ConstructDefinitionArg(construct->result)) {
       args.push_back(definition);
     }
@@ -274,25 +278,44 @@ auto CodeGenFunction::ForeignCallee(
 }
 
 // An array literal is a value built in place, not a runtime call: its elements
-// are stored into contiguous storage and named by a {pointer, length} span.
+// are stored into contiguous storage and named by a {pointer, length} span. A
+// dynamic array is a type-erased value, so its literal boxes each element into
+// the erased representation first; a fixed unpacked array carries its elements'
+// own handles directly.
 auto CodeGenFunction::LowerAggregate(
     const lir::AggregateInstr& agg, lir::TypeId result_type) -> llvm::Value* {
   const auto& result_data = module_->Unit().types.Get(result_type).data;
   if (const auto* tuple = std::get_if<lir::TupleType>(&result_data)) {
     return LowerTupleAggregate(agg, *tuple);
   }
-  const auto* array = std::get_if<lir::UnpackedArrayType>(&result_data);
-  if (array == nullptr) {
+  lir::TypeId element_type{};
+  bool box_elements = false;
+  if (const auto* dynamic_array =
+          std::get_if<lir::DynamicArrayType>(&result_data)) {
+    element_type = dynamic_array->element_type;
+    box_elements = true;
+  } else if (
+      const auto* array = std::get_if<lir::UnpackedArrayType>(&result_data)) {
+    element_type = array->element_type;
+  } else {
     throw InternalError(
-        "llvm codegen: aggregate result is not an unpacked array or tuple");
+        "llvm codegen: aggregate result is not an unpacked array, dynamic "
+        "array, or tuple");
   }
   auto* storage_ty = llvm::ArrayType::get(
-      module_->Types().Map(array->element_type), agg.elements.size());
+      box_elements ? module_->Types().Ptr()
+                   : module_->Types().Map(element_type),
+      agg.elements.size());
   llvm::Value* storage = builder_.CreateAlloca(storage_ty);
   for (std::uint32_t i = 0; i < agg.elements.size(); ++i) {
+    llvm::Value* element = LowerOperand(agg.elements[i]);
+    if (box_elements) {
+      element = builder_.CreateCall(
+          module_->Runtime().ValueBox(DomainOf(element_type)), {element});
+    }
     llvm::Value* slot =
         builder_.CreateConstInBoundsGEP2_64(storage_ty, storage, 0, i);
-    builder_.CreateStore(LowerOperand(agg.elements[i]), slot);
+    builder_.CreateStore(element, slot);
   }
   llvm::Value* span = llvm::UndefValue::get(module_->Types().Span());
   span = builder_.CreateInsertValue(span, storage, {0});
@@ -302,6 +325,45 @@ auto CodeGenFunction::LowerAggregate(
           llvm::Type::getInt64Ty(module_->Context()), agg.elements.size()),
       {1});
   return span;
+}
+
+// Realizes the construction of a dynamic-array runtime value: it selects the
+// runtime-ABI constructor from the operand shape, boxes the element prototype
+// into the erased representation, and emits the call. This is representation
+// lowering, not source semantics -- the container's value semantics, its
+// out-of-range behavior, and its element-write model belong to the runtime
+// object and the MIR-to-LIR lowering, never here. The four shapes are the
+// runtime constructors' operand lists: `[proto]` empty, `[size, proto]` sized,
+// `[size, proto, src]` sized-from-source, `[proto, literal]` assignment pattern
+// -- the literal's span is the one operand whose own type is the array type,
+// which separates it from the sized form's leading size.
+auto CodeGenFunction::LowerErasedDynamicArrayConstruct(
+    const lir::CallInstr& call, const lir::DynamicArrayType& type)
+    -> llvm::Value* {
+  const ValueDomain element_domain = DomainOf(type.element_type);
+  auto box = [&](const lir::Operand& operand) -> llvm::Value* {
+    return builder_.CreateCall(
+        module_->Runtime().ValueBox(element_domain), {LowerOperand(operand)});
+  };
+  const std::vector<lir::Operand>& args = call.args;
+  if (args.size() == 1) {
+    return builder_.CreateCall(
+        module_->Runtime().MakeDynamicArrayDefault(), {box(args[0])});
+  }
+  if (args.size() == 3) {
+    return builder_.CreateCall(
+        module_->Runtime().MakeDynamicArrayNewCopy(),
+        {LowerOperand(args[0]), box(args[1]), LowerOperand(args[2])});
+  }
+  const lir::TypeId result = std::get<lir::ConstructTarget>(call.target).result;
+  if (OperandType(args[1]) == result) {
+    return builder_.CreateCall(
+        module_->Runtime().MakeDynamicArrayFromLiteral(),
+        {box(args[0]), LowerOperand(args[1])});
+  }
+  return builder_.CreateCall(
+      module_->Runtime().MakeDynamicArrayNew(),
+      {LowerOperand(args[0]), box(args[1])});
 }
 
 // A product value is assembled by boxing each component into a product
@@ -319,8 +381,7 @@ auto CodeGenFunction::LowerTupleAggregate(
     const ValueDomain domain =
         ValueDomainOf(module_->Unit(), tuple.elements[i]);
     llvm::Value* boxed = builder_.CreateCall(
-        module_->Runtime().TupleComponent(domain),
-        {LowerOperand(agg.elements[i])});
+        module_->Runtime().ValueBox(domain), {LowerOperand(agg.elements[i])});
     llvm::Value* slot =
         builder_.CreateConstInBoundsGEP2_64(storage_ty, storage, 0, i);
     builder_.CreateStore(boxed, slot);

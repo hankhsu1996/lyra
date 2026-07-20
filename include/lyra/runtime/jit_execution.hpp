@@ -170,6 +170,7 @@ auto lyra_rt_packed_reduction_xor(const void* value) -> void*;
 auto lyra_rt_packed_reduction_nand(const void* value) -> void*;
 auto lyra_rt_packed_reduction_nor(const void* value) -> void*;
 auto lyra_rt_packed_reduction_xnor(const void* value) -> void*;
+auto lyra_rt_packed_to_owned(const void* value) -> void*;
 
 auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
 // The C string a `string` crosses the DPI-C boundary as (LRM 35.5.6). It points
@@ -267,24 +268,27 @@ auto lyra_rt_chandle_ne(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_to_bool(void* operand) -> bool;
 
+// Boxes a value-domain handle into a type-erased `RuntimeValue`, the element of
+// an aggregate value. An aggregate assembles from these boxed elements; the
+// domain rides in the symbol name, as every other domain-parametric entry does,
+// so the generated side never inspects the element's runtime representation.
+auto lyra_rt_value_box_packed(const void* value) -> void*;
+auto lyra_rt_value_box_string(const void* value) -> void*;
+auto lyra_rt_value_box_real(const void* value) -> void*;
+auto lyra_rt_value_box_shortreal(const void* value) -> void*;
+auto lyra_rt_value_box_chandle(void* value) -> void*;
+auto lyra_rt_value_box_tuple(const void* value) -> void*;
+auto lyra_rt_value_box_dynarray(const void* value) -> void*;
+
 // The unpacked-struct domain (LRM 7.2), MIR's product type. A struct value is a
 // runtime-owned product carried behind an opaque handle. It owns its components
 // by value, so construction copies each component in and access copies out; the
 // generated side only ever holds handles, never the product's internal storage.
 //
-// A component crosses as a handle of its own domain. Assembly first boxes each
-// into a component of the product (the domain rides in the symbol name, as
-// every other domain-parametric entry does), then `make` collects the
-// components into the product value. `extract` copies component `index` back
-// out; `update` returns a copy of the product with component `index` replaced
-// -- a value operation, never an in-place write, so value semantics hold even
-// when the product is shared.
-auto lyra_rt_tuple_component_packed(const void* value) -> void*;
-auto lyra_rt_tuple_component_string(const void* value) -> void*;
-auto lyra_rt_tuple_component_real(const void* value) -> void*;
-auto lyra_rt_tuple_component_shortreal(const void* value) -> void*;
-auto lyra_rt_tuple_component_chandle(void* value) -> void*;
-auto lyra_rt_tuple_component_tuple(const void* value) -> void*;
+// `make` collects the boxed components into the product value. `extract` copies
+// component `index` back out; `update` returns a copy of the product with
+// component `index` replaced -- a value operation, never an in-place write, so
+// value semantics hold even when the product is shared.
 auto lyra_rt_tuple_make(LyraSpan components) -> void*;
 auto lyra_rt_tuple_extract(const void* tuple, std::int64_t index) -> void*;
 auto lyra_rt_tuple_update(const void* tuple, std::int64_t index, void* value)
@@ -298,6 +302,37 @@ void lyra_rt_cell_tuple_set(void* cell, void* services, const void* value);
 auto lyra_rt_activation_frame_alloc_tuple() -> void*;
 void lyra_rt_activation_frame_store_tuple(void* cell, const void* value);
 auto lyra_rt_activation_frame_load_tuple(const void* cell) -> void*;
+
+// The dynamic-array domain (LRM 7.5), MIR's `DynamicArrayType`. A
+// run-time-sized homogeneous container carried behind an opaque handle, owning
+// its elements by value. `default` / `new` / `new_copy` are the LRM 7.5.1
+// constructors (empty, sized, sized-from-source); `from_literal` collects boxed
+// elements from an assignment pattern. The element default rides every
+// constructor as a boxed prototype -- the shape source for out-of-range reads
+// (LRM 7.4.5) and resize fills. `element` copies an element out; `with_element`
+// returns a copy of the array with one element replaced (LRM 7.4.6), and
+// `delete` a copy emptied (LRM 7.5.3) -- value operations, never in-place
+// writes, so value semantics hold even when the array is shared.
+auto lyra_rt_dynarray_default(const void* prototype) -> void*;
+auto lyra_rt_dynarray_new(const void* size, const void* prototype) -> void*;
+auto lyra_rt_dynarray_new_copy(
+    const void* size, const void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_from_literal(const void* prototype, LyraSpan elements)
+    -> void*;
+auto lyra_rt_dynarray_element(const void* array, const void* index) -> void*;
+auto lyra_rt_dynarray_with_element(
+    const void* array, const void* index, void* value) -> void*;
+auto lyra_rt_dynarray_delete(const void* array) -> void*;
+auto lyra_rt_dynarray_size(const void* array) -> void*;
+auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_cell_dynarray_get(void* cell) -> const void*;
+void lyra_rt_cell_dynarray_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_dynarray_set(void* cell, void* services, const void* value);
+auto lyra_rt_activation_frame_alloc_dynarray() -> void*;
+void lyra_rt_activation_frame_store_dynarray(void* cell, const void* value);
+auto lyra_rt_activation_frame_load_dynarray(const void* cell) -> void*;
 
 // Builds one conversion's format specification, and the print item that pairs a
 // value with it. Each field arrives as a packed value, as the value model

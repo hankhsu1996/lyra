@@ -149,6 +149,13 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Element";
     case support::BuiltinFn::kElementRef:
       return "ElementRef";
+    case support::BuiltinFn::kWithElement:
+      // The functional element write is synthesized only at MIR-to-LIR for the
+      // execution backend; the C++ backend writes an element in place through
+      // `ElementRef`, so it never renders this entry.
+      throw InternalError(
+          "BuiltinFnCppName: with_element is an execution-backend synthesis "
+          "entry, never rendered by the C++ backend");
     case support::BuiltinFn::kSlice:
       return "Slice";
     case support::BuiltinFn::kSliceRef:
