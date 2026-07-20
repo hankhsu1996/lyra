@@ -23,6 +23,7 @@
 #include "lyra/runtime/coroutine.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/delay.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/diagnostic.hpp"         // IWYU pragma: keep
+#include "lyra/runtime/dpi_context.hpp"        // IWYU pragma: keep
 #include "lyra/runtime/engine.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/event.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/file_table.hpp"         // IWYU pragma: keep

@@ -1,17 +1,21 @@
 #pragma once
 
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/dpi_scope_registry.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
 
 namespace lyra::runtime {
 
 class Scope;
+class RuntimeServices;
 
 // The design context in effect for the duration of a running simulation. A
-// foreign C function that calls back an exported SV subroutine (LRM 35.5)
-// reaches the wrapper with plain C arguments and no design pointer, so the
-// wrapper has nothing to reach the design from unless the runtime anchors it
-// ambiently. This holds the design root for that recovery.
+// foreign C function that calls back an exported SV subroutine (LRM 35.5), or
+// that queries the DPI scope surface (LRM 35.5.3, Annex H), reaches the runtime
+// with plain C arguments and no design pointer, so it has nothing to reach the
+// run from unless the runtime anchors it ambiently. This holds the design root
+// for export-instance recovery, the run's services facade for the executing
+// process and time queries, and the DPI scope directory.
 //
 // It is an RAII stack guard over a thread-local slot: installed once around the
 // simulation run at the single run entry, and torn down when the run returns.
@@ -21,7 +25,7 @@ class Scope;
 // different thread must install its own.
 class AmbientRunContext {
  public:
-  explicit AmbientRunContext(Scope* root);
+  AmbientRunContext(Scope* root, RuntimeServices& services);
   ~AmbientRunContext();
   AmbientRunContext(const AmbientRunContext&) = delete;
   auto operator=(const AmbientRunContext&) -> AmbientRunContext& = delete;
@@ -32,10 +36,20 @@ class AmbientRunContext {
     return root_;
   }
 
+  [[nodiscard]] auto Services() const -> RuntimeServices& {
+    return *services_;
+  }
+
+  [[nodiscard]] auto ScopeRegistry() -> DpiScopeRegistry& {
+    return scope_registry_;
+  }
+
   static auto Current() -> AmbientRunContext&;
 
  private:
   Scope* root_;
+  RuntimeServices* services_;
+  DpiScopeRegistry scope_registry_;
   AmbientRunContext* previous_;
 };
 

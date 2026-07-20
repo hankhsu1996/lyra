@@ -322,6 +322,8 @@ class MirDumper {
                   return "RuntimeLibrary(DpiBitChunk)";
                 case RuntimeLibraryKind::kDpiLogicChunk:
                   return "RuntimeLibrary(DpiLogicChunk)";
+                case RuntimeLibraryKind::kDpiScopeGuard:
+                  return "RuntimeLibrary(DpiScopeGuard)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },

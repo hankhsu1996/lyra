@@ -115,6 +115,10 @@ class Engine {
   // The process whose body is executing right now (LRM 9.5): what a fork spawn
   // parents its branch to, and what `wait fork` observes.
   [[nodiscard]] auto CurrentProcess() -> RuntimeProcess&;
+  // The executing process, or null when none is executing (non-throwing).
+  [[nodiscard]] auto TryCurrentProcess() -> RuntimeProcess* {
+    return execution_context_.TryCurrentProcess();
+  }
   [[nodiscard]] auto Now() const -> SimTime {
     return now_;
   }

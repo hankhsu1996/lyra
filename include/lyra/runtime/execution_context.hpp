@@ -15,6 +15,17 @@ class RuntimeProcess;
 // time.
 class ExecutionContext {
  public:
+  // The base read of the current-process state: the executing process, or null
+  // when none is executing. Absence is a legal result the caller handles -- a
+  // DPI query reachable from foreign C (`svGetScope`) reads this form because
+  // "no imported function is executing" is a state it must report, not fault.
+  [[nodiscard]] auto TryCurrentProcess() const -> RuntimeProcess* {
+    return current_;
+  }
+
+  // The same state read under the invariant that a process is executing (LRM
+  // 9.5): a fork spawn or a process-control statement runs inside a process, so
+  // absence is a compiler-invariant violation, not a case to handle.
   [[nodiscard]] auto CurrentProcess() const -> RuntimeProcess&;
 
  private:

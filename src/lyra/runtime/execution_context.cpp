@@ -6,10 +6,11 @@
 namespace lyra::runtime {
 
 auto ExecutionContext::CurrentProcess() const -> RuntimeProcess& {
-  if (current_ == nullptr) {
+  RuntimeProcess* process = TryCurrentProcess();
+  if (process == nullptr) {
     throw InternalError("ExecutionContext: no process is executing");
   }
-  return *current_;
+  return *process;
 }
 
 }  // namespace lyra::runtime

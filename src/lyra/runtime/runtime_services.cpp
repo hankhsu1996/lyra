@@ -75,6 +75,13 @@ auto RuntimeServices::CurrentProcess() -> RuntimeProcess& {
   return engine_->CurrentProcess();
 }
 
+auto RuntimeServices::TryCurrentProcess() -> RuntimeProcess* {
+  if (engine_ == nullptr) {
+    throw InternalError("RuntimeServices::TryCurrentProcess: no Engine bound");
+  }
+  return engine_->TryCurrentProcess();
+}
+
 auto RuntimeServices::Now() const -> SimTime {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::Now: no Engine bound");

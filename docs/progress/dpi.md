@@ -39,13 +39,17 @@ exported subroutine's single top-level instance from the running design -- and t
 runs in both directions: the import task (D5) has SV call a foreign C task, and the export task (D6)
 has foreign C call back an SV task, both under the uniform task protocol. A foreign task also
 consumes simulation time (D6b): its call runs on a fiber, so an exported task it reaches suspends on
-a delay across the boundary and resumes when time advances. What remains is instance-bound export
-dispatch beyond that single instance via `svSetScope` and receiver-less package / `$unit` scope
-(D4a), the generated ABI header and export linkage (D9), and the disable protocol across the
-boundary (D6c). On the execution backend scalar import (D10) is in: a foreign call lowers to an
-external-linkage symbol and the by-value carriers marshal. The rest of the import surface (D11) is
-blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a closure, which that
-backend does not yet lower at all (`architecture-reset.md`).
+a delay across the boundary and resumes when time advances. The `svdpi` context surface (D7) runs: a
+`context` import observes the fully qualified scope of its declaration, foreign code sets and gets
+the current scope and resolves a scope to and from its name, stores per-scope user data, and reads
+the scope's effective time unit and precision and the current time scaled to it -- the current scope
+riding the calling process so concurrent time-consuming imports never cross. What remains is
+instance-bound export dispatch beyond that single instance via `svSetScope` and receiver-less
+package / `$unit` scope (D4a), the generated ABI header and export linkage (D9), and the disable
+protocol across the boundary (D6c). On the execution backend scalar import (D10) is in: a foreign
+call lowers to an external-linkage symbol and the by-value carriers marshal. The rest of the import
+surface (D11) is blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a
+closure, which that backend does not yet lower at all (`architecture-reset.md`).
 
 ## Sub-Steps
 
@@ -132,9 +136,13 @@ protocol on top of it.
 
 ### Context and the svdpi surface
 
-- [ ] D7 -- `context` imports and exports and the `svdpi` runtime surface: DPI scope handles, set /
-      get scope, the scope registry, and time queries. A context import observes the scope of its
-      call site.
+- [x] D7 -- `context` imports and the `svdpi` runtime surface (LRM 35.5.3, Annex H): DPI scope
+      handles, set / get scope, resolve a scope to and from its fully qualified name, per-scope user
+      data, and time queries (a scope's effective unit and precision, and the current time scaled to
+      it). A context import observes the instantiated scope of its declaration, established for the
+      duration of its foreign call; the current scope rides the calling process, so two
+      time-consuming context imports suspended concurrently never observe each other's scope. Every
+      export is a context function reached through the same run context (LRM 35.7).
 
 ### Open arrays
 

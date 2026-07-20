@@ -7,10 +7,11 @@ namespace lyra::runtime {
 
 class Scope;
 
-// Returned by a scope that declares no timescale of its own (the synthetic
-// `$root`). The engine's design-global precision minimum ignores it, so a
-// purely structural node does not pull the simulation tick finer.
-inline constexpr std::int8_t kUnspecifiedTimePrecisionPower = 127;
+// The time unit or precision power a scope reports when it declares no
+// timescale of its own (the synthetic `$root`). The engine's design-global
+// precision minimum ignores it, so a purely structural node does not pull the
+// simulation tick finer.
+inline constexpr std::int8_t kUnspecifiedTimePower = 127;
 
 // The backend-neutral entry a generated body is reached through: a native
 // function over the generic scope receiver. A backend realizes it as a thunk
@@ -39,17 +40,22 @@ struct AbiStringRef {
 
 // A scope's immutable constant properties, known when its definition is built
 // and never computed by running generated code: its def name (LRM 23.8; empty
-// for a generate scope or `$root`) and its declared time precision as a power
-// of ten (LRM Table 20-2). These are data, not entries -- a backend supplies
+// for a generate scope or `$root`) and its effective time unit and precision as
+// powers of ten (LRM Table 20-2), each the scope's own timescale or the one it
+// inherits (LRM 3.14.2.3). These are data, not entries -- a backend supplies
 // the values, it does not supply a function that returns them.
 struct ScopeMetadata {
   AbiStringRef def_name;
-  std::int8_t time_precision_power = kUnspecifiedTimePrecisionPower;
+  std::int8_t time_unit_power = kUnspecifiedTimePower;
+  std::int8_t time_precision_power = kUnspecifiedTimePower;
 
   constexpr ScopeMetadata() = default;
   constexpr ScopeMetadata(
-      AbiStringRef def_name, std::int8_t time_precision_power)
-      : def_name(def_name), time_precision_power(time_precision_power) {
+      AbiStringRef def_name, std::int8_t time_unit_power,
+      std::int8_t time_precision_power)
+      : def_name(def_name),
+        time_unit_power(time_unit_power),
+        time_precision_power(time_precision_power) {
   }
 };
 

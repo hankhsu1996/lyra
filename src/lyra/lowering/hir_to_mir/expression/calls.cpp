@@ -1060,8 +1060,8 @@ auto LowerForeignImportInputsOnly(
 template <ExprLowerer Lowerer>
 auto PopulateForeignImportBoundary(
     Lowerer& lowerer, ClosureBuilder& closure, const hir::CallExpr& c,
-    const mir::ExternalCallable& decl, mir::CallableTarget target)
-    -> diag::Result<std::optional<mir::LocalId>> {
+    const mir::ExternalCallable& decl, mir::CallableTarget target,
+    mir::EnclosingHops hops) -> diag::Result<std::optional<mir::LocalId>> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
@@ -1069,6 +1069,34 @@ auto PopulateForeignImportBoundary(
 
   mir::Block& body = closure.Body();
   const WalkFrame& cframe = closure.Frame();
+
+  // A context import (LRM 35.5.3) observes the scope of its declaration and may
+  // call an exported subroutine back, so the boundary opens with an RAII guard
+  // that pushes the declaration scope (the enclosing instance `hops` levels up)
+  // on the calling process's DPI scope chain for the foreign call's duration.
+  // Declared first so its scope-exit pop is the last effect, on a normal return
+  // or an unwind.
+  if (decl.external.is_context) {
+    const mir::TypeId guard_type = unit.types.Intern(
+        mir::RuntimeLibraryType{
+            .kind = mir::RuntimeLibraryKind::kDpiScopeGuard});
+    const mir::LocalId guard = closure.Bindings().DeclareAnonymous(
+        mir::LocalDecl{.name = "_lyra_dpi_scope", .type = guard_type});
+    const mir::ExprId services_id =
+        body.exprs.Add(BuildServicesCallExpr(unit_lowerer, cframe));
+    const mir::ExprId decl_scope_id =
+        BuildEnclosingScopeReceiver(cframe, unit, hops);
+    body.AppendStmt(
+        mir::LocalDeclStmt{
+            .target = guard,
+            .init = body.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee = mir::Construct{},
+                            .arguments = {services_id, decl_scope_id}},
+                    .type = guard_type})});
+  }
 
   // One output / inout argument to copy back after the call.
   struct Writeback {
@@ -1234,13 +1262,14 @@ template <ExprLowerer Lowerer>
 auto LowerForeignImportSequenced(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const mir::ExternalCallable& decl, mir::CallableTarget target,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    mir::EnclosingHops hops, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
 
   ClosureBuilder closure(unit, frame);
   auto ret_temp =
-      PopulateForeignImportBoundary(lowerer, closure, c, decl, target);
+      PopulateForeignImportBoundary(lowerer, closure, c, decl, target, hops);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   if (!ret_temp->has_value()) {
@@ -1271,12 +1300,12 @@ auto LowerForeignImportSequenced(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportTask(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::ExternalCallable& decl, mir::CallableTarget target)
-    -> diag::Result<mir::Expr> {
+    const mir::ExternalCallable& decl, mir::CallableTarget target,
+    mir::EnclosingHops hops) -> diag::Result<mir::Expr> {
   auto& unit = lowerer.Owner().Unit();
   ClosureBuilder closure(unit, frame);
   auto ret_temp =
-      PopulateForeignImportBoundary(lowerer, closure, c, decl, target);
+      PopulateForeignImportBoundary(lowerer, closure, c, decl, target, hops);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
   return closure.BuildCoroutine();
 }
@@ -1325,12 +1354,15 @@ auto LowerForeignImportCall(
   const auto& decl = std::get<mir::ExternalCallable>(callable.impl);
 
   if (decl.is_task) {
-    return LowerForeignImportTask(lowerer, frame, c, decl, target);
+    return LowerForeignImportTask(lowerer, frame, c, decl, target, hops);
   }
+  // A context import sequences through a closure even when every actual is a
+  // by-value input, because its scope guard is a scoped body local the plain
+  // single-expression form has no room for.
   const bool needs_temp = std::ranges::any_of(decl.params, NeedsBoundaryTemp);
-  if (needs_temp) {
+  if (needs_temp || decl.external.is_context) {
     return LowerForeignImportSequenced(
-        lowerer, frame, c, decl, target, result_type);
+        lowerer, frame, c, decl, target, hops, result_type);
   }
   return LowerForeignImportInputsOnly(
       lowerer, frame, c, decl, target, result_type);
