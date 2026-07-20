@@ -17,11 +17,14 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
@@ -59,11 +62,13 @@ auto PopulatePackageStaticVariables(
 
   mir::CallableCode value_code;
   value_code.result_type = unit.builtins.void_type;
-  const mir::LocalId services_local = value_code.locals.Add(
-      mir::LocalDecl{.name = "services", .type = unit.builtins.services});
-  value_code.params.push_back(services_local);
+  CallableBindings value_bindings(unit, value_code);
+  value_code.params.push_back(value_bindings.Declare(
+      BindingOriginId::Services(),
+      mir::LocalDecl{.name = "services", .type = unit.builtins.services}));
   mir::Block& value_block = value_code.body;
-  const WalkFrame value_frame = WalkFrame{}.WithBlock(&value_block);
+  const WalkFrame value_frame =
+      WalkFrame{}.WithBlock(&value_block).WithBindings(&value_bindings);
 
   // The package root scope is an ExprLowerer over its own expressions: a
   // variable initializer's operands are literals, operators, and by-name
@@ -111,16 +116,14 @@ auto PopulatePackageStaticVariables(
                     make_cell(install_block, d.name, cell_type), prototype,
                     unit.builtins.void_type))});
 
-    // Phase 2: a user initializer (LRM 10.5) writes the value through the cell;
-    // the services comes from the callable's parameter, since there is no
-    // `self`.
+    // Phase 2: a user initializer (LRM 10.5) writes the value through the cell.
     if (var->initializer.has_value()) {
       auto value_or = expr_lowerer.LowerExpr(
           scope.exprs.Get(*var->initializer), value_frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
       const mir::ExprId value_id = value_block.exprs.Add(*std::move(value_or));
       const mir::ExprId services_ref = value_block.exprs.Add(
-          mir::MakeLocalRefExpr(services_local, unit.builtins.services));
+          BuildServicesCallExpr(unit_lowerer, value_frame));
       value_block.AppendStmt(
           mir::ExprStmt{
               .expr = value_block.exprs.Add(

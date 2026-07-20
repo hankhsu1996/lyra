@@ -8,14 +8,10 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
-
-enum class SubroutineKind : std::uint8_t {
-  kTask,
-  kFunction,
-};
 
 // LRM 13.5 argument directions. A formal is also a local variable of the
 // subroutine body; `var` indexes the body's procedural-var arena.
