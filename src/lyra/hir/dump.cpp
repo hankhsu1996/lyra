@@ -953,8 +953,15 @@ class HirDumper {
   }
 
   void DumpClass(std::size_t index, const ClassDecl& c) {
-    Line(std::format("[{}] class \"{}\"", index, c.name));
+    const std::string kind = c.is_interface_class ? "interface class" : "class";
+    Line(std::format("[{}] {} \"{}\"", index, kind, c.name));
     Indent();
+    if (c.base.has_value()) {
+      Line(std::format("Extends: {}", FormatClassRef(*c.base)));
+    }
+    for (const auto& impl : c.implements) {
+      Line(std::format("Implements: {}", FormatClassRef(impl)));
+    }
     for (const auto& field : c.fields) {
       Line(std::format("{}:Type[{}]", field.name, field.type.value));
     }

@@ -104,11 +104,18 @@ struct LocalClassMethodTarget {
 
 // A reference to a class method (LRM 8.6 / 8.10) declared by another
 // compilation unit: the declaring unit, the class's canonical name, and the
-// method's source name.
+// method's source name. `is_virtual` records whether the callee is virtual
+// (LRM 8.20) -- a fact the referring unit needs to route the call site
+// between static and virtual dispatch, but which it cannot recover from its
+// own class registry because the declaring class lives in another unit.
+// The producer (the unit intake that mints this target) reads the fact from
+// its frontend view of the callee; the consumer (the referring unit's call
+// lowering) reads it here.
 struct ExternalClassMethodTarget {
   std::string unit_name;
   std::string class_name;
   std::string method_name;
+  bool is_virtual = false;
 
   auto operator==(const ExternalClassMethodTarget&) const -> bool = default;
 };

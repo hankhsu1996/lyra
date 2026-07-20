@@ -538,6 +538,32 @@ auto FindOverriddenPureInBaseChain(
   return &proto;
 }
 
+// Locates the pure virtual method prototype (LRM 8.26 / 8.21) an interface
+// class this class directly implements declares, matched by name.
+// Complements the base-chain finder for the case a class reaches an
+// interface only through its own declared implements list -- typically a
+// class with no concrete base at all, where the base-chain walk has nothing
+// to walk. Interfaces are consulted in declaration order, and the first
+// match wins (LRM 8.26.6.1 name conflict resolution: one implementation
+// satisfies every same-name interface slot).
+auto FindOverriddenPureInImplementsChain(
+    const slang::ast::ClassType& cls, std::string_view method_name)
+    -> const slang::ast::MethodPrototypeSymbol* {
+  for (const auto* iface : cls.getDeclaredInterfaces()) {
+    const auto& iface_cls =
+        iface->getCanonicalType().as<slang::ast::ClassType>();
+    const auto* found = iface_cls.find(method_name);
+    if (found == nullptr ||
+        found->kind != slang::ast::SymbolKind::MethodPrototype) {
+      continue;
+    }
+    const auto& proto = found->as<slang::ast::MethodPrototypeSymbol>();
+    if (!proto.flags.has(slang::ast::MethodFlags::Pure)) continue;
+    return &proto;
+  }
+  return nullptr;
+}
+
 auto SynthesizeDefaultConstructor(hir::TypeId void_type, diag::SourceSpan span)
     -> hir::SubroutineDecl {
   hir::ProceduralBody body;
@@ -609,7 +635,8 @@ auto UnitLowerer::MakeClassMethodTarget(
   return hir::ExternalClassMethodTarget{
       .unit_name = ext.unit_name,
       .class_name = ext.class_name,
-      .method_name = std::string(method.name)};
+      .method_name = std::string(method.name),
+      .is_virtual = method.isVirtual()};
 }
 
 auto UnitLowerer::MakeClassPropertyTarget(
@@ -689,24 +716,39 @@ auto UnitLowerer::InternLocalClass(
 
   hir::ClassDecl decl;
   decl.name = SpecializationName(cls);
+  decl.is_interface_class = cls.isInterface;
 
-  // Base class (LRM 8.13). Slang exposes the base as a `ClassType*` on the
-  // derived class and flattens inherited members into the derived's member
-  // list; the base is reached through the class-reference translator because
-  // it may live in another compilation unit, and each member iteration below
-  // filters by parent scope so only members declared on this class enter
-  // its arena.
+  // Concrete base class (LRM 8.13). Only a regular class may extend a
+  // concrete base; an interface class carries no concrete base and reaches
+  // its parent interface classes through `implements` instead. Slang
+  // exposes the concrete base as a `ClassType*` on the derived class and
+  // flattens inherited members into the derived's member list; the base is
+  // reached through the class-reference translator because it may live in
+  // another compilation unit, and each member iteration below filters by
+  // parent scope so only members declared on this class enter its arena.
   if (const auto* base_type = cls.getBaseClass()) {
     const auto& base_class =
         base_type->getCanonicalType().as<slang::ast::ClassType>();
-    if (base_class.isInterface) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "interface class conformance is not yet supported");
-    }
     auto base_ref = ResolveClassRef(base_class, span);
     if (!base_ref) return std::unexpected(std::move(base_ref.error()));
     decl.base = *std::move(base_ref);
+  }
+
+  // Interface class contracts (LRM 8.26.2). Slang's `getDeclaredInterfaces`
+  // returns the source-declared list: for a regular class it is the
+  // `implements` clause; for an interface class it is the `extends` clause
+  // parents. Both source keywords land in the same field because at the
+  // object model layer they name the same relation -- aggregate these
+  // interface classes' pure virtual method contracts. The implicit-inherit
+  // rule ("a subclass implicitly implements every interface its superclass
+  // implements") is walked through the base chain at consumption time, not
+  // duplicated into this list, so this stays a source-declared shape.
+  for (const auto* iface_type : cls.getDeclaredInterfaces()) {
+    const auto& iface_class =
+        iface_type->getCanonicalType().as<slang::ast::ClassType>();
+    auto iface_ref = ResolveClassRef(iface_class, span);
+    if (!iface_ref) return std::unexpected(std::move(iface_ref.error()));
+    decl.implements.push_back(*std::move(iface_ref));
   }
 
   for (const auto& prop :
@@ -815,6 +857,29 @@ auto UnitLowerer::InternLocalClass(
         method_decl->overrides = MakeClassMethodTarget(*base_ref, *proto_stub);
         // An override of a base virtual method is itself virtual (LRM 8.20),
         // even when the derived declaration omits the `virtual` keyword.
+        method_decl->is_virtual = true;
+      } else if (const auto* pure_iface =
+                     FindOverriddenPureInImplementsChain(cls, method.name);
+                 pure_iface != nullptr) {
+        // The method satisfies an interface class's pure virtual contract
+        // (LRM 8.26). Slang validates the satisfaction but leaves the
+        // override link unset on the concrete method; wire it so downstream
+        // dispatch canonicalizes to the interface's slot instead of
+        // treating this method as a fresh introducer.
+        const auto& iface_class = pure_iface->getParentScope()
+                                      ->asSymbol()
+                                      .as<slang::ast::ClassType>();
+        auto iface_ref = ResolveClassRef(iface_class, span);
+        if (!iface_ref) return std::unexpected(std::move(iface_ref.error()));
+        const auto* proto_stub = pure_iface->getSubroutine();
+        if (proto_stub == nullptr) {
+          throw InternalError(
+              "UnitLowerer::InternLocalClass: interface pure virtual "
+              "prototype has no stub subroutine slang normally materializes");
+        }
+        method_decl->overrides = MakeClassMethodTarget(*iface_ref, *proto_stub);
+        // A method satisfying an interface pure virtual is itself virtual
+        // (LRM 8.26.2 requires the implementation carry `virtual`).
         method_decl->is_virtual = true;
       }
     }

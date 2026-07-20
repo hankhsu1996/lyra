@@ -452,19 +452,8 @@ auto LowerHirClassPropertyAccessExpr(
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-  if (const auto* local =
-          std::get_if<hir::LocalClassPropertyTarget>(&sel.target)) {
-    return mir::MakeFieldAccessExpr(
-        base_id,
-        mir::FieldTarget{
-            .owner = unit_lowerer.TranslateClass(local->owner),
-            .slot = UnitLowerer::TranslateField(local->field)},
-        result_type);
-  }
   return mir::MakeFieldAccessExpr(
-      base_id,
-      unit_lowerer.MakeExternalFieldTarget(
-          std::get<hir::ExternalClassPropertyTarget>(sel.target)),
+      base_id, unit_lowerer.TranslateClassPropertyTarget(sel.target),
       result_type);
 }
 
@@ -592,19 +581,8 @@ auto LowerHirClassPropertyAccessExprLhs(
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-  if (const auto* local =
-          std::get_if<hir::LocalClassPropertyTarget>(&sel.target)) {
-    return mir::MakeFieldAccessExpr(
-        base_id,
-        mir::FieldTarget{
-            .owner = unit_lowerer.TranslateClass(local->owner),
-            .slot = UnitLowerer::TranslateField(local->field)},
-        result_type);
-  }
   return mir::MakeFieldAccessExpr(
-      base_id,
-      unit_lowerer.MakeExternalFieldTarget(
-          std::get<hir::ExternalClassPropertyTarget>(sel.target)),
+      base_id, unit_lowerer.TranslateClassPropertyTarget(sel.target),
       result_type);
 }
 

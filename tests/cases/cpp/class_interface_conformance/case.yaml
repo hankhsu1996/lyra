@@ -1,0 +1,19 @@
+id: cpp.class_interface_conformance
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    cell_direct_get: 42
+    cell_via_putter: 51
+    cell_via_getter: 51
+    cell_via_putget: 201
+    cell_tag_direct: 7
+    cell_tag_via_named: 7
+    byte_get_value: 12
+    derived_tag_direct: 100
+    derived_tag_via_named: 100

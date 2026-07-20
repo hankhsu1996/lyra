@@ -228,19 +228,46 @@ struct Indirect {
   ExprId closure;
 };
 
-// A virtually-dispatched call: the receiver is evaluated once and then the
-// implementation of the named slot on that receiver's dynamic type runs
-// (LRM 8.20). `owner_class` and `slot` name the slot as it appears in the
-// class arena that introduced it -- the canonical logical identity a
-// backend uses to reach the method's name and signature; the receiver's
-// dynamic type is what decides which implementation runs. The receiver
-// rides here, distinct from user-supplied `CallExpr::arguments`, so the
-// call carries exactly the arguments the SV source wrote and the receiver
-// is not conflated with them.
-struct Virtual {
-  ExprId receiver;
+// Identity of a virtual dispatch slot introduced by a class in this
+// compilation unit: the introducing class and the callable arena position
+// where the slot was first declared. The receiver's dynamic type is what
+// decides which implementation runs; the slot is the canonical logical
+// identity a backend reads to reach the method's name and signature.
+struct LocalVirtualSlot {
   ClassId owner_class;
   CallableId slot;
+
+  auto operator==(const LocalVirtualSlot&) const -> bool = default;
+};
+
+// Identity of a virtual dispatch slot introduced by a class in another
+// compilation unit. The introducing class carries no unit-local id here, so
+// the slot is named by (declaring unit, class canonical name, method source
+// name) -- the same triple the cross-unit override relation uses. A backend
+// renders the dispatch through the target language's own virtual-call
+// machinery reached by including the declaring unit's header.
+struct ExternalVirtualSlot {
+  std::string unit_name;
+  std::string class_name;
+  std::string method_name;
+
+  auto operator==(const ExternalVirtualSlot&) const -> bool = default;
+};
+
+// The slot a virtual call names -- an intra-unit position or a cross-unit
+// by-name identity. Peer of `DirectTarget`'s local / external variant
+// structure: identity representation follows the compilation-unit boundary,
+// never split across two dispatch node kinds.
+using VirtualSlot = std::variant<LocalVirtualSlot, ExternalVirtualSlot>;
+
+// A virtually-dispatched call: the receiver is evaluated once and then the
+// implementation of the named slot on that receiver's dynamic type runs
+// (LRM 8.20). The receiver rides here, distinct from user-supplied
+// `CallExpr::arguments`, so the call carries exactly the arguments the SV
+// source wrote and the receiver is not conflated with them.
+struct Virtual {
+  ExprId receiver;
+  VirtualSlot slot;
 };
 
 // Constructs a value of the call's result data type from the positional

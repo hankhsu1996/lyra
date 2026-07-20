@@ -93,7 +93,7 @@ each stage establishes, not how.
       to whether the source separately wrote an empty body -- the two forms are semantically
       distinct and remain distinct end-to-end.
 
-- [ ] Interface-class conformance (LRM 8.26): a class may conform to several interfaces, a relation
+- [x] Interface-class conformance (LRM 8.26): a class may conform to several interfaces, a relation
       distinct from its single concrete base and carrying no second instance storage. Each
       conformance is a pure-virtual method contract the class must satisfy; a shared behaviour among
       unrelated concrete hierarchies is expressed as conformance to one interface class, not as a
