@@ -212,6 +212,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"svBitVecVal"};
               case mir::RuntimeLibraryKind::kDpiLogicChunk:
                 return std::string{"svLogicVecVal"};
+              case mir::RuntimeLibraryKind::kDpiScopeGuard:
+                return std::string{"lyra::runtime::DpiScopeGuard"};
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },

@@ -14,8 +14,11 @@ auto CurrentSlot() -> AmbientRunContext*& {
 
 }  // namespace
 
-AmbientRunContext::AmbientRunContext(Scope* root)
-    : root_(root), previous_(CurrentSlot()) {
+AmbientRunContext::AmbientRunContext(Scope* root, RuntimeServices& services)
+    : root_(root),
+      services_(&services),
+      scope_registry_(root),
+      previous_(CurrentSlot()) {
   CurrentSlot() = this;
 }
 

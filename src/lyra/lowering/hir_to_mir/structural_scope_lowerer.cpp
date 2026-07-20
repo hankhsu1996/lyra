@@ -1444,7 +1444,8 @@ auto InstallGeneratedDefinition(
       {name_lit, machine_int(static_cast<std::int64_t>(def_name.size()))});
   const mir::ExprId metadata = construct(
       mir::RuntimeLibraryKind::kScopeMetadata,
-      {def_name_ref, machine_int(cls.time_resolution.precision_power)});
+      {def_name_ref, machine_int(cls.time_resolution.unit_power),
+       machine_int(cls.time_resolution.precision_power)});
   const mir::ExprId program = construct(
       mir::RuntimeLibraryKind::kScopeProgram,
       {metadata, func_ref(resolve_abi), func_ref(init_abi),
@@ -1559,7 +1560,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                     .external =
                         mir::ExternalSymbol{
                             .foreign_name = imp.foreign_name,
-                            .is_pure = imp.is_pure}},
+                            .is_pure = imp.is_pure,
+                            .is_context = imp.is_context}},
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
   }

@@ -131,6 +131,15 @@ class Scope {
     return program_->metadata.time_precision_power;
   }
 
+  // The scope's time unit as a power of ten (LRM Table 20-2), read from its
+  // metadata: an addressable scope reports its own or inherited timescale, a
+  // scope with none of its own the unspecified sentinel. Read by the DPI
+  // `svGetTimeUnit` query and to scale `svGetTime` to the scope (LRM 35.5.3,
+  // Annex H).
+  [[nodiscard]] auto TimeUnitPower() const -> std::int8_t {
+    return program_->metadata.time_unit_power;
+  }
+
   // The post-construction elaboration phases, each a top-down walk over the
   // whole subtree. Services and structure are already wired in the
   // constructor; these install behavior that needs the whole tree to exist.

@@ -94,6 +94,8 @@ class RuntimeServices {
   // The process whose body is executing right now (LRM 9.5); the observation
   // target `wait fork` reads and a fork spawn parents its branch to.
   [[nodiscard]] auto CurrentProcess() -> RuntimeProcess&;
+  // The executing process, or null when none is executing (non-throwing).
+  [[nodiscard]] auto TryCurrentProcess() -> RuntimeProcess*;
   [[nodiscard]] auto Now() const -> SimTime;
 
   // The design-global time precision (LRM 3.14.3) the delay awaitable scales a

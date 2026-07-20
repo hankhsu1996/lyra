@@ -95,7 +95,7 @@ void Engine::ResolveGlobalTimePrecision() {
   std::int8_t min_power = kDefaultTimePrecisionPower;
   WalkScopePreOrder(*root_, [&](Scope& scope) {
     const std::int8_t power = scope.TimePrecisionPower();
-    if (power == kUnspecifiedTimePrecisionPower) {
+    if (power == kUnspecifiedTimePower) {
       return;
     }
     min_power = found ? std::min(min_power, power) : power;

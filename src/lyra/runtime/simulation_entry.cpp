@@ -35,7 +35,7 @@ auto RunDesignHost(int argc, char** argv, RootBuilder builder) -> int {
   auto root = builder(engine.Services());
   Scope* root_scope = root.get();
   engine.BindDesign(std::move(root));
-  AmbientRunContext run_context{root_scope};
+  AmbientRunContext run_context{root_scope, engine.Services()};
   return RunSimulation(engine);
 }
 

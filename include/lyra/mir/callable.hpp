@@ -36,14 +36,18 @@ struct ForeignParam {
 };
 
 // The external implementation form of a callable: a foreign linkage name plus
-// the pure property, with no SV body. A DPI-C import is realized as one
-// (LRM 35.4). `is_pure` marks an import the LRM lets the simulator treat as
-// side-effect-free (LRM 35.5.4). The source language and calling convention are
-// implicitly C, the only foreign linkage today; a second linkage adds them
-// here.
+// the pure and context properties, with no SV body. A DPI-C import is realized
+// as one (LRM 35.4). `is_pure` marks an import the LRM lets the simulator treat
+// as side-effect-free (LRM 35.5.4). `is_context` marks an import that observes
+// the instantiated scope of its declaration and may reach SV state or call an
+// exported subroutine back (LRM 35.5.3); the call site establishes that scope
+// for the duration of the foreign call. The source language and calling
+// convention are implicitly C, the only foreign linkage today; a second linkage
+// adds them here.
 struct ExternalSymbol {
   std::string foreign_name;
   bool is_pure;
+  bool is_context;
 };
 
 // A callable realized as a foreign symbol (LRM 35.4): a DPI-C import. The
