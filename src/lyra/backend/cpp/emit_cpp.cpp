@@ -674,12 +674,13 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   out += "#include <stdexcept>\n";
   out += "#include <string>\n";
   out += "#include <vector>\n";
+  out += "#include \"lyra/runtime/ambient_run_context.hpp\"\n";
   out += "#include \"lyra/runtime/coroutine.hpp\"\n";
   out += "#include \"lyra/runtime/delay.hpp\"\n";
+  out += "#include \"lyra/runtime/dpi_context.hpp\"\n";
   out += "#include \"lyra/runtime/file_table.hpp\"\n";
   out += "#include \"lyra/runtime/finish.hpp\"\n";
   out += "#include \"lyra/runtime/fork.hpp\"\n";
-  out += "#include \"lyra/runtime/ambient_run_context.hpp\"\n";
   out += "#include \"lyra/runtime/gc_ref.hpp\"\n";
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
   out += "#include \"lyra/runtime/net.hpp\"\n";

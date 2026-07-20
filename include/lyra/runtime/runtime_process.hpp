@@ -14,6 +14,7 @@ namespace lyra::runtime {
 class ExecutionContext;
 class ForeignExecution;
 class ForeignExecutionGuard;
+class Scope;
 
 enum class ProcessExecutionState : std::uint8_t {
   kCreated,
@@ -178,6 +179,35 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   auto EnterForeignExecution(CoroutineHandle continuation, ForeignExecution& fe)
       -> bool;
 
+  // The DPI current-scope chain (LRM 35.5.3). A `context` import brackets its
+  // foreign call by pushing the scope of its declaration and popping on return;
+  // `svGetScope` reads the top, `svSetScope` replaces it. The chain lives on
+  // the process, not a thread-global, so two foreign calls suspended on
+  // different processes never share one -- the invariant a shared thread-local
+  // would break once time-consuming foreign calls interleave. It is non-empty
+  // only inside a context import's foreign call.
+  void PushDpiScope(Scope* scope) {
+    dpi_scope_chain_.push_back(scope);
+  }
+  void PopDpiScope() {
+    dpi_scope_chain_.pop_back();
+  }
+  [[nodiscard]] auto CurrentDpiScope() const -> Scope* {
+    return dpi_scope_chain_.empty() ? nullptr : dpi_scope_chain_.back();
+  }
+  // `svSetScope` (LRM 35.5.3): retarget the current chain's scope, reporting
+  // the previous one. Outside any context import the chain is empty and there
+  // is no chain to retarget, so it is a no-op reporting null rather than
+  // fabricating a frame with no lifetime boundary to pop it.
+  auto ReplaceDpiScope(Scope* scope) -> Scope* {
+    if (dpi_scope_chain_.empty()) {
+      return nullptr;
+    }
+    Scope* previous = dpi_scope_chain_.back();
+    dpi_scope_chain_.back() = scope;
+    return previous;
+  }
+
   // LRM 9.7 `suspend`: revoke the active leaf's scheduler participation -- a
   // detach, no scheduler verb -- and record the suspended state. The leaf's
   // pending wait is kept if it was blocked (resume re-establishes it) and
@@ -327,6 +357,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // internally to the fiber, so its completion is not what continues the
   // process; this frame is. Null when no foreign call is outstanding.
   CoroutineHandle foreign_continuation_ = nullptr;
+  // The DPI current-scope chain (LRM 35.5.3), one frame per active context
+  // import in this process's foreign call chain. Empty outside any context
+  // import.
+  std::vector<Scope*> dpi_scope_chain_;
   ProcessExecutionState execution_state_ = ProcessExecutionState::kCreated;
   ProcessTerminationCause termination_cause_ =
       ProcessTerminationCause::kCompleted;

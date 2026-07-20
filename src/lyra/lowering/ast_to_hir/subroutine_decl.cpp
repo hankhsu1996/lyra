@@ -399,18 +399,13 @@ auto ClassifyDpiParams(
 // classification and the foreign name are resolved once here and never
 // re-derived downstream. A function or a task is accepted; a task carries no
 // return, so its `void` return classifies as `kVoid` through the same path. A
-// `context` import remains a located diagnostic, its scope surface a separate
-// concern.
+// `context` import (LRM 35.5.3) carries its context property forward; the call
+// site establishes the declaration scope around the foreign call.
 auto LowerForeignImport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<hir::ForeignImportDecl> {
   const auto& mapper = unit_lowerer.SourceMapper();
   const auto loc = mapper.PointSpanOf(sym.location);
-  if (sym.flags.has(slang::ast::MethodFlags::DPIContext)) {
-    return diag::Fail(
-        loc, diag::DiagCode::kUnsupportedDpi,
-        "DPI-C context import is not yet supported");
-  }
   const bool is_task = sym.subroutineKind == slang::ast::SubroutineKind::Task;
   auto ret_abi = ClassifyDpiScalarResult(sym.getReturnType(), loc);
   if (!ret_abi) return std::unexpected(std::move(ret_abi.error()));
@@ -425,6 +420,7 @@ auto LowerForeignImport(
       .foreign_name = ResolveImportCName(sym),
       .is_pure = sym.flags.has(slang::ast::MethodFlags::Pure),
       .is_task = is_task,
+      .is_context = sym.flags.has(slang::ast::MethodFlags::DPIContext),
       .ret_abi = *ret_abi,
       .ret_sv_type = *ret_type,
       .params = std::move(*abi_params)};

@@ -109,6 +109,11 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
           "TranslateRuntimeLibraryKind: a unit-definition record type is a "
           "compile-time constant consumed by the backend directly and does not "
           "flow through MIR-to-LIR");
+    case mir::RuntimeLibraryKind::kDpiScopeGuard:
+      throw InternalError(
+          "TranslateRuntimeLibraryKind: the DPI context scope guard is a "
+          "C++-backend marshaling artifact; the execution backend does not "
+          "consume the DPI context surface");
   }
   throw InternalError(
       "TranslateRuntimeLibraryKind: unknown RuntimeLibraryKind");
