@@ -1,0 +1,14 @@
+id: cpp.package_import_shadowing
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    local_val: 3
+    pkg_shared_after: 5
+    wildcard_val: 9
+    cross_pkg: 10

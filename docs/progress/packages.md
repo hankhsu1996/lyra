@@ -20,12 +20,14 @@ inside a package ride on the class workstream and are out of scope here.
 
 ## Actionable
 
-PK1 (compile-time contents), PK2 (the package as a first-class unit, carrying functions), and PK3
-(package variables) are done on the C++ backend: a package variable is declared with an initializer,
-initialized once at time zero before the top modules, and read and written from another unit by
-name, including from a package function or task and including waking a process on its change. A
-package task enabled from another unit suspends its caller until it completes. PK4 (the import forms
-and the LRM 26.3 name-search rules) is the next actionable step.
+PK1 (compile-time contents), PK2 (the package as a first-class unit, carrying functions), PK3
+(package variables), and PK4 (the import forms and the LRM 26.3 name-search rules) are done on the
+C++ backend: a package variable is declared with an initializer, initialized once at time zero
+before the top modules, and read and written from another unit by name, including from a package
+function or task, by explicit `pkg::item` or by a bare name brought into scope by import, and
+including waking a process on its change. A package task enabled from another unit suspends its
+caller until it completes. PK5 (`$unit`-scope declarations) is the next actionable step. The
+remaining PK2 and PK3 increments (checkboxes below) are independent follow-ups.
 
 ## Sub-Steps
 
@@ -47,9 +49,11 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       namespace of free functions, and a package function whose signature or body names a
       package-declared enum or typedef resolves it against the namespace's own type declarations,
       emitted into the namespace. Input arguments and the return value work, and one package
-      function calls a sibling in the same package. Remaining increments: a package function with an
-      output / inout / ref argument; and a DPI-C import declared inside a package (LRM 35.4), which
-      is rejected with a diagnostic rather than mis-emitted.
+      function calls a sibling in the same package.
+  - [ ] A package subroutine with an output / inout / ref argument, whose by-reference formal is
+        marshalled across the unit boundary.
+  - [ ] A DPI-C import declared inside a package (LRM 35.4), which is rejected with a diagnostic
+        rather than mis-emitted.
 - [x] PK3 -- Package variables. A package variable is static storage owned by the namespace -- one
       program-global cell, shared, not a member of any instance -- read and written from other units
       by name. It is the same type-associated storage a class static property uses, not a
@@ -64,16 +68,22 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       relative order of initializers is unspecified by the LRM; the design root picks a stable,
       best-effort order (a dependency before its dependent where a direct read makes it known) as a
       quality-of-implementation choice, and an unknown or cyclic dependency degrades to reading a
-      default, never a crash. Remaining increments: an initializer read reached through a called
-      function does not yet contribute to the preferred order; and two packages that reference each
-      other's symbols still produce circular emitted headers (a header-only emission limit, shared
-      with cross-package subroutine calls, not specific to variables).
-- [ ] PK4 -- The `import` forms for the remaining item kinds and the LRM 26.3 name-search and
+      default, never a crash.
+  - [ ] An initializer read reached through a called function contributes to the preferred
+        initialization order.
+  - [ ] Two packages that reference each other's symbols emit non-circular headers (a header-only
+        emission limit, shared with cross-package subroutine calls, not specific to variables).
+- [x] PK4 -- The `import` forms for the remaining item kinds and the LRM 26.3 name-search and
       shadowing rules. An import brings a name into a scope's lookup; it does not create a new kind
       of reference, so a name resolved through an import lowers identically to the explicit
       `pkg::item` form. Import of compile-time contents is covered by PK1; this item covers import
-      of the callable and variable entities once PK2 and PK3 exist, plus the search-order and
-      shadowing rules.
+      of the callable and variable entities. A package variable (read and write), a package
+      function, and a package task reached by a bare name after explicit `import pkg::item` or
+      wildcard `import pkg::*` behave exactly as under explicit scope resolution. A local
+      declaration shadows a wildcard-imported name, and a package imports another package's symbols
+      the same way a module does. The frontend resolves every import and enforces the search-order,
+      shadowing, and collision rules before lowering, so a bare imported name arrives already bound
+      to its package member.
 - [ ] PK5 -- `$unit`-scope declarations (LRM 3.12.1): declarations outside any design element,
       visible across the compilation-unit file set. Modeled as an implicit anonymous package so they
       ride the same unit, by-name reference, storage, and callable mechanisms as a named package; no
@@ -81,7 +91,7 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
 
 ## Blocked
 
-Nothing blocked. PK4 is actionable now.
+Nothing blocked. PK5 is actionable now.
 
 ## Out of Scope
 
