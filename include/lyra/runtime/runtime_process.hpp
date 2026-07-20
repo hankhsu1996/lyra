@@ -12,6 +12,8 @@
 namespace lyra::runtime {
 
 class ExecutionContext;
+class ForeignExecution;
+class ForeignExecutionGuard;
 
 enum class ProcessExecutionState : std::uint8_t {
   kCreated,
@@ -34,6 +36,29 @@ enum class ProcessTerminationCause : std::uint8_t {
   // KILLED.
   kKilled,
 };
+
+// The sentinel that unwinds the calling process's own body to the engine's
+// resume boundary. A running frame cannot be destroyed synchronously, so `kill`
+// / `disable` targeting the calling process records the terminal cause and
+// throws this: the body's destructors run and control returns to the resume
+// boundary, where the terminal state is published and the frame released.
+//
+// It is structured control flow, not an error: no base, no message, thrown only
+// by `UnwindForProcessTermination` after a termination request is recorded, and
+// consumed only at the resume boundary under that pending request. It travels
+// the coroutine's completion channel (the promise's unhandled-exception slot),
+// not a `catch` around a resume. It must never cross a boundary the runtime
+// does not own: a foreign (`extern "C"`) frame has no C++ unwind contract, so a
+// termination that must pass through foreign code uses the LRM cooperative
+// return protocol to reach a simulator-owned boundary first, and only unwinds
+// there.
+struct ProcessTerminationUnwind final {};
+
+// The sole throw site for the termination sentinel, so every delivery is one
+// auditable point. Call only after the termination cause has been recorded.
+[[noreturn]] inline void UnwindForProcessTermination() {
+  throw ProcessTerminationUnwind{};
+}
 
 // A node of the dynamic process lineage (LRM 9.5) and, while its body runs, the
 // owner of the coroutine frame executing it. The two lifetimes are distinct:
@@ -133,10 +158,25 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   void BlockLeaf(CoroutineHandle leaf, PendingWait* wait) {
     current_leaf_ = leaf;
     leaf->pending_wait = wait;
+    // The vehicle carrying this thread when it blocks is the vehicle the
+    // scheduler must drive to resume it. It is retained past the block (unlike
+    // the registration), because resume runs from another process's context
+    // where the ambient vehicle is that caller's, not this leaf's.
+    resume_target_ = current_foreign_execution_;
   }
   [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
     return current_leaf_;
   }
+
+  // Enters `fe` -- the foreign call the SV frame `continuation` is making --
+  // and drives it to its first suspension or its return. `continuation` is the
+  // frame to resume once the whole foreign call returns. Returns true if the
+  // call returned without suspending (the caller continues inline), false if it
+  // suspended across the boundary (an inner SV frame blocked and snapshotted
+  // `fe` as its resume vehicle, so the scheduler resumes it later). The caller
+  // owns `fe` and must keep it alive until the call returns.
+  auto EnterForeignExecution(CoroutineHandle continuation, ForeignExecution& fe)
+      -> bool;
 
   // LRM 9.7 `suspend`: revoke the active leaf's scheduler participation -- a
   // detach, no scheduler verb -- and record the suspended state. The leaf's
@@ -191,11 +231,43 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // own children but still linked to its parent; the caller drops that link.
   void TerminateSubtreeKilled(std::vector<CoroutineHandle>& woken);
 
+  // Terminates this subtree (LRM 9.7 `kill` / LRM 9.6 `disable`) when it
+  // contains `running` -- the calling process, whose frame is executing and so
+  // cannot be destroyed synchronously. Every off-path subtree is killed and
+  // severed synchronously as usual; the single chain of nodes from this one
+  // down to `running` is settled but kept linked, so `running` stays owned
+  // until it unwinds to its safe boundary. `running` itself is only
+  // termination-requested (phase 1), not settled: its terminal state is
+  // published, and the whole retained chain released, when its body reaches the
+  // resume boundary. The caller unwinds `running` after this returns.
+  void TerminateSubtreeDeferringRunning(
+      RuntimeProcess& running, std::vector<CoroutineHandle>& woken);
+
   // Whether `other` is this process or a descendant of it -- i.e. whether
   // terminating this subtree would tear down `other`'s frame. `kill` consults
-  // it against the calling process to reject killing the running frame.
+  // it against the calling process to route it to the deferred self / ancestor
+  // path.
   [[nodiscard]] auto IsSelfOrAncestorOf(const RuntimeProcess& other) const
       -> bool;
+
+  // Phase 1 of a deferred, safe-boundary termination (LRM 9.6 / 9.7): the
+  // calling process cannot destroy the frame it is running in, so termination
+  // is split. This records the terminal cause and revokes the leaf's scheduler
+  // participation -- nothing can wake it -- but does NOT publish the terminal
+  // state or drain waiters, because the body is still going to run its unwind.
+  // The terminal state, frame release, and waiter drain happen atomically later
+  // (phase 2), when the body has unwound to a safe boundary.
+  // Publishing nothing here is the point: an observer of `status()` or a
+  // termination waiter never sees the process terminated while its body may
+  // still run user code. Exactly-once -- a re-request on an already-requested
+  // or terminated process is a no-op.
+  void RequestTermination(ProcessTerminationCause cause);
+
+  // Whether a deferred termination has been requested but not yet published --
+  // the window between phase 1 and phase 2, during which the body unwinds.
+  [[nodiscard]] auto TerminationRequested() const -> bool {
+    return termination_requested_;
+  }
 
   // Unlinks this process from its parent's lineage, dropping the parent's
   // ownership of it (a surviving `process` handle keeps the node alive as a
@@ -212,6 +284,17 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   static void ReleaseTerminatedLineage(RuntimeProcess& process);
 
  private:
+  // The guard is the sole writer of the ambient foreign-execution vehicle,
+  // which it sets and restores around a foreign call.
+  friend class ForeignExecutionGuard;
+
+  // Drives `fe` for one stretch -- into its next suspension or its return --
+  // with the foreign-execution context installed for its duration, so an inner
+  // frame that blocks snapshots `fe` as its resume vehicle. Returns whether the
+  // call has returned. Every drive goes through here so that installation can
+  // never be forgotten.
+  auto DriveForeignVehicle(ForeignExecution& fe) -> bool;
+
   // The one indivisible terminal transition, and the sole writer of the
   // terminal state: a body can never be marked terminated while it still owns
   // the frame it ran in, nor terminated without its own `await` waiters being
@@ -231,9 +314,25 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // non-executing process has exactly one active leaf). Starts at the top frame
   // and follows the innermost parked frame as waits block it.
   CoroutineHandle current_leaf_ = nullptr;
+  // The foreign execution this thread is running under right now, valid only
+  // while a foreign call is on the stack; the guard sets and clears it. Null
+  // outside any foreign call, which is every plain-coroutine process.
+  ForeignExecution* current_foreign_execution_ = nullptr;
+  // The vehicle the scheduler drives to resume the active leaf, snapshotted
+  // from the ambient foreign execution when the leaf blocks and retained until
+  // it blocks again. Null means resume the coroutine frame directly.
+  ForeignExecution* resume_target_ = nullptr;
+  // The SV frame to resume once the outermost foreign call returns -- the
+  // import frame that entered it. An exported task suspends and completes
+  // internally to the fiber, so its completion is not what continues the
+  // process; this frame is. Null when no foreign call is outstanding.
+  CoroutineHandle foreign_continuation_ = nullptr;
   ProcessExecutionState execution_state_ = ProcessExecutionState::kCreated;
   ProcessTerminationCause termination_cause_ =
       ProcessTerminationCause::kCompleted;
+  // Set when a deferred termination is requested (phase 1) and consumed at the
+  // resume boundary (phase 2): pending while the body unwinds.
+  bool termination_requested_ = false;
   RuntimeProcess* parent_ = nullptr;
   std::vector<std::shared_ptr<RuntimeProcess>> children_;
   // The `wait fork` condition holds at most one activation: the frame that

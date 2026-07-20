@@ -344,6 +344,12 @@ enum class BuiltinFn : std::uint16_t {
   kWriteCanonicalBitVec,
   kWriteCanonicalLogicVec,
   kDpiBufferData,
+  // Runs an exported SV task's coroutine body to completion synchronously and
+  // yields its completion payload. A foreign C caller of an exported task (LRM
+  // 35.8) is not a coroutine and cannot await the task body, so its wrapper
+  // enters the body through this runtime driver instead of the `co_await` an SV
+  // enabler uses. A free function over the task's coroutine value.
+  kRunExportedTaskToCompletion,
   kFromInt,
   kConvertFrom,
   kFromPackedArray,

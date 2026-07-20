@@ -1,0 +1,13 @@
+id: cpp.process_self_kill
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pre_kill: 1
+    post_kill: 0
+    killed_ok: 1

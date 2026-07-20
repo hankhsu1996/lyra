@@ -76,6 +76,14 @@ class TypeInterner {
     return std::holds_alternative<CoroutineType>(Get(id).data);
   }
 
+  // The value a coroutine completes with -- the payload the await protocol
+  // yields, read off the coroutine result type. A consumer that must reach past
+  // the call protocol to the completed value (an export wrapper driving a task
+  // to completion outside that protocol) reads it here.
+  [[nodiscard]] auto CoroutinePayload(TypeId id) const -> TypeId {
+    return std::get<CoroutineType>(Get(id).data).payload;
+  }
+
   auto PointerTo(
       TypeId pointee, PointerOwnership ownership,
       Mutability mutability = Mutability::kMutable) -> TypeId {

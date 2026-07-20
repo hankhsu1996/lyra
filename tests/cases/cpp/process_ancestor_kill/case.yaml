@@ -1,0 +1,14 @@
+id: cpp.process_ancestor_kill
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    inner_pre: 1
+    inner_post: 0
+    outer_post: 0
+    outer_killed: 1

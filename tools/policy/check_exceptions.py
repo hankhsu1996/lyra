@@ -50,6 +50,14 @@ RE_BUG_REPORT_STRING = re.compile(r'"[^"\n]*(?:Please report|This is a bug|githu
 # Files allowed to contain bug report messages
 BUG_REPORT_ALLOWLIST = frozenset({"include/lyra/base/internal_error.hpp"})
 
+# The one sanctioned control-flow throw: the process-termination sentinel, which
+# unwinds a running coroutine to its safe boundary (no non-throw C++ mechanism
+# exists for that). It is confined to a single throw site so it stays auditable;
+# only that file may throw it, and only this exact expression.
+TERMINATION_UNWIND_ALLOWLIST = frozenset(
+    {"include/lyra/runtime/runtime_process.hpp"})
+RE_TERMINATION_SENTINEL = re.compile(r'^ProcessTerminationUnwind\s*\{\s*\}$')
+
 
 def get_repo_root() -> Path:
     result = subprocess.run(
@@ -135,6 +143,9 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
     for match in RE_THROW_STMT.finditer(content):
         thrown_expr = match.group(1).strip()
         if RE_INTERNAL_ERROR.search(thrown_expr):
+            continue
+        if (filepath in TERMINATION_UNWIND_ALLOWLIST
+                and RE_TERMINATION_SENTINEL.match(thrown_expr)):
             continue
         line = offset_to_line(original, match.start())
         snippet = thrown_expr.replace('\n', ' ')[:40]
