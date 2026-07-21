@@ -6,6 +6,7 @@ namespace slang::ast {
 class ClassType;
 class InstanceBodySymbol;
 class InstanceSymbol;
+class Symbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -35,5 +36,16 @@ auto SpecializationName(const slang::ast::InstanceSymbol& inst) -> std::string;
 // names. Bare `C` and empty-override `C #()` resolve to the same slang
 // ClassType and thus name the same specialization.
 auto SpecializationName(const slang::ast::ClassType& cls) -> std::string;
+
+// The name a compilation unit publishes for itself, so a consumer reaching one
+// of its members by name and the unit emitting that member agree with no shared
+// table (LRM 26.3). A package publishes its declared name; a module body its
+// specialization name. An anonymous compilation-unit scope (the LRM 3.12.1
+// `$unit` file-set scope, modeled as a namespace unit with no source name)
+// publishes a name derived from its own source-input identity: the only
+// property distinguishing two such scopes is which compilation-unit input they
+// belong to, which the LRM uses to define the scope boundary itself. Both the
+// producer and every consumer compute this from the same slang unit symbol.
+auto CompilationUnitName(const slang::ast::Symbol& unit) -> std::string;
 
 }  // namespace lyra::lowering::ast_to_hir

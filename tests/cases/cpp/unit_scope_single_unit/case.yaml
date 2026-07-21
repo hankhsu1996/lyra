@@ -1,0 +1,13 @@
+id: cpp.unit_scope_single_unit
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [a.sv, b.sv]
+  args: [--single-unit]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      42

@@ -32,6 +32,7 @@
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -167,21 +168,24 @@ auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
   return std::nullopt;
 }
 
-// The package a subroutine is declared directly in (LRM 26.2), or null when the
-// subroutine belongs to this compilation unit. A package subroutine's target
-// lives across the unit boundary and is reached by name, not through an
-// enclosing-scope binding of this unit.
-auto EnclosingPackage(const slang::ast::SubroutineSymbol& sym)
-    -> const slang::ast::PackageSymbol* {
+// The unit a subroutine is declared directly in when that unit is reached by
+// name across the boundary -- a package (LRM 26.2) or the anonymous `$unit`
+// scope (LRM 3.12.1) -- or null when the subroutine belongs to this compilation
+// unit. Such a target is a receiver-less callable reached by name, not through
+// an enclosing-scope binding of this unit. The returned symbol is the declaring
+// unit, from which the caller computes its published name.
+auto DeclaringUnitOfSubroutine(const slang::ast::SubroutineSymbol& sym)
+    -> const slang::ast::Symbol* {
   const slang::ast::Scope* scope = sym.getParentScope();
   if (scope == nullptr) {
     return nullptr;
   }
   const slang::ast::Symbol& owner = scope->asSymbol();
-  if (owner.kind != slang::ast::SymbolKind::Package) {
+  if (owner.kind != slang::ast::SymbolKind::Package &&
+      owner.kind != slang::ast::SymbolKind::CompilationUnit) {
     return nullptr;
   }
-  return &owner.as<slang::ast::PackageSymbol>();
+  return &owner;
 }
 
 }  // namespace
@@ -684,16 +688,16 @@ auto LowerCallExpr(
     };
   }
 
-  // A subroutine declared in a package belongs to another compilation unit
-  // (LRM 26.3). It is reached by name across the unit boundary rather than
-  // through an enclosing-scope binding of this unit.
-  if (const auto* pkg = EnclosingPackage(*sym)) {
+  // A subroutine declared in a package or the `$unit` scope belongs to another
+  // compilation unit (LRM 26.3 / 3.12.1). It is reached by name across the unit
+  // boundary rather than through an enclosing-scope binding of this unit.
+  if (const auto* unit = DeclaringUnitOfSubroutine(*sym)) {
     for (const auto* formal : sym->getArguments()) {
       if (formal->direction != slang::ast::ArgumentDirection::In) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedExpressionForm,
-            "package subroutine with output / inout / ref arguments is not yet "
-            "supported");
+            "a subroutine reached across a unit boundary with an output / "
+            "inout / ref argument is not yet supported");
       }
     }
     auto result_type = unit_lowerer.InternType(*call.type, span);
@@ -704,7 +708,7 @@ auto LowerCallExpr(
             hir::CallExpr{
                 .callee =
                     hir::ExternalUnitSubroutineRef{
-                        .unit_name = std::string{pkg->name},
+                        .unit_name = CompilationUnitName(*unit),
                         .subroutine_name = std::string{sym->name},
                         .kind = ToHirSubroutineKind(sym->subroutineKind)},
                 .arguments = std::move(arg_ids)},
