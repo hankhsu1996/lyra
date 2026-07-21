@@ -141,6 +141,10 @@ the detail lives in the entry itself.
   namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
   consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all
   rejected.
+- [interface-conformance-realization](interface-conformance-realization.md) -- inherited interface
+  satisfaction (LRM 8.26.2) is resolved at AST-to-HIR and realized as a synthesized forwarding
+  method (backend renders, never fabricates); the full method-to-slots dispatch representation is
+  deferred until a physical-vtable backend reads it.
 - [generated-behavior-boundary](generated-behavior-boundary.md) -- generated behavior reaches the
   runtime through an explicit, backend-neutral per-specialization unit definition (native lifecycle
   entries + a method dispatch table + constant metadata), not a backend-language object ABI; the C++

@@ -17,3 +17,7 @@ expect:
     byte_get_value: 12
     derived_tag_direct: 100
     derived_tag_via_named: 100
+    derived_tag_via_tagged: 100
+    mderived_tag_direct: 200
+    mderived_tag_via_named: 200
+    mderived_tag_via_tagged: 200
