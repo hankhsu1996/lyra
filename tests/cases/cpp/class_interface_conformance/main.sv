@@ -33,6 +33,12 @@ package pkg;
     pure virtual function int tag();
   endclass
 
+  // Same-signature contract as Named: one inherited implementation satisfies
+  // both (LRM 8.26.6.1), exercising adapter deduplication by implementation.
+  interface class Tagged;
+    pure virtual function int tag();
+  endclass
+
   class Base;
     virtual function int tag();
       return 100;
@@ -67,10 +73,20 @@ module Top;
   endclass
 
   // Inherited satisfaction (LRM 8.26.2): Base has `virtual function int
-  // tag()`, and `pkg::Named` requires `pure virtual function int tag()`. The
-  // implementation is inherited from Base; Derived does not need to redefine
-  // it.
-  class Derived extends pkg::Base implements pkg::Named;
+  // tag()`, and `pkg::Named` / `pkg::Tagged` each require `pure virtual
+  // function int tag()`. The implementation is inherited from Base; Derived
+  // does not redefine it, and one inherited method satisfies both same-name
+  // contracts (LRM 8.26.6.1).
+  class Derived extends pkg::Base implements pkg::Named, pkg::Tagged;
+  endclass
+
+  // A further-derived class overrides the inherited-satisfied method. Dispatch
+  // through every handle -- the concrete base, each interface, and the
+  // subclass -- must reach the most-derived override.
+  class MoreDerived extends Derived;
+    virtual function int tag();
+      return 200;
+    endfunction
   endclass
 
   int cell_direct_get;
@@ -83,15 +99,21 @@ module Top;
   int byte_get_value;
   int derived_tag_direct;
   int derived_tag_via_named;
+  int derived_tag_via_tagged;
+  int mderived_tag_direct;
+  int mderived_tag_via_named;
+  int mderived_tag_via_tagged;
 
   initial begin
     Cell c;
     ByteCell bc;
     Derived d;
+    MoreDerived md;
     pkg::Putter #(int) put_ref;
     pkg::Getter #(int) get_ref;
     pkg::PutGet #(int) putget_ref;
     pkg::Named named_ref;
+    pkg::Tagged tagged_ref;
     pkg::Getter #(byte) byte_get_ref;
 
     c = new;
@@ -122,5 +144,17 @@ module Top;
     derived_tag_direct = d.tag();
     named_ref = d;
     derived_tag_via_named = named_ref.tag();
+    tagged_ref = d;
+    derived_tag_via_tagged = tagged_ref.tag();
+
+    // A further-derived override dispatches to the most-derived method through
+    // every handle -- direct and each interface (LRM 8.26.2: a subclass of an
+    // implementing class also implements the interface).
+    md = new;
+    mderived_tag_direct = md.tag();
+    named_ref = md;
+    mderived_tag_via_named = named_ref.tag();
+    tagged_ref = md;
+    mderived_tag_via_tagged = tagged_ref.tag();
   end
 endmodule

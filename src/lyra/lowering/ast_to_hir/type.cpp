@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -14,6 +15,7 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -583,6 +585,165 @@ auto SynthesizeDefaultConstructor(hir::TypeId void_type, diag::SourceSpan span)
       .overrides = std::nullopt};
 }
 
+// Builds the forwarding method for one interface pure virtual method a class
+// satisfies through an inherited concrete-base method rather than a local
+// definition (LRM 8.26.2). Its dispatch role names the interface slot it fills;
+// its body forwards to the inherited implementation through a `super`-qualified
+// call, so a backend renders it as an ordinary method rather than fabricating
+// the forward.
+auto BuildInterfaceForwardingMethod(
+    UnitLowerer& unit_lowerer, diag::SourceSpan span,
+    const slang::ast::ClassType& iface_cls,
+    const slang::ast::MethodPrototypeSymbol& proto,
+    const slang::ast::SubroutineSymbol& impl)
+    -> diag::Result<hir::SubroutineDecl> {
+  auto result_type_or = unit_lowerer.InternType(impl.getReturnType(), span);
+  if (!result_type_or) {
+    return std::unexpected(std::move(result_type_or.error()));
+  }
+  const hir::TypeId result_type = *result_type_or;
+
+  hir::ProceduralBody body;
+  std::vector<hir::SubroutineParam> params;
+  std::vector<std::optional<hir::ExprId>> args;
+  for (const auto* formal : impl.getArguments()) {
+    if (formal->direction != slang::ast::ArgumentDirection::In) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedClassFeature,
+          "an interface method satisfied by an inherited implementation with "
+          "an output / inout / ref argument is not yet supported");
+    }
+    auto param_type_or = unit_lowerer.InternType(formal->getType(), span);
+    if (!param_type_or) {
+      return std::unexpected(std::move(param_type_or.error()));
+    }
+    const hir::ProceduralVarId var = body.procedural_vars.Add(
+        hir::ProceduralVarDecl{
+            .name = std::string{formal->name}, .type = *param_type_or});
+    params.push_back(
+        hir::SubroutineParam{
+            .var = var, .direction = hir::ParamDirection::kInput});
+    args.push_back(body.exprs.Add(
+        hir::Expr{
+            .type = *param_type_or,
+            .data = hir::PrimaryExpr{hir::ProceduralVarRef{.var = var}},
+            .span = span}));
+  }
+
+  std::optional<hir::ProceduralVarId> result_var;
+  if (!impl.getReturnType().isVoid()) {
+    result_var = body.procedural_vars.Add(
+        hir::ProceduralVarDecl{.name = "forward_result", .type = result_type});
+  }
+
+  const auto& impl_class =
+      impl.getParentScope()->asSymbol().as<slang::ast::ClassType>();
+  auto impl_ref = unit_lowerer.ResolveClassRef(impl_class, span);
+  if (!impl_ref) return std::unexpected(std::move(impl_ref.error()));
+  const hir::ExprId call = body.exprs.Add(
+      hir::Expr{
+          .type = result_type,
+          .data =
+              hir::CallExpr{
+                  .callee =
+                      hir::MethodCallRef{
+                          .receiver = hir::SuperReceiver{},
+                          .target = unit_lowerer.MakeClassMethodTarget(
+                              *impl_ref, impl)},
+                  .arguments = std::move(args)},
+          .span = span});
+  const hir::StmtId ret = body.stmts.Add(
+      hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::ReturnStmt{.value = call},
+          .span = span});
+  body.root_stmt = body.stmts.Add(
+      hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::BlockStmt{.statements = {ret}, .scope = std::nullopt},
+          .span = span});
+
+  auto iface_ref = unit_lowerer.ResolveClassRef(iface_cls, span);
+  if (!iface_ref) return std::unexpected(std::move(iface_ref.error()));
+  const auto* proto_stub = proto.getSubroutine();
+  if (proto_stub == nullptr) {
+    throw InternalError(
+        "BuildInterfaceForwardingMethod: interface pure virtual prototype "
+        "has no stub subroutine slang normally materializes");
+  }
+
+  return hir::SubroutineDecl{
+      .name = std::string{proto.name},
+      .kind = hir::SubroutineKind::kFunction,
+      .result_type = result_type,
+      .params = std::move(params),
+      .result_var = result_var,
+      .body = std::move(body),
+      .is_virtual = true,
+      .is_prototype = false,
+      .is_static = false,
+      .overrides = unit_lowerer.MakeClassMethodTarget(*iface_ref, *proto_stub)};
+}
+
+// Synthesizes forwarding methods for every interface pure virtual method a
+// class satisfies by inheriting a concrete-base implementation with no local
+// override (LRM 8.26.2). C++ multiple inheritance does not let one sibling
+// base's method override another's, so without the forward the class stays
+// abstract and a call through it is ambiguous. One forwarding method per
+// inherited implementation: a single method satisfying several same-name
+// interface slots (LRM 8.26.6.1) forwards once, and the target language's
+// implicit override fills the remaining slots.
+auto SynthesizeInterfaceForwardingMethods(
+    UnitLowerer& unit_lowerer, const slang::ast::ClassType& cls,
+    diag::SourceSpan span, hir::ClassDecl& decl) -> diag::Result<void> {
+  // An interface class only aggregates contracts (LRM 8.26); it carries no
+  // implementation to forward to, so it never bridges. Its `extends` parents
+  // are pure prototypes, not satisfiers.
+  if (cls.isInterface) return {};
+  std::set<const slang::ast::SubroutineSymbol*> bridged;
+  for (const auto* iface_type : cls.getDeclaredInterfaces()) {
+    const auto& iface_cls =
+        iface_type->getCanonicalType().as<slang::ast::ClassType>();
+    for (const auto& member : iface_cls.members()) {
+      const slang::ast::Symbol* unwrapped = &member;
+      if (member.kind == slang::ast::SymbolKind::TransparentMember) {
+        unwrapped = &member.as<slang::ast::TransparentMemberSymbol>().wrapped;
+      }
+      if (unwrapped->kind != slang::ast::SymbolKind::MethodPrototype) continue;
+      const auto& proto = unwrapped->as<slang::ast::MethodPrototypeSymbol>();
+      if (!proto.flags.has(slang::ast::MethodFlags::Pure)) continue;
+
+      const slang::ast::Symbol* found = cls.find(proto.name);
+      if (found == nullptr ||
+          found->kind != slang::ast::SymbolKind::Subroutine) {
+        continue;
+      }
+      const auto& impl = found->as<slang::ast::SubroutineSymbol>();
+      // A locally-defined satisfier is wired by the class's own method loop;
+      // only an inherited implementation needs a bridge.
+      if (impl.getParentScope() ==
+          static_cast<const slang::ast::Scope*>(&cls)) {
+        continue;
+      }
+      // The satisfier must be a real implementation. A pure prototype declared
+      // in an interface base carries no body to forward to (only reachable for
+      // a still-abstract virtual class); it is not a satisfier.
+      const auto& impl_owner = impl.getParentScope()->asSymbol();
+      if (impl_owner.kind == slang::ast::SymbolKind::ClassType &&
+          impl_owner.as<slang::ast::ClassType>().isInterface) {
+        continue;
+      }
+      if (!bridged.insert(&impl).second) continue;
+
+      auto method_or = BuildInterfaceForwardingMethod(
+          unit_lowerer, span, iface_cls, proto, impl);
+      if (!method_or) return std::unexpected(std::move(method_or.error()));
+      decl.methods.Add(*std::move(method_or));
+    }
+  }
+  return {};
+}
+
 // Walks a class's parent-scope chain to find the compilation-unit-level
 // symbol that owns its declaration -- a package (LRM 26), a module body
 // (LRM 23.2), or an interface body (LRM 25). A class nested in another
@@ -926,6 +1087,15 @@ auto UnitLowerer::InternLocalClass(
     if (const auto* proto_stub = proto.getSubroutine(); proto_stub != nullptr) {
       RegisterMethodId(*proto_stub, method_id);
     }
+  }
+
+  // Forward every interface pure virtual this class satisfies by inheritance
+  // rather than a local definition (LRM 8.26.2); a locally-satisfied contract
+  // is already wired by the method loop above.
+  if (auto forwards =
+          SynthesizeInterfaceForwardingMethods(*this, cls, span, decl);
+      !forwards) {
+    return std::unexpected(std::move(forwards.error()));
   }
 
   hir::SubroutineDecl constructor =
