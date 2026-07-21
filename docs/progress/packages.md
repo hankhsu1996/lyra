@@ -21,13 +21,14 @@ inside a package ride on the class workstream and are out of scope here.
 ## Actionable
 
 PK1 (compile-time contents), PK2 (the package as a first-class unit, carrying functions), PK3
-(package variables), and PK4 (the import forms and the LRM 26.3 name-search rules) are done on the
-C++ backend: a package variable is declared with an initializer, initialized once at time zero
-before the top modules, and read and written from another unit by name, including from a package
-function or task, by explicit `pkg::item` or by a bare name brought into scope by import, and
-including waking a process on its change. A package task enabled from another unit suspends its
-caller until it completes. PK5 (`$unit`-scope declarations) is the next actionable step. The
-remaining PK2 and PK3 increments (checkboxes below) are independent follow-ups.
+(package variables), PK4 (the import forms and the LRM 26.3 name-search rules), and PK5
+(`$unit`-scope declarations) are done on the C++ backend: a package or `$unit`-scope variable is
+declared with an initializer, initialized once at time zero before the top modules, and read and
+written from another unit by name, including from a package function or task, by explicit
+`pkg::item` or by a bare name (brought into scope by import, or lying at `$unit` scope), and
+including waking a process on its change. A package or `$unit` task enabled from another unit
+suspends its caller until it completes. The remaining PK2 and PK3 increments (checkboxes below) are
+the independent follow-ups.
 
 ## Sub-Steps
 
@@ -84,14 +85,22 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       the same way a module does. The frontend resolves every import and enforces the search-order,
       shadowing, and collision rules before lowering, so a bare imported name arrives already bound
       to its package member.
-- [ ] PK5 -- `$unit`-scope declarations (LRM 3.12.1): declarations outside any design element,
-      visible across the compilation-unit file set. Modeled as an implicit anonymous package so they
-      ride the same unit, by-name reference, storage, and callable mechanisms as a named package; no
-      second scope system.
+- [x] PK5 -- `$unit`-scope declarations (LRM 3.12.1): declarations outside any design element. A
+      `$unit`-scope variable (read and write), function, and task reached from a design element by a
+      bare name behave exactly as their package-scoped counterparts, including waking a process on
+      the variable's change and suspending a caller across a `$unit` task. They are modeled as an
+      anonymous namespace unit -- the same rootless unit a package is, with no source name of its
+      own -- so the by-name reference, storage, callable, and two-pass initialization mechanisms are
+      shared with a named package; there is no second scope system. The unit publishes a name
+      derived from its compilation-unit input identity, so the referrer and the emitted definition
+      agree with no shared table, whether the file set compiles as one unit (a single `$unit`
+      visible across every file) or per file (each file its own `$unit`). A class declared at
+      `$unit` scope rides the class workstream and is out of scope here, as its package-scoped
+      counterpart is.
 
 ## Blocked
 
-Nothing blocked. PK5 is actionable now.
+Nothing blocked. The remaining PK2 and PK3 increment checkboxes are the actionable follow-ups.
 
 ## Out of Scope
 

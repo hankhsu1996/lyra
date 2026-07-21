@@ -34,6 +34,7 @@
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -503,10 +504,11 @@ auto UnitLowerer::TranslateSensitivityReads(
     const std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint =
         read_type.isIntegral() && !read_type.isEnum() ? read.footprint
                                                       : std::nullopt;
-    // A package variable is watched the same way, but by name: it has no
-    // reader-relative route, so it wakes the process through a reference to its
-    // one program-global cell (LRM 26.2), the observation dual of reading it.
-    if (const auto* pkg = EnclosingPackageOfValue(*value)) {
+    // A variable owned by another unit's namespace is watched the same way, but
+    // by name: it has no reader-relative route, so it wakes the process through
+    // a reference to its one program-global cell (LRM 26.2 / 3.12.1), the
+    // observation dual of reading it.
+    if (const auto* unit = DeclaringUnitOfValue(*value)) {
       auto value_type =
           InternType(read_type, SourceMapper().PointSpanOf(value->location));
       if (!value_type) continue;
@@ -514,7 +516,7 @@ auto UnitLowerer::TranslateSensitivityReads(
           hir::SensitivityEntry{
               .ref =
                   hir::ExternalUnitValueRef{
-                      .unit_name = std::string{pkg->name},
+                      .unit_name = CompilationUnitName(*unit),
                       .variable_name = std::string{value->name},
                       .value_type = *value_type},
               .footprint = footprint});

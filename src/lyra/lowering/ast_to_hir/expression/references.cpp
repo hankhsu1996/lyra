@@ -25,6 +25,7 @@
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
+#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -256,19 +257,21 @@ auto RouteRefExpr(
       route);
 }
 
-// Lowers a reference to a package variable as an `ExternalUnitValueRef` naming
-// the package and the variable. The same by-name form serves a referrer in
-// another unit and the package's own callable reading its own variable; neither
-// has a receiver to route through.
+// Lowers a reference to a variable owned by another unit's namespace as an
+// `ExternalUnitValueRef` naming that unit and the variable. The same by-name
+// form serves a referrer in another unit and the owning unit's own callable
+// reading its own variable; neither has a receiver to route through. The unit
+// is a package or the anonymous `$unit` scope, already resolved to its
+// published name by the caller.
 auto LowerExternalUnitValueRef(
-    UnitLowerer& unit_lowerer, const slang::ast::PackageSymbol& pkg,
+    UnitLowerer& unit_lowerer, std::string unit_name,
     const slang::ast::ValueSymbol& value, const slang::ast::Type& type,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::MakeRefExpr(
       hir::ExternalUnitValueRef{
-          .unit_name = std::string{pkg.name},
+          .unit_name = std::move(unit_name),
           .variable_name = std::string{value.name},
           .value_type = *type_id},
       *type_id, span);
@@ -296,13 +299,16 @@ auto LowerStructuralSignalRef(
 
 }  // namespace
 
-auto EnclosingPackageOfValue(const slang::ast::ValueSymbol& value)
-    -> const slang::ast::PackageSymbol* {
+auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
+    -> const slang::ast::Symbol* {
   const slang::ast::Scope* scope = value.getParentScope();
   if (scope == nullptr) return nullptr;
   const slang::ast::Symbol& owner = scope->asSymbol();
-  if (owner.kind != slang::ast::SymbolKind::Package) return nullptr;
-  return &owner.as<slang::ast::PackageSymbol>();
+  if (owner.kind != slang::ast::SymbolKind::Package &&
+      owner.kind != slang::ast::SymbolKind::CompilationUnit) {
+    return nullptr;
+  }
+  return &owner;
 }
 
 auto LowerNamedValueProc(
@@ -341,9 +347,9 @@ auto LowerNamedValueProc(
             hir::ProceduralVarRef{.var = *local}, type, span);
       }
       const auto& value = sym.as<slang::ast::ValueSymbol>();
-      if (const auto* pkg = EnclosingPackageOfValue(value)) {
+      if (const auto* unit = DeclaringUnitOfValue(value)) {
         return LowerExternalUnitValueRef(
-            unit_lowerer, *pkg, value, *named.type, span);
+            unit_lowerer, CompilationUnitName(*unit), value, *named.type, span);
       }
       return LowerStructuralSignalRef(
           unit_lowerer, frame, value, *named.type, span);
@@ -398,9 +404,9 @@ auto LowerHierarchicalValue(
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
       const auto& value = target.as<slang::ast::ValueSymbol>();
-      if (const auto* pkg = EnclosingPackageOfValue(value)) {
+      if (const auto* unit = DeclaringUnitOfValue(value)) {
         return LowerExternalUnitValueRef(
-            unit_lowerer, *pkg, value, *hve.type, span);
+            unit_lowerer, CompilationUnitName(*unit), value, *hve.type, span);
       }
       auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
@@ -434,9 +440,9 @@ auto LowerNamedValueStructural(
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
       const auto& value = sym.as<slang::ast::ValueSymbol>();
-      if (const auto* pkg = EnclosingPackageOfValue(value)) {
+      if (const auto* unit = DeclaringUnitOfValue(value)) {
         return LowerExternalUnitValueRef(
-            unit_lowerer, *pkg, value, *named.type, span);
+            unit_lowerer, CompilationUnitName(*unit), value, *named.type, span);
       }
       return LowerStructuralSignalRef(
           unit_lowerer, frame, value, *named.type, span);

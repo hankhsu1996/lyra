@@ -137,6 +137,10 @@ the detail lives in the entry itself.
   interning into a top-down `InternLocalClass` (never asks "which CU?") and a boundary
   `ResolveClassRef` (walks slang's parent chain only when a class is not already cached);
   design-wide precomputed maps and single-conflated interning are rejected.
+- [unit-scope-naming](unit-scope-naming.md) -- the anonymous `$unit` scope (LRM 3.12.1) is a
+  namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
+  consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all
+  rejected.
 - [generated-behavior-boundary](generated-behavior-boundary.md) -- generated behavior reaches the
   runtime through an explicit, backend-neutral per-specialization unit definition (native lifecycle
   entries + a method dispatch table + constant metadata), not a backend-language object ABI; the C++
