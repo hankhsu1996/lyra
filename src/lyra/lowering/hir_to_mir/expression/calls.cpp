@@ -527,30 +527,32 @@ auto LowerBuiltinMethodCall(
       .type = result_type};
 }
 
-// Reads the slot's canonical (owner, id) off a method's stated
-// `virtual_dispatch`. Every participating method already stores this pair --
-// an introducer names itself, an intra-unit override was populated with the
-// canonical id at class lowering -- so this is a one-arm dispatch, never a
-// chain walk.
-auto CanonicalIntraUnitSlot(
+// Reads the virtual slot a method participates in off its stated
+// `virtual_dispatch`. Every participating method already names its slot -- an
+// introducer names its own (owner, id), an intra-unit override was populated
+// with the canonical intra-unit id at class lowering, and a cross-unit
+// override names the introducing (unit, class, method) triple -- so this is a
+// one-arm dispatch, never a chain walk. A method whose slot was introduced in
+// another compilation unit resolves to an `ExternalVirtualSlot`, reached
+// through the declaring unit's header.
+auto CanonicalVirtualSlot(
     mir::ClassId self_owner, mir::CallableId self_slot,
-    const mir::VirtualDispatchRole& role)
-    -> std::pair<mir::ClassId, mir::CallableId> {
+    const mir::VirtualDispatchRole& role) -> mir::VirtualSlot {
   return std::visit(
       Overloaded{
-          [&](const mir::IntroducesVirtualSlot&)
-              -> std::pair<mir::ClassId, mir::CallableId> {
-            return {self_owner, self_slot};
+          [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualSlot {
+            return mir::LocalVirtualSlot{
+                .owner_class = self_owner, .slot = self_slot};
           },
-          [](const mir::OverridesIntraUnitSlot& s)
-              -> std::pair<mir::ClassId, mir::CallableId> {
-            return {s.slot_owner, s.slot_id};
+          [](const mir::OverridesIntraUnitSlot& s) -> mir::VirtualSlot {
+            return mir::LocalVirtualSlot{
+                .owner_class = s.slot_owner, .slot = s.slot_id};
           },
-          [](const mir::OverridesExternalSlot&)
-              -> std::pair<mir::ClassId, mir::CallableId> {
-            throw InternalError(
-                "CanonicalIntraUnitSlot: expected an intra-unit slot, but the "
-                "method's role names a cross-unit slot introducer");
+          [](const mir::OverridesExternalSlot& e) -> mir::VirtualSlot {
+            return mir::ExternalVirtualSlot{
+                .unit_name = e.unit_name,
+                .class_name = e.class_name,
+                .method_name = e.method_name};
           }},
       role);
 }
@@ -672,18 +674,15 @@ auto LowerMethodCall(
                                .GetClassShape(owner_class)
                                .callable_signatures.Get(method_slot);
   if (!through_super && method_sig.virtual_dispatch.has_value()) {
-    const auto [canonical_owner, canonical_slot] = CanonicalIntraUnitSlot(
-        owner_class, method_slot, *method_sig.virtual_dispatch);
     return mir::Expr{
         .data =
             mir::CallExpr{
                 .callee =
                     mir::Virtual{
                         .receiver = receiver_ptr,
-                        .slot =
-                            mir::LocalVirtualSlot{
-                                .owner_class = canonical_owner,
-                                .slot = canonical_slot}},
+                        .slot = CanonicalVirtualSlot(
+                            owner_class, method_slot,
+                            *method_sig.virtual_dispatch)},
                 .arguments = std::move(user_args)},
         .type = result_type};
   }
