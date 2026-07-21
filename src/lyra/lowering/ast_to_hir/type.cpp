@@ -604,23 +604,6 @@ auto DeclaringCompilationUnit(const slang::ast::ClassType& cls)
   return nullptr;
 }
 
-// The name a compilation unit publishes for itself: a package's declared
-// name, or a module body's specialization name (the same name that unit
-// registers its own artifact under). A consumer reaching a class of this
-// unit by name uses this name for the unit component of the reference; the
-// class component is `SpecializationName(cls)`, computed on both sides
-// deterministically without a shared table.
-auto CompilationUnitName(const slang::ast::Symbol& unit) -> std::string {
-  if (unit.kind == slang::ast::SymbolKind::Package) {
-    return std::string(unit.name);
-  }
-  if (unit.kind == slang::ast::SymbolKind::InstanceBody) {
-    return SpecializationName(unit.as<slang::ast::InstanceBodySymbol>());
-  }
-  throw InternalError(
-      "CompilationUnitName: symbol is not a package or module body");
-}
-
 }  // namespace
 
 auto UnitLowerer::MakeClassMethodTarget(

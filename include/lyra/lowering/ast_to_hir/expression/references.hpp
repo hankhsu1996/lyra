@@ -14,19 +14,21 @@
 namespace slang::ast {
 class HierarchicalValueExpression;
 class NamedValueExpression;
-class PackageSymbol;
+class Symbol;
 class ValueSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
 
-// A variable declared directly in a package scope (LRM 26.2), or nullptr
-// otherwise. A package variable is reached by name across the unit boundary,
-// the way a package subroutine call is; both the value-reference path and the
-// sensitivity path detect it here so a package variable read and a wait on its
-// change agree on the by-name form.
-auto EnclosingPackageOfValue(const slang::ast::ValueSymbol& value)
-    -> const slang::ast::PackageSymbol*;
+// The compilation unit a value is declared directly in when that unit is
+// reached by name across the boundary -- a package (LRM 26.2) or the anonymous
+// `$unit` scope (LRM 3.12.1) -- or nullptr when the value belongs to this unit
+// and routes locally. Such a value is one program-global cell reached by name;
+// both the value-reference path and the sensitivity path detect it here so a
+// read and a wait on its change agree on the by-name form. The returned symbol
+// is the declaring unit, from which the caller computes its published name.
+auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
+    -> const slang::ast::Symbol*;
 
 auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,

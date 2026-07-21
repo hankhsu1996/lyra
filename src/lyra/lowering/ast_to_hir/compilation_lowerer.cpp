@@ -93,16 +93,76 @@ auto LowerPackageUnit(
   return unit;
 }
 
+// Whether a compilation-unit scope declares a member that becomes namespace
+// content -- a variable, net, subroutine, or type alias. A file whose only
+// scope members are design elements (a module or package declaration) and
+// imports manifests no `$unit` unit, so it is not collected.
+auto HasUnitScopeContent(const slang::ast::CompilationUnitSymbol& cu) -> bool {
+  for (const auto& member : cu.members()) {
+    switch (member.kind) {
+      case slang::ast::SymbolKind::Variable:
+      case slang::ast::SymbolKind::Net:
+      case slang::ast::SymbolKind::Subroutine:
+      case slang::ast::SymbolKind::TypeAlias:
+        return true;
+      default:
+        break;
+    }
+  }
+  return false;
+}
+
+auto CollectCompilationUnits(const LowerCompilationFacts& facts)
+    -> std::vector<const slang::ast::CompilationUnitSymbol*> {
+  // The `$unit` file-set scope (LRM 3.12.1) is modeled as an anonymous
+  // namespace unit. slang exposes one `CompilationUnitSymbol` per
+  // compilation-unit input (one per file, or one for all files under
+  // `--single-unit`); only those declaring namespace-level content manifest a
+  // unit, so a file holding only a design element contributes none.
+  std::vector<const slang::ast::CompilationUnitSymbol*> units;
+  for (const auto* cu : facts.Compilation().getRoot().compilationUnits) {
+    if (HasUnitScopeContent(*cu)) {
+      units.push_back(cu);
+    }
+  }
+  return units;
+}
+
+auto LowerCompilationUnitUnit(
+    const LowerCompilationFacts& facts,
+    const slang::ast::CompilationUnitSymbol& cu)
+    -> diag::Result<hir::CompilationUnit> {
+  const LoweringFacts unit_facts(
+      facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
+  UnitLowerer lowerer(unit_facts, cu, CompilationUnitName(cu));
+  auto unit = lowerer.Run();
+  if (unit) {
+    // A `$unit` scope is lowered, emitted, and initialized exactly as a package
+    // is -- a rootless namespace unit -- so it carries the same unit kind;
+    // nothing downstream distinguishes the two, so there is no separate kind.
+    unit->kind = hir::UnitKind::kPackage;
+  }
+  return unit;
+}
+
 }  // namespace
 
 auto LowerCompilationToHir(const LowerCompilationFacts& facts)
     -> diag::Result<std::vector<hir::CompilationUnit>> {
   std::vector<hir::CompilationUnit> units;
   const auto packages = CollectPackages(facts);
+  const auto compilation_units = CollectCompilationUnits(facts);
   const auto bodies = CollectUnitBodies(facts);
-  units.reserve(packages.size() + bodies.size());
+  units.reserve(packages.size() + compilation_units.size() + bodies.size());
   for (const auto* package : packages) {
     auto unit = LowerPackageUnit(facts, *package);
+    if (!unit) {
+      return std::unexpected(std::move(unit.error()));
+    }
+    units.push_back(*std::move(unit));
+  }
+  for (const auto* cu : compilation_units) {
+    auto unit = LowerCompilationUnitUnit(facts, *cu);
     if (!unit) {
       return std::unexpected(std::move(unit.error()));
     }

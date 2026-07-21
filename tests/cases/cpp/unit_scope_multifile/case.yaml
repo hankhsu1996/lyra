@@ -1,0 +1,12 @@
+id: cpp.unit_scope_multifile
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [a.sv, b.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      7
