@@ -1,6 +1,6 @@
 # Ambient runtime capability surface
 
-Date: 2026-07-20 Status: accepted
+Date: 2026-07-20 (deferred-check attribution revised 2026-07-24) Status: accepted
 
 ## Context
 
@@ -75,18 +75,22 @@ Concretely:
    type for "an elaborated scope tree". `Runtime::BindDesign` takes `unique_ptr<Design>`, so a
    mid-tree `Scope` cannot be mistaken for the whole design. Tree-global traversal (`ForEachScope`)
    lives here rather than accumulating on `Scope`.
-7. **Ambient execution identity is a single atomic step per resume.** `ProcessExecutionGuard` sets
-   the ambient current process and its owning scope together -- publishing them as one pair.
-   `ScopeExecutionGuard` sets only the current scope, for the extent of an elaboration walk that
-   runs a body outside any process. The two-guard pattern (a separate process guard and a separate
-   scope guard the caller had to remember to install together) is retired: a resume site cannot
-   install a mismatched pair, and the ambient scope is always the ambient process's owning scope
-   when a process is executing.
-8. **`SubmitObserved` reads ambient current scope with no fallback.** Because every generated code
-   entry point installs either a `ProcessExecutionGuard` (process resume) or a `ScopeExecutionGuard`
-   (elaboration walk) before running a body, `current_scope` is always set when a runtime effect can
-   fire. `SubmitObserved` reads it directly to key its per-scope coalescing map (LRM 16.14.6
-   last-write-wins per `(scope, site_id)`); it does not need a root-attribution fallback.
+7. **The ambient execution identity is the process, published once per resume.** A resume publishes
+   the executing process and nothing else. There is no ambient scope: a body reaches its own
+   instantiated position through `self` where it has one, and the single runtime consumer that used
+   to read an ambient scope is superseded by decision 8.
+8. **A pending violation report is owned by the executing process, not by a scope.** LRM 12.4.2.1
+   schedules a pending violation report on a queue associated with the currently executing process,
+   and defines its flush points as process events: resuming from an event control or a wait
+   statement, and an `always_comb` / `always_latch` resumed by a transition on what it reads. LRM
+   16.4.1 says the same for deferred assertion reports. Reports are therefore appended in the order
+   their checks fire, matured together at the Observed region, and no longer flushable once matured.
+   The owning process is recorded as the key a flush erases by, not as the holder the report is
+   stored on -- which is what lets a check reached before any process exists have no owner at all: a
+   static variable's initializer runs ahead of every procedure (LRM 6.8), no flush point can name
+   it, and its report simply survives to the Observed region. Each suspending construct declares
+   whether resuming from it is a flush point, so the resume path never branches on which construct a
+   wait came from.
 
 `self` retains its role in `mir.md` invariant 11: the per-instance handle for instance-method
 bodies. What it loses is its second job as the runtime-access route. The two concerns were
@@ -150,26 +154,32 @@ incidentally coupled under the module-only design; they are semantically indepen
   `queues_` if the type does not forbid it. The split has zero runtime cost and makes what generated
   code may vs may not touch a type-checkable fact.
 
-- **`SubmitObserved` on `Runtime` with a single global Observed queue.** Simplest attribution model.
-  Rejected because it drops the tree-order drain and the per-(site, scope) coalescing that LRM
-  16.14.6 relies on for anti-glitch semantics; two module instances each running the same package
-  function's unique check would collapse into one queue entry rather than firing independently.
+- **Keying the pending report set by the executing scope.** Held while the runtime published an
+  ambient scope, on the reasoning that the scope a body runs in is the natural owner of its side
+  effects. Rejected because LRM 12.4.2.1 names the process, and the two identities come apart
+  exactly where it matters: `fork` branches are separate processes with no separate scope (LRM 9.6),
+  so a scope key merges reports the LRM keeps apart, as do two procedures of one instance reaching
+  one check. Keying by process preserves what the scope key was chosen to protect -- two instances
+  running the same package function's check still report independently, because they are two
+  processes.
 
-- **`SubmitObserved` attributed to a synthesized package scope when the caller is package code.**
-  Rejected because packages are naming / storage units, not dynamic execution owners. Two module
-  instances calling the same package check would both attribute to one package pseudo-scope,
-  breaking `%m` and multi-instance ordering. Dynamic attribution to the ambient current scope
-  matches SV semantics: LRM 9.6 gives fork branches no separate scope, and the ambient identity for
-  the executing body is the natural owner of its side effects.
+- **Coalescing per check site instead of implementing flush points.** Overwriting the pending report
+  for an (owner, site) pair approximates glitch suppression without tracking why a process resumed.
+  Rejected because it is not the LRM's mechanism and misses in both directions: one execution
+  reaching a check twice reports once instead of twice, and an `always_comb` that violates, is
+  retriggered, and then settles keeps a stale report the LRM's flush point discards.
 
-- **`SubmitObserved` throws when no current process exists.** Cleaner contract; forces every
-  deferred-check-emitting body to be inside a process. Rejected because LRM 10.5 admits
-  `unique case` inside a variable initializer (which runs at Initialize phase, no process present).
-  Under this alternative Ibex-style vendor code that puts unique/priority in an initializer would
-  abort at simulation start; under the accepted rule the elaboration walk installs
-  `ScopeExecutionGuard` around each per-scope body, so `current_scope` is set and the same code
-  fires its warning in the first Observed region, matching the LRM 12.5.4 "shall issue a warning"
-  requirement.
+- **Attributing to a synthesized package scope when the caller is package code.** Rejected because
+  packages are naming / storage units, not dynamic execution owners; two module instances calling
+  the same package check would both attribute to one package pseudo-scope. The executing process is
+  the dynamic identity that tells them apart.
+
+- **Refusing a report raised while no process is executing.** A cleaner-looking contract that forces
+  every check-emitting body to sit inside a process. Rejected because LRM 6.8 runs a static
+  variable's initializer ahead of every procedure, so vendor code with a `unique case` on that path
+  would abort at simulation start. Having no owner is a meaningful state rather than an error: no
+  flush point can name it, so the report keeps to the Observed region and the warning fires as LRM
+  12.4.2 requires.
 
 - **Per-generated-call-scope `CurrentRuntimeGuard`.** Publish the runtime only for the extent of
   each runtime-to-generated call, not for the Runtime's whole lifetime. Rejected because host
@@ -179,15 +189,11 @@ incidentally coupled under the module-only design; they are semantically indepen
   current-process / current-scope publication, and mirrors the existing `current_process` and
   `current_time` lifetime.
 
-- **Independent `ProcessExecutionGuard` and `ScopeExecutionGuard` at every resume site.** The
-  earlier shape had a resume site install two separate guards in sequence (one for the process, one
-  for its owning scope). Rejected because the two identities are logically paired at a process
-  resume -- the ambient scope IS the ambient process's owning scope -- and two separate guards let a
-  resume site install only one, or install a mismatched pair. A single `ProcessExecutionGuard`
-  publishes both atomically; a distinct `ScopeExecutionGuard` is the correct shape for elaboration
-  walks where no process exists. Two-guard-at-every-site is a legacy of the receiver-based scheme
-  where scope was reached through `self`; the paired-guard is the clean expression of "who is
-  running this body".
+- **Publishing an ambient scope alongside the ambient process.** The receiver-based scheme reached
+  the executing scope through `self`, and its replacement kept a scope published beside the process
+  so a body could still ask where it was running. Rejected once attribution moved to the process:
+  nothing read it. A body that has an instantiated position reaches it through `self`, and a body
+  that has none has nothing an ambient scope could truthfully report.
 
 ## Consequences
 
@@ -202,10 +208,10 @@ incidentally coupled under the module-only design; they are semantically indepen
   `Runtime final : public RuntimeEffects` adds `BindDesign` / `Run` and holds every mutable
   simulation datum. `Design` owns the elaborated scope tree. `Scope` is a pure structural node (no
   scheduler state). `Runtime::processes_` + `Runtime::processes_by_scope_` hold every process, both
-  indexes updated in lockstep on register / spawn. `ProcessExecutionGuard` publishes ambient
-  process + scope atomically at each resume; `ScopeExecutionGuard` publishes only scope during
-  elaboration walks. `CurrentRuntimeGuard` publishes on Runtime construction, restores the prior
-  value on destruction so nested constructions in tests cannot leave dangling TLS.
+  indexes updated in lockstep on register / spawn. `ProcessExecutionGuard` publishes the ambient
+  process at each resume, and the elaboration walks publish nothing. `CurrentRuntimeGuard` publishes
+  on Runtime construction, restores the prior value on destruction so nested constructions in tests
+  cannot leave dangling TLS.
 
 - Backends: C++ renders `current_runtime()` as `lyra::runtime::current_runtime()` in the
   `lyra::runtime` namespace group. LLVM binds it to a zero-argument runtime symbol
@@ -228,8 +234,8 @@ incidentally coupled under the module-only design; they are semantically indepen
 
 - Ibex bring-up: the tactical `frame.current_class != nullptr` guard in `branches.cpp` (which
   silently dropped runtime warnings for package function unique/priority) is removed. The warnings
-  now fire correctly, attributed via `RuntimeEffects::SubmitObserved` under the ambient current
-  scope.
+  now fire correctly, pending on behalf of whichever process reached the check -- including none,
+  when a variable initializer reaches it before any process exists.
 
 - Not addressed here: class `static_init` executed at C++ `dynamic-static-init` lifetime
   (pre-`main`, pre-Runtime). Static initializer bodies that transitively use the runtime still fail

@@ -138,13 +138,10 @@ class Scope {
 
   // Per-scope lifecycle entries. Each runs this scope's generated body
   // for one elaboration phase and does no tree recursion of its own --
-  // the Runtime drives the top-down walk and installs the ambient
-  // current-scope for the extent of each per-scope call, so a body's
-  // runtime effect (e.g. a deferred check) attributes to the scope
-  // currently being walked. The boundary between phases is a
-  // design-wide barrier maintained by the Runtime: no scope's initialize
-  // observes any resolve mid-flight, and no activate runs before every
-  // scope has initialized.
+  // the Runtime drives the top-down walk. The boundary between phases is
+  // a design-wide barrier maintained by the Runtime: no scope's
+  // initialize observes any resolve mid-flight, and no activate runs
+  // before every scope has initialized.
   //
   // `Resolve` executes every cross-instance route the scope
   // owns, filling each borrowed-pointer slot with the target's sealed

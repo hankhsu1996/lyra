@@ -141,13 +141,12 @@ enum class BuiltinFn : std::uint16_t {
   // uniformly and without a receiver. Backed by a per-thread pointer the
   // attached Runtime publishes for its lifetime.
   kCurrentRuntime,
-  // Runtime scheduler submit operations. `SubmitNba`, `SubmitPostponed`, and
-  // `SubmitObserved` are `RuntimeEffects` methods taking a closure -- the
-  // NBA (LRM 4.4.2), postponed (LRM 4.4.2 / 21.2.2), and Observed
-  // (LRM 16.14.6 last-write-wins settle) region commits respectively.
-  // `SubmitObserved` attributes the check to the ambient current scope so
-  // callers reach it uniformly through the runtime, matching every other
-  // runtime effect.
+  // Runtime scheduler submit operations, each a `RuntimeEffects` method taking
+  // a closure: the NBA (LRM 4.4.2), postponed (LRM 4.4.2 / 21.2.2), and
+  // Observed (LRM 12.4.2.1 violation report maturing) region commits
+  // respectively. A submitted violation report is pending on behalf of the
+  // executing process, which the runtime reads ambiently, so the call carries
+  // only the closure.
   kSubmitNba,
   kSubmitPostponed,
   kSubmitObserved,

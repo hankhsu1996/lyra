@@ -44,6 +44,12 @@ class EventAwaitable : public PendingWait {
     return PendingWaitOutcome::kReblocked;
   }
 
+  // Waiting on a named event is an event control, so resuming from it is a
+  // violation report flush point (LRM 12.4.2.1).
+  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
+    return true;
+  }
+
  private:
   RuntimeEvent* event_;
 };
