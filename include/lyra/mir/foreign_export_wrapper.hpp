@@ -3,34 +3,32 @@
 #include <string>
 
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/local.hpp"
 
 namespace lyra::mir {
 
 // A foreign-linkage wrapper realizing a DPI-C export (LRM 35.5): the C entry
-// point foreign code calls to reach an exported SV method. `code` is a
-// receiver-less callable whose parameters are the marshaled carriers and whose
-// body marshals each argument to its SV value, calls the exported method on the
-// recovered receiver, and marshals the result and any `output` / `inout`
-// argument back. The marshaling is stated in the body as ordinary calls so a
-// backend renders it mechanically; only the receiver recovery and the external
-// linkage are the backend's shell. Each parameter's C ABI type is carried by
-// its MIR type (the carrier realized as a machine value or a canonical-chunk
-// pointer), so a backend spells the signature through ordinary type mapping,
-// with no per-parameter ABI decision in render.
+// point foreign code calls to reach an exported SV subroutine. A DPI export
+// defines a program-global foreign-linkage symbol, in its own name space
+// distinct from any compilation-unit scope and never a class member (LRM 35.4,
+// 35.7), so the wrapper is a unit-level contribution owned by the compilation
+// unit, not by any class it may dispatch into.
 //
-// `foreign_name` is the C linkage name (LRM 35.5.3); `instance_name` names the
-// design instance the exported subroutine runs against, recovered when foreign
-// code enters; `self_local` is the receiver binding the recovery fills, read by
-// the body's method call. The foreign caller owns the memory behind every
-// by-pointer argument and is trusted to pass valid pointers per the DPI
-// contract, as the runtime is otherwise explicit-pointer-threaded with no null
-// checks. A backend emits one external-linkage definition per wrapper.
+// `foreign_name` is the C linkage name (LRM 35.5.3). `code` is a self-contained
+// body: it recovers the exported subroutine's leading context argument from the
+// running design (the current DPI scope as a module export's receiver, or the
+// run's services for a receiver-less package export), marshals each C carrier
+// to its SV value, calls the exported subroutine, and marshals the result and
+// any `output` / `inout` argument back -- all as ordinary MIR a backend renders
+// mechanically. Only the external linkage of the entry point is the backend's
+// shell; the body decides nothing at render. Each parameter's C ABI type is
+// carried by its MIR type (the carrier realized as a machine value or a
+// canonical-chunk pointer), so a backend spells the signature through ordinary
+// type mapping. The foreign caller owns the memory behind every by-pointer
+// argument and is trusted to pass valid pointers per the DPI contract, as the
+// runtime is otherwise explicit-pointer-threaded with no null checks.
 struct ForeignExportWrapper {
   std::string foreign_name;
-  std::string instance_name;
   CallableCode code;
-  LocalId self_local;
 };
 
 }  // namespace lyra::mir

@@ -270,8 +270,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       .abi_adapters = {},
       .static_constants = {},
       .static_properties = shape.static_properties,
-      .static_init = {},
-      .foreign_export_wrappers = {}};
+      .static_init = {}};
 
   // The constructor's callable code is built in a local first, then added to
   // the class's callable arena last so its id sits after every
