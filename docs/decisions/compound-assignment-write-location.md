@@ -1,6 +1,10 @@
 # Compound assignment lowers uniformly; every write target is an op=-able location
 
-Date: 2026-06-28 Status: accepted
+Date: 2026-06-28 Status: accepted; the requirement that every write target be an op=-able location
+is superseded for value interiors by [value-projection-write](value-projection-write.md) (an
+interior write is an owner-relative value projection, not a location). The uniform
+compound-assignment node and the evaluate-once goal remain in force; genuine places keep the store
+model.
 
 ## Context
 

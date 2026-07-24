@@ -362,6 +362,87 @@ auto WriteDynArraySource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// Exercises mixed static/dynamic aggregate write chains: a component of a
+// dynamic-array element (`pr[i].a`) and an element of a struct's dynamic-array
+// field (`bx.v[i]`), in both directions and under compound assignment, plus a
+// partial write to an observable dynamic-array-of-struct signal that a reader
+// reacts to. Each folds into one functional whole-value update stored back
+// through the owner.
+auto WriteMixedChainSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  typedef struct { int a; int b; } Pair;\n"
+      << "  typedef struct { int v[]; } Box;\n"
+      << "  Pair pr[];\n"
+      << "  Box bx;\n"
+      << "  int aa[][];\n"
+      << "  Box ba[];\n"
+      << "  Pair psig[];\n"
+      << "  int mirror = 0;\n"
+      << "  always_comb mirror = psig[0].a * 100 + psig[0].b;\n"
+      << "  initial begin\n"
+      << "    pr = new[2];\n"
+      << "    pr[0].a = 5;\n"
+      << "    pr[0].b = 6;\n"
+      << "    pr[1].a = 7;\n"
+      << "    pr[0].a += 10;\n"
+      << "    $display(\"da a0=%0d b0=%0d a1=%0d\", pr[0].a, pr[0].b, "
+         "pr[1].a);\n"
+      << "    bx.v = new[3];\n"
+      << "    bx.v[0] = 10;\n"
+      << "    bx.v[2] = 30;\n"
+      << "    bx.v[0] += 5;\n"
+      << "    $display(\"sd v0=%0d v2=%0d\", bx.v[0], bx.v[2]);\n"
+      << "    aa = new[2];\n"
+      << "    aa[0] = new[2];\n"
+      << "    aa[1] = new[2];\n"
+      << "    aa[0][1] = 42;\n"
+      << "    aa[1][0] = 7;\n"
+      << "    aa[0][1] += 8;\n"
+      << "    $display(\"aa 01=%0d 10=%0d\", aa[0][1], aa[1][0]);\n"
+      << "    ba = new[2];\n"
+      << "    ba[0].v = new[3];\n"
+      << "    ba[0].v[2] = 99;\n"
+      << "    ba[0].v[2] += 1;\n"
+      << "    $display(\"ba v2=%0d\", ba[0].v[2]);\n"
+      << "    psig = new[1];\n"
+      << "    psig[0].a = 1;\n"
+      << "    psig[0].b = 2;\n"
+      << "    #1;\n"
+      << "    $display(\"obs mirror=%0d\", mirror);\n"
+      << "    psig[0].a = 7;\n"
+      << "    #1;\n"
+      << "    $display(\"obs2 mirror=%0d a=%0d\", mirror, psig[0].a);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+// Exercises indexed string-character write `s[i] = c`, including the LRM 6.16.2
+// putc corner cases: an out-of-range index and a NUL byte both leave the string
+// unchanged. On the execution backend the string is an opaque handle, so each
+// write is a functional whole-value update; the C++ backend writes in place
+// through the character proxy, and the two must agree.
+auto WriteStringCharSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  string s;\n"
+      << "  int c;\n"
+      << "  initial begin\n"
+      << "    s = \"hello\";\n"
+      << "    s[0] = \"H\";\n"
+      << "    $display(\"basic s=%s\", s);\n"
+      << "    c = s[1];\n"
+      << "    $display(\"read c=%0d\", c);\n"
+      << "    s[100] = \"X\";\n"
+      << "    $display(\"oob s=%s\", s);\n"
+      << "    s[2] = 8'h00;\n"
+      << "    $display(\"nul s=%s\", s);\n"
+      << "    s[4] = \"O\";\n"
+      << "    $display(\"last s=%s\", s);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -799,6 +880,75 @@ TEST(LyraRun, JitAndCppAgreeOnDynArray) {
       "xsusp l0=42 l1=43\n"
       "whole mirror=102\n"
       "partial mirror=702 sig0=7\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnMixedAggregateChain) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteMixedChainSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "da a0=15 b0=6 a1=7\n"
+      "sd v0=15 v2=30\n"
+      "aa 01=50 10=7\n"
+      "ba v2=100\n"
+      "obs mirror=102\n"
+      "obs2 mirror=702 a=7\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnStringCharWrite) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteStringCharSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "basic s=Hello\n"
+      "read c=101\n"
+      "oob s=Hello\n"
+      "nul s=Hello\n"
+      "last s=HellO\n")
       << "stdout: " << jit.stdout_text;
 }
 

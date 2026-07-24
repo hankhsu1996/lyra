@@ -162,6 +162,17 @@ auto RequiresFunctionalMutation(const mir::Type& type) -> bool {
   return type.Kind() == mir::TypeKind::kDynamicArray;
 }
 
+// Whether a `kElementRef` on a value of this type is a functional element
+// write: realized as a whole-value read / update / write-back because the value
+// is reached by an opaque handle and cannot be mutated in place. A
+// dynamic-array element (LRM 7.4.6) and a string character (LRM 6.16.2)
+// qualify. This is the peeling condition for an element selector, distinct from
+// the mutating-method question `RequiresFunctionalMutation` answers.
+auto HasFunctionalElementAccess(const mir::Type& type) -> bool {
+  const mir::TypeKind kind = type.Kind();
+  return kind == mir::TypeKind::kDynamicArray || kind == mir::TypeKind::kString;
+}
+
 // Marks every local the canonical lowering needs an address for: one that is
 // assigned after its initialization, or has its address taken. Such a local is
 // storage, so it must be a place local. A read never makes a local storage: a
@@ -936,25 +947,13 @@ auto FunctionLowerer::LowerCall(
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
-  // A write to a product component is not a place store: the product is an
-  // opaque value, so the component write is a whole-value rebuild stored back
-  // through the product's owner.
-  if (std::holds_alternative<mir::TupleGetExpr>(
-          block.exprs.Get(assign.target).data)) {
-    return LowerComponentAssign(block, assign);
-  }
-
-  // A write to a value-container element (`arr[i] = x`) targets the container-
-  // access write reference. The container is likewise an opaque value, so the
-  // write is a functional whole-value update stored back through its owner.
-  if (const auto* call =
-          std::get_if<mir::CallExpr>(&block.exprs.Get(assign.target).data)) {
-    if (const auto fn = DirectBuiltinFn(*call);
-        fn == support::BuiltinFn::kElementRef &&
-        RequiresFunctionalMutation(
-            unit_->Mir().types.Get(block.exprs.Get(call->arguments[0]).type))) {
-      return LowerElementAssign(block, assign);
-    }
+  // A target that projects into a value aggregate -- a product component, a
+  // value-container element, or any composition of them -- is not a place: the
+  // aggregate is an opaque value, so the write folds into a functional
+  // whole-value update stored back through the owner.
+  if (DecomposedTarget target = DecomposeTarget(block, assign.target);
+      !target.selectors.empty()) {
+    return LowerProjectionAssign(block, assign, target);
   }
 
   const lir::TypeId type =
@@ -1099,58 +1098,135 @@ auto FunctionLowerer::WriteWholeValue(
   return value;
 }
 
-auto FunctionLowerer::LowerComponentAssign(
-    const mir::Block& block, const mir::AssignExpr& assign)
-    -> diag::Result<lir::Operand> {
-  // Walk the component-projection chain from the target down to its storage
-  // root, collecting each level's component index and product type.
-  struct Level {
-    std::uint32_t index;
-    lir::TypeId tuple_type;
-    lir::TypeId component_type;
-  };
-  std::vector<Level> levels;
-  mir::ExprId cursor = assign.target;
+auto FunctionLowerer::DecomposeTarget(
+    const mir::Block& block, mir::ExprId target) -> DecomposedTarget {
+  // Peel value-projection selectors from the target inward until the expression
+  // is no longer one -- that remainder is the whole-value owner. A component
+  // (`TupleGetExpr`) and a value-container element (`kElementRef` on a
+  // container reached by an opaque handle) are selectors; a bit-select, a
+  // slice, or a union member is not one this path folds, so peeling stops there
+  // and the owner is that expression.
+  std::vector<ProjectionSelector> selectors;
+  mir::ExprId cursor = target;
   while (true) {
     const mir::Expr& expr = block.exprs.Get(cursor);
-    const auto* get = std::get_if<mir::TupleGetExpr>(&expr.data);
-    if (get == nullptr) {
-      break;
+    if (const auto* get = std::get_if<mir::TupleGetExpr>(&expr.data)) {
+      selectors.emplace_back(
+          ComponentSelector{
+              .index = static_cast<std::uint32_t>(get->index),
+              .container_type =
+                  unit_->TranslateType(block.exprs.Get(get->tuple).type),
+              .projected_type = unit_->TranslateType(expr.type)});
+      cursor = get->tuple;
+      continue;
     }
-    levels.push_back(
-        Level{
-            .index = static_cast<std::uint32_t>(get->index),
-            .tuple_type =
-                unit_->TranslateType(block.exprs.Get(get->tuple).type),
-            .component_type = unit_->TranslateType(expr.type)});
-    cursor = get->tuple;
+    if (const auto* call = std::get_if<mir::CallExpr>(&expr.data)) {
+      if (const auto fn = DirectBuiltinFn(*call);
+          fn == support::BuiltinFn::kElementRef &&
+          HasFunctionalElementAccess(unit_->Mir().types.Get(
+              block.exprs.Get(call->arguments[0]).type))) {
+        selectors.emplace_back(
+            ElementSelector{
+                .index = call->arguments[1],
+                .container_type = unit_->TranslateType(
+                    block.exprs.Get(call->arguments[0]).type),
+                .projected_type = unit_->TranslateType(expr.type)});
+        cursor = call->arguments[0];
+        continue;
+      }
+    }
+    break;
   }
-  std::ranges::reverse(levels);
-  const mir::ExprId root = cursor;
+  std::ranges::reverse(selectors);
+  return DecomposedTarget{.owner = cursor, .selectors = std::move(selectors)};
+}
 
-  auto root_value = ReadWholeValue(block, root);
-  if (!root_value) {
-    return std::unexpected(std::move(root_value.error()));
+auto FunctionLowerer::LowerProjectionAssign(
+    const mir::Block& block, const mir::AssignExpr& assign,
+    const DecomposedTarget& target) -> diag::Result<lir::Operand> {
+  const std::vector<ProjectionSelector>& selectors = target.selectors;
+
+  auto owner_value = ReadWholeValue(block, target.owner);
+  if (!owner_value) {
+    return std::unexpected(std::move(owner_value.error()));
   }
 
-  // The product value at each chain level, descending from the root toward the
-  // component being written.
-  std::vector<lir::Operand> tuples;
-  tuples.reserve(levels.size());
-  tuples.push_back(*std::move(root_value));
-  for (std::size_t depth = 1; depth < levels.size(); ++depth) {
-    tuples.push_back(Emit(
-        levels[depth].tuple_type,
-        lir::AggregateExtractInstr{
-            .aggregate = tuples[depth - 1],
-            .selector = lir::TupleElement{.index = levels[depth - 1].index}}));
+  // A container element's index is evaluated once, shared by its compound read
+  // and its write-back; a component selector needs none.
+  std::vector<std::optional<lir::Operand>> indices(selectors.size());
+  for (std::size_t depth = 0; depth < selectors.size(); ++depth) {
+    if (const auto* elem = std::get_if<ElementSelector>(&selectors[depth])) {
+      auto index = LowerExpr(block, elem->index);
+      if (!index) {
+        return std::unexpected(std::move(index.error()));
+      }
+      indices[depth] = *std::move(index);
+    }
+  }
+
+  const auto extract = [&](const lir::Operand& container,
+                           std::size_t depth) -> lir::Operand {
+    return std::visit(
+        Overloaded{
+            [&](const ComponentSelector& c) {
+              return Emit(
+                  c.projected_type,
+                  lir::AggregateExtractInstr{
+                      .aggregate = container,
+                      .selector = lir::TupleElement{.index = c.index}});
+            },
+            [&](const ElementSelector& e) {
+              return Emit(
+                  e.projected_type,
+                  lir::CallInstr{
+                      .target =
+                          lir::BuiltinTarget{
+                              .fn = support::BuiltinFn::kElement,
+                              .qualifier = std::nullopt},
+                      .args = {container, *indices[depth]}});
+            }},
+        selectors[depth]);
+  };
+  const auto update = [&](const lir::Operand& container, std::size_t depth,
+                          lir::Operand replacement) -> lir::Operand {
+    return std::visit(
+        Overloaded{
+            [&](const ComponentSelector& c) {
+              return Emit(
+                  c.container_type,
+                  lir::AggregateUpdateInstr{
+                      .aggregate = container,
+                      .selector = lir::TupleElement{.index = c.index},
+                      .replacement = std::move(replacement)});
+            },
+            [&](const ElementSelector& e) {
+              return Emit(
+                  e.container_type,
+                  lir::CallInstr{
+                      .target =
+                          lir::BuiltinTarget{
+                              .fn = support::BuiltinFn::kWithElement,
+                              .qualifier = std::nullopt},
+                      .args = {
+                          container, *indices[depth], std::move(replacement)}});
+            }},
+        selectors[depth]);
+  };
+
+  // The whole value at each chain level, descending from the owner toward the
+  // sub-value being written.
+  std::vector<lir::Operand> containers;
+  containers.reserve(selectors.size());
+  containers.push_back(*std::move(owner_value));
+  for (std::size_t depth = 1; depth < selectors.size(); ++depth) {
+    containers.push_back(extract(containers[depth - 1], depth - 1));
   }
 
   auto rhs = LowerExpr(block, assign.value);
   if (!rhs) {
     return std::unexpected(std::move(rhs.error()));
   }
-  const std::size_t leaf = levels.size() - 1;
+  const std::size_t leaf = selectors.size() - 1;
   lir::Operand leaf_value = *std::move(rhs);
   if (assign.compound_op.has_value()) {
     const std::optional<lir::BinaryOp> op =
@@ -1159,88 +1235,21 @@ auto FunctionLowerer::LowerComponentAssign(
       return Unsupported(
           "mir_to_lir: compound assignment operator has no direct realization");
     }
-    lir::Operand old = Emit(
-        levels[leaf].component_type,
-        lir::AggregateExtractInstr{
-            .aggregate = tuples[leaf],
-            .selector = lir::TupleElement{.index = levels[leaf].index}});
+    lir::Operand old = extract(containers[leaf], leaf);
     leaf_value = Emit(
-        levels[leaf].component_type,
+        std::visit(
+            [](const auto& sel) { return sel.projected_type; },
+            selectors[leaf]),
         lir::BinaryInstr{
             .op = *op, .lhs = std::move(old), .rhs = std::move(leaf_value)});
   }
 
-  // Rebuild the whole value from the written component outward.
+  // Rebuild the whole value from the written sub-value outward.
   lir::Operand rebuilt = std::move(leaf_value);
-  for (std::size_t depth = levels.size(); depth-- > 0;) {
-    rebuilt = Emit(
-        levels[depth].tuple_type,
-        lir::AggregateUpdateInstr{
-            .aggregate = tuples[depth],
-            .selector = lir::TupleElement{.index = levels[depth].index},
-            .replacement = std::move(rebuilt)});
+  for (std::size_t depth = selectors.size(); depth-- > 0;) {
+    rebuilt = update(containers[depth], depth, std::move(rebuilt));
   }
-
-  return WriteWholeValue(block, root, std::move(rebuilt));
-}
-
-auto FunctionLowerer::LowerElementAssign(
-    const mir::Block& block, const mir::AssignExpr& assign)
-    -> diag::Result<lir::Operand> {
-  const auto& target =
-      std::get<mir::CallExpr>(block.exprs.Get(assign.target).data);
-  const mir::ExprId container = target.arguments[0];
-  const mir::ExprId index = target.arguments[1];
-  const lir::TypeId container_type =
-      unit_->TranslateType(block.exprs.Get(container).type);
-  const lir::TypeId element_type =
-      unit_->TranslateType(block.exprs.Get(assign.target).type);
-
-  auto array = ReadWholeValue(block, container);
-  if (!array) {
-    return std::unexpected(std::move(array.error()));
-  }
-  const lir::Operand array_value = *std::move(array);
-  auto index_value = LowerExpr(block, index);
-  if (!index_value) {
-    return std::unexpected(std::move(index_value.error()));
-  }
-  auto rhs = LowerExpr(block, assign.value);
-  if (!rhs) {
-    return std::unexpected(std::move(rhs.error()));
-  }
-
-  lir::Operand replacement = *std::move(rhs);
-  if (assign.compound_op.has_value()) {
-    const std::optional<lir::BinaryOp> op =
-        TranslateBinaryOp(*assign.compound_op);
-    if (!op) {
-      return Unsupported(
-          "mir_to_lir: compound assignment operator has no direct realization");
-    }
-    lir::Operand old = Emit(
-        element_type, lir::CallInstr{
-                          .target =
-                              lir::BuiltinTarget{
-                                  .fn = support::BuiltinFn::kElement,
-                                  .qualifier = std::nullopt},
-                          .args = {array_value, *index_value}});
-    replacement = Emit(
-        element_type,
-        lir::BinaryInstr{
-            .op = *op, .lhs = std::move(old), .rhs = std::move(replacement)});
-  }
-
-  lir::Operand updated = Emit(
-      container_type,
-      lir::CallInstr{
-          .target =
-              lir::BuiltinTarget{
-                  .fn = support::BuiltinFn::kWithElement,
-                  .qualifier = std::nullopt},
-          .args = {
-              array_value, *std::move(index_value), std::move(replacement)}});
-  return WriteWholeValue(block, container, std::move(updated));
+  return WriteWholeValue(block, target.owner, std::move(rebuilt));
 }
 
 auto FunctionLowerer::LowerMutatingCall(

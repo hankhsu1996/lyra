@@ -927,6 +927,29 @@ enough to warrant its own focused review.
     that pays off only when several sites route through it; scope the cut so at least the queue /
     packed / managed-new forms land together with the dispatch table itself.
 
+- [ ] R61 -- A value-aggregate interior write is modeled in MIR as a write onto an lvalue expression
+      -- the reference / location model -- while the functional whole-value-update model the layer
+      contracts describe (`../architecture/mir.md`, `../architecture/lir.md`) lives one layer below,
+      synthesized during MIR-to-LIR by the execution backend and gated to a single container type.
+      One MIR node is therefore consumed two ways -- the C++ backend mutates in place, the execution
+      backend rewrites into read-whole / functional-update / write-whole -- and the
+      place-vs-value-projection fact is re-derived per backend, the shape `../architecture/mir.md`'s
+      Forbidden Shapes name. The visible consequence: an interior write to a union member, a packed
+      slice, a string character, or a queue / associative-array element, and every `ref` bound to an
+      aggregate interior, is rejected on the execution backend today; only a struct component and
+      the one gated container write take the functional path. **Target shape**: MIR states a
+      place-vs-value-projection write designator -- an interior write is an owner-relative value
+      projection, a functional whole-value update stored back through the owner with owner and
+      selectors evaluated once; a `ref` to an interior is an owner-relative projection reference;
+      the C++ in-place write becomes a behavior-preserving optimization over a semantically
+      equivalent proxy. Every value-interior family routes through one functional path; the
+      single-container gate and the per-family target branch are removed. The full model, the
+      rejected alternatives, and the staged migration are recorded in
+      `../decisions/value-projection-write.md`. **Blocker**: none unlanded, but it reverses two
+      accepted decisions for value interiors and is cross-cutting across HIR-to-MIR, both backends,
+      and the value library -- large enough to warrant its own focused review, and it lands in the
+      staged cuts the decision records rather than folded into a container-feature cut.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

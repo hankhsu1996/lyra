@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -59,6 +60,32 @@ class FunctionLowerer {
   using LocalBinding =
       std::variant<PlaceBinding, ValueBinding, ActivationValueBinding>;
 
+  // A value-projection selector peeled from an assignment target: a product
+  // component by declaration-order position, or a value-container element by a
+  // runtime index. Each names a sub-value of the owner's whole value, so a
+  // write through it folds into a functional whole-value update.
+  // `container_type` is the value the selector projects into; `projected_type`
+  // is the sub-value it reaches.
+  struct ComponentSelector {
+    std::uint32_t index;
+    lir::TypeId container_type;
+    lir::TypeId projected_type;
+  };
+  struct ElementSelector {
+    mir::ExprId index;
+    lir::TypeId container_type;
+    lir::TypeId projected_type;
+  };
+  using ProjectionSelector = std::variant<ComponentSelector, ElementSelector>;
+  // An assignment target split into the whole-value owner it writes back
+  // through and the value-projection selectors reaching the written sub-value,
+  // in owner-to-leaf order. An empty selector list means the target is the
+  // owner itself -- a plain place.
+  struct DecomposedTarget {
+    mir::ExprId owner;
+    std::vector<ProjectionSelector> selectors;
+  };
+
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
   auto LowerStmtInto(const mir::Block& block, const mir::Stmt& stmt)
       -> diag::Result<void>;
@@ -93,23 +120,25 @@ class FunctionLowerer {
       -> diag::Result<lir::Operand>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
-  // A write to one component of a product value (`s.f = x`). The chain of
-  // component projections is rebuilt bottom-up as pure functional-update values
-  // over the product's current whole value, then the rebuilt whole value is
-  // stored back through the product's storage owner -- so value semantics hold
-  // and, when the owner is an observable cell, the whole-cell update fires.
-  auto LowerComponentAssign(
-      const mir::Block& block, const mir::AssignExpr& assign)
-      -> diag::Result<lir::Operand>;
-  // A write to one element of a value container (`arr[i] = x`). The container
-  // is a value reached by an opaque handle, so the element write is a
-  // functional whole-value update: read the whole container, produce a new one
-  // with the element replaced, store it back through the container's owner --
-  // the runtime-library counterpart of `LowerComponentAssign`'s static value
-  // instructions, for a dynamic, runtime-indexed selector.
-  auto LowerElementAssign(
-      const mir::Block& block, const mir::AssignExpr& assign)
-      -> diag::Result<lir::Operand>;
+  // Splits an assignment target into its whole-value owner and the value-
+  // projection selectors reaching the written sub-value. A product component
+  // (`.f`) and a value-container element (`[i]`) are selectors; the owner is
+  // the first expression that is not one -- a place, an activation handle, or
+  // an observable cell. Selectors compose freely, so a mixed static/dynamic
+  // target
+  // (`a[i].f`, `s.v[i]`) decomposes uniformly.
+  auto DecomposeTarget(const mir::Block& block, mir::ExprId target)
+      -> DecomposedTarget;
+  // A write through one or more value-projection selectors (`s.f = x`,
+  // `arr[i] = x`, `a[i].f = x`). The owner's whole value is read, the selectors
+  // are folded into a functional whole-value update -- a product component a
+  // static value instruction, a container element a runtime-library call -- and
+  // the rebuilt whole value is stored back through the owner, so value
+  // semantics hold and, when the owner is an observable cell, the whole-cell
+  // update fires.
+  auto LowerProjectionAssign(
+      const mir::Block& block, const mir::AssignExpr& assign,
+      const DecomposedTarget& target) -> diag::Result<lir::Operand>;
   // A receiver-mutating value-container method (`arr.delete()`). The container
   // value cannot be mutated in place through a shared handle, so the method is
   // a functional operation whose result is stored back through the receiver's

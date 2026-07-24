@@ -621,6 +621,20 @@ auto lyra_rt_string_getc(const void* value, const void* index) -> void* {
   return Own(Read<String>(value).Getc(Read<PackedArray>(index)));
 }
 
+auto lyra_rt_string_element(const void* value, const void* index) -> void* {
+  return Own(Read<String>(value).Element(Read<PackedArray>(index)));
+}
+
+// The functional character write (LRM 6.16.2): a new string with character
+// `index` replaced. Synthesized at MIR-to-LIR for a string reached by an opaque
+// handle, the string counterpart of `lyra_rt_dynarray_with_element`.
+auto lyra_rt_string_with_element(
+    const void* value, const void* index, const void* replacement) -> void* {
+  return Own(
+      Read<String>(value).WithElement(
+          Read<PackedArray>(index), Read<PackedArray>(replacement)));
+}
+
 auto lyra_rt_string_toupper(const void* value) -> void* {
   return Own(Read<String>(value).Toupper());
 }
