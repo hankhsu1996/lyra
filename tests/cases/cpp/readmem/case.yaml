@@ -18,3 +18,4 @@ expect:
     mem_x: ["16'h0ax0", "16'hzzzz", "16'h1x2z"]
     memb: ["8'b10100101", "8'b00001111", "8'b11110000"]
     memb_x: ["4'b10x1", "4'bz0z0"]
+    mem_st: ["8'hab", "8'hcd", "8'hef"]
