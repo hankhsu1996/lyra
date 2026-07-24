@@ -2,8 +2,16 @@ module Top;
   // LRM 21.4 $readmemh / $readmemb. One memory per facet: full fill, @address
   // directive, comments, explicit start, descending start>finish, unaddressed
   // words preserved (copy-in), a wide element with `_` separators, per-digit
-  // x/z, and the binary radix (full fill plus per-bit x/z). Every image is
-  // written to a text file by the test itself, then loaded back and asserted.
+  // x/z, the binary radix (full fill plus per-bit x/z), and a packed-struct
+  // element (LRM 21.4.1). Every image is written to a text file by the test
+  // itself, then loaded back and asserted.
+
+  // LRM 21.4.1: a packed struct element loads as its vector equivalent, so a
+  // memory of packed structs reads exactly like a memory of same-width vectors.
+  typedef struct packed {
+    logic [3:0] hi;
+    logic [3:0] lo;
+  } nib_t;
   bit [31:0]   mem       [0:3];
   bit [15:0]   mem_at    [0:3];
   bit [7:0]    mem_cmt   [0:2];
@@ -14,6 +22,7 @@ module Top;
   logic [15:0] mem_x     [0:2];
   bit [7:0]    memb      [0:2];
   logic [3:0]  memb_x    [0:1];
+  nib_t        mem_st    [0:2];
 
   int fd;
 
@@ -79,5 +88,11 @@ module Top;
     $fwrite(fd, "10x1 z0z0\n");
     $fclose(fd);
     $readmemb("x.bin", memb_x);
+
+    // Packed-struct element: each 8-bit word loads as its vector equivalent.
+    fd = $fopen("st.hex", "w");
+    $fwrite(fd, "ab cd ef\n");
+    $fclose(fd);
+    $readmemh("st.hex", mem_st);
   end
 endmodule

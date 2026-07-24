@@ -1,0 +1,14 @@
+id: cpp.writemem
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    dst: ["32'hDEADBEEF", "32'h0a0b0c0d", "32'h11223344", "32'hcafef00d"]
+    bdst: ["8'ha5", "8'h3c", "8'hff"]
+    rdst: ["32'h22222222", "32'h33333333"]
+    xdst: ["4'b10x1", "4'bz0z0", "4'b1x0z"]

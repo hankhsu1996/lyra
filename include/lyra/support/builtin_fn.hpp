@@ -237,6 +237,11 @@ enum class BuiltinFn : std::uint16_t {
   // memory in place; the SV task's void result means the caller never awaits
   // it.
   kReadMem,
+  // LRM 21.5 $writememh / $writememb. The dump counterpart of kReadMem: same
+  // operand shape but the memory is read, not written, so it passes by const
+  // reference. It opens the named file (overwriting) and writes one radix word
+  // per element over the addressed range.
+  kWriteMem,
   // LRM 9.4.1 `#N`. The runtime free function the scheduler suspends on.
   // The call takes the runtime handle, the duration in the calling scope's
   // precision steps, and the calling scope's precision power; the runtime

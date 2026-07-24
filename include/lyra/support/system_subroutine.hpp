@@ -157,12 +157,18 @@ struct PlusargsSystemSubroutineInfo {
   PlusargsKind kind;
 };
 
-// LRM 21.4 memory-load tasks. `base` is the digit radix -- 16 for $readmemh,
-// 2 for $readmemb -- which the lowering emits as a literal operand of the
-// runtime ReadMem call so the parser reads each file word at that radix. The
-// two tasks share one runtime entry and differ only in this value.
-struct ReadMemSystemSubroutineInfo {
+// LRM 21.4 / 21.5 memory file transfer. `$readmem{h,b}` load a memory from a
+// text file; `$writemem{h,b}` dump one to a file the load reads back. `base` is
+// the digit radix (16 for the `h` forms, 2 for the `b` forms), emitted as a
+// literal operand of the runtime call so each word is read / written at that
+// radix. `direction` selects load vs dump: a load writes its memory argument
+// (an output argument, copy-out desugared), a dump reads it (an input
+// argument), which is the whole difference the statement-form lowering branches
+// on.
+enum class MemFileDirection : std::uint8_t { kLoad, kStore };
+struct MemFileSystemSubroutineInfo {
   unsigned base;
+  MemFileDirection direction;
 };
 
 using SystemSubroutineSemantic = std::variant<
@@ -171,7 +177,7 @@ using SystemSubroutineSemantic = std::variant<
     ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
     TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
     PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
-    ReadMemSystemSubroutineInfo>;
+    MemFileSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -872,7 +878,9 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 4},
-        .semantic = ReadMemSystemSubroutineInfo{.base = 16},
+        .semantic =
+            MemFileSystemSubroutineInfo{
+                .base = 16, .direction = MemFileDirection::kLoad},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{57},
@@ -881,7 +889,31 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 4},
-        .semantic = ReadMemSystemSubroutineInfo{.base = 2},
+        .semantic =
+            MemFileSystemSubroutineInfo{
+                .base = 2, .direction = MemFileDirection::kLoad},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{58},
+        .name = "$writememh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 4},
+        .semantic =
+            MemFileSystemSubroutineInfo{
+                .base = 16, .direction = MemFileDirection::kStore},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{59},
+        .name = "$writememb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 4},
+        .semantic =
+            MemFileSystemSubroutineInfo{
+                .base = 2, .direction = MemFileDirection::kStore},
     },
 };
 

@@ -300,6 +300,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "value_plusargs";
     case BuiltinFn::kReadMem:
       return "read_mem";
+    case BuiltinFn::kWriteMem:
+      return "write_mem";
     case BuiltinFn::kDelay:
       return "delay";
     case BuiltinFn::kWaitAny:
