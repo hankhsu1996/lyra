@@ -28,11 +28,6 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-namespace {
-
-// slang has no ConstRef direction (LRM 13.5.2): a `const ref` formal carries
-// direction Ref with the Const variable flag, so the const-ness must be read
-// off the formal rather than the direction enum alone.
 auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection {
   switch (formal.direction) {
@@ -49,6 +44,8 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
   }
   throw InternalError("ParamDirectionOf: unknown ArgumentDirection");
 }
+
+namespace {
 
 // Classifies an SV type into its DPI-C carrier (LRM 35.5.6, Annex H.10 /
 // Table H.1). This is the one place slang types are inspected for DPI. The

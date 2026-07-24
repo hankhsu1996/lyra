@@ -1,0 +1,18 @@
+id: cpp.subroutine_output_nested_expr
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_arith: 104
+    o1: 30
+    r_nested: 12
+    o2: 50
+    r_cond: 1
+    o3: 70
+    r_inout: 1060
+    v: 6

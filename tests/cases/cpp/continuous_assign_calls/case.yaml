@@ -11,3 +11,6 @@ expect:
     fn_result: 10
     rep: 1365
     in_set: 1
+    stamped: 8
+    has_arg: 0
+    label: "a=5"

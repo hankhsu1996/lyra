@@ -120,6 +120,13 @@ class StructuralScopeLowerer {
     return *hir_scope_;
   }
 
+  // The scope's time unit (LRM 3.14.2), which a time query scales its result
+  // to. Named as the procedural pass names it, so a handler shared by both
+  // passes reads it the same way.
+  [[nodiscard]] auto Resolution() const -> TimeResolution {
+    return hir_scope_->time_resolution;
+  }
+
   // The expression arena of the scope being lowered. The uniform sub-expression
   // accessor the context-free expression handler templates reach through; both
   // lowering pass classes expose it with the same shape so those templates bind

@@ -34,6 +34,7 @@
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -690,15 +691,21 @@ auto LowerCallExpr(
 
   // A subroutine declared in a package or the `$unit` scope belongs to another
   // compilation unit (LRM 26.3 / 3.12.1). It is reached by name across the unit
-  // boundary rather than through an enclosing-scope binding of this unit.
+  // boundary rather than through an enclosing-scope binding of this unit. The
+  // call site recomputes each formal's direction and type -- the callee's
+  // argument-marshalling interface -- from the same declaration the callee
+  // lowers from, so an output / inout / ref actual is marshalled at the
+  // boundary exactly as an intra-unit one. The call's result type is the
+  // enclosing expression's own type and is not recorded again here.
   if (const auto* unit = DeclaringUnitOfSubroutine(*sym)) {
+    std::vector<hir::ExternalUnitParam> params;
+    params.reserve(sym->getArguments().size());
     for (const auto* formal : sym->getArguments()) {
-      if (formal->direction != slang::ast::ArgumentDirection::In) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedExpressionForm,
-            "a subroutine reached across a unit boundary with an output / "
-            "inout / ref argument is not yet supported");
-      }
+      auto formal_type = unit_lowerer.InternType(formal->getType(), span);
+      if (!formal_type) return std::unexpected(std::move(formal_type.error()));
+      params.push_back(
+          hir::ExternalUnitParam{
+              .direction = ParamDirectionOf(*formal), .type = *formal_type});
     }
     auto result_type = unit_lowerer.InternType(*call.type, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
@@ -710,7 +717,8 @@ auto LowerCallExpr(
                     hir::ExternalUnitSubroutineRef{
                         .unit_name = CompilationUnitName(*unit),
                         .subroutine_name = std::string{sym->name},
-                        .kind = ToHirSubroutineKind(sym->subroutineKind)},
+                        .kind = ToHirSubroutineKind(sym->subroutineKind),
+                        .params = std::move(params)},
                 .arguments = std::move(arg_ids)},
         .span = span,
     };

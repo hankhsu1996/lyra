@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -25,15 +26,15 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+template <ExprLowerer Lowerer>
 auto LowerTestPlusargs(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& unit = process.Owner().Unit();
+  const auto& hir_exprs = lowerer.HirExprs();
+  auto& unit = lowerer.Owner().Unit();
   auto& body = *frame.current_block;
 
-  auto user_or =
-      process.LowerExpr(hir_proc.exprs.Get(*call.arguments[0]), frame);
+  auto user_or = lowerer.LowerExpr(hir_exprs.Get(*call.arguments[0]), frame);
   if (!user_or) return std::unexpected(std::move(user_or.error()));
   const mir::ExprId raw_user_id = body.exprs.Add(*std::move(user_or));
   // A packed literal / integral variable is a legal user_string here
@@ -42,7 +43,7 @@ auto LowerTestPlusargs(
   const mir::ExprId user_id =
       ConvertToType(unit, body, raw_user_id, unit.builtins.string);
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+      body.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -52,17 +53,18 @@ auto LowerTestPlusargs(
       .type = unit.builtins.int_type};
 }
 
+template <ExprLowerer Lowerer>
 auto LowerValuePlusargs(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& unit_lowerer = process.Owner();
+  const auto& hir_exprs = lowerer.HirExprs();
+  auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::TypeId bit_t = unit.builtins.bit1;
   const mir::TypeId void_t = unit.builtins.void_type;
 
-  const auto& hir_target = hir_proc.exprs.Get(*call.arguments[1]);
+  const auto& hir_target = hir_exprs.Get(*call.arguments[1]);
   const mir::TypeId target_type = unit_lowerer.TranslateType(hir_target.type);
 
   // A match writes the parsed remainder into the caller's lvalue and returns
@@ -73,7 +75,7 @@ auto LowerValuePlusargs(
   const WalkFrame& closure_frame = closure.Frame();
 
   auto user_or =
-      process.LowerExpr(hir_proc.exprs.Get(*call.arguments[0]), closure_frame);
+      lowerer.LowerExpr(hir_exprs.Get(*call.arguments[0]), closure_frame);
   if (!user_or) return std::unexpected(std::move(user_or.error()));
   const mir::ExprId raw_user_id = body.exprs.Add(*std::move(user_or));
   // A packed literal / integral variable is a legal user_string here
@@ -120,7 +122,7 @@ auto LowerValuePlusargs(
   mir::Block then_body;
   const WalkFrame then_frame = closure_frame.WithBlock(&then_body);
   auto lvalue_or =
-      process.LowerLhsExpr(hir_proc.exprs.Get(*call.arguments[1]), then_frame);
+      lowerer.LowerLhsExpr(hir_exprs.Get(*call.arguments[1]), then_frame);
   if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
   const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
   const mir::ExprId temp_read_then =
@@ -145,8 +147,9 @@ auto LowerValuePlusargs(
 
 }  // namespace
 
+template <ExprLowerer Lowerer>
 auto LowerPlusargsSystemSubroutineCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const support::PlusargsSystemSubroutineInfo& info)
     -> diag::Result<mir::Expr> {
   switch (info.kind) {
@@ -156,7 +159,7 @@ auto LowerPlusargsSystemSubroutineCall(
             "LowerPlusargsSystemSubroutineCall: $test$plusargs expects exactly "
             "one non-elided argument");
       }
-      return LowerTestPlusargs(process, frame, call);
+      return LowerTestPlusargs(lowerer, frame, call);
     }
     case support::PlusargsKind::kValue: {
       if (call.arguments.size() != 2 || !call.arguments[0].has_value() ||
@@ -165,11 +168,18 @@ auto LowerPlusargsSystemSubroutineCall(
             "LowerPlusargsSystemSubroutineCall: $value$plusargs expects two "
             "non-elided arguments");
       }
-      return LowerValuePlusargs(process, frame, call);
+      return LowerValuePlusargs(lowerer, frame, call);
     }
   }
   throw InternalError(
       "LowerPlusargsSystemSubroutineCall: unknown PlusargsKind");
 }
+
+template auto LowerPlusargsSystemSubroutineCall(
+    ProcessLowerer&, WalkFrame, const hir::CallExpr&,
+    const support::PlusargsSystemSubroutineInfo&) -> diag::Result<mir::Expr>;
+template auto LowerPlusargsSystemSubroutineCall(
+    const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
+    const support::PlusargsSystemSubroutineInfo&) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

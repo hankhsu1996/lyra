@@ -3,28 +3,10 @@
 #include <cstddef>
 #include <vector>
 
-#include "lyra/hir/subroutine.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
-
-auto CompletionComponentTypes(
-    const UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
-    -> std::vector<mir::TypeId> {
-  std::vector<mir::TypeId> components;
-  if (decl.result_var.has_value()) {
-    components.push_back(unit_lowerer.TranslateType(decl.result_type));
-  }
-  for (const auto& param : decl.params) {
-    if (param.direction == hir::ParamDirection::kOutput ||
-        param.direction == hir::ParamDirection::kInOut) {
-      components.push_back(unit_lowerer.TranslateType(
-          decl.body.procedural_vars.Get(param.var).type));
-    }
-  }
-  return components;
-}
 
 auto NormalizeCompletionPayload(
     mir::CompilationUnit& unit, const std::vector<mir::TypeId>& components)

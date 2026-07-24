@@ -19,6 +19,7 @@ class NewArrayExpression;
 class NewClassExpression;
 class ReplicatedAssignmentPatternExpression;
 class ReplicationExpression;
+class SimpleAssignmentPatternExpression;
 class StructuredAssignmentPatternExpression;
 }  // namespace slang::ast
 
@@ -46,6 +47,21 @@ auto LowerReplicatedAssignmentPatternExpr(
     diag::SourceSpan span) -> diag::Result<hir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerAssociativeAssignmentPattern(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::StructuredAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+
+// The assignment-pattern dispatch by slang kind: the positional `'{a, b}` form
+// and the structured `'{index: value}` form. Each selects its target-specific
+// lowering (LHS-destructuring gate; associative / dynamic-array / positional),
+// so the expression dispatcher delegates to one entry per slang kind.
+template <ExprLowerer Lowerer>
+auto LowerSimpleAssignmentPattern(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::SimpleAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+template <ExprLowerer Lowerer>
+auto LowerStructuredAssignmentPattern(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::StructuredAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr>;

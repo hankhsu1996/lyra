@@ -36,6 +36,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/lowering/hir_to_mir/writeback_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
@@ -270,86 +271,139 @@ auto BuildArrayMethodClosure(
 // `expression/system/*.cpp`. The visitor is exhaustive over
 // `support::SystemSubroutineSemantic`; new arms force a compile-time
 // update here.
+// A structural context admits only a pure value query -- one that reads state
+// and sequences nothing. Every other family is an effect that needs a process
+// body, so it has no structural lowering.
+auto RejectStructuralEffect(diag::SourceSpan span) -> diag::Result<mir::Expr> {
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+      "this system subroutine is not yet supported in a continuous assignment; "
+      "only a value query is legal there");
+}
+
+// Fans out a system-subroutine call to the per-family handler. The visit is
+// exhaustive over `support::SystemSubroutineSemantic`, so a new family forces
+// an arm here and a decision about both contexts. A family that is a pure value
+// query (LRM 20.3 time, LRM 21.6 plusargs, LRM 21.3.3 `$sformatf`) needs no
+// process body and its one handler serves both pass classes; a family that is
+// an effect is procedural-only.
+template <ExprLowerer Lowerer>
 auto LowerSystemSubroutineCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const hir::SystemSubroutineRef& ref, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
+  constexpr bool kProcedural = std::same_as<Lowerer, ProcessLowerer>;
   const auto& desc = support::LookupSystemSubroutine(ref.id);
   return std::visit(
       Overloaded{
           [&](const support::PrintSystemSubroutineInfo& print)
               -> diag::Result<mir::Expr> {
-            return LowerPrintSystemSubroutineCall(process, frame, call, print);
+            if constexpr (kProcedural) {
+              return LowerPrintSystemSubroutineCall(
+                  lowerer, frame, call, print);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::TerminationSystemSubroutineInfo& term)
               -> diag::Result<mir::Expr> {
-            return LowerFinishSystemSubroutineCall(
-                process, frame, call, desc.name, term, span);
+            if constexpr (kProcedural) {
+              return LowerFinishSystemSubroutineCall(
+                  lowerer, frame, call, desc.name, term, span);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::DiagnosticSystemSubroutineInfo& diag_info)
               -> diag::Result<mir::Expr> {
-            return LowerDiagnosticSystemSubroutineCall(
-                process, frame, call, diag_info, span);
+            if constexpr (kProcedural) {
+              return LowerDiagnosticSystemSubroutineCall(
+                  lowerer, frame, call, diag_info, span);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::FileIOSystemSubroutineInfo& file_io)
               -> diag::Result<mir::Expr> {
-            return LowerFileIOSystemSubroutineCall(
-                process, frame, call, desc.name, file_io, span);
+            if constexpr (kProcedural) {
+              return LowerFileIOSystemSubroutineCall(
+                  lowerer, frame, call, desc.name, file_io, span);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::ScanSystemSubroutineInfo& scan_info)
               -> diag::Result<mir::Expr> {
-            return LowerScanSystemSubroutineCall(
-                process, frame, call, scan_info, span);
+            if constexpr (kProcedural) {
+              return LowerScanSystemSubroutineCall(
+                  lowerer, frame, call, scan_info, span);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::SFormatSystemSubroutineInfo& sformat)
               -> diag::Result<mir::Expr> {
             return LowerSFormatSystemSubroutineCall(
-                process, frame, call, sformat);
+                lowerer, frame, call, sformat);
           },
           [&](const support::TimeSystemSubroutineInfo& time_info)
               -> diag::Result<mir::Expr> {
-            return LowerTimeSystemSubroutineCall(process, frame, time_info);
+            return LowerTimeSystemSubroutineCall(lowerer, frame, time_info);
           },
           [&](const support::TimeFormatSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
-            return LowerTimeFormatSystemSubroutineCall(
-                process, frame, call, span);
+            if constexpr (kProcedural) {
+              return LowerTimeFormatSystemSubroutineCall(
+                  lowerer, frame, call, span);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::PrintTimescaleSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
-            return LowerPrintTimescaleSystemSubroutineCall(process, frame);
+            if constexpr (kProcedural) {
+              return LowerPrintTimescaleSystemSubroutineCall(lowerer, frame);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::PlusargsSystemSubroutineInfo& plusargs)
               -> diag::Result<mir::Expr> {
             return LowerPlusargsSystemSubroutineCall(
-                process, frame, call, plusargs);
+                lowerer, frame, call, plusargs);
           },
       },
       desc.semantic);
 }
 
-// LRM 13.5 user-subroutine call (function or task). A call with output /
-// inout actuals is desugared to copy-in-copy-out at statement position;
-// reaching this lowering means the call is a nested expression operand,
-// where the copy-out statement has nowhere to be sequenced. ref / const
-// ref alias the actual and copy nothing back (LRM 13.5.2), so they fall
-// through to the value-only lowering. The callee body receives its
-// instance handle as `arguments[0]`; SV actuals follow.
+// LRM 13.5 intra-unit subroutine call in value position: the callee takes only
+// `input` values and `ref` / const-ref aliases here. A `ref` / const-ref formal
+// aliases the actual's cell (LRM 13.5.2); the body's `Ref<T>` binds it. An
+// output / inout call is intercepted before this dispatch and lowered through
+// the completion-payload writeback path, so it never reaches here. The callee
+// body receives its instance handle as `arguments[0]`; SV actuals follow.
 template <ExprLowerer Lowerer>
 auto LowerStructuralSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::StructuralSubroutineRef& usr, diag::SourceSpan span,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    const hir::StructuralSubroutineRef& usr, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const hir::SubroutineDecl& decl =
       lowerer.LookupHirSubroutine(usr.hops, usr.subroutine);
-  for (const auto& param : decl.params) {
-    if (hir::RequiresWriteback(param.direction)) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedSubroutineArgument,
-          "a call with output / inout arguments is only supported in "
-          "statement position, not as a nested expression");
+  if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
+    // An output / inout formal only reaches value lowering in a structural
+    // context; the procedural path intercepts it as a completion-payload
+    // closure. The frontend rejects an output / inout call outside procedural
+    // code (LRM 13.4), so a structural one is a compiler-invariant violation
+    // rather than a user-diagnosable form.
+    for (const auto& param : decl.params) {
+      if (hir::RequiresWriteback(param.direction)) {
+        throw InternalError(
+            "structural subroutine call carries an output / inout argument; "
+            "the "
+            "frontend rejects these outside procedural code (LRM 13.4)");
+      }
     }
   }
   std::vector<mir::ExprId> args;
@@ -1367,13 +1421,14 @@ auto LowerForeignImportCall(
       lowerer, frame, c, decl, target, result_type);
 }
 
-// A call to a package subroutine (LRM 26.3): a receiver-less callable of
-// another compilation unit, reached by name. It takes no receiver but does take
-// the engine services as its leading argument -- the receiver-less peer of
-// `self`, so the callee body can wake a package variable's subscribers or
-// suspend. The remaining arguments are input-only (the AST-to-HIR producer
-// rejects output / inout / ref formals), so each actual lowers as a plain
-// value.
+// A call to a package or `$unit` subroutine (LRM 26.3 / 3.12.1) in value
+// position: a receiver-less callable of another compilation unit, reached by
+// name. It takes no receiver but does take the engine services as its leading
+// argument -- the receiver-less peer of `self`, so the callee body can wake a
+// variable's subscribers or suspend. A ref / const-ref formal aliases the
+// actual's cell exactly as an intra-unit call does. An output / inout call is
+// intercepted before this dispatch and lowered through the completion-payload
+// writeback path, so it never reaches here.
 template <ExprLowerer Lowerer>
 auto LowerExternalUnitSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -1381,17 +1436,49 @@ auto LowerExternalUnitSubroutineCall(
     -> diag::Result<mir::Expr> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
+  if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
+    // As with an intra-unit call, an output / inout formal only reaches value
+    // lowering in a structural context; the procedural path intercepts it. The
+    // frontend rejects such a call outside procedural code (LRM 13.4).
+    for (const auto& param : ref.params) {
+      if (hir::RequiresWriteback(param.direction)) {
+        throw InternalError(
+            "cross-unit subroutine call carries an output / inout argument; "
+            "the "
+            "frontend rejects these outside procedural code (LRM 13.4)");
+      }
+    }
+  }
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
   // The caller supplies services from its own ambient handle: an instance
   // body's `self`, or an enclosing package callable's own services parameter.
   args.push_back(
       block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame)));
-  for (const auto& argument : c.arguments) {
-    if (!argument.has_value()) {
+  for (std::size_t i = 0; i < c.arguments.size(); ++i) {
+    if (!c.arguments[i].has_value()) {
       throw InternalError("package call argument unexpectedly elided");
     }
-    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*argument), frame);
+    const bool is_ref_formal =
+        i < ref.params.size() &&
+        (ref.params[i].direction == hir::ParamDirection::kRef ||
+         ref.params[i].direction == hir::ParamDirection::kConstRef);
+    if (is_ref_formal) {
+      auto arg_or = lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments[i]), frame);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      mir::ExprId actual_id = block.exprs.Add(*std::move(arg_or));
+      const mir::ExprId root_id =
+          FindLhsRootId(lowerer.Owner().Unit(), block, actual_id);
+      if (root_id != actual_id) {
+        actual_id =
+            MaybeWrapObservableLhsWithMutate(lowerer, frame, block, actual_id);
+      }
+      args.push_back(BuildReferenceArg(
+          lowerer.Owner().Unit(), block, actual_id,
+          block.exprs.Get(actual_id).type));
+      continue;
+    }
+    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     args.push_back(block.exprs.Add(*std::move(arg_or)));
   }
@@ -1463,28 +1550,27 @@ template <ExprLowerer Lowerer>
 auto LowerHirCallExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  // A call whose callee has an output / inout formal carries its writebacks
+  // through a completion payload; in value position it lowers to an
+  // immediately-invoked closure that writes them back and yields the function
+  // result (LRM 13.4). Procedural-only -- the frontend rejects an output /
+  // inout / ref call outside procedural code (LRM 13.4), so no such call
+  // reaches a structural HIR -- so the interception is guarded here, and the
+  // per-callee dispatch below sees only input / ref arguments.
+  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+    if (auto plan = PlanWritebackCall(lowerer, c, result_type)) {
+      return LowerWritebackCallExpr(lowerer, frame, c, *plan);
+    }
+  }
   return std::visit(
       Overloaded{
           [&](const hir::SystemSubroutineRef& sys) -> diag::Result<mir::Expr> {
-            // System subroutines (the print / scan / file families plus the
-            // value functions) are lowered through statement-flavored handlers
-            // bound to a process body; a continuous-assign RHS reaching one is
-            // a value system function ($time and the like), which is the only
-            // form legal in expression position there but not yet wired on the
-            // structural path.
-            if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-              return LowerSystemSubroutineCall(lowerer, frame, c, sys, span);
-            } else {
-              return diag::Fail(
-                  span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                  "a system subroutine call is not yet supported in a "
-                  "continuous assignment");
-            }
+            return LowerSystemSubroutineCall(lowerer, frame, c, sys, span);
           },
           [&](const hir::StructuralSubroutineRef& usr)
               -> diag::Result<mir::Expr> {
             return LowerStructuralSubroutineCall(
-                lowerer, frame, c, usr, span, result_type);
+                lowerer, frame, c, usr, result_type);
           },
           [&](const hir::MethodCallRef& m) -> diag::Result<mir::Expr> {
             return LowerMethodCall(lowerer, frame, c, m, result_type);

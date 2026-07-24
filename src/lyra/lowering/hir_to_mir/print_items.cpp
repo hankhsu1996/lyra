@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
@@ -99,14 +100,14 @@ auto FlattenCallArgs(const hir::CallExpr& call) -> std::vector<hir::ExprId> {
 
 // Lowers one operand of a format, whichever way its conversion is chosen. The
 // returned expression is detached for the caller to intern.
-auto LowerFormatOperand(
-    ProcessLowerer& process, WalkFrame frame, hir::ExprId hir_arg)
+template <ExprLowerer Lowerer>
+auto LowerFormatOperand(Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg)
     -> diag::Result<mir::Expr> {
-  const hir::Expr& hir_expr = process.HirBody().exprs.Get(hir_arg);
-  auto lowered_or = process.LowerExpr(hir_expr, frame);
+  const hir::Expr& hir_expr = lowerer.HirExprs().Get(hir_arg);
+  auto lowered_or = lowerer.LowerExpr(hir_expr, frame);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
-  if (TypeContainsChandle(process.Owner().Unit(), lowered.type)) {
+  if (TypeContainsChandle(lowerer.Owner().Unit(), lowered.type)) {
     return diag::Fail(
         hir_expr.span, diag::DiagCode::kUnsupportedExpressionForm,
         "a chandle is not a legal format argument (LRM 6.14 permits a chandle "
@@ -115,11 +116,12 @@ auto LowerFormatOperand(
   return lowered;
 }
 
+template <ExprLowerer Lowerer>
 auto BuildPrintValueItem(
-    ProcessLowerer& process, WalkFrame frame, hir::ExprId hir_arg,
+    Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg,
     mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
   auto& block = *frame.current_block;
-  auto lowered_or = LowerFormatOperand(process, frame, hir_arg);
+  auto lowered_or = LowerFormatOperand(lowerer, frame, hir_arg);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
 
@@ -127,14 +129,14 @@ auto BuildPrintValueItem(
   // each format directly, without building a string value. Only an unpacked
   // byte array is not directly formattable, so it lifts to a string value
   // here.
-  const auto& value_type = process.Owner().Unit().types.Get(lowered.type);
+  const auto& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
   if (spec.kind == value::FormatKind::kString &&
       value_type.Kind() != mir::TypeKind::kString &&
       !value_type.IsIntegralPacked()) {
     const mir::ExprId inner = block.exprs.Add(std::move(lowered));
     lowered = BuildValueConversion(
-        process.Owner().Unit(), block, inner,
-        process.Owner().Unit().builtins.string);
+        lowerer.Owner().Unit(), block, inner,
+        lowerer.Owner().Unit().builtins.string);
   }
 
   const mir::TypeId type = lowered.type;
@@ -142,11 +144,11 @@ auto BuildPrintValueItem(
   return mir::RuntimePrintValue(value, type, std::move(spec));
 }
 
+template <ExprLowerer Lowerer>
 auto BuildPrintItemFromDirective(
-    ProcessLowerer& process, WalkFrame frame,
-    const value::FormatDirective& directive, std::span<const hir::ExprId> args,
-    std::size_t& value_index, diag::SourceSpan span)
-    -> diag::Result<mir::RuntimePrintItem> {
+    Lowerer& lowerer, WalkFrame frame, const value::FormatDirective& directive,
+    std::span<const hir::ExprId> args, std::size_t& value_index,
+    diag::SourceSpan span) -> diag::Result<mir::RuntimePrintItem> {
   switch (directive.role) {
     case value::FormatDirective::Role::kLiteral:
       return mir::RuntimePrintLiteral{.text = directive.literal};
@@ -160,7 +162,7 @@ auto BuildPrintItemFromDirective(
       // the operand cursor where it found it; its modifiers ride through the
       // string-format spec like an ordinary `%s` argument.
       auto& block = *frame.current_block;
-      const auto& builtins = process.Owner().Unit().builtins;
+      const auto& builtins = lowerer.Owner().Unit().builtins;
       const mir::ExprId self_id = block.exprs.Add(
           MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
       const mir::ExprId path_id = block.exprs.Add(
@@ -187,7 +189,7 @@ auto BuildPrintItemFromDirective(
       }
       const hir::ExprId hir_arg = args[value_index++];
       return BuildPrintValueItem(
-          process, frame, hir_arg,
+          lowerer, frame, hir_arg,
           mir::FormatSpec(
               directive.kind, ToMirFormatModifiers(directive.modifiers)));
     }
@@ -240,9 +242,9 @@ struct LiteralFormatStringRef {
 };
 
 auto TryGetHirStringLiteral(
-    const hir::ProceduralBody& proc, hir::ExprId expr_id)
+    const base::Arena<hir::Expr, hir::ExprId>& exprs, hir::ExprId expr_id)
     -> std::optional<LiteralFormatStringRef> {
-  const auto& expr = proc.exprs.Get(expr_id);
+  const auto& expr = exprs.Get(expr_id);
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
   if (primary == nullptr) return std::nullopt;
   const auto* sl = std::get_if<hir::StringLiteral>(&primary->data);
@@ -334,18 +336,19 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind {
   throw InternalError("RadixToFormatKind: unknown PrintRadix");
 }
 
+template <ExprLowerer Lowerer>
 auto BuildRuntimePrintItemsFromCallArgs(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     support::PrintRadix default_radix, std::size_t arg_offset)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
-  const auto& hir_proc = process.HirBody();
+  const auto& hir_exprs = lowerer.HirExprs();
   std::vector<mir::RuntimePrintItem> items;
   const std::vector<hir::ExprId> args = FlattenCallArgs(call);
   std::size_t cursor = arg_offset;
 
   std::optional<LiteralFormatStringRef> literal;
   if (cursor < args.size()) {
-    literal = TryGetHirStringLiteral(hir_proc, args[cursor]);
+    literal = TryGetHirStringLiteral(hir_exprs, args[cursor]);
   }
   if (literal.has_value()) {
     const value::FormatParseResult parsed =
@@ -357,7 +360,7 @@ auto BuildRuntimePrintItemsFromCallArgs(
     auto value_index = cursor;
     for (const auto& directive : parsed.directives) {
       auto item_or = BuildPrintItemFromDirective(
-          process, frame, directive, args, value_index, literal->span);
+          lowerer, frame, directive, args, value_index, literal->span);
       if (!item_or) return std::unexpected(std::move(item_or.error()));
       items.push_back(std::move(*item_or));
     }
@@ -370,7 +373,7 @@ auto BuildRuntimePrintItemsFromCallArgs(
       items.emplace_back(mir::RuntimePrintLiteral{.text = " "});
     }
     auto item_or = BuildPrintValueItem(
-        process, frame, args[cursor],
+        lowerer, frame, args[cursor],
         mir::FormatSpec(default_kind, mir::FormatModifiers{}));
     if (!item_or) return std::unexpected(std::move(item_or.error()));
     items.push_back(*std::move(item_or));
@@ -379,19 +382,21 @@ auto BuildRuntimePrintItemsFromCallArgs(
   return items;
 }
 
+template <ExprLowerer Lowerer>
 auto HasLiteralFormatString(
-    const ProcessLowerer& process, const hir::CallExpr& call,
-    std::size_t arg_offset) -> bool {
+    const Lowerer& lowerer, const hir::CallExpr& call, std::size_t arg_offset)
+    -> bool {
   if (arg_offset >= call.arguments.size()) return false;
   const auto& slot = call.arguments[arg_offset];
   if (!slot.has_value()) return false;
-  return TryGetHirStringLiteral(process.HirBody(), *slot).has_value();
+  return TryGetHirStringLiteral(lowerer.HirExprs(), *slot).has_value();
 }
 
+template <ExprLowerer Lowerer>
 auto BuildRuntimeFormatCallExpr(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     std::size_t arg_offset) -> diag::Result<mir::Expr> {
-  auto& unit = process.Owner().Unit();
+  auto& unit = lowerer.Owner().Unit();
   auto& block = *frame.current_block;
   const std::vector<hir::ExprId> args = FlattenCallArgs(call);
 
@@ -404,7 +409,7 @@ auto BuildRuntimeFormatCallExpr(
   // An integral or unpacked-byte-array format string carries its text as bytes
   // (LRM 21.3.3), so it reaches the parse as a string value through the same
   // conversion any other bits-to-text operand takes.
-  auto format_or = LowerFormatOperand(process, frame, args[arg_offset]);
+  auto format_or = LowerFormatOperand(lowerer, frame, args[arg_offset]);
   if (!format_or) return std::unexpected(std::move(format_or.error()));
   const mir::ExprId lowered_format = block.exprs.Add(*std::move(format_or));
   const mir::ExprId format_id =
@@ -413,7 +418,7 @@ auto BuildRuntimeFormatCallExpr(
   std::vector<mir::ExprId> operands;
   operands.reserve(args.size() - arg_offset - 1);
   for (std::size_t i = arg_offset + 1; i < args.size(); ++i) {
-    auto lowered_or = LowerFormatOperand(process, frame, args[i]);
+    auto lowered_or = LowerFormatOperand(lowerer, frame, args[i]);
     if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
     const mir::ExprId value = block.exprs.Add(*std::move(lowered_or));
     operands.push_back(block.exprs.Add(
@@ -447,7 +452,7 @@ auto BuildRuntimeFormatCallExpr(
           .type = unit.builtins.string});
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+      block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
   const mir::ExprId time_format_id = block.exprs.Add(
       mir::Expr{
           .data =
@@ -459,7 +464,7 @@ auto BuildRuntimeFormatCallExpr(
   const mir::ExprId time_unit_power = block.exprs.Add(
       mir::MakeIntLiteral(
           unit.builtins.int_type,
-          static_cast<std::int64_t>(process.Resolution().unit_power)));
+          static_cast<std::int64_t>(lowerer.Resolution().unit_power)));
 
   return mir::Expr{
       .data =
@@ -490,5 +495,23 @@ auto BuildPrintItemsArray(
       .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
       .type = array_type};
 }
+
+template auto HasLiteralFormatString(
+    const ProcessLowerer&, const hir::CallExpr&, std::size_t) -> bool;
+template auto HasLiteralFormatString(
+    const StructuralScopeLowerer&, const hir::CallExpr&, std::size_t) -> bool;
+template auto BuildRuntimePrintItemsFromCallArgs(
+    ProcessLowerer&, WalkFrame, const hir::CallExpr&, support::PrintRadix,
+    std::size_t) -> diag::Result<std::vector<mir::RuntimePrintItem>>;
+template auto BuildRuntimePrintItemsFromCallArgs(
+    const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
+    support::PrintRadix, std::size_t)
+    -> diag::Result<std::vector<mir::RuntimePrintItem>>;
+template auto BuildRuntimeFormatCallExpr(
+    ProcessLowerer&, WalkFrame, const hir::CallExpr&, std::size_t)
+    -> diag::Result<mir::Expr>;
+template auto BuildRuntimeFormatCallExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&, std::size_t)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

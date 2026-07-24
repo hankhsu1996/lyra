@@ -75,6 +75,12 @@ on the execution backend, mirroring the C++-backend items one surface at a time.
       `bit [31:0]` (canonical vector) get distinct C ABIs; the canonical layout matches Lyra's
       two-plane representation, so marshaling is a plane reshape. A 4-state scalar `logic` result
       crosses by value; a wider result stays restricted to a small value (LRM 35.5.5).
+  - [ ] `shortreal` as a DPI-C argument or result type (LRM 35.5.6) is rejected; `real` is
+        supported.
+  - [ ] A packed struct / union as a DPI-C argument (LRM 35.5.6, Annex H) is rejected; only the
+        packed-vector, scalar, `real`, `string`, and `chandle` carriers are wired.
+  - [ ] A DPI-C signature carrying any other unmapped type (LRM 35.5.6, Table H.1) is rejected
+        rather than mis-marshalled.
 
 ### Export: foreign C calls SV
 

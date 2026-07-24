@@ -274,39 +274,15 @@ auto LowerExprImpl(
       return LowerReplicationExpr(
           lowerer, frame, expr.as<slang::ast::ReplicationExpression>(), span);
 
-    case slang::ast::ExpressionKind::SimpleAssignmentPattern: {
-      const auto& sap =
-          expr.as<slang::ast::SimpleAssignmentPatternExpression>();
-      if (sap.isLValue) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
-            "assignment pattern as LHS destructuring is not yet supported");
-      }
-      return LowerAssignmentPatternFromElements(lowerer, frame, sap, span);
-    }
+    case slang::ast::ExpressionKind::SimpleAssignmentPattern:
+      return LowerSimpleAssignmentPattern(
+          lowerer, frame,
+          expr.as<slang::ast::SimpleAssignmentPatternExpression>(), span);
 
-    case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
-      const auto& sap =
-          expr.as<slang::ast::StructuredAssignmentPatternExpression>();
-      const auto target_kind = expr.type->getCanonicalType().kind;
-      // LRM 7.9.11: an associative literal keeps its `index: value` pairs and
-      // optional default; lower the keyed form, not the positional one that
-      // would drop both.
-      if (target_kind == slang::ast::SymbolKind::AssociativeArrayType) {
-        return LowerAssociativeAssignmentPattern(lowerer, frame, sap, span);
-      }
-      // Slang accepts `'{idx:val, ...}` for a dynamic-array target as long as
-      // indices cover a dense `0..N-1`. The legal subset is equivalent to
-      // positional and adds no expressive power; rejecting it here keeps the
-      // dispatch narrow until a consumer needs the structured form.
-      if (target_kind == slang::ast::SymbolKind::DynamicArrayType) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
-            "index-keyed assignment pattern on a dynamic array is not yet "
-            "supported; use positional form");
-      }
-      return LowerAssignmentPatternFromElements(lowerer, frame, sap, span);
-    }
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern:
+      return LowerStructuredAssignmentPattern(
+          lowerer, frame,
+          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), span);
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
       return LowerReplicatedAssignmentPatternExpr(

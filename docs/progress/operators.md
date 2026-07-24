@@ -25,12 +25,19 @@ The numeric IDs (W1..W14) imply execution order; where a cut is independent the 
 - [x] W1 -- `inside` set-membership (LRM 11.4.13). Singular and range items; ranges use
       `(>= lo) && (<= hi)`. The LRM 11.4.13 four-state corner ("no match but some compare yields
       `1'bx`") is preserved through the existing logical-OR truth table.
+  - [ ] The tolerance-range item form (`inside {[a:b]}` with a `+/-` tolerance, LRM 11.4.13) is
+        rejected; only singular and plain `[lo:hi]` range items are accepted.
 - [x] W2 -- Wildcard equality `==?` / `!=?` (LRM 11.4.6). Asymmetric: X / Z in the right operand are
       wildcards; X / Z in the left operand are not. Result is `1'bx` when the left operand carries X
       / Z that meets a known right-operand bit and no other bit definitely mismatches. W1's value
       items use `==?` so wildcard items in `inside` work.
 - [x] W3 -- Case equality `===` / `!==` (LRM 11.4.5). Bit-exact 4-state compare (X matches X, Z
       matches Z, X does not match Z); deterministic bool.
+  - [ ] The conditional operator's `&&&` multi-condition form and its `matches` pattern form (LRM
+        11.4.11 / 12.6) are rejected; the plain `c ? a : b` ternary is supported.
+  - [ ] An array query (`$size` / `$left` / `$right` / `$low` / `$high`, LRM 20.7) whose dimension
+        index is a run-time value over an array with a run-time dimension is rejected; a constant
+        dimension index over a fixed-size operand folds at elaboration.
 
 ### Selectors
 
@@ -48,8 +55,12 @@ merged node.
 
 - [x] W4 -- Element-select read `v[idx]`. Covers 1D bit-select and multi-dim element-select
       uniformly. LRM 7.4.5 / 11.5.1 OOB and X / Z propagation rules apply.
+  - [ ] Element-select on a non-integral operand beyond the supported families (LRM 7.4.6) is
+        rejected.
 - [x] W5 -- Range-select read covering all three bounds forms: constant `v[msb:lsb]`, indexed-up
       `v[base +: w]`, indexed-down `v[base -: w]`.
+  - [ ] Range-select on an operand that is neither integral nor an unpacked array (LRM 7.4.6) is
+        rejected.
 - [x] W6 -- Selector lvalue (write side, including NBA + selector). LRM 11.5.1 write rules
       (fully-OOB no-op, partial-OOB only in-range bits, X / Z position no-op) all hold. Closes
       `datatypes/packed/indexed_part_select` for the write half.

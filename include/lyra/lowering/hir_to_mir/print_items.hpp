@@ -6,7 +6,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -28,9 +28,10 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind;
 // directives are known at compile time. A caller whose format string is
 // mandatory (LRM 21.3.3) but absent from this slot formats through the runtime
 // parse instead.
+template <ExprLowerer Lowerer>
 auto HasLiteralFormatString(
-    const ProcessLowerer& process, const hir::CallExpr& call,
-    std::size_t arg_offset) -> bool;
+    const Lowerer& lowerer, const hir::CallExpr& call, std::size_t arg_offset)
+    -> bool;
 
 // Walks a system-subroutine call's argument list and produces the runtime
 // print-item sequence. The first argument at `arg_offset` is treated as
@@ -41,8 +42,9 @@ auto HasLiteralFormatString(
 // `arg_offset` is 1 for file-output variants whose first call argument
 // is the MCD/FD descriptor, or for `$sformat` / `$swrite*` whose first
 // argument is the output_var lvalue; 0 otherwise.
+template <ExprLowerer Lowerer>
 auto BuildRuntimePrintItemsFromCallArgs(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     support::PrintRadix default_radix, std::size_t arg_offset)
     -> diag::Result<std::vector<mir::RuntimePrintItem>>;
 
@@ -53,8 +55,9 @@ auto BuildRuntimePrintItemsFromCallArgs(
 // remaining argument becomes a bare type-erased operand, since no directive is
 // known yet to bind it to a conversion. Yields the SV `string` the call
 // produces, as the compile-time-parsed path does.
+template <ExprLowerer Lowerer>
 auto BuildRuntimeFormatCallExpr(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     std::size_t arg_offset) -> diag::Result<mir::Expr>;
 
 // Materializes a runtime print-item DTO list into MIR construction nodes: each

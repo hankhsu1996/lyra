@@ -12,6 +12,7 @@
 
 namespace slang::ast {
 class Expression;
+class FormalArgumentSymbol;
 class MethodPrototypeSymbol;
 class SubroutineSymbol;
 }  // namespace slang::ast
@@ -19,6 +20,15 @@ class SubroutineSymbol;
 namespace lyra::lowering::ast_to_hir {
 
 class UnitLowerer;
+
+// Classifies a slang formal's argument direction into its HIR ParamDirection
+// (LRM 13.5). slang has no ConstRef direction (LRM 13.5.2): a `const ref`
+// formal carries direction Ref with the Const variable flag, so const-ness is
+// read off the formal rather than the direction enum alone. Shared by the
+// subroutine-declaration lowering and the cross-unit call site, which recompute
+// the same directions from the same formals.
+auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
+    -> hir::ParamDirection;
 
 // Lowers a slang subroutine (LRM 13) into a hir::SubroutineDecl: its result
 // type, its formals as body-local procedural vars carrying their direction, the

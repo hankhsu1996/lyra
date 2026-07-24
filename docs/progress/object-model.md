@@ -119,7 +119,23 @@ each stage establishes, not how.
       disjoint arenas -- an instance member and a type-associated one never share identity space --
       and the initializer of a static property runs once at design init (LRM 10.5), before any
       initial or always procedure, from a class-level body separate from the per-instance
-      constructor.
+      constructor. Because a static property needs no receiver, it also reads from a structural
+      expression (a continuous-assignment right-hand side), which re-evaluates when the cell
+      changes; an instance property has no structural form, having no receiver to reach it through.
+
+- [ ] Class-method argument directions beyond `input` (LRM 13.5): an instance method, a static
+      method, or a constructor declared with an `output`, `inout`, or `ref` formal is rejected. A
+      free subroutine carries these back to the caller's actuals in every position the LRM allows;
+      the class surface has no equivalent yet, so a method's results must be returned rather than
+      written back through an argument.
+
+- [ ] Class task methods (LRM 8.6, 13.3): a `task` declared in a class body, and its pure-virtual
+      prototype form (LRM 8.21), are rejected. A class method must be a function today, so a
+      class-owned behaviour that suspends has no home.
+
+- [ ] Out-of-block method definitions (LRM 8.24): a method declared as an `extern` prototype in the
+      class body and defined outside it (`function ClassName::m; ... endfunction`) is rejected. A
+      method must be defined inline in the class body today.
 
 ## Managed-object lifetime: current implementation status
 

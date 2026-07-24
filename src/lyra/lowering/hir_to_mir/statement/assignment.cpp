@@ -17,17 +17,16 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/lowering/hir_to_mir/writeback_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -209,194 +208,115 @@ auto LowerDestructuringAssign(
       .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
-// A user subroutine whose formals include a non-`input` direction needs the
-// call desugared so the writebacks become explicit MIR statements; returns
-// its HIR declaration, or nullptr for a value-only call (system / builtin
-// callee, or an all-`input` user callee). Only a structural callee is resolved
-// through the enclosing structural scope, so a package callable's body -- which
-// has no enclosing structural scope and can only reach input-only siblings --
-// short-circuits before reaching for one.
-auto SubroutineWithWritebacks(
-    ProcessLowerer& process, const hir::CallExpr& call)
-    -> const hir::SubroutineDecl* {
-  const auto* ref = std::get_if<hir::StructuralSubroutineRef>(&call.callee);
-  if (ref == nullptr) {
-    return nullptr;
-  }
-  const hir::SubroutineDecl& decl =
-      process.EnclosingScopeLowerer().LookupHirSubroutine(
-          ref->hops, ref->subroutine);
-  for (const auto& param : decl.params) {
-    if (hir::RequiresWriteback(param.direction)) {
-      return &decl;
-    }
-  }
-  return nullptr;
+// Whether enabling this callee suspends the caller (LRM 13.3): a task enable
+// awaits its completion, a function call returns without yielding. The visit is
+// exhaustive over the callee kinds, so a kind that becomes suspendable forces a
+// decision here rather than silently defaulting to non-suspending.
+auto CallSuspends(ProcessLowerer& process, const hir::CallExpr& call) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const hir::SystemSubroutineRef& sys) {
+            return support::LookupSystemSubroutine(sys.id).suspends;
+          },
+          [&](const hir::StructuralSubroutineRef& s) {
+            return process.EnclosingScopeLowerer()
+                       .LookupHirSubroutine(s.hops, s.subroutine)
+                       .kind == hir::SubroutineKind::kTask;
+          },
+          [](const hir::ImportedMethodRef& m) {
+            return support::ImportedRuntimeMethodSuspends(m.method);
+          },
+          [&](const hir::ForeignImportRef& f) {
+            return process.EnclosingScopeLowerer()
+                .LookupForeignImport(f.hops, f.id)
+                .is_task;
+          },
+          [](const hir::ExternalUnitSubroutineRef& e) {
+            // A cross-unit task enable (LRM 26.3) awaits, the same as an
+            // intra-unit one; the callee's kind rides its by-name reference.
+            return e.kind == hir::SubroutineKind::kTask;
+          },
+          // A class method is always a function today -- a task declared in a
+          // class body is rejected at AST-to-HIR -- so no receiver-bearing call
+          // yields. When a class task method becomes lowerable, its enable
+          // suspends and these arms state that instead.
+          [](const hir::MethodCallRef&) { return false; },
+          [](const hir::StaticMethodCallRef&) { return false; },
+          // A built-in method (LRM 6.16 / 7.9 / 7.12 / 15.5) computes a value
+          // against a library type and never yields.
+          [](const hir::BuiltinMethodRef&) { return false; },
+      },
+      call.callee);
 }
 
-// One value the completion payload carries back to a caller place: the actual
-// lvalue to write and which payload component supplies it.
-struct CompletionWriteback {
-  mir::ExprId place{};
-  std::size_t component_index = 0;
-  mir::TypeId type{};
-};
-
-// LRM 13.5 output / inout argument passing. The callable's `output` / `inout`
-// values ride its completion payload: the call passes only the `input` values,
-// the `ref` aliases, and an `inout`'s incoming value; the payload's components
-// are then written back to the actual places after completion. A task awaits
-// the payload; a function's result is the payload directly. The whole thing
-// desugars into a block so the writebacks are explicit statements.
-//
-// `assign_target` is the lvalue for a `lhs = f(...)` statement -- it receives
-// the function-return component -- or nullopt for a bare call.
-auto LowerSubroutineCallWithWritebacks(
+// The statement-position lowering a system subroutine needs when its effect
+// cannot be expressed as a bare value: a file write whose formatted output is
+// bound to an output argument, and the `$sformat` / `$swrite` family whose
+// result lands in an output variable. Nullopt for every family that lowers as
+// an ordinary expression. Exhaustive over the semantic families, so a new one
+// forces a decision about whether it has a statement form.
+auto LowerSystemSubroutineCallStmtForm(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CallExpr& call, const hir::StructuralSubroutineRef& callee_ref,
-    const hir::SubroutineDecl& decl, std::optional<hir::ExprId> assign_target)
-    -> diag::Result<mir::Stmt> {
-  if (call.arguments.size() != decl.params.size()) {
-    throw InternalError(
-        "LowerSubroutineCallWithWritebacks: argument / formal count mismatch");
-  }
-
-  UnitLowerer& unit_lowerer = process.Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const hir::ProceduralBody& hir_proc = process.HirBody();
-  mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
-
-  // The completion layout the callee body and this call site share.
-  const std::vector<mir::TypeId> components =
-      CompletionComponentTypes(unit_lowerer, decl);
-  const mir::TypeId payload_type = NormalizeCompletionPayload(unit, components);
-  const bool is_task = decl.kind == hir::SubroutineKind::kTask;
-  const mir::TypeId call_result_type =
-      is_task ? unit.types.CoroutineOf(payload_type) : payload_type;
-
-  std::vector<mir::ExprId> call_args;
-  call_args.reserve(call.arguments.size() + 1);
-  call_args.push_back(wrapper.exprs.Add(MakeSelfRefExpr(
-      wrapper_frame, wrapper_frame.current_class->self_pointer_type)));
-
-  std::vector<CompletionWriteback> writebacks;
-  std::size_t next_component = 0;
-
-  // A non-void function's return is payload component 0; `lhs = f(...)` writes
-  // it back, a discarded result skips it.
-  if (decl.result_var.has_value()) {
-    if (assign_target.has_value()) {
-      auto lhs_or = process.LowerLhsExpr(
-          hir_proc.exprs.Get(*assign_target), wrapper_frame);
-      if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-      writebacks.push_back(
-          {.place = wrapper.exprs.Add(*std::move(lhs_or)),
-           .component_index = 0,
-           .type = components.front()});
-    }
-    next_component = 1;
-  }
-
-  for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-    const hir::ParamDirection dir = decl.params[i].direction;
-    if (!call.arguments[i].has_value()) {
-      throw InternalError(
-          "LowerSubroutineCallWithWritebacks: user-call positional arg "
-          "unexpectedly elided");
-    }
-    const hir::Expr& hir_arg = hir_proc.exprs.Get(*call.arguments[i]);
-    const mir::TypeId formal_type = unit_lowerer.TranslateType(
-        decl.body.procedural_vars.Get(decl.params[i].var).type);
-
-    // An `output` passes no argument; an `inout` passes its incoming value.
-    // Both bind the actual place for a post-completion writeback.
-    if (dir == hir::ParamDirection::kOutput ||
-        dir == hir::ParamDirection::kInOut) {
-      auto place_or = process.LowerLhsExpr(hir_arg, wrapper_frame);
-      if (!place_or) return std::unexpected(std::move(place_or.error()));
-      const mir::ExprId place = wrapper.exprs.Add(*std::move(place_or));
-      if (dir == hir::ParamDirection::kInOut) {
-        auto value_or = process.LowerExpr(hir_arg, wrapper_frame);
-        if (!value_or) return std::unexpected(std::move(value_or.error()));
-        call_args.push_back(wrapper.exprs.Add(*std::move(value_or)));
-      }
-      writebacks.push_back(
-          {.place = place,
-           .component_index = next_component++,
-           .type = formal_type});
-      continue;
-    }
-
-    // A `ref` / const-ref formal aliases the actual's cell -- pass the cell
-    // (or a `ScopedMutation` for selector / range chains on an observable
-    // cell) so the body's `Ref<T>` binds the underlying storage.
-    const bool is_ref = dir == hir::ParamDirection::kRef ||
-                        dir == hir::ParamDirection::kConstRef;
-    if (is_ref) {
-      auto arg_or = process.LowerLhsExpr(hir_arg, wrapper_frame);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      mir::ExprId actual_id = wrapper.exprs.Add(*std::move(arg_or));
-      const mir::ExprId root_id = FindLhsRootId(unit, wrapper, actual_id);
-      const bool root_is_cell = mir::IsObservableCellType(
-          unit.types.Get(wrapper.exprs.Get(root_id).type));
-      if (root_is_cell && root_id != actual_id) {
-        const mir::ExprId services_id = wrapper.exprs.Add(
-            BuildServicesCallExpr(unit_lowerer, wrapper_frame));
-        actual_id =
-            RewriteLhsRootWithMutate(unit, wrapper, actual_id, services_id);
-      }
-      call_args.push_back(BuildReferenceArg(
-          unit, wrapper, actual_id, wrapper.exprs.Get(actual_id).type));
-      continue;
-    }
-
-    auto arg_or = process.LowerExpr(hir_arg, wrapper_frame);
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    call_args.push_back(wrapper.exprs.Add(*std::move(arg_or)));
-  }
-
-  const mir::ExprId call_id = wrapper.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = process.EnclosingScopeLowerer()
-                                .TranslateStructuralSubroutine(
-                                    callee_ref.hops, callee_ref.subroutine),
-                  .arguments = std::move(call_args)},
-          .type = call_result_type});
-
-  // The completion value is the awaited payload for a task, the call result for
-  // a function; bind it to a local that every writeback projects from (and that
-  // the backend reuses as the task's completion slot).
-  const mir::ExprId completion_value =
-      is_task ? wrapper.exprs.Add(
-                    mir::Expr{
-                        .data = mir::AwaitExpr{.awaitable = call_id},
-                        .type = payload_type})
-              : call_id;
-  const mir::LocalId completion = wrapper_frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
-  wrapper.AppendStmt(
-      mir::LocalDeclStmt{.target = completion, .init = completion_value});
-
-  const mir::ExprId services_id =
-      wrapper.exprs.Add(BuildServicesCallExpr(unit_lowerer, wrapper_frame));
-  const mir::TypeId void_type = unit.builtins.void_type;
-  for (const CompletionWriteback& wb : writebacks) {
-    const mir::ExprId value_id = ProjectCompletionComponent(
-        wrapper, completion, payload_type, components.size(),
-        wb.component_index, wb.type);
-    const mir::Expr assign_expr = BuildObservableAssignExpr(
-        unit, wrapper, services_id, wb.place, value_id, std::nullopt, wb.type,
-        void_type);
-    wrapper.AppendStmt(mir::ExprStmt{.expr = wrapper.exprs.Add(assign_expr)});
-  }
-
-  const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(wrapper));
-  return mir::Stmt{
-      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
+    const hir::CallExpr& call, const hir::SystemSubroutineRef& ref,
+    std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
+    -> std::optional<diag::Result<mir::Stmt>> {
+  const auto& desc = support::LookupSystemSubroutine(ref.id);
+  return std::visit(
+      Overloaded{
+          [&](const support::FileIOSystemSubroutineInfo& file_io)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            if (!support::IsFileOutputArgBuiltinFn(file_io.builtin_fn)) {
+              return std::nullopt;
+            }
+            return LowerFileIOSystemSubroutineCallStmt(
+                process, frame, std::move(label), call, file_io, assign_target,
+                result_type);
+          },
+          [&](const support::SFormatSystemSubroutineInfo& sformat)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            // The statement form writes into the call's own output variable
+            // (`$sformat` / `$swrite`) or discards the text (`$sformatf`). A
+            // call feeding an assignment target is necessarily the valued
+            // `$sformatf`, whose result the assignment consumes, so it stays an
+            // ordinary expression there.
+            if (assign_target.has_value()) return std::nullopt;
+            return LowerSFormatSystemSubroutineCallStmt(
+                process, frame, std::move(label), call, sformat);
+          },
+          [](const support::PrintSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+          [](const support::TerminationSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+          [](const support::DiagnosticSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+          [](const support::ScanSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+          [](const support::TimeSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+          [](const support::TimeFormatSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+          [](const support::PrintTimescaleSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+          [](const support::PlusargsSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+      },
+      desc.semantic);
 }
 
 }  // namespace
@@ -430,52 +350,20 @@ auto LowerExprStmt(
   // outputs), so the await result is void and the enclosing statement discards
   // it.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
-    if (const auto* decl = SubroutineWithWritebacks(process, *call)) {
-      return LowerSubroutineCallWithWritebacks(
-          process, frame, std::move(label), *call,
-          std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
-          std::nullopt);
+    if (auto plan = PlanWritebackCall(
+            process, *call, process.Owner().TranslateType(inner.type))) {
+      return LowerWritebackCallStmt(
+          process, frame, std::move(label), *call, *plan, std::nullopt);
     }
-    bool suspends = false;
     if (const auto* sys_ref =
             std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
-      const auto& desc = support::LookupSystemSubroutine(sys_ref->id);
-      if (const auto* file_info = support::GetFileIOInfo(desc)) {
-        if (support::IsFileOutputArgBuiltinFn(file_info->builtin_fn)) {
-          return LowerFileIOSystemSubroutineCallStmt(
-              process, frame, std::move(label), *call, *file_info, std::nullopt,
-              process.Owner().TranslateType(inner.type));
-        }
+      if (auto stmt = LowerSystemSubroutineCallStmtForm(
+              process, frame, std::move(label), *call, *sys_ref, std::nullopt,
+              process.Owner().TranslateType(inner.type))) {
+        return *std::move(stmt);
       }
-      if (const auto* sformat_info = support::GetSFormatInfo(desc)) {
-        return LowerSFormatSystemSubroutineCallStmt(
-            process, frame, std::move(label), *call, *sformat_info);
-      }
-      suspends = desc.suspends;
-    } else if (
-        const auto* struct_ref =
-            std::get_if<hir::StructuralSubroutineRef>(&call->callee)) {
-      suspends =
-          process.EnclosingScopeLowerer()
-              .LookupHirSubroutine(struct_ref->hops, struct_ref->subroutine)
-              .kind == hir::SubroutineKind::kTask;
-    } else if (
-        const auto* imported =
-            std::get_if<hir::ImportedMethodRef>(&call->callee)) {
-      suspends = support::ImportedRuntimeMethodSuspends(imported->method);
-    } else if (
-        const auto* foreign =
-            std::get_if<hir::ForeignImportRef>(&call->callee)) {
-      suspends = process.EnclosingScopeLowerer()
-                     .LookupForeignImport(foreign->hops, foreign->id)
-                     .is_task;
-    } else if (
-        const auto* ext =
-            std::get_if<hir::ExternalUnitSubroutineRef>(&call->callee)) {
-      // A cross-unit task enable (LRM 26.3) awaits, the same as an intra-unit
-      // one; the callee's kind rides its by-name reference.
-      suspends = ext->kind == hir::SubroutineKind::kTask;
     }
+    const bool suspends = CallSuspends(process, *call);
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));
     const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
@@ -505,26 +393,23 @@ auto LowerExprStmt(
         conv_target_type = rhs->type;
       }
       if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
-        if (const auto* decl = SubroutineWithWritebacks(process, *call)) {
+        if (auto plan = PlanWritebackCall(
+                process, *call,
+                process.Owner().TranslateType(call_carrier->type))) {
           if (!conv_target_type.has_value()) {
-            return LowerSubroutineCallWithWritebacks(
-                process, frame, std::move(label), *call,
-                std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
-                assign->lhs);
+            return LowerWritebackCallStmt(
+                process, frame, std::move(label), *call, *plan, assign->lhs);
           }
         }
         if (const auto* sys_ref =
                 std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
-          const auto& desc = support::LookupSystemSubroutine(sys_ref->id);
           const mir::TypeId result_type = process.Owner().TranslateType(
               conv_target_type.has_value() ? *conv_target_type
                                            : call_carrier->type);
-          if (const auto* file_info = support::GetFileIOInfo(desc)) {
-            if (support::IsFileOutputArgBuiltinFn(file_info->builtin_fn)) {
-              return LowerFileIOSystemSubroutineCallStmt(
-                  process, frame, std::move(label), *call, *file_info,
-                  assign->lhs, result_type);
-            }
+          if (auto stmt = LowerSystemSubroutineCallStmtForm(
+                  process, frame, std::move(label), *call, *sys_ref,
+                  assign->lhs, result_type)) {
+            return *std::move(stmt);
           }
         }
       }
