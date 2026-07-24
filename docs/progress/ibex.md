@@ -110,11 +110,9 @@ full support.
       `ibex_simple_system` SRAM model calls `$readmemh(MemInitFile, mem)` in an `initial` block
       through the vendor helper `prim_util_memload.svh` (included from `prim_ram_1p` /
       `prim_ram_2p`), which is how the testbench boots a program image into RAM under the
-      `SRAMInitFile` parameter. Now supported for a one-dimensional memory of packed elements:
-      `@address` directives, `//` and `/* */` comments, per-digit x / z, an explicit start / finish
-      range (descending when start > finish), and unaddressed words left unchanged.
-      Multidimensional, associative, and dynamic-array memories (LRM 21.4.1 / 21.4.3) are not yet
-      covered; Ibex needs only the 1-D form.
+      `SRAMInitFile` parameter. Supported: `@address` directives, `//` and `/* */` comments,
+      per-digit x / z, an explicit start / finish range (descending when start > finish), and
+      unaddressed words left unchanged. Ibex needs only the one-dimensional form.
 - [x] **Hierarchical reference reaching a module instance from a nested generate scope** -- a dotted
       reference, written inside a conditional or loop generate block, that descends into a module
       instance owned by an enclosing scope (the RVFI trap logic in `ibex_core`, and `ibex_ex_block`
