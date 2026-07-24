@@ -18,7 +18,6 @@ class FileTable;
 class PlusArgsSource;
 class Observable;
 class RuntimeProcess;
-class Scope;
 
 // The runtime capability surface reachable from generated code. Every side
 // effect an emitted body performs -- I/O, scheduler verbs, time queries,
@@ -38,13 +37,11 @@ class RuntimeEffects {
 
   void SubmitNba(std::function<void(RuntimeEffects&)> closure);
   void SubmitPostponed(std::function<void()> closure);
-  // LRM 16.14.6: enqueue a deferred check for the Observed region of the
-  // current time slot. Attribution is the ambient current scope; coalescing
-  // is last-write-wins per (attribution scope, site_id) so a re-submit at
-  // the same site from the same scope in the same slot overwrites the
-  // pending closure.
-  void SubmitObserved(
-      const lyra::value::PackedArray& site_id, std::function<void()> fn);
+  // LRM 12.4.2.1: schedule a violation report to mature in the Observed region
+  // of the current time slot. The report is pending on behalf of the process
+  // that raised it, so a flush point that process reaches discards it; a check
+  // reached before any process exists has no owner and nothing can discard it.
+  void SubmitObserved(std::function<void()> fn);
 
   void TriggerValueChange(
       Observable& observable, const EdgeClassifier& classify);
@@ -63,12 +60,7 @@ class RuntimeEffects {
   // target `wait fork` reads and a fork spawn parents its branch to. Throws
   // if no process is executing.
   [[nodiscard]] auto CurrentProcess() -> RuntimeProcess&;
-  // The scope whose body is executing right now: what `%m` reports
-  // (LRM 21.2.1.1) and what a scope-attributed deferred effect attributes to.
-  // Throws if no scope is executing.
-  [[nodiscard]] auto CurrentScope() -> Scope&;
   [[nodiscard]] auto HasCurrentProcess() const -> bool;
-  [[nodiscard]] auto HasCurrentScope() const -> bool;
   // Nullable form of `CurrentProcess()`: returns the executing process, or
   // `nullptr` when no process is running -- a scope-agnostic foreign query
   // (e.g. `svGetScope` outside an imported subroutine, LRM 35.5.3) uses this
@@ -128,11 +120,9 @@ class CurrentRuntimeGuard {
   RuntimeEffects* previous_;
 };
 
-// Atomic publication of `process` and its owning scope as this runtime's
-// ambient execution identity for a process resume. Publishing them together
-// prevents a resume site from installing only one or a mismatched pair; the
-// ambient scope is always the ambient process's owning scope. LRM 9.5
-// process identity + LRM 21.2.1.1 %m attribution are the consumers.
+// Publication of `process` as this runtime's ambient execution identity for
+// the extent of a resume (LRM 9.5). Save-and-restore, so a nested foreign call
+// that re-enters generated code cannot lose the identity on the way back.
 class ProcessExecutionGuard {
  public:
   ProcessExecutionGuard(RuntimeEffects& effects, RuntimeProcess& process);
@@ -147,26 +137,6 @@ class ProcessExecutionGuard {
  private:
   RuntimeEffects* effects_;
   RuntimeProcess* previous_process_;
-  Scope* previous_scope_;
-};
-
-// Publishes `scope` as the ambient current scope for an extent that runs a
-// body outside any process (elaboration walks). Save-and-restore semantics
-// stack correctly for nested walks. Leaves the ambient process untouched;
-// during elaboration no process is executing.
-class ScopeExecutionGuard {
- public:
-  ScopeExecutionGuard(RuntimeEffects& effects, Scope& scope);
-  ~ScopeExecutionGuard();
-
-  ScopeExecutionGuard(const ScopeExecutionGuard&) = delete;
-  auto operator=(const ScopeExecutionGuard&) -> ScopeExecutionGuard& = delete;
-  ScopeExecutionGuard(ScopeExecutionGuard&&) = delete;
-  auto operator=(ScopeExecutionGuard&&) -> ScopeExecutionGuard& = delete;
-
- private:
-  RuntimeEffects* effects_;
-  Scope* previous_scope_;
 };
 
 }  // namespace lyra::runtime

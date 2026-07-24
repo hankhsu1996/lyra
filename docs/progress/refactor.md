@@ -60,11 +60,10 @@ enough to warrant its own focused review.
       machinery. Every emitted scope class extends it and stays thin; the scheduler walks the real
       object tree through the base. The kind is carried by the specialization type, not a side enum.
       Identity is fixed at construction; bind only wires services, creates processes, and recurses.
-      `services_` lives once, generate-scope classes are no longer bare, and the observed region
-      drains for every scope -- so a deferred check (and combinational settle) inside a nested
-      instance or a generate block now works. **Follow-up**: the `instance` / `gen scope` layer is
-      empty today and exists to mark the divergence; it is populated when Stage E (ports) lands --
-      ports live on `instance`, never on `gen scope`.
+      `services_` lives once, generate-scope classes are no longer bare, and a deferred check (and
+      combinational settle) inside a nested instance or a generate block now works. **Follow-up**:
+      the `instance` / `gen scope` layer is empty today and exists to mark the divergence; it is
+      populated when Stage E (ports) lands -- ports live on `instance`, never on `gen scope`.
 
 - [x] R6 -- The synthetic-expression builders an AST-to-HIR lowering reaches for (a counter,
       sentinel, or computed bound) are public, pure, and have one definition each. A raw-int64

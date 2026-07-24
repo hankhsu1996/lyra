@@ -1,6 +1,5 @@
 #include "lyra/runtime/runtime_effects.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -11,7 +10,7 @@
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/var.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
@@ -60,25 +59,11 @@ ProcessExecutionGuard::ProcessExecutionGuard(
     RuntimeEffects& effects, RuntimeProcess& process)
     : effects_(&effects),
       previous_process_(
-          std::exchange(AsRuntime(effects).current_process_, &process)),
-      previous_scope_(
-          std::exchange(
-              AsRuntime(effects).current_scope_, process.OwningScope())) {
+          std::exchange(AsRuntime(effects).current_process_, &process)) {
 }
 
 ProcessExecutionGuard::~ProcessExecutionGuard() {
   AsRuntime(*effects_).current_process_ = previous_process_;
-  AsRuntime(*effects_).current_scope_ = previous_scope_;
-}
-
-ScopeExecutionGuard::ScopeExecutionGuard(RuntimeEffects& effects, Scope& scope)
-    : effects_(&effects),
-      previous_scope_(
-          std::exchange(AsRuntime(effects).current_scope_, &scope)) {
-}
-
-ScopeExecutionGuard::~ScopeExecutionGuard() {
-  AsRuntime(*effects_).current_scope_ = previous_scope_;
 }
 
 auto RuntimeEffects::Stream() -> StreamDispatcher& {
@@ -117,18 +102,11 @@ void RuntimeEffects::SubmitPostponed(std::function<void()> closure) {
   rt.queues_.postponed.push_back(std::move(closure));
 }
 
-void RuntimeEffects::SubmitObserved(
-    const lyra::value::PackedArray& site_id, std::function<void()> fn) {
+void RuntimeEffects::SubmitObserved(std::function<void()> fn) {
   Runtime& rt = AsRuntime(*this);
-  if (rt.current_scope_ == nullptr) {
-    throw InternalError("RuntimeEffects::SubmitObserved: no ambient scope");
-  }
-  const auto slot = static_cast<std::size_t>(site_id.ToInt64());
-  auto& queue = rt.queues_.observed[rt.current_scope_];
-  if (slot >= queue.size()) {
-    queue.resize(slot + 1);
-  }
-  queue[slot] = std::move(fn);
+  rt.queues_.observed.push_back(
+      Runtime::PendingReport{
+          .owner = rt.current_process_, .emit = std::move(fn)});
 }
 
 void RuntimeEffects::TriggerValueChange(
@@ -185,25 +163,12 @@ auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {
   return *p;
 }
 
-auto RuntimeEffects::CurrentScope() -> Scope& {
-  Scope* s = AsRuntime(*this).current_scope_;
-  if (s == nullptr) {
-    throw InternalError(
-        "RuntimeEffects::CurrentScope: no scope is currently executing");
-  }
-  return *s;
-}
-
 auto RuntimeEffects::HasCurrentProcess() const -> bool {
   return AsRuntime(*this).current_process_ != nullptr;
 }
 
 auto RuntimeEffects::TryCurrentProcess() -> RuntimeProcess* {
   return AsRuntime(*this).current_process_;
-}
-
-auto RuntimeEffects::HasCurrentScope() const -> bool {
-  return AsRuntime(*this).current_scope_ != nullptr;
 }
 
 auto RuntimeEffects::Now() const -> SimTime {

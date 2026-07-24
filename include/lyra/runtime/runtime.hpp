@@ -67,11 +67,8 @@ class Runtime final : public RuntimeEffects {
 
   // Takes ownership of the elaborated `design`, then walks its scope tree in
   // three top-down passes (resolve state, initialize state, create processes).
-  // Each per-scope call runs inside a `ScopeExecutionGuard` so a runtime effect
-  // the body reaches (e.g. a deferred check emitted by a variable initializer)
-  // attributes to the scope currently being walked. Design-wide barrier per
-  // phase: every scope resolves before any initializes; every scope
-  // initializes before any activates.
+  // Design-wide barrier per phase: every scope resolves before any
+  // initializes; every scope initializes before any activates.
   void BindDesign(std::unique_ptr<Design> design);
   auto Run() -> int;
 
@@ -88,7 +85,17 @@ class Runtime final : public RuntimeEffects {
   friend class RuntimeEffects;
   friend class CurrentRuntimeGuard;
   friend class ProcessExecutionGuard;
-  friend class ScopeExecutionGuard;
+
+  // A violation report waiting to mature (LRM 12.4.2.1). The owner is the
+  // process that raised it: the key a flush erases by, not the holder the
+  // report is stored on. A check reached before any process exists -- a static
+  // variable's initializer runs ahead of every procedure (LRM 6.8) -- has no
+  // owner, and no flush point can name one, so its report simply survives to
+  // the Observed region.
+  struct PendingReport {
+    const RuntimeProcess* owner;
+    std::function<void()> emit;
+  };
 
   // An activation waiting on the runtime is parked on one of these exactly as
   // it parks on an event or an observable, so cancelling it while it is queued
@@ -99,12 +106,10 @@ class Runtime final : public RuntimeEffects {
     RegistrationList next_delta;
     std::vector<std::function<void(RuntimeEffects&)>> nba;
     std::vector<std::function<void()>> postponed;
-    // Per-scope pending observed closures (LRM 16.14.6). Keyed by the
-    // attribution scope pointer; inner vector is indexed by site_id and
-    // overwritten in place so a re-submit at the same (scope, site) in
-    // the same slot last-writes-wins. Drained tree-order at Observed
-    // region entry.
-    std::unordered_map<Scope*, std::vector<std::function<void()>>> observed;
+    // Pending violation reports in the order the checks that raised them
+    // fired. They mature together at Observed region entry, and once matured
+    // can no longer be flushed (LRM 12.4.2.1).
+    std::vector<PendingReport> observed;
     std::map<SimTime, RegistrationList> delayed;
     RegistrationList finals;
     // The snapshot a region drain is working through, moved out of its source
@@ -119,6 +124,13 @@ class Runtime final : public RuntimeEffects {
   // Wait-resume verb: revoke the leaf's scheduler participation and park it
   // on the next-delta queue. LRM 9.3.2 delta cycle boundary.
   void EnqueueNextDelta(CoroutineHandle handle);
+
+  // Ends the wait that parked `handle`: it is runnable now, so it holds no
+  // membership and no pending wait until its body parks again. A wait the
+  // LRM counts as a flush point takes its process's pending violation reports
+  // with it (LRM 12.4.2.1) -- the activation cannot run between here and its
+  // resume, so discarding at either point is the same discard.
+  void ConsumeWait(CoroutineHandle handle);
 
   void EnsureReadyToRun();
   // LRM 3.14.3: design-global tick is the minimum declared precision across
@@ -177,7 +189,6 @@ class Runtime final : public RuntimeEffects {
   // here without scanning the full registry.
   std::unordered_map<Scope*, std::vector<RuntimeProcess*>> processes_by_scope_;
   RuntimeProcess* current_process_ = nullptr;
-  Scope* current_scope_ = nullptr;
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;

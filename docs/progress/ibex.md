@@ -156,12 +156,11 @@ Independent of whether the feature is supported, each of these should fail clean
       that actually needs it appears. The `prim_cipher_pkg` intra-package call chain that first
       surfaced this crash now lowers.
 - [x] A `unique` / `unique0` / `priority` case inside a package function (LRM 12.5.4 in a LRM 26.3
-      body) tripped the deferred-check machinery, which reaches the runtime through the enclosing
-      body's receiver. A package body carries no receiver. The lowering now recognises this and runs
-      the case as an ordinary cascade, dropping only the runtime warning (which the LRM allows the
-      tool to skip). The `prim_secded_pkg::is_width_valid` nested `unique case` that first surfaced
-      this crash now lowers. Reinstating the runtime warning for package callables is a separate
-      follow-up on services-threading, not a Ibex-bring-up gap.
+      body) crashed, because the deferred check reached the runtime through the enclosing body's
+      receiver and a package body carries no receiver. Runtime access no longer needs a receiver, so
+      such a body lowers and its violation report fires like any other. The
+      `prim_secded_pkg::is_width_valid` nested `unique case` that first surfaced this crash now
+      lowers and reports.
 
 ## Cross-references
 

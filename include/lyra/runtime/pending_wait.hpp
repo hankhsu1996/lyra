@@ -45,6 +45,14 @@ class PendingWait {
   // `activation` -- or kReblocked when it re-enrolled and stays parked.
   virtual auto Reestablish(RuntimeEffects& effects, CoroutineHandle activation)
       -> PendingWaitOutcome = 0;
+
+  // Whether a process resuming from this wait reaches a violation report flush
+  // point (LRM 12.4.2.1), discarding the reports it still has pending. The LRM
+  // names two: resuming from an event control or a wait statement, and an
+  // always_comb / always_latch resumed by a transition on what it reads. Time
+  // passing is not one of them, so each construct answers for its own
+  // suspension rather than the resume path guessing from the queue it came off.
+  [[nodiscard]] virtual auto IsReportFlushPoint() const -> bool = 0;
 };
 
 }  // namespace lyra::runtime

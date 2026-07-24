@@ -145,6 +145,13 @@ class ProcessAwaitAwaitable : public PendingWait {
     return PendingWaitOutcome::kReblocked;
   }
 
+  // Awaiting another process (LRM 9.7) is a method call, not an event control
+  // or a wait statement, so LRM 12.4.2.1 does not make resuming from it a
+  // violation report flush point.
+  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
+    return false;
+  }
+
  private:
   // Pins the target across the suspension, so a kill that detaches it from the
   // lineage while the caller is parked cannot free the node before resume.

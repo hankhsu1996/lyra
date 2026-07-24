@@ -263,6 +263,14 @@ class EventControlAwaitable : public PendingWait {
     return PendingWaitOutcome::kReblocked;
   }
 
+  // The construct behind this wait is an event control, a `wait` condition, or
+  // an always_comb / always_latch sensitivity list -- each of which
+  // LRM 12.4.2.1 names as a violation report flush point when it resumes the
+  // process.
+  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
+    return true;
+  }
+
  private:
   std::vector<Trigger> triggers_;
 };
