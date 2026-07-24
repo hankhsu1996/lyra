@@ -14,6 +14,7 @@
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/plusargs.hpp"
+#include "lyra/runtime/readmem.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"

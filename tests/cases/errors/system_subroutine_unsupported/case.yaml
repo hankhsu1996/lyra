@@ -11,7 +11,7 @@ expect:
   stderr:
     contains:
       - "unsupported:"
-      - "$readmemh"
+      - "$monitor"
       - "not yet supported"
     not_contains:
       - "internal error"
