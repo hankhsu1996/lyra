@@ -157,6 +157,8 @@ using lyra::value::Chandle;
 using lyra::value::Format;
 using lyra::value::FormatSpec;
 using lyra::value::PackedArray;
+using lyra::value::PackedRange;
+using lyra::value::PackedType;
 using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;
 using lyra::value::PrintValueItem;
@@ -205,11 +207,19 @@ auto lyra_rt_format(LyraSpan items, const void* time_format) -> void* {
 }
 
 auto lyra_rt_packed_const(
-    std::int64_t value, std::int32_t width, bool is_signed, bool is_four_state)
-    -> void* {
+    std::int64_t value, const std::int64_t* dims, std::int64_t dims_count,
+    bool is_signed, bool is_four_state) -> void* {
+  const auto count = static_cast<std::size_t>(dims_count);
+  const std::span<const std::int64_t> bounds{dims, count * 2};
+  std::vector<PackedRange> ranges;
+  ranges.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    ranges.push_back(
+        PackedRange{.left = bounds[i * 2], .right = bounds[(i * 2) + 1]});
+  }
   return GeneratedCallScope::Current().Arena().New<PackedArray>(
       PackedArray::FromInt(
-          value, static_cast<std::uint64_t>(width), is_signed, is_four_state));
+          value, PackedType{std::move(ranges), is_signed, is_four_state}));
 }
 
 void lyra_rt_writeln(void* files, void* descriptor, void* text) {
@@ -609,20 +619,21 @@ auto lyra_rt_packed_with_element(
 }
 
 auto lyra_rt_packed_slice(
-    const void* value, const void* a, const void* b, const void* form)
-    -> void* {
+    const void* value, const void* a, const void* b, const void* form,
+    const void* shape) -> void* {
   return Own(
       Read<PackedArray>(value).Slice(
-          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form)));
+          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
+          Read<PackedArray>(shape)));
 }
 
 auto lyra_rt_packed_with_slice(
     const void* value, const void* a, const void* b, const void* form,
-    const void* replacement) -> void* {
+    const void* shape, const void* replacement) -> void* {
   return Own(
       Read<PackedArray>(value).WithSlice(
           Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<PackedArray>(replacement)));
+          Read<PackedArray>(shape), Read<PackedArray>(replacement)));
 }
 
 // Materializes a borrowed packed view (a container element or slice read) into

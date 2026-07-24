@@ -472,11 +472,30 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
       constant.value.state_kind == lir::IntegralStateKind::kFourState;
   auto* i64_ty = llvm::Type::getInt64Ty(module_->Context());
   auto* i1_ty = llvm::Type::getInt1Ty(module_->Context());
+
+  // The declared dimension stack travels with the constant so a multi-dim
+  // packed value keeps its shape into element / slice access -- the same
+  // PackedType the C++ backend renders inline.
+  const std::vector<lir::PackedRange>& dims =
+      lir::PackedShape(module_->Unit().types, constant.type).dims;
+  std::vector<llvm::Constant*> bounds;
+  bounds.reserve(dims.size() * 2);
+  for (const lir::PackedRange& range : dims) {
+    bounds.push_back(llvm::ConstantInt::get(i64_ty, range.left));
+    bounds.push_back(llvm::ConstantInt::get(i64_ty, range.right));
+  }
+  auto* bounds_ty = llvm::ArrayType::get(i64_ty, bounds.size());
+  auto* bounds_global = new llvm::GlobalVariable(
+      module_->Module(), bounds_ty, true, llvm::GlobalValue::PrivateLinkage,
+      llvm::ConstantArray::get(bounds_ty, bounds));
+  bounds_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  llvm::Value* bounds_ptr =
+      builder_.CreateConstInBoundsGEP2_64(bounds_ty, bounds_global, 0, 0);
+
   return builder_.CreateCall(
       module_->Runtime().PackedConst(),
-      {llvm::ConstantInt::get(i64_ty, value),
-       llvm::ConstantInt::get(
-           llvm::Type::getInt32Ty(module_->Context()), constant.value.width),
+      {llvm::ConstantInt::get(i64_ty, value), bounds_ptr,
+       llvm::ConstantInt::get(i64_ty, static_cast<std::uint64_t>(dims.size())),
        llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0),
        llvm::ConstantInt::get(i1_ty, is_four_state ? 1 : 0)});
 }

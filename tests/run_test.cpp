@@ -479,6 +479,64 @@ auto WritePackedPartSelectSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+auto WriteMultiDimPackedSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  logic [1:0][3:0] m;\n"
+      << "  logic [3:0] e;\n"
+      << "  int idx;\n"
+      << "  initial begin\n"
+      << "    m = 8'h00;\n"
+      << "    idx = 1;\n"
+      << "    m[1] = 4'hA;\n"
+      << "    m[0] = 4'h5;\n"
+      << "    $display(\"w m=%h\", m);\n"
+      << "    e = m[1];\n"
+      << "    $display(\"r e=%h\", e);\n"
+      << "    m[idx] += 4'h1;\n"
+      << "    $display(\"c m=%h\", m);\n"
+      << "    m[0][1] = 1'b1;\n"
+      << "    $display(\"b m=%h\", m);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+auto WriteAggregateMemberShapeSource(const std::filesystem::path& path)
+    -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  typedef struct packed {\n"
+      << "    logic [1:0][7:0] f;\n"
+      << "    logic [15:0] g;\n"
+      << "  } S;\n"
+      << "  typedef union packed {\n"
+      << "    logic [15:0] w;\n"
+      << "    logic [1:0][7:0] b;\n"
+      << "  } U;\n"
+      << "  S s;\n"
+      << "  U u;\n"
+      << "  logic [7:0] e;\n"
+      << "  initial begin\n"
+      << "    s = 32'h0;\n"
+      << "    s.f[0] = 8'hAB;\n"
+      << "    s.f[1] = 8'hCD;\n"
+      << "    $display(\"sf=%h g=%h\", s.f, s.g);\n"
+      << "    e = s.f[1];\n"
+      << "    $display(\"se=%h\", e);\n"
+      << "    s.f[0][3:0] = 4'h5;\n"
+      << "    $display(\"ss=%h\", s.f);\n"
+      << "    u.w = 16'h0000;\n"
+      << "    u.b[0] = 8'hAB;\n"
+      << "    u.b[1] = 8'hCD;\n"
+      << "    $display(\"uw=%h\", u.w);\n"
+      << "    e = u.b[0];\n"
+      << "    $display(\"ue=%h\", e);\n"
+      << "    u.b[0][3:0] = 4'h5;\n"
+      << "    $display(\"us=%h\", u.w);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -1022,6 +1080,74 @@ TEST(LyraRun, JitAndCppAgreeOnPackedPartSelectWrite) {
       "up q=53a1\n"
       "dn q=53af\n"
       "fn q=00c1\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnMultiDimPacked) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteMultiDimPackedSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "w m=a5\n"
+      "r e=a\n"
+      "c m=b5\n"
+      "b m=b7\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnAggregateMemberShape) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteAggregateMemberShapeSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "sf=cdab g=0000\n"
+      "se=cd\n"
+      "ss=cda5\n"
+      "uw=cdab\n"
+      "ue=ab\n"
+      "us=cda5\n")
       << "stdout: " << jit.stdout_text;
 }
 

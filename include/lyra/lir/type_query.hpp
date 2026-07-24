@@ -27,6 +27,14 @@ auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
 // address-only, never the value itself.
 auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool;
 
+// The packed shape an integral type's value is structured by: a packed array is
+// its own shape, an enumeration is represented by its base's. Every consumer
+// that must know how an integral value's bits are grouped asks this, so the
+// answer is given once rather than re-derived wherever it is needed. A type
+// that is not integral has no such shape and is a caller error, never a width
+// guess.
+auto PackedShape(const TypeArena& types, TypeId type) -> const PackedArrayType&;
+
 // Whether a callable's result type states the coroutine call protocol: the body
 // may hand control back to the scheduler and completes as a coroutine, rather
 // than running to a value in one call. The protocol is the type -- nothing else

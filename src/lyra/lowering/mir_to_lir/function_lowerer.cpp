@@ -1146,6 +1146,7 @@ auto FunctionLowerer::DecomposeTarget(
                 .a = call->arguments[1],
                 .b = call->arguments[2],
                 .form = call->arguments[3],
+                .shape = call->arguments[4],
                 .container_type = unit_->TranslateType(
                     block.exprs.Get(call->arguments[0]).type),
                 .projected_type = unit_->TranslateType(expr.type)});
@@ -1178,7 +1179,7 @@ auto FunctionLowerer::LowerProjectionAssign(
       key_exprs = {elem->index};
     } else if (
         const auto* slice = std::get_if<SliceSelector>(&selectors[depth])) {
-      key_exprs = {slice->a, slice->b, slice->form};
+      key_exprs = {slice->a, slice->b, slice->form, slice->shape};
     }
     for (const mir::ExprId key_expr : key_exprs) {
       auto key = LowerExpr(block, key_expr);
@@ -1220,7 +1221,7 @@ auto FunctionLowerer::LowerProjectionAssign(
                               .qualifier = std::nullopt},
                       .args = {
                           container, keys[depth][0], keys[depth][1],
-                          keys[depth][2]}});
+                          keys[depth][2], keys[depth][3]}});
             }},
         selectors[depth]);
   };
@@ -1257,7 +1258,8 @@ auto FunctionLowerer::LowerProjectionAssign(
                               .qualifier = std::nullopt},
                       .args = {
                           container, keys[depth][0], keys[depth][1],
-                          keys[depth][2], std::move(replacement)}});
+                          keys[depth][2], keys[depth][3],
+                          std::move(replacement)}});
             }},
         selectors[depth]);
   };

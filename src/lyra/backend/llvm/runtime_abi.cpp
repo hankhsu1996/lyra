@@ -161,8 +161,9 @@ auto RuntimeAbi::MakePrintLiteralItem() -> llvm::FunctionCallee {
 auto RuntimeAbi::PackedConst() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_packed_const", types_->Ptr(),
-      {llvm::Type::getInt64Ty(*ctx_), llvm::Type::getInt32Ty(*ctx_),
-       llvm::Type::getInt1Ty(*ctx_), llvm::Type::getInt1Ty(*ctx_)});
+      {llvm::Type::getInt64Ty(*ctx_), types_->Ptr(),
+       llvm::Type::getInt64Ty(*ctx_), llvm::Type::getInt1Ty(*ctx_),
+       llvm::Type::getInt1Ty(*ctx_)});
 }
 
 auto RuntimeAbi::RealConst(ValueDomain domain) -> llvm::FunctionCallee {

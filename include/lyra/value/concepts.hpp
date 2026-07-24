@@ -154,8 +154,7 @@ concept AssocIndexable = requires(T& t, const K& key) {
 };
 
 // Sliceable: extract a fixed-width sub-window (LRM 7.4.5 / 11.5.2). Conforming
-// containers: PackedArray, DynamicArray, UnpackedArray. The shape is
-// `Slice(anchor, count, shift)`:
+// container: DynamicArray. The shape is `Slice(anchor, count, shift)`:
 //
 // - `anchor` is the SV-declared endpoint the slice hangs from; the container
 //   rebases it against its own declared range.
@@ -190,10 +189,9 @@ concept SliceableRef = requires(
 
 // The unpacked family supplies its declared coordinate range at the select as a
 // `[left:right]` operand pair sourced from the receiver's static type, rather
-// than carrying it in the value. PackedArray self-describes (its dims are
-// storage representation) and a dynamic array is zero-based, so both stay on
-// `Indexable` / `Sliceable`; the
-// unpacked value pins the range-carrying shape instead.
+// than carrying it in the value. A packed value's own dims are storage
+// representation and a dynamic array is zero-based, so neither needs the range
+// operand; the unpacked value pins the range-carrying shape instead.
 template <typename T>
 concept RangedIndexable = requires(
     T& t, const PackedArray& pos, const PackedArray& left,
@@ -215,6 +213,26 @@ concept RangedSliceableRef = requires(
     T& t, const PackedArray& a, const PackedArray& b, const PackedArray& form,
     const PackedArray& left, const PackedArray& right) {
   { t.SliceRef(a, b, form, left, right) };
+};
+
+// The packed family states the shape its slice result takes as a trailing
+// prototype operand sourced from the select's static result type. The bounds
+// decide which bits are selected; the shape decides how they are structured,
+// which the receiver cannot always supply -- a packed aggregate's base is a
+// flat bit run whose member shapes live only in the member types. The element
+// forms need no such operand: an element's shape is the receiver's own subtype.
+template <typename T>
+concept ShapedSliceable = requires(
+    const T& t, const PackedArray& a, const PackedArray& b,
+    const PackedArray& form, const PackedArray& shape) {
+  { t.Slice(a, b, form, shape) };
+};
+
+template <typename T>
+concept ShapedSliceableRef = requires(
+    T& t, const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& shape) {
+  { t.SliceRef(a, b, form, shape) };
 };
 
 // Ownable: materialise a borrowed view into an owning value. Models Rust's

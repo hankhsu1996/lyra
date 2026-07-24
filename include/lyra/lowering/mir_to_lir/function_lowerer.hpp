@@ -80,6 +80,7 @@ class FunctionLowerer {
     mir::ExprId a;
     mir::ExprId b;
     mir::ExprId form;
+    mir::ExprId shape;
     lir::TypeId container_type;
     lir::TypeId projected_type;
   };

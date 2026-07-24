@@ -48,20 +48,6 @@ auto BuildRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
       .type = unit.builtins.machine_int64};
 }
 
-// The destination representation a packed factory call lands its result into,
-// carried as an ordinary MIR value of the destination type -- a default literal
-// -- so the representation reaches the runtime through the argument list, not
-// composed by the backend from type payload. Its contents are overwritten by
-// the factory; only its type's declared shape matters.
-auto BuildPackedShapePrototype(
-    mir::Block& block, const mir::PackedArrayType& dst_pa, mir::TypeId dst_type)
-    -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::IntegerLiteral{.value = DefaultIntegralConstant(dst_pa)},
-          .type = dst_type});
-}
-
 // `PackedArray::FromInt(int_value, prototype)` -- the static factory used by
 // the real-to-integral path: lands `int_value` into the prototype's declared
 // representation.
@@ -118,6 +104,15 @@ auto BuildStringFromFactory(
 }
 
 }  // namespace
+
+auto BuildPackedShapePrototype(
+    mir::Block& block, const mir::PackedArrayType& dst_pa, mir::TypeId dst_type)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::IntegerLiteral{.value = DefaultIntegralConstant(dst_pa)},
+          .type = dst_type});
+}
 
 auto BuildValueConversion(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,

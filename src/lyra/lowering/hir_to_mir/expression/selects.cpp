@@ -121,9 +121,8 @@ auto WrapSliceToDeclaredType(
 // Append the receiver's declared range `[left:right]` as trailing select
 // operands when the receiver is an unpacked array: the range is a fact of the
 // receiver's static type, materialized here as a MIR operand rather than
-// carried in the value. A packed receiver self-describes (its dims are storage
-// representation) and a dynamic array is zero-based, so neither contributes an
-// operand.
+// carried in the value. A packed receiver's coordinates are its own dims, which
+// it carries, and a dynamic array is zero-based, so neither states a range.
 auto AppendReceiverRange(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     std::vector<mir::ExprId>& args) -> void {
@@ -151,6 +150,22 @@ auto AppendReceiverRange(
     args.push_back(
         block.exprs.Add(mir::MakeIntLiteral(int_type, ua->dim.right)));
   }
+}
+
+// Append the shape a packed part-select's result takes as a trailing operand,
+// sourced from the select's static result type. The bounds decide which bits
+// are selected; the result type decides how they are structured. A receiver can
+// only supply that structure when it is itself the array being selected from --
+// a packed aggregate's base is a flat bit run, and its members' shapes live in
+// the member types alone (LRM 7.2.1 / 7.3.1). Every other container's slice
+// yields its own element structure, so none contributes an operand.
+auto AppendResultShape(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId result_type,
+    std::vector<mir::ExprId>& args) -> void {
+  const auto& result_ty = unit_lowerer.Unit().types.Get(result_type);
+  if (!result_ty.IsIntegralPacked()) return;
+  args.push_back(BuildPackedShapePrototype(
+      block, result_ty.AsIntegralPacked(), result_type));
 }
 
 // `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The callee carries just
@@ -220,6 +235,7 @@ auto BuildRangeSliceCallExpr(
   const auto form_id =
       block.exprs.Add(mir::MakeIntLiteral(int_type, raw_or->form));
   std::vector<mir::ExprId> args = {base_id, raw_or->a, raw_or->b, form_id};
+  AppendResultShape(unit_lowerer, block, result_type, args);
   AppendReceiverRange(unit_lowerer, block, base_id, args);
   return mir::Expr{
       .data =
@@ -249,6 +265,8 @@ auto BuildFieldSliceCallExpr(
   // A field occupies bits `[offset +: width]` -- a raw indexed-up part-select
   // (`value::SliceForm` `kIndexedUp` == 1); the value resolves the bit window.
   const auto form_id = block.exprs.Add(mir::MakeIntLiteral(int_type, 1));
+  std::vector<mir::ExprId> args = {base_id, offset_id, width_id, form_id};
+  AppendResultShape(unit_lowerer, block, result_type, args);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -257,7 +275,7 @@ auto BuildFieldSliceCallExpr(
                       .target = side == AccessSide::kLhs
                                     ? support::BuiltinFn::kSliceRef
                                     : support::BuiltinFn::kSlice},
-              .arguments = {base_id, offset_id, width_id, form_id}},
+              .arguments = std::move(args)},
       .type = result_type};
 }
 
