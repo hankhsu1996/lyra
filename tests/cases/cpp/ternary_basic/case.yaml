@@ -11,3 +11,5 @@ expect:
     a: 7
     b: 3
     larger: 7
+    guarded_hit: 7
+    guarded_miss: 3

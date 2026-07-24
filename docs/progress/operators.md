@@ -33,8 +33,11 @@ The numeric IDs (W1..W14) imply execution order; where a cut is independent the 
       items use `==?` so wildcard items in `inside` work.
 - [x] W3 -- Case equality `===` / `!==` (LRM 11.4.5). Bit-exact 4-state compare (X matches X, Z
       matches Z, X does not match Z); deterministic bool.
-  - [ ] The conditional operator's `&&&` multi-condition form and its `matches` pattern form (LRM
-        11.4.11 / 12.6) are rejected; the plain `c ? a : b` ternary is supported.
+  - [x] The conditional operator's `&&&` multi-condition form (LRM 12.4): the `&&&`-separated
+        conditions form a conjunction, taken iff every condition is true, desugared to the same
+        chained logical-AND the `if`-statement predicate uses.
+  - [ ] The conditional operator's `matches` pattern form (LRM 11.4.11 / 12.6) is rejected; the
+        plain `c ? a : b` ternary and its `&&&` predicate are supported.
   - [ ] An array query (`$size` / `$left` / `$right` / `$low` / `$high`, LRM 20.7) whose dimension
         index is a run-time value over an array with a run-time dimension is rejected; a constant
         dimension index over a fixed-size operand folds at elaboration.
