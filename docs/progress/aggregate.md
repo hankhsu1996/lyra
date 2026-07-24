@@ -77,9 +77,11 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       compile-time count. Multi-dimensional forms fall out from the recursive element-type
       representation; jagged sizing per row is the natural consequence of each inner pattern
       determining its row's size. Structured forms with `default:` keys are rejected by slang for
-      dynamic-array targets (LRM forbids `default` here); index-keyed forms are accepted by slang
-      only when the indices cover a dense `0..N-1` set, which adds no expressive power over the
-      positional form and is rejected at HIR lowering with a "use positional" diagnostic.
+      dynamic-array targets (LRM forbids `default` here).
+  - [x] The index-keyed form on a dynamic-array target (LRM 10.9.1): `'{0: v0, 1: v1}`. The frontend
+        admits it only when the keys cover a dense `0..N-1` set and resolves the keys into the
+        element list, so it lowers exactly as the positional form -- source order of the keys does
+        not matter, and the pattern sizes the destination the same way.
 
 - [x] DA4 -- Aggregate equality. `A == B`, `A != B`, `A === B`, `A !== B` per LRM 11.2.2 + 11.4.5.
       LRM 11.2.2 requires equivalent operand type but is silent on runtime size mismatch; the

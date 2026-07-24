@@ -15,3 +15,4 @@ expect:
     fourth_id_via_derived: 4
     counter_after_all: 4
     counter_via_derived: 4
+    counter_continuous: 4

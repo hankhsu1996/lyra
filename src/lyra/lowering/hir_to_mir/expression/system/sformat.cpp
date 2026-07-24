@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -26,8 +27,9 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+template <ExprLowerer Lowerer>
 auto BuildSFormatCallExpr(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const support::SFormatSystemSubroutineInfo& info, std::size_t arg_offset)
     -> diag::Result<mir::Expr> {
   // LRM 21.3.3: `$sformat` / `$sformatf` always take a format string, but it
@@ -35,31 +37,32 @@ auto BuildSFormatCallExpr(
   // conversion at compile time; anything else carries its text only at
   // simulation time, so the parse and the binding happen there.
   if (info.expects_format_string &&
-      !HasLiteralFormatString(process, call, arg_offset)) {
-    return BuildRuntimeFormatCallExpr(process, frame, call, arg_offset);
+      !HasLiteralFormatString(lowerer, call, arg_offset)) {
+    return BuildRuntimeFormatCallExpr(lowerer, frame, call, arg_offset);
   }
 
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      process, frame, call, info.radix, arg_offset);
+      lowerer, frame, call, info.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
-  auto& unit = process.Owner().Unit();
+  auto& unit = lowerer.Owner().Unit();
   auto& block = *frame.current_block;
   const auto time_unit_power =
-      static_cast<std::int64_t>(process.Resolution().unit_power);
+      static_cast<std::int64_t>(lowerer.Resolution().unit_power);
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+      block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
 
   return BuildFormatCallExpr(unit, block, services_id, items_array);
 }
 
 }  // namespace
 
+template <ExprLowerer Lowerer>
 auto LowerSFormatSystemSubroutineCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Expr> {
   if (info.has_output_arg) {
@@ -68,7 +71,7 @@ auto LowerSFormatSystemSubroutineCall(
         "expression-position lowering; slang's task binding should reject "
         "them outside statement position");
   }
-  return BuildSFormatCallExpr(process, frame, call, info, 0);
+  return BuildSFormatCallExpr(lowerer, frame, call, info, 0);
 }
 
 auto LowerSFormatSystemSubroutineCallStmt(
@@ -126,5 +129,12 @@ auto LowerSFormatSystemSubroutineCallStmt(
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = assign_id}};
 }
+
+template auto LowerSFormatSystemSubroutineCall(
+    ProcessLowerer&, WalkFrame, const hir::CallExpr&,
+    const support::SFormatSystemSubroutineInfo&) -> diag::Result<mir::Expr>;
+template auto LowerSFormatSystemSubroutineCall(
+    const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
+    const support::SFormatSystemSubroutineInfo&) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

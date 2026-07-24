@@ -1,0 +1,12 @@
+id: cpp.unit_scope_subroutine_ref_args
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    b: 6
+    r: 12

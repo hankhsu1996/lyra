@@ -236,6 +236,28 @@ auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
   };
 }
 
+// A static property (LRM 8.9) is one cell owned by the class, reached without a
+// receiver, so its reference is a function of the unit alone -- the same in a
+// process body and in a structural expression.
+auto LowerStaticPropertyRefExpr(
+    UnitLowerer& unit_lowerer, const hir::StaticPropertyRef& r,
+    mir::TypeId result_type) -> mir::Expr {
+  if (const auto* local =
+          std::get_if<hir::LocalStaticPropertyTarget>(&r.target)) {
+    return mir::Expr{
+        .data =
+            mir::StaticPropertyRef{
+                .owner = unit_lowerer.TranslateClass(local->owner),
+                .prop = UnitLowerer::TranslateStaticProperty(local->prop),
+            },
+        .type = result_type};
+  }
+  return mir::Expr{
+      .data = unit_lowerer.MakeExternalStaticPropertyRef(
+          std::get<hir::ExternalStaticPropertyTarget>(r.target)),
+      .type = result_type};
+}
+
 auto LowerHirPrimaryExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::Primary& p,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -278,21 +300,7 @@ auto LowerHirPrimaryExprProc(
                 result_type);
           },
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {
-            if (const auto* local =
-                    std::get_if<hir::LocalStaticPropertyTarget>(&r.target)) {
-              return mir::Expr{
-                  .data =
-                      mir::StaticPropertyRef{
-                          .owner = process.Owner().TranslateClass(local->owner),
-                          .prop =
-                              UnitLowerer::TranslateStaticProperty(local->prop),
-                      },
-                  .type = result_type};
-            }
-            return mir::Expr{
-                .data = process.Owner().MakeExternalStaticPropertyRef(
-                    std::get<hir::ExternalStaticPropertyTarget>(r.target)),
-                .type = result_type};
+            return LowerStaticPropertyRefExpr(process.Owner(), r, result_type);
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
             return LowerReferenceRouteExpr(
@@ -344,10 +352,8 @@ auto LowerHirPrimaryExprStructural(
                 "LowerHirPrimaryExprStructural: HIR ClassPropertyRef does not "
                 "appear in structural expressions");
           },
-          [](const hir::StaticPropertyRef&) -> mir::Expr {
-            throw InternalError(
-                "LowerHirPrimaryExprStructural: HIR StaticPropertyRef does not "
-                "appear in structural expressions");
+          [&](const hir::StaticPropertyRef& r) -> mir::Expr {
+            return LowerStaticPropertyRefExpr(lowerer.Owner(), r, result_type);
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
             return LowerReferenceRouteExpr(

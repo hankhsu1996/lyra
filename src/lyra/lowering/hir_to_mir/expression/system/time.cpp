@@ -3,7 +3,9 @@
 #include <cstdint>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -35,18 +37,19 @@ auto SelectTimeFn(const mir::BuiltinMirTypes& builtins, support::TimeKind kind)
 
 }  // namespace
 
+template <ExprLowerer Lowerer>
 auto LowerTimeSystemSubroutineCall(
-    const ProcessLowerer& process, const WalkFrame& frame,
+    const Lowerer& lowerer, const WalkFrame& frame,
     const support::TimeSystemSubroutineInfo& info) -> diag::Result<mir::Expr> {
-  const auto& builtins = process.Owner().Unit().builtins;
+  const auto& builtins = lowerer.Owner().Unit().builtins;
   const TimeFnInfo fn = SelectTimeFn(builtins, info.kind);
   auto& body = *frame.current_block;
   const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+      body.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
   const mir::ExprId unit_power_id = body.exprs.Add(
       mir::MakeIntLiteral(
           builtins.int_type,
-          static_cast<std::int64_t>(process.Resolution().unit_power)));
+          static_cast<std::int64_t>(lowerer.Resolution().unit_power)));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -54,5 +57,12 @@ auto LowerTimeSystemSubroutineCall(
               .arguments = {services_id, unit_power_id}},
       .type = fn.result_type};
 }
+
+template auto LowerTimeSystemSubroutineCall(
+    const ProcessLowerer&, const WalkFrame&,
+    const support::TimeSystemSubroutineInfo&) -> diag::Result<mir::Expr>;
+template auto LowerTimeSystemSubroutineCall(
+    const StructuralScopeLowerer&, const WalkFrame&,
+    const support::TimeSystemSubroutineInfo&) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

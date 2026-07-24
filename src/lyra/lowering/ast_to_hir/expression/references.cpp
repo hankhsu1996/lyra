@@ -447,10 +447,20 @@ auto LowerNamedValueStructural(
       return LowerStructuralSignalRef(
           unit_lowerer, frame, value, *named.type, span);
     }
-    // A class property has no structural (non-procedural) meaning: it is only
-    // reachable through a method receiver, so outside a method it is rejected
-    // alongside the genuinely unsupported kinds.
-    case Referent::kClassProperty:
+    // A static property (LRM 8.9) is one cell owned by the class, reached
+    // without a receiver, so it reads here exactly as it does in a process. An
+    // instance property is reachable only through a receiver, which a
+    // structural expression has none of.
+    case Referent::kClassProperty: {
+      const auto& prop = sym.as<slang::ast::ClassPropertySymbol>();
+      if (prop.lifetime == slang::ast::VariableLifetime::Static) {
+        return MakeClassPropertyRefExpr(unit_lowerer, sym, *named.type, span);
+      }
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+          "an instance class property is reachable only through a receiver, "
+          "which a structural expression has none of");
+    }
     case Referent::kUnsupported:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
