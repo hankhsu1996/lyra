@@ -940,9 +940,9 @@ auto FunctionLowerer::LowerAssign(
   // value-container element, or any composition of them -- is not a place: the
   // aggregate is an opaque value, so the write folds into a functional
   // whole-value update stored back through the owner.
-  if (const auto* projection = std::get_if<mir::ValueProjectionExpr>(
-          &block.exprs.Get(assign.target).data)) {
-    return LowerProjectionAssign(block, assign, *projection);
+  if (std::holds_alternative<mir::ValueProjectionExpr>(
+          block.exprs.Get(assign.target).data)) {
+    return LowerProjectionAssign(block, assign);
   }
 
   const lir::TypeId type =
@@ -1094,8 +1094,11 @@ auto FunctionLowerer::WriteWholeValue(
 // reader that extracts the part's current value on demand, so a plain store
 // never reads it and a compound or an increment reads it once.
 auto FunctionLowerer::LowerProjectionUpdate(
-    const mir::Block& block, const mir::ValueProjectionExpr& projection,
-    const LeafTransform& make_leaf) -> diag::Result<lir::Operand> {
+    const mir::Block& block, mir::ExprId target, const LeafTransform& make_leaf)
+    -> diag::Result<lir::Operand> {
+  const mir::Expr& target_expr = block.exprs.Get(target);
+  const auto& projection = std::get<mir::ValueProjectionExpr>(target_expr.data);
+  const lir::TypeId designated_type = unit_->TranslateType(target_expr.type);
   const std::vector<mir::Selector>& path = projection.path;
 
   auto owner_value = ReadWholeValue(block, projection.owner);
@@ -1231,9 +1234,17 @@ auto FunctionLowerer::LowerProjectionUpdate(
     containers.push_back(extract(containers[depth - 1], depth - 1));
   }
 
+  // The last step reaches what the designator denotes, so the two statements of
+  // that type must agree; a disagreement means the path and the node's type
+  // came from different lowerings.
   const std::size_t leaf = path.size() - 1;
+  if (projected_type(leaf) != designated_type) {
+    throw InternalError(
+        "mir_to_lir: a designator's last step reaches a different type than "
+        "the designator states");
+  }
   auto leaf_value = make_leaf(
-      [&] { return extract(containers[leaf], leaf); }, projected_type(leaf));
+      [&] { return extract(containers[leaf], leaf); }, designated_type);
   if (!leaf_value) {
     return std::unexpected(std::move(leaf_value.error()));
   }
@@ -1247,10 +1258,10 @@ auto FunctionLowerer::LowerProjectionUpdate(
 }
 
 auto FunctionLowerer::LowerProjectionAssign(
-    const mir::Block& block, const mir::AssignExpr& assign,
-    const mir::ValueProjectionExpr& projection) -> diag::Result<lir::Operand> {
+    const mir::Block& block, const mir::AssignExpr& assign)
+    -> diag::Result<lir::Operand> {
   return LowerProjectionUpdate(
-      block, projection,
+      block, assign.target,
       [&](const LeafReader& read_leaf,
           lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
         auto rhs = LowerExpr(block, assign.value);
@@ -1318,12 +1329,12 @@ auto FunctionLowerer::LowerIncDec(
 
   // A designated part increments through its owner: the part's current value is
   // read out of the owner's whole value, stepped, and folded back in.
-  if (const auto* projection = std::get_if<mir::ValueProjectionExpr>(
-          &block.exprs.Get(inc_dec.target).data)) {
+  if (std::holds_alternative<mir::ValueProjectionExpr>(
+          block.exprs.Get(inc_dec.target).data)) {
     std::optional<lir::Operand> old;
     std::optional<lir::Operand> stepped;
     auto written = LowerProjectionUpdate(
-        block, *projection,
+        block, inc_dec.target,
         [&](const LeafReader& read_leaf,
             lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
           old = read_leaf();

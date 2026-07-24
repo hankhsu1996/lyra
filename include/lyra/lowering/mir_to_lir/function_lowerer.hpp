@@ -107,7 +107,7 @@ class FunctionLowerer {
   // exactly once, and the store back through the owner is a single one -- for
   // an observable owner, one cell write whatever the path's depth.
   auto LowerProjectionUpdate(
-      const mir::Block& block, const mir::ValueProjectionExpr& projection,
+      const mir::Block& block, mir::ExprId target,
       const LeafTransform& make_leaf) -> diag::Result<lir::Operand>;
   // A write through a designated part of an owner's value (`s.f = x`,
   // `arr[i] = x`, `a[i].f = x`). The owner's whole value is read, the path is
@@ -117,8 +117,8 @@ class FunctionLowerer {
   // hold and, when the owner is an observable cell, the whole-cell update
   // fires once whatever the path's depth.
   auto LowerProjectionAssign(
-      const mir::Block& block, const mir::AssignExpr& assign,
-      const mir::ValueProjectionExpr& projection) -> diag::Result<lir::Operand>;
+      const mir::Block& block, const mir::AssignExpr& assign)
+      -> diag::Result<lir::Operand>;
   // A receiver-mutating value-container method (`arr.delete()`). The container
   // value cannot be mutated in place through a shared handle, so the method is
   // a functional operation whose result is stored back through the receiver's
