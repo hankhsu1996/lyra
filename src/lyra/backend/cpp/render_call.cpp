@@ -27,8 +27,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
   switch (id) {
     case support::BuiltinFn::kParent:
       return "Parent";
-    case support::BuiltinFn::kServices:
-      return "Services";
+    case support::BuiltinFn::kCurrentRuntime:
+      return "current_runtime";
     case support::BuiltinFn::kGet:
       return "Get";
     case support::BuiltinFn::kInitialize:
@@ -257,9 +257,9 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kGetChild:
       return "GetChild";
     case support::BuiltinFn::kRegisterInitial:
-      return "RegisterInitial";
+      return "RegisterInitialProcess";
     case support::BuiltinFn::kRegisterFinal:
-      return "RegisterFinal";
+      return "RegisterFinalProcess";
     case support::BuiltinFn::kForkWaitAll:
       return "ForkWaitAll";
     case support::BuiltinFn::kForkWaitFirst:
@@ -396,6 +396,9 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kWriteCanonicalLogicVec:
     case support::BuiltinFn::kFromSvLogic:
       return "lyra::value";
+    case support::BuiltinFn::kCurrentRuntime:
+    case support::BuiltinFn::kRegisterInitial:
+    case support::BuiltinFn::kRegisterFinal:
     case support::BuiltinFn::kDelay:
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kSimTime:
@@ -569,7 +572,7 @@ auto RenderDirectExternalUnitClassMethodCall(
 
 // Renders a call to a method the runtime library provides for an imported class
 // (LRM 9.7 `process`). The callee is the runtime symbol named by the method
-// identity; every argument -- a receiver handle or the services handle -- is
+// identity; every argument -- a receiver handle or the runtime handle -- is
 // passed positionally, so no leading argument is absorbed into the callee text.
 auto RenderDirectImportedRuntimeCall(
     const mir::ImportedRuntimeCallTarget& target) -> CalleeRender {

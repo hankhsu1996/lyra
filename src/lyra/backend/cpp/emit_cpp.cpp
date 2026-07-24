@@ -685,7 +685,8 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
   out += "#include \"lyra/runtime/net.hpp\"\n";
   out += "#include \"lyra/runtime/process_control.hpp\"\n";
-  out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
+  out += "#include \"lyra/runtime/runtime.hpp\"\n";
+  out += "#include \"lyra/runtime/runtime_effects.hpp\"\n";
   out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/sim_time.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
@@ -865,14 +866,17 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   // construction, bind, scheduler drive, exception mapping -- lives in
   // `RunDesignHost`. The emitter contributes only the C++ call that
   // allocates `$root`: the concrete root class, its constructor arguments
-  // (parent, hierarchy segment, services). That call is composed here from
-  // MIR-known parts (the root class name, the hierarchy-segment type)
-  // rather than rendered from a single MIR/LIR root-construct artifact --
-  // allocation is realized per backend (a JIT backend allocates a generic
-  // runtime object; the C++ backend allocates its concrete class), so this
-  // shim carries the C++ form. `main` is a one-line hand-off; a new
-  // host-boundary concept is added to `RunDesignHost` in runtime C++,
-  // never to this shim.
+  // (parent, hierarchy segment). Services are reached through the
+  // thread-local `current_runtime()` the owning Runtime has already
+  // published on this thread; nothing runtime-related crosses the
+  // constructor boundary. This shim is composed from MIR-known parts (the
+  // root class name, the hierarchy-segment type) rather than rendered
+  // from a single MIR/LIR root-construct artifact -- allocation is
+  // realized per backend (a JIT backend allocates a generic runtime
+  // object; the C++ backend allocates its concrete class), so this shim
+  // carries the C++ form. `main` is a one-line hand-off; a new host-
+  // boundary concept is added to `RunDesignHost` in runtime C++, never
+  // to this shim.
   std::string out;
   out += "#include <memory>\n";
   out += "\n";
@@ -882,11 +886,9 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   out += "\n";
   out += "namespace {\n";
   out += "\n";
-  out += "auto BuildRoot(lyra::runtime::RuntimeServices& services)\n";
-  out += "    -> std::unique_ptr<lyra::runtime::Scope> {\n";
+  out += "auto BuildRoot() -> std::unique_ptr<lyra::runtime::Scope> {\n";
   out += std::format(
-      "  return std::make_unique<{0}>(nullptr, {1}{{\"{2}\", {{}}}}, "
-      "services);\n",
+      "  return std::make_unique<{0}>(nullptr, {1}{{\"{2}\", {{}}}});\n",
       root_cpp_name, segment_cpp, root_class.name);
   out += "}\n";
   out += "\n";

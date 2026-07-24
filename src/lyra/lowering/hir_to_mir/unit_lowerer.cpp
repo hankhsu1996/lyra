@@ -24,7 +24,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
@@ -42,14 +42,15 @@ namespace {
 // Lowers a package's variables (LRM 26.2) into unit-level static storage and
 // synthesizes the two receiver-less callables that bring them up at time zero:
 // `Install` installs every cell's declared representation and default (no
-// services -- nothing to fire before any process), and `Initialize` runs each
-// LRM 10.5 value initializer through its cell (taking the services, since a
-// package has no `self` to reach them through). The design root installs every
-// package before initializing any, so a value initializer always reaches
-// installed storage. A package variable is reached by name (`unit::name`), so a
-// variable initializer's references to sibling or other-package variables lower
-// through the same by-name path with no enclosing scope or receiver; the
-// other-package reads are recorded as the unit's initializer dependency.
+// runtime handle -- nothing to fire before any process), and `Initialize`
+// runs each LRM 10.5 value initializer through its cell (taking a runtime
+// handle as its one parameter, since a package has no `self` to reach it
+// through). The design root installs every package before initializing any,
+// so a value initializer always reaches installed storage. A package variable
+// is reached by name (`unit::name`), so a variable initializer's references
+// to sibling or other-package variables lower through the same by-name path
+// with no enclosing scope or receiver; the other-package reads are recorded
+// as the unit's initializer dependency.
 auto PopulatePackageStaticVariables(
     UnitLowerer& unit_lowerer, const hir::StructuralScope& scope)
     -> diag::Result<void> {
@@ -63,9 +64,10 @@ auto PopulatePackageStaticVariables(
   mir::CallableCode value_code;
   value_code.result_type = unit.builtins.void_type;
   CallableBindings value_bindings(unit, value_code);
-  value_code.params.push_back(value_bindings.Declare(
-      BindingOriginId::Services(),
-      mir::LocalDecl{.name = "services", .type = unit.builtins.services}));
+  const mir::LocalId runtime_local = value_bindings.Declare(
+      BindingOriginId::Runtime(),
+      mir::LocalDecl{.name = "runtime", .type = unit.builtins.effects});
+  value_code.params.push_back(runtime_local);
   mir::Block& value_block = value_code.body;
   const WalkFrame value_frame =
       WalkFrame{}.WithBlock(&value_block).WithBindings(&value_bindings);
@@ -116,19 +118,21 @@ auto PopulatePackageStaticVariables(
                     make_cell(install_block, d.name, cell_type), prototype,
                     unit.builtins.void_type))});
 
-    // Phase 2: a user initializer (LRM 10.5) writes the value through the cell.
+    // Phase 2: a user initializer (LRM 10.5) writes the value through the
+    // cell; the runtime handle comes from the callable's parameter, since
+    // there is no `self`.
     if (var->initializer.has_value()) {
       auto value_or = expr_lowerer.LowerExpr(
           scope.exprs.Get(*var->initializer), value_frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
       const mir::ExprId value_id = value_block.exprs.Add(*std::move(value_or));
-      const mir::ExprId services_ref = value_block.exprs.Add(
-          BuildServicesCallExpr(unit_lowerer, value_frame));
+      const mir::ExprId runtime_ref = value_block.exprs.Add(
+          mir::MakeLocalRefExpr(runtime_local, unit.builtins.effects));
       value_block.AppendStmt(
           mir::ExprStmt{
               .expr = value_block.exprs.Add(
                   mir::MakeObservableSetCallExpr(
-                      make_cell(value_block, d.name, cell_type), services_ref,
+                      make_cell(value_block, d.name, cell_type), runtime_ref,
                       value_id, unit.builtins.void_type))});
     }
   }

@@ -281,7 +281,9 @@ class MirDumper {
             [](const ExternalClassType& e) -> std::string {
               return std::format("ExternalClass(\"{}\")", e.qualified_name);
             },
-            [](const ServicesType&) -> std::string { return "Services"; },
+            [](const RuntimeEffectsType&) -> std::string {
+              return "RuntimeEffects";
+            },
             [](const FilesType&) -> std::string { return "Files"; },
             [](const DiagnosticType&) -> std::string { return "Diagnostic"; },
             [](const RuntimeLibraryType& r) -> std::string {

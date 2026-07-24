@@ -266,8 +266,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "attach_driver";
     case BuiltinFn::kUpdateDriver:
       return "update_driver";
-    case BuiltinFn::kServices:
-      return "services";
+    case BuiltinFn::kCurrentRuntime:
+      return "current_runtime";
     case BuiltinFn::kSubmitNba:
       return "submit_nba";
     case BuiltinFn::kSubmitPostponed:

@@ -43,7 +43,7 @@ auto BuildOutputArgSlot(
 }
 
 auto BuildCopyOutBlock(
-    const mir::CompilationUnit& unit, mir::ExprId services_id,
+    const mir::CompilationUnit& unit, mir::ExprId runtime_id,
     WalkFrame parent_frame, mir::Block wrapper,
     std::optional<std::string> label, mir::TypeId result_type,
     mir::Expr call_expr, bool call_suspends,
@@ -60,7 +60,7 @@ auto BuildCopyOutBlock(
           BuildValueConversion(unit, wrapper, call_id, result_type));
     }
     const mir::Expr assign_expr = BuildObservableAssignExpr(
-        unit, wrapper, services_id, *assign_target_id, value_id, std::nullopt,
+        unit, wrapper, runtime_id, *assign_target_id, value_id, std::nullopt,
         result_type, void_type);
     const mir::ExprId assign_id = wrapper.exprs.Add(assign_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
@@ -77,7 +77,7 @@ auto BuildCopyOutBlock(
     const mir::ExprId temp_read =
         wrapper.exprs.Add(mir::MakeLocalRefExpr(slot.temp, slot.type));
     const mir::Expr copy_out_expr = BuildObservableAssignExpr(
-        unit, wrapper, services_id, slot.actual, temp_read, std::nullopt,
+        unit, wrapper, runtime_id, slot.actual, temp_read, std::nullopt,
         slot.type, void_type);
     const mir::ExprId copy_out = wrapper.exprs.Add(copy_out_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = copy_out});

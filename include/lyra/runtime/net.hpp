@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/runtime_services.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/concepts.hpp"
@@ -104,31 +104,31 @@ class ResolvedNet : public Observable {
   friend class Driver<T, Resolver>;
 
   void UpdateContribution(
-      RuntimeServices& services, std::size_t slot, const T& value) {
+      RuntimeEffects& runtime, std::size_t slot, const T& value) {
     if (slot >= slots_.size()) {
       throw InternalError("ResolvedNet::UpdateContribution: bad slot");
     }
     slots_[slot].value = value;
-    PublishIfChanged(services, Resolver::Resolve(slots_, undriven_));
+    PublishIfChanged(runtime, Resolver::Resolve(slots_, undriven_));
   }
 
   // Mirrors `Var<T>::Set`: store the resolved value and wake subscribers only
   // when it actually changed (LRM 9.4.2). A contribution that moves without
   // changing the resolved value wakes no observer.
-  void PublishIfChanged(RuntimeServices& services, T next) {
+  void PublishIfChanged(RuntimeEffects& runtime, T next) {
     if constexpr (std::same_as<T, value::PackedArray>) {
       const value::PackedArray old_val = resolved_;
       const bool changed = !resolved_.IsBitIdentical(next);
       resolved_ = std::move(next);
       if (changed) {
-        services.TriggerValueChange(
+        runtime.TriggerValueChange(
             *this, MakePackedArrayEdgeClassifier(old_val, resolved_));
       }
     } else {
       const bool changed = !resolved_.IsBitIdentical(next);
       resolved_ = std::move(next);
       if (changed) {
-        services.TriggerValueChange(
+        runtime.TriggerValueChange(
             *this,
             [](std::uint64_t, std::uint64_t, support::EventEdge edge) -> bool {
               return edge == support::EventEdge::kAnyChange;
@@ -155,11 +155,11 @@ class Driver {
       : node_(&node), slot_(slot) {
   }
 
-  void Update(RuntimeServices& services, const T& value) const {
+  void Update(RuntimeEffects& runtime, const T& value) const {
     if (node_ == nullptr) {
       throw InternalError("Driver::Update: driver is not attached");
     }
-    node_->UpdateContribution(services, slot_, value);
+    node_->UpdateContribution(runtime, slot_, value);
   }
 
  private:

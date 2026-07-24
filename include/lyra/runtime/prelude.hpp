@@ -22,9 +22,9 @@
 
 #include "lyra/runtime/coroutine.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/delay.hpp"              // IWYU pragma: keep
+#include "lyra/runtime/design.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/diagnostic.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/dpi_context.hpp"        // IWYU pragma: keep
-#include "lyra/runtime/engine.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/event.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/file_table.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/finish.hpp"             // IWYU pragma: keep
@@ -34,9 +34,9 @@
 #include "lyra/runtime/hierarchy_segment.hpp"  // IWYU pragma: keep
 #include "lyra/runtime/named_event.hpp"        // IWYU pragma: keep
 #include "lyra/runtime/process_kind.hpp"       // IWYU pragma: keep
+#include "lyra/runtime/runtime.hpp"            // IWYU pragma: keep
+#include "lyra/runtime/runtime_effects.hpp"    // IWYU pragma: keep
 #include "lyra/runtime/runtime_process.hpp"    // IWYU pragma: keep
-#include "lyra/runtime/runtime_services.hpp"   // IWYU pragma: keep
-#include "lyra/runtime/runtime_traversal.hpp"  // IWYU pragma: keep
 #include "lyra/runtime/scope.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/sim_time.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/simulation_entry.hpp"   // IWYU pragma: keep

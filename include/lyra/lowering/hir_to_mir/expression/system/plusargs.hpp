@@ -13,7 +13,7 @@ namespace lyra::lowering::hir_to_mir {
 // as an IIFE: the closure body calls the runtime helper against a temp of
 // the output lvalue's shape and conditionally writes the temp back to the
 // original lvalue. The test form has no output and lowers to a direct call
-// against the services handle. Both yield the SV `int` return. Neither reads
+// against the runtime handle. Both yield the SV `int` return. Neither reads
 // anything a process body owns, so one template serves both pass classes; the
 // value form's output argument keeps it out of a structural context, which the
 // frontend rejects there.

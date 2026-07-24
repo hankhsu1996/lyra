@@ -16,7 +16,7 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -491,10 +491,10 @@ auto LowerHirIncDecExprProc(
       FindLhsRootId(process.Owner().Unit(), block, target_id);
   if (mir::IsObservableCellType(
           process.Owner().Unit().types.Get(block.exprs.Get(root_id).type))) {
-    const mir::ExprId services_id =
-        block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+    const mir::ExprId runtime_id =
+        block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
     target_id = RewriteLhsRootWithMutate(
-        process.Owner().Unit(), block, target_id, services_id);
+        process.Owner().Unit(), block, target_id, runtime_id);
   }
 
   return mir::Expr{

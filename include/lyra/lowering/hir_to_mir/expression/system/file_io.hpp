@@ -17,7 +17,7 @@ namespace lyra::lowering::hir_to_mir {
 
 // Lower a file IO system subroutine call ($fopen / $fclose / $fgetc /
 // $ungetc / $fseek / $rewind / $ftell / $feof / $fflush) into a generic
-// mir::CallExpr whose receiver is the `files` broker (services.Files())
+// mir::CallExpr whose receiver is the `files` broker (runtime.Files())
 // and whose remaining arguments are the task operands. Output-arg tasks
 // ($fgets / $fread / $ferror) reach this path only when nested inside a
 // larger expression and return an unsupported diagnostic -- the

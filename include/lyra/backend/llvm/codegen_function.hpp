@@ -22,7 +22,7 @@ class CodeGenModule;
 
 // Per-function code generation: lowers one LIR callable body into its LLVM
 // function. Each LIR value becomes one LLVM value; reads resolve through the
-// per-function value map. Shared services -- types, the runtime ABI, method
+// per-function value map. Shared context -- types, the runtime ABI, method
 // resolution -- are reached through the owning module-level code generation.
 class CodeGenFunction {
  public:

@@ -66,6 +66,10 @@ the detail lives in the entry itself.
 - [read-set-inference](read-set-inference.md) -- read-set inference via slang flow analysis.
 - [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) -- runtime effects lower
   to ordinary `CallExpr` with the engine handle as one argument.
+- [ambient-runtime-services](ambient-runtime-services.md) -- generated code reaches the runtime
+  through a thread-local `current_runtime()` the attached Runtime publishes for its lifetime;
+  `RuntimeEffects` is the narrow capability surface, `Runtime final` adds host orchestration; the
+  receiver-based route is retired.
 - [callable-receiver](callable-receiver.md) -- every callable body's first binding is `self`; how it
   is supplied differs per callable form.
 - [unified-callable-model](unified-callable-model.md) -- one callable concept: callable code vs

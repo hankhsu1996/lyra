@@ -15,7 +15,7 @@
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -52,10 +52,10 @@ auto BuildSFormatCallExpr(
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
-  const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
 
-  return BuildFormatCallExpr(unit, block, services_id, items_array);
+  return BuildFormatCallExpr(unit, block, runtime_id, items_array);
 }
 
 }  // namespace
@@ -119,11 +119,11 @@ auto LowerSFormatSystemSubroutineCallStmt(
   const mir::ExprId value_id =
       ConvertToType(process.Owner().Unit(), block, call_id, out_type);
 
-  const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
-      process.Owner().Unit(), block, services_id, out_id, value_id,
-      std::nullopt, out_type, process.Owner().Unit().builtins.void_type);
+      process.Owner().Unit(), block, runtime_id, out_id, value_id, std::nullopt,
+      out_type, process.Owner().Unit().builtins.void_type);
   const mir::ExprId assign_id = block.exprs.Add(assign_expr);
 
   return mir::Stmt{

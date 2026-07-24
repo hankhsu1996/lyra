@@ -54,7 +54,7 @@ struct CapturePolicy {
   [[nodiscard]] auto ViewFor(BindingOriginId origin) const -> CaptureView {
     switch (origin.kind) {
       case BindingOriginId::Kind::kReceiver:
-      case BindingOriginId::Kind::kServices:
+      case BindingOriginId::Kind::kRuntime:
         return CaptureView::kSnapshot;
       case BindingOriginId::Kind::kSynthesized:
         return CaptureView::kOwning;

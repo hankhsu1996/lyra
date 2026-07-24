@@ -79,7 +79,7 @@ auto Type::Kind() const -> TypeKind {
             return TypeKind::kExternalUnitObject;
           },
           [](const ExternalClassType&) { return TypeKind::kExternalClass; },
-          [](const ServicesType&) { return TypeKind::kServices; },
+          [](const RuntimeEffectsType&) { return TypeKind::kRuntimeEffects; },
           [](const FilesType&) { return TypeKind::kFiles; },
           [](const DiagnosticType&) { return TypeKind::kDiagnostic; },
           [](const RuntimeLibraryType&) { return TypeKind::kRuntimeLibrary; },
@@ -139,7 +139,7 @@ auto Type::AsIntegralPacked() const -> const PackedArrayType& {
 }
 
 auto Type::IsAliasHandle() const -> bool {
-  return std::holds_alternative<ServicesType>(data) ||
+  return std::holds_alternative<RuntimeEffectsType>(data) ||
          std::holds_alternative<FilesType>(data) ||
          std::holds_alternative<DiagnosticType>(data);
 }

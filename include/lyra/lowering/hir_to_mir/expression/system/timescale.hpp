@@ -9,8 +9,8 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower `$timeformat` (LRM 20.4.3) into a `services.SetTimeFormat(...)` or
-// `services.ResetTimeFormat()` call. The four-argument form lowers each
+// Lower `$timeformat` (LRM 20.4.3) into a `runtime.SetTimeFormat(...)` or
+// `runtime.ResetTimeFormat()` call. The four-argument form lowers each
 // operand into a value expression and routes to the set method; the
 // no-argument form selects the reset method, which restores the LRM Table
 // 20-3 defaults the runtime resolves.
@@ -19,7 +19,7 @@ auto LowerTimeFormatSystemSubroutineCall(
     diag::SourceSpan span) -> diag::Result<mir::Expr>;
 
 // Lower `$printtimescale` (LRM 20.4.2, no-argument form) into a
-// `services.Files().Writeln(stdout_fd, text)` call. The scope's name, time
+// `runtime.Files().Writeln(stdout_fd, text)` call. The scope's name, time
 // unit, and precision are all known at lowering time, so the message text is
 // formatted into a string literal here -- the runtime only sees the same sink
 // write that `$display` uses.

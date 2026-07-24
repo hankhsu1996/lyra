@@ -6,7 +6,7 @@
 
 namespace lyra::runtime {
 
-class RuntimeServices;
+class RuntimeEffects;
 
 // Whether re-establishing a wait found its condition already satisfied.
 enum class PendingWaitOutcome : std::uint8_t {
@@ -43,8 +43,7 @@ class PendingWait {
   // (join, wait fork, await) re-checks and is runnable if met. Returns
   // kRunnable when the condition already holds -- the caller schedules
   // `activation` -- or kReblocked when it re-enrolled and stays parked.
-  virtual auto Reestablish(
-      RuntimeServices& services, CoroutineHandle activation)
+  virtual auto Reestablish(RuntimeEffects& effects, CoroutineHandle activation)
       -> PendingWaitOutcome = 0;
 };
 

@@ -20,8 +20,8 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -451,15 +451,15 @@ auto BuildRuntimeFormatCallExpr(
                   .arguments = {self_id}},
           .type = unit.builtins.string});
 
-  const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   const mir::ExprId time_format_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kTimeFormat},
-                  .arguments = {services_id}},
+                  .arguments = {runtime_id}},
           .type = unit.builtins.time_format});
   const mir::ExprId time_unit_power = block.exprs.Add(
       mir::MakeIntLiteral(

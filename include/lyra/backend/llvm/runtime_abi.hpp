@@ -56,7 +56,7 @@ class RuntimeAbi {
  public:
   RuntimeAbi(llvm::Module& module, llvm::LLVMContext& ctx, CodeGenTypes& types);
 
-  auto Services() -> llvm::FunctionCallee;
+  auto CurrentServices() -> llvm::FunctionCallee;
   auto Files() -> llvm::FunctionCallee;
   auto TimeFormat() -> llvm::FunctionCallee;
   auto Format() -> llvm::FunctionCallee;
@@ -124,7 +124,7 @@ class RuntimeAbi {
 
   // Operations on an observable storage cell, reached through its address.
   // `Initialize` installs the cell's declared representation once; `Set`
-  // threads services so a change wakes the cell's subscribers.
+  // threads runtime so a change wakes the cell's subscribers.
   auto CellGet(ValueDomain domain) -> llvm::FunctionCallee;
   auto CellInitialize(ValueDomain domain) -> llvm::FunctionCallee;
   auto CellSet(ValueDomain domain) -> llvm::FunctionCallee;
@@ -134,7 +134,7 @@ class RuntimeAbi {
   // holds. `ActivationFrameAlloc` allocates the cell (uninitialized -- the
   // first store installs its representation); `ActivationFrameStore` overwrites
   // it; `ActivationFrameLoad` copies its value into the current stretch. No
-  // services thread through: a procedural local is not observable.
+  // runtime thread through: a procedural local is not observable.
   auto ActivationFrameAlloc(ValueDomain domain) -> llvm::FunctionCallee;
   auto ActivationFrameStore(ValueDomain domain) -> llvm::FunctionCallee;
   auto ActivationFrameLoad(ValueDomain domain) -> llvm::FunctionCallee;

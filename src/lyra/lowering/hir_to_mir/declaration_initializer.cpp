@@ -5,8 +5,8 @@
 
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -19,7 +19,6 @@ auto IntegratePendingStaticInitializer(
     -> diag::Result<void> {
   auto& init_block = *init_frame.current_block;
   const mir::CompilationUnit& unit = process.Owner().Unit();
-  const mir::TypeId self_ptr_type = init_frame.current_class->self_pointer_type;
 
   const mir::ExprId target = init_block.exprs.Add(
       process.BuildStaticStorageAccess(init_frame, pending.placement));
@@ -55,12 +54,10 @@ auto IntegratePendingStaticInitializer(
         process.Owner(), init_frame, pending.hir_type));
   }
 
-  const mir::ExprId services_self_read =
-      init_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type));
-  const mir::ExprId services_id = init_block.exprs.Add(
-      mir::MakeServicesCallExpr(services_self_read, unit.builtins.services));
+  const mir::ExprId runtime_id = init_block.exprs.Add(
+      mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
-      unit, init_block, services_id, target, init_value, std::nullopt,
+      unit, init_block, runtime_id, target, init_value, std::nullopt,
       pending.storage_type, unit.builtins.void_type);
   init_block.AppendStmt(
       mir::ExprStmt{.expr = init_block.exprs.Add(assign_expr)});

@@ -58,7 +58,7 @@ auto BuildOutputArgSlot(
 // call is wrapped in an awaited expression whose void completion the statement
 // discards; an `lhs = f(...)` shape is a function and never suspends.
 auto BuildCopyOutBlock(
-    const mir::CompilationUnit& unit, mir::ExprId services_id,
+    const mir::CompilationUnit& unit, mir::ExprId runtime_id,
     WalkFrame parent_frame, mir::Block wrapper,
     std::optional<std::string> label, mir::TypeId result_type,
     mir::Expr call_expr, bool call_suspends,

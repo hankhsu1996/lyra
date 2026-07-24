@@ -57,7 +57,7 @@ auto FindLhsRootId(
 
 auto RewriteLhsRootWithMutate(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
-    mir::ExprId services_id) -> mir::ExprId {
+    mir::ExprId runtime_id) -> mir::ExprId {
   const auto& expr = block.exprs.Get(lhs_id);
   // A captured carrier (cell-typed) is the chain's leaf root: mutate it
   // directly rather than projecting through it as a struct member.
@@ -65,7 +65,7 @@ auto RewriteLhsRootWithMutate(
     const mir::TypeId value_type =
         mir::ObservableInnerValueType(unit.types.Get(expr.type));
     const mir::ExprId mutate_id = block.exprs.Add(
-        mir::MakeObservableMutateCallExpr(lhs_id, services_id, value_type));
+        mir::MakeObservableMutateCallExpr(lhs_id, runtime_id, value_type));
     return block.exprs.Add(
         mir::Expr{
             .data = mir::DerefExpr{.pointer = mutate_id}, .type = value_type});
@@ -74,14 +74,14 @@ auto RewriteLhsRootWithMutate(
     mir::TupleGetExpr rewritten = *g;
     const mir::TypeId result_ty = expr.type;
     rewritten.tuple =
-        RewriteLhsRootWithMutate(unit, block, rewritten.tuple, services_id);
+        RewriteLhsRootWithMutate(unit, block, rewritten.tuple, runtime_id);
     return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
   }
   if (const auto* m = std::get_if<mir::UnionGetRefExpr>(&expr.data)) {
     mir::UnionGetRefExpr rewritten = *m;
     const mir::TypeId result_ty = expr.type;
     rewritten.union_value = RewriteLhsRootWithMutate(
-        unit, block, rewritten.union_value, services_id);
+        unit, block, rewritten.union_value, runtime_id);
     return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
   }
   if (AsContainerAccessBase(expr) != nullptr) {
@@ -91,7 +91,7 @@ auto RewriteLhsRootWithMutate(
     // reference.
     const mir::TypeId expr_type = expr.type;
     rewritten_call.arguments.front() = RewriteLhsRootWithMutate(
-        unit, block, rewritten_call.arguments.front(), services_id);
+        unit, block, rewritten_call.arguments.front(), runtime_id);
     return block.exprs.Add(
         mir::Expr{.data = std::move(rewritten_call), .type = expr_type});
   }
@@ -110,7 +110,7 @@ auto LhsRootIsObservableCell(
 
 auto BuildObservableAssignExpr(
     const mir::CompilationUnit& unit, mir::Block& block,
-    std::optional<mir::ExprId> services_id, mir::ExprId lhs_id,
+    std::optional<mir::ExprId> runtime_id, mir::ExprId lhs_id,
     mir::ExprId rhs_id, std::optional<mir::BinaryOp> compound_op,
     mir::TypeId result_type, mir::TypeId void_type) -> mir::Expr {
   // A plain store carries the right-hand side to the destination's full
@@ -137,21 +137,21 @@ auto BuildObservableAssignExpr(
                 .target = lhs_id, .compound_op = compound_op, .value = rhs_id},
         .type = result_type};
   }
-  // The write is observable, so it notifies through a services value the caller
+  // The write is observable, so it notifies through a runtime handle the caller
   // must have supplied.
-  if (!services_id.has_value()) {
+  if (!runtime_id.has_value()) {
     throw InternalError(
-        "BuildObservableAssignExpr: an observable write requires a services "
+        "BuildObservableAssignExpr: an observable write requires a runtime "
         "value");
   }
   const bool whole_var_simple_write =
       (root_id == lhs_id) && !compound_op.has_value();
   if (whole_var_simple_write) {
     return mir::MakeObservableSetCallExpr(
-        lhs_id, *services_id, rhs_id, void_type);
+        lhs_id, *runtime_id, rhs_id, void_type);
   }
   const mir::ExprId rewritten =
-      RewriteLhsRootWithMutate(unit, block, lhs_id, *services_id);
+      RewriteLhsRootWithMutate(unit, block, lhs_id, *runtime_id);
   return mir::Expr{
       .data =
           mir::AssignExpr{

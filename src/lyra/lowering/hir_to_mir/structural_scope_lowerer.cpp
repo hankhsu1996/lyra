@@ -29,8 +29,8 @@
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -47,7 +47,7 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Adds the runtime scope base's construction prefix (parent, hierarchy
-// segment, services) as ordinary ctor params, in the order the base
+// segment) as ordinary ctor params, in the order the base
 // constructor consumes them.
 void AttachRuntimeScopeCtorPrefix(
     const mir::CompilationUnit& unit, mir::ClassShape& shape) {
@@ -56,8 +56,6 @@ void AttachRuntimeScopeCtorPrefix(
       mir::ParamDecl{.name = "parent", .type = builtins.scope_ptr});
   shape.ctor_prefix_params.Add(
       mir::ParamDecl{.name = "segment", .type = builtins.hierarchy_segment});
-  shape.ctor_prefix_params.Add(
-      mir::ParamDecl{.name = "services", .type = builtins.services});
 }
 
 struct GenerateChildSpec {
@@ -151,9 +149,7 @@ void EmitExternalUnitDimLevel(
                     .arguments = {string_literal(runtime_label), indices_id}},
             .type = builtins.hierarchy_segment});
 
-    std::vector<mir::ExprId> ctor_args = {
-        parent_self, segment_id,
-        block.exprs.Add(BuildServicesCallExpr(unit_lowerer, frame))};
+    std::vector<mir::ExprId> ctor_args = {parent_self, segment_id};
     const mir::ExprId ctor_call_id = block.exprs.Add(
         mir::Expr{
             .data =
@@ -851,7 +847,7 @@ void ValidateOwnedChildConstruction(
 
 // Lowers an owned-child construction site to the MIR call shape
 // `AddOwnedChild(self, make_unique<Child>(self, HierarchySegment{label,
-// indices}, services, ctor_args...))`: the child instance is built carrying
+// indices}, ctor_args...))`: the child instance is built carrying
 // its complete hierarchy identity, then handed to the parent to own. The
 // runtime tree owns the child; the parent keeps no member, and a later
 // reference reaches it by name through GetChild. `runtime_label` is the
@@ -910,11 +906,9 @@ void AppendOwnedChildConstruction(
           .type = builtins.hierarchy_segment});
 
   std::vector<mir::ExprId> ctor_call_args;
-  ctor_call_args.reserve(3);
+  ctor_call_args.reserve(2);
   ctor_call_args.push_back(self_read());
   ctor_call_args.push_back(segment_id);
-  ctor_call_args.push_back(
-      arm_block.exprs.Add(BuildServicesCallExpr(unit_lowerer, arm_frame)));
   const mir::ExprId ctor_call_id = arm_block.exprs.Add(
       mir::Expr{
           .data =
@@ -1675,11 +1669,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       // its engine-side change-tracking sees it; a plain field gets a regular
       // assignment.
       const auto emit_value_store = [&](mir::ExprId value_id) {
-        const mir::ExprId services_id = initialize_block.exprs.Add(
-            mir::MakeServicesCallExpr(
-                init_self_read(), unit_lowerer.Unit().builtins.services));
+        const mir::ExprId runtime_id = initialize_block.exprs.Add(
+            mir::MakeCurrentRuntimeCallExpr(
+                unit_lowerer.Unit().builtins.effects));
         append_stmt(BuildObservableAssignExpr(
-            unit_lowerer.Unit(), initialize_block, services_id, init_target,
+            unit_lowerer.Unit(), initialize_block, runtime_id, init_target,
             value_id, std::nullopt, mir_value_type,
             unit_lowerer.Unit().builtins.void_type));
       };
@@ -1807,10 +1801,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     call_package(pkg, kPackageInstallCallableName, {});
   }
   for (const std::string& pkg : package_init_plan_.value_initialize_order) {
-    const mir::ExprId services = initialize_block.exprs.Add(
-        mir::MakeServicesCallExpr(
-            init_self_read(), unit_lowerer.Unit().builtins.services));
-    call_package(pkg, kPackageInitializeCallableName, {services});
+    const mir::ExprId runtime_id = initialize_block.exprs.Add(
+        mir::MakeCurrentRuntimeCallExpr(unit_lowerer.Unit().builtins.effects));
+    call_package(pkg, kPackageInitializeCallableName, {runtime_id});
   }
 
   // Build each materialized procedural-storage scope's class: copy its

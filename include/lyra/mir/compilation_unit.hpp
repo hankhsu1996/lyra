@@ -64,7 +64,7 @@ struct BuiltinMirTypes {
   TypeId void_type;
   TypeId realtime;
   TypeId time;
-  TypeId services;
+  TypeId effects;
   TypeId scope_ptr;
   // The object type an imported runtime-library class handle (LRM 9.7
   // `process`) references. A fixed library class named by its qualified name,
@@ -190,7 +190,7 @@ struct CompilationUnit {
                     .signedness = Signedness::kUnsigned,
                     .dims = {PackedRange{.left = 63, .right = 0}},
                     .form = PackedArrayForm::kTime}),
-            .services = types.Intern(ServicesType{}),
+            .effects = types.Intern(RuntimeEffectsType{}),
             .scope_ptr = types.PointerTo(
                 types.Intern(
                     ExternalClassType{

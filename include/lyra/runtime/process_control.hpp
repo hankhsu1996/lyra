@@ -9,8 +9,8 @@
 #include "lyra/runtime/gc_ref.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
@@ -29,8 +29,8 @@ enum class ProcessStatusCode : std::int32_t {
 // LRM 9.7 `process::self()`: a handle to the process making the call. A task or
 // function runs in its caller's thread (LRM 9.5), so this returns the enclosing
 // executing process, reached through the ambient execution context.
-inline auto ProcessSelf(RuntimeServices& services) -> GcRef<RuntimeProcess> {
-  return GcRef<RuntimeProcess>(services.CurrentProcess().shared_from_this());
+inline auto ProcessSelf(RuntimeEffects& runtime) -> GcRef<RuntimeProcess> {
+  return GcRef<RuntimeProcess>(runtime.CurrentProcess().shared_from_this());
 }
 
 // LRM 9.7 `process::status()`: the process's execution state projected onto the
@@ -73,14 +73,14 @@ inline auto ProcessStatus(const GcRef<RuntimeProcess>& self)
 // cause recorded) and its body is unwound to the engine's resume boundary,
 // where the terminal state is published and the retained chain released.
 inline void ProcessKill(
-    const GcRef<RuntimeProcess>& self, RuntimeServices& services) {
+    const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime) {
   RuntimeProcess& target = *self;
-  RuntimeProcess& caller = services.CurrentProcess();
+  RuntimeProcess& caller = runtime.CurrentProcess();
   if (target.IsSelfOrAncestorOf(caller)) {
     std::vector<CoroutineHandle> woken;
     target.TerminateSubtreeDeferringRunning(caller, woken);
     for (CoroutineHandle waiter : woken) {
-      services.ScheduleNextDelta(waiter);
+      runtime.ScheduleNextDelta(waiter);
     }
     UnwindForProcessTermination();
   }
@@ -99,7 +99,7 @@ inline void ProcessKill(
     RuntimeProcess::ReleaseTerminatedLineage(*parent);
   }
   for (CoroutineHandle waiter : woken) {
-    services.ScheduleNextDelta(waiter);
+    runtime.ScheduleNextDelta(waiter);
   }
 }
 
@@ -134,9 +134,9 @@ class ProcessAwaitAwaitable : public PendingWait {
 
   // Termination is monotonic (LRM 9.7): the target terminates once. On resume,
   // if it has terminated the awaiter is runnable; otherwise re-park on its
-  // termination. No engine services are needed.
+  // termination. No runtime access is needed.
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
       -> PendingWaitOutcome override {
     if (target_->ExecutionState() == ProcessExecutionState::kTerminated) {
       return PendingWaitOutcome::kRunnable;
@@ -155,9 +155,9 @@ class ProcessAwaitAwaitable : public PendingWait {
 // own termination). The check is here at the call, symmetric with `suspend`, so
 // the awaitable itself is pure readiness.
 inline auto ProcessAwait(
-    const GcRef<RuntimeProcess>& self, RuntimeServices& services)
+    const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime)
     -> ProcessAwaitAwaitable {
-  if (self.Get() == &services.CurrentProcess()) {
+  if (self.Get() == &runtime.CurrentProcess()) {
     throw InternalError(
         "process::await on the calling process is not allowed (LRM 9.7)");
   }
@@ -169,9 +169,9 @@ inline auto ProcessAwait(
 // process that is already suspended or terminated has no effect. The activation
 // layer does the state transition and the detach; nothing here schedules.
 inline void ProcessSuspend(
-    const GcRef<RuntimeProcess>& self, RuntimeServices& services) {
+    const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime) {
   RuntimeProcess& target = *self;
-  if (&target == &services.CurrentProcess()) {
+  if (&target == &runtime.CurrentProcess()) {
     throw InternalError(
         "process::suspend on the calling process is not allowed (LRM 9.7)");
   }
@@ -184,7 +184,7 @@ inline void ProcessSuspend(
 // runnable if the condition is already satisfied; a process suspended while
 // runnable is re-queued to run in the current time step.
 inline void ProcessResume(
-    const GcRef<RuntimeProcess>& self, RuntimeServices& services) {
+    const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime) {
   RuntimeProcess& target = *self;
   if (target.ExecutionState() != ProcessExecutionState::kSuspended) {
     return;
@@ -198,9 +198,9 @@ inline void ProcessResume(
   PendingWait* pending = leaf->pending_wait;
   const bool runnable =
       pending == nullptr ||
-      pending->Reestablish(services, leaf) == PendingWaitOutcome::kRunnable;
+      pending->Reestablish(runtime, leaf) == PendingWaitOutcome::kRunnable;
   if (runnable) {
-    services.ScheduleNextDelta(leaf);
+    runtime.ScheduleNextDelta(leaf);
   }
 }
 

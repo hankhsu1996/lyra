@@ -4,7 +4,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -44,8 +44,8 @@ auto LowerTimeSystemSubroutineCall(
   const auto& builtins = lowerer.Owner().Unit().builtins;
   const TimeFnInfo fn = SelectTimeFn(builtins, info.kind);
   auto& body = *frame.current_block;
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
+  const mir::ExprId runtime_id =
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   const mir::ExprId unit_power_id = body.exprs.Add(
       mir::MakeIntLiteral(
           builtins.int_type,
@@ -54,7 +54,7 @@ auto LowerTimeSystemSubroutineCall(
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = fn.id},
-              .arguments = {services_id, unit_power_id}},
+              .arguments = {runtime_id, unit_power_id}},
       .type = fn.result_type};
 }
 

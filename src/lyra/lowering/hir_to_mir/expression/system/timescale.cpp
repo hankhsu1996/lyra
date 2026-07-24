@@ -12,7 +12,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -35,7 +35,7 @@ auto LowerTimeFormatSystemSubroutineCall(
 
   std::vector<mir::ExprId> call_args;
   call_args.push_back(
-      body.exprs.Add(BuildServicesCallExpr(process.Owner(), frame)));
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner())));
   for (const auto& arg : args) {
     if (!arg.has_value()) {
       throw InternalError(
@@ -86,7 +86,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   const mir::ExprId fd_id = body.exprs.Add(
       mir::MakeIntLiteral(builtins.int_type, support::kStdoutFd));
   const mir::ExprId files_id =
-      body.exprs.Add(BuildFilesCallExpr(process.Owner(), frame));
+      body.exprs.Add(BuildFilesCallExpr(process.Owner(), body));
   return mir::Expr{
       .data =
           mir::CallExpr{

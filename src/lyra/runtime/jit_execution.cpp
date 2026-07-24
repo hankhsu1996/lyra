@@ -18,8 +18,9 @@
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/runtime.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
@@ -146,7 +147,7 @@ using lyra::runtime::HierarchySegment;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
 using lyra::runtime::Read;
-using lyra::runtime::RuntimeServices;
+using lyra::runtime::RuntimeEffects;
 using lyra::runtime::Scope;
 using lyra::runtime::SubscribeValueChange;
 using lyra::runtime::Trigger;
@@ -169,16 +170,16 @@ using lyra::value::TimeFormat;
 
 extern "C" {
 
-auto lyra_rt_services(void* self) -> void* {
-  return &static_cast<Scope*>(self)->AbiServices();
+auto lyra_rt_current_runtime() -> void* {
+  return &lyra::runtime::current_runtime();
 }
 
-auto lyra_rt_files(void* services) -> void* {
-  return &static_cast<RuntimeServices*>(services)->Files();
+auto lyra_rt_files(void* runtime) -> void* {
+  return &static_cast<RuntimeEffects*>(runtime)->Files();
 }
 
-auto lyra_rt_time_format(void* services) -> const void* {
-  return &static_cast<RuntimeServices*>(services)->TimeFormat();
+auto lyra_rt_time_format(void* runtime) -> const void* {
+  return &static_cast<RuntimeEffects*>(runtime)->TimeFormat();
 }
 
 auto lyra_rt_make_string(void* cstr) -> void* {
@@ -227,8 +228,8 @@ auto lyra_rt_make_coroutine(void* (*ramp)(void*), void* env) -> void* {
 }
 
 void lyra_rt_delay(
-    void* services, const void* ticks, const void* precision_power) {
-  auto& svc = *static_cast<RuntimeServices*>(services);
+    void* runtime, const void* ticks, const void* precision_power) {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
   const CoroutineHandle token = svc.CurrentProcess().TopHandle();
   const std::int64_t tick_count = Read<PackedArray>(ticks).ToInt64();
   if (tick_count == 0) {
@@ -253,8 +254,8 @@ auto lyra_rt_make_trigger(
 // The generated frame the process suspends is not a frame the engine ever sees
 // -- it resumes the runtime-owned coroutine that drives it -- so the process to
 // wake is the running one, read from the runtime.
-void lyra_rt_wait_any(void* services, LyraSpan triggers) {
-  auto& svc = *static_cast<RuntimeServices*>(services);
+void lyra_rt_wait_any(void* runtime, LyraSpan triggers) {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
   const std::span<Trigger* const> handles(
       static_cast<Trigger* const*>(triggers.data), triggers.count);
   std::vector<Trigger> collected;
@@ -266,12 +267,14 @@ void lyra_rt_wait_any(void* services, LyraSpan triggers) {
 }
 
 void lyra_rt_register_initial(void* self, void* coroutine) {
-  static_cast<Scope*>(self)->AbiRegisterInitial(
+  RegisterInitialProcess(
+      static_cast<Scope*>(self),
       std::move(*static_cast<Coroutine<void>*>(coroutine)));
 }
 
 void lyra_rt_register_final(void* self, void* coroutine) {
-  static_cast<Scope*>(self)->AbiRegisterFinal(
+  RegisterFinalProcess(
+      static_cast<Scope*>(self),
       std::move(*static_cast<Coroutine<void>*>(coroutine)));
 }
 
@@ -287,13 +290,12 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
       std::string(static_cast<const char*>(label)), resolved);
 }
 
-auto lyra_rt_make_unit(
-    const void* definition, void* parent, void* segment, void* services)
+auto lyra_rt_make_unit(const void* definition, void* parent, void* segment)
     -> void* {
   const auto* def = static_cast<const UnitDefinition*>(definition);
   auto instance = std::make_unique<GeneratedInstance>(
       static_cast<Scope*>(parent), *static_cast<HierarchySegment*>(segment),
-      *static_cast<RuntimeServices*>(services), def);
+      def);
   {
     GeneratedCallScope scope;
     def->construct(instance.get());
@@ -324,9 +326,9 @@ void lyra_rt_cell_packed_initialize(void* cell, const void* prototype) {
       Read<PackedArray>(prototype));
 }
 
-void lyra_rt_cell_packed_set(void* cell, void* services, const void* value) {
+void lyra_rt_cell_packed_set(void* cell, void* runtime, const void* value) {
   static_cast<Var<PackedArray>*>(cell)->Set(
-      *static_cast<RuntimeServices*>(services), Read<PackedArray>(value));
+      *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(value));
 }
 
 auto lyra_rt_cell_string_get(void* cell) -> const void* {
@@ -337,9 +339,9 @@ void lyra_rt_cell_string_initialize(void* cell, const void* prototype) {
   static_cast<Var<String>*>(cell)->Initialize(Read<String>(prototype));
 }
 
-void lyra_rt_cell_string_set(void* cell, void* services, const void* value) {
+void lyra_rt_cell_string_set(void* cell, void* runtime, const void* value) {
   static_cast<Var<String>*>(cell)->Set(
-      *static_cast<RuntimeServices*>(services), Read<String>(value));
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(value));
 }
 
 auto lyra_rt_cell_real_get(void* cell) -> const void* {
@@ -350,9 +352,9 @@ void lyra_rt_cell_real_initialize(void* cell, const void* prototype) {
   static_cast<Var<Real>*>(cell)->Initialize(Read<Real>(prototype));
 }
 
-void lyra_rt_cell_real_set(void* cell, void* services, const void* value) {
+void lyra_rt_cell_real_set(void* cell, void* runtime, const void* value) {
   static_cast<Var<Real>*>(cell)->Set(
-      *static_cast<RuntimeServices*>(services), Read<Real>(value));
+      *static_cast<RuntimeEffects*>(runtime), Read<Real>(value));
 }
 
 auto lyra_rt_cell_shortreal_get(void* cell) -> const void* {
@@ -363,9 +365,9 @@ void lyra_rt_cell_shortreal_initialize(void* cell, const void* prototype) {
   static_cast<Var<ShortReal>*>(cell)->Initialize(Read<ShortReal>(prototype));
 }
 
-void lyra_rt_cell_shortreal_set(void* cell, void* services, const void* value) {
+void lyra_rt_cell_shortreal_set(void* cell, void* runtime, const void* value) {
   static_cast<Var<ShortReal>*>(cell)->Set(
-      *static_cast<RuntimeServices*>(services), Read<ShortReal>(value));
+      *static_cast<RuntimeEffects*>(runtime), Read<ShortReal>(value));
 }
 
 // A procedural local whose value crosses a suspension. The cell is allocated in
@@ -374,8 +376,8 @@ void lyra_rt_cell_shortreal_set(void* cell, void* services, const void* value) {
 // storage. A store overwrites the cell in place -- the first store installs the
 // declared representation -- and a load copies the current value into the
 // per-stretch scope, like any other value the boundary hands back. A procedural
-// local is not observable, so no services thread through and no subscriber
-// wakes.
+// local is not observable, so no runtime handle threads through and no
+// subscriber wakes.
 auto lyra_rt_activation_frame_alloc_packed() -> void* {
   return GeneratedCallScope::Current()
       .ActivationFrame()
@@ -1033,9 +1035,9 @@ void lyra_rt_cell_tuple_initialize(void* cell, const void* prototype) {
       Read<RuntimeTuple>(prototype));
 }
 
-void lyra_rt_cell_tuple_set(void* cell, void* services, const void* value) {
+void lyra_rt_cell_tuple_set(void* cell, void* runtime, const void* value) {
   static_cast<Var<RuntimeTuple>*>(cell)->Set(
-      *static_cast<RuntimeServices*>(services), Read<RuntimeTuple>(value));
+      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeTuple>(value));
 }
 
 auto lyra_rt_activation_frame_alloc_tuple() -> void* {
@@ -1153,10 +1155,9 @@ void lyra_rt_cell_dynarray_initialize(void* cell, const void* prototype) {
       Read<RuntimeDynamicArray>(prototype));
 }
 
-void lyra_rt_cell_dynarray_set(void* cell, void* services, const void* value) {
+void lyra_rt_cell_dynarray_set(void* cell, void* runtime, const void* value) {
   static_cast<Var<RuntimeDynamicArray>*>(cell)->Set(
-      *static_cast<RuntimeServices*>(services),
-      Read<RuntimeDynamicArray>(value));
+      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(value));
 }
 
 auto lyra_rt_activation_frame_alloc_dynarray() -> void* {

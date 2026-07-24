@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 
 #include <filesystem>
 #include <format>
@@ -6,10 +6,6 @@
 
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
-#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -27,54 +23,39 @@ auto FormatRuntimeOriginString(
       loc.line, loc.col);
 }
 
-auto BuildServicesCallExpr(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame) -> mir::Expr {
-  auto& body = *frame.current_block;
-  const auto& builtins = unit_lowerer.Unit().builtins;
-  // A receiver-less callable (a package function or task, LRM 26.3) reaches the
-  // engine through its own leading services binding, not through a `self` it
-  // does not have. An instance callable derives the handle from its receiver.
-  if (frame.current_class == nullptr) {
-    const BodyBindingRef services =
-        frame.bindings->EnsureCarrier(BindingOriginId::Services());
-    return frame.bindings->MakeReadExpr(services, body);
-  }
-  const mir::ExprId self_id = body.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-  return mir::MakeServicesCallExpr(self_id, builtins.services);
+auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer) -> mir::Expr {
+  return mir::MakeCurrentRuntimeCallExpr(unit_lowerer.Unit().builtins.effects);
 }
 
-auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, const WalkFrame& frame)
+auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, mir::Block& block)
     -> mir::Expr {
-  auto& body = *frame.current_block;
   const auto& builtins = unit_lowerer.Unit().builtins;
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(unit_lowerer, frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
-              .arguments = {services_id}},
+              .arguments = {runtime_id}},
       .type = builtins.files};
 }
 
-auto BuildDiagnosticCallExpr(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame) -> mir::Expr {
-  auto& body = *frame.current_block;
+auto BuildDiagnosticCallExpr(const UnitLowerer& unit_lowerer, mir::Block& block)
+    -> mir::Expr {
   const auto& builtins = unit_lowerer.Unit().builtins;
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(unit_lowerer, frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kDiagnostic},
-              .arguments = {services_id}},
+              .arguments = {runtime_id}},
       .type = builtins.diagnostic};
 }
 
 auto BuildFormatCallExpr(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    mir::ExprId services_id, mir::ExprId items_array) -> mir::Expr {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId runtime_id,
+    mir::ExprId items_array) -> mir::Expr {
   const auto& builtins = unit.builtins;
   const mir::ExprId time_format_id = block.exprs.Add(
       mir::Expr{
@@ -82,7 +63,7 @@ auto BuildFormatCallExpr(
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kTimeFormat},
-                  .arguments = {services_id}},
+                  .arguments = {runtime_id}},
           .type = builtins.time_format});
   return mir::Expr{
       .data =

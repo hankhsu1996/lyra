@@ -8,7 +8,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -105,14 +105,14 @@ auto MakeValueChangeWaitStmt(
           .data = mir::ArrayLiteralExpr{.elements = std::move(triggers)},
           .type = triggers_type});
 
-  const mir::ExprId services_id =
-      target_block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
+  const mir::ExprId runtime_id =
+      target_block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   const mir::ExprId call_id = target_block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = support::BuiltinFn::kWaitAny},
-                  .arguments = {services_id, triggers_id}},
+                  .arguments = {runtime_id, triggers_id}},
           .type = unit.builtins.void_type});
   const mir::ExprId await_id = target_block.exprs.Add(
       mir::Expr{

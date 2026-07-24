@@ -515,8 +515,8 @@ auto CodeGenFunction::BuiltinCallee(
     const lir::BuiltinTarget& target, const lir::CallInstr& call,
     lir::TypeId result_type) -> llvm::FunctionCallee {
   switch (target.fn) {
-    case support::BuiltinFn::kServices:
-      return module_->Runtime().Services();
+    case support::BuiltinFn::kCurrentRuntime:
+      return module_->Runtime().CurrentServices();
     case support::BuiltinFn::kFiles:
       return module_->Runtime().Files();
     case support::BuiltinFn::kTimeFormat:

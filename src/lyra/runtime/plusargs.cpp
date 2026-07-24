@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-#include "lyra/runtime/runtime_services.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -97,14 +97,14 @@ auto PlusArgsSource::MatchPrefix(std::string_view prefix) const
   return std::nullopt;
 }
 
-auto TestPlusargs(RuntimeServices& services, const value::String& user_string)
+auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
     -> value::PackedArray {
-  const auto match = services.PlusArgs().MatchPrefix(user_string.View());
+  const auto match = runtime.PlusArgs().MatchPrefix(user_string.View());
   return MakeIntResult(match.has_value() ? 1 : 0);
 }
 
 auto ValuePlusargs(
-    RuntimeServices& services, const value::String& user_string,
+    RuntimeEffects& runtime, const value::String& user_string,
     value::PackedArray& out) -> value::PackedArray {
   const auto parsed = ParseUserString(user_string.View());
   const auto base = BaseForFormat(parsed.format_letter);
@@ -112,7 +112,7 @@ auto ValuePlusargs(
     // %s / %e / %f / %g on an integral target: no match, out untouched.
     return MakeIntResult(0);
   }
-  const auto match = services.PlusArgs().MatchPrefix(parsed.prefix);
+  const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
   if (!match.has_value()) return MakeIntResult(0);
   const std::int64_t converted = ConvertIntegralRemainder(*match, *base);
   out = value::PackedArray::FromInt(converted, out);
@@ -120,12 +120,12 @@ auto ValuePlusargs(
 }
 
 auto ValuePlusargs(
-    RuntimeServices& services, const value::String& user_string,
+    RuntimeEffects& runtime, const value::String& user_string,
     value::String& out) -> value::PackedArray {
   const auto parsed = ParseUserString(user_string.View());
   const char letter = parsed.format_letter;
   if (letter != 's' && letter != 'S') return MakeIntResult(0);
-  const auto match = services.PlusArgs().MatchPrefix(parsed.prefix);
+  const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
   if (!match.has_value()) return MakeIntResult(0);
   out = value::String(std::string(*match));
   return MakeIntResult(1);

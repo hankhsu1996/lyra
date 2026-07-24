@@ -276,9 +276,9 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
             .name = "self", .type = parent.current_class->self_pointer_type}));
   } else if (parent.current_class == nullptr) {
     params.push_back(bindings.Declare(
-        BindingOriginId::Services(),
+        BindingOriginId::Runtime(),
         mir::LocalDecl{
-            .name = "services", .type = owner_->Unit().builtins.services}));
+            .name = "runtime", .type = owner_->Unit().builtins.effects}));
   }
   // A task body suspends on timing controls, so its call protocol is the
   // coroutine one; a function body executes synchronously.

@@ -80,7 +80,7 @@ struct AttachedDriver {
 
 // Installs a driver on a net cell reached through a route: a driver-handle
 // member bound at Resolve (`self->driver = net_access.AttachDriver()`) and
-// seeded at Initialize (`self->driver.Update(services, source)`). The
+// seeded at Initialize (`self->driver.Update(runtime, source)`). The
 // caller supplies `net_access` -- the resolve-phase lvalue of the net cell,
 // itself the LHS lowered in `resolve_frame` -- so a same-scope target reads
 // as `self->net`, and an enclosing or cross-unit target as a dereference of
@@ -128,7 +128,7 @@ auto AttachDriver(
     return init_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type));
   };
   const mir::ExprId seed_services = init_block.exprs.Add(
-      mir::MakeServicesCallExpr(init_self(), unit.builtins.services));
+      mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
   const mir::ExprId seed_driver = init_block.exprs.Add(
       mir::MakeFieldAccessExpr(
           init_self(),
@@ -210,10 +210,8 @@ auto LowerContinuousAssign(
   // it, and a net driver updates through it. The body's `self` is the
   // receiver binding seeded above, reached through the same capture
   // machinery a process body's self read uses.
-  const mir::ExprId body_self_ref =
-      body_block.exprs.Add(MakeSelfRefExpr(body_frame, self_ptr_type));
-  const mir::ExprId body_services_id = body_block.exprs.Add(
-      mir::MakeServicesCallExpr(body_self_ref, unit.builtins.services));
+  const mir::ExprId body_runtime_id = body_block.exprs.Add(
+      mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
 
   mir::ExprId effect_id{};
   if (attached.has_value()) {
@@ -230,14 +228,14 @@ auto LowerContinuousAssign(
             attached->driver_type));
     effect_id = body_block.exprs.Add(
         mir::MakeNetDriverUpdateCallExpr(
-            driver_access, body_services_id, rhs_id, unit.builtins.void_type));
+            driver_access, body_runtime_id, rhs_id, unit.builtins.void_type));
   } else {
     auto lhs_or =
         lowerer.LowerLhsExpr(hir_scope.exprs.Get(src.lhs), body_frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
     const mir::ExprId lhs_id = body_block.exprs.Add(*std::move(lhs_or));
     const mir::Expr assign_expr = BuildObservableAssignExpr(
-        unit, body_block, body_services_id, lhs_id, rhs_id, std::nullopt,
+        unit, body_block, body_runtime_id, lhs_id, rhs_id, std::nullopt,
         assign_type, unit.builtins.void_type);
     effect_id = body_block.exprs.Add(assign_expr);
   }

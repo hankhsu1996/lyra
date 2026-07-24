@@ -11,7 +11,7 @@
 
 namespace lyra::runtime {
 
-class RuntimeServices;
+class RuntimeEffects;
 
 // LRM 21.6 command-line plusargs source, held on the engine as design-global
 // state. Stored tokens are the plusarg content (`+` prefix already stripped)
@@ -35,7 +35,7 @@ class PlusArgsSource {
 
 // LRM 21.6 $test$plusargs. Returns 1 on prefix match, 0 otherwise, as a
 // PackedArray shaped for SV `int` (2-state 32-bit signed).
-auto TestPlusargs(RuntimeServices& services, const value::String& user_string)
+auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
     -> value::PackedArray;
 
 // LRM 21.6 $value$plusargs. `user_string` is `"plusarg_prefix format_spec"`;
@@ -45,10 +45,10 @@ auto TestPlusargs(RuntimeServices& services, const value::String& user_string)
 // leading 0 permitted). Real-valued conversions (%e %f %g) are not yet
 // supported; a call with one of them returns 0 without writing.
 auto ValuePlusargs(
-    RuntimeServices& services, const value::String& user_string,
+    RuntimeEffects& runtime, const value::String& user_string,
     value::PackedArray& out) -> value::PackedArray;
 auto ValuePlusargs(
-    RuntimeServices& services, const value::String& user_string,
+    RuntimeEffects& runtime, const value::String& user_string,
     value::String& out) -> value::PackedArray;
 
 }  // namespace lyra::runtime

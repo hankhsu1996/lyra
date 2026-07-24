@@ -13,7 +13,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -42,14 +42,14 @@ auto LowerTestPlusargs(
   // gets the value-layer conversion.
   const mir::ExprId user_id =
       ConvertToType(unit, body, raw_user_id, unit.builtins.string);
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
+  const mir::ExprId runtime_id =
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee =
                   mir::Direct{.target = support::BuiltinFn::kTestPlusargs},
-              .arguments = {services_id, user_id}},
+              .arguments = {runtime_id, user_id}},
       .type = unit.builtins.int_type};
 }
 
@@ -90,8 +90,8 @@ auto LowerValuePlusargs(
       mir::LocalDecl{.name = "_lyra_plusargs_out", .type = target_type});
   body.AppendStmt(mir::LocalDeclStmt{.target = temp_var, .init = temp_init});
 
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(unit_lowerer, closure_frame));
+  const mir::ExprId runtime_id =
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::ExprId temp_ref =
       body.exprs.Add(mir::MakeLocalRefExpr(temp_var, target_type));
   const mir::ExprId hit_call = body.exprs.Add(
@@ -100,7 +100,7 @@ auto LowerValuePlusargs(
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kValuePlusargs},
-                  .arguments = {services_id, user_id, temp_ref}},
+                  .arguments = {runtime_id, user_id, temp_ref}},
           .type = int_type});
   const mir::LocalId hit_var = closure.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_plusargs_hit", .type = int_type});
@@ -127,11 +127,11 @@ auto LowerValuePlusargs(
   const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
   const mir::ExprId temp_read_then =
       then_body.exprs.Add(mir::MakeLocalRefExpr(temp_var, target_type));
-  const mir::ExprId services_id_then =
-      then_body.exprs.Add(BuildServicesCallExpr(unit_lowerer, then_frame));
+  const mir::ExprId runtime_id_then =
+      then_body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
-      unit, then_body, services_id_then, lvalue_id, temp_read_then,
-      std::nullopt, target_type, void_t);
+      unit, then_body, runtime_id_then, lvalue_id, temp_read_then, std::nullopt,
+      target_type, void_t);
   const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
   then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 

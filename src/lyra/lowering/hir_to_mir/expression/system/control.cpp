@@ -14,7 +14,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -67,15 +67,15 @@ auto LowerFinishSystemSubroutineCall(
     level = static_cast<int>(*literal);
   }
   const auto& builtins = process.Owner().Unit().builtins;
-  const mir::ExprId services_id = frame.current_block->exprs.Add(
-      BuildServicesCallExpr(process.Owner(), frame));
+  const mir::ExprId runtime_id = frame.current_block->exprs.Add(
+      BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId level_id = frame.current_block->exprs.Add(
       mir::MakeIntLiteral(builtins.int_type, static_cast<std::int64_t>(level)));
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kFinish},
-              .arguments = {services_id, level_id}},
+              .arguments = {runtime_id, level_id}},
       .type = builtins.void_type};
 }
 

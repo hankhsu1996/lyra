@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <new>
 #include <span>
 #include <string>
@@ -13,7 +14,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
-#include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/design.hpp"
+#include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
@@ -29,19 +31,20 @@ auto RunDesignHost(int argc, char** argv, RootBuilder builder) -> int {
       plusargs.emplace_back(view.substr(1));
     }
   }
-  auto options = DefaultEngineOptions();
+  auto options = DefaultRuntimeOptions();
   options.plusargs = std::move(plusargs);
-  Engine engine{std::move(options)};
-  auto root = builder(engine.Services());
+  Runtime runtime{std::move(options)};
+  auto root = builder();
   Scope* root_scope = root.get();
-  engine.BindDesign(std::move(root));
-  AmbientRunContext run_context{root_scope, engine.Services()};
-  return RunSimulation(engine);
+  auto design = std::make_unique<Design>(std::move(root));
+  runtime.BindDesign(std::move(design));
+  AmbientRunContext run_context{root_scope, runtime};
+  return RunSimulation(runtime);
 }
 
-auto RunSimulation(Engine& engine) -> int {
+auto RunSimulation(Runtime& runtime) -> int {
   try {
-    return engine.Run();
+    return runtime.Run();
   } catch (const InternalError& e) {
     std::cerr << e.what() << "\n";
     return EXIT_FAILURE;

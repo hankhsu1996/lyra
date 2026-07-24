@@ -17,8 +17,8 @@
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -109,7 +109,8 @@ struct WritebackBody {
 };
 
 // Emits into `block` / `frame` the whole call boundary: the leading argument
-// (an intra-unit receiver or the engine services), each actual bound by its
+// (an intra-unit receiver or the ambient runtime handle), each actual bound by
+// its
 // direction (an `input` value, an `inout`'s incoming value, an `output`'s
 // nothing, a `ref` cell alias), the call itself (awaited for a task), the
 // completion local, and each output / inout component written back to its
@@ -145,12 +146,12 @@ auto EmitWritebackCallBody(
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size() + 1);
   // The leading argument is the callee's ambient handle: the enclosing object's
-  // receiver for an intra-unit callable, the engine services for a
+  // receiver for an intra-unit callable, the runtime handle for a
   // receiver-less cross-unit one.
   call_args.push_back(
       plan.receiver_hops.has_value()
           ? BuildEnclosingScopeReceiver(frame, unit, *plan.receiver_hops)
-          : block.exprs.Add(BuildServicesCallExpr(unit_lowerer, frame)));
+          : block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
 
   std::vector<CompletionWriteback> writebacks;
   std::size_t next_component = plan.result_type.has_value() ? 1 : 0;
@@ -197,7 +198,7 @@ auto EmitWritebackCallBody(
           unit.types.Get(block.exprs.Get(root_id).type));
       if (root_is_cell && root_id != actual_id) {
         const mir::ExprId services_id =
-            block.exprs.Add(BuildServicesCallExpr(unit_lowerer, frame));
+            block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
         actual_id =
             RewriteLhsRootWithMutate(unit, block, actual_id, services_id);
       }
@@ -233,7 +234,7 @@ auto EmitWritebackCallBody(
       mir::LocalDeclStmt{.target = completion, .init = completion_value});
 
   const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(unit_lowerer, frame));
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::TypeId void_type = unit.builtins.void_type;
   for (const CompletionWriteback& wb : writebacks) {
     const mir::ExprId value_id = ProjectCompletionComponent(
@@ -281,7 +282,7 @@ auto LowerWritebackCallStmt(
 
   if (result_place.has_value()) {
     const mir::ExprId services_id =
-        wrapper.exprs.Add(BuildServicesCallExpr(unit_lowerer, wrapper_frame));
+        wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
     const mir::ExprId value_id = ProjectCompletionComponent(
         wrapper, body->completion, body->payload_type, body->component_count, 0,
         *body->result_type);

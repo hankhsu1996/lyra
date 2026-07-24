@@ -26,7 +26,7 @@ struct DiagnosticRecord {
 // LRM 20.10 severity-fixed emit surface. The three EmitX methods are the
 // generated-code entry points: each takes the pre-formatted origin string
 // ("file:line:col", produced at lowering from the call's source span) and a
-// pre-formatted body string (from `services.Format(items)`), and routes a
+// pre-formatted body string (from `runtime.Format(items)`), and routes a
 // record at its fixed severity through Emit. The dispatcher uses the origin
 // directly for both the message prefix and the rate-limit dedup key, so
 // distinct call sites get distinct counters.

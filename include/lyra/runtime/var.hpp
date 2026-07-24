@@ -11,8 +11,8 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
@@ -146,7 +146,7 @@ class Var : public Observable, public ValueStorageCore<T> {
   // Commits a whole-variable write and, on a real change (LRM 4.3 update
   // event), wakes subscribers through the engine. Defined out of line below so
   // it can reach the PackedArray edge classifier.
-  void Set(RuntimeServices& services, const T& new_val);
+  void Set(RuntimeEffects& runtime, const T& new_val);
 
   // RAII entry to partial-write context. Construct via `var.Mutate(svc)`
   // at the start of a chain; the returned handle snapshots the current
@@ -156,7 +156,7 @@ class Var : public Observable, public ValueStorageCore<T> {
   // (fires subscribers on change). Lifetime is C++ standard full-expression
   // temporary lifetime -- the handle is non-copyable and non-movable, so
   // storing it past the statement is rejected at compile time.
-  auto Mutate(RuntimeServices& services) -> ScopedMutation<T>;
+  auto Mutate(RuntimeEffects& runtime) -> ScopedMutation<T>;
 };
 
 // A reference to a variable cell. Transparently views one of two backings:
@@ -185,9 +185,9 @@ class Ref {
 
   // Const: a `Ref` is a view, so `Set` writes the referenced cell, not the
   // handle's own pointers -- as `*p = v` is allowed through a `T* const p`.
-  void Set(RuntimeServices& services, const T& new_val) const {
+  void Set(RuntimeEffects& runtime, const T& new_val) const {
     if (signal_ != nullptr) {
-      signal_->Set(services, new_val);
+      signal_->Set(runtime, new_val);
     } else {
       *plain_ = new_val;
     }
@@ -198,8 +198,7 @@ class Ref {
   // selector chain lands in the snapshot, and writes the snapshot back through
   // `Ref::Set` in its destructor (firing subscribers when the backing is
   // observable).
-  [[nodiscard]] auto Mutate(RuntimeServices& services) const
-      -> ScopedMutation<T>;
+  [[nodiscard]] auto Mutate(RuntimeEffects& runtime) const -> ScopedMutation<T>;
 
  private:
   Var<T>* signal_ = nullptr;
@@ -255,10 +254,10 @@ class EventControlAwaitable : public PendingWait {
 
   // An edge / value-change is not a level: a change during suspension is missed
   // (LRM 9.7 resensitize), so resume re-subscribes and waits for the next one.
-  // Re-subscribing needs no engine services, but the capability signature
+  // Re-subscribing needs no runtime access, but the capability signature
   // carries them uniformly.
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
       -> PendingWaitOutcome override {
     SubscribeValueChange(activation, triggers_);
     return PendingWaitOutcome::kReblocked;
@@ -274,7 +273,7 @@ class EventControlAwaitable : public PendingWait {
 // backend, whose generated frame the engine never sees, needs that handle to
 // ask the runtime which process is running.
 inline auto WaitAny(
-    RuntimeServices&,  // NOLINT(readability-named-parameter)
+    RuntimeEffects&,  // NOLINT(readability-named-parameter)
     std::span<const Trigger> triggers) -> EventControlAwaitable {
   return EventControlAwaitable{triggers};
 }
@@ -311,7 +310,7 @@ inline auto MakePackedArrayEdgeClassifier(
 }
 
 template <value::LyraValue T>
-void Var<T>::Set(RuntimeServices& services, const T& new_val) {
+void Var<T>::Set(RuntimeEffects& runtime, const T& new_val) {
   // A PackedArray write classifies the LSB transition per waiter (LRM 9.4.2
   // Table 9-2); every other cell type only has any-change waiters. The
   // representation match and change detection live in `ValueStorageCore`; the
@@ -324,12 +323,12 @@ void Var<T>::Set(RuntimeServices& services, const T& new_val) {
     }
     const value::PackedArray old_val = this->Get();
     if (this->Overwrite(new_val)) {
-      services.TriggerValueChange(
+      runtime.TriggerValueChange(
           *this, MakePackedArrayEdgeClassifier(old_val, new_val));
     }
   } else {
     if (this->Overwrite(new_val)) {
-      services.TriggerValueChange(
+      runtime.TriggerValueChange(
           *this,
           [](std::uint64_t, std::uint64_t, support::EventEdge edge) -> bool {
             return edge == support::EventEdge::kAnyChange;
@@ -352,8 +351,8 @@ void Var<T>::Set(RuntimeServices& services, const T& new_val) {
 template <value::LyraValue T>
 class ScopedMutation {
  public:
-  ScopedMutation(RuntimeServices& services, Ref<T> ref)
-      : services_(&services), ref_(ref), snapshot_(ref.Get()) {
+  ScopedMutation(RuntimeEffects& runtime, Ref<T> ref)
+      : runtime_(&runtime), ref_(ref), snapshot_(ref.Get()) {
   }
 
   ScopedMutation(const ScopedMutation&) = delete;
@@ -362,7 +361,7 @@ class ScopedMutation {
   auto operator=(ScopedMutation&&) -> ScopedMutation& = delete;
 
   ~ScopedMutation() {
-    ref_.Set(*services_, std::move(snapshot_));
+    ref_.Set(*runtime_, std::move(snapshot_));
   }
 
   auto operator*() -> T& {
@@ -370,19 +369,19 @@ class ScopedMutation {
   }
 
  private:
-  RuntimeServices* services_;
+  RuntimeEffects* runtime_;
   Ref<T> ref_;
   T snapshot_;
 };
 
 template <value::LyraValue T>
-auto Var<T>::Mutate(RuntimeServices& services) -> ScopedMutation<T> {
-  return ScopedMutation<T>{services, Ref<T>{*this}};
+auto Var<T>::Mutate(RuntimeEffects& runtime) -> ScopedMutation<T> {
+  return ScopedMutation<T>{runtime, Ref<T>{*this}};
 }
 
 template <value::LyraValue T>
-auto Ref<T>::Mutate(RuntimeServices& services) const -> ScopedMutation<T> {
-  return ScopedMutation<T>{services, *this};
+auto Ref<T>::Mutate(RuntimeEffects& runtime) const -> ScopedMutation<T> {
+  return ScopedMutation<T>{runtime, *this};
 }
 
 }  // namespace lyra::runtime

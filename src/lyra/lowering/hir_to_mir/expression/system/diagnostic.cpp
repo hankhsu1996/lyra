@@ -17,7 +17,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -109,12 +109,12 @@ auto LowerDiagnosticSystemSubroutineCall(
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
-  const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId text_id = block.exprs.Add(
-      BuildFormatCallExpr(unit, block, services_id, items_array));
+      BuildFormatCallExpr(unit, block, runtime_id, items_array));
   const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(process.Owner(), frame));
+      block.exprs.Add(BuildDiagnosticCallExpr(process.Owner(), block));
   const mir::ExprId origin_id = BuildOriginStringExpr(
       unit, block,
       FormatRuntimeOriginString(span, process.Owner().SourceManager()));
@@ -135,8 +135,8 @@ auto LowerDiagnosticSystemSubroutineCall(
   const mir::ExprId emit_call_id = block.exprs.Add(std::move(emit_call));
   block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
 
-  const mir::ExprId finish_services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+  const mir::ExprId finish_runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId level_id = block.exprs.Add(
       mir::MakeIntLiteral(
           unit.builtins.int_type, static_cast<std::int64_t>(finish_level)));
@@ -144,7 +144,7 @@ auto LowerDiagnosticSystemSubroutineCall(
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kFatalFinish},
-              .arguments = {finish_services_id, level_id}},
+              .arguments = {finish_runtime_id, level_id}},
       .type = unit.builtins.void_type};
 }
 

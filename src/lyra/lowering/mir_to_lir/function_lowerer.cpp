@@ -1018,12 +1018,12 @@ namespace {
 
 struct MutateCell {
   mir::ExprId cell;
-  mir::ExprId services;
+  mir::ExprId runtime;
 };
 
 // Detects the observable-cell mutate proxy a partial write to an observable
 // cell roots in -- a dereference of a `kMutate` call -- and returns its cell
-// and services argument expressions. An ordinary place root yields nothing.
+// and runtime argument expressions. An ordinary place root yields nothing.
 auto MutateCellOf(const mir::Block& block, mir::ExprId id)
     -> std::optional<MutateCell> {
   const auto* deref = std::get_if<mir::DerefExpr>(&block.exprs.Get(id).data);
@@ -1043,7 +1043,7 @@ auto MutateCellOf(const mir::Block& block, mir::ExprId id)
   if (fn == nullptr || *fn != support::BuiltinFn::kMutate) {
     return std::nullopt;
   }
-  return MutateCell{.cell = call->arguments[0], .services = call->arguments[1]};
+  return MutateCell{.cell = call->arguments[0], .runtime = call->arguments[1]};
 }
 
 }  // namespace
@@ -1074,9 +1074,9 @@ auto FunctionLowerer::WriteWholeValue(
     if (!cell) {
       return std::unexpected(std::move(cell.error()));
     }
-    auto services = LowerExpr(block, mutate->services);
-    if (!services) {
-      return std::unexpected(std::move(services.error()));
+    auto runtime = LowerExpr(block, mutate->runtime);
+    if (!runtime) {
+      return std::unexpected(std::move(runtime.error()));
     }
     Emit(
         unit_->VoidType(),
@@ -1084,7 +1084,7 @@ auto FunctionLowerer::WriteWholeValue(
             .target =
                 lir::BuiltinTarget{
                     .fn = support::BuiltinFn::kSet, .qualifier = std::nullopt},
-            .args = {*std::move(cell), *std::move(services), value}});
+            .args = {*std::move(cell), *std::move(runtime), value}});
     return value;
   }
   if (const std::optional<lir::Operand> handle =

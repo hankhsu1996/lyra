@@ -93,9 +93,8 @@ auto LowerCaseStmt(
 
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(c.items.size());
-  for (std::size_t i = 0; i < c.items.size(); ++i) {
-    auto body_or =
-        LowerStmtIntoChildScope(process, wrapper_frame, c.items[i].stmt);
+  for (const auto& item : c.items) {
+    auto body_or = LowerStmtIntoChildScope(process, wrapper_frame, item.stmt);
     if (!body_or) {
       return std::unexpected(std::move(body_or.error()));
     }
@@ -186,9 +185,8 @@ auto LowerCaseInsideStmt(
 
   std::vector<mir::Block> body_scopes;
   body_scopes.reserve(c.items.size());
-  for (std::size_t i = 0; i < c.items.size(); ++i) {
-    auto body_or =
-        LowerStmtIntoChildScope(process, wrapper_frame, c.items[i].stmt);
+  for (const auto& item : c.items) {
+    auto body_or = LowerStmtIntoChildScope(process, wrapper_frame, item.stmt);
     if (!body_or) {
       return std::unexpected(std::move(body_or.error()));
     }

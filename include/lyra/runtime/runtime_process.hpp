@@ -11,7 +11,7 @@
 
 namespace lyra::runtime {
 
-class ExecutionContext;
+class RuntimeEffects;
 class ForeignExecution;
 class ForeignExecutionGuard;
 class Scope;
@@ -74,9 +74,21 @@ struct ProcessTerminationUnwind final {};
 // task or function it called (LRM 9.6.1): a subroutine call runs in the
 // caller's thread and creates no process of its own. The list therefore
 // accumulates across every fork the process executes.
+class Scope;
+
 class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
  public:
-  RuntimeProcess(ProcessKind kind, Coroutine<void> coroutine);
+  // `owning_scope` is the scope this process was registered against -- the
+  // scope whose Observed queue a runtime side effect this process reaches
+  // attributes to. Every side effect the body performs runs in this scope's
+  // attribution: an unqualified-case runtime warning, an NBA or postponed
+  // submit, a `%m` hierarchical name. A fork branch inherits its parent
+  // process's owning scope so a side effect the branch performs attributes
+  // to the same scope the outer body's would. The registration site owns
+  // the process's shared handle; the process's `owning_scope_` is a
+  // borrowed pointer whose lifetime is that of the owning scope.
+  RuntimeProcess(
+      Scope* owning_scope, ProcessKind kind, Coroutine<void> coroutine);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -91,6 +103,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   ~RuntimeProcess() = default;
 
   [[nodiscard]] auto Kind() const -> ProcessKind;
+
+  // The scope this process's runtime side effects attribute to. Inherited
+  // by fork branches so a branch's effects belong to the same scope as the
+  // outer body's would.
+  [[nodiscard]] auto OwningScope() const -> Scope* {
+    return owning_scope_;
+  }
 
   // The process's internal execution state. A `process` handle (LRM 9.7) reads
   // it through `status()`, which projects it onto the LRM state enum; the state
@@ -117,11 +136,12 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // Completing runs the whole terminal transition atomically -- terminal state,
   // frame release, and draining this process's own `await` waiters into `woken`
   // -- so a body can never be left terminated with its waiters unwoken. The
-  // node outlives the frame. Taking the context is what makes this the only way
-  // a body can run: the resumed body reaches its own process identity through
-  // the context, and a caller cannot resume without supplying one.
+  // node outlives the frame. Taking the runtime is what makes this the only
+  // way a body can run: the resumed body reaches its own process identity
+  // through the runtime's ambient, and a caller cannot resume without
+  // supplying it.
   auto ResumeWith(
-      ExecutionContext& context, CoroutineHandle handle,
+      RuntimeEffects& effects, CoroutineHandle handle,
       std::vector<CoroutineHandle>& woken) -> bool;
 
   // The top-level coroutine frame. Awaitables register the innermost handle for
@@ -339,6 +359,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   void EraseChild(RuntimeProcess& child);
 
   ProcessKind kind_;
+  Scope* owning_scope_;
   Coroutine<void> coroutine_;
   // The frame the engine will resume next for this process (invariant: a
   // non-executing process has exactly one active leaf). Starts at the top frame

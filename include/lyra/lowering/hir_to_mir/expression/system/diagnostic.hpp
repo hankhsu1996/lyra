@@ -11,8 +11,8 @@
 namespace lyra::lowering::hir_to_mir {
 
 // Lower $info / $warning / $error into the two-step composition the print
-// family uses: `services.Format(items)` yields the formatted text, then
-// `services.Diagnostic().EmitX(text)` emits at the severity selected by
+// family uses: `runtime.Format(items)` yields the formatted text, then
+// `runtime.Diagnostic().EmitX(text)` emits at the severity selected by
 // `info.builtin_fn` (LRM 20.10). Shares format-item parsing with the print
 // path; the returned expression is the void Emit call.
 auto LowerDiagnosticSystemSubroutineCall(
