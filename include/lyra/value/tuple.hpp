@@ -27,13 +27,21 @@ class Tuple {
   explicit Tuple(Ts... values) : data_(std::move(values)...) {
   }
 
-  // Component access by declaration-order index. The explicit object parameter
-  // yields a const reference on a const receiver (member read) and a mutable
-  // reference on a mutable one (member write through a Mutate snapshot), so one
-  // method serves both access sides.
+  // Component access by declaration-order index. The reference qualifier tracks
+  // the receiver's value category: a const receiver yields a const reference (a
+  // member read), a mutable one a mutable reference (a member write through a
+  // Mutate snapshot), and an rvalue one a movable reference.
   template <std::size_t I>
-  [[nodiscard]] auto Get(this auto&& self) -> auto&& {
-    return std::get<I>(std::forward<decltype(self)>(self).data_);
+  [[nodiscard]] auto Get() & -> decltype(auto) {
+    return std::get<I>(data_);
+  }
+  template <std::size_t I>
+  [[nodiscard]] auto Get() const& -> decltype(auto) {
+    return std::get<I>(data_);
+  }
+  template <std::size_t I>
+  [[nodiscard]] auto Get() && -> decltype(auto) {
+    return std::get<I>(std::move(data_));
   }
 
   // LRM 11.4.5 `==` / `!=` (Any data type). Member-wise logical AND, yielding a
