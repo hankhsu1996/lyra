@@ -10,7 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
+#include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -141,20 +141,11 @@ auto LowerConditionalStmt(
     const slang::ast::ConditionalStatement& cs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   const auto if_check = LowerUniquePriorityCheck(cs.check);
-  if (cs.conditions.size() != 1) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "multi-condition if expressions are not yet supported");
-  }
-  const auto& cond = cs.conditions.front();
-  if (cond.pattern != nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "pattern matching in if conditions is not yet supported");
-  }
-  auto cond_expr = proc.LowerExpr(*cond.expr, frame);
-  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
+  auto cond_or = LowerCondPredicate(
+      proc, frame, cs.conditions, diag::DiagCode::kUnsupportedStatementForm,
+      span);
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
   auto then_stmt = proc.LowerStmt(cs.ifTrue, frame);
   if (!then_stmt) return std::unexpected(std::move(then_stmt.error()));
   const hir::StmtId then_id =

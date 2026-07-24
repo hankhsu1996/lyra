@@ -21,10 +21,11 @@ complete.
 
 ### Statements
 
-- [x] C1 -- `if` / `else` (procedural conditional). Multi-condition lists, pattern forms, and
-      `unique` / `priority` qualifiers are rejected as unsupported; the qualifier work is C13.
-  - [ ] A multi-condition `if` (`if (a &&& b)` / comma list, LRM 12.4) is rejected; only a single
-        condition expression is accepted.
+- [x] C1 -- `if` / `else` (procedural conditional). Pattern forms and `unique` / `priority`
+      qualifiers are rejected as unsupported; the qualifier work is C13.
+  - [x] A multi-condition `if` (`if (a &&& b)`, LRM 12.4): the `&&&`-separated conditions form a
+        conjunction, so the branch is taken iff every condition is true (X / Z counting as false).
+        It desugars to a chained logical-AND, so no multi-condition form reaches a lower layer.
   - [ ] Pattern matching in an `if` condition (`if (e matches p)`, LRM 12.6) is rejected.
 - [x] C2 -- `for` (procedural for-loop). Includes inline and external init, multi-init / multi-step,
       countdown, zero-iteration, and `if`-in-body composition. `break` / `continue` are C7.
@@ -89,7 +90,8 @@ complete.
 
 ### Expressions
 
-- [x] C14 -- Ternary `cond ? a : b`. Multi-condition (`&&&`) and `matches` pattern forms are
+- [x] C14 -- Ternary `cond ? a : b`, including an `&&&` multi-condition predicate (LRM 12.4) that
+      desugars to the same chained logical-AND the `if` statement uses. The `matches` pattern form is
       rejected as unsupported. 4-state X/Z propagation on the condition rides on the broader 4-state
       work in `operators.md`.
 

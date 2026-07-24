@@ -9,3 +9,4 @@ expect:
   exit: 0
   variables:
     y: 7
+    g: 9
