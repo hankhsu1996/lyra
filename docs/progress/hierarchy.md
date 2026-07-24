@@ -194,6 +194,10 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       only after the whole object tree exists, so a sibling not yet constructed when the referrer's
       own construction runs still resolves; no instance is dereferenced across the boundary during
       construction. The intra-unit, indexed extension of the sibling reads in D2d.
+- [ ] D9 -- Hierarchical-reference target forms beyond a signal in an instance. A hierarchical path
+      reaching a class property (LRM 8.4), an interface port, or a declaration kind other than a
+      variable / net is rejected. Only a variable or net reached across the instance boundary
+      resolves today.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 

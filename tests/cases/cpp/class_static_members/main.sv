@@ -28,6 +28,13 @@ module Top;
   int counter_after_all;
   int counter_via_derived;
 
+  // A static property is one cell owned by the class, reached without a
+  // receiver, so it reads in a continuous assignment exactly as it does in a
+  // process -- and the assignment re-evaluates when the cell changes. An
+  // instance property has no structural form, since there is no receiver.
+  int counter_continuous;
+  assign counter_continuous = Registry::counter;
+
   initial begin
     Registry r;
     Derived d;

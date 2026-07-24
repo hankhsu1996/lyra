@@ -5,6 +5,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -18,8 +19,12 @@ namespace lyra::lowering::hir_to_mir {
 // `$swrite*` are tasks and slang rejects them as expressions, so a call
 // arriving with `info.has_output_arg == true` is an upstream invariant
 // violation and raises `InternalError`.
+// Nothing in the value path reads a process body, so one template serves both
+// pass classes; a continuous assignment admits `$sformatf` for the same reason
+// it admits any pure value query.
+template <ExprLowerer Lowerer>
 auto LowerSFormatSystemSubroutineCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Expr>;
 

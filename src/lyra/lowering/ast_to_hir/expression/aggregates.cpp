@@ -146,6 +146,39 @@ auto LowerAssociativeAssignmentPattern(
 }
 
 template <ExprLowerer Lowerer>
+auto LowerSimpleAssignmentPattern(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::SimpleAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  // LRM 10.9.1 positional assignment pattern `'{a, b, ...}`. As an rvalue it
+  // lowers from its elements; its LHS-destructuring form is not yet supported.
+  if (ap.isLValue) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
+        "assignment pattern as LHS destructuring is not yet supported");
+  }
+  return LowerAssignmentPatternFromElements(lowerer, frame, ap, span);
+}
+
+template <ExprLowerer Lowerer>
+auto LowerStructuredAssignmentPattern(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::StructuredAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  // LRM 10.9.1 structured assignment pattern `'{key: value, ...}`. An
+  // associative literal keeps its keyed pairs and optional default (LRM 7.9.11)
+  // because its keys are arbitrary values with no positional meaning. For every
+  // other target the keys name element positions, which the frontend has
+  // already resolved into the element list, so the pattern lowers from those
+  // elements exactly as the positional form does.
+  const auto target_kind = ap.type->getCanonicalType().kind;
+  if (target_kind == slang::ast::SymbolKind::AssociativeArrayType) {
+    return LowerAssociativeAssignmentPattern(lowerer, frame, ap, span);
+  }
+  return LowerAssignmentPatternFromElements(lowerer, frame, ap, span);
+}
+
+template <ExprLowerer Lowerer>
 auto LowerReplicatedAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ReplicatedAssignmentPatternExpression& rp,
@@ -273,6 +306,22 @@ template auto LowerAssociativeAssignmentPattern(
     const slang::ast::StructuredAssignmentPatternExpression&, diag::SourceSpan)
     -> diag::Result<hir::Expr>;
 template auto LowerAssociativeAssignmentPattern(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::StructuredAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerSimpleAssignmentPattern(
+    ProcessLowerer&, WalkFrame,
+    const slang::ast::SimpleAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerSimpleAssignmentPattern(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::SimpleAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerStructuredAssignmentPattern(
+    ProcessLowerer&, WalkFrame,
+    const slang::ast::StructuredAssignmentPatternExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerStructuredAssignmentPattern(
     StructuralScopeLowerer&, WalkFrame,
     const slang::ast::StructuredAssignmentPatternExpression&, diag::SourceSpan)
     -> diag::Result<hir::Expr>;

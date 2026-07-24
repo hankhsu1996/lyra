@@ -13,7 +13,8 @@ Done when:
 
 ## Actionable
 
-All sub-steps are complete.
+The sub-steps are complete; the one open increment is the assignment pattern as an assignment target
+(the checkbox under P5).
 
 ## Sub-Steps
 
@@ -28,8 +29,9 @@ The numeric IDs are stable references.
 - [x] P4 -- Packed union (LRM 7.3.1). Untagged hard and soft packed unions; members overlay at the
       LSBs and reads / writes reinterpret per the accessed member's declared type, including signed
       reinterpretation. Whole-union copy, equality, bit / part selects ride on the "treated as a
-      single vector" projection. Tagged packed unions are deferred (need runtime tag-bit logic per
-      LRM 11.9).
+      single vector" projection.
+  - [ ] A tagged packed union (LRM 7.3.2) is rejected; it needs runtime tag-bit logic per LRM 11.9.
+        Only untagged hard / soft packed unions are supported.
 
 - [x] P5 -- Assignment patterns over packed aggregates (LRM 10.9). Positional `'{a, b, c}`, named /
       type-key / index-key `'{x: v, default: w}`, `'{default: v}`, and replication `'{N{items}}`
@@ -37,9 +39,11 @@ The numeric IDs are stable references.
       expression list at the slang binding boundary; replication preserves the LRM shape and unrolls
       into the same packed concat path used for `{a,b,c}`. The type-prefixed self-determined form
       `T'{...}` is in. Closes `datatypes/packed/assignment_pattern_fill` and
-      `datatypes/packed/assignment_pattern_multibit`. Unpacked-array targets and LHS destructuring
-      (`'{a,b,c}=B`) are deferred (the unpacked surface lives behind the unpacked-array push; LHS
-      destructuring is a separate ergonomics follow-up).
+      `datatypes/packed/assignment_pattern_multibit`. Unpacked-array targets are deferred behind the
+      unpacked-array push.
+  - [ ] The assignment pattern as an assignment target (LRM 10.9): the LHS-destructuring form
+        `'{a, b, c} = B` is rejected with a diagnostic. The concatenation spelling `{a, b, c} = B`
+        (LRM 11.4.12) is supported, so only the pattern spelling is missing.
 
 ## Cross-references
 

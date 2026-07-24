@@ -51,8 +51,11 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       package-declared enum or typedef resolves it against the namespace's own type declarations,
       emitted into the namespace. Input arguments and the return value work, and one package
       function calls a sibling in the same package.
-  - [ ] A package subroutine with an output / inout / ref argument, whose by-reference formal is
-        marshalled across the unit boundary.
+  - [x] A package or `$unit` subroutine reached across the unit boundary with an output / inout /
+        ref argument carries its by-reference formals back to the caller's actuals exactly as an
+        intra-unit call does (LRM 13.5): output and inout are copied back after the call, and ref /
+        const ref alias the caller's cell. Covers a function whose return value and an output
+        argument are written back together, and a task whose output crosses a suspension.
   - [ ] A DPI-C import declared inside a package (LRM 35.4), which is rejected with a diagnostic
         rather than mis-emitted.
 - [x] PK3 -- Package variables. A package variable is static storage owned by the namespace -- one
@@ -74,6 +77,9 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
         initialization order.
   - [ ] Two packages that reference each other's symbols emit non-circular headers (a header-only
         emission limit, shared with cross-package subroutine calls, not specific to variables).
+  - [ ] A package variable whose type is outside the supported storage families is rejected rather
+        than mis-emitted.
+  - [ ] A net declared at package scope (LRM 26.2) is rejected; a package holds variables, not nets.
 - [x] PK4 -- The `import` forms for the remaining item kinds and the LRM 26.3 name-search and
       shadowing rules. An import brings a name into a scope's lookup; it does not create a new kind
       of reference, so a name resolved through an import lowers identically to the explicit

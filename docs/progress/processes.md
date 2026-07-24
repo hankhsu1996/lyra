@@ -55,9 +55,22 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 - [x] P4 -- Non-blocking assignment `<=`. Submits a closure to the NBA region during the active
       phase; the engine commits all closures in the NBA commit phase before observing changes.
       Re-entrancy during NBA commit is rejected.
+  - [ ] A non-blocking assignment whose target is an automatic-lifetime procedural local (LRM
+        13.3.2) is rejected; the deferred-commit closure would outlive the local's activation.
 - [x] P7 -- Continuous assignment `assign x = y;` (LRM 10.3). Read set is precomputed by slang's
       flow analysis (LRM 10.3.2 reads identical to LRM 9.2.2.2.1). Drive strength (LRM 10.3.4) and
       `assign #N` (LRM 10.3.3) are diagnosed; concat LHS rides on the procedural side.
+  - [ ] A delay on a continuous assignment (`assign #N x = y;`, LRM 10.3.3) is rejected; the net's
+        drivers update without the specified inertial / transport delay.
+  - [ ] A continuous-assignment form beyond the plain `assign` and net-declaration assignment (the
+        remaining LRM 10.3 forms) is rejected.
+  - [x] The pure value queries in a continuous-assignment right-hand side: a time read (`$time` /
+        `$stime` / `$realtime`, LRM 20.3, scaled to the scope's time unit per LRM 3.14.2), a
+        plusargs test (LRM 21.6), and `$sformatf` (LRM 21.3.3). Each reads state and sequences
+        nothing, so it needs no process body and lowers through the same handler the procedural side
+        uses. The system subroutines that are effects remain rejected there; their output-bearing
+        siblings never arrive, since the frontend keeps an output argument out of a structural
+        context.
 
 ### Timing controls
 
@@ -78,6 +91,15 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       subset, including multi-dimensional packed selects and ascending / negative-base ranges (LRM
       11.5.1 direction translation). Compound expressions (concatenation, arithmetic, dynamic index)
       remain rejected -- see Blocked.
+  - [ ] The `iff` qualifier on an event control (LRM 9.4.2.3): `@(e iff cond)` is rejected.
+  - [ ] An edge event control on a non-packed-bit-vector operand, and a value-change event control
+        on a non-value operand (LRM 9.4.2): only packed-vector / value operands are accepted.
+  - [ ] Repeated event control `repeat (N) @(...)` (LRM 9.4.4), and nested timing controls inside an
+        event-list entry: only signal events compose in a list today.
+  - [ ] A delay whose duration is not an integer or time literal (LRM 9.4.1): a computed or
+        real-valued delay expression is rejected.
+- [ ] T6 -- Event-trigger forms beyond the blocking `-> e`: the non-blocking trigger `->> e` (LRM
+      15.5.2) and a delayed trigger carrying an intra-assignment timing control are rejected.
 
 ### Synchronisation primitives
 

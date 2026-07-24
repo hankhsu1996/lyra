@@ -1,0 +1,19 @@
+id: cpp.package_subroutine_ref_args
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    out_b: 42
+    inout_v: 15
+    ref_r: 77
+    cref_out: 9
+    quotient: 3
+    rem: 2
+    task_out: 101
+    nested_ret: 24
+    nested_o: 5

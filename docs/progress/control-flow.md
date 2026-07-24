@@ -23,6 +23,9 @@ complete.
 
 - [x] C1 -- `if` / `else` (procedural conditional). Multi-condition lists, pattern forms, and
       `unique` / `priority` qualifiers are rejected as unsupported; the qualifier work is C13.
+  - [ ] A multi-condition `if` (`if (a &&& b)` / comma list, LRM 12.4) is rejected; only a single
+        condition expression is accepted.
+  - [ ] Pattern matching in an `if` condition (`if (e matches p)`, LRM 12.6) is rejected.
 - [x] C2 -- `for` (procedural for-loop). Includes inline and external init, multi-init / multi-step,
       countdown, zero-iteration, and `if`-in-body composition. `break` / `continue` are C7.
 - [x] C3 -- `case` (plain, `==` semantics, LRM 12.5). Reproduces the core archive subset: basic

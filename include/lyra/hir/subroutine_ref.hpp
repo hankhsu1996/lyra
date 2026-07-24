@@ -3,13 +3,16 @@
 #include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
+#include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -91,6 +94,16 @@ struct ImportedMethodRef {
   std::optional<ExprId> receiver = std::nullopt;
 };
 
+// One formal of a cross-unit callee, as the referring unit recomputes it from
+// the callee's declaration. The direction classifies how the actual is
+// marshalled at the boundary (LRM 13.5); the type is the formal's type interned
+// in the referring unit, needed to shape the completion payload an output /
+// inout rides back in and the writeback assignment.
+struct ExternalUnitParam {
+  ParamDirection direction = ParamDirection::kInput;
+  TypeId type{};
+};
+
 // Calls a subroutine that belongs to another compilation unit -- a package
 // function or task (LRM 26.3), reached by name. The target lives outside this
 // unit, so it carries no unit-local id: the referring unit names the package
@@ -99,11 +112,18 @@ struct ImportedMethodRef {
 // enclosing-scope hop within this unit. `kind` is the callee's call protocol,
 // part of that interface: a task enable suspends the caller until completion
 // (LRM 13.3), so the call site awaits it, exactly as it does an intra-unit task
-// enable whose kind it reads from the callee's declaration.
+// enable whose kind it reads from the callee's declaration. `params` is the
+// callee's argument-marshalling interface, recomputed from the same declaration
+// both sides see: an output / inout argument is carried back through the
+// callee's completion payload, so the call site reproduces that payload's shape
+// from the formal directions and types, exactly as it reproduces the callee's
+// name. The result component of that payload is the call's own result type --
+// the enclosing expression's type -- so it is not recorded here.
 struct ExternalUnitSubroutineRef {
   std::string unit_name;
   std::string subroutine_name;
   SubroutineKind kind;
+  std::vector<ExternalUnitParam> params;
 };
 
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
