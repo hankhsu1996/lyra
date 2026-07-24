@@ -91,9 +91,9 @@ complete.
 ### Expressions
 
 - [x] C14 -- Ternary `cond ? a : b`, including an `&&&` multi-condition predicate (LRM 12.4) that
-      desugars to the same chained logical-AND the `if` statement uses. The `matches` pattern form is
-      rejected as unsupported. 4-state X/Z propagation on the condition rides on the broader 4-state
-      work in `operators.md`.
+      desugars to the same chained logical-AND the `if` statement uses. The `matches` pattern form
+      is rejected as unsupported. 4-state X/Z propagation on the condition rides on the broader
+      4-state work in `operators.md`.
 
 ## Out of Scope
 
