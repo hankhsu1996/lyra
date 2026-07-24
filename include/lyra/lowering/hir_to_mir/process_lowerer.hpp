@@ -173,14 +173,19 @@ class ProcessLowerer {
   // The lowering pass for the structural scope this body sits inside; its
   // registries resolve every reference to an enclosing-scope declaration (a
   // structural variable, a generate loop variable, a cross-unit reference, a
-  // peer subroutine). A class method body resolves no such reference and sits
-  // inside no structural scope; reaching this from one is a compiler bug.
+  // peer subroutine). Absent for a body that sits inside no structural scope
+  // -- a class method or a package callable -- because the source forms
+  // resolved through this pass are meaningless there: a class method reaches
+  // its owner through `self`, and a package callable reaches its peers by
+  // name across the unit boundary. Reaching this from such a body is a
+  // compiler bug.
   [[nodiscard]] auto EnclosingScopeLowerer() const
       -> const StructuralScopeLowerer& {
     if (enclosing_scope_lowerer_ == nullptr) {
       throw InternalError(
-          "ProcessLowerer::EnclosingScopeLowerer: a class method body sits "
-          "inside no structural scope");
+          "ProcessLowerer::EnclosingScopeLowerer: this body has no enclosing "
+          "structural scope; reaching an enclosing structural declaration from "
+          "a package callable or a class method body is a compiler bug");
     }
     return *enclosing_scope_lowerer_;
   }

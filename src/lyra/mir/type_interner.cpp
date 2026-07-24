@@ -184,7 +184,7 @@ auto TypeInterner::ObservableCellOf(TypeId value_type) -> TypeId {
     // not wrapped: a handle or container (pointer, managed / borrowed
     // reference, vector, chandle), an object (a class instance or an
     // instantiated child), a named event (LRM 15 -- it carries its own
-    // subscribe mechanism), a runtime facade (services, files, diagnostics, a
+    // subscribe mechanism), a runtime facade (effects, files, diagnostics, a
     // runtime-library type), a coroutine result, a machine primitive (a machine
     // int / float / C string used at an ABI boundary), a compiler-generated
     // promoted scope struct or closure, an internal index, `void`, and the
@@ -200,7 +200,7 @@ auto TypeInterner::ObservableCellOf(TypeId value_type) -> TypeId {
     case TypeKind::kObject:
     case TypeKind::kExternalUnitObject:
     case TypeKind::kExternalClass:
-    case TypeKind::kServices:
+    case TypeKind::kRuntimeEffects:
     case TypeKind::kFiles:
     case TypeKind::kDiagnostic:
     case TypeKind::kRuntimeLibrary:

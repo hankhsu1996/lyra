@@ -5,8 +5,8 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/event.hpp"
 #include "lyra/runtime/pending_wait.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
@@ -36,9 +36,9 @@ class EventAwaitable : public PendingWait {
 
   // A named-event trigger is instantaneous (LRM 15.5): a trigger during
   // suspension is missed, so resume re-subscribes for the next one. No engine
-  // services are needed; the capability signature carries them uniformly.
+  // runtime access is needed; the capability signature carries it uniformly.
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
       -> PendingWaitOutcome override {
     event_->AddWaiter(activation);
     return PendingWaitOutcome::kReblocked;
@@ -52,7 +52,7 @@ class EventAwaitable : public PendingWait {
 // module state struct; it owns the waiters list and a timestamp recording
 // when it was last triggered. The "triggered in current time step"
 // semantic (LRM 15.5.3) is realised by comparing `last_triggered_at_`
-// against `services.Now()` -- there is no slot bookkeeping in the event
+// against `runtime.Now()` -- there is no slot bookkeeping in the event
 // or in the engine.
 class NamedEvent {
  public:
@@ -68,10 +68,10 @@ class NamedEvent {
 
   // LRM 15.5.1: `-> e;` records the current simulation time and wakes every
   // currently-waiting process via the engine's generic scheduling primitive.
-  void Trigger(RuntimeServices& services) {
-    last_triggered_at_ = services.Now();
+  void Trigger(RuntimeEffects& runtime) {
+    last_triggered_at_ = runtime.Now();
     for (CoroutineHandle waiter : event_.TakeWaiters()) {
-      services.ScheduleNextDelta(waiter);
+      runtime.ScheduleNextDelta(waiter);
     }
   }
 
@@ -83,10 +83,10 @@ class NamedEvent {
   // LRM 15.5.3: `e.triggered` is true iff the most recent trigger happened
   // in the current simulation time step. No mutation, no clearing -- the
   // answer is a timestamp comparison.
-  [[nodiscard]] auto Triggered(RuntimeServices& services) const
+  [[nodiscard]] auto Triggered(RuntimeEffects& runtime) const
       -> value::PackedArray {
     const bool hit =
-        last_triggered_at_.has_value() && *last_triggered_at_ == services.Now();
+        last_triggered_at_.has_value() && *last_triggered_at_ == runtime.Now();
     return value::PackedArray::FromInt(hit ? 1 : 0, 1, false, false);
   }
 

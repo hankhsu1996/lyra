@@ -19,8 +19,8 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -193,22 +193,26 @@ auto LowerImplicitEventTimedStmt(
 }
 
 // LRM 9.4.1 `#N body`. The wait lowers to a coroutine-suspending free-function
-// call whose argument vector states services, the literal tick count in the
-// enclosing scope's precision, and that scope's precision power (LRM 3.14.2);
-// the runtime scales from precision to the design-global tick (LRM 3.14.3).
+// call whose argument vector states the runtime handle, the literal tick count
+// in the enclosing scope's precision, and that scope's precision power
+// (LRM 3.14.2); the runtime scales from precision to the design-global tick
+// (LRM 3.14.3).
 auto LowerDelayTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t, const hir::DelayControl& d)
     -> diag::Result<mir::Stmt> {
   return LowerTimedWaitWrapper(
       process, frame, std::move(label), t.stmt,
-      [&](mir::Block& child_block,
-          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
+      // NOLINTNEXTLINE(readability-named-parameter): the callback interface
+      // hands us a `WalkFrame` that a delay body has no use for -- the
+      // ambient runtime covers what an event-shaped wait needs the frame
+      // to reach for.
+      [&](mir::Block& child_block, WalkFrame) -> diag::Result<mir::Stmt> {
         auto ticks_or = ResolveDelayTicks(process, d);
         if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
         const auto& builtins = process.Owner().Unit().builtins;
-        const mir::ExprId services_id = child_block.exprs.Add(
-            BuildServicesCallExpr(process.Owner(), child_frame));
+        const mir::ExprId runtime_id =
+            child_block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
         const mir::ExprId duration_id = child_block.exprs.Add(
             mir::MakeIntLiteral(
                 builtins.int_type, static_cast<std::int64_t>(*ticks_or)));
@@ -222,7 +226,7 @@ auto LowerDelayTimedStmt(
                     mir::CallExpr{
                         .callee =
                             mir::Direct{.target = support::BuiltinFn::kDelay},
-                        .arguments = {services_id, duration_id, precision_id}},
+                        .arguments = {runtime_id, duration_id, precision_id}},
                 .type = builtins.void_type});
         const mir::ExprId await_expr_id = child_block.exprs.Add(
             mir::Expr{
@@ -265,16 +269,16 @@ auto LowerEventTriggerStmt(
       process.LowerExpr(process.HirBody().exprs.Get(et.event), frame);
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
   const mir::ExprId receiver_id = block.exprs.Add(*std::move(receiver_or));
-  // LRM 15.5.1: triggering reaches RuntimeServices to wake subscribers. The
+  // LRM 15.5.1: triggering reaches RuntimeEffects to wake subscribers. The
   // engine handle is a real trailing argument, threaded the same way every
   // runtime effect threads it.
-  const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   mir::Expr call{
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kTrigger},
-              .arguments = {receiver_id, services_id},
+              .arguments = {receiver_id, runtime_id},
           },
       .type = process.Owner().Unit().builtins.void_type};
   const mir::ExprId call_id = block.exprs.Add(std::move(call));

@@ -12,12 +12,13 @@ namespace lyra::lowering::hir_to_mir {
 // root that calls it agree on the spelling.
 //
 // Phase 1 (`Install`): install every package cell's declared type and language
-// default. It fires nothing and takes no services. The design root calls it for
-// every package with variables before any value initializer runs anywhere, so a
-// cross-package read always reaches installed storage -- at worst a default.
+// default. It fires nothing and takes no runtime handle. The design root calls
+// it for every package with variables before any value initializer runs
+// anywhere, so a cross-package read always reaches installed storage -- at
+// worst a default.
 //
 // Phase 2 (`Initialize`): run each LRM 10.5 value initializer through its cell,
-// firing subscribers; it takes the runtime services. The design root calls it
+// firing subscribers; it takes the runtime handle. The design root calls it
 // in a stable, best-effort dependency order (a quality-of-implementation choice
 // -- the LRM leaves the relative order of initializers unspecified, not a
 // race).

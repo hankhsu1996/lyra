@@ -23,7 +23,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/lowering/hir_to_mir/writeback_call.hpp"
@@ -174,10 +174,10 @@ auto LowerDestructuringAssign(
 
     mir::ExprId per_part_expr_id{};
     if (assign.kind == hir::AssignKind::kBlocking) {
-      const mir::ExprId services_id = wrapper.exprs.Add(
-          BuildServicesCallExpr(process.Owner(), wrapper_frame));
+      const mir::ExprId runtime_id =
+          wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
       const mir::Expr part_assign_expr = BuildObservableAssignExpr(
-          process.Owner().Unit(), wrapper, services_id, part_lhs_id,
+          process.Owner().Unit(), wrapper, runtime_id, part_lhs_id,
           rhs_for_part, std::nullopt, part_mir_type,
           process.Owner().Unit().builtins.void_type);
       per_part_expr_id = wrapper.exprs.Add(part_assign_expr);
@@ -186,15 +186,15 @@ auto LowerDestructuringAssign(
           process.Owner(), wrapper_frame, part_lhs_id, rhs_for_part,
           part_mir_type);
       const mir::ExprId closure_id = wrapper.exprs.Add(std::move(closure_expr));
-      const mir::ExprId services_id = wrapper.exprs.Add(
-          BuildServicesCallExpr(process.Owner(), wrapper_frame));
+      const mir::ExprId runtime_id =
+          wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
       per_part_expr_id = wrapper.exprs.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
                       .callee =
                           mir::Direct{.target = support::BuiltinFn::kSubmitNba},
-                      .arguments = {services_id, closure_id}},
+                      .arguments = {runtime_id, closure_id}},
               .type = process.Owner().Unit().builtins.void_type});
     }
     wrapper.AppendStmt(mir::ExprStmt{.expr = per_part_expr_id});

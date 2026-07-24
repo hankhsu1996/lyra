@@ -7,14 +7,14 @@
 namespace lyra::runtime {
 
 class Scope;
-class RuntimeServices;
+class RuntimeEffects;
 
 // The design context in effect for the duration of a running simulation. A
 // foreign C function that calls back an exported SV subroutine (LRM 35.5), or
 // that queries the DPI scope surface (LRM 35.5.3, Annex H), reaches the runtime
 // with plain C arguments and no design pointer, so it has nothing to reach the
 // run from unless the runtime anchors it ambiently. This holds the design root
-// for export-instance recovery, the run's services facade for the executing
+// for export-instance recovery, the run's effects facade for the executing
 // process and time queries, and the DPI scope directory.
 //
 // It is an RAII stack guard over a thread-local slot: installed once around the
@@ -25,7 +25,7 @@ class RuntimeServices;
 // different thread must install its own.
 class AmbientRunContext {
  public:
-  AmbientRunContext(Scope* root, RuntimeServices& services);
+  AmbientRunContext(Scope* root, RuntimeEffects& effects);
   ~AmbientRunContext();
   AmbientRunContext(const AmbientRunContext&) = delete;
   auto operator=(const AmbientRunContext&) -> AmbientRunContext& = delete;
@@ -36,8 +36,8 @@ class AmbientRunContext {
     return root_;
   }
 
-  [[nodiscard]] auto Services() const -> RuntimeServices& {
-    return *services_;
+  [[nodiscard]] auto Effects() const -> RuntimeEffects& {
+    return *effects_;
   }
 
   [[nodiscard]] auto ScopeRegistry() -> DpiScopeRegistry& {
@@ -48,7 +48,7 @@ class AmbientRunContext {
 
  private:
   Scope* root_;
-  RuntimeServices* services_;
+  RuntimeEffects* effects_;
   DpiScopeRegistry scope_registry_;
   AmbientRunContext* previous_;
 };

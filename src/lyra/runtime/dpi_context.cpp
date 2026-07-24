@@ -4,15 +4,15 @@
 
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/dpi_scope_registry.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/sim_time.hpp"
 
 namespace lyra::runtime {
 
-DpiScopeGuard::DpiScopeGuard(RuntimeServices& services, Scope* decl_scope)
-    : process_(&services.CurrentProcess()) {
+DpiScopeGuard::DpiScopeGuard(RuntimeEffects& effects, Scope* decl_scope)
+    : process_(&effects.CurrentProcess()) {
   process_->PushDpiScope(decl_scope);
 }
 
@@ -45,7 +45,7 @@ auto Directory() -> lyra::runtime::DpiScopeRegistry& {
 // a null scope rather than a fault.
 auto ForeignProcess() -> lyra::runtime::RuntimeProcess* {
   return lyra::runtime::AmbientRunContext::Current()
-      .Services()
+      .Effects()
       .TryCurrentProcess();
 }
 
@@ -116,14 +116,13 @@ auto svGetTime(void* scope, void* time) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  lyra::runtime::RuntimeServices& services =
-      lyra::runtime::AmbientRunContext::Current().Services();
-  const std::int8_t unit = resolved != nullptr
-                               ? resolved->TimeUnitPower()
-                               : services.GlobalPrecisionPower();
+  lyra::runtime::RuntimeEffects& effects =
+      lyra::runtime::AmbientRunContext::Current().Effects();
+  const std::int8_t unit = resolved != nullptr ? resolved->TimeUnitPower()
+                                               : effects.GlobalPrecisionPower();
   const lyra::SimDuration divisor =
-      lyra::runtime::TimeUnitDivisor(unit, services.GlobalPrecisionPower());
-  const std::uint64_t scaled = services.Now() / divisor;
+      lyra::runtime::TimeUnitDivisor(unit, effects.GlobalPrecisionPower());
+  const std::uint64_t scaled = effects.Now() / divisor;
   auto* out = static_cast<SvTimeVal*>(time);
   out->type = kVpiSimTime;
   out->high = static_cast<std::uint32_t>(scaled >> 32U);
@@ -140,11 +139,11 @@ auto svGetTimeUnit(void* scope, void* time_unit) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  lyra::runtime::RuntimeServices& services =
-      lyra::runtime::AmbientRunContext::Current().Services();
-  *static_cast<std::int32_t*>(time_unit) =
-      resolved != nullptr ? resolved->TimeUnitPower()
-                          : services.GlobalPrecisionPower();
+  lyra::runtime::RuntimeEffects& effects =
+      lyra::runtime::AmbientRunContext::Current().Effects();
+  *static_cast<std::int32_t*>(time_unit) = resolved != nullptr
+                                               ? resolved->TimeUnitPower()
+                                               : effects.GlobalPrecisionPower();
   return 0;
 }
 
@@ -156,11 +155,11 @@ auto svGetTimePrecision(void* scope, void* time_precision) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  lyra::runtime::RuntimeServices& services =
-      lyra::runtime::AmbientRunContext::Current().Services();
+  lyra::runtime::RuntimeEffects& effects =
+      lyra::runtime::AmbientRunContext::Current().Effects();
   *static_cast<std::int32_t*>(time_precision) =
       resolved != nullptr ? resolved->TimePrecisionPower()
-                          : services.GlobalPrecisionPower();
+                          : effects.GlobalPrecisionPower();
   return 0;
 }
 

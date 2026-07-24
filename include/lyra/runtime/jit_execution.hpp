@@ -13,9 +13,9 @@ struct LyraSpan {
   std::uint64_t count;
 };
 
-auto lyra_rt_services(void* self) -> void*;
-auto lyra_rt_files(void* services) -> void*;
-auto lyra_rt_time_format(void* services) -> const void*;
+auto lyra_rt_current_runtime() -> void*;
+auto lyra_rt_files(void* runtime) -> void*;
+auto lyra_rt_time_format(void* runtime) -> const void*;
 auto lyra_rt_make_string(void* cstr) -> void*;
 auto lyra_rt_make_print_literal_item(void* string_value) -> void*;
 auto lyra_rt_format(LyraSpan items, const void* time_format) -> void*;
@@ -42,7 +42,7 @@ void lyra_rt_register_final(void* self, void* coroutine);
 // the running process itself, read from the runtime; no token crosses the
 // boundary.
 void lyra_rt_delay(
-    void* services, const void* ticks, const void* precision_power);
+    void* runtime, const void* ticks, const void* precision_power);
 
 // Builds one leaf of a value-change wait: the observable cell it watches, the
 // bit projection of that cell's packed encoding it watches as a
@@ -58,7 +58,7 @@ auto lyra_rt_make_trigger(
 // preceded by (LRM 9.4.2 / 9.4.2.2 / 9.4.3). An empty span means "never wake
 // up". The wakeup source is the running process itself, read from the runtime;
 // no token crosses the boundary.
-void lyra_rt_wait_any(void* services, LyraSpan triggers);
+void lyra_rt_wait_any(void* runtime, LyraSpan triggers);
 
 // Builds a scope's structural identity from its base label and per-dimension
 // indices (a span of 32-bit index values, empty for a scalar). The segment is
@@ -69,8 +69,7 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void*;
 // build its subtree, and returns the owning handle to the caller (which hands
 // it to `lyra_rt_add_owned_child`). `definition` is an opaque cross-unit
 // reference the generated code never inspects.
-auto lyra_rt_make_unit(
-    const void* definition, void* parent, void* segment, void* services)
+auto lyra_rt_make_unit(const void* definition, void* parent, void* segment)
     -> void*;
 
 // Attaches a freshly built child to its parent, transferring ownership into the
@@ -87,24 +86,24 @@ void lyra_rt_register_signal(void* self, const void* name, void* cell);
 // entry names the cell's value domain; the runtime never inspects a type tag.
 auto lyra_rt_cell_packed_get(void* cell) -> const void*;
 void lyra_rt_cell_packed_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_packed_set(void* cell, void* services, const void* value);
+void lyra_rt_cell_packed_set(void* cell, void* runtime, const void* value);
 auto lyra_rt_cell_string_get(void* cell) -> const void*;
 void lyra_rt_cell_string_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_string_set(void* cell, void* services, const void* value);
+void lyra_rt_cell_string_set(void* cell, void* runtime, const void* value);
 auto lyra_rt_cell_real_get(void* cell) -> const void*;
 void lyra_rt_cell_real_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_real_set(void* cell, void* services, const void* value);
+void lyra_rt_cell_real_set(void* cell, void* runtime, const void* value);
 auto lyra_rt_cell_shortreal_get(void* cell) -> const void*;
 void lyra_rt_cell_shortreal_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_shortreal_set(void* cell, void* services, const void* value);
+void lyra_rt_cell_shortreal_set(void* cell, void* runtime, const void* value);
 
 // A procedural local whose value crosses a suspension (LRM 9.4). The cell lives
 // in the running activation's frame, so the handle a generated frame holds
 // across a suspension points into activation-lifetime storage rather than the
 // per-stretch scope. `store` overwrites the cell -- the first store installs
 // the declared representation -- and `load` copies the current value back into
-// the per-stretch scope. No services and no subscriber wakeup: a procedural
-// local is not observable.
+// the per-stretch scope. No runtime handle and no subscriber wakeup: a
+// procedural local is not observable.
 auto lyra_rt_activation_frame_alloc_packed() -> void*;
 auto lyra_rt_activation_frame_alloc_string() -> void*;
 void lyra_rt_activation_frame_store_packed(void* cell, const void* value);
@@ -298,7 +297,7 @@ auto lyra_rt_tuple_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_cell_tuple_get(void* cell) -> const void*;
 void lyra_rt_cell_tuple_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_tuple_set(void* cell, void* services, const void* value);
+void lyra_rt_cell_tuple_set(void* cell, void* runtime, const void* value);
 auto lyra_rt_activation_frame_alloc_tuple() -> void*;
 void lyra_rt_activation_frame_store_tuple(void* cell, const void* value);
 auto lyra_rt_activation_frame_load_tuple(const void* cell) -> void*;
@@ -329,7 +328,7 @@ auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_cell_dynarray_get(void* cell) -> const void*;
 void lyra_rt_cell_dynarray_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_dynarray_set(void* cell, void* services, const void* value);
+void lyra_rt_cell_dynarray_set(void* cell, void* runtime, const void* value);
 auto lyra_rt_activation_frame_alloc_dynarray() -> void*;
 void lyra_rt_activation_frame_store_dynarray(void* cell, const void* value);
 auto lyra_rt_activation_frame_load_dynarray(const void* cell) -> void*;

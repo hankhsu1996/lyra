@@ -93,9 +93,9 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   }
   // The header closure is staged under `include/lyra/`; resolve one known
   // header and walk up to the `include` root the emitted code includes from.
-  const std::filesystem::path engine_hpp =
-      runfiles->Rlocation("_main/include/lyra/runtime/engine.hpp");
-  if (engine_hpp.empty() || !std::filesystem::exists(engine_hpp)) {
+  const std::filesystem::path anchor =
+      runfiles->Rlocation("_main/include/lyra/runtime/runtime.hpp");
+  if (anchor.empty() || !std::filesystem::exists(anchor)) {
     return std::unexpected("cannot locate the Lyra runtime headers");
   }
   const std::filesystem::path lib =
@@ -104,7 +104,7 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
     return std::unexpected("cannot locate the Lyra runtime library");
   }
   return RuntimeLocation{
-      .include_root = engine_hpp.parent_path().parent_path().parent_path(),
+      .include_root = anchor.parent_path().parent_path().parent_path(),
       .lib = lib};
 }
 

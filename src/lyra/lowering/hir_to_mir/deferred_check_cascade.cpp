@@ -13,12 +13,10 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
-#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -119,8 +117,7 @@ auto SnapshotPredicate(
 }
 
 auto BuildDiagnosticThenScope(
-    mir::CompilationUnit& unit, CallableBindings& bindings,
-    BodyBindingRef self_ref, mir::LocalId count_var,
+    mir::CompilationUnit& unit, mir::LocalId count_var,
     const CheckVerdict& verdict, std::string origin) -> mir::Block {
   mir::Block block;
   const mir::TypeId int_type = unit.builtins.int_type;
@@ -143,26 +140,22 @@ auto BuildDiagnosticThenScope(
   const mir::ExprId items_array =
       block.exprs.Add(BuildPrintItemsArray(unit, block, items, 0));
 
-  // `self` is the closure body's captured receiver; this then-scope is a block
-  // of that same body, so the read names the capture directly.
-  const mir::ExprId self_read =
-      block.exprs.Add(bindings.MakeReadExpr(self_ref, block));
-  const mir::ExprId services = block.exprs.Add(
-      mir::MakeServicesCallExpr(self_read, unit.builtins.services));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
 
   // Format the verdict text, then route through the diagnostic broker's
   // EmitWarning method (LRM 20.10): unique / priority deferred-check failures
   // are warning-severity by spec. The origin tag is the qualified statement's
   // source location, threaded in from the cascade entry.
-  const mir::ExprId text_id =
-      block.exprs.Add(BuildFormatCallExpr(unit, block, services, items_array));
+  const mir::ExprId text_id = block.exprs.Add(
+      BuildFormatCallExpr(unit, block, runtime_id, items_array));
   const mir::ExprId diagnostic_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kDiagnostic},
-                  .arguments = {services}},
+                  .arguments = {runtime_id}},
           .type = unit.builtins.diagnostic});
   const mir::ExprId origin_lit = block.exprs.Add(
       mir::Expr{
@@ -196,8 +189,6 @@ auto BuildUniqueCheckClosure(
 
   const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
   const mir::TypeId bit1_type = unit_lowerer.Unit().builtins.bit1;
-  const BodyBindingRef self_ref =
-      closure.Bindings().EnsureCarrier(BindingOriginId::Receiver());
 
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
@@ -264,8 +255,7 @@ auto BuildUniqueCheckClosure(
           .type = int_type});
 
   mir::Block diag_block = BuildDiagnosticThenScope(
-      unit_lowerer.Unit(), closure.Bindings(), self_ref, count_var, verdict,
-      std::move(origin));
+      unit_lowerer.Unit(), count_var, verdict, std::move(origin));
 
   const mir::BlockId diag_scope_id =
       body.child_scopes.Add(std::move(diag_block));
@@ -314,8 +304,8 @@ auto BuildDeferredCheckCascade(
 
   const mir::DeferredCheckSiteId site_id =
       unit_lowerer.Unit().AllocateDeferredCheckSiteId();
-  const mir::ExprId self_id = wrapper.exprs.Add(MakeSelfRefExpr(
-      wrapper_frame, wrapper_frame.current_class->self_pointer_type));
+  const mir::ExprId runtime_id =
+      wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::ExprId site_id_expr = wrapper.exprs.Add(
       mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(site_id.value)));
   const mir::ExprId submit_expr_id = wrapper.exprs.Add(
@@ -325,7 +315,7 @@ auto BuildDeferredCheckCascade(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kSubmitObserved},
-                  .arguments = {self_id, site_id_expr, closure_expr_id}},
+                  .arguments = {runtime_id, site_id_expr, closure_expr_id}},
           .type = void_type});
   wrapper.AppendStmt(mir::ExprStmt{.expr = submit_expr_id});
 

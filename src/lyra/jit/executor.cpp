@@ -36,10 +36,11 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/type_query.hpp"
-#include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/design.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/jit_execution.hpp"
+#include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/simulation_entry.hpp"
@@ -115,7 +116,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
             llvm::orc::ExecutorAddr::fromPtr(fn),
             llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable);
   };
-  add("lyra_rt_services", &lyra_rt_services);
+  add("lyra_rt_current_runtime", &lyra_rt_current_runtime);
   add("lyra_rt_files", &lyra_rt_files);
   add("lyra_rt_time_format", &lyra_rt_time_format);
   add("lyra_rt_make_string", &lyra_rt_make_string);
@@ -553,23 +554,23 @@ auto Execute(
     FillDefinition(*jit, *entry.unit, *entry.metadata, *entry.definition);
   }
 
-  runtime::Engine engine;
+  runtime::Runtime runtime_instance;
 
   // The design-root unit's construct elaborates the design: it builds the
   // top-level units through the cross-unit construct ABI, which recurses into
   // their subtrees. The bootstrap allocates the root instance and runs that
   // construct in a generated-call scope, exactly as the runtime enters any
-  // construct entry; the engine then walks the built tree.
+  // construct entry; the runtime then walks the built tree.
   const runtime::UnitDefinition& root_definition = *loaded.back().definition;
   auto root = std::make_unique<runtime::GeneratedInstance>(
-      nullptr, runtime::HierarchySegment{"$root", {}}, engine.Services(),
-      &root_definition);
+      nullptr, runtime::HierarchySegment{"$root", {}}, &root_definition);
   {
     runtime::GeneratedCallScope construct_scope;
     root_definition.construct(root.get());
   }
-  engine.BindDesign(std::move(root));
-  return runtime::RunSimulation(engine);
+  auto design = std::make_unique<runtime::Design>(std::move(root));
+  runtime_instance.BindDesign(std::move(design));
+  return runtime::RunSimulation(runtime_instance);
 }
 
 }  // namespace lyra::jit

@@ -229,8 +229,8 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
             return lir::TypeData{
                 lir::ExternalClassType{.qualified_name = e.qualified_name}};
           },
-          [](const mir::ServicesType&) -> lir::TypeData {
-            return lir::TypeData{lir::ServicesType{}};
+          [](const mir::RuntimeEffectsType&) -> lir::TypeData {
+            return lir::TypeData{lir::RuntimeEffectsType{}};
           },
           [](const mir::FilesType&) -> lir::TypeData {
             return lir::TypeData{lir::FilesType{}};

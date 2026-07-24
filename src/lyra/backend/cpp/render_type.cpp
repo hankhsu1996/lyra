@@ -165,8 +165,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [](const mir::ExternalClassType& e) -> std::string {
             return e.qualified_name;
           },
-          [](const mir::ServicesType&) -> std::string {
-            return std::string{"lyra::runtime::RuntimeServices&"};
+          [](const mir::RuntimeEffectsType&) -> std::string {
+            return std::string{"lyra::runtime::RuntimeEffects&"};
           },
           [](const mir::FilesType&) -> std::string {
             return std::string{"lyra::runtime::FileTable&"};

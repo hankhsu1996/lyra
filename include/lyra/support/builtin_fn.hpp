@@ -9,7 +9,7 @@ namespace lyra::support {
 // HIR and MIR; lives in the support layer so neither layer's vocabulary
 // imports the other's. The receiver type at the call site names the runtime
 // library type whose method is being invoked (value-layer containers,
-// observable storage cells, runtime services, scope handle); this enum
+// observable storage cells, runtime effects, scope handle); this enum
 // carries only the method identity.
 enum class BuiltinFn : std::uint16_t {
   // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access. Bare returns value
@@ -121,32 +121,38 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 20.8.1. ceil(log2) of the operand read as unsigned; $clog2(0) is 0.
   // A constant argument is folded downstream, never in lowering.
   kClog2,
-  // Observable storage cell operations. `Set` / `Mutate` thread services
-  // as the second argument. `Initialize` installs the cell's declared
-  // representation once at construction (no services -- no subscribers yet);
-  // every later `Set` then requires the right-hand side to already be at that
-  // representation.
+  // Observable storage cell operations. `Set` / `Mutate` thread the runtime
+  // handle as the second argument. `Initialize` installs the cell's declared
+  // representation once at construction (no runtime handle -- no subscribers
+  // yet); every later `Set` then requires the right-hand side to already be
+  // at that representation.
   kGet,
   kInitialize,
   kSet,
   kMutate,
   // Net driver operations (LRM 6.5). `AttachDriver` is a `ResolvedNet` method
   // returning a driver handle; `UpdateDriver` is a `Driver` method that
-  // threads services and the new contribution value.
+  // threads the runtime handle and the new contribution value.
   kAttachDriver,
   kUpdateDriver,
-  kServices,
-  // Engine submit operations. `SubmitNba` and `SubmitPostponed` are
-  // `RuntimeServices` methods taking a closure -- the NBA region commit
-  // (LRM 4.4.2) and the postponed region commit (LRM 4.4.2 / 21.2.2)
-  // respectively. `SubmitObserved` is a `Scope` method taking the
-  // deferred-check site id and a closure (LRM 16.14.6 last-write-wins
-  // settle).
+  // The ambient `RuntimeEffects` accessor. Zero-argument free function in
+  // `lyra::runtime`. Every body kind -- module process, class method, package
+  // function, class static method -- reaches the runtime through this,
+  // uniformly and without a receiver. Backed by a per-thread pointer the
+  // attached Runtime publishes for its lifetime.
+  kCurrentRuntime,
+  // Runtime scheduler submit operations. `SubmitNba`, `SubmitPostponed`, and
+  // `SubmitObserved` are `RuntimeEffects` methods taking a closure -- the
+  // NBA (LRM 4.4.2), postponed (LRM 4.4.2 / 21.2.2), and Observed
+  // (LRM 16.14.6 last-write-wins settle) region commits respectively.
+  // `SubmitObserved` attributes the check to the ambient current scope so
+  // callers reach it uniformly through the runtime, matching every other
+  // runtime effect.
   kSubmitNba,
   kSubmitPostponed,
   kSubmitObserved,
   // File-IO subsystem accessor and cancellation token operations. `Files`
-  // is a `RuntimeServices` method returning the `FileTable` broker.
+  // is a `RuntimeEffects` method returning the `FileTable` broker.
   // `CancellationFor` is a `FileTable` method taking a file descriptor and
   // returning a `ChannelCancellation` token snapshotted to the channel
   // currently bound at the descriptor. `IsCancelled` queries that token
@@ -156,9 +162,9 @@ enum class BuiltinFn : std::uint16_t {
   kIsCancelled,
   // Print decomposes into a pure-value format step and a sink-write step.
   // `Format` is a `lyra::value` free function that walks the items and yields
-  // an SV `string`; it takes the engine's `$timeformat` state (for `%t`) as an
+  // an SV `string`; it takes the runtime's `$timeformat` state (for `%t`) as an
   // explicit operand the caller supplies from `TimeFormat`, so the format step
-  // holds no engine state of its own. `Write` / `Writeln` are `FileTable`
+  // holds no runtime state of its own. `Write` / `Writeln` are `FileTable`
   // methods that emit that string to the descriptor's sink (LRM 21.2.1 /
   // 21.3.1); the `ln` variant appends a trailing newline.
   kFormat,
@@ -172,7 +178,7 @@ enum class BuiltinFn : std::uint16_t {
   kWrite,
   kWriteln,
   // Diagnostic subsystem accessor and severity-fixed emit operations.
-  // `Diagnostic` is a `RuntimeServices` method returning the
+  // `Diagnostic` is a `RuntimeEffects` method returning the
   // `DiagnosticDispatcher` broker. `EmitInfo` / `EmitWarning` / `EmitError` /
   // `EmitFatal` are dispatcher methods taking a pre-formatted text (LRM 20.10),
   // one method per severity rather than a single emit-with-tag, mirroring the
@@ -183,7 +189,7 @@ enum class BuiltinFn : std::uint16_t {
   kEmitWarning,
   kEmitError,
   kEmitFatal,
-  // LRM 20.4.3 `$timeformat` display state on `RuntimeServices`. `TimeFormat`
+  // LRM 20.4.3 `$timeformat` display state on `RuntimeEffects`. `TimeFormat`
   // reads the current state, threaded into `Format` as the `%t` operand. The
   // setter takes the four `%t` display arguments (units power, precision,
   // suffix, minimum field width) as SV values; the reset form takes none and
@@ -200,7 +206,7 @@ enum class BuiltinFn : std::uint16_t {
   kPeekBuffered,
   kAdvanceFd,
   // LRM 21.3 file-IO subsystem methods on the `files` broker. Each is a
-  // FileTable instance method whose receiver is `services.Files()`; the
+  // FileTable instance method whose receiver is `runtime.Files()`; the
   // descriptor / FD operands are SV-typed packed values, so the lowered
   // call carries the same shapes the user wrote. `Open` returns the
   // descriptor value (LRM 21.3.1); the read family yields byte counts;
@@ -219,25 +225,25 @@ enum class BuiltinFn : std::uint16_t {
   kFileError,
   kFileFlush,
   // LRM 21.6 command-line plusargs. Free functions on `lyra::runtime` that
-  // take the services handle plus SV `string` operands; the value form also
+  // take the runtime handle plus SV `string` operands; the value form also
   // takes the output lvalue by reference (a `PackedArray` or `String`,
   // selected by C++ overload from the SV lvalue's declared type). Both
   // return an SV `int` (1 on prefix match, 0 otherwise).
   kTestPlusargs,
   kValuePlusargs,
   // LRM 9.4.1 `#N`. The runtime free function the scheduler suspends on.
-  // The call takes the engine handle, the duration in the calling scope's
+  // The call takes the runtime handle, the duration in the calling scope's
   // precision steps, and the calling scope's precision power; the runtime
   // scales to the design-global tick (LRM 3.14.3).
   kDelay,
   // LRM 9.4.2 / 9.4.2.2 / 9.4.3 value-change wait. The runtime free function
   // every wait on a signal suspends on -- an `@(...)`, an `@*`, an
   // `always_comb` / `always_latch` body, a `wait (cond)`, a continuous
-  // assignment. The call takes the engine handle and the trigger set, one
+  // assignment. The call takes the runtime handle and the trigger set, one
   // entry per observed leaf; the process resumes when any leaf changes as its
   // edge demands.
   kWaitAny,
-  // LRM 20.3 simulation-time read functions. Each takes the engine handle
+  // LRM 20.3 simulation-time read functions. Each takes the runtime handle
   // and the calling scope's unit power; the runtime scales the design-global
   // tick down to that unit. `$time` rounds and yields a 64-bit `time`,
   // `$stime` yields the low 32 bits as an `int`, `$realtime` keeps the
@@ -245,11 +251,11 @@ enum class BuiltinFn : std::uint16_t {
   kSimTime,
   kSTime,
   kRealTime,
-  // LRM 20.2 simulation termination. Takes the engine handle and the LRM
+  // LRM 20.2 simulation termination. Takes the runtime handle and the LRM
   // diagnostic level (0 / 1 / 2). The call suspends and never resumes; the
-  // engine drops the process at the next dispatch. `kFatalFinish` is the
+  // runtime drops the process at the next dispatch. `kFatalFinish` is the
   // $fatal sibling (LRM 20.10): same shutdown protocol, but marks the
-  // termination as a fatal error so the engine returns a non-zero exit code.
+  // termination as a fatal error so the runtime returns a non-zero exit code.
   kFinish,
   kFatalFinish,
   // Ancestor-scope resolution for a hierarchical reference whose route starts
@@ -281,20 +287,20 @@ enum class BuiltinFn : std::uint16_t {
   // wait; the call's result is `void` so the caller never awaits it). The
   // mode lives in the callee identity rather than as an enum operand so MIR
   // never carries a join-mode datum and the call's result type is what
-  // selects await vs not. Each takes the services handle followed by a
+  // selects await vs not. Each takes the runtime handle followed by a
   // variadic branch list -- the runtime entry is a variadic template that
   // assembles the move-only branches into the internal coroutine vector.
   kForkWaitAll,
   kForkWaitFirst,
   kSpawnAll,
   // LRM 9.6.1 `wait fork`: suspends the executing process until every immediate
-  // child it spawned has terminated. Takes only the services handle; the child
+  // child it spawned has terminated. Takes only the runtime handle; the child
   // set is the executing process's, read at runtime. The call's result is
   // `void` and the caller awaits it, the same await shape as `join`.
   kWaitFork,
   // LRM 9.6.3 `disable fork`: terminates every descendant of the executing
   // process, including the descendants of subprocesses that have already
-  // terminated. Takes only the services handle; the descendant set is the
+  // terminated. Takes only the runtime handle; the descendant set is the
   // executing process's, read at runtime. The caller does not block, so its
   // `void` result is never awaited.
   kDisableFork,
@@ -469,7 +475,7 @@ enum class BuiltinFn : std::uint16_t {
 
 // The id's stable spelling. It aligns with the SV method spelling where one
 // exists (LRM 6.16 / 7.9 / 7.12 / 6.19.5) and is descriptive where there is no
-// SV-side surface (`get` / `set` / `mutate` / `services`).
+// SV-side surface (`get` / `set` / `mutate` / `runtime`).
 //
 // This is an interface contract, not a display string. It names the entry in a
 // dump and in a diagnostic, and it is the suffix of the runtime-library symbol

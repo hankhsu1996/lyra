@@ -15,7 +15,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/file_table.hpp"
-#include "lyra/runtime/runtime_services.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scan_source.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -624,18 +624,17 @@ auto LyraSScanf(
 }
 
 auto LyraFScanf(
-    RuntimeServices& services, const value::PackedArray& fd_pa,
+    RuntimeEffects& runtime, const value::PackedArray& fd_pa,
     const value::String& format, std::initializer_list<ScanTarget> targets)
     -> value::PackedArray {
   const auto fd = static_cast<std::int32_t>(fd_pa.ToInt64());
-  auto* slot = services.Files().ResolveSlot(fd);
+  auto* slot = runtime.Files().ResolveSlot(fd);
   if (slot == nullptr) {
-    services.Files().SetError(
-        fd, EBADF, "$fscanf: not an open file descriptor");
+    runtime.Files().SetError(fd, EBADF, "$fscanf: not an open file descriptor");
     return value::PackedArray::Integer(-1);
   }
   if (!slot->permits_read) {
-    services.Files().SetError(fd, EBADF, "$fscanf: file not open for reading");
+    runtime.Files().SetError(fd, EBADF, "$fscanf: file not open for reading");
     return value::PackedArray::Integer(-1);
   }
   FileScanSource src(*slot);

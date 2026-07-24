@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/runtime_services.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 
@@ -27,24 +27,24 @@ inline auto TimeUnitDivisor(
 // the nearest integer (only the unit conversion rounds; precision does not).
 // `unit_power` arrives as a Lyra value, the same as any other call argument.
 inline auto SimTimeInUnit(
-    RuntimeServices& services, const value::PackedArray& unit_power)
+    RuntimeEffects& runtime, const value::PackedArray& unit_power)
     -> value::PackedArray {
   const auto power = static_cast<std::int8_t>(unit_power.ToInt64());
   const SimDuration divisor =
-      TimeUnitDivisor(power, services.GlobalPrecisionPower());
-  const SimTime scaled = (services.Now() + divisor / 2) / divisor;
+      TimeUnitDivisor(power, runtime.GlobalPrecisionPower());
+  const SimTime scaled = (runtime.Now() + divisor / 2) / divisor;
   return value::PackedArray::FromInt(
       static_cast<std::int64_t>(scaled), 64, false, true);
 }
 
 // $stime (LRM 20.3.2): the low 32 bits of the $time value.
 inline auto STimeInUnit(
-    RuntimeServices& services, const value::PackedArray& unit_power)
+    RuntimeEffects& runtime, const value::PackedArray& unit_power)
     -> value::PackedArray {
   const auto power = static_cast<std::int8_t>(unit_power.ToInt64());
   const SimDuration divisor =
-      TimeUnitDivisor(power, services.GlobalPrecisionPower());
-  const SimTime scaled = (services.Now() + divisor / 2) / divisor;
+      TimeUnitDivisor(power, runtime.GlobalPrecisionPower());
+  const SimTime scaled = (runtime.Now() + divisor / 2) / divisor;
   return value::PackedArray::FromInt(
       static_cast<std::int64_t>(static_cast<std::uint32_t>(scaled)), 32, true,
       false);
@@ -53,13 +53,13 @@ inline auto STimeInUnit(
 // $realtime (LRM 20.3.3): the current time scaled to `unit_power` as a real,
 // keeping any fractional part.
 inline auto RealTimeInUnit(
-    RuntimeServices& services, const value::PackedArray& unit_power)
+    RuntimeEffects& runtime, const value::PackedArray& unit_power)
     -> value::Real {
   const auto power = static_cast<std::int8_t>(unit_power.ToInt64());
   const SimDuration divisor =
-      TimeUnitDivisor(power, services.GlobalPrecisionPower());
+      TimeUnitDivisor(power, runtime.GlobalPrecisionPower());
   return value::Real{
-      static_cast<double>(services.Now()) / static_cast<double>(divisor)};
+      static_cast<double>(runtime.Now()) / static_cast<double>(divisor)};
 }
 
 }  // namespace lyra::runtime

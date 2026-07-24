@@ -32,7 +32,7 @@ namespace lyra::backend::llvm_backend {
 // Module-level code generation: owns the context and module, declares every
 // callable's signature, drives per-function body generation, and yields the
 // verified module. The narrow accessors hand the per-function generation the
-// shared services it needs without exposing the whole module emitter.
+// shared internals it needs without exposing the whole module emitter.
 class CodeGenModule {
  public:
   explicit CodeGenModule(const lir::CompilationUnit& unit);

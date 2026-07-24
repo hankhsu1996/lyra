@@ -1,7 +1,6 @@
 #include "lyra/runtime/scope.hpp"
 
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -11,11 +10,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
-#include "lyra/runtime/process_kind.hpp"
-#include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_services.hpp"
 
 namespace lyra::runtime {
 
@@ -26,12 +21,8 @@ void ScopeNoOp(Scope*) {
 }
 
 Scope::Scope(
-    Scope* parent, HierarchySegment segment, RuntimeServices& services,
-    const ScopeProgram* program)
-    : parent_(parent),
-      segment_(std::move(segment)),
-      services_(&services),
-      program_(program) {
+    Scope* parent, HierarchySegment segment, const ScopeProgram* program)
+    : parent_(parent), segment_(std::move(segment)), program_(program) {
 }
 
 auto Scope::AddOwnedChild(std::unique_ptr<Scope> child) -> Scope* {
@@ -135,32 +126,18 @@ auto Scope::HierarchicalPath() const -> lyra::value::String {
 }
 
 void Scope::Resolve() {
-  // The whole tree is constructed before resolution runs, so every ancestor and
-  // the full parent chain exist when this scope's `ResolveState` walks the
-  // route of each cross-instance reference it owns. The walk is top-down, so a
-  // parent binds a child's `ref` port before the child (or its own children)
-  // forwards it onward.
-  {
-    GeneratedCallScope call;
-    program_->resolve_state(this);
-  }
-  ForEachChild([](Scope& child) { child.Resolve(); });
+  GeneratedCallScope call;
+  program_->resolve_state(this);
 }
 
 void Scope::Initialize() {
-  {
-    GeneratedCallScope call;
-    program_->initialize_state(this);
-  }
-  ForEachChild([](Scope& child) { child.Initialize(); });
+  GeneratedCallScope call;
+  program_->initialize_state(this);
 }
 
-void Scope::Activate() {
-  {
-    GeneratedCallScope call;
-    program_->create_processes(this);
-  }
-  ForEachChild([](Scope& child) { child.Activate(); });
+void Scope::CreateProcesses() {
+  GeneratedCallScope call;
+  program_->create_processes(this);
 }
 
 auto Scope::ResolveVisibleChild(
@@ -182,40 +159,6 @@ auto Scope::ResolveRoot() -> Scope* {
     level = level->parent_;
   }
   return level;
-}
-
-auto Scope::Services() -> RuntimeServices& {
-  return *services_;
-}
-
-void Scope::RegisterInitial(Coroutine<void> coroutine) {
-  processes_.push_back(
-      std::make_shared<RuntimeProcess>(
-          ProcessKind::kInitial, std::move(coroutine)));
-}
-
-void Scope::RegisterFinal(Coroutine<void> coroutine) {
-  processes_.push_back(
-      std::make_shared<RuntimeProcess>(
-          ProcessKind::kFinal, std::move(coroutine)));
-}
-
-void Scope::SubmitObserved(
-    const lyra::value::PackedArray& site_id, std::function<void()> fn) {
-  const auto slot = static_cast<std::size_t>(site_id.ToInt64());
-  if (slot >= observed_pending_.size()) {
-    observed_pending_.resize(slot + 1);
-  }
-  observed_pending_[slot] = std::move(fn);
-}
-
-void Scope::DrainObserved() {
-  for (auto& fn : observed_pending_) {
-    if (fn) {
-      fn();
-      fn = nullptr;
-    }
-  }
 }
 
 }  // namespace lyra::runtime

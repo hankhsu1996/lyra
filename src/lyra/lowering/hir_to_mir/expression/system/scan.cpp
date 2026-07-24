@@ -19,7 +19,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -183,14 +183,14 @@ auto LowerScanSystemSubroutineCall(
           "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
     }
     fd_id = raw_source_id;
-    const mir::ExprId services_id =
-        body.exprs.Add(BuildServicesCallExpr(process.Owner(), closure_frame));
+    const mir::ExprId runtime_id =
+        body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
     const mir::ExprId files_id = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
                     .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
-                    .arguments = {services_id}},
+                    .arguments = {runtime_id}},
             .type = unit.builtins.files});
     source_id = body.exprs.Add(
         mir::Expr{
@@ -263,14 +263,14 @@ auto LowerScanSystemSubroutineCall(
       mir::LocalDeclStmt{.target = count_var, .init = parse_call_id});
 
   if (is_file) {
-    const mir::ExprId services_after =
-        body.exprs.Add(BuildServicesCallExpr(process.Owner(), closure_frame));
+    const mir::ExprId runtime_after =
+        body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
     const mir::ExprId files_after = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
                     .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
-                    .arguments = {services_after}},
+                    .arguments = {runtime_after}},
             .type = unit.builtins.files});
     const mir::ExprId consumed_read =
         body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type));
@@ -309,11 +309,11 @@ auto LowerScanSystemSubroutineCall(
     const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
     const mir::ExprId temp_read_id = then_body.exprs.Add(
         mir::MakeLocalRefExpr(temp_ids[k], target_types[k]));
-    const mir::ExprId services_id_then =
-        then_body.exprs.Add(BuildServicesCallExpr(process.Owner(), then_frame));
+    const mir::ExprId runtime_id_then =
+        then_body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
     const mir::Expr assign_expr = BuildObservableAssignExpr(
-        unit, then_body, services_id_then, lvalue_id, temp_read_id,
-        std::nullopt, target_types[k], void_t);
+        unit, then_body, runtime_id_then, lvalue_id, temp_read_id, std::nullopt,
+        target_types[k], void_t);
     const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 

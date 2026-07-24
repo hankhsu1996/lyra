@@ -17,7 +17,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -30,7 +30,7 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Assembles the file-IO call as an instance method on the `files` broker.
-// `files = services.Files()` is interned first; subsequent operands flow
+// `files = runtime.Files()` is interned first; subsequent operands flow
 // after it in their runtime-signature order.
 auto BuildFileIoCall(
     const ProcessLowerer& process, const WalkFrame& frame,
@@ -39,7 +39,7 @@ auto BuildFileIoCall(
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> args;
   args.reserve(operands.size() + 1);
-  args.push_back(block.exprs.Add(BuildFilesCallExpr(process.Owner(), frame)));
+  args.push_back(block.exprs.Add(BuildFilesCallExpr(process.Owner(), block)));
   for (const mir::ExprId operand : operands) {
     args.push_back(operand);
   }
@@ -320,10 +320,10 @@ auto LowerFileIOSystemSubroutineCallStmt(
     assign_target_id = wrapper.exprs.Add(*std::move(lhs_or));
   }
 
-  const mir::ExprId services_id =
-      wrapper.exprs.Add(BuildServicesCallExpr(process.Owner(), wrapper_frame));
+  const mir::ExprId runtime_id =
+      wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   return BuildCopyOutBlock(
-      process.Owner().Unit(), services_id, frame, std::move(wrapper),
+      process.Owner().Unit(), runtime_id, frame, std::move(wrapper),
       std::move(label), result_type, std::move(call_expr), false,
       assign_target_id, slots);
 }

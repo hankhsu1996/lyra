@@ -34,7 +34,7 @@ enum class TypeKind {
   kObject,
   kExternalUnitObject,
   kExternalClass,
-  kServices,
+  kRuntimeEffects,
   kFiles,
   kDiagnostic,
   kRuntimeLibrary,
@@ -278,26 +278,23 @@ struct ExternalClassType {
   auto operator==(const ExternalClassType&) const -> bool = default;
 };
 
-// The engine facade `lyra::runtime::RuntimeServices`. A callable body reaches
-// it from `self` through the `Services` scope method; it is the engine handle
-// every runtime-effect call threads as a plain argument.
-struct ServicesType {
-  auto operator==(const ServicesType&) const -> bool = default;
+// The runtime capability surface `lyra::runtime::RuntimeEffects`. Reached
+// via ambient (`current_runtime()`) with no receiver; every runtime-effect
+// call threads it as a plain argument.
+struct RuntimeEffectsType {
+  auto operator==(const RuntimeEffectsType&) const -> bool = default;
 };
 
-// The file-IO subsystem handle `lyra::runtime::FileTable`, reached from
-// `RuntimeServices` through its `Files` method. A by-name navigation handle
-// like ServicesType; the receiver of file-layer methods (`CancellationFor`,
-// future `Open` / `Close` / ...). Opaque, never inspected by MIR.
+// The file-IO subsystem handle `lyra::runtime::FileTable`, reached from the
+// runtime through its `Files` method. Opaque, never inspected by MIR.
 struct FilesType {
   auto operator==(const FilesType&) const -> bool = default;
 };
 
 // The diagnostic subsystem handle `lyra::runtime::DiagnosticDispatcher`,
-// reached from `RuntimeServices` through its `Diagnostic` method. The
-// receiver of severity-fixed emit methods (`EmitInfo` / `EmitWarning` /
-// `EmitError`) carrying a pre-formatted text. Opaque, never inspected by
-// MIR.
+// reached from the runtime through its `Diagnostic` method. The receiver of
+// severity-fixed emit methods (`EmitInfo` / `EmitWarning` / `EmitError`)
+// carrying a pre-formatted text. Opaque, never inspected by MIR.
 struct DiagnosticType {
   auto operator==(const DiagnosticType&) const -> bool = default;
 };
@@ -306,8 +303,8 @@ struct DiagnosticType {
 // it is constructed (via ConstructExpr) and forwarded to a runtime-effect call,
 // and MIR makes no decision on its contents. The branch selects which library
 // type, and the backend maps the branch to the concrete library name. Distinct
-// from ServicesType / ScopeType, which are runtime object-model handles the
-// receiver semantics reason about; these are inert payloads.
+// from RuntimeEffectsType / ScopeType, which are runtime object-model handles
+// the receiver semantics reason about; these are inert payloads.
 enum class RuntimeLibraryKind : std::uint8_t {
   kPrintItem,
   kPrintLiteralItem,
@@ -555,7 +552,7 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
     MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ExternalClassType, ServicesType, FilesType, DiagnosticType,
+    ExternalClassType, RuntimeEffectsType, FilesType, DiagnosticType,
     RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
     VectorType, TupleType, UnionType, ObservableType, ResolvedType, DriverType,
     StructType, ClosureType>;
@@ -575,7 +572,7 @@ struct Type {
   [[nodiscard]] auto IsIntegralPacked() const -> bool;
   [[nodiscard]] auto AsIntegralPacked() const -> const PackedArrayType&;
   // True for a stable runtime facade the backend realizes as a live reference
-  // rather than a movable value -- the runtime services handle, the file
+  // rather than a movable value -- the runtime handle, the file
   // table handle, the diagnostic dispatcher handle. Lowering sites that
   // decide whether an operand may be transferred consult this: an alias
   // handle carries no ownership to move.

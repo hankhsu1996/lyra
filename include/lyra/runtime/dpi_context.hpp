@@ -2,7 +2,7 @@
 
 namespace lyra::runtime {
 
-class RuntimeServices;
+class RuntimeEffects;
 class RuntimeProcess;
 class Scope;
 
@@ -16,7 +16,7 @@ class Scope;
 // and never leaks into another process's chain.
 class DpiScopeGuard {
  public:
-  DpiScopeGuard(RuntimeServices& services, Scope* decl_scope);
+  DpiScopeGuard(RuntimeEffects& effects, Scope* decl_scope);
   ~DpiScopeGuard();
   DpiScopeGuard(const DpiScopeGuard&) = delete;
   auto operator=(const DpiScopeGuard&) -> DpiScopeGuard& = delete;
