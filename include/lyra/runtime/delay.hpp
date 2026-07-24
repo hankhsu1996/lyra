@@ -66,6 +66,12 @@ class DelayAwaitable : public PendingWait {
     return PendingWaitOutcome::kReblocked;
   }
 
+  // A delay waits for time, not for a condition, so resuming from it is not a
+  // flush point (LRM 12.4.2.1): a report raised before the delay stays pending.
+  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
+    return false;
+  }
+
  private:
   // Fixes the absolute deadline and parks: `#0` on the inactive region of this
   // slot (its deadline is this time, so a resume finds it transpired), `#N` at

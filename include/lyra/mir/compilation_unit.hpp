@@ -14,7 +14,6 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
-#include "lyra/mir/deferred_check_site.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/foreign_export_wrapper.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -26,8 +25,6 @@
 #include "lyra/mir/type_interner.hpp"
 
 namespace lyra::mir {
-
-struct DeferredCheckSite {};
 
 // A unit-level static variable: a named mutable value the unit's namespace owns
 // with static storage -- one program-global cell, shared across the whole
@@ -138,7 +135,6 @@ struct CompilationUnit {
   // closure's type identity, in a separate registry from `structs`: a closure
   // is its own callable-value category, not a struct.
   base::Registry<ClosureDecl, ClosureId> closures;
-  std::vector<DeferredCheckSite> deferred_check_sites;
   // Names of other compilation units this unit reaches a namespace-level symbol
   // of by name -- a package function or task called (LRM 26.3), or a package
   // variable read or written (LRM 26.2). Such a reference carries no
@@ -301,13 +297,6 @@ struct CompilationUnit {
       }
     }
     external_class_units.push_back(std::move(unit_name));
-  }
-
-  // Backing-vector position is the id, matching TypeId / LocalId.
-  auto AllocateDeferredCheckSiteId() -> DeferredCheckSiteId {
-    const auto id = static_cast<std::uint32_t>(deferred_check_sites.size());
-    deferred_check_sites.push_back({});
-    return DeferredCheckSiteId{id};
   }
 };
 

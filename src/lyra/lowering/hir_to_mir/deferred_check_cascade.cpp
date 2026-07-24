@@ -21,7 +21,6 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/deferred_check_site.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -302,12 +301,8 @@ auto BuildDeferredCheckCascade(
       FormatRuntimeOriginString(span, unit_lowerer.SourceManager()));
   const mir::ExprId closure_expr_id = wrapper.exprs.Add(std::move(closure));
 
-  const mir::DeferredCheckSiteId site_id =
-      unit_lowerer.Unit().AllocateDeferredCheckSiteId();
   const mir::ExprId runtime_id =
       wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId site_id_expr = wrapper.exprs.Add(
-      mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(site_id.value)));
   const mir::ExprId submit_expr_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
@@ -315,7 +310,7 @@ auto BuildDeferredCheckCascade(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kSubmitObserved},
-                  .arguments = {runtime_id, site_id_expr, closure_expr_id}},
+                  .arguments = {runtime_id, closure_expr_id}},
           .type = void_type});
   wrapper.AppendStmt(mir::ExprStmt{.expr = submit_expr_id});
 

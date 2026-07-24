@@ -97,6 +97,13 @@ class JoinAwaitable : public PendingWait {
     return PendingWaitOutcome::kReblocked;
   }
 
+  // Rejoining branches is neither an event control nor a wait statement, so
+  // LRM 12.4.2.1 does not make it a flush point: reports the parent raised
+  // before the fork stay pending across the join.
+  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
+    return false;
+  }
+
  private:
   std::shared_ptr<ForkGroup> group_;
 };
@@ -190,6 +197,12 @@ class WaitForkAwaitable : public PendingWait {
     }
     process.ArmWaitFork(activation);
     return PendingWaitOutcome::kReblocked;
+  }
+
+  // `wait fork` is a wait statement (LRM 9.6.1), one of the two forms
+  // LRM 12.4.2.1 makes a violation report flush point.
+  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
+    return true;
   }
 
  private:

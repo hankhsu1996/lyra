@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
@@ -57,26 +58,17 @@ void Runtime::BindDesign(std::unique_ptr<Design> design) {
 }
 
 void Runtime::WalkResolve(Scope& scope) {
-  {
-    ScopeExecutionGuard guard{*this, scope};
-    scope.Resolve();
-  }
+  scope.Resolve();
   scope.ForEachChild([this](Scope& child) { WalkResolve(child); });
 }
 
 void Runtime::WalkInitialize(Scope& scope) {
-  {
-    ScopeExecutionGuard guard{*this, scope};
-    scope.Initialize();
-  }
+  scope.Initialize();
   scope.ForEachChild([this](Scope& child) { WalkInitialize(child); });
 }
 
 void Runtime::WalkActivate(Scope& scope) {
-  {
-    ScopeExecutionGuard guard{*this, scope};
-    scope.CreateProcesses();
-  }
+  scope.CreateProcesses();
   scope.ForEachChild([this](Scope& child) { WalkActivate(child); });
 }
 
@@ -159,14 +151,25 @@ void Runtime::RegisterProcessInRegistry(
 
 void Runtime::EnqueueNextDelta(CoroutineHandle handle) {
   // Every satisfied wait comes back through this verb, so it is also where the
-  // wait ends: the activation is runnable now, and nothing it was parked on --
-  // the sibling observables of an `@(a or b)`, the event it waited for -- may
-  // fire it a second time. The pending wait is consumed here too, so a suspend
-  // in the woken-but-not-yet-resumed window saves a runnable disposition (a
-  // re-queue on resume), not a blocked one (a re-establish).
-  handle->RevokeRegistrations();
-  handle->pending_wait = nullptr;
+  // wait ends: nothing it was parked on -- the sibling observables of an
+  // `@(a or b)`, the event it waited for -- may fire it a second time. Ending
+  // the wait here also means a suspend in the woken-but-not-yet-resumed window
+  // saves a runnable disposition (a re-queue on resume), not a blocked one (a
+  // re-establish).
+  ConsumeWait(handle);
   handle->Park(queues_.next_delta);
+}
+
+void Runtime::ConsumeWait(CoroutineHandle handle) {
+  handle->RevokeRegistrations();
+  const PendingWait* wait = handle->pending_wait;
+  if (wait != nullptr && wait->IsReportFlushPoint()) {
+    const RuntimeProcess* owner = handle->process;
+    std::erase_if(queues_.observed, [owner](const PendingReport& pending) {
+      return pending.owner == owner;
+    });
+  }
+  handle->pending_wait = nullptr;
 }
 
 void Runtime::ExecuteCurrentTimeSlot() {
@@ -210,11 +213,7 @@ void Runtime::DrainRunnableQueue(RegistrationList& queue) {
   queue.SpliceBackOnto(queues_.draining);
   while (Registration* queued = queues_.draining.PopFront()) {
     CoroutineHandle handle = queued->activation;
-    // The activation is running, not waiting: it holds no membership and no
-    // pending wait until its body parks again (the wait that led here is
-    // consumed).
-    handle->RevokeRegistrations();
-    handle->pending_wait = nullptr;
+    ConsumeWait(handle);
     RunProcess(handle);
   }
 }
@@ -234,20 +233,16 @@ void Runtime::ExecuteNbaRegion() {
 
 void Runtime::ExecuteObservedRegion() {
   phase_ = SchedulerPhase::kObserved;
-  // Drain per-scope pending queues in tree order so a warning fires
-  // consistent with the design hierarchy (LRM 4.4.3 does not fix the
-  // relative order between scopes, but tree-order matches the natural
-  // reading of the design and every other tree-walked runtime pass).
-  // Each scope's slot is cleared as it drains so a fresh submit landing
-  // during a later slot lands into an empty vector.
-  design_->ForEachScope([this](Scope& scope) {
-    const auto it = queues_.observed.find(&scope);
-    if (it == queues_.observed.end()) return;
-    for (auto& fn : it->second) {
-      if (fn) fn();
-    }
-    queues_.observed.erase(it);
-  });
+  // LRM 12.4.2.1: every pending report matures here, and a matured report can
+  // no longer be flushed -- so the set moves out before any of it fires, and a
+  // report raised while these fire belongs to the next region. Reports fire in
+  // the order their checks did; the LRM fixes no order between processes, and
+  // this one is the only one a reader can predict from the source.
+  const std::vector<PendingReport> matured = std::move(queues_.observed);
+  queues_.observed.clear();
+  for (const PendingReport& pending : matured) {
+    pending.emit();
+  }
 }
 
 void Runtime::ExecuteReactiveRegion() {

@@ -149,14 +149,14 @@ protocol on top of it.
 - [ ] D6c -- The disable protocol (LRM 35.9): a `disable` reaching a process suspended inside a
       foreign task returns control across the C boundary the runtime does not own, cooperatively via
       the disable-acknowledgment return rather than a stack unwind.
-- [ ] D6d -- Scope attribution inside an exported task body. A side effect the exported body raises
-      -- `%m` (LRM 21.2.1.1), a deferred `unique` / `priority` warning (LRM 16.14.6), a diagnostic
-      task (LRM 20.10) -- must attribute to the scope the exported subroutine lives in, not to the
-      calling process's own scope. Fork parenting is unaffected: LRM 9.5 makes the exported body run
-      as the caller's thread, so a branch spawned inside it correctly belongs to that lineage. Not
-      exercised by the current export test because its export and its caller share one scope; the
-      gap surfaces the first time an exported task in one module is called from a process running in
-      another.
+- [x] D6d -- Side-effect attribution inside an exported subroutine body. `%m` (LRM 21.2.1.1) renders
+      the exported subroutine's own instantiated position, and a severity task (LRM 20.10) tags its
+      report with the call site, so both already read where the exported body is rather than where
+      its caller is. A deferred `unique` / `priority` violation report is owned by the executing
+      process (LRM 12.4.2.1), and reaching an export creates no new process -- the exported body
+      runs as part of the process whose foreign call reached it -- so that process is the correct
+      owner and no DPI-specific attribution exists. Fork parenting follows for the same reason (LRM
+      9.5).
 
 ### Context and the svdpi surface
 
