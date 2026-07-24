@@ -10,3 +10,5 @@ expect:
   variables:
     a: 1
     b: 2
+    c_all: 1
+    d_one: 2

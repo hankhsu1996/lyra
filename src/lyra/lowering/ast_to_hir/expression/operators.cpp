@@ -1,19 +1,23 @@
 #include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <expected>
+#include <span>
 #include <utility>
 
+#include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -140,23 +144,70 @@ auto LowerBinaryExpr(
   };
 }
 
+template <ExprLowerer Lowerer, typename Condition>
+auto LowerCondPredicate(
+    Lowerer& lowerer, WalkFrame frame, std::span<const Condition> conditions,
+    diag::DiagCode pattern_code, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  bool any_four_state = false;
+  for (const auto& condition : conditions) {
+    if (condition.pattern != nullptr) {
+      return diag::Fail(
+          span, pattern_code,
+          "pattern matching in a condition is not yet supported");
+    }
+    any_four_state = any_four_state || condition.expr->type->isFourState();
+  }
+
+  auto first_or = lowerer.LowerExpr(*conditions.front().expr, frame);
+  if (!first_or) return std::unexpected(std::move(first_or.error()));
+  if (conditions.size() == 1) {
+    return *std::move(first_or);
+  }
+
+  // A synthesized `&&` carries slang's own logical-result type: a 1-bit `bit`,
+  // or `logic` when any operand is four-state so an X / Z operand still
+  // propagates before the condition reduces it to false.
+  const slang::ast::Compilation& compilation =
+      lowerer.Owner().SourceScope().getCompilation();
+  auto bit1_or = lowerer.Owner().InternType(
+      any_four_state ? compilation.getLogicType() : compilation.getBitType(),
+      span);
+  if (!bit1_or) return std::unexpected(std::move(bit1_or.error()));
+
+  const auto make_and = [&](hir::ExprId lhs, hir::ExprId rhs) -> hir::Expr {
+    return hir::Expr{
+        .type = *bit1_or,
+        .data =
+            hir::BinaryExpr{
+                .op = hir::BinaryOp::kLogicalAnd, .lhs = lhs, .rhs = rhs},
+        .span = span};
+  };
+
+  // Fold every condition but the last into the accumulator, interning each
+  // intermediate so the next `&&` can name it; the last condition forms the
+  // returned expression as data, which the caller interns.
+  hir::ExprId acc = frame.Exprs().Add(*std::move(first_or));
+  for (std::size_t i = 1; i + 1 < conditions.size(); ++i) {
+    auto rhs_or = lowerer.LowerExpr(*conditions[i].expr, frame);
+    if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+    const hir::ExprId rhs = frame.Exprs().Add(*std::move(rhs_or));
+    acc = frame.Exprs().Add(make_and(acc, rhs));
+  }
+  auto last_or = lowerer.LowerExpr(*conditions.back().expr, frame);
+  if (!last_or) return std::unexpected(std::move(last_or.error()));
+  const hir::ExprId last = frame.Exprs().Add(*std::move(last_or));
+  return make_and(acc, last);
+}
+
 template <ExprLowerer Lowerer>
 auto LowerConditionalExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ConditionalExpression& cond, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  if (cond.conditions.size() != 1) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "conditional operator with `&&&` multi-condition is not yet "
-        "supported");
-  }
-  if (cond.conditions[0].pattern != nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "conditional operator with `matches` pattern is not yet supported");
-  }
-  auto cond_or = lowerer.LowerExpr(*cond.conditions[0].expr, frame);
+  auto cond_or = LowerCondPredicate(
+      lowerer, frame, cond.conditions,
+      diag::DiagCode::kUnsupportedExpressionForm, span);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
   auto then_or = lowerer.LowerExpr(cond.left(), frame);
@@ -207,5 +258,17 @@ template auto LowerConditionalExpr(
     StructuralScopeLowerer&, WalkFrame,
     const slang::ast::ConditionalExpression&, diag::SourceSpan)
     -> diag::Result<hir::Expr>;
+template auto LowerCondPredicate(
+    ProcessLowerer&, WalkFrame,
+    std::span<const slang::ast::ConditionalStatement::Condition>,
+    diag::DiagCode, diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerCondPredicate(
+    ProcessLowerer&, WalkFrame,
+    std::span<const slang::ast::ConditionalExpression::Condition>,
+    diag::DiagCode, diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerCondPredicate(
+    StructuralScopeLowerer&, WalkFrame,
+    std::span<const slang::ast::ConditionalExpression::Condition>,
+    diag::DiagCode, diag::SourceSpan) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir
