@@ -1,0 +1,20 @@
+id: cpp.readmem
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    mem: ["32'h0a0b0c0d", "32'h11223344", "32'hDEADBEEF", "32'h00c0ffee"]
+    mem_at: ["16'h0000", "16'h0000", "16'h000a", "16'h000b"]
+    mem_cmt: ["8'h0a", "8'h0b", "8'h0c"]
+    mem_start: ["8'h00", "8'h0a", "8'h0b", "8'h0c"]
+    mem_desc: ["8'h00", "8'h0c", "8'h0b", "8'h0a"]
+    mem_keep: ["8'hFF", "8'h0a", "8'h0b", "8'hFF"]
+    mem_wide: ["40'h0011223344", "40'h5566778899"]
+    mem_x: ["16'h0ax0", "16'hzzzz", "16'h1x2z"]
+    memb: ["8'b10100101", "8'b00001111", "8'b11110000"]
+    memb_x: ["4'b10x1", "4'bz0z0"]

@@ -231,6 +231,13 @@ enum class BuiltinFn : std::uint16_t {
   // return an SV `int` (1 on prefix match, 0 otherwise).
   kTestPlusargs,
   kValuePlusargs,
+  // LRM 21.4 $readmemh / $readmemb. A free function on `lyra::runtime` taking
+  // the runtime handle, the output memory by reference, the file name, the
+  // memory's declared bounds, the digit radix (16 / 2), and the optional start
+  // / finish addresses. It opens and parses the named text file and fills the
+  // memory in place; the SV task's void result means the caller never awaits
+  // it.
+  kReadMem,
   // LRM 9.4.1 `#N`. The runtime free function the scheduler suspends on.
   // The call takes the runtime handle, the duration in the calling scope's
   // precision steps, and the calling scope's precision power; the runtime

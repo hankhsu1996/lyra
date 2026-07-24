@@ -157,12 +157,21 @@ struct PlusargsSystemSubroutineInfo {
   PlusargsKind kind;
 };
 
+// LRM 21.4 memory-load tasks. `base` is the digit radix -- 16 for $readmemh,
+// 2 for $readmemb -- which the lowering emits as a literal operand of the
+// runtime ReadMem call so the parser reads each file word at that radix. The
+// two tasks share one runtime entry and differ only in this value.
+struct ReadMemSystemSubroutineInfo {
+  unsigned base;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
     ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
     TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
-    PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo>;
+    PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
+    ReadMemSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -855,6 +864,24 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
         .semantic = PlusargsSystemSubroutineInfo{.kind = PlusargsKind::kValue},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{56},
+        .name = "$readmemh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 4},
+        .semantic = ReadMemSystemSubroutineInfo{.base = 16},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{57},
+        .name = "$readmemb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 4},
+        .semantic = ReadMemSystemSubroutineInfo{.base = 2},
     },
 };
 

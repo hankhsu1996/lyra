@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -259,6 +260,105 @@ auto PackedArray::FromBytes(
       std::span<const std::uint64_t>{}, bit_width, is_signed, is_four_state);
 }
 
+namespace {
+
+// One scanned bit's two-plane encoding: `unk` marks x or z, and for an unknown
+// bit `val` distinguishes x (1) from z (0), matching the 4-state convention
+// (all-x is val1/unk1, all-z is val0/unk1).
+struct DigitBit {
+  bool val;
+  bool unk;
+};
+
+auto HexDigitValue(char c) -> int {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return (c - 'a') + 10;
+  if (c >= 'A' && c <= 'F') return (c - 'A') + 10;
+  return -1;
+}
+
+}  // namespace
+
+auto PackedArray::FromDigits(
+    std::string_view digits, unsigned base, std::uint64_t bit_width,
+    bool is_signed, bool is_four_state) -> std::optional<PackedArray> {
+  unsigned bits_per_digit = 0;
+  switch (base) {
+    case 2:
+      bits_per_digit = 1;
+      break;
+    case 8:
+      bits_per_digit = 3;
+      break;
+    case 16:
+      bits_per_digit = 4;
+      break;
+    default:
+      throw InternalError("PackedArray::FromDigits: base must be 2, 8, or 16");
+  }
+
+  // Each digit expands to `bits_per_digit` bits, MSB-first, so the string is
+  // right-justified into the target below. An x / z / ? digit marks its whole
+  // span unknown (LRM 21.4: an unknown digit covers all the bits it names).
+  std::vector<DigitBit> bits;
+  bits.reserve(digits.size() * bits_per_digit);
+  bool any_digit = false;
+  for (const char c : digits) {
+    if (c == '_') continue;
+    bool unknown = false;
+    bool unknown_val = false;
+    unsigned digit_value = 0;
+    if (c == 'x' || c == 'X') {
+      unknown = true;
+      unknown_val = true;
+    } else if (c == 'z' || c == 'Z' || c == '?') {
+      unknown = true;
+    } else {
+      const int d = HexDigitValue(c);
+      if (d < 0 || static_cast<unsigned>(d) >= base) return std::nullopt;
+      digit_value = static_cast<unsigned>(d);
+    }
+    any_digit = true;
+    for (unsigned b = 0; b < bits_per_digit; ++b) {
+      const unsigned shift = bits_per_digit - 1U - b;
+      if (unknown) {
+        bits.push_back(DigitBit{.val = unknown_val, .unk = true});
+      } else {
+        bits.push_back(
+            DigitBit{.val = ((digit_value >> shift) & 1U) != 0U, .unk = false});
+      }
+    }
+  }
+  if (!any_digit) return std::nullopt;
+
+  const auto word_count = static_cast<std::size_t>((bit_width + 63U) / 64U);
+  std::vector<std::uint64_t> val_words(word_count, 0U);
+  std::vector<std::uint64_t> unk_words(word_count, 0U);
+  const auto bits_to_use =
+      std::min<std::size_t>(bits.size(), static_cast<std::size_t>(bit_width));
+  const std::size_t skip = bits.size() - bits_to_use;
+  for (std::size_t i = 0; i < bits_to_use; ++i) {
+    const std::size_t bit_pos = bits_to_use - 1U - i;
+    const DigitBit b = bits[skip + i];
+    const std::size_t word_ix = bit_pos / 64U;
+    const std::size_t bit_ix = bit_pos % 64U;
+    if (b.val) val_words[word_ix] |= std::uint64_t{1} << bit_ix;
+    if (b.unk) unk_words[word_ix] |= std::uint64_t{1} << bit_ix;
+  }
+
+  if (!is_four_state) {
+    for (std::size_t w = 0; w < word_count; ++w) {
+      val_words[w] &= ~unk_words[w];
+    }
+    return PackedArray::FromWords(
+        std::span<const std::uint64_t>{val_words},
+        std::span<const std::uint64_t>{}, bit_width, is_signed, false);
+  }
+  return PackedArray::FromWords(
+      std::span<const std::uint64_t>{val_words},
+      std::span<const std::uint64_t>{unk_words}, bit_width, is_signed, true);
+}
+
 auto PackedArray::BitWidth() const -> std::uint64_t {
   return type_.bit_width;
 }
@@ -296,7 +396,7 @@ auto PackedArray::HighImpedanceLike(const PackedArray& prototype)
   // unknown 1). Construction masks the bits above the declared width in the top
   // word.
   const std::uint64_t width = prototype.type_.bit_width;
-  const std::size_t words = static_cast<std::size_t>((width + 63) / 64);
+  const auto words = static_cast<std::size_t>((width + 63) / 64);
   const std::vector<std::uint64_t> value_words(words, 0);
   const std::vector<std::uint64_t> unknown_words(words, ~std::uint64_t{0});
   return FromWords(value_words, unknown_words, prototype.type_);
