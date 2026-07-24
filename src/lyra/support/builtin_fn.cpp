@@ -404,6 +404,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "dpi_buffer_data";
     case BuiltinFn::kRunExportedTaskToCompletion:
       return "run_exported_task_to_completion";
+    case BuiltinFn::kCurrentExportScope:
+      return "current_export_scope";
     case BuiltinFn::kFromSvLogic:
       return "from_sv_logic";
     case BuiltinFn::kFromInt:

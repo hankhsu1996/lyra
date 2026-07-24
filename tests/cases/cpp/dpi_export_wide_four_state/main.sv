@@ -8,7 +8,7 @@
 // vector `input` counting unknown bits, and a scalar `logic` input / output
 // round-tripping an X.
 module Top;
-  import "DPI-C" function int drive();
+  import "DPI-C" context function int drive();
 
   export "DPI-C" function make_zx;
   export "DPI-C" function count_x;

@@ -79,6 +79,14 @@ class MirDumper {
       }
       Dedent();
     }
+    if (!unit.foreign_export_wrappers.empty()) {
+      Line("ForeignExportWrappers:");
+      Indent();
+      for (std::size_t i = 0; i < unit.foreign_export_wrappers.size(); ++i) {
+        DumpForeignExportWrapper(unit.foreign_export_wrappers[i], i);
+      }
+      Dedent();
+    }
     if (unit.structs.size() > 0) {
       Line("Structs:");
       Indent();
@@ -900,15 +908,6 @@ class MirDumper {
       Dedent();
     }
 
-    if (!s.foreign_export_wrappers.empty()) {
-      Line("ForeignExportWrappers:");
-      Indent();
-      for (std::size_t i = 0; i < s.foreign_export_wrappers.size(); ++i) {
-        DumpForeignExportWrapper(s.foreign_export_wrappers[i], i);
-      }
-      Dedent();
-    }
-
     Line("Constructor:");
     Indent();
     if (s.constructor.base_init.has_value()) {
@@ -1072,11 +1071,9 @@ class MirDumper {
       const ForeignExportWrapper& w, std::size_t index) {
     Line(
         std::format(
-            R"([{}] c_name="{}" instance="{}" : Type[{}])", index,
-            w.foreign_name, w.instance_name, w.code.result_type.value));
+            R"([{}] c_name="{}" : Type[{}])", index, w.foreign_name,
+            w.code.result_type.value));
     Indent();
-    const auto& self = w.code.locals.Get(w.self_local);
-    Line(std::format(R"(Self "{}" : Type[{}])", self.name, self.type.value));
     for (std::size_t i = 0; i < w.code.params.size(); ++i) {
       const auto& param = w.code.locals.Get(w.code.params[i]);
       Line(

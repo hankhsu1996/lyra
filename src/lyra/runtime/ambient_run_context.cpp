@@ -1,6 +1,8 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
@@ -15,10 +17,7 @@ auto CurrentSlot() -> AmbientRunContext*& {
 }  // namespace
 
 AmbientRunContext::AmbientRunContext(Scope* root, RuntimeEffects& effects)
-    : root_(root),
-      effects_(&effects),
-      scope_registry_(root),
-      previous_(CurrentSlot()) {
+    : effects_(&effects), scope_registry_(root), previous_(CurrentSlot()) {
   CurrentSlot() = this;
 }
 
@@ -33,13 +32,16 @@ auto AmbientRunContext::Current() -> AmbientRunContext& {
   return *CurrentSlot();
 }
 
-auto ResolveExportInstance(const char* instance_name) -> Scope* {
-  Scope* instance =
-      AmbientRunContext::Current().Root()->GetChild(instance_name, {});
-  if (instance == nullptr) {
-    throw InternalError("DPI export: exported subroutine's instance not found");
+auto CurrentExportScope() -> Scope* {
+  RuntimeProcess* process =
+      AmbientRunContext::Current().Effects().TryCurrentProcess();
+  Scope* scope = process == nullptr ? nullptr : process->CurrentDpiScope();
+  if (scope == nullptr) {
+    throw InternalError(
+        "DPI export reached without a scope context: the calling import must "
+        "be a context import or set the scope with svSetScope (LRM 35.5.3)");
   }
-  return instance;
+  return scope;
 }
 
 }  // namespace lyra::runtime

@@ -609,21 +609,19 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
 }
 
 // A DPI-C export's foreign-linkage entry point (LRM 35.5): a free `extern "C"`
-// definition foreign code calls. It recovers the exported method's receiver
-// from the running design, then runs the marshaling body -- an ordinary
-// statement render, so every carrier conversion and the method call come from
-// MIR. Each parameter renders from its MIR type through ordinary type mapping;
-// a packed-vector carrier's C spelling (`svBitVecVal*` / `svLogicVecVal*`, made
-// `const` for an input by the pointer's mutability) is carried by that type, so
-// render makes no per-parameter ABI decision. Emitted after the class it
-// dispatches into so that class is complete.
+// definition foreign code calls. Its `extern "C"` prototype is the C linkage
+// name, the C ABI result type, and one parameter per marshaled carrier, each
+// rendered from its MIR type through ordinary type mapping (a packed-vector
+// carrier's C spelling `svBitVecVal*` / `svLogicVecVal*` is carried by that
+// type). The body -- context recovery, marshaling, the exported-subroutine
+// call, writeback -- is all MIR, rendered mechanically against a namespace
+// scope view; the entry point is receiver-less, so the class it may dispatch
+// into reaches its inner call through that call's own target, never through the
+// scope view. Emitted at file scope after the class or namespace it calls into
+// is complete.
 auto RenderForeignExportWrapper(
-    const mir::CompilationUnit& unit, const mir::Class& s,
-    const mir::ForeignExportWrapper& w) -> std::string {
-  const ScopeView body_view = ScopeView::ForRoot(unit, s, w.code);
-  const mir::LocalDecl& self_decl = w.code.locals.Get(w.self_local);
-  const std::string self_type = RenderTypeAsCpp(unit, self_decl.type);
-
+    const mir::CompilationUnit& unit, const mir::ForeignExportWrapper& w)
+    -> std::string {
   std::string sig = std::format(
       "extern \"C\" {} {}(", RenderTypeAsCpp(unit, w.code.result_type),
       w.foreign_name);
@@ -635,11 +633,7 @@ auto RenderForeignExportWrapper(
 
   std::string out;
   out += std::format("{} {{\n", sig);
-  out += std::format(
-      "  {0} {1} = static_cast<{0}>("
-      "lyra::runtime::ResolveExportInstance(\"{2}\"));\n",
-      self_type, self_decl.name, w.instance_name);
-  out += RenderBlockStatements(body_view, 1);
+  out += RenderBlockStatements(ScopeView::ForNamespace(unit, w.code), 1);
   out += "}\n";
   return out;
 }
@@ -647,14 +641,9 @@ auto RenderForeignExportWrapper(
 auto RenderForeignExportWrappers(const mir::CompilationUnit& unit)
     -> std::string {
   std::string out;
-  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    const mir::ClassId id{static_cast<std::uint32_t>(i)};
-    if (!unit.classes.IsDefined(id)) continue;
-    for (const mir::ForeignExportWrapper& w :
-         unit.GetClass(id).foreign_export_wrappers) {
-      out += "\n";
-      out += RenderForeignExportWrapper(unit, unit.GetClass(id), w);
-    }
+  for (const mir::ForeignExportWrapper& w : unit.foreign_export_wrappers) {
+    out += "\n";
+    out += RenderForeignExportWrapper(unit, w);
   }
   return out;
 }
@@ -853,10 +842,16 @@ auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
     out += "\n";
   }
   out += std::format("}}  // namespace {}\n", ToCppName(unit.name));
+
+  // The export wrappers are free `extern "C"` definitions at file scope,
+  // emitted after the namespace so each package function they call is declared.
+  out += RenderForeignExportWrappers(unit);
   return out;
 }
 
-auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
+auto RenderHostMain(
+    std::span<const mir::CompilationUnit> units,
+    const mir::CompilationUnit& root) -> std::string {
   const auto& root_class = root.GetClass(*root.root);
   const std::string root_cpp_name = ToCppName(root_class.name);
   const std::string segment_cpp =
@@ -882,6 +877,17 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   out += "\n";
   out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
+  // A unit that contributes a DPI-C export wrapper reached only from foreign C
+  // (LRM 35.7) -- a package with no SV referrer to pull it in through the
+  // include graph -- must be included so its `extern "C"` wrapper lands in this
+  // translation unit and links. A module's export wrapper lives on its class,
+  // whose header is already reached through the instantiation it takes part in,
+  // so only namespace-unit wrappers need this.
+  for (const auto& unit : units) {
+    if (!unit.foreign_export_wrappers.empty()) {
+      out += std::format("#include \"{}.hpp\"\n", ToCppName(unit.name));
+    }
+  }
   out += std::format("#include \"{}.hpp\"\n", root_cpp_name);
   out += "\n";
   out += "namespace {\n";
@@ -913,8 +919,10 @@ auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact {
                      : RenderNamespaceUnitHeaderFile(unit)};
 }
 
-auto EmitCppHostMain(const mir::CompilationUnit& root) -> CppArtifact {
-  return {.relpath = "main.cpp", .content = RenderHostMain(root)};
+auto EmitCppHostMain(
+    std::span<const mir::CompilationUnit> units,
+    const mir::CompilationUnit& root) -> CppArtifact {
+  return {.relpath = "main.cpp", .content = RenderHostMain(units, root)};
 }
 
 auto EmitCpp(
@@ -925,7 +933,7 @@ auto EmitCpp(
     set.files.push_back(EmitCppDeclarations(unit));
   }
   set.files.push_back(EmitCppDeclarations(root));
-  set.files.push_back(EmitCppHostMain(root));
+  set.files.push_back(EmitCppHostMain(units, root));
   return set;
 }
 

@@ -9,7 +9,7 @@
 // `inout`, a multi-word 2-state vector `output`, and a multi-word 2-state
 // vector `input` feeding a non-void return.
 module Top;
-  import "DPI-C" function int drive();
+  import "DPI-C" context function int drive();
 
   export "DPI-C" function get_pair;
   export "DPI-C" function accumulate;

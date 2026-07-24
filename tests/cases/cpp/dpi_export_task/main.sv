@@ -11,7 +11,7 @@
 // folds every result back into `total`, so a marshaling or drive defect in any
 // direction moves the asserted total.
 module Top;
-  import "DPI-C" task drive();
+  import "DPI-C" context task drive();
 
   export "DPI-C" task add_to_total;
   export "DPI-C" task get_pair;

@@ -5,7 +5,7 @@
 // while simulation time moves, then continues. Two delays in one exported body
 // exercise repeated suspend/resume across the same call.
 module Top;
-  import "DPI-C" task run_it();
+  import "DPI-C" context task run_it();
 
   export "DPI-C" task step;
 
