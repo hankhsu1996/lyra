@@ -3,7 +3,9 @@
 #include <array>
 #include <concepts>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string_view>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -139,6 +141,18 @@ class PackedArray {
   // applies the justification rule. An empty string yields zero.
   [[nodiscard]] static auto FromString(
       const String& text, const PackedArray& prototype) -> PackedArray;
+
+  // LRM 21.4 memory-load digit parse: builds a value of the given shape from a
+  // radix-`base` digit string (base 2 / 8 / 16). Each digit contributes
+  // log2(base) bits MSB-first, so the string is right-justified into the target
+  // -- a shorter string zero-fills the leading bits and a longer one drops
+  // them. An `x` / `X` digit contributes that many x bits and a `z` / `Z` / `?`
+  // digit that many z bits; a 2-state target collapses both to 0. `_`
+  // separators are ignored. Returns nullopt if `digits` (after removing `_`)
+  // is empty or holds a character that is not a base-`base` digit, x, z, or ?.
+  [[nodiscard]] static auto FromDigits(
+      std::string_view digits, unsigned base, std::uint64_t bit_width,
+      bool is_signed, bool is_four_state) -> std::optional<PackedArray>;
 
   // LRM 11.4.12: `{a, b, c, ...}`. First operand occupies the result's MSBs,
   // last occupies the LSBs. Total bit width is the sum of operand widths.

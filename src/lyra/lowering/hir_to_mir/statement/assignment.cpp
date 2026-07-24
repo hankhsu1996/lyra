@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/readmem.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -314,6 +315,13 @@ auto LowerSystemSubroutineCallStmtForm(
           [](const support::PlusargsSystemSubroutineInfo&)
               -> std::optional<diag::Result<mir::Stmt>> {
             return std::nullopt;
+          },
+          [&](const support::ReadMemSystemSubroutineInfo& readmem)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            // A void task (LRM 21.4): its only form is a statement, so it never
+            // feeds an assignment target.
+            return LowerReadMemSystemSubroutineCallStmt(
+                process, frame, std::move(label), call, readmem);
           },
       },
       desc.semantic);
