@@ -14,7 +14,6 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/foreign_export_wrapper.hpp"
 #include "lyra/mir/param.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
@@ -189,10 +188,6 @@ struct Class {
   // signature-less: `code.params` is empty (no `self`, no formals), and
   // `code.result_type` is void.
   CallableCode static_init;
-  // The foreign-linkage wrappers this class exposes -- one per `export "DPI-C"`
-  // of one of its callables (LRM 35.5). Each is an external entry a backend
-  // materializes beside the class; empty for a class that exports nothing.
-  std::vector<ForeignExportWrapper> foreign_export_wrappers;
 };
 
 }  // namespace lyra::mir

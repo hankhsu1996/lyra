@@ -1637,27 +1637,63 @@ auto ExportParamType(
 }
 
 auto SynthesizeForeignExportWrapper(
-    UnitLowerer& module, const WalkFrame& ctor_frame, mir::ClassId class_id,
-    mir::CallableId method_id, const hir::ForeignExportDecl& export_decl,
-    std::string instance_name) -> mir::ForeignExportWrapper {
+    UnitLowerer& module, const WalkFrame& context_frame,
+    mir::DirectTarget target, mir::TypeId result_type,
+    const hir::ForeignExportDecl& export_decl) -> mir::ForeignExportWrapper {
   mir::CompilationUnit& unit = module.Unit();
-  const mir::Class& mir_class = *ctor_frame.current_class;
-  const mir::TypeId self_ptr = mir_class.self_pointer_type;
   const mir::TypeId void_type = unit.builtins.void_type;
 
   mir::CallableCode code;
   CallableBindings bindings(unit, code);
   mir::Block& body = code.body;
 
-  // The receiver the exported method runs against is recovered by the backend's
+  // The exported subroutine's leading argument is recovered by the backend's
   // wrapper shell from the running design, not passed by the foreign caller
-  // (LRM 35.5.3), so it is a body local rather than a parameter.
-  const mir::LocalId self_local = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{.name = "self", .type = self_ptr});
+  // (LRM 35.5.3), so it is a body local rather than a parameter. Which one it
+  // is follows the call target: a class method (LRM 8.6) takes the calling
+  // instance as its receiver; every other target is a receiver-less free
+  // function (a package export, LRM 26.3) that takes the run's effects. The
+  // marshaling below reaches the runtime through this same binding, so its
+  // origin is the ordinary receiver / runtime origin the callable model already
+  // uses.
+  const bool receiver_less =
+      !std::holds_alternative<mir::CallableTarget>(target);
+  const mir::TypeId context_type =
+      receiver_less ? unit.builtins.effects
+                    : context_frame.current_class->self_pointer_type;
+  const mir::LocalId context_local = bindings.Declare(
+      receiver_less ? BindingOriginId::Runtime() : BindingOriginId::Receiver(),
+      mir::LocalDecl{
+          .name = receiver_less ? "runtime" : "self", .type = context_type});
 
   const WalkFrame body_frame =
-      ctor_frame.WithBlock(&body).WithBindings(&bindings);
+      context_frame.WithBlock(&body).WithBindings(&bindings);
+
+  // Recover the leading context argument as the wrapper's first statement, so
+  // the whole body -- recovery, marshaling, call, writeback -- is MIR a backend
+  // renders mechanically, with nothing recovered in a render shell. The scope
+  // recovery yields the borrowed scope pointer the runtime hands back, which a
+  // pointer cast narrows to the exported subroutine's instance type; the effects
+  // recovery yields the run effects directly.
+  const support::BuiltinFn recovery_builtin =
+      receiver_less ? support::BuiltinFn::kCurrentExportEffects
+                    : support::BuiltinFn::kCurrentExportScope;
+  const mir::ExprId recovery_call = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = recovery_builtin},
+                  .arguments = {}},
+          .type = receiver_less ? context_type : unit.builtins.scope_ptr});
+  const mir::ExprId context_init =
+      receiver_less
+          ? recovery_call
+          : body.exprs.Add(
+                mir::Expr{
+                    .data = mir::PointerCastExpr{.operand = recovery_call},
+                    .type = context_type});
+  body.AppendStmt(
+      mir::LocalDeclStmt{.target = context_local, .init = context_init});
 
   // One foreign parameter per SV formal, in declaration order (the C ABI
   // order). The parameter's MIR type is the ABI carrier realized concretely, so
@@ -1686,7 +1722,7 @@ auto SynthesizeForeignExportWrapper(
   // crosses by value; a scalar `inout` reads through its pointer.
   std::vector<mir::ExprId> call_args;
   call_args.push_back(
-      body.exprs.Add(mir::MakeLocalRefExpr(self_local, self_ptr)));
+      body.exprs.Add(mir::MakeLocalRefExpr(context_local, context_type)));
   for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
     const hir::DpiParamAbi& p = export_decl.params[i];
     if (p.direction == support::DpiDirection::kOutput) {
@@ -1726,9 +1762,7 @@ auto SynthesizeForeignExportWrapper(
   // completion payload the writeback loop below destructures is that payload
   // either way; for a task it is the coroutine's payload, reached past the
   // protocol.
-  const mir::TypeId method_result_type =
-      std::get<mir::InternalCallable>(mir_class.callables.Get(method_id).impl)
-          .code.result_type;
+  const mir::TypeId method_result_type = result_type;
   const bool is_task = unit.types.IsCoroutine(method_result_type);
   const mir::TypeId payload_type =
       is_task ? unit.types.CoroutinePayload(method_result_type)
@@ -1737,11 +1771,7 @@ auto SynthesizeForeignExportWrapper(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              mir::CallableTarget{
-                                  .owner = class_id, .slot = method_id}},
+                  .callee = mir::Direct{.target = std::move(target)},
                   .arguments = std::move(call_args)},
           .type = method_result_type});
 
@@ -1874,10 +1904,7 @@ auto SynthesizeForeignExportWrapper(
   code.params = std::move(params);
 
   return mir::ForeignExportWrapper{
-      .foreign_name = export_decl.foreign_name,
-      .instance_name = std::move(instance_name),
-      .code = std::move(code),
-      .self_local = self_local};
+      .foreign_name = export_decl.foreign_name, .code = std::move(code)};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

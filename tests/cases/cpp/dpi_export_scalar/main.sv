@@ -4,10 +4,11 @@
 // proves the whole import -> export chain ran: a no-op import would read 0, and
 // an import that returned its argument without calling back would read 21.
 //
-// `sv_double` reads no instance state, so its receiver is the sole top
-// instance -- the receiver-less / singleton export shape.
+// The import is `context`, so calling back an export is legal (LRM 35.5.3); the
+// export's receiver is the calling instance -- here the single top instance --
+// recovered from the call chain's current DPI scope.
 module Top;
-  import "DPI-C" function int round_trip(input int x);
+  import "DPI-C" context function int round_trip(input int x);
   export "DPI-C" function sv_double;
   function int sv_double(input int x);
     return x * 2;

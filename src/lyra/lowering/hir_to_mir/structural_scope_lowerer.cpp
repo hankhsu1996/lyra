@@ -1976,8 +1976,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // Each exported subroutine (LRM 35.5) already lowered as a callable above, in
   // structural-subroutine id order past the leading DPI imports, so its
   // callable id is the import count plus its subroutine index. The wrapper is
-  // synthesized to call that callable on the instance recovered from the
-  // running design, named here by the class's own instance identity.
+  // synthesized to call that method on the receiver the backend recovers from
+  // the current DPI scope (LRM 35.5.3) -- the instance the foreign call chain
+  // targets, which svSetScope may have redirected.
   for (const hir::ForeignExportDecl& export_decl : hir_scope.foreign_exports) {
     std::optional<mir::CallableId> method_id;
     for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
@@ -1994,9 +1995,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           "StructuralScopeLowerer::PopulateBodies: exported subroutine has no "
           "lowered method");
     }
-    mir_class.foreign_export_wrappers.push_back(SynthesizeForeignExportWrapper(
-        unit_lowerer, ctor_frame, class_id_, *method_id, export_decl,
-        mir_class.name));
+    const mir::TypeId method_result_type =
+        std::get<mir::InternalCallable>(
+            mir_class.callables.Get(*method_id).impl)
+            .code.result_type;
+    unit_lowerer.Unit().foreign_export_wrappers.push_back(
+        SynthesizeForeignExportWrapper(
+            unit_lowerer, ctor_frame,
+            mir::CallableTarget{.owner = class_id_, .slot = *method_id},
+            method_result_type, export_decl));
   }
 
   for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {

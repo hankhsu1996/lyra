@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -303,6 +304,36 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
             .impl = mir::InternalCallable{.code = *std::move(code_or)},
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
+  }
+
+  // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
+  // foreign-linkage wrapper recovers the run's services instead of a calling
+  // instance and calls the package's own free function by name. The callables
+  // above were added in structural-subroutine order and a package has no
+  // leading DPI imports, so an export's callable id is its subroutine index.
+  for (const hir::ForeignExportDecl& export_decl : scope.foreign_exports) {
+    std::optional<mir::CallableId> callable_id;
+    for (std::size_t i = 0; i < scope.structural_subroutines.size(); ++i) {
+      if (scope.structural_subroutines
+              .Get(hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)})
+              .name == export_decl.sv_name) {
+        callable_id = mir::CallableId{static_cast<std::uint32_t>(i)};
+        break;
+      }
+    }
+    if (!callable_id.has_value()) {
+      throw InternalError(
+          "UnitLowerer::RunPackage: exported subroutine has no lowered "
+          "callable");
+    }
+    const mir::TypeId result_type =
+        std::get<mir::InternalCallable>(unit_.callables.Get(*callable_id).impl)
+            .code.result_type;
+    unit_.foreign_export_wrappers.push_back(SynthesizeForeignExportWrapper(
+        *this, WalkFrame{},
+        mir::ExternalUnitCallableTarget{
+            .unit_name = unit_.name, .callable_name = export_decl.sv_name},
+        result_type, export_decl));
   }
 
   if (auto vars = PopulatePackageStaticVariables(*this, scope); !vars) {

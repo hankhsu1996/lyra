@@ -363,6 +363,14 @@ enum class BuiltinFn : std::uint16_t {
   // enters the body through this runtime driver instead of the `co_await` an SV
   // enabler uses. A free function over the task's coroutine value.
   kRunExportedTaskToCompletion,
+  // The ambient context a DPI-C export wrapper runs against, recovered from the
+  // running design rather than passed by the foreign caller (LRM 35.5.3): the
+  // current DPI scope for a module-scoped export's receiver, or the run's
+  // effects for a receiver-less package export (LRM 26.3). Both are no-argument
+  // free functions; the scope one yields the borrowed scope pointer a
+  // `PointerCastExpr` narrows to the exported subroutine's instance type.
+  kCurrentExportScope,
+  kCurrentExportEffects,
   kFromInt,
   kConvertFrom,
   kFromPackedArray,

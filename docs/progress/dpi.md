@@ -43,13 +43,17 @@ a delay across the boundary and resumes when time advances. The `svdpi` context 
 `context` import observes the fully qualified scope of its declaration, foreign code sets and gets
 the current scope and resolves a scope to and from its name, stores per-scope user data, and reads
 the scope's effective time unit and precision and the current time scaled to it -- the current scope
-riding the calling process so concurrent time-consuming imports never cross. What remains is
-instance-bound export dispatch beyond that single instance via `svSetScope` and receiver-less
-package / `$unit` scope (D4a), the generated ABI header and export linkage (D9), and the disable
-protocol across the boundary (D6c). On the execution backend scalar import (D10) is in: a foreign
-call lowers to an external-linkage symbol and the by-value carriers marshal. The rest of the import
-surface (D11) is blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a
-closure, which that backend does not yet lower at all (`architecture-reset.md`).
+riding the calling process so concurrent time-consuming imports never cross. Instance-bound export
+dispatch (D4a) now runs too: a module-scoped export dispatches to the instance the foreign call
+targets -- the current DPI scope the caller established, or one `svSetScope` redirected to -- rather
+than a single hardcoded instance, and a receiver-less package-scoped export calls its package
+function directly with no instance; reaching any export now requires a valid scope context, so its
+caller must be a context import or set the scope with `svSetScope`. What remains is `$unit`-scoped
+export (D4c, blocked on the `$unit` scope itself), the generated ABI header and export linkage (D9),
+and the disable protocol across the boundary (D6c). On the execution backend scalar import (D10) is
+in: a foreign call lowers to an external-linkage symbol and the by-value carriers marshal. The rest
+of the import surface (D11) is blocked, and not by anything DPI owns: by-pointer marshaling is
+expressed as a closure, which that backend does not yet lower at all (`architecture-reset.md`).
 
 ## Sub-Steps
 
@@ -93,18 +97,24 @@ from an external main.
 
 - [x] D4 -- The scalar export foreign-linkage wrapper and the import -> export call chain under Lyra
       as the driver (LRM 35.5): a scalar, input-only export executes end to end. The wrapper
-      marshals the C arguments, recovers the exported subroutine's instance from the running design
-      (the single top-level instance), calls the method, and marshals the result back. The
-      subroutine keeps its ordinary body; the wrapper's marshaling is stated in MIR so a backend
-      renders it mechanically, and only the receiver recovery and the external linkage are the
-      backend's shell.
-- [ ] D4a -- Instance-bound dispatch beyond the single top-level instance (LRM 35.5.3): the wrapper
-      resolves the specific instance the foreign call targets from the scope the foreign side set
-      (`svSetScope`), rather than the single-instance recovery above, and a receiver-less package /
-      `$unit`-scoped export needs no instance at all (riding on the package unit and package
-      callable in `packages.md`, PK1-PK2). This is the `mhpmcounter_num` / `mhpmcounter_get` shape
+      marshals the C arguments, recovers the exported subroutine's receiver from the running design,
+      calls the method, and marshals the result back. The subroutine keeps its ordinary body; the
+      wrapper's marshaling is stated in MIR so a backend renders it mechanically, and only the
+      receiver recovery and the external linkage are the backend's shell.
+- [x] D4a -- Instance-bound dispatch beyond the single top-level instance (LRM 35.5.3): a
+      module-scoped export dispatches to the specific instance the foreign call targets, resolved
+      from the current DPI scope the call chain established -- the calling context import's scope,
+      or one `svSetScope` redirected to -- rather than the single-instance recovery above; a
+      receiver-less package-scoped export needs no instance at all and calls its package function
+      directly (riding on the package unit and callable in `packages.md`, PK1-PK2). Reaching any
+      export now requires a valid scope context, so its caller must be a context import or set the
+      scope with `svSetScope` (LRM 35.5.3). This is the `mhpmcounter_num` / `mhpmcounter_get` shape
       in the Ibex bring-up; the pure-SV Ibex run never calls them, so this closes the construct, not
       the Ibex external-driver usage.
+- [ ] D4c -- `$unit`-scoped receiver-less export (LRM 35.7): the same package-export wrapper shape,
+      but the exported subroutine lives in the anonymous compilation-unit scope. Blocked on the
+      `$unit` scope itself being modeled as a unit (`packages.md` PK5); once it is, its export hangs
+      off it exactly as D4a's package export does.
 - [x] D4b -- 4-state and by-pointer packed export marshaling. An `output` / `inout` scalar crosses
       by pointer to its by-value carrier; a packed vector of any direction crosses by pointer as its
       canonical `svBitVecVal*` / `svLogicVecVal*` buffer, its planes reshaped without a per-bit

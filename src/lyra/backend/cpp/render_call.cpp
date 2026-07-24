@@ -294,6 +294,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Data";
     case support::BuiltinFn::kRunExportedTaskToCompletion:
       return "RunExportedTaskToCompletion";
+    case support::BuiltinFn::kCurrentExportScope:
+      return "CurrentExportScope";
+    case support::BuiltinFn::kCurrentExportEffects:
+      return "CurrentExportEffects";
     case support::BuiltinFn::kFromSvLogic:
       return "FromSvLogic";
     case support::BuiltinFn::kFromInt:
@@ -414,6 +418,8 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
     case support::BuiltinFn::kRunExportedTaskToCompletion:
+    case support::BuiltinFn::kCurrentExportScope:
+    case support::BuiltinFn::kCurrentExportEffects:
       return "lyra::runtime";
     default:
       return "";
