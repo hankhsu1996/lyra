@@ -163,14 +163,16 @@ auto RequiresFunctionalMutation(const mir::Type& type) -> bool {
 }
 
 // Whether a `kElementRef` on a value of this type is a functional element
-// write: realized as a whole-value read / update / write-back because the value
-// is reached by an opaque handle and cannot be mutated in place. A
-// dynamic-array element (LRM 7.4.6) and a string character (LRM 6.16.2)
+// write: realized as a whole-value read / update / write-back because the
+// execution backend reaches the value through an immutable handle and cannot
+// write an element in place. A dynamic-array element (LRM 7.4.6), a string
+// character (LRM 6.16.2), and a packed bit-select / element (LRM 11.5.1)
 // qualify. This is the peeling condition for an element selector, distinct from
 // the mutating-method question `RequiresFunctionalMutation` answers.
 auto HasFunctionalElementAccess(const mir::Type& type) -> bool {
   const mir::TypeKind kind = type.Kind();
-  return kind == mir::TypeKind::kDynamicArray || kind == mir::TypeKind::kString;
+  return kind == mir::TypeKind::kDynamicArray ||
+         kind == mir::TypeKind::kString || kind == mir::TypeKind::kPackedArray;
 }
 
 // Marks every local the canonical lowering needs an address for: one that is

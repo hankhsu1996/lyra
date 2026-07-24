@@ -597,6 +597,17 @@ auto lyra_rt_packed_reduction_xnor(const void* value) -> void* {
   return Own(Read<PackedArray>(value).ReductionXnor());
 }
 
+auto lyra_rt_packed_element(const void* value, const void* index) -> void* {
+  return Own(Read<PackedArray>(value).Element(Read<PackedArray>(index)));
+}
+
+auto lyra_rt_packed_with_element(
+    const void* value, const void* index, const void* replacement) -> void* {
+  return Own(
+      Read<PackedArray>(value).WithElement(
+          Read<PackedArray>(index), Read<PackedArray>(replacement)));
+}
+
 // Materializes a borrowed packed view (a container element or slice read) into
 // an owning value. On the execution backend a container access already copies
 // the element out, so this is an idempotent copy that keeps the ownership shape

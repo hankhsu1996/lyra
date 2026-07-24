@@ -443,6 +443,33 @@ auto WriteStringCharSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+auto WritePackedBitWriteSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  logic [7:0] p;\n"
+      << "  int idx;\n"
+      << "  function automatic logic [7:0] flip(logic [7:0] a, int i);\n"
+      << "    logic [7:0] v;\n"
+      << "    v = a;\n"
+      << "    v[i] = 1'b1;\n"
+      << "    return v;\n"
+      << "  endfunction\n"
+      << "  initial begin\n"
+      << "    p = 8'h00;\n"
+      << "    idx = 3;\n"
+      << "    p[idx] = 1'b1;\n"
+      << "    p[0] = 1'b1;\n"
+      << "    $display(\"p=%h\", p);\n"
+      << "    p[idx] += 1'b1;\n"
+      << "    $display(\"cp=%h\", p);\n"
+      << "    p[9] = 1'b1;\n"
+      << "    $display(\"oob=%h\", p);\n"
+      << "    p = flip(8'h00, 5);\n"
+      << "    $display(\"fn=%h\", p);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -949,6 +976,39 @@ TEST(LyraRun, JitAndCppAgreeOnStringCharWrite) {
       "oob s=Hello\n"
       "nul s=Hello\n"
       "last s=HellO\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnPackedBitWrite) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WritePackedBitWriteSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "p=09\n"
+      "cp=01\n"
+      "oob=01\n"
+      "fn=20\n")
       << "stdout: " << jit.stdout_text;
 }
 

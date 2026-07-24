@@ -1717,6 +1717,13 @@ auto PackedArray::Element(const PackedArray& idx) const -> PackedArray {
   return ExtractBits(sel.bit_offset, sel.dims);
 }
 
+auto PackedArray::WithElement(
+    const PackedArray& idx, const PackedArray& value) const -> PackedArray {
+  PackedArray result{*this};
+  result.ElementRef(idx) = value;
+  return result;
+}
+
 auto PackedArray::SliceRef(
     const PackedArray& a, const PackedArray& b, const PackedArray& form)
     -> PackedArrayRef {

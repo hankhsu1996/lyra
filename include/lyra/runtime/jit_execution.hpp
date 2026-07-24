@@ -170,6 +170,13 @@ auto lyra_rt_packed_reduction_nand(const void* value) -> void*;
 auto lyra_rt_packed_reduction_nor(const void* value) -> void*;
 auto lyra_rt_packed_reduction_xnor(const void* value) -> void*;
 auto lyra_rt_packed_to_owned(const void* value) -> void*;
+// Positional access (LRM 11.5.1). `element` copies the bit-select / element
+// out; `with_element` returns a copy with that element replaced -- the
+// functional write the execution backend uses because it cannot mutate a packed
+// value in place.
+auto lyra_rt_packed_element(const void* value, const void* index) -> void*;
+auto lyra_rt_packed_with_element(
+    const void* value, const void* index, const void* replacement) -> void*;
 
 auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
 // The C string a `string` crosses the DPI-C boundary as (LRM 35.5.6). It points
@@ -178,6 +185,12 @@ auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
 auto lyra_rt_string_string_cstr(const void* value) -> const char*;
 auto lyra_rt_string_len(const void* value) -> void*;
 auto lyra_rt_string_getc(const void* value, const void* index) -> void*;
+// Positional access (LRM 6.16.2). `element` reads the character; `with_element`
+// returns a copy with one character replaced -- the functional write the
+// execution backend uses because it cannot mutate a string in place.
+auto lyra_rt_string_element(const void* value, const void* index) -> void*;
+auto lyra_rt_string_with_element(
+    const void* value, const void* index, const void* replacement) -> void*;
 auto lyra_rt_string_toupper(const void* value) -> void*;
 auto lyra_rt_string_tolower(const void* value) -> void*;
 auto lyra_rt_string_compare(const void* lhs, const void* rhs) -> void*;

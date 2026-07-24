@@ -451,6 +451,12 @@ class PackedArray {
   // `concepts.hpp` for the `Indexable` / `Sliceable` protocol shape.
   [[nodiscard]] auto ElementRef(const PackedArray& idx) -> PackedArrayRef;
   [[nodiscard]] auto Element(const PackedArray& idx) const -> PackedArray;
+  // The functional counterpart of the in-place element write, for a value
+  // reached by an opaque handle that cannot be mutated in place: a new value
+  // equal to the receiver with the element at `idx` replaced, under the same
+  // LRM 11.5.1 out-of-range / X-Z index no-op as the in-place write.
+  [[nodiscard]] auto WithElement(
+      const PackedArray& idx, const PackedArray& value) const -> PackedArray;
   [[nodiscard]] auto SliceRef(
       const PackedArray& a, const PackedArray& b, const PackedArray& form)
       -> PackedArrayRef;
