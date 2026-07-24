@@ -56,11 +56,6 @@ class AmbientRunContext {
 // without a context import or svSetScope (LRM 35.5.3 makes that an error).
 auto CurrentExportScope() -> Scope*;
 
-// The run's effects, for a receiver-less package-scoped export (LRM 26.3): with
-// no instance to recover, the package free function still takes the engine
-// effects as its leading argument, supplied here from the active run context.
-auto CurrentExportEffects() -> RuntimeEffects&;
-
 // Runs an exported SV task's body to completion and hands back its completion
 // payload. A foreign C caller of an exported task (LRM 35.8) is not a
 // coroutine, so it cannot `co_await` the body the way an SV enabler does; its

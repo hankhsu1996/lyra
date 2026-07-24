@@ -406,8 +406,6 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "run_exported_task_to_completion";
     case BuiltinFn::kCurrentExportScope:
       return "current_export_scope";
-    case BuiltinFn::kCurrentExportEffects:
-      return "current_export_effects";
     case BuiltinFn::kFromSvLogic:
       return "from_sv_logic";
     case BuiltinFn::kFromInt:

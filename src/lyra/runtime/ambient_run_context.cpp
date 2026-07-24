@@ -44,8 +44,4 @@ auto CurrentExportScope() -> Scope* {
   return scope;
 }
 
-auto CurrentExportEffects() -> RuntimeEffects& {
-  return AmbientRunContext::Current().Effects();
-}
-
 }  // namespace lyra::runtime
