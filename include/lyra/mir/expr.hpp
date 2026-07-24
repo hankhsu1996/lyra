@@ -611,16 +611,18 @@ struct Expr {
 // sliced). LHS-chain walkers use this to reach the root primary.
 [[nodiscard]] auto IsContainerAccessCallee(const Callee& callee) -> bool;
 
-// `self.Services()` -- reaches the engine facade from the scope handle.
-// Every runtime-effect call threads the result as its engine handle.
-[[nodiscard]] inline auto MakeServicesCallExpr(ExprId self, TypeId services)
-    -> Expr {
+// `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
+// capability view through a thread-local pointer the Runtime publishes for
+// its lifetime. Zero-argument free function so every body kind -- module
+// process, class method, package function, class static method -- takes one
+// uniform runtime-access path with no receiver.
+[[nodiscard]] inline auto MakeCurrentRuntimeCallExpr(TypeId effects) -> Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kServices},
-              .arguments = {self}},
-      .type = services};
+              .callee = Direct{.target = support::BuiltinFn::kCurrentRuntime},
+              .arguments = {}},
+      .type = effects};
 }
 
 // `cell.Get()` -- unwraps an observable cell to its inner value.
@@ -636,8 +638,8 @@ struct Expr {
 
 // `cell.Initialize(prototype)` -- installs the cell's declared representation
 // (and default contents) once at construction. `prototype` is a value of the
-// cell's declared type; only its representation is used. No services: it runs
-// before any process, so there are no subscribers to fire.
+// cell's declared type; only its representation is used. No runtime handle: it
+// runs before any process, so there are no subscribers to fire.
 [[nodiscard]] inline auto MakeObservableInitializeCallExpr(
     ExprId cell, ExprId prototype, TypeId void_type) -> Expr {
   return Expr{
@@ -648,28 +650,28 @@ struct Expr {
       .type = void_type};
 }
 
-// `cell.Set(services, value)` -- whole-cell write that fires subscribers
+// `cell.Set(runtime, value)` -- whole-cell write that fires subscribers
 // on change.
 [[nodiscard]] inline auto MakeObservableSetCallExpr(
-    ExprId cell, ExprId services, ExprId value, TypeId void_type) -> Expr {
+    ExprId cell, ExprId runtime_id, ExprId value, TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee = Direct{.target = support::BuiltinFn::kSet},
-              .arguments = {cell, services, value}},
+              .arguments = {cell, runtime_id, value}},
       .type = void_type};
 }
 
-// `cell.Mutate(services)` -- opens a partial-write proxy. The MIR result
+// `cell.Mutate(runtime)` -- opens a partial-write proxy. The MIR result
 // type is the inner value T; consumers wrap the call in a `DerefExpr` so
 // downstream selectors / operators run on T directly.
 [[nodiscard]] inline auto MakeObservableMutateCallExpr(
-    ExprId cell, ExprId services, TypeId value_type) -> Expr {
+    ExprId cell, ExprId runtime_id, TypeId value_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee = Direct{.target = support::BuiltinFn::kMutate},
-              .arguments = {cell, services}},
+              .arguments = {cell, runtime_id}},
       .type = value_type};
 }
 
@@ -685,15 +687,15 @@ struct Expr {
       .type = driver_type};
 }
 
-// `driver.Update(services, value)` -- updates one driver's contribution; the
+// `driver.Update(runtime, value)` -- updates one driver's contribution; the
 // net re-resolves and publishes on a real change.
 [[nodiscard]] inline auto MakeNetDriverUpdateCallExpr(
-    ExprId driver, ExprId services, ExprId value, TypeId void_type) -> Expr {
+    ExprId driver, ExprId runtime_id, ExprId value, TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee = Direct{.target = support::BuiltinFn::kUpdateDriver},
-              .arguments = {driver, services, value}},
+              .arguments = {driver, runtime_id, value}},
       .type = void_type};
 }
 

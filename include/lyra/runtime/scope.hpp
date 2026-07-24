@@ -9,31 +9,27 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/member_storage.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
-class RuntimeServices;
-
-// A node in the one canonical object tree. Every constructed SystemVerilog
-// scope -- a module instance, a generate block, the implicit `$root` -- is a
-// Scope. It carries the scope's structural identity (parent plus
-// HierarchySegment), the services handle its bodies reach through, its own
-// processes, and the observed-region pending closures. The scheduler walks
-// this same tree; there is no parallel topology.
+// A node in the one canonical object tree. Every constructed
+// SystemVerilog scope -- a module instance, a generate block, the
+// implicit `$root` -- is a Scope. It carries the scope's structural
+// identity (parent plus HierarchySegment), its child scopes, and its
+// registered signals. The runtime walks this same tree; there is no
+// parallel topology. Every dynamic scheduler concern -- queues, process
+// registry, deferred-effect attribution, ambient identity -- lives on
+// the Runtime. Scope contributes only structural identity.
 class Scope {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
-  Scope(
-      Scope* parent, HierarchySegment segment, RuntimeServices& services,
-      const ScopeProgram* program);
+  Scope(Scope* parent, HierarchySegment segment, const ScopeProgram* program);
   virtual ~Scope() = default;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
@@ -140,73 +136,36 @@ class Scope {
     return program_->metadata.time_unit_power;
   }
 
-  // The post-construction elaboration phases, each a top-down walk over the
-  // whole subtree. Services and structure are already wired in the
-  // constructor; these install behavior that needs the whole tree to exist.
-  // The engine drives them in order across the whole design -- every scope
-  // resolves, then every scope initializes, then every scope activates -- and
-  // the boundary between phases is a global barrier: no scope's Initialize
-  // observes any Resolve mid-flight, and no Activate runs before every scope
-  // has initialized.
+  // Per-scope lifecycle entries. Each runs this scope's generated body
+  // for one elaboration phase and does no tree recursion of its own --
+  // the Runtime drives the top-down walk and installs the ambient
+  // current-scope for the extent of each per-scope call, so a body's
+  // runtime effect (e.g. a deferred check) attributes to the scope
+  // currently being walked. The boundary between phases is a
+  // design-wide barrier maintained by the Runtime: no scope's initialize
+  // observes any resolve mid-flight, and no activate runs before every
+  // scope has initialized.
   //
-  // Resolve executes every cross-instance route the scope owns, filling each
-  // borrowed-pointer slot with the target's sealed endpoint (an observable
-  // cell for a variable / net reference, an alias for a `ref` port), and
-  // attaches cross-instance drivers. The frontend has already proved every
-  // route has a determinate target, so Resolve is total: an unfilled route or
-  // type mismatch is a compiler-invariant violation and surfaces at Resolve,
-  // not deferred to a hot-path read. Initialize runs variable initializers
-  // and seeds driver contributions; every reference across the design is
-  // sealed before it starts, so an initializer observes only connected and
-  // bound values. Activate creates this scope's processes.
+  // `Resolve` executes every cross-instance route the scope
+  // owns, filling each borrowed-pointer slot with the target's sealed
+  // endpoint (an observable cell for a variable / net reference, an
+  // alias for a `ref` port), and attaches cross-instance drivers. The
+  // frontend has already proved every route has a determinate target,
+  // so resolve is total: an unfilled route or type mismatch is a
+  // compiler-invariant violation and surfaces here, not deferred to a
+  // hot-path read.
+  //
+  // `Initialize` runs variable initializers and seeds driver
+  // contributions; every reference across the design is sealed before
+  // it starts, so an initializer observes only connected and bound
+  // values.
+  //
+  // `CreateProcesses` creates this scope's processes.
   void Resolve();
   void Initialize();
-  void Activate();
-
-  // Last-write-wins per site within a time slot: re-submit at the same site
-  // overwrites the prior closure, which suppresses settle-time glitches. The
-  // site id is the compile-time-fixed slot index passed as an SV integer; the
-  // runtime projects to `std::size_t` internally at the API boundary.
-  void SubmitObserved(
-      const lyra::value::PackedArray& site_id, std::function<void()> fn);
-  void DrainObserved();
+  void CreateProcesses();
 
   void ForEachChild(const ChildVisitor& fn);
-
-  template <typename Fn>
-  void ForEachProcess(Fn&& fn) {
-    auto&& f = std::forward<Fn>(fn);
-    for (auto& process : processes_) {
-      f(*process);
-    }
-  }
-
-  // The generated-runtime ABI surface: a non-C++ backend recovers this scope's
-  // services and process-registration surface from an opaque self handle here.
-  // The C++ backend reaches the protected forms directly from its class-member
-  // bodies and does not use these.
-  [[nodiscard]] auto AbiServices() -> RuntimeServices& {
-    return Services();
-  }
-  void AbiRegisterInitial(Coroutine<void> coroutine) {
-    RegisterInitial(std::move(coroutine));
-  }
-  void AbiRegisterFinal(Coroutine<void> coroutine) {
-    RegisterFinal(std::move(coroutine));
-  }
-
- protected:
-  // Reached by the emitted `CreateProcesses` body to bind a process coroutine
-  // to this scope's startup (`RegisterInitial`, LRM 9.2) or shutdown
-  // (`RegisterFinal`, LRM 9.2.3) lifecycle. Distinct entries, not one kind-
-  // tagged call, mirroring the two MIR registration callees.
-  void RegisterInitial(Coroutine<void> coroutine);
-  void RegisterFinal(Coroutine<void> coroutine);
-
-  // Reached by emitted process and subroutine bodies for every runtime
-  // service call (print, delay, NBA submit, file I/O, the deferred-check
-  // observed submit).
-  [[nodiscard]] auto Services() -> RuntimeServices&;
 
  private:
   struct SignalEntry {
@@ -216,8 +175,6 @@ class Scope {
 
   Scope* parent_ = nullptr;
   HierarchySegment segment_;
-  // Borrowed; set in the constructor.
-  RuntimeServices* services_ = nullptr;
   // Borrowed. The scope's generated behavior, set at construction.
   const ScopeProgram* program_ = nullptr;
   // Physical containment: every runtime child scope this object owns
@@ -229,9 +186,6 @@ class Scope {
   // Filled during construction; scanned only at construction-time
   // resolution, never on the simulation path.
   std::vector<SignalEntry> signals_;
-  std::vector<std::shared_ptr<RuntimeProcess>> processes_;
-  // Empty std::function == clean slot; no parallel dirty bitmap needed.
-  std::vector<std::function<void()>> observed_pending_;
 };
 
 // A module / interface / program instance: an owned child built from another
@@ -240,9 +194,8 @@ class Scope {
 class Instance : public Scope {
  public:
   Instance(
-      Scope* parent, HierarchySegment segment, RuntimeServices& services,
-      const UnitDefinition* definition)
-      : Scope(parent, std::move(segment), services, &definition->root),
+      Scope* parent, HierarchySegment segment, const UnitDefinition* definition)
+      : Scope(parent, std::move(segment), &definition->root),
         definition_(definition) {
   }
 
@@ -263,9 +216,8 @@ class Instance : public Scope {
 class GeneratedInstance : public Instance {
  public:
   GeneratedInstance(
-      Scope* parent, HierarchySegment segment, RuntimeServices& services,
-      const UnitDefinition* definition)
-      : Instance(parent, std::move(segment), services, definition) {
+      Scope* parent, HierarchySegment segment, const UnitDefinition* definition)
+      : Instance(parent, std::move(segment), definition) {
     members_.reserve(definition->members.size);
     for (const MemberStorageDescriptor& descriptor :
          definition->members.Descriptors()) {

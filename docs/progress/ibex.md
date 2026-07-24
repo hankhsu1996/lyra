@@ -98,21 +98,26 @@ full support.
       sub-instance's `localparam` or enum value through a dotted path (the `MHPMCounterNum` accessor
       in the DPI block). A hierarchically reached compile-time constant resolves to its value
       independent of the path, matching a same-scope reference to the same constant.
-- [ ] **DPI-C export** -- `export "DPI-C"` exposes an SV subroutine to C (LRM 35.5). Lyra emits no C
-      ABI for the export direction, so it is rejected with a diagnostic. This is the current
-      full-top frontier, and it recurs across the design: `ibex_simple_system` exports
-      `mhpmcounter_num` / `mhpmcounter_get`, and `ibex_if_stage` exports the icache scramble-key
-      helper `simutil_get_scramble_key`, both to the Verilator C++ testbench -- unneeded by the
-      pure-SV `ibex_simple_system_tb` run, but the unmodified source still declares them.
-      `import "DPI-C"` lowers; the accepted Ibex sources exercise no import (the DPI imports in the
-      tree are DV-only crypto models outside the run's file list). Real support is tracked in
-      `dpi.md`; the module-scoped export here is its D4a.
+- [x] **DPI-C export** -- `export "DPI-C"` exposes an SV subroutine to C (LRM 35.5).
+      `ibex_simple_system` exports `mhpmcounter_num` / `mhpmcounter_get`, and `ibex_if_stage`
+      exports the icache scramble-key helper `simutil_get_scramble_key`, both to the Verilator C++
+      testbench -- unneeded by the pure-SV `ibex_simple_system_tb` run, but the unmodified source
+      still declares them. Now lowers through the C++ backend under the single top-level instance
+      case (`dpi.md` D4, D4b, D6, D6b, all landed). The multi-instance dispatch (D4a) is not needed
+      for either `ibex_top` or `ibex_simple_system_tb`, which each carry a single top-level
+      exporting instance.
+- [ ] **`$readmemh`** -- memory backdoor load from a hex file (LRM 21.4.1). The `ibex_simple_system`
+      SRAM model calls `$readmemh(MemInitFile, mem)` in an `initial` block through the vendor helper
+      `prim_util_memload.svh` (included from `prim_ram_1p` / `prim_ram_2p`), which is how the
+      testbench boots a program image into RAM under the `SRAMInitFile` parameter. Not yet
+      supported. Current top-level frontier for `ibex_simple_system_tb`.
 - [ ] **Hierarchical reference reaching a module instance from a nested generate scope** -- a dotted
       reference, written inside a conditional or loop generate block, that descends into a module
       instance owned by an enclosing scope (the RVFI trap logic in `ibex_core`,
       `id_stage_i.controller_i.exc_req_d` inside `gen_rvfi_no_wb_stage`; `ibex_ex_block` reaches its
-      generate-instantiated multiplier and divider the same way). Reached once DPI export above is
-      handled or elided.
+      generate-instantiated multiplier and divider the same way). Status un-reverified since it was
+      last observed; hidden behind `$readmemh` on the full top and out of the path for `ibex_top`
+      standalone. Recheck once `$readmemh` lowers.
 - [x] **`$value$plusargs` / `$test$plusargs`** -- runtime plusarg query (LRM 21.6). The full surface
       is live: `$test$plusargs` probes for a prefix, `$value$plusargs` parses the matched plusarg's
       remainder under `%d` / `%o` / `%h` / `%x` / `%b` / `%s`, and the host command line populates
@@ -141,6 +146,18 @@ Independent of whether the feature is supported, each of these should fail clean
 - [x] `$signed` / `$unsigned` aborts as an "unresolved system subroutine" rather than a clean
       unsupported diagnostic (subsumed once the feature above lands).
 - [x] A non-literal where an integer constant is expected aborts instead of diagnosing.
+- [x] A package function calling a peer package function (LRM 26.3) tripped the writeback pre-check
+      on a body with no enclosing structural scope. Fixed: the check now inspects the callee kind
+      first, so a body without an enclosing structural scope only reaches the lookup when a callee
+      that actually needs it appears. The `prim_cipher_pkg` intra-package call chain that first
+      surfaced this crash now lowers.
+- [x] A `unique` / `unique0` / `priority` case inside a package function (LRM 12.5.4 in a LRM 26.3
+      body) tripped the deferred-check machinery, which reaches the runtime through the enclosing
+      body's receiver. A package body carries no receiver. The lowering now recognises this and runs
+      the case as an ordinary cascade, dropping only the runtime warning (which the LRM allows the
+      tool to skip). The `prim_secded_pkg::is_width_valid` nested `unique case` that first surfaced
+      this crash now lowers. Reinstating the runtime warning for package callables is a separate
+      follow-up on services-threading, not a Ibex-bring-up gap.
 
 ## Cross-references
 

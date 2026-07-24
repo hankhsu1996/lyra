@@ -131,7 +131,7 @@ struct ExternalClassType {
   std::string qualified_name;
 };
 
-struct ServicesType {};
+struct RuntimeEffectsType {};
 struct FilesType {};
 struct DiagnosticType {};
 
@@ -191,7 +191,7 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
     MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ExternalClassType, ServicesType, FilesType, DiagnosticType,
+    ExternalClassType, RuntimeEffectsType, FilesType, DiagnosticType,
     RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
     VectorType, TupleType, UnionType, ResolvedType, DriverType, ObservableType>;
 

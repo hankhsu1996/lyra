@@ -33,8 +33,8 @@
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/lowering/hir_to_mir/writeback_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -51,7 +51,7 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // If the lowered LHS chain `lhs_id` is rooted in an observable cell, wrap
-// the root with `Deref(Mutate(cell, services))` so the consumer operates on
+// the root with `Deref(Mutate(cell, runtime))` so the consumer operates on
 // a `ScopedMutation` snapshot whose destructor commits via `Var::Set`.
 // Returns `lhs_id` unchanged when no cell is at the root. Used by both the
 // mutating-method receiver path and the ref-formal actual path; the latter
@@ -60,17 +60,16 @@ namespace {
 // snapshot.
 template <ExprLowerer Lowerer>
 auto MaybeWrapObservableLhsWithMutate(
-    Lowerer& lowerer, WalkFrame frame, mir::Block& block, mir::ExprId lhs_id)
-    -> mir::ExprId {
+    Lowerer& lowerer, mir::Block& block, mir::ExprId lhs_id) -> mir::ExprId {
   const mir::ExprId root_id =
       FindLhsRootId(lowerer.Owner().Unit(), block, lhs_id);
   const bool root_is_cell = mir::IsObservableCellType(
       lowerer.Owner().Unit().types.Get(block.exprs.Get(root_id).type));
   if (!root_is_cell) return lhs_id;
-  const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   return RewriteLhsRootWithMutate(
-      lowerer.Owner().Unit(), block, lhs_id, services_id);
+      lowerer.Owner().Unit(), block, lhs_id, runtime_id);
 }
 
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
@@ -134,10 +133,10 @@ auto LowerAssociativeTraversal(
   const mir::ExprId idx_lhs_id = body.exprs.Add(*std::move(idx_lhs_or));
   const mir::ExprId probe_writeback_id =
       body.exprs.Add(mir::MakeLocalRefExpr(probe_var, key_type));
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), closure_frame));
+  const mir::ExprId runtime_id =
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   const mir::Expr assign_expr = BuildObservableAssignExpr(
-      unit_lowerer.Unit(), body, services_id, idx_lhs_id, probe_writeback_id,
+      unit_lowerer.Unit(), body, runtime_id, idx_lhs_id, probe_writeback_id,
       std::nullopt, key_type, void_t);
   body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
 
@@ -437,8 +436,7 @@ auto LowerStructuralSubroutineCall(
       const mir::ExprId root_id =
           FindLhsRootId(lowerer.Owner().Unit(), block, actual_id);
       if (root_id != actual_id) {
-        actual_id =
-            MaybeWrapObservableLhsWithMutate(lowerer, frame, block, actual_id);
+        actual_id = MaybeWrapObservableLhsWithMutate(lowerer, block, actual_id);
       }
       args.push_back(BuildReferenceArg(
           lowerer.Owner().Unit(), block, actual_id,
@@ -517,7 +515,7 @@ auto LowerBuiltinMethodCall(
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver_id = block.exprs.Add(*std::move(recv_or));
       receiver_id =
-          MaybeWrapObservableLhsWithMutate(lowerer, frame, block, receiver_id);
+          MaybeWrapObservableLhsWithMutate(lowerer, block, receiver_id);
     } else {
       auto recv_or =
           lowerer.LowerExpr(hir_exprs.Get(*c.arguments.front()), frame);
@@ -567,13 +565,13 @@ auto LowerBuiltinMethodCall(
   }
 
   // LRM 15.5.3: `e.triggered` reads the triggered flag out of
-  // RuntimeServices. The engine handle is a real trailing argument, threaded
+  // RuntimeEffects. The runtime handle is a real trailing argument, threaded
   // the same way every runtime effect threads it -- not a backend-fabricated
   // one. (`-> e` is the only producer of the trigger kind and lowers through
-  // the event-trigger stmt path; `await` takes no services.)
+  // the event-trigger stmt path; `await` takes no runtime handle.)
   if (b.method == support::BuiltinFn::kTriggered) {
     args.push_back(
-        block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame)));
+        block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
   }
 
   return mir::Expr{
@@ -1136,7 +1134,7 @@ auto PopulateForeignImportBoundary(
     const mir::LocalId guard = closure.Bindings().DeclareAnonymous(
         mir::LocalDecl{.name = "_lyra_dpi_scope", .type = guard_type});
     const mir::ExprId services_id =
-        body.exprs.Add(BuildServicesCallExpr(unit_lowerer, cframe));
+        body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
     const mir::ExprId decl_scope_id =
         BuildEnclosingScopeReceiver(cframe, unit, hops);
     body.AppendStmt(
@@ -1294,10 +1292,10 @@ auto PopulateForeignImportBoundary(
       rhs_id = body.exprs.Add(MarshalCarrierToSv(
           unit_lowerer, cframe, temp_ref, wb.carrier, wb.sv_type));
     }
-    const mir::ExprId services_id =
-        body.exprs.Add(BuildServicesCallExpr(unit_lowerer, cframe));
+    const mir::ExprId runtime_id =
+        body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
     const mir::Expr assign = BuildObservableAssignExpr(
-        unit, body, services_id, lhs_id, rhs_id, std::nullopt, wb.sv_type,
+        unit, body, runtime_id, lhs_id, rhs_id, std::nullopt, wb.sv_type,
         void_t);
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
   }
@@ -1453,8 +1451,7 @@ auto LowerExternalUnitSubroutineCall(
   args.reserve(c.arguments.size() + 1);
   // The caller supplies services from its own ambient handle: an instance
   // body's `self`, or an enclosing package callable's own services parameter.
-  args.push_back(
-      block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame)));
+  args.push_back(block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
   for (std::size_t i = 0; i < c.arguments.size(); ++i) {
     if (!c.arguments[i].has_value()) {
       throw InternalError("package call argument unexpectedly elided");
@@ -1470,8 +1467,7 @@ auto LowerExternalUnitSubroutineCall(
       const mir::ExprId root_id =
           FindLhsRootId(lowerer.Owner().Unit(), block, actual_id);
       if (root_id != actual_id) {
-        actual_id =
-            MaybeWrapObservableLhsWithMutate(lowerer, frame, block, actual_id);
+        actual_id = MaybeWrapObservableLhsWithMutate(lowerer, block, actual_id);
       }
       args.push_back(BuildReferenceArg(
           lowerer.Owner().Unit(), block, actual_id,
@@ -1498,7 +1494,7 @@ auto LowerExternalUnitSubroutineCall(
 // A call to a method the runtime library provides for an imported class (LRM
 // 9.7 `process`) lowers to a direct call on the library symbol. An instance
 // method passes its receiver handle as the leading argument; whether the
-// engine services handle follows is a per-method fact. The receiver is passed
+// runtime handle follows is a per-method fact. The receiver is passed
 // as the managed handle itself, not a borrowed object pointer -- the runtime
 // reads the process identity from the handle. A suspending method (`await`) is
 // wrapped in an await by the statement lowering, the same as a task enable.
@@ -1517,12 +1513,12 @@ auto LowerImportedMethodCall(
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     args.push_back(block.exprs.Add(*std::move(receiver_or)));
   }
-  // A static method (no receiver) threads the services handle as its leading
+  // A static method (no receiver) threads the runtime handle as its leading
   // argument; an instance method threads it after the receiver when the method
   // needs the engine -- to schedule, or to identify the calling process.
   if (support::ImportedRuntimeMethodTakesServices(m.method)) {
     args.push_back(
-        block.exprs.Add(BuildServicesCallExpr(lowerer.Owner(), frame)));
+        block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
   }
 
   for (const auto& arg : c.arguments) {

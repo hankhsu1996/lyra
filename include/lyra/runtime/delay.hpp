@@ -5,8 +5,8 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/pending_wait.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
@@ -34,9 +34,9 @@ inline auto ScaleToGlobalTicks(
 class DelayAwaitable : public PendingWait {
  public:
   DelayAwaitable(
-      RuntimeServices& services, SimDuration duration,
+      RuntimeEffects& runtime, SimDuration duration,
       std::int8_t precision_power)
-      : services_(&services),
+      : runtime_(&runtime),
         duration_(duration),
         precision_power_(precision_power) {
   }
@@ -57,12 +57,12 @@ class DelayAwaitable : public PendingWait {
 
   // A delay's deadline is absolute (LRM 9.7): on resume, if it has transpired
   // the process is runnable, otherwise it re-parks for the remaining time.
-  auto Reestablish(RuntimeServices& services, CoroutineHandle activation)
+  auto Reestablish(RuntimeEffects& runtime, CoroutineHandle activation)
       -> PendingWaitOutcome override {
-    if (services.Now() >= deadline_) {
+    if (runtime.Now() >= deadline_) {
       return PendingWaitOutcome::kRunnable;
     }
-    services.ScheduleAtTime(deadline_, activation);
+    runtime.ScheduleAtTime(deadline_, activation);
     return PendingWaitOutcome::kReblocked;
   }
 
@@ -72,27 +72,27 @@ class DelayAwaitable : public PendingWait {
   // the scaled future time.
   void Arm(CoroutineHandle token) {
     if (duration_ == 0) {
-      deadline_ = services_->Now();
-      services_->ScheduleInactive(token);
+      deadline_ = runtime_->Now();
+      runtime_->ScheduleInactive(token);
     } else {
       const SimDuration global_ticks = ScaleToGlobalTicks(
-          duration_, precision_power_, services_->GlobalPrecisionPower());
-      deadline_ = services_->Now() + global_ticks;
-      services_->ScheduleAtTime(deadline_, token);
+          duration_, precision_power_, runtime_->GlobalPrecisionPower());
+      deadline_ = runtime_->Now() + global_ticks;
+      runtime_->ScheduleAtTime(deadline_, token);
     }
   }
 
-  RuntimeServices* services_;
+  RuntimeEffects* runtime_;
   SimDuration duration_;
   std::int8_t precision_power_;
   SimTime deadline_ = 0;
 };
 
 inline auto Delay(
-    RuntimeServices& services, const value::PackedArray& duration,
+    RuntimeEffects& runtime, const value::PackedArray& duration,
     const value::PackedArray& precision_power) -> DelayAwaitable {
   return DelayAwaitable{
-      services, static_cast<SimDuration>(duration.ToInt64()),
+      runtime, static_cast<SimDuration>(duration.ToInt64()),
       static_cast<std::int8_t>(precision_power.ToInt64())};
 }
 

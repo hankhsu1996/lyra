@@ -89,8 +89,8 @@ auto RuntimeAbi::Get(
   return Get(name.c_str(), result, params);
 }
 
-auto RuntimeAbi::Services() -> llvm::FunctionCallee {
-  return Get("lyra_rt_services", types_->Ptr(), {types_->Ptr()});
+auto RuntimeAbi::CurrentServices() -> llvm::FunctionCallee {
+  return Get("lyra_rt_current_runtime", types_->Ptr(), {});
 }
 
 auto RuntimeAbi::Files() -> llvm::FunctionCallee {
@@ -196,7 +196,7 @@ auto RuntimeAbi::MakeSegment() -> llvm::FunctionCallee {
 auto RuntimeAbi::MakeUnit() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_make_unit", types_->Ptr(),
-      {types_->Ptr(), types_->Ptr(), types_->Ptr(), types_->Ptr()});
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::AddOwnedChild() -> llvm::FunctionCallee {

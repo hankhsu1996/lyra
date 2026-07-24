@@ -74,7 +74,11 @@ complete.
       predicate is snapshotted; the qualifier check runs in the Observed region and emits a runtime
       warning when violated (`unique`: count != 1; `unique0`: count > 1; `priority`: count == 0).
       Glitch-driven false positives within one time slot are suppressed. Source-location reporting
-      in the warning text is a follow-up.
+      in the warning text is a follow-up. A body that carries no receiver -- a package function (LRM
+      26.3) -- runs a qualified case as an ordinary cascade and drops the runtime warning because
+      the check reaches the engine services through the enclosing body's receiver; the branch
+      semantics are preserved, only the warning is skipped. Reinstating the warning depends on
+      threading services into package bodies, which the current runtime does not.
 - [x] C15 -- `case` with non-constant labels and with duplicate labels (first-match-wins per LRM
       12.5). The C3 cascade handles both: non-constant labels render as runtime `==`; duplicate
       labels honour top-down ordering.

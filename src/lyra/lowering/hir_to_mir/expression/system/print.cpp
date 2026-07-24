@@ -15,7 +15,7 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -54,16 +54,15 @@ auto WriteCalleeFor(bool append_newline) -> support::BuiltinFn {
 // Emits the two-step composition: format the items, then write to the sink.
 // Both calls land in `block`; the returned id is the void write call.
 auto EmitFormatThenWrite(
-    ProcessLowerer& process, const WalkFrame& frame, mir::Block& block,
-    mir::ExprId items_array, mir::ExprId fd, bool append_newline)
-    -> mir::ExprId {
+    ProcessLowerer& process, mir::Block& block, mir::ExprId items_array,
+    mir::ExprId fd, bool append_newline) -> mir::ExprId {
   auto& unit = process.Owner().Unit();
-  const mir::ExprId services =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
-  const mir::ExprId text =
-      block.exprs.Add(BuildFormatCallExpr(unit, block, services, items_array));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  const mir::ExprId text = block.exprs.Add(
+      BuildFormatCallExpr(unit, block, runtime_id, items_array));
   const mir::ExprId files =
-      block.exprs.Add(BuildFilesCallExpr(process.Owner(), frame));
+      block.exprs.Add(BuildFilesCallExpr(process.Owner(), block));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -97,7 +96,7 @@ auto LowerStrobeCall(
     if (!desc_or) return std::unexpected(std::move(desc_or.error()));
     outer_user_descriptor = block.exprs.Add(*std::move(desc_or));
     const mir::ExprId outer_files =
-        block.exprs.Add(BuildFilesCallExpr(process.Owner(), frame));
+        block.exprs.Add(BuildFilesCallExpr(process.Owner(), block));
     outer_cancellation = block.exprs.Add(
         mir::Expr{
             .data =
@@ -154,18 +153,18 @@ auto LowerStrobeCall(
                                   ? *body_user_descriptor
                                   : BuildStdoutFdLiteral(body, int_type);
   const mir::ExprId write_call = EmitFormatThenWrite(
-      process, body_frame, body, items_array, body_fd, print.append_newline);
+      process, body, items_array, body_fd, print.append_newline);
   body.AppendStmt(mir::ExprStmt{.expr = write_call});
 
   const mir::ExprId closure_id = block.exprs.Add(closure.BuildVoid());
-  const mir::ExprId services =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee =
                   mir::Direct{.target = support::BuiltinFn::kSubmitPostponed},
-              .arguments = {services, closure_id}},
+              .arguments = {runtime_id, closure_id}},
       .type = void_type};
 }
 
@@ -206,7 +205,7 @@ auto LowerPrintSystemSubroutineCall(
                              ? *user_descriptor
                              : BuildStdoutFdLiteral(block, int_type);
   const mir::ExprId write_call = EmitFormatThenWrite(
-      process, frame, block, items_array, fd, print.append_newline);
+      process, block, items_array, fd, print.append_newline);
   return block.exprs.Get(write_call);
 }
 

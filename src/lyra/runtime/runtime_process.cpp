@@ -9,14 +9,16 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/execution_context.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
 #include "lyra/runtime/process_kind.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 
 namespace lyra::runtime {
 
-RuntimeProcess::RuntimeProcess(ProcessKind kind, Coroutine<void> coroutine)
+RuntimeProcess::RuntimeProcess(
+    Scope* owning_scope, ProcessKind kind, Coroutine<void> coroutine)
     : kind_(kind),
+      owning_scope_(owning_scope),
       coroutine_(std::move(coroutine)),
       // Before the body runs, the top frame is the active leaf (what the engine
       // schedules to start the process); a wait moves the leaf inward.
@@ -225,7 +227,7 @@ void RuntimeProcess::SettleTerminated(
 }
 
 auto RuntimeProcess::ResumeWith(
-    ExecutionContext& context, CoroutineHandle handle,
+    RuntimeEffects& effects, CoroutineHandle handle,
     std::vector<CoroutineHandle>& woken) -> bool {
   if (execution_state_ == ProcessExecutionState::kTerminated) {
     throw InternalError(
@@ -236,7 +238,13 @@ auto RuntimeProcess::ResumeWith(
   }
   execution_state_ = ProcessExecutionState::kRunning;
   {
-    const ExecutionContextGuard guard(context, *this);
+    // Install the process and its owning scope as the ambient execution
+    // identity for this resume. `ProcessExecutionGuard` publishes both
+    // atomically -- LRM 9.5 process identity + LRM 21.2.1.1 `%m` scope
+    // attribution -- and stacks via save-and-restore so a nested foreign
+    // call that re-enters generated code cannot lose either identity on
+    // the way back.
+    const ProcessExecutionGuard resume_guard(effects, *this);
     // A leaf that blocked under a foreign call is resumed by driving its
     // vehicle, which re-enters the native stack and continues the coroutine
     // from within; a leaf blocked on the runtime's own stack is resumed

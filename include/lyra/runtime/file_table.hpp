@@ -50,7 +50,7 @@ class ChannelCancellation {
 //   index into the FD pool. The first three indexes are reserved for the
 //   pre-bound STDIN / STDOUT / STDERR descriptors (32'h8000_0000..0002 per
 //   LRM 21.3.1). Those slots are not backed by FileTable storage -- callers
-//   route them directly through `RuntimeServices::Stream()` / `std::cerr`
+//   route them directly through `RuntimeEffects::Stream()` / `std::cerr`
 //   to preserve test-harness stdout ordering and avoid wrapping stdio in
 //   an owning fstream (you can't fstream stdout).
 //

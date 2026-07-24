@@ -15,7 +15,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -47,7 +47,7 @@ auto JoinModeToCallee(hir::JoinMode mode) -> support::BuiltinFn {
 // become ordinary `LocalDeclStmt`s) whose last statement is the dispatch call:
 // `ForkWaitAll` / `ForkWaitFirst` (awaited) for `join` / `join_any`, or
 // `SpawnAll` (no await) for `join_none`. The runtime entry is variadic over
-// branches; MIR carries them as ordinary call arguments after the services
+// branches; MIR carries them as ordinary call arguments after the runtime
 // handle. The result type is `void` for every dispatch -- the awaitable's
 // `await_resume` is void, and `SpawnAll` returns void directly -- so the
 // `AwaitExpr` / `ExprStmt` shape is the same regardless of mode.
@@ -81,12 +81,12 @@ auto LowerForkStmt(
   }
 
   const auto& builtins = process.Owner().Unit().builtins;
-  const mir::ExprId services_id =
-      fork_block.exprs.Add(BuildServicesCallExpr(process.Owner(), fork_frame));
+  const mir::ExprId runtime_id =
+      fork_block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
 
   std::vector<mir::ExprId> call_args;
   call_args.reserve(1 + f.branches.size());
-  call_args.push_back(services_id);
+  call_args.push_back(runtime_id);
   for (const hir::StmtId branch_hir_id : f.branches) {
     const hir::Stmt& branch = hir_proc.stmts.Get(branch_hir_id);
     // LRM 9.3.2: a branch is a concurrent thread whose body may suspend on
@@ -133,7 +133,7 @@ auto LowerForkStmt(
 
 // LRM 9.6.1 `wait fork`: suspend the executing process until its immediate
 // children have terminated. It lowers to a single awaited runtime call taking
-// only the services handle; the child set is resolved at runtime from the
+// only the runtime handle; the child set is resolved at runtime from the
 // executing process, so MIR carries no operand. The awaited call's result type
 // is `void`, the same await shape as `join`.
 auto LowerWaitForkStmt(
@@ -141,15 +141,15 @@ auto LowerWaitForkStmt(
     -> diag::Result<mir::Stmt> {
   mir::Block& block = *frame.current_block;
   const auto& builtins = process.Owner().Unit().builtins;
-  const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId call_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kWaitFork},
-                  .arguments = {services_id}},
+                  .arguments = {runtime_id}},
           .type = builtins.void_type});
   const mir::ExprId await_id = block.exprs.Add(
       mir::Expr{
@@ -160,7 +160,7 @@ auto LowerWaitForkStmt(
 }
 
 // LRM 9.6.3 `disable fork` terminates every descendant of the executing
-// process. It lowers to a single runtime call taking only the services handle;
+// process. It lowers to a single runtime call taking only the runtime handle;
 // the descendant set is resolved at runtime, so MIR carries no operand. The
 // caller does not block, so the call is not awaited -- the same shape as
 // `join_none`.
@@ -169,15 +169,15 @@ auto LowerDisableForkStmt(
     -> diag::Result<mir::Stmt> {
   mir::Block& block = *frame.current_block;
   const auto& builtins = process.Owner().Unit().builtins;
-  const mir::ExprId services_id =
-      block.exprs.Add(BuildServicesCallExpr(process.Owner(), frame));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId call_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kDisableFork},
-                  .arguments = {services_id}},
+                  .arguments = {runtime_id}},
           .type = builtins.void_type});
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};

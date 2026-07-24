@@ -9,8 +9,8 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_services.hpp"
 
 namespace lyra::runtime {
 
@@ -23,8 +23,8 @@ namespace lyra::runtime {
 // `join_any` (resume after the first).
 class ForkGroup {
  public:
-  ForkGroup(RuntimeServices& services, std::int64_t completions_needed)
-      : services_(&services), completions_needed_(completions_needed) {
+  ForkGroup(RuntimeEffects& runtime, std::int64_t completions_needed)
+      : runtime_(&runtime), completions_needed_(completions_needed) {
   }
 
   // True iff there is still an outstanding completion the parent should wait
@@ -47,13 +47,13 @@ class ForkGroup {
     }
     if (completions_needed_ == 0) {
       if (Registration* parent = parked_parent_.PopFront()) {
-        services_->ScheduleNextDelta(parent->activation);
+        runtime_->ScheduleNextDelta(parent->activation);
       }
     }
   }
 
  private:
-  RuntimeServices* services_;
+  RuntimeEffects* runtime_;
   std::int64_t completions_needed_;
   // The join condition holds at most one activation: the process that executed
   // the fork.
@@ -86,9 +86,9 @@ class JoinAwaitable : public PendingWait {
 
   // A join condition is monotonic (LRM 9.3.2): branch completions accumulate
   // during suspension. On resume, if the threshold is now met the parent is
-  // runnable; otherwise re-park on the group. No engine services are needed.
+  // runnable; otherwise re-park on the group. No runtime access is needed.
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
       -> PendingWaitOutcome override {
     if (!group_->NeedsPark()) {
       return PendingWaitOutcome::kRunnable;
@@ -104,11 +104,11 @@ class JoinAwaitable : public PendingWait {
 namespace detail {
 
 inline void SpawnEach(
-    RuntimeServices& services, std::shared_ptr<ForkGroup> group,
+    RuntimeEffects& runtime, std::shared_ptr<ForkGroup> group,
     std::vector<Coroutine<void>> branches) {
   for (auto& branch : branches) {
     branch.Handle().promise().on_complete = [group] { group->OnBranchDone(); };
-    services.Spawn(std::move(branch));
+    runtime.Spawn(std::move(branch));
   }
 }
 
@@ -130,26 +130,26 @@ auto Collect(Branches&&... branches) -> std::vector<Coroutine<void>> {
 // after the parent has parked (for `ForkWaitAll` / `ForkWaitFirst`) or moved
 // on (for `SpawnAll`).
 template <class... Branches>
-auto ForkWaitAll(RuntimeServices& services, Branches... branches)
+auto ForkWaitAll(RuntimeEffects& runtime, Branches... branches)
     -> JoinAwaitable {
   auto group = std::make_shared<ForkGroup>(
-      services, static_cast<std::int64_t>(sizeof...(Branches)));
-  detail::SpawnEach(services, group, detail::Collect(std::move(branches)...));
+      runtime, static_cast<std::int64_t>(sizeof...(Branches)));
+  detail::SpawnEach(runtime, group, detail::Collect(std::move(branches)...));
   return JoinAwaitable{group};
 }
 
 template <class... Branches>
-auto ForkWaitFirst(RuntimeServices& services, Branches... branches)
+auto ForkWaitFirst(RuntimeEffects& runtime, Branches... branches)
     -> JoinAwaitable {
   auto group =
-      std::make_shared<ForkGroup>(services, sizeof...(Branches) == 0 ? 0 : 1);
-  detail::SpawnEach(services, group, detail::Collect(std::move(branches)...));
+      std::make_shared<ForkGroup>(runtime, sizeof...(Branches) == 0 ? 0 : 1);
+  detail::SpawnEach(runtime, group, detail::Collect(std::move(branches)...));
   return JoinAwaitable{group};
 }
 
 template <class... Branches>
-void SpawnAll(RuntimeServices& services, Branches... branches) {
-  (services.Spawn(std::move(branches)), ...);
+void SpawnAll(RuntimeEffects& runtime, Branches... branches) {
+  (runtime.Spawn(std::move(branches)), ...);
 }
 
 // LRM 9.6.1 `wait fork`: block the executing process until every immediate
@@ -159,17 +159,17 @@ void SpawnAll(RuntimeServices& services, Branches... branches) {
 // handle rather than the process's own body.
 class WaitForkAwaitable : public PendingWait {
  public:
-  explicit WaitForkAwaitable(RuntimeServices& services) : services_(&services) {
+  explicit WaitForkAwaitable(RuntimeEffects& runtime) : runtime_(&runtime) {
   }
 
   [[nodiscard]] auto await_ready() const -> bool {
-    return services_->CurrentProcess().HasNoLiveChild();
+    return runtime_->CurrentProcess().HasNoLiveChild();
   }
 
   template <class P>
   void await_suspend(std::coroutine_handle<P> waiter) {
     CoroutineHandle token = &waiter.promise();
-    services_->CurrentProcess().ArmWaitFork(token);
+    runtime_->CurrentProcess().ArmWaitFork(token);
     token->process->BlockLeaf(token, this);
   }
 
@@ -182,7 +182,7 @@ class WaitForkAwaitable : public PendingWait {
   // The target is the process owning the waiting frame, not the resumer's
   // current process, so it is read from the activation.
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeServices&, CoroutineHandle activation)
+  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
       -> PendingWaitOutcome override {
     RuntimeProcess& process = activation->Process();
     if (process.HasNoLiveChild()) {
@@ -193,11 +193,11 @@ class WaitForkAwaitable : public PendingWait {
   }
 
  private:
-  RuntimeServices* services_;
+  RuntimeEffects* runtime_;
 };
 
-inline auto WaitFork(RuntimeServices& services) -> WaitForkAwaitable {
-  return WaitForkAwaitable{services};
+inline auto WaitFork(RuntimeEffects& runtime) -> WaitForkAwaitable {
+  return WaitForkAwaitable{runtime};
 }
 
 // LRM 9.6.3 `disable fork`: terminate every descendant of the executing
@@ -205,11 +205,11 @@ inline auto WaitFork(RuntimeServices& services) -> WaitForkAwaitable {
 // simulation time -- so this is a plain call rather than an awaitable. Like
 // `wait fork`, it reads the executing process (LRM 9.5), so a `disable fork`
 // inside a task reaches the descendants the enclosing process owns.
-inline void DisableFork(RuntimeServices& services) {
+inline void DisableFork(RuntimeEffects& runtime) {
   std::vector<CoroutineHandle> woken;
-  services.CurrentProcess().DisableDescendants(woken);
+  runtime.CurrentProcess().DisableDescendants(woken);
   for (CoroutineHandle waiter : woken) {
-    services.ScheduleNextDelta(waiter);
+    runtime.ScheduleNextDelta(waiter);
   }
 }
 
