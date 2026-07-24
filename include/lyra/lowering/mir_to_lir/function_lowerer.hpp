@@ -61,11 +61,11 @@ class FunctionLowerer {
       std::variant<PlaceBinding, ValueBinding, ActivationValueBinding>;
 
   // A value-projection selector peeled from an assignment target: a product
-  // component by declaration-order position, or a value-container element by a
-  // runtime index. Each names a sub-value of the owner's whole value, so a
-  // write through it folds into a functional whole-value update.
-  // `container_type` is the value the selector projects into; `projected_type`
-  // is the sub-value it reaches.
+  // component by declaration-order position, a value-container element by a
+  // runtime index, or a part-select range by its bounds. Each names a sub-value
+  // of the owner's whole value, so a write through it folds into a functional
+  // whole-value update. `container_type` is the value the selector projects
+  // into; `projected_type` is the sub-value it reaches.
   struct ComponentSelector {
     std::uint32_t index;
     lir::TypeId container_type;
@@ -76,7 +76,15 @@ class FunctionLowerer {
     lir::TypeId container_type;
     lir::TypeId projected_type;
   };
-  using ProjectionSelector = std::variant<ComponentSelector, ElementSelector>;
+  struct SliceSelector {
+    mir::ExprId a;
+    mir::ExprId b;
+    mir::ExprId form;
+    lir::TypeId container_type;
+    lir::TypeId projected_type;
+  };
+  using ProjectionSelector =
+      std::variant<ComponentSelector, ElementSelector, SliceSelector>;
   // An assignment target split into the whole-value owner it writes back
   // through and the value-projection selectors reaching the written sub-value,
   // in owner-to-leaf order. An empty selector list means the target is the

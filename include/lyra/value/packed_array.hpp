@@ -463,6 +463,14 @@ class PackedArray {
   [[nodiscard]] auto Slice(
       const PackedArray& a, const PackedArray& b, const PackedArray& form) const
       -> PackedArray;
+  // The functional counterpart of the in-place part-select write, for a value
+  // reached by an opaque handle that cannot be mutated in place: a new value
+  // equal to the receiver with the range selected by `a` / `b` / `form`
+  // replaced, under the same LRM 11.5.1 out-of-range no-op as the in-place
+  // write.
+  [[nodiscard]] auto WithSlice(
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& value) const -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;

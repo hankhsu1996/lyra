@@ -162,14 +162,15 @@ auto RequiresFunctionalMutation(const mir::Type& type) -> bool {
   return type.Kind() == mir::TypeKind::kDynamicArray;
 }
 
-// Whether a `kElementRef` on a value of this type is a functional element
-// write: realized as a whole-value read / update / write-back because the
-// execution backend reaches the value through an immutable handle and cannot
-// write an element in place. A dynamic-array element (LRM 7.4.6), a string
-// character (LRM 6.16.2), and a packed bit-select / element (LRM 11.5.1)
-// qualify. This is the peeling condition for an element selector, distinct from
-// the mutating-method question `RequiresFunctionalMutation` answers.
-auto HasFunctionalElementAccess(const mir::Type& type) -> bool {
+// Whether an element-ref or slice-ref on a value of this type is a functional
+// interior write: realized as a whole-value read / update / write-back because
+// the execution backend reaches the value through an immutable handle and
+// cannot write an interior in place. A dynamic-array element (LRM 7.4.6), a
+// string character (LRM 6.16.2), and a packed bit-select / part-select (LRM
+// 11.5.1) qualify. This is the peeling condition for an element or slice
+// selector, distinct from the mutating-method question
+// `RequiresFunctionalMutation` answers.
+auto HasFunctionalInteriorAccess(const mir::Type& type) -> bool {
   const mir::TypeKind kind = type.Kind();
   return kind == mir::TypeKind::kDynamicArray ||
          kind == mir::TypeKind::kString || kind == mir::TypeKind::kPackedArray;
@@ -1104,10 +1105,10 @@ auto FunctionLowerer::DecomposeTarget(
     const mir::Block& block, mir::ExprId target) -> DecomposedTarget {
   // Peel value-projection selectors from the target inward until the expression
   // is no longer one -- that remainder is the whole-value owner. A component
-  // (`TupleGetExpr`) and a value-container element (`kElementRef` on a
-  // container reached by an opaque handle) are selectors; a bit-select, a
-  // slice, or a union member is not one this path folds, so peeling stops there
-  // and the owner is that expression.
+  // (`TupleGetExpr`), a value-container element (`kElementRef`), and a
+  // part-select (`kSliceRef`) on a value reached by an opaque handle are
+  // selectors; anything else (a union member) is not one this path folds, so
+  // peeling stops there and the owner is that expression.
   std::vector<ProjectionSelector> selectors;
   mir::ExprId cursor = target;
   while (true) {
@@ -1123,13 +1124,28 @@ auto FunctionLowerer::DecomposeTarget(
       continue;
     }
     if (const auto* call = std::get_if<mir::CallExpr>(&expr.data)) {
-      if (const auto fn = DirectBuiltinFn(*call);
-          fn == support::BuiltinFn::kElementRef &&
-          HasFunctionalElementAccess(unit_->Mir().types.Get(
-              block.exprs.Get(call->arguments[0]).type))) {
+      const auto fn = DirectBuiltinFn(*call);
+      const bool functional_container =
+          (fn == support::BuiltinFn::kElementRef ||
+           fn == support::BuiltinFn::kSliceRef) &&
+          HasFunctionalInteriorAccess(
+              unit_->Mir().types.Get(block.exprs.Get(call->arguments[0]).type));
+      if (functional_container && fn == support::BuiltinFn::kElementRef) {
         selectors.emplace_back(
             ElementSelector{
                 .index = call->arguments[1],
+                .container_type = unit_->TranslateType(
+                    block.exprs.Get(call->arguments[0]).type),
+                .projected_type = unit_->TranslateType(expr.type)});
+        cursor = call->arguments[0];
+        continue;
+      }
+      if (functional_container && fn == support::BuiltinFn::kSliceRef) {
+        selectors.emplace_back(
+            SliceSelector{
+                .a = call->arguments[1],
+                .b = call->arguments[2],
+                .form = call->arguments[3],
                 .container_type = unit_->TranslateType(
                     block.exprs.Get(call->arguments[0]).type),
                 .projected_type = unit_->TranslateType(expr.type)});
@@ -1153,16 +1169,23 @@ auto FunctionLowerer::LowerProjectionAssign(
     return std::unexpected(std::move(owner_value.error()));
   }
 
-  // A container element's index is evaluated once, shared by its compound read
-  // and its write-back; a component selector needs none.
-  std::vector<std::optional<lir::Operand>> indices(selectors.size());
+  // An element's or slice's key expressions are evaluated once, shared by a
+  // compound read and the write-back; a component selector needs none.
+  std::vector<std::vector<lir::Operand>> keys(selectors.size());
   for (std::size_t depth = 0; depth < selectors.size(); ++depth) {
+    std::vector<mir::ExprId> key_exprs;
     if (const auto* elem = std::get_if<ElementSelector>(&selectors[depth])) {
-      auto index = LowerExpr(block, elem->index);
-      if (!index) {
-        return std::unexpected(std::move(index.error()));
+      key_exprs = {elem->index};
+    } else if (
+        const auto* slice = std::get_if<SliceSelector>(&selectors[depth])) {
+      key_exprs = {slice->a, slice->b, slice->form};
+    }
+    for (const mir::ExprId key_expr : key_exprs) {
+      auto key = LowerExpr(block, key_expr);
+      if (!key) {
+        return std::unexpected(std::move(key.error()));
       }
-      indices[depth] = *std::move(index);
+      keys[depth].push_back(*std::move(key));
     }
   }
 
@@ -1185,7 +1208,19 @@ auto FunctionLowerer::LowerProjectionAssign(
                           lir::BuiltinTarget{
                               .fn = support::BuiltinFn::kElement,
                               .qualifier = std::nullopt},
-                      .args = {container, *indices[depth]}});
+                      .args = {container, keys[depth][0]}});
+            },
+            [&](const SliceSelector& s) {
+              return Emit(
+                  s.projected_type,
+                  lir::CallInstr{
+                      .target =
+                          lir::BuiltinTarget{
+                              .fn = support::BuiltinFn::kSlice,
+                              .qualifier = std::nullopt},
+                      .args = {
+                          container, keys[depth][0], keys[depth][1],
+                          keys[depth][2]}});
             }},
         selectors[depth]);
   };
@@ -1210,7 +1245,19 @@ auto FunctionLowerer::LowerProjectionAssign(
                               .fn = support::BuiltinFn::kWithElement,
                               .qualifier = std::nullopt},
                       .args = {
-                          container, *indices[depth], std::move(replacement)}});
+                          container, keys[depth][0], std::move(replacement)}});
+            },
+            [&](const SliceSelector& s) {
+              return Emit(
+                  s.container_type,
+                  lir::CallInstr{
+                      .target =
+                          lir::BuiltinTarget{
+                              .fn = support::BuiltinFn::kWithSlice,
+                              .qualifier = std::nullopt},
+                      .args = {
+                          container, keys[depth][0], keys[depth][1],
+                          keys[depth][2], std::move(replacement)}});
             }},
         selectors[depth]);
   };

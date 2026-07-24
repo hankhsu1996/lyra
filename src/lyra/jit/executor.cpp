@@ -211,6 +211,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_to_owned", &lyra_rt_packed_to_owned);
   add("lyra_rt_packed_element", &lyra_rt_packed_element);
   add("lyra_rt_packed_with_element", &lyra_rt_packed_with_element);
+  add("lyra_rt_packed_slice", &lyra_rt_packed_slice);
+  add("lyra_rt_packed_with_slice", &lyra_rt_packed_with_slice);
   add("lyra_rt_string_from_packed_array", &lyra_rt_string_from_packed_array);
   add("lyra_rt_string_string_cstr", &lyra_rt_string_string_cstr);
   add("lyra_rt_string_len", &lyra_rt_string_len);

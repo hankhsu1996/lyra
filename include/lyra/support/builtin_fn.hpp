@@ -26,6 +26,11 @@ enum class BuiltinFn : std::uint16_t {
   // handle and so cannot write an element in place; it never arises from
   // source.
   kWithElement,
+  // The functional part-select write, the slice counterpart of `kWithElement`:
+  // yields a new value equal to the receiver with the selected range replaced
+  // (LRM 11.5.1). Synthesized at MIR-to-LIR as the value-model counterpart of
+  // the in-place `kSliceRef` write; it never arises from source.
+  kWithSlice,
   // LRM 7.4.3 / 7.5 / 7.9 / 7.10.2. AA's `num` is an alias of `size`;
   // String's LRM 6.16.1 `len` is its own mandated spelling.
   kSize,

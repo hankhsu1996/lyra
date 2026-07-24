@@ -1742,6 +1742,14 @@ auto PackedArray::Slice(
   return ExtractBits(sel.bit_offset, sel.dims);
 }
 
+auto PackedArray::WithSlice(
+    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& value) const -> PackedArray {
+  PackedArray result{*this};
+  result.SliceRef(a, b, form) = value;
+  return result;
+}
+
 PackedArrayRef::PackedArrayRef(
     PackedArray& root, const PackedArray& bit_offset,
     std::vector<PackedRange> dims)

@@ -443,29 +443,38 @@ auto WriteStringCharSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
-auto WritePackedBitWriteSource(const std::filesystem::path& path) -> void {
+auto WritePackedPartSelectSource(const std::filesystem::path& path) -> void {
   std::ofstream out(path);
   out << "module Test;\n"
-      << "  logic [7:0] p;\n"
+      << "  logic [15:0] q;\n"
       << "  int idx;\n"
-      << "  function automatic logic [7:0] flip(logic [7:0] a, int i);\n"
-      << "    logic [7:0] v;\n"
-      << "    v = a;\n"
-      << "    v[i] = 1'b1;\n"
+      << "  function automatic logic [15:0] setbits(logic [15:0] x);\n"
+      << "    logic [15:0] v;\n"
+      << "    v = x;\n"
+      << "    v[0] = 1'b1;\n"
+      << "    v[7:4] = 4'hC;\n"
       << "    return v;\n"
       << "  endfunction\n"
       << "  initial begin\n"
-      << "    p = 8'h00;\n"
+      << "    q = 16'h0000;\n"
       << "    idx = 3;\n"
-      << "    p[idx] = 1'b1;\n"
-      << "    p[0] = 1'b1;\n"
-      << "    $display(\"p=%h\", p);\n"
-      << "    p[idx] += 1'b1;\n"
-      << "    $display(\"cp=%h\", p);\n"
-      << "    p[9] = 1'b1;\n"
-      << "    $display(\"oob=%h\", p);\n"
-      << "    p = flip(8'h00, 5);\n"
-      << "    $display(\"fn=%h\", p);\n"
+      << "    q[idx] = 1'b1;\n"
+      << "    q[0] = 1'b1;\n"
+      << "    $display(\"bit q=%h\", q);\n"
+      << "    q[idx] += 1'b1;\n"
+      << "    $display(\"cbit q=%h\", q);\n"
+      << "    q[20] = 1'b1;\n"
+      << "    $display(\"oob q=%h\", q);\n"
+      << "    q[7:4] = 4'hA;\n"
+      << "    $display(\"sl q=%h\", q);\n"
+      << "    q[11:8] += 4'h3;\n"
+      << "    $display(\"csl q=%h\", q);\n"
+      << "    q[12 +: 4] = 4'h5;\n"
+      << "    $display(\"up q=%h\", q);\n"
+      << "    q[3 -: 4] = 4'hF;\n"
+      << "    $display(\"dn q=%h\", q);\n"
+      << "    q = setbits(16'h0000);\n"
+      << "    $display(\"fn q=%h\", q);\n"
       << "  end\n"
       << "endmodule\n";
 }
@@ -979,14 +988,14 @@ TEST(LyraRun, JitAndCppAgreeOnStringCharWrite) {
       << "stdout: " << jit.stdout_text;
 }
 
-TEST(LyraRun, JitAndCppAgreeOnPackedBitWrite) {
+TEST(LyraRun, JitAndCppAgreeOnPackedPartSelectWrite) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
 
   auto tmp_or = MakeTempCaseDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
   const auto src = *tmp_or / "test.sv";
-  WritePackedBitWriteSource(src);
+  WritePackedPartSelectSource(src);
 
   const std::vector<std::string> jit_args = {
       "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
@@ -1005,10 +1014,14 @@ TEST(LyraRun, JitAndCppAgreeOnPackedBitWrite) {
   EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
   EXPECT_EQ(
       jit.stdout_text,
-      "p=09\n"
-      "cp=01\n"
-      "oob=01\n"
-      "fn=20\n")
+      "bit q=0009\n"
+      "cbit q=0001\n"
+      "oob q=0001\n"
+      "sl q=00a1\n"
+      "csl q=03a1\n"
+      "up q=53a1\n"
+      "dn q=53af\n"
+      "fn q=00c1\n")
       << "stdout: " << jit.stdout_text;
 }
 

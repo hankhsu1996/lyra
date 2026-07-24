@@ -177,6 +177,11 @@ auto lyra_rt_packed_to_owned(const void* value) -> void*;
 auto lyra_rt_packed_element(const void* value, const void* index) -> void*;
 auto lyra_rt_packed_with_element(
     const void* value, const void* index, const void* replacement) -> void*;
+auto lyra_rt_packed_slice(
+    const void* value, const void* a, const void* b, const void* form) -> void*;
+auto lyra_rt_packed_with_slice(
+    const void* value, const void* a, const void* b, const void* form,
+    const void* replacement) -> void*;
 
 auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
 // The C string a `string` crosses the DPI-C boundary as (LRM 35.5.6). It points

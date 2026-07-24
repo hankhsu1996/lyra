@@ -164,6 +164,13 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Slice";
     case support::BuiltinFn::kSliceRef:
       return "SliceRef";
+    case support::BuiltinFn::kWithSlice:
+      // The functional part-select write is synthesized only at MIR-to-LIR for
+      // the execution backend; the C++ backend writes a slice in place through
+      // `SliceRef`, so it never renders this entry.
+      throw InternalError(
+          "BuiltinFnCppName: with_slice is an execution-backend synthesis "
+          "entry, never rendered by the C++ backend");
     case support::BuiltinFn::kSize:
       return "Size";
     case support::BuiltinFn::kBitstreamWidth:

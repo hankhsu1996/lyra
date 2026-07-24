@@ -608,6 +608,23 @@ auto lyra_rt_packed_with_element(
           Read<PackedArray>(index), Read<PackedArray>(replacement)));
 }
 
+auto lyra_rt_packed_slice(
+    const void* value, const void* a, const void* b, const void* form)
+    -> void* {
+  return Own(
+      Read<PackedArray>(value).Slice(
+          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form)));
+}
+
+auto lyra_rt_packed_with_slice(
+    const void* value, const void* a, const void* b, const void* form,
+    const void* replacement) -> void* {
+  return Own(
+      Read<PackedArray>(value).WithSlice(
+          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
+          Read<PackedArray>(replacement)));
+}
+
 // Materializes a borrowed packed view (a container element or slice read) into
 // an owning value. On the execution backend a container access already copies
 // the element out, so this is an idempotent copy that keeps the ownership shape
