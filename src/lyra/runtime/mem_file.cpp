@@ -1,4 +1,4 @@
-#include "lyra/runtime/readmem.hpp"
+#include "lyra/runtime/mem_file.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -12,6 +12,7 @@
 
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -20,16 +21,26 @@ namespace lyra::runtime {
 
 namespace {
 
-auto TaskName(unsigned base) -> value::String {
-  return value::String(base == 2U ? "$readmemb" : "$readmemh");
+enum class Direction : std::uint8_t { kLoad, kStore };
+
+auto TaskName(unsigned base, Direction dir) -> value::String {
+  const bool store = dir == Direction::kStore;
+  if (base == 2U) {
+    return value::String(store ? "$writememb" : "$readmemb");
+  }
+  return value::String(store ? "$writememh" : "$readmemh");
 }
 
-void Warn(RuntimeEffects& runtime, unsigned base, const std::string& text) {
-  runtime.Diagnostic().EmitWarning(TaskName(base), value::String(text));
+void Warn(
+    RuntimeEffects& runtime, unsigned base, Direction dir,
+    const std::string& text) {
+  runtime.Diagnostic().EmitWarning(TaskName(base, dir), value::String(text));
 }
 
-void Error(RuntimeEffects& runtime, unsigned base, const std::string& text) {
-  runtime.Diagnostic().EmitError(TaskName(base), value::String(text));
+void Error(
+    RuntimeEffects& runtime, unsigned base, Direction dir,
+    const std::string& text) {
+  runtime.Diagnostic().EmitError(TaskName(base, dir), value::String(text));
 }
 
 // Splits the file text into tokens, dropping `//`-to-end-of-line and `/* */`
@@ -87,7 +98,7 @@ void ReadMemImpl(
   std::ifstream in{std::string{filename.View()}};
   if (!in.is_open()) {
     Error(
-        runtime, base,
+        runtime, base, Direction::kLoad,
         std::format("cannot open file '{}'", std::string{filename.View()}));
     return;
   }
@@ -127,13 +138,15 @@ void ReadMemImpl(
       const auto addr = value::PackedArray::FromDigits(
           std::string_view{token}.substr(1), 16U, 64U, true, false);
       if (!addr) {
-        Error(runtime, base, std::format("malformed address '{}'", token));
+        Error(
+            runtime, base, Direction::kLoad,
+            std::format("malformed address '{}'", token));
         return;
       }
       const std::int64_t a = addr->ToInt64();
       if (a < active_lo || a > active_hi) {
         Error(
-            runtime, base,
+            runtime, base, Direction::kLoad,
             std::format("address {} is outside the load range", a));
         return;
       }
@@ -147,7 +160,9 @@ void ReadMemImpl(
     const auto elem = value::PackedArray::FromDigits(
         token, base, width, is_signed, is_four_state);
     if (!elem) {
-      Error(runtime, base, std::format("malformed data word '{}'", token));
+      Error(
+          runtime, base, Direction::kLoad,
+          std::format("malformed data word '{}'", token));
       return;
     }
     dest.ElementRef(
@@ -165,11 +180,63 @@ void ReadMemImpl(
     const std::int64_t expected = active_hi - active_lo + 1;
     if (words_written != expected) {
       Warn(
-          runtime, base,
+          runtime, base, Direction::kLoad,
           std::format(
               "file holds {} words but the address range spans {}",
               words_written, expected));
     }
+  }
+}
+
+// Renders one element as a full-width radix-`base` word: the %h / %b display of
+// the packed value, so a 4-state x / z survives per the display rules that
+// $readmem{h,b} reads back (LRM 21.5.1, 21.4.1).
+auto RenderWord(const value::PackedArray& elem, unsigned base) -> std::string {
+  value::FormatSpec spec;
+  spec.kind = base == 2U ? value::FormatKind::kBinary : value::FormatKind::kHex;
+  return value::Formatter<value::PackedArray>::Format(spec, elem, {});
+}
+
+void WriteMemImpl(
+    RuntimeEffects& runtime,
+    const value::UnpackedArray<value::PackedArray>& src,
+    const value::String& filename, std::int64_t declared_left,
+    std::int64_t declared_right, unsigned base,
+    std::optional<std::int64_t> start, std::optional<std::int64_t> finish) {
+  std::ofstream out{std::string{filename.View()}};
+  if (!out.is_open()) {
+    Error(
+        runtime, base, Direction::kStore,
+        std::format("cannot open file '{}'", std::string{filename.View()}));
+    return;
+  }
+
+  const std::int64_t lowest = std::min(declared_left, declared_right);
+  const std::int64_t highest = std::max(declared_left, declared_right);
+
+  // The dump window and direction follow LRM 21.5 from the supplied addresses;
+  // no in-file `@address` is written for an unpacked array (LRM 21.5.3).
+  std::int64_t cursor = lowest;
+  std::int64_t last = highest;
+  std::int64_t step = 1;
+  if (start.has_value() && finish.has_value()) {
+    cursor = *start;
+    last = *finish;
+    step = (*start <= *finish) ? 1 : -1;
+  } else if (start.has_value()) {
+    cursor = *start;
+  }
+
+  const value::PackedArray left =
+      value::PackedArray::Int(static_cast<std::int32_t>(declared_left));
+  const value::PackedArray right =
+      value::PackedArray::Int(static_cast<std::int32_t>(declared_right));
+  for (std::int64_t idx = cursor;; idx += step) {
+    if (idx < lowest || idx > highest) break;
+    const value::PackedArray& elem = src.Element(
+        value::PackedArray::Int(static_cast<std::int32_t>(idx)), left, right);
+    out << RenderWord(elem, base) << '\n';
+    if (idx == last) break;
   }
 }
 
@@ -205,6 +272,38 @@ void ReadMem(
       runtime, dest, filename, declared_left.ToInt64(),
       declared_right.ToInt64(), static_cast<unsigned>(base.ToInt64()),
       start.ToInt64(), finish.ToInt64());
+}
+
+void WriteMem(
+    RuntimeEffects& runtime,
+    const value::UnpackedArray<value::PackedArray>& src,
+    const value::String& filename, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right, const value::PackedArray& base) {
+  WriteMemImpl(
+      runtime, src, filename, declared_left.ToInt64(), declared_right.ToInt64(),
+      static_cast<unsigned>(base.ToInt64()), std::nullopt, std::nullopt);
+}
+
+void WriteMem(
+    RuntimeEffects& runtime,
+    const value::UnpackedArray<value::PackedArray>& src,
+    const value::String& filename, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right, const value::PackedArray& base,
+    const value::PackedArray& start) {
+  WriteMemImpl(
+      runtime, src, filename, declared_left.ToInt64(), declared_right.ToInt64(),
+      static_cast<unsigned>(base.ToInt64()), start.ToInt64(), std::nullopt);
+}
+
+void WriteMem(
+    RuntimeEffects& runtime,
+    const value::UnpackedArray<value::PackedArray>& src,
+    const value::String& filename, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right, const value::PackedArray& base,
+    const value::PackedArray& start, const value::PackedArray& finish) {
+  WriteMemImpl(
+      runtime, src, filename, declared_left.ToInt64(), declared_right.ToInt64(),
+      static_cast<unsigned>(base.ToInt64()), start.ToInt64(), finish.ToInt64());
 }
 
 }  // namespace lyra::runtime

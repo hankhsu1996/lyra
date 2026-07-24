@@ -203,12 +203,13 @@ Tracked in `processes.md`.
 ### system tasks
 
 - [ ] System tasks -- the `$display` / `$write` / `$strobe` / `$monitor` family, file IO,
-      `$sformat`, `$time` / `$timeformat`, `$random`, `$readmem*`. Formatting is tracked in
-      `display.md`, memory load in `readmem.md`, and RNG in `simulation-rng.md`; most land in the
-      runtime call registry. `$readmemh` / `$readmemb` load a one-dimensional memory of packed
-      elements today; multidimensional and associative / dynamic memories are the remaining
-      `$readmem*` gap (`readmem.md`). Other known gaps: `$monitor`, `$random`. (The archive effect /
-      pure / state classification is retired -- see below.)
+      `$sformat`, `$time` / `$timeformat`, `$random`, `$readmem*` / `$writemem*`. Formatting is
+      tracked in `display.md`, memory file load / dump in `mem_file.md`, and RNG in
+      `simulation-rng.md`; most land in the runtime call registry. `$readmem{h,b}` and
+      `$writemem{h,b}` handle a one-dimensional memory of packed elements today; multidimensional
+      and associative / dynamic memories are the remaining container-shape gap (`mem_file.md`).
+      Other known gaps: `$monitor`, `$random`. (The archive effect / pure / state classification is
+      retired -- see below.)
 
 ### trace
 

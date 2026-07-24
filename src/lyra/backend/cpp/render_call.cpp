@@ -89,6 +89,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "ValuePlusargs";
     case support::BuiltinFn::kReadMem:
       return "ReadMem";
+    case support::BuiltinFn::kWriteMem:
+      return "WriteMem";
     case support::BuiltinFn::kTrigger:
       return "Trigger";
     case support::BuiltinFn::kAwait:
@@ -418,6 +420,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
     case support::BuiltinFn::kReadMem:
+    case support::BuiltinFn::kWriteMem:
     case support::BuiltinFn::kRunExportedTaskToCompletion:
     case support::BuiltinFn::kCurrentExportScope:
       return "lyra::runtime";
