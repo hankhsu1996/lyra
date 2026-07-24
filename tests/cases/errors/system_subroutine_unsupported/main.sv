@@ -1,4 +1,4 @@
 module Top;
-  logic [7:0] mem [0:3];
-  initial $readmemh("mem.hex", mem);
+  int x;
+  initial $monitor("x=%0d", x);
 endmodule

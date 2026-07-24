@@ -1,0 +1,18 @@
+id: cpp.readmem_errors
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stderr:
+    contains:
+      - "cannot open file 'no_such_file.hex'"
+      - "address 9 is outside the load range"
+      - "file holds 2 words but the address range spans 4"
+  variables:
+    mem_miss: ["8'h00", "8'h00", "8'h00", "8'h00"]
+    mem_oor: ["8'h00", "8'h00", "8'h00", "8'h00"]
+    mem_cnt: ["8'h0a", "8'h0b", "8'h00", "8'h00"]

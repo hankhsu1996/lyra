@@ -368,6 +368,17 @@ auto LowerSystemSubroutineCall(
             return LowerPlusargsSystemSubroutineCall(
                 lowerer, frame, call, plusargs);
           },
+          [&](const support::ReadMemSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            // A void task (LRM 21.4) has no value, so the frontend rejects it
+            // in any value position; a statement-position call is intercepted
+            // by the statement-form dispatch and never falls through here.
+            // Reaching this arm is therefore a frontend / lowering invariant
+            // violation, not an unsupported source form.
+            throw InternalError(
+                "$readmemh / $readmemb reached expression lowering; a void "
+                "task only lowers through the statement-form dispatch");
+          },
       },
       desc.semantic);
 }

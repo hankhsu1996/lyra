@@ -164,12 +164,25 @@ sanctions; the runtime-parsed path continues silently.
       bounded for free. The same per-channel signal will carry future `$fmonitor` cancellation when
       that lands.
 
+## File read family follow-ups
+
+- [ ] Expression-position use of the output-argument reads `$fgets` / `$fread` / `$ferror` (LRM
+      21.3.4). Each returns a value that LRM permits in any expression position
+      (`if ($fgets(s, fd))`, a blocking-assign condition), but Lyra supports them only in statement
+      position (a bare call or the right-hand side of a blocking assignment), where the LRM 13.5
+      output-argument copy-out has a statement boundary to desugar into; a nested-expression call is
+      rejected with a diagnostic. Closing this needs the copy-out to run inside an
+      immediately-invoked closure, the same shape the scan family already uses for its
+      expression-position support. `$readmemh` / `$readmemb` do not share this gap: they are void
+      tasks, so they never appear in expression position.
+
 ## Out of Scope
 
 - Format-string parse diagnostics (trailing `%`, missing specifier, width overflow, unknown
   specifier) -- already implemented, not gaps.
 - `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
-- Other file read tasks (`$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fseek` / `$rewind` /
-  `$ftell` / `$feof` / `$ferror` / `$fflush`) are implemented per LRM 21.3.4..21.3.8.
+- File read / positioning tasks (`$fgetc` / `$ungetc` / `$fseek` / `$rewind` / `$ftell` / `$feof` /
+  `$fflush`) are implemented per LRM 21.3.4..21.3.8. The output-argument reads `$fgets` / `$fread` /
+  `$ferror` are implemented in statement position; their expression-position gap is tracked above.
 - `%u` / `%z` (binary-packed unsigned / signed) and `%v` (strength). Not on the immediate roadmap;
   add entries when concrete consumers appear.

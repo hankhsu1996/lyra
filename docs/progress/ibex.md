@@ -106,18 +106,22 @@ full support.
       case (`dpi.md` D4, D4b, D6, D6b, all landed). The multi-instance dispatch (D4a) is not needed
       for either `ibex_top` or `ibex_simple_system_tb`, which each carry a single top-level
       exporting instance.
-- [ ] **`$readmemh`** -- memory backdoor load from a hex file (LRM 21.4.1). The `ibex_simple_system`
-      SRAM model calls `$readmemh(MemInitFile, mem)` in an `initial` block through the vendor helper
-      `prim_util_memload.svh` (included from `prim_ram_1p` / `prim_ram_2p`), which is how the
-      testbench boots a program image into RAM under the `SRAMInitFile` parameter. Not yet
-      supported. Current top-level frontier for `ibex_simple_system_tb`.
-- [ ] **Hierarchical reference reaching a module instance from a nested generate scope** -- a dotted
+- [x] **`$readmemh` / `$readmemb`** -- memory load from a hex / binary text file (LRM 21.4). The
+      `ibex_simple_system` SRAM model calls `$readmemh(MemInitFile, mem)` in an `initial` block
+      through the vendor helper `prim_util_memload.svh` (included from `prim_ram_1p` /
+      `prim_ram_2p`), which is how the testbench boots a program image into RAM under the
+      `SRAMInitFile` parameter. Now supported for a one-dimensional memory of packed elements:
+      `@address` directives, `//` and `/* */` comments, per-digit x / z, an explicit start / finish
+      range (descending when start > finish), and unaddressed words left unchanged.
+      Multidimensional, associative, and dynamic-array memories (LRM 21.4.1 / 21.4.3) are not yet
+      covered; Ibex needs only the 1-D form.
+- [x] **Hierarchical reference reaching a module instance from a nested generate scope** -- a dotted
       reference, written inside a conditional or loop generate block, that descends into a module
-      instance owned by an enclosing scope (the RVFI trap logic in `ibex_core`,
-      `id_stage_i.controller_i.exc_req_d` inside `gen_rvfi_no_wb_stage`; `ibex_ex_block` reaches its
-      generate-instantiated multiplier and divider the same way). Status un-reverified since it was
-      last observed; hidden behind `$readmemh` on the full top and out of the path for `ibex_top`
-      standalone. Recheck once `$readmemh` lowers.
+      instance owned by an enclosing scope (the RVFI trap logic in `ibex_core`, and `ibex_ex_block`
+      reaching its generate-instantiated multiplier and divider the same way). No longer a lowering
+      blocker: with `$readmemh` cleared, the whole `ibex_simple_system_tb` now lowers to MIR with no
+      diagnostics, so this form lowers as part of the full design. C++ emit / build / run of the
+      full top is the next thing to verify and is not yet re-checked.
 - [x] **`$value$plusargs` / `$test$plusargs`** -- runtime plusarg query (LRM 21.6). The full surface
       is live: `$test$plusargs` probes for a prefix, `$value$plusargs` parses the matched plusarg's
       remainder under `%d` / `%o` / `%h` / `%x` / `%b` / `%s`, and the host command line populates
