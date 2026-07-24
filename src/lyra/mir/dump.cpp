@@ -853,10 +853,39 @@ class MirDumper {
                   "UnionGetExpr union=Expr[{}] index={}", g.union_value.value,
                   g.index);
             },
-            [](const UnionGetRefExpr& g) -> std::string {
+            [](const ValueProjectionExpr& p) -> std::string {
+              const auto operands =
+                  [](const std::vector<ExprId>& ids) -> std::string {
+                std::string out;
+                for (const ExprId id : ids) {
+                  out += out.empty() ? "" : ", ";
+                  out += std::format("Expr[{}]", id.value);
+                }
+                return out;
+              };
+              std::string path;
+              for (const Selector& selector : p.path) {
+                path += path.empty() ? "" : ", ";
+                path += std::visit(
+                    Overloaded{
+                        [](const ComponentSelector& c) -> std::string {
+                          return std::format("component {}", c.index);
+                        },
+                        [](const UnionMemberSelector& m) -> std::string {
+                          return std::format("member {}", m.index);
+                        },
+                        [&](const ElementSelector& e) -> std::string {
+                          return std::format(
+                              "element({})", operands(e.operands));
+                        },
+                        [&](const SliceSelector& s) -> std::string {
+                          return std::format("slice({})", operands(s.operands));
+                        }},
+                    selector);
+              }
               return std::format(
-                  "UnionGetRefExpr union=Expr[{}] index={}",
-                  g.union_value.value, g.index);
+                  "ValueProjectionExpr owner=Expr[{}] path=[{}]", p.owner.value,
+                  path);
             },
             [](const TaggedExpr& t) -> std::string {
               return std::format(

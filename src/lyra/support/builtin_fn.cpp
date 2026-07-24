@@ -27,18 +27,6 @@ auto IsMutatingBuiltinFn(BuiltinFn id) -> bool {
   }
 }
 
-auto IsContainerAccessFn(BuiltinFn id) -> bool {
-  switch (id) {
-    case BuiltinFn::kElement:
-    case BuiltinFn::kElementRef:
-    case BuiltinFn::kSlice:
-    case BuiltinFn::kSliceRef:
-      return true;
-    default:
-      return false;
-  }
-}
-
 auto ArrayMethodTakesClosure(BuiltinFn id) -> bool {
   switch (id) {
     case BuiltinFn::kSort:
@@ -118,14 +106,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
   switch (id) {
     case BuiltinFn::kElement:
       return "element";
-    case BuiltinFn::kElementRef:
-      return "element_ref";
     case BuiltinFn::kWithElement:
       return "with_element";
     case BuiltinFn::kSlice:
       return "slice";
-    case BuiltinFn::kSliceRef:
-      return "slice_ref";
     case BuiltinFn::kWithSlice:
       return "with_slice";
     case BuiltinFn::kSize:

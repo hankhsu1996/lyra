@@ -48,8 +48,10 @@ below LIR, at LIR-to-LLVM.
 - A self-contained type graph: LIR-owned type identities that type every local, value, place
   projection, return, and call argument. Each is translated from a generic-PL type at MIR-to-LIR and
   carries no live reference back to MIR.
-- The place vocabulary: a place is a base local plus a projection chain (member, index, dereference,
-  slice, downcast). Every load, store, and address-of names a place by logical identity.
+- The place vocabulary: a place is a base local plus a projection chain of member and dereference
+  steps. Every load, store, and address-of names a place by logical identity. There is no index or
+  slice step: a value aggregate's interior is not independently addressable, and an array of storage
+  is reached through the indirection its elements already carry.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
@@ -96,8 +98,8 @@ identity is the suspect, not the analysis.
    codegen knows for every value whether it lives in memory or in a register-class temporary; no
    value's storage class must be inferred._
 3. LIR fixes logical storage topology, not physical layout. A place names storage by logical
-   identity -- a base local and a projection chain of member, index, and dereference steps -- never
-   as a byte offset, an address, or pointer arithmetic. The physical realization of that topology is
+   identity -- a base local and a projection chain of member and dereference steps -- never as a
+   byte offset, an address, or pointer arithmetic. The physical realization of that topology is
    derived below LIR. _Machine-execution consequence: one LIR program is valid for every target; the
    target-specific layout is a separate derivation, not a property baked into a place._
 4. LIR identity is self-contained. Every type, class, member, and callable a LIR node names is a

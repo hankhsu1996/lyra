@@ -12,24 +12,14 @@ namespace lyra::support {
 // observable storage cells, runtime effects, scope handle); this enum
 // carries only the method identity.
 enum class BuiltinFn : std::uint16_t {
-  // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access. Bare returns value
-  // form; `Ref` returns write-through reference. `Slice` is read,
-  // `SliceRef` is write.
+  // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access, both reads. A write is not
+  // an access call: it is a descent step on the target's designator.
   kElement,
-  kElementRef,
   kSlice,
-  kSliceRef,
-  // The functional element write for a value-container: yields a new container
-  // equal to the receiver with one element replaced (LRM 7.4.6). It is the
-  // value-model counterpart of the in-place `kElementRef` write, synthesized at
-  // MIR-to-LIR for a backend whose container value is reached by an opaque
-  // handle and so cannot write an element in place; it never arises from
-  // source.
+  // The functional writes those descent steps realize: a new value equal to the
+  // receiver with one element (LRM 7.4.6) or one selected range (LRM 11.5.1)
+  // replaced. Synthesized at MIR-to-LIR; neither arises from source.
   kWithElement,
-  // The functional part-select write, the slice counterpart of `kWithElement`:
-  // yields a new value equal to the receiver with the selected range replaced
-  // (LRM 11.5.1). Synthesized at MIR-to-LIR as the value-model counterpart of
-  // the in-place `kSliceRef` write; it never arises from source.
   kWithSlice,
   // LRM 7.4.3 / 7.5 / 7.9 / 7.10.2. AA's `num` is an alias of `size`;
   // String's LRM 6.16.1 `len` is its own mandated spelling.
@@ -470,7 +460,6 @@ enum class BuiltinFn : std::uint16_t {
 // True iff the call's `args[0]` is the container being indexed or sliced
 // (rather than a value receiver). Used by LHS-chain walkers to reach the
 // root primary.
-[[nodiscard]] auto IsContainerAccessFn(BuiltinFn id) -> bool;
 
 // True iff the LRM 7.12 method takes a `with`-clause closure as its second
 // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,

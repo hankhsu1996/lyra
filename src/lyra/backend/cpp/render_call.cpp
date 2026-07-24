@@ -151,26 +151,17 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Realtoa";
     case support::BuiltinFn::kElement:
       return "Element";
-    case support::BuiltinFn::kElementRef:
-      return "ElementRef";
-    case support::BuiltinFn::kWithElement:
-      // The functional element write is synthesized only at MIR-to-LIR for the
-      // execution backend; the C++ backend writes an element in place through
-      // `ElementRef`, so it never renders this entry.
-      throw InternalError(
-          "BuiltinFnCppName: with_element is an execution-backend synthesis "
-          "entry, never rendered by the C++ backend");
     case support::BuiltinFn::kSlice:
       return "Slice";
-    case support::BuiltinFn::kSliceRef:
-      return "SliceRef";
+    case support::BuiltinFn::kWithElement:
     case support::BuiltinFn::kWithSlice:
-      // The functional part-select write is synthesized only at MIR-to-LIR for
-      // the execution backend; the C++ backend writes a slice in place through
-      // `SliceRef`, so it never renders this entry.
+      // The functional interior writes are synthesized only at MIR-to-LIR for
+      // the execution backend; the C++ backend realizes a descent step in place
+      // through the value library's write proxies, so it never renders one.
       throw InternalError(
-          "BuiltinFnCppName: with_slice is an execution-backend synthesis "
-          "entry, never rendered by the C++ backend");
+          "BuiltinFnCppName: a functional interior write is an "
+          "execution-backend synthesis entry, never rendered by the C++ "
+          "backend");
     case support::BuiltinFn::kSize:
       return "Size";
     case support::BuiltinFn::kBitstreamWidth:

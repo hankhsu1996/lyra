@@ -52,22 +52,11 @@ auto IsExprRootedAtStructuralDataObject(
           [&](const mir::DerefExpr& d) {
             return IsExprRootedAtStructuralDataObject(block, d.pointer);
           },
-          [&](const mir::TupleGetExpr& g) {
-            return IsExprRootedAtStructuralDataObject(block, g.tuple);
-          },
-          [&](const mir::UnionGetRefExpr& g) {
-            return IsExprRootedAtStructuralDataObject(block, g.union_value);
+          [&](const mir::ValueProjectionExpr& p) {
+            return IsExprRootedAtStructuralDataObject(block, p.owner);
           },
           [&](const mir::TaggedGetRefExpr& g) {
             return IsExprRootedAtStructuralDataObject(block, g.union_value);
-          },
-          [&](const mir::CallExpr& c) {
-            if (!mir::IsContainerAccessCallee(c.callee) ||
-                c.arguments.empty()) {
-              return false;
-            }
-            return IsExprRootedAtStructuralDataObject(
-                block, c.arguments.front());
           },
           [&](const mir::ConcatExpr& c) {
             return std::ranges::all_of(c.operands, [&](mir::ExprId op) {
@@ -99,61 +88,40 @@ auto CloneLhsSelectorChainOntoRef(
   const auto& outer_expr = outer_block.exprs.Get(outer_id);
   return std::visit(
       Overloaded{
-          [&](const mir::CallExpr& c) -> mir::ExprId {
-            if (!mir::IsContainerAccessCallee(c.callee) ||
-                c.arguments.empty()) {
-              throw InternalError(
-                  "CloneLhsSelectorChainOntoRef: CallExpr above the NBA target "
-                  "root is not a container access");
-            }
-            // Copy the callee, argument ids, and result type up front: the
-            // recursion and `SnapshotIntoClosure` below append to
-            // `outer_block`, which can reallocate its expression storage and
-            // dangle the `outer_expr` reference `c` is bound to.
-            const auto callee = c.callee;
-            const mir::TypeId call_type = outer_expr.type;
-            const std::vector<mir::ExprId> src_args(
-                c.arguments.begin(), c.arguments.end());
-            std::vector<mir::ExprId> body_args;
-            body_args.reserve(src_args.size());
-            body_args.push_back(CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, src_args.front(), root_id,
-                captured_root));
-            for (std::size_t i = 1; i < src_args.size(); ++i) {
-              body_args.push_back(SnapshotIntoClosure(
-                  unit_lowerer, outer_frame, closure, src_args[i],
-                  "_lyra_nba_arg"));
+          // The owner is rebuilt onto the body-side reference; each step's
+          // coordinates are snapshotted by value, so the body writes the part
+          // the statement designated at submit time. Copy the path up front:
+          // the recursion and snapshots below append to `outer_block`, which
+          // can reallocate and dangle the `outer_expr` reference `p` is bound
+          // to.
+          [&](const mir::ValueProjectionExpr& p) -> mir::ExprId {
+            const mir::TypeId type = outer_expr.type;
+            const mir::ExprId src_owner = p.owner;
+            std::vector<mir::Selector> path = p.path;
+            const mir::ExprId owner = CloneLhsSelectorChainOntoRef(
+                unit_lowerer, outer_frame, closure, src_owner, root_id,
+                captured_root);
+            const auto snapshot = [&](std::vector<mir::ExprId>& operands) {
+              for (mir::ExprId& operand : operands) {
+                operand = SnapshotIntoClosure(
+                    unit_lowerer, outer_frame, closure, operand,
+                    "_lyra_nba_arg");
+              }
+            };
+            for (mir::Selector& selector : path) {
+              std::visit(
+                  Overloaded{
+                      [](const mir::ComponentSelector&) {},
+                      [](const mir::UnionMemberSelector&) {},
+                      [&](mir::ElementSelector& e) { snapshot(e.operands); },
+                      [&](mir::SliceSelector& s) { snapshot(s.operands); }},
+                  selector);
             }
             return body.exprs.Add(
                 mir::Expr{
                     .data =
-                        mir::CallExpr{
-                            .callee = callee,
-                            .arguments = std::move(body_args)},
-                    .type = call_type});
-          },
-          [&](const mir::TupleGetExpr& g) -> mir::ExprId {
-            const auto index = g.index;
-            const mir::TypeId type = outer_expr.type;
-            const mir::ExprId base = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, g.tuple, root_id,
-                captured_root);
-            return body.exprs.Add(
-                mir::Expr{
-                    .data = mir::TupleGetExpr{.tuple = base, .index = index},
-                    .type = type});
-          },
-          [&](const mir::UnionGetRefExpr& g) -> mir::ExprId {
-            const auto index = g.index;
-            const mir::TypeId type = outer_expr.type;
-            const mir::ExprId base = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, g.union_value, root_id,
-                captured_root);
-            return body.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::UnionGetRefExpr{
-                            .union_value = base, .index = index},
+                        mir::ValueProjectionExpr{
+                            .owner = owner, .path = std::move(path)},
                     .type = type});
           },
           [&](const mir::TaggedGetRefExpr& g) -> mir::ExprId {

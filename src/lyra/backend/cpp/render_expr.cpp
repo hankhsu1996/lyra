@@ -409,6 +409,47 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
       m.field);
 }
 
+// A projection realized in place: the value library's write proxies carry the
+// same semantics the functional update states, so the descent composes onto the
+// owner's place as a proxy chain. Each step is a fixed function of its selector
+// kind. The result is a reference, so it serves both a write target and an
+// actual bound by reference.
+auto RenderProjectionChain(
+    const ScopeView& view, const mir::ValueProjectionExpr& projection)
+    -> std::string {
+  const auto operands =
+      [&](const std::vector<mir::ExprId>& ids) -> std::string {
+    std::string out;
+    for (const mir::ExprId id : ids) {
+      out += out.empty() ? "" : ", ";
+      out += RenderExpr(view, view.Expr(id));
+    }
+    return out;
+  };
+  std::string rendered = RenderLhsExpr(view, view.Expr(projection.owner));
+  for (const mir::Selector& selector : projection.path) {
+    rendered = std::visit(
+        Overloaded{
+            [&](const mir::ComponentSelector& c) -> std::string {
+              return std::format("({}).template Get<{}>()", rendered, c.index);
+            },
+            [&](const mir::UnionMemberSelector& m) -> std::string {
+              return std::format(
+                  "({}).template GetRef<{}>()", rendered, m.index);
+            },
+            [&](const mir::ElementSelector& e) -> std::string {
+              return std::format(
+                  "({}).ElementRef({})", rendered, operands(e.operands));
+            },
+            [&](const mir::SliceSelector& s) -> std::string {
+              return std::format(
+                  "({}).SliceRef({})", rendered, operands(s.operands));
+            }},
+        selector);
+  }
+  return rendered;
+}
+
 // LHS expression render: produces a write-target reference (a name, a
 // dereference, or a chain of container-access `CallExpr`s whose runtime
 // overloads return write-through references). The observable-cell
@@ -451,12 +492,8 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
                 "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
                 r.property_name);
           },
-          // HIR-to-MIR lowers an LHS selector chain to write-form nodes -- a
-          // container-access `CallExpr` with a write callee (per
-          // `mir::IsContainerAccessCall`), a `UnionGetRefExpr`, a
-          // `TupleGetExpr` on a mutable base -- whose value-side render is
-          // already a writable place. So the lvalue rendering of a container
-          // access is just its value-side render, with no extra fix-up here.
+          // A call in write position is the observable cell's mutate proxy,
+          // which the value-side render already produces as a writable place.
           [&](const mir::CallExpr&) -> std::string {
             return RenderExpr(view, expr);
           },
@@ -476,10 +513,8 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           // through the addressable union (the Mutate snapshot). The reference
           // makes the member active, so the projection is itself the assignment
           // target and composes for a nested `u.f.g`.
-          [&](const mir::UnionGetRefExpr& g) -> std::string {
-            return std::format(
-                "({}).template GetRef<{}>()",
-                RenderLhsExpr(view, view.Expr(g.union_value)), g.index);
+          [&](const mir::ValueProjectionExpr& p) -> std::string {
+            return RenderProjectionChain(view, p);
           },
           // A tagged-union member write: a reference to the payload of the
           // active tag. Unlike its untagged counterpart, this throws at
@@ -978,13 +1013,12 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
                 "({}).template Get<{}>()",
                 RenderExpr(view, view.Expr(g.union_value)), g.index);
           },
-          // The write node reaches rvalue render only as the receiver of a
-          // container-access write (`u.h[i] = v`), where it is still the active
-          // member reference; it renders the same as in lvalue position.
-          [&](const mir::UnionGetRefExpr& g) -> std::string {
-            return std::format(
-                "({}).template GetRef<{}>()",
-                RenderExpr(view, view.Expr(g.union_value)), g.index);
+          // A designator reaches value position where a construct binds one
+          // rather than writing it -- a reference actual, an output pack
+          // component, a nonblocking update. Its chain is already a reference,
+          // so the render is the same one the write target uses.
+          [&](const mir::ValueProjectionExpr& p) -> std::string {
+            return RenderProjectionChain(view, p);
           },
           [&](const mir::TaggedExpr& t) -> std::string {
             return std::format(

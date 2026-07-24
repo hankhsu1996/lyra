@@ -40,16 +40,17 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Read vs LHS side dispatch for `arr[i]`. The split is uniform across all
-// container kinds (LRM 7.8.6 / 7.8.7 AA, LRM 7.10.1 queue, LRM 7.4 packed /
-// unpacked) and mirrors the runtime API's bare-vs-`Ref`-suffix protocol;
-// see `include/lyra/value/concepts.hpp`.
+// Which side of an assignment a select is on. The two sides produce different
+// shapes, uniformly across every container kind (LRM 7.8.6 / 7.8.7 AA, LRM
+// 7.10.1 queue, LRM 7.4 packed / unpacked): a read composes bottom-up as a
+// value, and a write is a descent step on the target's designator, which has to
+// name the place the rebuilt value goes back to.
 enum class AccessSide : std::uint8_t { kRead, kLhs };
 
-auto ElementAccessCallee(AccessSide side) -> mir::Direct {
-  return mir::Direct{
-      .target = side == AccessSide::kLhs ? support::BuiltinFn::kElementRef
-                                         : support::BuiltinFn::kElement};
+// An element read. A write is not a call: it is a descent step on the target's
+// designator, so no write-side access entry exists.
+auto ElementAccessCallee() -> mir::Direct {
+  return mir::Direct{.target = support::BuiltinFn::kElement};
 }
 
 // LRM 7.2.1 / 7.2.2: packed struct or union field table accessor. Used by
@@ -62,11 +63,9 @@ auto GetAggregateFields(const hir::Type& t)
       "GetAggregateFields: base type is not a packed struct or union");
 }
 
-// Read-side wrap that materialises a borrowed `PackedArrayRef` result into
-// an owning `PackedArray` (Rust's `&[T]::to_owned() -> Vec<T>` pattern).
-// LHS chains keep the view because they write through it; non-packed
-// receivers fall through unchanged because their access already returns an
-// owning value.
+// Read-side wrap that materialises a borrowed packed view into an owning value
+// (Rust's `&[T]::to_owned() -> Vec<T>` pattern). A non-packed receiver falls
+// through unchanged because its access already returns an owning value.
 auto WrapPackedAsOwned(
     const mir::CompilationUnit& unit, mir::Block& block, mir::Expr access_call,
     mir::TypeId result_type) -> mir::Expr {
@@ -168,21 +167,54 @@ auto AppendResultShape(
       block, result_ty.AsIntegralPacked(), result_type));
 }
 
-// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The callee carries just
-// read-vs-write (`kElement` / `kElementRef`); the receiver's container kind
-// picks the runtime overload at C++ render time. The raw source index is passed
+// Extends a write target by one descent step. A target that already designates
+// a part of some owner's value gains another selector; a target that is still a
+// place becomes the owner of a new designation. The place boundary therefore
+// falls out of the lowering's own recursion -- the innermost expression that is
+// not itself a descent is the owner -- and no consumer recovers it afterwards.
+auto ProjectOnto(
+    mir::Block& block, mir::ExprId base_id, mir::Selector selector,
+    mir::TypeId result_type) -> mir::Expr {
+  if (const auto* projection = std::get_if<mir::ValueProjectionExpr>(
+          &block.exprs.Get(base_id).data)) {
+    std::vector<mir::Selector> path = projection->path;
+    const mir::ExprId owner = projection->owner;
+    path.push_back(std::move(selector));
+    return mir::Expr{
+        .data =
+            mir::ValueProjectionExpr{.owner = owner, .path = std::move(path)},
+        .type = result_type};
+  }
+  return mir::Expr{
+      .data =
+          mir::ValueProjectionExpr{
+              .owner = base_id, .path = {std::move(selector)}},
+      .type = result_type};
+}
+
+// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). A read is a call whose
+// receiver's container kind picks the runtime overload; a write is a descent
+// step on the target's designator. Either way the raw source index is passed
 // through, plus the receiver's declared range for the unpacked family; every
 // selectable value resolves the coordinate against that range.
 auto BuildElementAccessCallExpr(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, AccessSide side, mir::TypeId result_type) -> mir::Expr {
-  std::vector<mir::ExprId> args = {base_id, idx_id};
-  AppendReceiverRange(unit_lowerer, block, base_id, args);
+  std::vector<mir::ExprId> operands = {idx_id};
+  AppendReceiverRange(unit_lowerer, block, base_id, operands);
+  if (side == AccessSide::kLhs) {
+    return ProjectOnto(
+        block, base_id,
+        mir::ElementSelector{
+            .operands = std::move(operands), .projected_type = result_type},
+        result_type);
+  }
+  std::vector<mir::ExprId> args = {base_id};
+  args.insert(args.end(), operands.begin(), operands.end());
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = ElementAccessCallee(side),
-              .arguments = std::move(args)},
+              .callee = ElementAccessCallee(), .arguments = std::move(args)},
       .type = result_type};
 }
 
@@ -234,17 +266,22 @@ auto BuildRangeSliceCallExpr(
   const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
   const auto form_id =
       block.exprs.Add(mir::MakeIntLiteral(int_type, raw_or->form));
-  std::vector<mir::ExprId> args = {base_id, raw_or->a, raw_or->b, form_id};
-  AppendResultShape(unit_lowerer, block, result_type, args);
-  AppendReceiverRange(unit_lowerer, block, base_id, args);
+  std::vector<mir::ExprId> operands = {raw_or->a, raw_or->b, form_id};
+  AppendResultShape(unit_lowerer, block, result_type, operands);
+  AppendReceiverRange(unit_lowerer, block, base_id, operands);
+  if (side == AccessSide::kLhs) {
+    return ProjectOnto(
+        block, base_id,
+        mir::SliceSelector{
+            .operands = std::move(operands), .projected_type = result_type},
+        result_type);
+  }
+  std::vector<mir::ExprId> args = {base_id};
+  args.insert(args.end(), operands.begin(), operands.end());
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = side == AccessSide::kLhs
-                                    ? support::BuiltinFn::kSliceRef
-                                    : support::BuiltinFn::kSlice},
+              .callee = mir::Direct{.target = support::BuiltinFn::kSlice},
               .arguments = std::move(args)},
       .type = result_type};
 }
@@ -265,16 +302,21 @@ auto BuildFieldSliceCallExpr(
   // A field occupies bits `[offset +: width]` -- a raw indexed-up part-select
   // (`value::SliceForm` `kIndexedUp` == 1); the value resolves the bit window.
   const auto form_id = block.exprs.Add(mir::MakeIntLiteral(int_type, 1));
-  std::vector<mir::ExprId> args = {base_id, offset_id, width_id, form_id};
-  AppendResultShape(unit_lowerer, block, result_type, args);
+  std::vector<mir::ExprId> operands = {offset_id, width_id, form_id};
+  AppendResultShape(unit_lowerer, block, result_type, operands);
+  if (side == AccessSide::kLhs) {
+    return ProjectOnto(
+        block, base_id,
+        mir::SliceSelector{
+            .operands = std::move(operands), .projected_type = result_type},
+        result_type);
+  }
+  std::vector<mir::ExprId> args = {base_id};
+  args.insert(args.end(), operands.begin(), operands.end());
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = side == AccessSide::kLhs
-                                    ? support::BuiltinFn::kSliceRef
-                                    : support::BuiltinFn::kSlice},
+              .callee = mir::Direct{.target = support::BuiltinFn::kSlice},
               .arguments = std::move(args)},
       .type = result_type};
 }
@@ -367,7 +409,7 @@ auto LowerHirElementSelectExpr(
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee = ElementAccessCallee(AccessSide::kRead),
+                .callee = ElementAccessCallee(),
                 .arguments = {base_id, idx_id}},
         .type = result_type};
   }
@@ -504,19 +546,6 @@ auto LowerHirElementSelectExprLhs(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  const auto& hir_base_ty = unit_lowerer.Hir().types.Get(hir_base.type);
-  // LRM 6.16: indexed character write `s[i] = ...` is the element-reference
-  // access, the write-side dual of the element-value read. It joins the generic
-  // element-access path so the place flows through the observable mutate route
-  // and the assignment shape uniformly.
-  if (hir_base_ty.Kind() == hir::TypeKind::kString) {
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee = ElementAccessCallee(AccessSide::kLhs),
-                .arguments = {base_id, idx_id}},
-        .type = result_type};
-  }
   return LowerElementSelectInner(
       unit_lowerer, block, base_id, idx_id, AccessSide::kLhs, result_type,
       false);
@@ -561,15 +590,17 @@ auto LowerHirMemberAccessExprLhs(
     auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-    return mir::Expr{
-        .data =
-            mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index.value},
-        .type = result_type};
+    return ProjectOnto(
+        block, base_id,
+        mir::ComponentSelector{
+            .index = sel.field_index.value, .projected_type = result_type},
+        result_type);
   }
-  // LRM 7.3: an unpacked union member write is the write-side access form
-  // `UnionGetRefExpr` over the union place (the by-reference counterpart of
-  // the `UnionGetExpr` read). The observable root routes through the cell's
-  // mutate path later; the place is just the projection here.
+  // LRM 7.3: an unpacked union member write descends into the union value. An
+  // untagged member write makes that member active, so it is a descent step on
+  // the designator; a tagged one instead requires the member to already be the
+  // current tag (LRM 11.9), which is its own node. The observable root routes
+  // through the cell's mutate path later.
   if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
       hir::TypeKind::kUnpackedUnion) {
     auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
@@ -584,11 +615,11 @@ auto LowerHirMemberAccessExprLhs(
                   .union_value = base_id, .tag_index = sel.field_index.value},
           .type = result_type};
     }
-    return mir::Expr{
-        .data =
-            mir::UnionGetRefExpr{
-                .union_value = base_id, .index = sel.field_index.value},
-        .type = result_type};
+    return ProjectOnto(
+        block, base_id,
+        mir::UnionMemberSelector{
+            .index = sel.field_index.value, .projected_type = result_type},
+        result_type);
   }
   const auto& fields =
       GetAggregateFields(unit_lowerer.Hir().types.Get(base_hir_expr.type));

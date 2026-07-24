@@ -10,20 +10,6 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
-
-// Yields the container access chain's base argument when `expr` is a
-// container access (per `mir::IsContainerAccessCallee`); null otherwise.
-auto AsContainerAccessBase(const mir::Expr& expr) -> const mir::ExprId* {
-  const auto* call = std::get_if<mir::CallExpr>(&expr.data);
-  if (call == nullptr) return nullptr;
-  if (!mir::IsContainerAccessCallee(call->callee)) return nullptr;
-  if (call->arguments.empty()) return nullptr;
-  return &call->arguments.front();
-}
-
-}  // namespace
-
 auto FindLhsRootId(
     const mir::CompilationUnit& unit, const mir::Block& block,
     mir::ExprId lhs_id) -> mir::ExprId {
@@ -36,23 +22,15 @@ auto FindLhsRootId(
     if (mir::IsObservableCellType(unit.types.Get(expr.type))) {
       return lhs_id;
     }
-    // A struct member projects through a tuple component and a union member
-    // through its union access; the observable root is the base, reached the
-    // same way a container access reaches its receiver.
-    if (const auto* g = std::get_if<mir::TupleGetExpr>(&expr.data)) {
-      lhs_id = g->tuple;
-      continue;
-    }
-    if (const auto* m = std::get_if<mir::UnionGetRefExpr>(&expr.data)) {
-      lhs_id = m->union_value;
+    // A designated part of a value states its owner, so the root is reached
+    // without walking a descent chain.
+    if (const auto* projection =
+            std::get_if<mir::ValueProjectionExpr>(&expr.data)) {
+      lhs_id = projection->owner;
       continue;
     }
     if (const auto* m = std::get_if<mir::TaggedGetRefExpr>(&expr.data)) {
       lhs_id = m->union_value;
-      continue;
-    }
-    if (const auto* base = AsContainerAccessBase(expr)) {
-      lhs_id = *base;
       continue;
     }
     return lhs_id;
@@ -74,19 +52,14 @@ auto RewriteLhsRootWithMutate(
         mir::Expr{
             .data = mir::DerefExpr{.pointer = mutate_id}, .type = value_type});
   }
-  if (const auto* g = std::get_if<mir::TupleGetExpr>(&expr.data)) {
-    mir::TupleGetExpr rewritten = *g;
+  if (const auto* projection =
+          std::get_if<mir::ValueProjectionExpr>(&expr.data)) {
+    mir::ValueProjectionExpr rewritten = *projection;
     const mir::TypeId result_ty = expr.type;
-    rewritten.tuple =
-        RewriteLhsRootWithMutate(unit, block, rewritten.tuple, runtime_id);
-    return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
-  }
-  if (const auto* m = std::get_if<mir::UnionGetRefExpr>(&expr.data)) {
-    mir::UnionGetRefExpr rewritten = *m;
-    const mir::TypeId result_ty = expr.type;
-    rewritten.union_value = RewriteLhsRootWithMutate(
-        unit, block, rewritten.union_value, runtime_id);
-    return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
+    rewritten.owner =
+        RewriteLhsRootWithMutate(unit, block, rewritten.owner, runtime_id);
+    return block.exprs.Add(
+        mir::Expr{.data = std::move(rewritten), .type = result_ty});
   }
   if (const auto* m = std::get_if<mir::TaggedGetRefExpr>(&expr.data)) {
     mir::TaggedGetRefExpr rewritten = *m;
@@ -94,17 +67,6 @@ auto RewriteLhsRootWithMutate(
     rewritten.union_value = RewriteLhsRootWithMutate(
         unit, block, rewritten.union_value, runtime_id);
     return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
-  }
-  if (AsContainerAccessBase(expr) != nullptr) {
-    auto rewritten_call = std::get<mir::CallExpr>(expr.data);
-    // Read the type out before the recursive rewrite below: that recursion
-    // appends to the same expression arena, which invalidates the `expr`
-    // reference.
-    const mir::TypeId expr_type = expr.type;
-    rewritten_call.arguments.front() = RewriteLhsRootWithMutate(
-        unit, block, rewritten_call.arguments.front(), runtime_id);
-    return block.exprs.Add(
-        mir::Expr{.data = std::move(rewritten_call), .type = expr_type});
   }
   throw InternalError(
       "RewriteLhsRootWithMutate: LHS root is neither an observable cell nor a "

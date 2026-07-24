@@ -162,20 +162,6 @@ auto RequiresFunctionalMutation(const mir::Type& type) -> bool {
   return type.Kind() == mir::TypeKind::kDynamicArray;
 }
 
-// Whether an element-ref or slice-ref on a value of this type is a functional
-// interior write: realized as a whole-value read / update / write-back because
-// the execution backend reaches the value through an immutable handle and
-// cannot write an interior in place. A dynamic-array element (LRM 7.4.6), a
-// string character (LRM 6.16.2), and a packed bit-select / part-select (LRM
-// 11.5.1) qualify. This is the peeling condition for an element or slice
-// selector, distinct from the mutating-method question
-// `RequiresFunctionalMutation` answers.
-auto HasFunctionalInteriorAccess(const mir::Type& type) -> bool {
-  const mir::TypeKind kind = type.Kind();
-  return kind == mir::TypeKind::kDynamicArray ||
-         kind == mir::TypeKind::kString || kind == mir::TypeKind::kPackedArray;
-}
-
 // Marks every local the canonical lowering needs an address for: one that is
 // assigned after its initialization, or has its address taken. Such a local is
 // storage, so it must be a place local. A read never makes a local storage: a
@@ -954,9 +940,9 @@ auto FunctionLowerer::LowerAssign(
   // value-container element, or any composition of them -- is not a place: the
   // aggregate is an opaque value, so the write folds into a functional
   // whole-value update stored back through the owner.
-  if (DecomposedTarget target = DecomposeTarget(block, assign.target);
-      !target.selectors.empty()) {
-    return LowerProjectionAssign(block, assign, target);
+  if (const auto* projection = std::get_if<mir::ValueProjectionExpr>(
+          &block.exprs.Get(assign.target).data)) {
+    return LowerProjectionAssign(block, assign, *projection);
   }
 
   const lir::TypeId type =
@@ -1101,88 +1087,42 @@ auto FunctionLowerer::WriteWholeValue(
   return value;
 }
 
-auto FunctionLowerer::DecomposeTarget(
-    const mir::Block& block, mir::ExprId target) -> DecomposedTarget {
-  // Peel value-projection selectors from the target inward until the expression
-  // is no longer one -- that remainder is the whole-value owner. A component
-  // (`TupleGetExpr`), a value-container element (`kElementRef`), and a
-  // part-select (`kSliceRef`) on a value reached by an opaque handle are
-  // selectors; anything else (a union member) is not one this path folds, so
-  // peeling stops there and the owner is that expression.
-  std::vector<ProjectionSelector> selectors;
-  mir::ExprId cursor = target;
-  while (true) {
-    const mir::Expr& expr = block.exprs.Get(cursor);
-    if (const auto* get = std::get_if<mir::TupleGetExpr>(&expr.data)) {
-      selectors.emplace_back(
-          ComponentSelector{
-              .index = static_cast<std::uint32_t>(get->index),
-              .container_type =
-                  unit_->TranslateType(block.exprs.Get(get->tuple).type),
-              .projected_type = unit_->TranslateType(expr.type)});
-      cursor = get->tuple;
-      continue;
-    }
-    if (const auto* call = std::get_if<mir::CallExpr>(&expr.data)) {
-      const auto fn = DirectBuiltinFn(*call);
-      const bool functional_container =
-          (fn == support::BuiltinFn::kElementRef ||
-           fn == support::BuiltinFn::kSliceRef) &&
-          HasFunctionalInteriorAccess(
-              unit_->Mir().types.Get(block.exprs.Get(call->arguments[0]).type));
-      if (functional_container && fn == support::BuiltinFn::kElementRef) {
-        selectors.emplace_back(
-            ElementSelector{
-                .index = call->arguments[1],
-                .container_type = unit_->TranslateType(
-                    block.exprs.Get(call->arguments[0]).type),
-                .projected_type = unit_->TranslateType(expr.type)});
-        cursor = call->arguments[0];
-        continue;
-      }
-      if (functional_container && fn == support::BuiltinFn::kSliceRef) {
-        selectors.emplace_back(
-            SliceSelector{
-                .a = call->arguments[1],
-                .b = call->arguments[2],
-                .form = call->arguments[3],
-                .shape = call->arguments[4],
-                .container_type = unit_->TranslateType(
-                    block.exprs.Get(call->arguments[0]).type),
-                .projected_type = unit_->TranslateType(expr.type)});
-        cursor = call->arguments[0];
-        continue;
-      }
-    }
-    break;
-  }
-  std::ranges::reverse(selectors);
-  return DecomposedTarget{.owner = cursor, .selectors = std::move(selectors)};
-}
+// Read the owner's whole value, descend the path, let `make_leaf` produce the
+// part's new value, rebuild the whole value outward, and store it back. The
+// owner and every coordinate evaluate exactly once, whatever the path's depth,
+// and the store back through the owner is a single one. `make_leaf` receives a
+// reader that extracts the part's current value on demand, so a plain store
+// never reads it and a compound or an increment reads it once.
+auto FunctionLowerer::LowerProjectionUpdate(
+    const mir::Block& block, const mir::ValueProjectionExpr& projection,
+    const LeafTransform& make_leaf) -> diag::Result<lir::Operand> {
+  const std::vector<mir::Selector>& path = projection.path;
 
-auto FunctionLowerer::LowerProjectionAssign(
-    const mir::Block& block, const mir::AssignExpr& assign,
-    const DecomposedTarget& target) -> diag::Result<lir::Operand> {
-  const std::vector<ProjectionSelector>& selectors = target.selectors;
-
-  auto owner_value = ReadWholeValue(block, target.owner);
+  auto owner_value = ReadWholeValue(block, projection.owner);
   if (!owner_value) {
     return std::unexpected(std::move(owner_value.error()));
   }
 
-  // An element's or slice's key expressions are evaluated once, shared by a
-  // compound read and the write-back; a component selector needs none.
-  std::vector<std::vector<lir::Operand>> keys(selectors.size());
-  for (std::size_t depth = 0; depth < selectors.size(); ++depth) {
-    std::vector<mir::ExprId> key_exprs;
-    if (const auto* elem = std::get_if<ElementSelector>(&selectors[depth])) {
-      key_exprs = {elem->index};
-    } else if (
-        const auto* slice = std::get_if<SliceSelector>(&selectors[depth])) {
-      key_exprs = {slice->a, slice->b, slice->form, slice->shape};
+  // A step's key expressions are evaluated once, shared by a compound read and
+  // the write-back; a positional step has none.
+  std::vector<std::vector<lir::Operand>> keys(path.size());
+  for (std::size_t depth = 0; depth < path.size(); ++depth) {
+    const std::vector<mir::ExprId>* operands = std::visit(
+        Overloaded{
+            [](const mir::ComponentSelector&) {
+              return static_cast<const std::vector<mir::ExprId>*>(nullptr);
+            },
+            [](const mir::UnionMemberSelector&) {
+              return static_cast<const std::vector<mir::ExprId>*>(nullptr);
+            },
+            [](const mir::ElementSelector& e) { return &e.operands; },
+            [](const mir::SliceSelector& s) { return &s.operands; }},
+        path[depth]);
+    if (operands == nullptr) {
+      continue;
     }
-    for (const mir::ExprId key_expr : key_exprs) {
-      auto key = LowerExpr(block, key_expr);
+    for (const mir::ExprId operand : *operands) {
+      auto key = LowerExpr(block, operand);
       if (!key) {
         return std::unexpected(std::move(key.error()));
       }
@@ -1190,117 +1130,148 @@ auto FunctionLowerer::LowerProjectionAssign(
     }
   }
 
+  // The type of the value each step descends into, and of the part it reaches.
+  const auto projected_type = [&](std::size_t depth) {
+    return unit_->TranslateType(
+        std::visit(
+            [](const auto& selector) { return selector.projected_type; },
+            path[depth]));
+  };
+  const auto container_type = [&](std::size_t depth) {
+    return depth == 0
+               ? unit_->TranslateType(block.exprs.Get(projection.owner).type)
+               : projected_type(depth - 1);
+  };
+
+  const auto call = [&](support::BuiltinFn fn, lir::TypeId result,
+                        std::vector<lir::Operand> args) {
+    return Emit(
+        result,
+        lir::CallInstr{
+            .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
+            .args = std::move(args)});
+  };
   const auto extract = [&](const lir::Operand& container,
                            std::size_t depth) -> lir::Operand {
+    std::vector<lir::Operand> args = {container};
+    args.insert(args.end(), keys[depth].begin(), keys[depth].end());
     return std::visit(
         Overloaded{
-            [&](const ComponentSelector& c) {
+            [&](const mir::ComponentSelector& c) {
               return Emit(
-                  c.projected_type,
+                  projected_type(depth),
                   lir::AggregateExtractInstr{
                       .aggregate = container,
-                      .selector = lir::TupleElement{.index = c.index}});
+                      .selector = lir::TupleElement{
+                          .index = static_cast<std::uint32_t>(c.index)}});
             },
-            [&](const ElementSelector& e) {
+            [&](const mir::UnionMemberSelector& m) {
               return Emit(
-                  e.projected_type,
-                  lir::CallInstr{
-                      .target =
-                          lir::BuiltinTarget{
-                              .fn = support::BuiltinFn::kElement,
-                              .qualifier = std::nullopt},
-                      .args = {container, keys[depth][0]}});
+                  projected_type(depth),
+                  lir::AggregateExtractInstr{
+                      .aggregate = container,
+                      .selector = lir::TupleElement{
+                          .index = static_cast<std::uint32_t>(m.index)}});
             },
-            [&](const SliceSelector& s) {
-              return Emit(
-                  s.projected_type,
-                  lir::CallInstr{
-                      .target =
-                          lir::BuiltinTarget{
-                              .fn = support::BuiltinFn::kSlice,
-                              .qualifier = std::nullopt},
-                      .args = {
-                          container, keys[depth][0], keys[depth][1],
-                          keys[depth][2], keys[depth][3]}});
+            [&](const mir::ElementSelector&) {
+              return call(
+                  support::BuiltinFn::kElement, projected_type(depth), args);
+            },
+            [&](const mir::SliceSelector&) {
+              return call(
+                  support::BuiltinFn::kSlice, projected_type(depth), args);
             }},
-        selectors[depth]);
+        path[depth]);
   };
   const auto update = [&](const lir::Operand& container, std::size_t depth,
                           lir::Operand replacement) -> lir::Operand {
+    std::vector<lir::Operand> args = {container};
+    args.insert(args.end(), keys[depth].begin(), keys[depth].end());
+    args.push_back(replacement);
     return std::visit(
         Overloaded{
-            [&](const ComponentSelector& c) {
+            [&](const mir::ComponentSelector& c) {
               return Emit(
-                  c.container_type,
+                  container_type(depth),
                   lir::AggregateUpdateInstr{
                       .aggregate = container,
-                      .selector = lir::TupleElement{.index = c.index},
-                      .replacement = std::move(replacement)});
+                      .selector =
+                          lir::TupleElement{
+                              .index = static_cast<std::uint32_t>(c.index)},
+                      .replacement = replacement});
             },
-            [&](const ElementSelector& e) {
+            [&](const mir::UnionMemberSelector& m) {
               return Emit(
-                  e.container_type,
-                  lir::CallInstr{
-                      .target =
-                          lir::BuiltinTarget{
-                              .fn = support::BuiltinFn::kWithElement,
-                              .qualifier = std::nullopt},
-                      .args = {
-                          container, keys[depth][0], std::move(replacement)}});
+                  container_type(depth),
+                  lir::AggregateUpdateInstr{
+                      .aggregate = container,
+                      .selector =
+                          lir::TupleElement{
+                              .index = static_cast<std::uint32_t>(m.index)},
+                      .replacement = replacement});
             },
-            [&](const SliceSelector& s) {
-              return Emit(
-                  s.container_type,
-                  lir::CallInstr{
-                      .target =
-                          lir::BuiltinTarget{
-                              .fn = support::BuiltinFn::kWithSlice,
-                              .qualifier = std::nullopt},
-                      .args = {
-                          container, keys[depth][0], keys[depth][1],
-                          keys[depth][2], keys[depth][3],
-                          std::move(replacement)}});
+            [&](const mir::ElementSelector&) {
+              return call(
+                  support::BuiltinFn::kWithElement, container_type(depth),
+                  args);
+            },
+            [&](const mir::SliceSelector&) {
+              return call(
+                  support::BuiltinFn::kWithSlice, container_type(depth), args);
             }},
-        selectors[depth]);
+        path[depth]);
   };
 
   // The whole value at each chain level, descending from the owner toward the
   // sub-value being written.
   std::vector<lir::Operand> containers;
-  containers.reserve(selectors.size());
+  containers.reserve(path.size());
   containers.push_back(*std::move(owner_value));
-  for (std::size_t depth = 1; depth < selectors.size(); ++depth) {
+  for (std::size_t depth = 1; depth < path.size(); ++depth) {
     containers.push_back(extract(containers[depth - 1], depth - 1));
   }
 
-  auto rhs = LowerExpr(block, assign.value);
-  if (!rhs) {
-    return std::unexpected(std::move(rhs.error()));
-  }
-  const std::size_t leaf = selectors.size() - 1;
-  lir::Operand leaf_value = *std::move(rhs);
-  if (assign.compound_op.has_value()) {
-    const std::optional<lir::BinaryOp> op =
-        TranslateBinaryOp(*assign.compound_op);
-    if (!op) {
-      return Unsupported(
-          "mir_to_lir: compound assignment operator has no direct realization");
-    }
-    lir::Operand old = extract(containers[leaf], leaf);
-    leaf_value = Emit(
-        std::visit(
-            [](const auto& sel) { return sel.projected_type; },
-            selectors[leaf]),
-        lir::BinaryInstr{
-            .op = *op, .lhs = std::move(old), .rhs = std::move(leaf_value)});
+  const std::size_t leaf = path.size() - 1;
+  auto leaf_value = make_leaf(
+      [&] { return extract(containers[leaf], leaf); }, projected_type(leaf));
+  if (!leaf_value) {
+    return std::unexpected(std::move(leaf_value.error()));
   }
 
   // Rebuild the whole value from the written sub-value outward.
-  lir::Operand rebuilt = std::move(leaf_value);
-  for (std::size_t depth = selectors.size(); depth-- > 0;) {
+  lir::Operand rebuilt = *std::move(leaf_value);
+  for (std::size_t depth = path.size(); depth-- > 0;) {
     rebuilt = update(containers[depth], depth, std::move(rebuilt));
   }
-  return WriteWholeValue(block, target.owner, std::move(rebuilt));
+  return WriteWholeValue(block, projection.owner, std::move(rebuilt));
+}
+
+auto FunctionLowerer::LowerProjectionAssign(
+    const mir::Block& block, const mir::AssignExpr& assign,
+    const mir::ValueProjectionExpr& projection) -> diag::Result<lir::Operand> {
+  return LowerProjectionUpdate(
+      block, projection,
+      [&](const LeafReader& read_leaf,
+          lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
+        auto rhs = LowerExpr(block, assign.value);
+        if (!rhs) {
+          return std::unexpected(std::move(rhs.error()));
+        }
+        if (!assign.compound_op.has_value()) {
+          return *std::move(rhs);
+        }
+        const std::optional<lir::BinaryOp> op =
+            TranslateBinaryOp(*assign.compound_op);
+        if (!op) {
+          return Unsupported(
+              "mir_to_lir: compound assignment operator has no direct "
+              "realization");
+        }
+        return Emit(
+            leaf_type,
+            lir::BinaryInstr{
+                .op = *op, .lhs = read_leaf(), .rhs = *std::move(rhs)});
+      });
 }
 
 auto FunctionLowerer::LowerMutatingCall(
@@ -1344,6 +1315,28 @@ auto FunctionLowerer::LowerIncDec(
                          inc_dec.op == mir::IncDecOp::kPreDec;
   const lir::UnaryOp op =
       is_increment ? lir::UnaryOp::kIncrement : lir::UnaryOp::kDecrement;
+
+  // A designated part increments through its owner: the part's current value is
+  // read out of the owner's whole value, stepped, and folded back in.
+  if (const auto* projection = std::get_if<mir::ValueProjectionExpr>(
+          &block.exprs.Get(inc_dec.target).data)) {
+    std::optional<lir::Operand> old;
+    std::optional<lir::Operand> stepped;
+    auto written = LowerProjectionUpdate(
+        block, *projection,
+        [&](const LeafReader& read_leaf,
+            lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
+          old = read_leaf();
+          stepped = Emit(leaf_type, lir::UnaryInstr{.op = op, .operand = *old});
+          return *stepped;
+        });
+    if (!written) {
+      return std::unexpected(std::move(written.error()));
+    }
+    // What was stored is the owner's whole value; the statement's own value is
+    // the part, before or after the step.
+    return is_prefix ? *stepped : *old;
+  }
 
   // An activation-frame value local increments through its handle: read the old
   // value out, apply the step, overwrite.

@@ -927,28 +927,26 @@ enough to warrant its own focused review.
     that pays off only when several sites route through it; scope the cut so at least the queue /
     packed / managed-new forms land together with the dispatch table itself.
 
-- [ ] R61 -- A value-aggregate interior write is modeled in MIR as a write onto an lvalue expression
-      -- the reference / location model -- while the functional whole-value-update model the layer
-      contracts describe (`../architecture/mir.md`, `../architecture/lir.md`) lives one layer below,
-      synthesized during MIR-to-LIR by the execution backend and gated to a single container type.
-      One MIR node is therefore consumed two ways -- the C++ backend mutates in place, the execution
-      backend rewrites into read-whole / functional-update / write-whole -- and the
-      place-vs-value-projection fact is re-derived per backend, the shape `../architecture/mir.md`'s
-      Forbidden Shapes name. The visible consequence: an interior write to a union member, a packed
-      slice, a string character, or a queue / associative-array element, and every `ref` bound to an
-      aggregate interior, is rejected on the execution backend today; only a struct component and
-      the one gated container write take the functional path. **Target shape**: MIR states a
-      place-vs-value-projection write designator -- an interior write is an owner-relative value
-      projection, a functional whole-value update stored back through the owner with owner and
-      selectors evaluated once; a `ref` to an interior is an owner-relative projection reference;
-      the C++ in-place write becomes a behavior-preserving optimization over a semantically
-      equivalent proxy. Every value-interior family routes through one functional path; the
-      single-container gate and the per-family target branch are removed. The full model, the
-      rejected alternatives, and the staged migration are recorded in
-      `../decisions/value-projection-write.md`. **Blocker**: none unlanded, but it reverses two
-      accepted decisions for value interiors and is cross-cutting across HIR-to-MIR, both backends,
-      and the value library -- large enough to warrant its own focused review, and it lands in the
-      staged cuts the decision records rather than folded into a container-feature cut.
+- [x] R61 -- A value-aggregate interior write reached MIR as a write onto a nested lvalue
+      expression, and each backend recovered the owner and the selectors by walking that expression
+      and consulting each receiver's type. Two backends deriving one semantic fact is the shape
+      `../architecture/mir.md`'s Forbidden Shapes name, and it made every new container family
+      arrive as another per-type branch. MIR now states the write target as a designator -- the
+      place that owns the whole value, and the descent that reaches the part -- with a closed
+      selector set covering a product component, a union member, an element, and a window. Each
+      backend is a fixed function of that node: the C++ backend composes the value library's write
+      proxies in place, the execution backend folds one functional whole-value update. The nested
+      write encoding, the write-side access entries, the target decomposition, and its per-type
+      predicate are gone. Every interior write -- struct component, union member, packed slice,
+      packed or unpacked element, string character -- and every increment through one now takes the
+      same path on both backends. The full model and the questions it settles are recorded in
+      `../decisions/value-projection-write.md` and `../decisions/value-projection-designator.md`.
+  - [ ] A `ref` / `output` / `inout` actual bound to an interior, and a nonblocking assignment into
+        one, are the designator's evaluated form -- a projection reference. It is rejected on the
+        execution backend today. Landing it needs that reference to exist as a runtime value on both
+        backends, able to cross a suspension.
+  - [ ] The queue and associative-array interior writes connect to the same path once those value
+        domains are realized on the execution backend.
 
 ## Out of Scope
 

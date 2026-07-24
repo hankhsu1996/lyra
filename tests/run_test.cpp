@@ -537,6 +537,83 @@ auto WriteAggregateMemberShapeSource(const std::filesystem::path& path)
       << "endmodule\n";
 }
 
+// Every descent step a write target can take, composed and nested: a product
+// component reached through another component, a packed bit-select, a packed
+// window (plain and compound), a string character, a union member, and an
+// increment. One source so the paths are exercised together rather than each in
+// isolation, which is where a shared write path would break first.
+auto WriteInteriorWriteSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  typedef struct {\n"
+      << "    logic [15:0] w;\n"
+      << "    string s;\n"
+      << "  } Inner;\n"
+      << "  typedef struct {\n"
+      << "    Inner i;\n"
+      << "    int n;\n"
+      << "  } Outer;\n"
+      << "  typedef union packed {\n"
+      << "    logic [15:0] a;\n"
+      << "    logic signed [15:0] b;\n"
+      << "  } U;\n"
+      << "  Outer o;\n"
+      << "  U u;\n"
+      << "  int idx;\n"
+      << "  initial begin\n"
+      << "    idx = 1;\n"
+      << "    o.n = 7;\n"
+      << "    o.n++;\n"
+      << "    $display(\"n=%0d\", o.n);\n"
+      << "    o.i.w = 16'h0000;\n"
+      << "    o.i.w[idx] = 1'b1;\n"
+      << "    o.i.w[7:4] = 4'hA;\n"
+      << "    o.i.w[11:8] += 4'h3;\n"
+      << "    $display(\"w=%h\", o.i.w);\n"
+      << "    o.i.s = \"hello\";\n"
+      << "    o.i.s[0] = \"H\";\n"
+      << "    $display(\"s=%s\", o.i.s);\n"
+      << "    u.a = 16'hFFFF;\n"
+      << "    u.b = 16'h0000;\n"
+      << "    u.a[3:0] = 4'h5;\n"
+      << "    $display(\"u=%h\", u.a);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+TEST(LyraRun, JitAndCppAgreeOnInteriorWrite) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteInteriorWriteSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "n=8\n"
+      "w=03a2\n"
+      "s=Hello\n"
+      "u=0005\n")
+      << "stdout: " << jit.stdout_text;
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();

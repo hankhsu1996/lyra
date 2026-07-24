@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <variant>
@@ -60,41 +60,6 @@ class FunctionLowerer {
   using LocalBinding =
       std::variant<PlaceBinding, ValueBinding, ActivationValueBinding>;
 
-  // A value-projection selector peeled from an assignment target: a product
-  // component by declaration-order position, a value-container element by a
-  // runtime index, or a part-select range by its bounds. Each names a sub-value
-  // of the owner's whole value, so a write through it folds into a functional
-  // whole-value update. `container_type` is the value the selector projects
-  // into; `projected_type` is the sub-value it reaches.
-  struct ComponentSelector {
-    std::uint32_t index;
-    lir::TypeId container_type;
-    lir::TypeId projected_type;
-  };
-  struct ElementSelector {
-    mir::ExprId index;
-    lir::TypeId container_type;
-    lir::TypeId projected_type;
-  };
-  struct SliceSelector {
-    mir::ExprId a;
-    mir::ExprId b;
-    mir::ExprId form;
-    mir::ExprId shape;
-    lir::TypeId container_type;
-    lir::TypeId projected_type;
-  };
-  using ProjectionSelector =
-      std::variant<ComponentSelector, ElementSelector, SliceSelector>;
-  // An assignment target split into the whole-value owner it writes back
-  // through and the value-projection selectors reaching the written sub-value,
-  // in owner-to-leaf order. An empty selector list means the target is the
-  // owner itself -- a plain place.
-  struct DecomposedTarget {
-    mir::ExprId owner;
-    std::vector<ProjectionSelector> selectors;
-  };
-
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
   auto LowerStmtInto(const mir::Block& block, const mir::Stmt& stmt)
       -> diag::Result<void>;
@@ -129,25 +94,31 @@ class FunctionLowerer {
       -> diag::Result<lir::Operand>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
-  // Splits an assignment target into its whole-value owner and the value-
-  // projection selectors reaching the written sub-value. A product component
-  // (`.f`) and a value-container element (`[i]`) are selectors; the owner is
-  // the first expression that is not one -- a place, an activation handle, or
-  // an observable cell. Selectors compose freely, so a mixed static/dynamic
-  // target
-  // (`a[i].f`, `s.v[i]`) decomposes uniformly.
-  auto DecomposeTarget(const mir::Block& block, mir::ExprId target)
-      -> DecomposedTarget;
-  // A write through one or more value-projection selectors (`s.f = x`,
-  // `arr[i] = x`, `a[i].f = x`). The owner's whole value is read, the selectors
-  // are folded into a functional whole-value update -- a product component a
-  // static value instruction, a container element a runtime-library call -- and
-  // the rebuilt whole value is stored back through the owner, so value
-  // semantics hold and, when the owner is an observable cell, the whole-cell
-  // update fires.
+  // Extracts the designated part's current value; called at most once, and only
+  // by a leaf transform that needs the old value.
+  using LeafReader = std::function<lir::Operand()>;
+  // Produces the designated part's new value, given a reader for its current
+  // one and the part's type.
+  using LeafTransform =
+      std::function<diag::Result<lir::Operand>(const LeafReader&, lir::TypeId)>;
+  // The shared realization of every write through a designator: read the
+  // owner's whole value, descend the path, transform the part, rebuild the
+  // whole value outward, store it back. The owner and every coordinate evaluate
+  // exactly once, and the store back through the owner is a single one -- for
+  // an observable owner, one cell write whatever the path's depth.
+  auto LowerProjectionUpdate(
+      const mir::Block& block, const mir::ValueProjectionExpr& projection,
+      const LeafTransform& make_leaf) -> diag::Result<lir::Operand>;
+  // A write through a designated part of an owner's value (`s.f = x`,
+  // `arr[i] = x`, `a[i].f = x`). The owner's whole value is read, the path is
+  // folded into a functional whole-value update -- a product component a static
+  // value instruction, a container element a runtime-library call -- and the
+  // rebuilt whole value is stored back through the owner, so value semantics
+  // hold and, when the owner is an observable cell, the whole-cell update
+  // fires once whatever the path's depth.
   auto LowerProjectionAssign(
       const mir::Block& block, const mir::AssignExpr& assign,
-      const DecomposedTarget& target) -> diag::Result<lir::Operand>;
+      const mir::ValueProjectionExpr& projection) -> diag::Result<lir::Operand>;
   // A receiver-mutating value-container method (`arr.delete()`). The container
   // value cannot be mutated in place through a shared handle, so the method is
   // a functional operation whose result is stored back through the receiver's

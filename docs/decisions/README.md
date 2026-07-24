@@ -43,6 +43,10 @@ the detail lives in the entry itself.
   owner-relative value projection (a functional whole-value update through the owner), not a place
   store; MIR states the place-vs-projection designator, the C++ in-place write is a
   behavior-preserving optimization.
+- [value-projection-designator](value-projection-designator.md) -- the formal shape of that
+  designator: one node whose children are the owner place and a closed selector path, shared by the
+  write path and by the projection reference a `ref`, an `output` / `inout` actual, and a
+  nonblocking assignment bind; the nested-lvalue write encoding is deleted.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering.
 - [array-method-dispatch](array-method-dispatch.md) -- LRM 7.12 array-method runtime semantics;
