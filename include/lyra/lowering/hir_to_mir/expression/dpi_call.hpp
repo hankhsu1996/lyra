@@ -2,25 +2,39 @@
 
 // DPI-C call lowering (LRM 35): the SystemVerilog / C foreign-language
 // boundary. An `import "DPI-C"` call marshals each SV actual to its C ABI
-// carrier, calls the external symbol, and marshals results back; an `export
-// "DPI-C"` synthesizes the `extern "C"` wrapper foreign code calls to reach an
-// SV subroutine. Both sides share the carrier-marshaling vocabulary, kept here
-// so the ordinary-call dispatch in `calls.hpp` stays free of the DPI ABI
-// surface.
+// carrier, calls the foreign symbol, and marshals results back; an `export
+// "DPI-C"` synthesizes the C entry point foreign code calls to reach an SV
+// subroutine. Both sides share the carrier-marshaling vocabulary, kept here so
+// the ordinary-call dispatch in `calls.hpp` stays free of the DPI ABI surface.
+
+#include <span>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/foreign_export.hpp"
+#include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/callable.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/foreign_export_wrapper.hpp"
+#include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 class UnitLowerer;
+
+// The signature a DPI-C declaration publishes to the C side (LRM 35.5.6): one
+// binding per formal, typed as the value crosses the boundary, plus the type
+// the entry point returns. The result carries no body, since this is what an
+// import -- a declaration the user's C defines -- is made of; carrying the
+// prototype as an ordinary signature is what lets an import's declaration and
+// an export's definition render through one path.
+auto MakeForeignSignature(
+    mir::CompilationUnit& unit, std::span<const hir::DpiParamAbi> params,
+    support::DpiScalarAbi ret_abi, bool is_task) -> mir::CallableCode;
 
 // LRM 35.4 import call: an ordinary call to the external static callable,
 // wrapped in boundary marshaling. The carriers and directions are read from the
@@ -36,18 +50,18 @@ auto LowerForeignImportCall(
     const hir::ForeignImportRef& ref, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
-// Builds the foreign-linkage wrapper for a DPI-C export (LRM 35.5): a callable
-// whose C-ABI parameters marshal to the exported subroutine's SV arguments,
-// which it calls through its leading context argument, marshaling the result
-// back. `target` is the call the body makes -- a class method takes a recovered
-// receiver, any other target is a receiver-less package free function taking
-// the run's effects -- so it also fixes the leading argument. `context_frame`
-// supplies the enclosing class for a receiver (a bare frame otherwise);
-// `result_type` is the exported subroutine's result type the writeback
-// destructures.
-auto SynthesizeForeignExportWrapper(
+// Builds the C entry point of a DPI-C export (LRM 35.5): a receiver-less
+// callable carrying foreign linkage, whose C-ABI parameters marshal to the
+// exported subroutine's SV arguments, which it calls through its leading
+// context argument, marshaling the result back. `target` is the call the body
+// makes -- a class method takes a recovered receiver, any other target is a
+// receiver-less package free function taking the run's effects -- so it also
+// fixes the leading argument. `context_frame` supplies the enclosing class for
+// a receiver (a bare frame otherwise); `result_type` is the exported
+// subroutine's result type the writeback destructures.
+auto SynthesizeForeignExportEntry(
     UnitLowerer& module, const WalkFrame& context_frame,
     mir::DirectTarget target, mir::TypeId result_type,
-    const hir::ForeignExportDecl& export_decl) -> mir::ForeignExportWrapper;
+    const hir::ForeignExportDecl& export_decl) -> mir::CallableDecl;
 
 }  // namespace lyra::lowering::hir_to_mir

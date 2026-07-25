@@ -53,10 +53,10 @@ scheduler) -- and none of it returns to the body.
 
 Two structural concepts, not one:
 
-- **Callable code** (a declaration): a signature plus an implementation form, which is either an
-  **internal body** (a `Block`) or an **external symbol** (a foreign declaration with no body; see
-  DPI below). The receiver `self` is the code's first ordinary parameter -- a code-level receiver,
-  not a special slot.
+- **Callable code** (a declaration): a signature, plus a **body** (a `Block`) where this declaration
+  also defines the callable. A declaration this program does not define -- a DPI import, a pure
+  virtual method -- simply has none (see DPI below). The receiver `self` is the code's first
+  ordinary parameter -- a code-level receiver, not a special slot.
 - **Callable value**: a reference to callable code plus a **bound environment**. A closure
   constructs a callable value with a captured environment; a registered process is a callable value
   that binds the instance receiver; a stored/bound method is a callable value that binds its
@@ -196,21 +196,23 @@ These are contracts, not optional lowering details:
   abnormal termination (`disable`, `disable fork`) and forked task calls are where this needs
   explicit care, tracked with the object-model and scheduling work, not assumed.
 
-### Internal versus external callables: DPI is a structural form
+### Declaration versus definition, and foreign linkage: DPI needs no species of its own
 
-A callable's implementation form is a sum, exactly mirroring how an object is either intra-unit or
-external-unit:
+Two independent facts, not one sum:
 
-- **Internal**: a body plus an environment model.
-- **External**: a foreign-symbol declaration -- a signature plus a linkage name, foreign language,
-  and calling convention -- with no body. A DPI import is this.
+- **Body presence.** A declaration this program defines carries a body; one it does not simply has
+  none. A DPI import and a pure virtual method are the two that do not, and an absent body is
+  distinct from a present empty one.
+- **Foreign linkage.** A linkage name, foreign language, and calling convention, present on either.
 
-This is a legitimate structural variant, not a redundant discriminator: it changes whether a body
-exists, how the symbol resolves, and where the implementation is produced. The external **symbol
-contract** (linkage name, language, calling convention, import/export identity) is explicit MIR
-structure on the external declaration, because more than one backend must read the same fact and
-none may re-derive it (`mir.md` invariant 10). Only the mechanical value marshaling is backend
-realization (home 4). A DPI export is an ordinary internal callable plus an export registration.
+Both are explicit MIR structure, because more than one backend must read the same fact and none may
+re-derive it (`mir.md` invariant 10). Only the mechanical value marshaling is backend realization
+(home 4). The two DPI directions fall out of the combination: an import is bodyless plus foreign, an
+export's entry point is bodied plus foreign, and pure-virtualness is bodyless plus a dispatch role.
+
+A named implementation-form species over these would be a discriminator, not structure. Once every
+form carries the signature, the species restates only which of the other facts is present, and two
+facts that must agree drift -- which is exactly the failure this decision removes elsewhere.
 
 ### Lifecycle registration is per-instance and constructor-time
 

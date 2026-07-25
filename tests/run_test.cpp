@@ -843,6 +843,78 @@ TEST(LyraCompile, ProducesPortableBuildableProject) {
       << "stdout: " << run.stdout_text;
 }
 
+// A design that crosses the DPI-C boundary in both directions (LRM 35): the
+// module imports a C function, which calls back the package function the
+// package exports.
+auto WriteDpiSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "package pkg;\n"
+      << "  export \"DPI-C\" function triple;\n"
+      << "  function automatic int triple(int x);\n"
+      << "    return x * 3;\n"
+      << "  endfunction\n"
+      << "endpackage\n"
+      << "module Test;\n"
+      << "  import \"DPI-C\" context function int call_pkg(input int x);\n"
+      << "  initial $display(\"dpi %0d\", call_pkg(7));\n"
+      << "endmodule\n";
+}
+
+// The foreign half, stating no prototype of its own: the generated ABI header
+// carries both the import it defines and the export it calls.
+auto WriteDpiForeignSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "#include \"dpi.h\"\n"
+      << "\n"
+      << "int call_pkg(int x) {\n"
+      << "  return triple(x);\n"
+      << "}\n";
+}
+
+TEST(LyraEmit, PortableProjectBuildsItsDpiSources) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteDpiSource(src);
+  const auto foreign = *tmp_or / "foreign.c";
+  WriteDpiForeignSource(foreign);
+  const auto out_dir = *tmp_or / "out";
+
+  const std::vector<std::string> args = {
+      "emit",           "cpp",       "--no-project",   "--top",
+      "Test",           "-o",        out_dir.string(), "--dpi-link",
+      foreign.string(), src.string()};
+  const auto emit = RunChildProcess(lyra, args, 60s);
+  ASSERT_EQ(emit.termination, TerminationKind::kExitedNormally)
+      << emit.stdout_text << emit.stderr_text;
+  ASSERT_EQ(emit.exit_code, 0) << emit.stderr_text;
+
+  // The emitted directory carries the whole foreign boundary: the generated
+  // prototypes, the standard header they are spelled in, and a copy of the
+  // user's source, so it builds where the originals are not reachable.
+  EXPECT_TRUE(std::filesystem::exists(out_dir / "dpi.h"));
+  EXPECT_TRUE(std::filesystem::exists(out_dir / "svdpi.h"));
+  ASSERT_TRUE(std::filesystem::exists(out_dir / "dpi/foreign.c"));
+  std::filesystem::remove(foreign);
+
+  auto sh_or = lyra::support::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  const std::vector<std::string> build = {
+      "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
+  const auto built = RunChildProcess(*sh_or, build, 120s);
+  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+      << built.stdout_text << built.stderr_text;
+  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+
+  const auto run = RunChildProcess(out_dir / "program", {}, 30s);
+  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("dpi 21"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+}
+
 TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();

@@ -85,7 +85,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Activation; execution instance; completion slot; cancellation domain                       | `activation.md`                 |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit                   | `scheduling.md`                 |
 | Incremental compilation; query-based caching                                               | `incremental_build.md`          |
-| Locating/bundling the C++ runtime; run output contract                                     | `runtime_distribution.md`       |
+| Locating/bundling the C++ runtime; the foreign-language ABI surface; run output contract   | `runtime_distribution.md`       |
 | Test categories; suite layout; expectation forms                                           | `testing_strategy.md`           |
 
 These docs are the contracts. For the trade-off records behind them -- rejected alternatives and

@@ -71,7 +71,9 @@ struct BaseInit {
 // -- live alongside it. A consumer that emits construction reads `base_init`
 // and `member_inits` in declaration order, then descends into `code`.
 struct ConstructorDecl {
-  CallableCode code;
+  // A class always defines its own construction, so this code is always a
+  // definition; an empty body is a class that constructs nothing.
+  CallableCode code = CallableCode::Defined();
   std::optional<BaseInit> base_init;
   std::vector<FieldInit> member_inits;
 };
@@ -186,8 +188,9 @@ struct Class {
   // here. Peer to `constructor.code` on the axis "code the runtime runs at
   // construction time," but per-class rather than per-instance and
   // signature-less: `code.params` is empty (no `self`, no formals), and
-  // `code.result_type` is void.
-  CallableCode static_init;
+  // `code.result_type` is void. Always a definition; a class with no static
+  // initializer simply defines an empty one.
+  CallableCode static_init = CallableCode::Defined();
 };
 
 }  // namespace lyra::mir

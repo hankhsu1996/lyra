@@ -8,6 +8,8 @@
 #include <string_view>
 #include <system_error>
 
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/driver/file_output.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
@@ -17,39 +19,12 @@ namespace {
 
 using bazel::tools::cpp::runfiles::Runfiles;
 
-// Copy one file, overwriting, and ensure the result is owner-writable. The
-// runtime sources come from the build cache read-only; without this a re-emit
-// into the same directory cannot overwrite the previous copy.
-auto CopyFileOverwrite(
-    const std::filesystem::path& from, const std::filesystem::path& to)
-    -> std::expected<void, std::string> {
-  std::error_code ec;
-  std::filesystem::copy_file(
-      from, to, std::filesystem::copy_options::overwrite_existing, ec);
-  if (ec) {
-    return std::unexpected(
-        std::format(
-            "failed to copy '{}' to '{}': {}", from.string(), to.string(),
-            ec.message()));
-  }
-  std::filesystem::permissions(
-      to, std::filesystem::perms::owner_write,
-      std::filesystem::perm_options::add, ec);
-  if (ec) {
-    return std::unexpected(
-        std::format(
-            "failed to set permissions on '{}': {}", to.string(),
-            ec.message()));
-  }
-  return {};
-}
-
 // Copy a directory tree, dereferencing symlinks into real files. Runfiles
 // stages headers as symlinks into the build cache; copying them verbatim would
 // leave the exported tree pointing back at the cache instead of standing alone.
 auto CopyTree(
     const std::filesystem::path& from, const std::filesystem::path& to)
-    -> std::expected<void, std::string> {
+    -> diag::Result<void> {
   std::error_code ec;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(
            from, std::filesystem::directory_options::follow_directory_symlink,
@@ -60,22 +35,18 @@ auto CopyTree(
     // Lexical relative only: runfiles entries are symlinks into the build
     // cache, and a filesystem-resolving `relative` would canonicalize them
     // back to their source locations and escape the destination tree.
-    const auto rel = entry.path().lexically_relative(from);
-    const auto dest = to / rel;
-    std::filesystem::create_directories(dest.parent_path(), ec);
-    if (ec) {
-      return std::unexpected(
-          std::format(
-              "failed to create '{}': {}", dest.parent_path().string(),
-              ec.message()));
-    }
-    if (auto r = CopyFileOverwrite(entry.path(), dest); !r) {
+    if (auto r = CopyFileWritable(
+            entry.path(), to / entry.path().lexically_relative(from));
+        !r) {
       return r;
     }
   }
   if (ec) {
     return std::unexpected(
-        std::format("failed to walk '{}': {}", from.string(), ec.message()));
+        diag::Make(
+            diag::DiagCode::kHostIoError,
+            std::format(
+                "failed to walk '{}': {}", from.string(), ec.message())));
   }
   return {};
 }
@@ -103,38 +74,28 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   if (lib.empty() || !std::filesystem::exists(lib)) {
     return std::unexpected("cannot locate the Lyra runtime library");
   }
+  const std::filesystem::path svdpi =
+      runfiles->Rlocation("_main/third_party/systemverilog/svdpi.h");
+  if (svdpi.empty() || !std::filesystem::exists(svdpi)) {
+    return std::unexpected("cannot locate the standard DPI-C header");
+  }
   return RuntimeLocation{
       .include_root = anchor.parent_path().parent_path().parent_path(),
-      .lib = lib};
+      .lib = lib,
+      .svdpi_header = svdpi};
 }
 
 auto ExportRuntimeTree(
     const RuntimeLocation& runtime, const std::filesystem::path& dest_dir)
-    -> std::expected<void, std::string> {
-  const auto lyra_include_root = runtime.include_root / "lyra";
-
-  const auto include_dest = dest_dir / kRuntimeIncludeDir / "lyra";
-  const auto lib_dest_dir = dest_dir / kRuntimeLibDir;
-
-  std::error_code ec;
-  std::filesystem::create_directories(include_dest.parent_path(), ec);
-  if (ec) {
-    return std::unexpected(
-        std::format(
-            "failed to create '{}': {}", include_dest.parent_path().string(),
-            ec.message()));
-  }
-  std::filesystem::create_directories(lib_dest_dir, ec);
-  if (ec) {
-    return std::unexpected(
-        std::format(
-            "failed to create '{}': {}", lib_dest_dir.string(), ec.message()));
-  }
-
-  if (auto r = CopyTree(lyra_include_root, include_dest); !r) {
+    -> diag::Result<void> {
+  if (auto r = CopyTree(
+          runtime.include_root / "lyra",
+          dest_dir / kRuntimeIncludeDir / "lyra");
+      !r) {
     return r;
   }
-  return CopyFileOverwrite(runtime.lib, lib_dest_dir / kRuntimeLibFile);
+  return CopyFileWritable(
+      runtime.lib, dest_dir / kRuntimeLibDir / kRuntimeLibFile);
 }
 
 }  // namespace lyra::driver

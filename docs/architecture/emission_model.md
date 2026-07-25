@@ -31,7 +31,10 @@ non-conforming code, not as a relaxation of the contract.
 
 ## Does Not Own
 
-- Where the runtime library lives and how a binary locates it (see `runtime_distribution.md`).
+- Where the runtime library lives and how a binary locates it, and the foreign-language ABI surface
+  an emitted project publishes to a user's own sources (see `runtime_distribution.md`). That surface
+  is program-level rather than per-unit; the reasoning for why that is not the aggregate artifact
+  this doc forbids lives there.
 - The compilation-unit boundary itself and what an interface is (see `compilation_unit_model.md`).
 - When and into what a cross-unit reference resolves, semantically (see `reference_resolution.md`);
   this doc owns only how a backend _realizes_ that resolution.

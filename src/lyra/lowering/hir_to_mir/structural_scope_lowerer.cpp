@@ -1365,19 +1365,19 @@ auto InstallGeneratedDefinition(
   const auto make_adapter =
       [&](std::string name,
           std::optional<mir::CallableId> body) -> mir::AbiAdapterId {
-    mir::CallableCode code;
+    mir::CallableCode code = mir::CallableCode::Defined();
     const mir::LocalId self =
         code.locals.Add(mir::LocalDecl{.name = "self", .type = scope_ptr});
     code.params = {self};
     code.result_type = void_type;
     if (body.has_value()) {
-      const mir::ExprId self_ref = code.body.exprs.Add(
+      const mir::ExprId self_ref = code.Body().exprs.Add(
           mir::Expr{.data = mir::LocalRef{.var = self}, .type = scope_ptr});
-      const mir::ExprId typed = code.body.exprs.Add(
+      const mir::ExprId typed = code.Body().exprs.Add(
           mir::Expr{
               .data = mir::PointerCastExpr{.operand = self_ref},
               .type = self_ptr});
-      const mir::ExprId call = code.body.exprs.Add(
+      const mir::ExprId call = code.Body().exprs.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
@@ -1388,7 +1388,7 @@ auto InstallGeneratedDefinition(
                                       .owner = cls_id, .slot = *body}},
                       .arguments = {typed}},
               .type = void_type});
-      code.body.AppendStmt(mir::ExprStmt{.expr = call});
+      code.Body().AppendStmt(mir::ExprStmt{.expr = call});
     }
     return cls.abi_adapters.Add(
         mir::AbiAdapter{.name = std::move(name), .code = std::move(code)});
@@ -1458,7 +1458,7 @@ auto InstallGeneratedDefinition(
   const mir::StaticConstantId def_id = cls.static_constants.Add(std::move(def));
 
   // The constructor hands the base the address of the constant just installed.
-  auto& cex = ctor_code.body.exprs;
+  auto& cex = ctor_code.Body().exprs;
   const mir::ExprId ref = cex.Add(
       mir::Expr{
           .data = mir::StaticConstantRef{.constant = def_id},
@@ -1486,12 +1486,12 @@ void FinalizeConstructor(
     base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
     for (const mir::LocalId id : prefix_local_ids) {
       const mir::TypeId ty = ctor_code.locals.Get(id).type;
-      const mir::ExprId local_ref = ctor_code.body.exprs.Add(
+      const mir::ExprId local_ref = ctor_code.Body().exprs.Add(
           mir::Expr{.data = mir::LocalRef{.var = id}, .type = ty});
       if (unit.types.Get(ty).IsAliasHandle()) {
         base_args.push_back(local_ref);
       } else {
-        base_args.push_back(ctor_code.body.exprs.Add(
+        base_args.push_back(ctor_code.Body().exprs.Add(
             mir::Expr{
                 .data = mir::MoveExpr{.operand = local_ref}, .type = ty}));
       }
@@ -1526,10 +1526,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
 
   // A DPI-C import declares no body, so it never enters the subroutine body
   // machinery below. Its ABI projection and foreign name were resolved once at
-  // AST-to-HIR; here they translate straight into a receiver-less external
-  // callable of the class, the callable the import call lowers against. The
-  // imports are the class's first callables, so a body-bearing subroutine sits
-  // past them (its reserved id accounts for the import count).
+  // AST-to-HIR; here they translate straight into a receiver-less bodyless
+  // callable of the class carrying that linkage, the callable the import call
+  // lowers against. The imports are the class's first callables, so a
+  // body-bearing subroutine sits past them (its reserved id accounts for the
+  // import count).
   for (std::size_t i = 0; i < hir_scope.foreign_imports.size(); ++i) {
     const hir::ForeignImportDecl& imp = hir_scope.foreign_imports.Get(
         hir::ForeignImportId{static_cast<std::uint32_t>(i)});
@@ -1545,17 +1546,20 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     mir_class.callables.Add(
         mir::CallableDecl{
             .name = imp.name,
-            .impl =
-                mir::ExternalCallable{
-                    .params = std::move(params),
-                    .ret_sv_type = unit_lowerer.TranslateType(imp.ret_sv_type),
-                    .ret_abi = imp.ret_abi,
-                    .is_task = imp.is_task,
-                    .external =
-                        mir::ExternalSymbol{
-                            .foreign_name = imp.foreign_name,
-                            .is_pure = imp.is_pure,
-                            .is_context = imp.is_context}},
+            .code = MakeForeignSignature(
+                unit_lowerer.Unit(), imp.params, imp.ret_abi, imp.is_task),
+            .foreign =
+                mir::ForeignLinkage{
+                    .foreign_name = imp.foreign_name,
+                    .is_pure = imp.is_pure,
+                    .is_context = imp.is_context,
+                    .marshal =
+                        mir::ForeignMarshal{
+                            .params = std::move(params),
+                            .ret_sv_type =
+                                unit_lowerer.TranslateType(imp.ret_sv_type),
+                            .ret_abi = imp.ret_abi,
+                            .is_task = imp.is_task}},
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
   }
@@ -1572,7 +1576,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // Each lifecycle phase is a callable like any other: `self` is the receiver
   // binding seeded into its `locals`, and every nested block's `self` read
   // resolves through that one binding.
-  mir::CallableCode ctor_code;
+  mir::CallableCode ctor_code = mir::CallableCode::Defined();
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
   const mir::LocalId self_id = seed_self(ctor_bindings);
   // Each prefix param the base contract demands lands as an ordinary local
@@ -1586,34 +1590,34 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(
         mir::LocalDecl{.name = p.name, .type = p.type}));
   }
-  mir::Block& ctor_block = ctor_code.body;
+  mir::Block& ctor_block = ctor_code.Body();
   const WalkFrame ctor_frame =
       parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
           .WithBlock(&ctor_block)
           .WithBindings(&ctor_bindings);
 
-  mir::CallableCode initialize_code;
+  mir::CallableCode initialize_code = mir::CallableCode::Defined();
   CallableBindings init_bindings(unit_lowerer.Unit(), initialize_code);
   const mir::LocalId init_self_id = seed_self(init_bindings);
-  mir::Block& initialize_block = initialize_code.body;
+  mir::Block& initialize_block = initialize_code.Body();
   const WalkFrame init_frame =
       parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
           .WithBlock(&initialize_block)
           .WithBindings(&init_bindings);
 
-  mir::CallableCode resolve_code;
+  mir::CallableCode resolve_code = mir::CallableCode::Defined();
   CallableBindings resolve_bindings(unit_lowerer.Unit(), resolve_code);
   const mir::LocalId resolve_self_id = seed_self(resolve_bindings);
-  mir::Block& resolve_block = resolve_code.body;
+  mir::Block& resolve_block = resolve_code.Body();
   const WalkFrame resolve_frame =
       parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
           .WithBlock(&resolve_block)
           .WithBindings(&resolve_bindings);
 
-  mir::CallableCode activate_code;
+  mir::CallableCode activate_code = mir::CallableCode::Defined();
   CallableBindings activate_bindings(unit_lowerer.Unit(), activate_code);
   const mir::LocalId activate_self_id = seed_self(activate_bindings);
-  mir::Block& activate_block = activate_code.body;
+  mir::Block& activate_block = activate_code.Body();
   const WalkFrame activate_frame =
       parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
           .WithBlock(&activate_block)
@@ -1831,7 +1835,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     sub_class.fields = sub_shape.fields;
     sub_class.contained = sub_shape.contained;
 
-    mir::CallableCode sub_ctor_code;
+    mir::CallableCode sub_ctor_code = mir::CallableCode::Defined();
     CallableBindings sub_ctor_bindings(unit_lowerer.Unit(), sub_ctor_code);
     const mir::LocalId sub_self_id = sub_ctor_bindings.Declare(
         BindingOriginId::Receiver(),
@@ -1844,7 +1848,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       sub_ctor_prefix_local_ids.push_back(sub_ctor_bindings.DeclareAnonymous(
           mir::LocalDecl{.name = p.name, .type = p.type}));
     }
-    mir::Block& sub_ctor_block = sub_ctor_code.body;
+    mir::Block& sub_ctor_block = sub_ctor_code.Body();
     ScopeChainNode sub_scope_link{};
     const WalkFrame sub_ctor_frame =
         parent_frame.WithClass(&sub_class, entry.class_id, sub_scope_link)
@@ -1936,9 +1940,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         entry.companion_field);
   }
 
-  // An exported subroutine (LRM 35.5) is reached from foreign C through its
-  // wrapper, a free function outside the class, so it joins the class's
-  // externally callable surface rather than its internal one.
+  // An exported subroutine (LRM 35.5) is reached from foreign C through a C
+  // entry point outside the class, so it joins the class's externally callable
+  // surface rather than its internal one.
   std::unordered_set<std::string_view> exported_names;
   for (const hir::ForeignExportDecl& e : hir_scope.foreign_exports) {
     exported_names.insert(e.sv_name);
@@ -1955,7 +1959,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::CallableId added = mir_class.callables.Add(
         mir::CallableDecl{
             .name = src.name,
-            .impl = mir::InternalCallable{.code = *std::move(code_or)},
+            .code = *std::move(code_or),
+            .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
             .visibility = exported_names.contains(src.name)
                               ? mir::CallableVisibility::kPublic
@@ -1975,10 +1980,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
 
   // Each exported subroutine (LRM 35.5) already lowered as a callable above, in
   // structural-subroutine id order past the leading DPI imports, so its
-  // callable id is the import count plus its subroutine index. The wrapper is
-  // synthesized to call that method on the receiver the backend recovers from
-  // the current DPI scope (LRM 35.5.3) -- the instance the foreign call chain
-  // targets, which svSetScope may have redirected.
+  // callable id is the import count plus its subroutine index. Its C entry
+  // point calls that method on the receiver recovered from the current DPI
+  // scope (LRM 35.5.3) -- the instance the foreign call chain targets, which
+  // svSetScope may have redirected -- and the unit owns it, since a DPI-C name
+  // is program-global and never a class member (LRM 35.4, 35.7).
   for (const hir::ForeignExportDecl& export_decl : hir_scope.foreign_exports) {
     std::optional<mir::CallableId> method_id;
     for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
@@ -1996,14 +2002,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           "lowered method");
     }
     const mir::TypeId method_result_type =
-        std::get<mir::InternalCallable>(
-            mir_class.callables.Get(*method_id).impl)
-            .code.result_type;
-    unit_lowerer.Unit().foreign_export_wrappers.push_back(
-        SynthesizeForeignExportWrapper(
-            unit_lowerer, ctor_frame,
-            mir::CallableTarget{.owner = class_id_, .slot = *method_id},
-            method_result_type, export_decl));
+        mir_class.callables.Get(*method_id).code.result_type;
+    unit_lowerer.Unit().callables.Add(SynthesizeForeignExportEntry(
+        unit_lowerer, ctor_frame,
+        mir::CallableTarget{.owner = class_id_, .slot = *method_id},
+        method_result_type, export_decl));
   }
 
   for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {
@@ -2018,7 +2021,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::CallableId body = mir_class.callables.Add(
         mir::CallableDecl{
             .name = std::move(name),
-            .impl = mir::InternalCallable{.code = *std::move(code_or)},
+            .code = *std::move(code_or),
+            .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
     AppendProcessRegistration(
@@ -2100,7 +2104,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     return mir_class.callables.Add(
         mir::CallableDecl{
             .name = std::move(name),
-            .impl = mir::InternalCallable{.code = std::move(code)},
+            .code = std::move(code),
+            .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
   };

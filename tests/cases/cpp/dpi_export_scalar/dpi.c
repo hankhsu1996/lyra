@@ -1,6 +1,6 @@
-// The emitted program provides `sv_double` as an `extern "C"` symbol (the DPI-C
-// export wrapper). This imported function calls it back.
-extern int sv_double(int x);
+/* The generated ABI header declares every DPI-C name the design takes part in
+   (LRM 35), so this source states none of them itself. */
+#include "dpi.h"
 
 int round_trip(int x) {
   return sv_double(x);

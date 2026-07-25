@@ -36,14 +36,14 @@ class ScopeView {
   static auto ForRoot(
       const mir::CompilationUnit& unit, const mir::Class& cls,
       const mir::CallableCode& code) -> ScopeView {
-    return ScopeView{unit, &cls, code, code.body, nullptr};
+    return ScopeView{unit, &cls, code, code.Body(), nullptr};
   }
 
   // A callable the unit's namespace owns directly, with no enclosing class.
   static auto ForNamespace(
       const mir::CompilationUnit& unit, const mir::CallableCode& code)
       -> ScopeView {
-    return ScopeView{unit, nullptr, code, code.body, nullptr};
+    return ScopeView{unit, nullptr, code, code.Body(), nullptr};
   }
 
   [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
@@ -55,7 +55,7 @@ class ScopeView {
   [[nodiscard]] auto WithClass(
       const mir::Class& child_class, const mir::CallableCode& child_code) const
       -> ScopeView {
-    return ScopeView{*unit_, &child_class, child_code, child_code.body, this};
+    return ScopeView{*unit_, &child_class, child_code, child_code.Body(), this};
   }
 
   // Enter a closure's own code while staying in the same class context: a
@@ -64,7 +64,7 @@ class ScopeView {
   [[nodiscard]] auto WithClosure(const mir::CallableCode& closure_code) const
       -> ScopeView {
     return ScopeView{
-        *unit_, class_, closure_code, closure_code.body, class_parent_};
+        *unit_, class_, closure_code, closure_code.Body(), class_parent_};
   }
 
   ScopeView(const ScopeView&) = delete;

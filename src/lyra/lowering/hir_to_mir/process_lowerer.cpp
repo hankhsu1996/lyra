@@ -174,7 +174,7 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
 auto LowerStraightLineProcess(ProcessLowerer& process)
     -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
-  mir::CallableCode code;
+  mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
       BindingOriginId::Receiver(),
@@ -182,13 +182,13 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
           .name = "self", .type = parent.current_class->self_pointer_type});
   code.params = {self_id};
   const WalkFrame body_frame =
-      parent.WithBlock(&code.body).WithBindings(&bindings);
+      parent.WithBlock(&code.Body()).WithBindings(&bindings);
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   // A process completes by falling off its end, which is a real body statement
   // rather than an implicit exit (LRM 9.2). Its coroutine result type is what
   // makes that return a coroutine completion.
-  code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.result_type = process.Owner().Unit().builtins.coroutine_void;
   return code;
 }
@@ -202,7 +202,7 @@ auto LowerForeverProcess(
     const std::vector<hir::SensitivityEntry>* implicit_sensitivity)
     -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
-  mir::CallableCode code;
+  mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
       BindingOriginId::Receiver(),
@@ -223,14 +223,14 @@ auto LowerForeverProcess(
   }
 
   const mir::BlockId body_scope_id =
-      code.body.child_scopes.Add(std::move(body_block));
-  code.body.AppendStmt(
+      code.Body().child_scopes.Add(std::move(body_block));
+  code.Body().AppendStmt(
       mir::ForStmt{
           .init = {},
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.result_type = process.Owner().Unit().builtins.coroutine_void;
   return code;
 }
@@ -256,7 +256,7 @@ auto ProcessLowerer::Run(const hir::Process& src)
 auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = owner_ctor_frame_;
-  mir::CallableCode code;
+  mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(owner_->Unit(), code);
   std::vector<mir::LocalId> params;
   // A callable's leading parameter is the ambient handle its body reaches
@@ -284,7 +284,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // coroutine one; a function body executes synchronously.
   const bool body_is_coroutine = src.kind == hir::SubroutineKind::kTask;
   const WalkFrame body_frame =
-      parent.WithBlock(&code.body).WithBindings(&bindings);
+      parent.WithBlock(&code.Body()).WithBindings(&bindings);
 
   // Formals normalize into the signature's data flow (LRM 13.5). An `input` and
   // a `ref` / `const ref` are parameters (the latter carries a `Ref<T>`); an
@@ -298,12 +298,12 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     const hir::ParamDirection dir = param.direction;
 
     if (dir == hir::ParamDirection::kOutput) {
-      const mir::ExprId default_init = code.body.exprs.Add(
+      const mir::ExprId default_init = code.Body().exprs.Add(
           BuildDefaultValueFromHir(*owner_, body_frame, hir_var.type));
       const mir::LocalId local = bindings.Declare(
           BindingOriginId::Procedural(param.var),
           mir::LocalDecl{.name = hir_var.name, .type = value_type});
-      code.body.AppendStmt(
+      code.Body().AppendStmt(
           mir::LocalDeclStmt{.target = local, .init = default_init});
       MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
       output_pack_vars_.push_back(local);
@@ -343,12 +343,12 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   std::vector<mir::TypeId> payload_components;
   if (src.result_var.has_value()) {
     const mir::TypeId ret_type = owner_->TranslateType(src.result_type);
-    const mir::ExprId default_init = code.body.exprs.Add(
+    const mir::ExprId default_init = code.Body().exprs.Add(
         BuildDefaultValueFromHir(*owner_, body_frame, src.result_type));
     const mir::LocalId result_local = bindings.Declare(
         BindingOriginId::Procedural(*src.result_var),
         mir::LocalDecl{.name = "_lyra_result", .type = ret_type});
-    code.body.AppendStmt(
+    code.Body().AppendStmt(
         mir::LocalDeclStmt{.target = result_local, .init = default_init});
     MapProceduralVar(*src.result_var, AutomaticVarBinding{.type = ret_type});
     result_var_ = result_local;
@@ -376,10 +376,10 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // a bare return when the payload is empty (a void function, or a task with no
   // outputs, which completes by falling off its end -- LRM 13.3). Either way
   // the completion is a real body statement, not a backend-appended epilogue.
-  if (auto trailing = BuildReturnPayload(code.body, std::nullopt)) {
-    code.body.AppendStmt(mir::ReturnStmt{.value = trailing});
+  if (auto trailing = BuildReturnPayload(code.Body(), std::nullopt)) {
+    code.Body().AppendStmt(mir::ReturnStmt{.value = trailing});
   } else if (body_is_coroutine) {
-    code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   }
 
   code.params = std::move(params);
