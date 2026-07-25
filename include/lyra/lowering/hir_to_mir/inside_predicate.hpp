@@ -1,7 +1,6 @@
 #pragma once
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/inside_item.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -19,8 +18,7 @@ namespace lyra::lowering::hir_to_mir {
 // contexts; explicit instantiations live in the implementation file.
 template <ExprLowerer Lowerer>
 auto BuildHirInsideItemPredicate(
-    Lowerer& lowerer, WalkFrame frame, mir::ExprId lhs_id,
-    const hir::InsideItem& item, mir::TypeId result_type)
-    -> diag::Result<mir::ExprId>;
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId lhs_id, hir::ExprId item,
+    mir::TypeId result_type) -> diag::Result<mir::ExprId>;
 
 }  // namespace lyra::lowering::hir_to_mir

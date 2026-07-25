@@ -3,8 +3,6 @@
 #include <expected>
 #include <utility>
 
-#include "lyra/base/overloaded.hpp"
-#include "lyra/hir/inside_item.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -14,11 +12,14 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+// LRM 11.4.13: an operand of a membership test is compared with the
+// asymmetric wildcard equality, except a value range, which is a bounds test.
+// The distinction is a property of the operand's HIR shape, read here -- HIR
+// carries the SV form, and this is the layer that turns it into primitives.
 template <ExprLowerer Lowerer>
 auto BuildHirInsideItemPredicate(
-    Lowerer& lowerer, WalkFrame frame, mir::ExprId lhs_id,
-    const hir::InsideItem& item, mir::TypeId result_type)
-    -> diag::Result<mir::ExprId> {
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId lhs_id, hir::ExprId item,
+    mir::TypeId result_type) -> diag::Result<mir::ExprId> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   auto& unit = lowerer.Owner().Unit();
@@ -30,39 +31,32 @@ auto BuildHirInsideItemPredicate(
     return block.exprs.Add(*std::move(lowered));
   };
 
-  return std::visit(
-      Overloaded{
-          [&](const hir::ExprId& val_id) -> diag::Result<mir::ExprId> {
-            auto v = lower_id(val_id);
-            if (!v) return std::unexpected(std::move(v.error()));
-            return block.exprs.Add(BuildMirBinaryExpr(
-                unit, block, mir::BinaryOp::kWildcardEquality, lhs_id, *v,
-                result_type));
-          },
-          [&](const hir::InsideRangePair& r) -> diag::Result<mir::ExprId> {
-            auto lo = lower_id(r.lo);
-            if (!lo) return std::unexpected(std::move(lo.error()));
-            auto hi = lower_id(r.hi);
-            if (!hi) return std::unexpected(std::move(hi.error()));
-            const mir::ExprId ge_id = block.exprs.Add(BuildMirBinaryExpr(
-                unit, block, mir::BinaryOp::kGreaterEqual, lhs_id, *lo,
-                result_type));
-            const mir::ExprId le_id = block.exprs.Add(BuildMirBinaryExpr(
-                unit, block, mir::BinaryOp::kLessEqual, lhs_id, *hi,
-                result_type));
-            return block.exprs.Add(BuildMirBinaryExpr(
-                unit, block, mir::BinaryOp::kLogicalAnd, ge_id, le_id,
-                result_type));
-          },
-      },
-      item);
+  if (const auto* range =
+          std::get_if<hir::ValueRangeExpr>(&hir_exprs.Get(item).data)) {
+    auto lo = lower_id(range->lo);
+    if (!lo) return std::unexpected(std::move(lo.error()));
+    auto hi = lower_id(range->hi);
+    if (!hi) return std::unexpected(std::move(hi.error()));
+    const mir::ExprId ge_id = block.exprs.Add(BuildMirBinaryExpr(
+        unit, block, mir::BinaryOp::kGreaterEqual, lhs_id, *lo, result_type));
+    const mir::ExprId le_id = block.exprs.Add(BuildMirBinaryExpr(
+        unit, block, mir::BinaryOp::kLessEqual, lhs_id, *hi, result_type));
+    return block.exprs.Add(BuildMirBinaryExpr(
+        unit, block, mir::BinaryOp::kLogicalAnd, ge_id, le_id, result_type));
+  }
+
+  auto value = lower_id(item);
+  if (!value) return std::unexpected(std::move(value.error()));
+  return block.exprs.Add(BuildMirBinaryExpr(
+      unit, block, mir::BinaryOp::kWildcardEquality, lhs_id, *value,
+      result_type));
 }
 
 template auto BuildHirInsideItemPredicate(
-    ProcessLowerer&, WalkFrame, mir::ExprId, const hir::InsideItem&,
-    mir::TypeId) -> diag::Result<mir::ExprId>;
+    ProcessLowerer&, WalkFrame, mir::ExprId, hir::ExprId, mir::TypeId)
+    -> diag::Result<mir::ExprId>;
 template auto BuildHirInsideItemPredicate(
-    const StructuralScopeLowerer&, WalkFrame, mir::ExprId,
-    const hir::InsideItem&, mir::TypeId) -> diag::Result<mir::ExprId>;
+    const StructuralScopeLowerer&, WalkFrame, mir::ExprId, hir::ExprId,
+    mir::TypeId) -> diag::Result<mir::ExprId>;
 
 }  // namespace lyra::lowering::hir_to_mir

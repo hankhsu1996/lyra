@@ -189,6 +189,10 @@ auto LowerStatement(
       return LowerCaseStmt(
           proc, frame, stmt.as<slang::ast::CaseStatement>(), span);
 
+    case slang::ast::StatementKind::PatternCase:
+      return LowerPatternCaseStmt(
+          proc, frame, stmt.as<slang::ast::PatternCaseStatement>(), span);
+
     case slang::ast::StatementKind::Conditional:
       return LowerConditionalStmt(
           proc, frame, stmt.as<slang::ast::ConditionalStatement>(), span);

@@ -22,6 +22,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
+#include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -312,6 +313,16 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& sym) const
       -> std::optional<ForeignImportBinding>;
 
+  // Pattern-bound identifiers (LRM 12.6). The declaration is the
+  // `VariablePattern` node itself, so a reference resolves to that node's
+  // `PatternId`. The map lives on the unit rather than on either pass class
+  // because a pattern reads the same in a procedural body and in a structural
+  // expression, and neither owns a declaration arena for it.
+  void MapPatternVar(
+      const slang::ast::PatternVarSymbol& sym, hir::PatternId pattern);
+  [[nodiscard]] auto LookupPatternVar(const slang::ast::PatternVarSymbol& sym)
+      const -> std::optional<hir::PatternId>;
+
   void MapOwnedChildBinding(
       const slang::ast::Symbol& child, ScopeFrameId home_frame,
       hir::DownwardHead head);
@@ -421,6 +432,8 @@ class UnitLowerer {
   SubroutineBindings subroutine_bindings_;
   ForeignImportBindings foreign_import_bindings_;
   OwnedChildBindings owned_child_bindings_;
+  std::unordered_map<const slang::ast::PatternVarSymbol*, hir::PatternId>
+      pattern_var_bindings_;
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
   // Dedup by (home_frame, target): the slot id is an index within a scope's
   // own `routed_refs`, so two scopes referencing the same member each need

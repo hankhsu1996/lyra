@@ -176,20 +176,27 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
             return mir::TupleType{.elements = std::move(elements)};
           },
           [&](const hir::UnpackedUnionType& src) -> mir::TypeData {
-            // Only the untagged overlapping-storage form maps to `UnionType`
-            // (LRM 7.3). A tagged union is a sum type rejected at ast_to_hir,
-            // so it never reaches MIR translation.
-            if (src.tagged) {
-              throw InternalError(
-                  "TranslateTypeData: tagged unpacked union reached MIR "
-                  "translation");
-            }
+            // The untagged overlapping-storage form (LRM 7.3) maps to
+            // `UnionType`; the tagged, type-checked sum form (LRM 7.3.2) to
+            // `TaggedUnionType` -- MIR keeps them as distinct types because
+            // their value spaces and access semantics genuinely differ.
             std::vector<mir::TypeId> elements;
             elements.reserve(src.fields.size());
             for (const auto& field : src.fields) {
               elements.push_back(TranslateType(field.type));
             }
-            return mir::UnionType{.elements = std::move(elements)};
+            if (!src.tagged) {
+              return mir::UnionType{.elements = std::move(elements)};
+            }
+            // A `void` member (LRM 7.3.2) occupies a value slot, so its
+            // component is the type carrying no information rather than the
+            // absence of a type the SV keyword otherwise names.
+            for (mir::TypeId& element : elements) {
+              if (unit_.types.Get(element).Kind() == mir::TypeKind::kVoid) {
+                element = unit_.types.Intern(mir::EmptyType{});
+              }
+            }
+            return mir::TaggedUnionType{.elements = std::move(elements)};
           },
           [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
             return mir::UnpackedArrayType{

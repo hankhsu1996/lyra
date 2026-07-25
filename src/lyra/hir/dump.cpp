@@ -484,6 +484,9 @@ class HirDumper {
                                      : "Index";
               return std::format("Iteration[{}].{}", r.clause.value, role);
             },
+            [](const PatternVarRef& r) -> std::string {
+              return std::format("PatternVar[{}]", r.pattern.value);
+            },
             [](const ExternalUnitValueRef& r) -> std::string {
               return std::format(
                   "ExternalUnitValue({}::{})", r.unit_name, r.variable_name);
@@ -687,17 +690,7 @@ class HirDumper {
     std::string items;
     for (std::size_t i = 0; i < in.items.size(); ++i) {
       if (i != 0) items += ", ";
-      items += std::visit(
-          Overloaded{
-              [](const ExprId& id) {
-                return std::format("Expr[{}]", id.value);
-              },
-              [](const InsideRangePair& r) {
-                return std::format(
-                    "[Expr[{}]:Expr[{}]]", r.lo.value, r.hi.value);
-              },
-          },
-          in.items[i]);
+      items += std::format("Expr[{}]", in.items[i].value);
     }
     return std::format(
         "InsideExpr lhs=Expr[{}] items=[{}]", in.lhs.value, items);
@@ -721,8 +714,8 @@ class HirDumper {
             },
             [](const ConditionalExpr& c) -> std::string {
               return std::format(
-                  "ConditionalExpr cond=Expr[{}] then=Expr[{}] else=Expr[{}]",
-                  c.condition.value, c.then_value.value, c.else_value.value);
+                  "ConditionalExpr clauses={} then=Expr[{}] else=Expr[{}]",
+                  c.conditions.size(), c.then_value.value, c.else_value.value);
             },
             [](const AssignExpr& a) -> std::string {
               const auto* kind_str = a.kind == AssignKind::kNonBlocking
@@ -779,6 +772,11 @@ class HirDumper {
               return std::format(
                   "ConversionExpr kind={} operand=Expr[{}]",
                   FormatConversionKind(cv.kind), cv.operand.value);
+            },
+            [](const ValueRangeExpr& r) -> std::string {
+              return std::format(
+                  "ValueRangeExpr lo=Expr[{}] hi=Expr[{}]", r.lo.value,
+                  r.hi.value);
             },
             [](const InsideExpr& in) -> std::string {
               return FormatInsideExprNode(in);
@@ -900,6 +898,15 @@ class HirDumper {
               }
               return std::format(
                   "AssociativeAssignmentPatternExpr entries=[{}]", entries);
+            },
+            [](const TaggedUnionExpr& t) -> std::string {
+              if (t.payload.has_value()) {
+                return std::format(
+                    "TaggedUnionExpr member={} payload=Expr[{}]",
+                    t.member_index, t.payload->value);
+              }
+              return std::format(
+                  "TaggedUnionExpr member={} void", t.member_index);
             },
         },
         e.data);
@@ -1293,15 +1300,26 @@ class HirDumper {
     Dedent();
   }
 
+  void DumpConditionClauses(
+      const ProceduralBody& p, const std::vector<ConditionClause>& clauses) {
+    for (const auto& clause : clauses) {
+      Line(
+          std::format(
+              "Expr[{}] {}", clause.expr.value,
+              FormatProcExpr(p, clause.expr)));
+      if (clause.pattern.has_value()) {
+        Line(std::format("matches Pattern[{}]", clause.pattern->value));
+      }
+    }
+  }
+
   void DumpIfStmtNode(const ProceduralBody& p, StmtId id, const IfStmt& i) {
     Line(
         std::format(
-            "Stmt[{}] IfStmt{} cond=Expr[{}]", id.value,
-            FormatUniquePriorityCheck(i.check), i.condition.value));
+            "Stmt[{}] IfStmt{} clauses={}", id.value,
+            FormatUniquePriorityCheck(i.check), i.conditions.size()));
     Indent();
-    Line(
-        std::format(
-            "Expr[{}] {}", i.condition.value, FormatProcExpr(p, i.condition)));
+    DumpConditionClauses(p, i.conditions);
     Line("then:");
     Indent();
     DumpStmt(p, i.then_stmt);
@@ -1327,6 +1345,9 @@ class HirDumper {
       case CaseCondition::kWildcardXOrZ:
         kind_tag = "x";
         break;
+      case CaseCondition::kInside:
+        kind_tag = " inside";
+        break;
     }
     Line(
         std::format(
@@ -1350,54 +1371,6 @@ class HirDumper {
         Line(
             std::format(
                 "Expr[{}] {}", label_id.value, FormatProcExpr(p, label_id)));
-      }
-      Line("stmt:");
-      Indent();
-      DumpStmt(p, item.stmt);
-      Dedent();
-      Dedent();
-    }
-    if (c.default_stmt.has_value()) {
-      Line("default:");
-      Indent();
-      DumpStmt(p, *c.default_stmt);
-      Dedent();
-    }
-    Dedent();
-  }
-
-  void DumpCaseInsideStmtNode(
-      const ProceduralBody& p, StmtId id, const CaseInsideStmt& c) {
-    Line(
-        std::format(
-            "Stmt[{}] CaseInsideStmt{} cond=Expr[{}] (items={})", id.value,
-            FormatUniquePriorityCheck(c.check), c.condition.value,
-            c.items.size()));
-    Indent();
-    Line(
-        std::format(
-            "Expr[{}] {}", c.condition.value, FormatProcExpr(p, c.condition)));
-    for (std::size_t k = 0; k < c.items.size(); ++k) {
-      const auto& item = c.items[k];
-      Line(std::format("item[{}] range_list (count={})", k, item.items.size()));
-      Indent();
-      for (const auto& inside_item : item.items) {
-        std::visit(
-            Overloaded{
-                [&](const ExprId& val_id) {
-                  Line(
-                      std::format(
-                          "Expr[{}] {}", val_id.value,
-                          FormatProcExpr(p, val_id)));
-                },
-                [&](const InsideRangePair& r) {
-                  Line(
-                      std::format(
-                          "[Expr[{}]:Expr[{}]] {} : {}", r.lo.value, r.hi.value,
-                          FormatProcExpr(p, r.lo), FormatProcExpr(p, r.hi)));
-                },
-            },
-            inside_item);
       }
       Line("stmt:");
       Indent();
@@ -1565,7 +1538,9 @@ class HirDumper {
             [&](const ForkStmt& f) { DumpForkStmtNode(p, id, f); },
             [&](const IfStmt& i) { DumpIfStmtNode(p, id, i); },
             [&](const CaseStmt& c) { DumpCaseStmtNode(p, id, c); },
-            [&](const CaseInsideStmt& c) { DumpCaseInsideStmtNode(p, id, c); },
+            [&](const PatternCaseStmt&) {
+              Line(std::format("Stmt[{}] PatternCaseStmt", id.value));
+            },
             [&](const ForStmt& f) { DumpForStmtNode(p, id, f); },
             [&](const WhileStmt& w) { DumpWhileStmtNode(p, id, w); },
             [&](const RepeatStmt& r) { DumpRepeatStmtNode(p, id, r); },

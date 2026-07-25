@@ -90,6 +90,8 @@ auto Type::Kind() const -> TypeKind {
           [](const VectorType&) { return TypeKind::kVector; },
           [](const TupleType&) { return TypeKind::kTuple; },
           [](const UnionType&) { return TypeKind::kUnion; },
+          [](const TaggedUnionType&) { return TypeKind::kTaggedUnion; },
+          [](const EmptyType&) { return TypeKind::kEmpty; },
           [](const ObservableType&) { return TypeKind::kObservable; },
           [](const ResolvedType&) { return TypeKind::kResolved; },
           [](const DriverType&) { return TypeKind::kDriver; },

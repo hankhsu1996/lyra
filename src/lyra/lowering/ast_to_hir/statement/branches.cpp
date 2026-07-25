@@ -9,8 +9,7 @@
 #include <slang/ast/statements/ConditionalStatements.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
-#include "lyra/lowering/ast_to_hir/expression/operators.hpp"
+#include "lyra/lowering/ast_to_hir/pattern.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -32,46 +31,20 @@ auto LowerUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
       "LowerUniquePriorityCheck: unknown slang UniquePriorityCheck value");
 }
 
-auto LowerCaseInsideStmt(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::CaseStatement& cs,
-    diag::SourceSpan span) -> diag::Result<hir::Stmt> {
-  const auto case_check = LowerUniquePriorityCheck(cs.check);
-  auto cond_expr = proc.LowerExpr(cs.expr, frame);
-  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
-  std::vector<hir::CaseInsideItem> items;
-  items.reserve(cs.items.size());
-  for (const auto& item : cs.items) {
-    std::vector<hir::InsideItem> inside_items;
-    inside_items.reserve(item.expressions.size());
-    for (const auto* label_expr : item.expressions) {
-      auto item_or = proc.LowerInsideItem(*label_expr, frame);
-      if (!item_or) return std::unexpected(std::move(item_or.error()));
-      inside_items.push_back(*std::move(item_or));
-    }
-    auto item_stmt = proc.LowerStmt(*item.stmt, frame);
-    if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
-    const hir::StmtId item_id =
-        frame.current_procedural_body->stmts.Add(*std::move(item_stmt));
-    items.push_back(
-        hir::CaseInsideItem{.items = std::move(inside_items), .stmt = item_id});
+auto LowerCaseCondition(slang::ast::CaseStatementCondition condition)
+    -> hir::CaseCondition {
+  switch (condition) {
+    case slang::ast::CaseStatementCondition::Normal:
+      return hir::CaseCondition::kNormal;
+    case slang::ast::CaseStatementCondition::WildcardJustZ:
+      return hir::CaseCondition::kWildcardJustZ;
+    case slang::ast::CaseStatementCondition::WildcardXOrZ:
+      return hir::CaseCondition::kWildcardXOrZ;
+    case slang::ast::CaseStatementCondition::Inside:
+      return hir::CaseCondition::kInside;
   }
-  std::optional<hir::StmtId> default_id;
-  if (cs.defaultCase != nullptr) {
-    auto default_stmt = proc.LowerStmt(*cs.defaultCase, frame);
-    if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
-    default_id =
-        frame.current_procedural_body->stmts.Add(*std::move(default_stmt));
-  }
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data =
-          hir::CaseInsideStmt{
-              .condition = cond_id,
-              .items = std::move(items),
-              .default_stmt = default_id,
-              .check = case_check},
-      .span = span};
+  throw InternalError(
+      "LowerCaseCondition: unknown slang CaseStatementCondition");
 }
 
 }  // namespace
@@ -79,23 +52,7 @@ auto LowerCaseInsideStmt(
 auto LowerCaseStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::CaseStatement& cs,
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
-  if (cs.condition == slang::ast::CaseStatementCondition::Inside) {
-    return LowerCaseInsideStmt(proc, frame, cs, span);
-  }
-  const hir::CaseCondition condition_kind = [&] {
-    switch (cs.condition) {
-      case slang::ast::CaseStatementCondition::Normal:
-        return hir::CaseCondition::kNormal;
-      case slang::ast::CaseStatementCondition::WildcardJustZ:
-        return hir::CaseCondition::kWildcardJustZ;
-      case slang::ast::CaseStatementCondition::WildcardXOrZ:
-        return hir::CaseCondition::kWildcardXOrZ;
-      case slang::ast::CaseStatementCondition::Inside:
-        break;
-    }
-    throw InternalError(
-        "LowerCaseStmt: Inside should have been dispatched above");
-  }();
+  const hir::CaseCondition condition_kind = LowerCaseCondition(cs.condition);
   const auto case_check = LowerUniquePriorityCheck(cs.check);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
@@ -141,11 +98,8 @@ auto LowerConditionalStmt(
     const slang::ast::ConditionalStatement& cs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   const auto if_check = LowerUniquePriorityCheck(cs.check);
-  auto cond_or = LowerCondPredicate(
-      proc, frame, cs.conditions, diag::DiagCode::kUnsupportedStatementForm,
-      span);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
+  auto clauses_or = LowerConditionClauses(proc, frame, cs.conditions, span);
+  if (!clauses_or) return std::unexpected(std::move(clauses_or.error()));
   auto then_stmt = proc.LowerStmt(cs.ifTrue, frame);
   if (!then_stmt) return std::unexpected(std::move(then_stmt.error()));
   const hir::StmtId then_id =
@@ -160,10 +114,57 @@ auto LowerConditionalStmt(
       .label = std::nullopt,
       .data =
           hir::IfStmt{
-              .condition = cond_id,
+              .conditions = *std::move(clauses_or),
               .then_stmt = then_id,
               .else_stmt = else_id,
               .check = if_check},
+      .span = span};
+}
+
+auto LowerPatternCaseStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::PatternCaseStatement& cs, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  const auto case_check = LowerUniquePriorityCheck(cs.check);
+  const hir::CaseCondition condition_kind = LowerCaseCondition(cs.condition);
+  auto cond_expr = proc.LowerExpr(cs.expr, frame);
+  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
+  const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
+  std::vector<hir::PatternCaseItem> items;
+  items.reserve(cs.items.size());
+  for (const auto& item : cs.items) {
+    auto pat_or = AddPattern(proc, frame, *item.pattern, span);
+    if (!pat_or) return std::unexpected(std::move(pat_or.error()));
+    std::optional<hir::ExprId> filter_id;
+    if (item.filter != nullptr) {
+      auto filter_or = proc.LowerExpr(*item.filter, frame);
+      if (!filter_or) return std::unexpected(std::move(filter_or.error()));
+      filter_id = frame.Exprs().Add(*std::move(filter_or));
+    }
+    auto stmt_or = proc.LowerStmt(*item.stmt, frame);
+    if (!stmt_or) return std::unexpected(std::move(stmt_or.error()));
+    const hir::StmtId stmt_id =
+        frame.current_procedural_body->stmts.Add(*std::move(stmt_or));
+    items.push_back(
+        hir::PatternCaseItem{
+            .pattern = *pat_or, .filter = filter_id, .stmt = stmt_id});
+  }
+  std::optional<hir::StmtId> default_id;
+  if (cs.defaultCase != nullptr) {
+    auto default_stmt = proc.LowerStmt(*cs.defaultCase, frame);
+    if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
+    default_id =
+        frame.current_procedural_body->stmts.Add(*std::move(default_stmt));
+  }
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::PatternCaseStmt{
+              .condition_kind = condition_kind,
+              .condition = cond_id,
+              .items = std::move(items),
+              .default_stmt = default_id,
+              .check = case_check},
       .span = span};
 }
 

@@ -515,6 +515,51 @@ struct UnionGetRefExpr {
   std::size_t index;
 };
 
+// Builds a tagged-union value whose active tag is `tag_index`, carrying
+// `payload`. The value-build primitive for `TaggedUnionType` and the tagged
+// analogue of `UnionExpr`: SystemVerilog spells this as `tagged Member expr`
+// (or `tagged Member` for a `void` member, LRM 11.9). Every tag carries a
+// payload here, including a `void` one -- the source's missing operand is
+// filled in with that element type's value at HIR-to-MIR, so a consumer never
+// has to decide what an absent one would mean. `Expr::type` is the
+// `TaggedUnionType`.
+struct TaggedExpr {
+  std::size_t tag_index;
+  ExprId payload;
+};
+
+// Reads component `tag_index` of a tagged union (`u.Member`), the read side of
+// tagged-union member access. Unlike `UnionGetExpr` -- which returns the
+// component default on a cross-member read -- an access whose tag does not
+// match the current one is a run-time error (LRM 11.9). `Expr::type` is the
+// component's type; a `VoidType` component is never read (a void member has no
+// payload) and so never lands here.
+struct TaggedGetExpr {
+  ExprId union_value;
+  std::size_t tag_index;
+};
+
+// The writable location of tagged-union component `tag_index` (`u.Member` as an
+// assignment target), the write side of tagged-union member access and the
+// tagged analogue of `UnionGetRefExpr`. Unlike its untagged counterpart, which
+// activates the member on write, this is a run-time error when `tag_index` is
+// not the current tag (LRM 11.9): re-tagging goes through a whole-value
+// `TaggedExpr` construction, not a member write.
+struct TaggedGetRefExpr {
+  ExprId union_value;
+  std::size_t tag_index;
+};
+
+// Non-throwing tag check: `1` iff the tagged-union value's active tag equals
+// `tag_index`. `Expr::type` is a 1-bit packed vector (the `bool`-shaped result
+// that `if` and `?:` consume). Pattern-matching desugar emits this as the
+// guard preceding every `TaggedGetExpr` (LRM 12.6), keeping the run-time
+// mismatch error path reserved for the direct dot-access surface.
+struct TaggedIsExpr {
+  ExprId union_value;
+  std::size_t tag_index;
+};
+
 // Used where a runtime callback surface takes a bare function value with no
 // wrapper object (a lifecycle hook slot in a per-class definition constant).
 // The referent is an `AbiAdapter`, never an instance method: instance
@@ -577,8 +622,9 @@ using ExprData = std::variant<
     MoveExpr, PointerCastExpr, IntCastExpr, FieldAccessExpr,
     StructConstructExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
     ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr, UnionExpr,
-    UnionGetExpr, UnionGetRefExpr, FunctionRef, StaticConstantRef,
-    StaticPropertyRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    UnionGetExpr, UnionGetRefExpr, TaggedExpr, TaggedGetExpr, TaggedGetRefExpr,
+    TaggedIsExpr, FunctionRef, StaticConstantRef, StaticPropertyRef,
+    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 struct Expr {
   ExprData data;

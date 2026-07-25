@@ -73,7 +73,7 @@ auto ProcessLowerer::Run(
   std::vector<hir::ProceduralVarId> root_declarations;
   std::vector<hir::ProceduralScopeId> root_children;
   const WalkFrame frame =
-      parent_frame.WithProceduralBody(&body, &body.exprs)
+      parent_frame.WithProceduralBody(&body, &body.exprs, &body.patterns)
           .WithProceduralScopeAccumulators(&root_declarations, &root_children);
 
   AnalyzeLifetimeExtended(proc.getBody());

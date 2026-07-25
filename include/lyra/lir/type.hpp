@@ -119,6 +119,11 @@ struct RealTimeType {};
 struct ChandleType {};
 struct VoidType {};
 
+// A value type carrying no information: exactly one value, nothing to store.
+// Distinct from `VoidType`, which marks the absence of a type. Reached through
+// a tagged union's `void` member (LRM 7.3.2).
+struct EmptyType {};
+
 struct ObjectType {
   ClassId class_id;
 };
@@ -170,6 +175,10 @@ struct UnionType {
   std::vector<TypeId> elements;
 };
 
+struct TaggedUnionType {
+  std::vector<TypeId> elements;
+};
+
 // The sealed endpoint of a cross-instance reference -- a resolution node
 // wrapping the referenced value type.
 struct ResolvedType {
@@ -190,10 +199,11 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
     MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
-    RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ExternalClassType, RuntimeEffectsType, FilesType, DiagnosticType,
-    RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
-    VectorType, TupleType, UnionType, ResolvedType, DriverType, ObservableType>;
+    RealTimeType, ChandleType, VoidType, EmptyType, ObjectType,
+    ExternalUnitObjectType, ExternalClassType, RuntimeEffectsType, FilesType,
+    DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
+    ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
+    ResolvedType, DriverType, ObservableType>;
 
 struct Type {
   TypeData data;

@@ -12,6 +12,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/Time.h>
 #include <slang/syntax/AllSyntax.h>
@@ -240,6 +241,28 @@ auto LowerExprImpl(
             "(LRM 10.3); structural code has no general assignment");
       }
 
+    case slang::ast::ExpressionKind::ValueRange: {
+      const auto& vr = expr.as<slang::ast::ValueRangeExpression>();
+      if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "tolerance-range form of a value range is not yet supported "
+            "(LRM 11.4.13)");
+      }
+      auto lo_or = lowerer.LowerExpr(vr.left(), frame);
+      if (!lo_or) return std::unexpected(std::move(lo_or.error()));
+      const hir::ExprId lo_id = frame.Exprs().Add(*std::move(lo_or));
+      auto hi_or = lowerer.LowerExpr(vr.right(), frame);
+      if (!hi_or) return std::unexpected(std::move(hi_or.error()));
+      const hir::ExprId hi_id = frame.Exprs().Add(*std::move(hi_or));
+      auto type_id = unit_lowerer.InternType(*expr.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = hir::ValueRangeExpr{.lo = lo_id, .hi = hi_id},
+          .span = span};
+    }
+
     case slang::ast::ExpressionKind::Inside:
       return LowerInsideExpr(
           lowerer, frame, expr.as<slang::ast::InsideExpression>(), span);
@@ -304,6 +327,31 @@ auto LowerExprImpl(
       return LowerNewClassExpr(
           lowerer, frame, expr.as<slang::ast::NewClassExpression>(), span);
 
+    case slang::ast::ExpressionKind::TaggedUnion: {
+      const auto& tu = expr.as<slang::ast::TaggedUnionExpression>();
+      auto type_id = lowerer.Owner().InternType(*tu.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      std::optional<hir::ExprId> payload_id;
+      if (tu.valueExpr != nullptr) {
+        auto payload_or = lowerer.LowerExpr(*tu.valueExpr, frame);
+        if (!payload_or) {
+          return std::unexpected(std::move(payload_or.error()));
+        }
+        payload_id = frame.Exprs().Add(*std::move(payload_or));
+      }
+      // LRM 11.9: `tagged Member primary` names the member by declaration-
+      // order position within the union. slang resolves the identifier to a
+      // FieldSymbol whose `fieldIndex` gives that position -- HIR carries the
+      // position, dropping the name.
+      const auto& field = tu.member.as<slang::ast::FieldSymbol>();
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::TaggedUnionExpr{
+                  .member_index = field.fieldIndex, .payload = payload_id},
+          .span = span};
+    }
+
     default:
       if constexpr (kProcedural) {
         return diag::Fail(
@@ -327,12 +375,6 @@ auto ProcessLowerer::LowerExpr(
     const slang::ast::Expression& expr, WalkFrame frame)
     -> diag::Result<hir::Expr> {
   return LowerExprImpl(*this, frame, expr);
-}
-
-auto ProcessLowerer::LowerInsideItem(
-    const slang::ast::Expression& item_expr, WalkFrame frame)
-    -> diag::Result<hir::InsideItem> {
-  return LowerInsideItemImpl(*this, frame, item_expr);
 }
 
 auto ProcessLowerer::ValidateAssignableProcedural(

@@ -13,7 +13,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
-#include "lyra/hir/inside_item.hpp"
+#include "lyra/hir/pattern.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/range_bounds.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -36,8 +36,11 @@ struct BinaryExpr {
   ExprId rhs;
 };
 
+// LRM 11.4.11 / 12.6.3. `conditions` is the predicate's clause sequence,
+// always at least one entry; a plain `cond ? a : b` is the single
+// pattern-free clause.
 struct ConditionalExpr {
-  ExprId condition;
+  std::vector<ConditionClause> conditions;
   ExprId then_value;
   ExprId else_value;
 };
@@ -102,9 +105,20 @@ struct CallExpr {
   std::optional<WithClause> with_clause = std::nullopt;
 };
 
+// LRM 11.4.13 value range `[lo:hi]`. slang models it as an ordinary
+// expression, and so does HIR: it is only meaningful as an operand of a
+// membership test, but that is a rule about where it may appear, not a reason
+// to give it a shape outside the expression set. Keeping it here is what lets
+// every membership operand -- an `inside` item, a case-inside label -- be a
+// plain `ExprId`.
+struct ValueRangeExpr {
+  ExprId lo;
+  ExprId hi;
+};
+
 struct InsideExpr {
   ExprId lhs;
-  std::vector<InsideItem> items;
+  std::vector<ExprId> items;
 };
 
 struct ElementSelectExpr {
@@ -201,6 +215,15 @@ struct ClassNewExpr {
 // keeps this distinct from the positional pattern, so the key structure is
 // retained here rather than flattened into an element list. HIR-to-MIR builds
 // the associative value from a vector of (key, value) tuples plus the default.
+// LRM 11.9 tagged union expression `tagged Member primary`. `member_index` is
+// the declaration-order position of the tagged member inside the union type
+// (names are dropped, position is the tag). `payload` is absent when the
+// member is `void`.
+struct TaggedUnionExpr {
+  std::size_t member_index;
+  std::optional<ExprId> payload;
+};
+
 struct AssociativeAssignmentPatternExpr {
   struct Entry {
     ExprId key;
@@ -212,10 +235,11 @@ struct AssociativeAssignmentPatternExpr {
 
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
-    CallExpr, ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr,
-    MemberAccessExpr, ClassPropertyAccessExpr, ConcatExpr, ReplicationExpr,
-    AssignmentPatternExpr, AssignmentPatternReplicationExpr,
-    DynamicArrayNewExpr, ClassNewExpr, AssociativeAssignmentPatternExpr>;
+    CallExpr, ConversionExpr, ValueRangeExpr, InsideExpr, ElementSelectExpr,
+    RangeSelectExpr, MemberAccessExpr, ClassPropertyAccessExpr, ConcatExpr,
+    ReplicationExpr, AssignmentPatternExpr, AssignmentPatternReplicationExpr,
+    DynamicArrayNewExpr, ClassNewExpr, AssociativeAssignmentPatternExpr,
+    TaggedUnionExpr>;
 
 struct Expr {
   TypeId type;

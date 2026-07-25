@@ -1,16 +1,16 @@
 #include "lyra/lowering/hir_to_mir/expression/inside.hpp"
 
 #include <expected>
-#include <optional>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -29,25 +29,16 @@ auto LowerHirInsideExpr(
     throw InternalError(
         "LowerHirInsideExpr: hir::InsideExpr has empty item list");
   }
-  std::optional<mir::ExprId> acc;
+  std::vector<mir::ExprId> tests;
+  tests.reserve(in.items.size());
   for (const auto& item : in.items) {
     auto pred_or =
         BuildHirInsideItemPredicate(lowerer, frame, lhs_id, item, result_type);
     if (!pred_or) return std::unexpected(std::move(pred_or.error()));
-    if (acc.has_value()) {
-      acc = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kLogicalOr,
-                      .lhs = *acc,
-                      .rhs = *pred_or},
-              .type = result_type});
-    } else {
-      acc = *pred_or;
-    }
+    tests.push_back(*pred_or);
   }
-  return mir::Expr{block.exprs.Get(*acc)};
+  return mir::Expr{block.exprs.Get(
+      BuildMirLogicalOr(lowerer.Owner().Unit(), block, result_type, tests))};
 }
 
 template auto LowerHirInsideExpr(

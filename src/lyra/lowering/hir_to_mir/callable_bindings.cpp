@@ -42,15 +42,26 @@ CallableBindings::CallableBindings(
       code_->locals.Add(mir::LocalDecl{.name = "self", .type = self_ptr_type_});
 }
 
+auto CallableBindings::AddLocal(mir::LocalDecl decl) -> mir::LocalId {
+  const bool name_taken =
+      std::ranges::any_of(code_->locals, [&](const mir::LocalDecl& existing) {
+        return existing.name == decl.name;
+      });
+  if (name_taken) {
+    decl.name += "_" + std::to_string(code_->locals.size());
+  }
+  return code_->locals.Add(std::move(decl));
+}
+
 auto CallableBindings::Declare(BindingOriginId origin, mir::LocalDecl decl)
     -> mir::LocalId {
-  const mir::LocalId id = code_->locals.Add(std::move(decl));
+  const mir::LocalId id = AddLocal(std::move(decl));
   available_.insert_or_assign(origin, BodyBindingRef{.ref = id});
   return id;
 }
 
 auto CallableBindings::DeclareAnonymous(mir::LocalDecl decl) -> mir::LocalId {
-  return code_->locals.Add(std::move(decl));
+  return AddLocal(std::move(decl));
 }
 
 auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {

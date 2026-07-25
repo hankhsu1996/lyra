@@ -168,6 +168,16 @@ auto LowerExternalUnitValueRefExpr(
       .type = unit.types.ObservableCellOf(value_type)};
 }
 
+// The pattern that declares the identifier is its binding origin, so the read
+// is the ordinary body-binding read of that origin -- the clause lowering
+// materialized it before the arm it guards was walked.
+auto LowerPatternVarRefExpr(WalkFrame frame, const hir::PatternVarRef& r)
+    -> mir::Expr {
+  const BodyBindingRef ref =
+      frame.bindings->EnsureCarrier(BindingOriginId::Pattern(r.pattern));
+  return frame.bindings->MakeReadExpr(ref, *frame.current_block);
+}
+
 auto LowerProceduralVarRefExpr(
     ProcessLowerer& process, const WalkFrame& frame,
     const hir::ProceduralVarRef& l, mir::TypeId type) -> mir::Expr {
@@ -289,6 +299,9 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
             return LowerProceduralVarRefExpr(process, frame, l, result_type);
           },
+          [&](const hir::PatternVarRef& r) -> mir::Expr {
+            return LowerPatternVarRefExpr(frame, r);
+          },
           [&](const hir::ClassPropertyRef& r) -> mir::Expr {
             const mir::TypeId self_type =
                 frame.current_class->self_pointer_type;
@@ -346,6 +359,9 @@ auto LowerHirPrimaryExprStructural(
             throw InternalError(
                 "LowerHirPrimaryExprStructural: HIR ProceduralVarRef does not "
                 "appear in structural expressions");
+          },
+          [&](const hir::PatternVarRef& r) -> mir::Expr {
+            return LowerPatternVarRefExpr(frame, r);
           },
           [](const hir::ClassPropertyRef&) -> mir::Expr {
             throw InternalError(

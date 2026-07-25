@@ -418,6 +418,17 @@ auto LowerHirMemberAccessExpr(
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+    // LRM 11.9: a tagged-union dot-access is a run-time-checked read; the
+    // untagged form is the type-loophole read. Route by the source-level tag.
+    const auto& union_ty = std::get<hir::UnpackedUnionType>(
+        unit_lowerer.Hir().types.Get(base_hir_expr.type).data);
+    if (union_ty.tagged) {
+      return mir::Expr{
+          .data =
+              mir::TaggedGetExpr{
+                  .union_value = base_id, .tag_index = sel.field_index.value},
+          .type = result_type};
+    }
     return mir::Expr{
         .data =
             mir::UnionGetExpr{
@@ -546,6 +557,15 @@ auto LowerHirMemberAccessExprLhs(
     auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+    const auto& union_ty = std::get<hir::UnpackedUnionType>(
+        unit_lowerer.Hir().types.Get(base_hir_expr.type).data);
+    if (union_ty.tagged) {
+      return mir::Expr{
+          .data =
+              mir::TaggedGetRefExpr{
+                  .union_value = base_id, .tag_index = sel.field_index.value},
+          .type = result_type};
+    }
     return mir::Expr{
         .data =
             mir::UnionGetRefExpr{

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -22,11 +23,15 @@ struct BindingOriginId {
     kRuntime,
     kSourceProcedural,
     kIterator,
+    kPattern,
     kSynthesized,
   };
 
   Kind kind{};
   // SourceProcedural: the HIR procedural-var id. Iterator: the clause id.
+  // Pattern: the id of the `VariablePattern` node that declares the
+  // identifier -- the pattern owns the declaration (LRM 12.6), so its own id
+  // is the binding's identity.
   // Synthesized: the deterministic owner site (e.g. the HIR statement that
   // introduced the carrier).
   std::uint32_t key = 0;
@@ -44,6 +49,9 @@ struct BindingOriginId {
   }
   static auto Procedural(hir::ProceduralVarId var) -> BindingOriginId {
     return {.kind = Kind::kSourceProcedural, .key = var.value};
+  }
+  static auto Pattern(hir::PatternId pattern) -> BindingOriginId {
+    return {.kind = Kind::kPattern, .key = pattern.value};
   }
   static auto Iterator(std::uint32_t clause, std::uint32_t role)
       -> BindingOriginId {

@@ -481,6 +481,16 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
                 "({}).template GetRef<{}>()",
                 RenderLhsExpr(view, view.Expr(g.union_value)), g.index);
           },
+          // A tagged-union member write: a reference to the payload of the
+          // active tag. Unlike its untagged counterpart, this throws at
+          // runtime if the tag is not `tag_index` (LRM 11.9). Renders the
+          // same at the syntax level; the divergence lives in
+          // `TaggedUnion::GetRef`.
+          [&](const mir::TaggedGetRefExpr& g) -> std::string {
+            return std::format(
+                "({}).template GetRef<{}>()",
+                RenderLhsExpr(view, view.Expr(g.union_value)), g.tag_index);
+          },
           [&](const auto&) -> std::string {
             throw InternalError(
                 "RenderLhsExpr: expression form is not addressable; the "
@@ -975,6 +985,26 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::format(
                 "({}).template GetRef<{}>()",
                 RenderExpr(view, view.Expr(g.union_value)), g.index);
+          },
+          [&](const mir::TaggedExpr& t) -> std::string {
+            return std::format(
+                "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
+                t.tag_index, RenderExpr(view, view.Expr(t.payload)));
+          },
+          [&](const mir::TaggedGetExpr& g) -> std::string {
+            return std::format(
+                "({}).template Get<{}>()",
+                RenderExpr(view, view.Expr(g.union_value)), g.tag_index);
+          },
+          [&](const mir::TaggedGetRefExpr& g) -> std::string {
+            return std::format(
+                "({}).template GetRef<{}>()",
+                RenderExpr(view, view.Expr(g.union_value)), g.tag_index);
+          },
+          [&](const mir::TaggedIsExpr& g) -> std::string {
+            return std::format(
+                "lyra::value::PackedArray::Bit(({}).template IsTagged<{}>())",
+                RenderExpr(view, view.Expr(g.union_value)), g.tag_index);
           },
       },
       expr.data);

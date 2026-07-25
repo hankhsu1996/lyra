@@ -10,8 +10,8 @@
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/inside_item.hpp"
 #include "lyra/hir/loop_label_id.hpp"
+#include "lyra/hir/pattern.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -83,20 +83,24 @@ enum class UniquePriorityCheck : std::uint8_t {
   kPriority,
 };
 
-// LRM 12.5 plain case (`===` exact compare) and the LRM 12.5.1 do-not-care
-// forms casez (Z bidirectional wildcard) and casex (Z + X bidirectional
-// wildcard). All three share the cascade shape (selector snapshot, value-list
-// labels, first-match-wins, optional default); they differ only in the
-// per-label compare primitive HIR->MIR picks. case-inside is a separate
-// CaseInsideStmt because its labels are range_list entries.
+// LRM 12.5 plain case (`===` exact compare), the LRM 12.5.1 do-not-care forms
+// casez (Z bidirectional wildcard) and casex (Z + X bidirectional wildcard),
+// and the LRM 12.5.4 set-membership form `case (X) inside`. All four share the
+// cascade shape -- selector snapshot, label list, first-match-wins, optional
+// default -- and differ only in the per-label compare HIR->MIR picks: an
+// equality primitive for the first three, the asymmetric wildcard membership
+// of LRM 11.4.13 for inside.
 enum class CaseCondition : std::uint8_t {
   kNormal,
   kWildcardJustZ,
   kWildcardXOrZ,
+  kInside,
 };
 
+// LRM 12.4 / 12.6.2. `conditions` is the predicate's clause sequence, always
+// at least one entry; a plain `if (expr)` is the single pattern-free clause.
 struct IfStmt {
-  ExprId condition;
+  std::vector<ConditionClause> conditions;
   StmtId then_stmt;
   std::optional<StmtId> else_stmt;
   std::optional<UniquePriorityCheck> check;
@@ -115,19 +119,24 @@ struct CaseStmt {
   std::optional<UniquePriorityCheck> check;
 };
 
-// LRM 12.5.4 set-membership form `case (X) inside { ... }`. Distinct from
-// CaseStmt because both the per-item label shape (range_list, not value list)
-// and the per-item match semantics (asymmetric wildcard inside-membership per
-// LRM 11.4.13 / 11.4.6) differ -- a match here is only the deterministic
-// `1'b1` from the inside operator; `1'b0` and `1'bx` are both no-match.
-struct CaseInsideItem {
-  std::vector<InsideItem> items;
-  StmtId stmt;
+// LRM 12.6.1 pattern-matching case item: a pattern plus an optional Boolean
+// filter (the `&&& filter` suffix) plus the statement body. Pattern-bound
+// identifiers are in scope for the filter and the body.
+struct PatternCaseItem {
+  PatternId pattern = {};
+  std::optional<ExprId> filter;
+  StmtId stmt = {};
 };
 
-struct CaseInsideStmt {
+// LRM 12.6.1 pattern-matching case statement (`case (expr) matches ... /
+// casez (expr) matches ... / casex (expr) matches ...`). Distinct from
+// `CaseStmt` because both the per-item label shape (patterns, not
+// expressions) and the per-item match semantics (a recursive match that binds
+// identifiers) differ.
+struct PatternCaseStmt {
+  CaseCondition condition_kind;
   ExprId condition;
-  std::vector<CaseInsideItem> items;
+  std::vector<PatternCaseItem> items;
   std::optional<StmtId> default_stmt;
   std::optional<UniquePriorityCheck> check;
 };
@@ -273,7 +282,7 @@ struct DisableForkStmt {};
 
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
-    CaseInsideStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
+    PatternCaseStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
     BreakStmt, ContinueStmt, ReturnStmt, TimedStmt, EventTriggerStmt, WaitStmt,
     WaitForkStmt, DisableForkStmt>;
 

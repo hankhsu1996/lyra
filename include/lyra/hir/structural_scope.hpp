@@ -14,6 +14,7 @@
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
+#include "lyra/hir/pattern.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_data_object.hpp"
@@ -235,6 +236,7 @@ struct StructuralScope {
   base::Arena<StructuralDataObjectDecl, StructuralDataObjectId>
       structural_data_objects;
   base::Arena<Expr, ExprId> exprs;
+  base::Arena<Pattern, PatternId> patterns;
   base::Arena<Process, ProcessId> processes;
   base::Arena<ContinuousAssign, ContinuousAssignId> continuous_assigns;
   base::Arena<Generate, GenerateId> generates;

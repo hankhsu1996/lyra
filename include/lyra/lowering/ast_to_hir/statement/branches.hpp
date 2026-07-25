@@ -14,6 +14,7 @@
 namespace slang::ast {
 class CaseStatement;
 class ConditionalStatement;
+class PatternCaseStatement;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -26,5 +27,10 @@ auto LowerConditionalStmt(
 auto LowerCaseStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::CaseStatement& cs,
     diag::SourceSpan span) -> diag::Result<hir::Stmt>;
+
+auto LowerPatternCaseStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::PatternCaseStatement& cs, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt>;
 
 }  // namespace lyra::lowering::ast_to_hir

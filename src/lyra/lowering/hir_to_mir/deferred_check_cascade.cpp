@@ -4,6 +4,7 @@
 #include <expected>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,8 +14,10 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -33,17 +36,18 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 struct UniqueIfCascade {
-  std::vector<hir::ExprId> conditions;
-  std::vector<hir::StmtId> bodies;
+  std::vector<const hir::IfStmt*> arms;
   std::optional<hir::StmtId> tail_else;
 };
 
+// The qualifier applies to a whole if-else-if series (LRM 12.4.2), so the
+// series is collected here. A nested `if` carrying its own qualifier starts
+// its own series and stays the tail else of this one.
 auto FlattenUniqueCascade(
     const hir::ProceduralBody& proc, const hir::IfStmt& root)
     -> UniqueIfCascade {
   UniqueIfCascade out;
-  out.conditions.push_back(root.condition);
-  out.bodies.push_back(root.then_stmt);
+  out.arms.push_back(&root);
   std::optional<hir::StmtId> cur_else = root.else_stmt;
   while (cur_else.has_value()) {
     const hir::Stmt& s = proc.stmts.Get(*cur_else);
@@ -52,8 +56,7 @@ auto FlattenUniqueCascade(
       out.tail_else = cur_else;
       break;
     }
-    out.conditions.push_back(nested->condition);
-    out.bodies.push_back(nested->then_stmt);
+    out.arms.push_back(nested);
     cur_else = nested->else_stmt;
   }
   return out;
@@ -366,33 +369,41 @@ auto BuildDeferredCheckCascade(
 auto LowerUniqueIfStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::IfStmt& root, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
-  const auto& hir_proc = process.HirBody();
-  const auto cascade = FlattenUniqueCascade(hir_proc, root);
+  const UniqueIfCascade cascade = FlattenUniqueCascade(process.HirBody(), root);
+  const mir::TypeId bit1_type = process.Owner().Unit().builtins.bit1;
 
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
-  // Lower each branch condition into wrapper; these are the predicates
-  // that BuildDeferredCheckCascade will snapshot.
-  std::vector<mir::ExprId> predicates;
-  predicates.reserve(cascade.conditions.size());
-  for (const hir::ExprId hir_cond : cascade.conditions) {
-    auto cond_or =
-        process.LowerExpr(hir_proc.exprs.Get(hir_cond), wrapper_frame);
-    if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    predicates.push_back(wrapper.exprs.Add(*std::move(cond_or)));
-  }
-
-  // Lower each body into its own child scope.
+  // LRM 12.4.2 evaluates every arm's predicate before any arm's statement
+  // runs, so each arm's clause chain is emitted here with an empty then-arm
+  // and its outcome left in a flag. Reducing an arm to a flag is what makes
+  // arm shape invisible to the check: one clause or several, pattern or not,
+  // every arm answers the same question the same way.
   std::vector<DeferredCheckBranch> branches;
-  branches.reserve(cascade.bodies.size());
-  for (std::size_t i = 0; i < cascade.bodies.size(); ++i) {
+  branches.reserve(cascade.arms.size());
+  for (const hir::IfStmt* arm : cascade.arms) {
+    const mir::LocalId held = wrapper_frame.bindings->DeclareAnonymous(
+        mir::LocalDecl{.name = "_lyra_arm_held", .type = bit1_type});
+    const mir::ExprId not_held =
+        wrapper.exprs.Add(mir::MakeBit1Literal(bit1_type, false));
+    wrapper.AppendStmt(mir::LocalDeclStmt{.target = held, .init = not_held});
+
+    auto chain_or = BuildClauseChainIf(
+        process, wrapper_frame,
+        std::span<const hir::ConditionClause>{arm->conditions}, held,
+        [](WalkFrame) -> diag::Result<void> { return {}; });
+    if (!chain_or) return std::unexpected(std::move(chain_or.error()));
+    wrapper.AppendStmt(*std::move(chain_or));
+
     auto body_or =
-        LowerStmtIntoChildScope(process, wrapper_frame, cascade.bodies[i]);
+        LowerStmtIntoChildScope(process, wrapper_frame, arm->then_stmt);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
     branches.push_back(
         DeferredCheckBranch{
-            .predicate = predicates[i], .body = std::move(*body_or)});
+            .predicate =
+                wrapper.exprs.Add(mir::MakeLocalRefExpr(held, bit1_type)),
+            .body = std::move(*body_or)});
   }
 
   std::optional<mir::Block> tail_scope;
