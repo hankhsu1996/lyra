@@ -6,11 +6,13 @@
 module Top;
   bit [7:0] grow [$:3];
   bit [7:0] init_big [$:2] = '{1, 2, 3, 4, 5};
+  bit [7:0] rep_init [$:2] = '{5{8'd7}};
   bit [7:0] assigned [$:2];
   bit [7:0] retained [$:3] = '{1, 2};
 
   int s_grow;
   int s_init;
+  int s_rep;
   int s_assigned;
   int s_retained;
 
@@ -23,6 +25,8 @@ module Top;
     s_grow = grow.size();
 
     s_init = init_big.size();
+
+    s_rep = rep_init.size();
 
     assigned = {8'd1, 8'd2, 8'd3, 8'd4};
     s_assigned = assigned.size();

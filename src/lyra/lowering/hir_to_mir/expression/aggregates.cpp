@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
-#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -27,10 +26,9 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // LRM 10.9.1: the replication count of an assignment pattern is a constant
-// expression; slang has already evaluated it to an integer literal. The
-// unpacked-target path uses this value to materialize the element list at
-// compile time (no runtime replication primitive exists for unpacked
-// aggregates).
+// expression; slang has already evaluated it to an integer literal. The array
+// path carries this count into the container's tiling construction, and the
+// packed path folds it into the flat replication width.
 auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
   if (primary == nullptr) {
@@ -44,19 +42,6 @@ auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
   const auto& c = lit->value;
   if (c.value_words.empty()) return 0;
   return c.value_words[0];
-}
-
-auto BuildArrayReplicationFlatList(
-    const UnitLowerer& unit_lowerer, WalkFrame frame,
-    std::span<const mir::ExprId> items_ids, std::uint64_t count,
-    mir::TypeId result_type) -> mir::Expr {
-  std::vector<mir::ExprId> flat;
-  flat.reserve(items_ids.size() * count);
-  for (std::uint64_t i = 0; i < count; ++i) {
-    flat.insert(flat.end(), items_ids.begin(), items_ids.end());
-  }
-  return BuildArrayConstructionCall(
-      unit_lowerer, frame, result_type, std::move(flat));
 }
 
 // A packed assignment pattern folds its members into one flat bit plane (LRM
@@ -207,8 +192,13 @@ auto LowerHirAssignmentPatternReplicationExpr(
   if (IsArrayContainerType(result_ty)) {
     const std::uint64_t count =
         ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
-    return BuildArrayReplicationFlatList(
-        lowerer.Owner(), frame, item_ids, count, result_type);
+    const mir::TypeId element_type =
+        ArrayContainerElementType(lowerer.Owner().Unit(), result_type);
+    const mir::ExprId element_default = block.exprs.Add(
+        BuildDefaultValueExpr(lowerer.Owner(), frame, element_type));
+    return BuildArrayRepeatCall(
+        lowerer.Owner(), frame, result_type, element_default,
+        std::move(item_ids), count);
   }
   if (std::holds_alternative<mir::TupleType>(result_ty.data)) {
     const std::uint64_t count =
