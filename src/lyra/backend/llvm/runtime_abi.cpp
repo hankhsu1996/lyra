@@ -304,6 +304,40 @@ auto RuntimeAbi::TupleExtract() -> llvm::FunctionCallee {
       {types_->Ptr(), llvm::Type::getInt64Ty(*ctx_)});
 }
 
+// The entries a descent step resolves to. The value domain of the aggregate
+// being descended into names each one, as it does for every value operation.
+// The write halves realize a step's update, so no source-level construct names
+// them and they are not part of the builtin namespace HIR and MIR share.
+auto RuntimeAbi::ElementExtract(
+    ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+    -> llvm::FunctionCallee {
+  return ValueBuiltin(
+      domain, lyra::support::BuiltinFn::kElement, types_->Ptr(), params);
+}
+
+auto RuntimeAbi::SliceExtract(
+    ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+    -> llvm::FunctionCallee {
+  return ValueBuiltin(
+      domain, lyra::support::BuiltinFn::kSlice, types_->Ptr(), params);
+}
+
+auto RuntimeAbi::ElementUpdate(
+    ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_{}_with_element", ValueDomainName(domain)),
+      types_->Ptr(), params);
+}
+
+auto RuntimeAbi::SliceUpdate(
+    ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_{}_with_slice", ValueDomainName(domain)),
+      types_->Ptr(), params);
+}
+
 auto RuntimeAbi::TupleUpdate() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_tuple_update", types_->Ptr(),

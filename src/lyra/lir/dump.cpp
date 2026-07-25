@@ -239,9 +239,19 @@ class LirDumper {
   [[nodiscard]] static auto FormatSelector(const AggregateSelector& selector)
       -> std::string {
     return std::visit(
-        Overloaded{[](const TupleElement& e) {
-          return std::format("element {}", e.index);
-        }},
+        Overloaded{
+            [](const TupleElement& e) -> std::string {
+              return std::format("component {}", e.index);
+            },
+            [](const UnionMember& m) -> std::string {
+              return std::format("member {}", m.index);
+            },
+            [](const ContainerElement& e) -> std::string {
+              return std::format("element({})", FormatOperands(e.operands));
+            },
+            [](const ContainerSlice& s) -> std::string {
+              return std::format("slice({})", FormatOperands(s.operands));
+            }},
         selector);
   }
 

@@ -1146,83 +1146,43 @@ auto FunctionLowerer::LowerProjectionUpdate(
                : projected_type(depth - 1);
   };
 
-  const auto call = [&](support::BuiltinFn fn, lir::TypeId result,
-                        std::vector<lir::Operand> args) {
-    return Emit(
-        result,
-        lir::CallInstr{
-            .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
-            .args = std::move(args)});
+  // The step's selector, in LIR's own vocabulary. A positional step names a
+  // component slot; a coordinate-bearing one carries the operands it was
+  // evaluated with. Which runtime entry realizes a step follows from the
+  // aggregate's type, below this layer.
+  const auto selector = [&](std::size_t depth) -> lir::AggregateSelector {
+    return std::visit(
+        Overloaded{
+            [&](const mir::ComponentSelector& c) -> lir::AggregateSelector {
+              return lir::TupleElement{
+                  .index = static_cast<std::uint32_t>(c.index)};
+            },
+            [&](const mir::UnionMemberSelector& m) -> lir::AggregateSelector {
+              return lir::UnionMember{
+                  .index = static_cast<std::uint32_t>(m.index)};
+            },
+            [&](const mir::ElementSelector&) -> lir::AggregateSelector {
+              return lir::ContainerElement{.operands = keys[depth]};
+            },
+            [&](const mir::SliceSelector&) -> lir::AggregateSelector {
+              return lir::ContainerSlice{.operands = keys[depth]};
+            }},
+        path[depth]);
   };
   const auto extract = [&](const lir::Operand& container,
                            std::size_t depth) -> lir::Operand {
-    std::vector<lir::Operand> args = {container};
-    args.insert(args.end(), keys[depth].begin(), keys[depth].end());
-    return std::visit(
-        Overloaded{
-            [&](const mir::ComponentSelector& c) {
-              return Emit(
-                  projected_type(depth),
-                  lir::AggregateExtractInstr{
-                      .aggregate = container,
-                      .selector = lir::TupleElement{
-                          .index = static_cast<std::uint32_t>(c.index)}});
-            },
-            [&](const mir::UnionMemberSelector& m) {
-              return Emit(
-                  projected_type(depth),
-                  lir::AggregateExtractInstr{
-                      .aggregate = container,
-                      .selector = lir::TupleElement{
-                          .index = static_cast<std::uint32_t>(m.index)}});
-            },
-            [&](const mir::ElementSelector&) {
-              return call(
-                  support::BuiltinFn::kElement, projected_type(depth), args);
-            },
-            [&](const mir::SliceSelector&) {
-              return call(
-                  support::BuiltinFn::kSlice, projected_type(depth), args);
-            }},
-        path[depth]);
+    return Emit(
+        projected_type(depth),
+        lir::AggregateExtractInstr{
+            .aggregate = container, .selector = selector(depth)});
   };
   const auto update = [&](const lir::Operand& container, std::size_t depth,
                           lir::Operand replacement) -> lir::Operand {
-    std::vector<lir::Operand> args = {container};
-    args.insert(args.end(), keys[depth].begin(), keys[depth].end());
-    args.push_back(replacement);
-    return std::visit(
-        Overloaded{
-            [&](const mir::ComponentSelector& c) {
-              return Emit(
-                  container_type(depth),
-                  lir::AggregateUpdateInstr{
-                      .aggregate = container,
-                      .selector =
-                          lir::TupleElement{
-                              .index = static_cast<std::uint32_t>(c.index)},
-                      .replacement = replacement});
-            },
-            [&](const mir::UnionMemberSelector& m) {
-              return Emit(
-                  container_type(depth),
-                  lir::AggregateUpdateInstr{
-                      .aggregate = container,
-                      .selector =
-                          lir::TupleElement{
-                              .index = static_cast<std::uint32_t>(m.index)},
-                      .replacement = replacement});
-            },
-            [&](const mir::ElementSelector&) {
-              return call(
-                  support::BuiltinFn::kWithElement, container_type(depth),
-                  args);
-            },
-            [&](const mir::SliceSelector&) {
-              return call(
-                  support::BuiltinFn::kWithSlice, container_type(depth), args);
-            }},
-        path[depth]);
+    return Emit(
+        container_type(depth), lir::AggregateUpdateInstr{
+                                   .aggregate = container,
+                                   .selector = selector(depth),
+                                   .replacement = std::move(replacement)});
   };
 
   // The whole value at each chain level, descending from the owner toward the

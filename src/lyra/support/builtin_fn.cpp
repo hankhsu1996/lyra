@@ -106,12 +106,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
   switch (id) {
     case BuiltinFn::kElement:
       return "element";
-    case BuiltinFn::kWithElement:
-      return "with_element";
     case BuiltinFn::kSlice:
       return "slice";
-    case BuiltinFn::kWithSlice:
-      return "with_slice";
     case BuiltinFn::kSize:
       return "size";
     case BuiltinFn::kLen:

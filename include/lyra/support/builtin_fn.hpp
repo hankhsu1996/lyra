@@ -13,14 +13,10 @@ namespace lyra::support {
 // carries only the method identity.
 enum class BuiltinFn : std::uint16_t {
   // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access, both reads. A write is not
-  // an access call: it is a descent step on the target's designator.
+  // an access call: it is a descent step on the target's designator, and the
+  // entry that realizes it is named below this layer.
   kElement,
   kSlice,
-  // The functional writes those descent steps realize: a new value equal to the
-  // receiver with one element (LRM 7.4.6) or one selected range (LRM 11.5.1)
-  // replaced. Synthesized at MIR-to-LIR; neither arises from source.
-  kWithElement,
-  kWithSlice,
   // LRM 7.4.3 / 7.5 / 7.9 / 7.10.2. AA's `num` is an alias of `size`;
   // String's LRM 6.16.1 `len` is its own mandated spelling.
   kSize,

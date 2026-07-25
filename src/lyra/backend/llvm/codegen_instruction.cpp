@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -399,14 +400,40 @@ auto CodeGenFunction::LowerTupleAggregate(
 auto CodeGenFunction::LowerAggregateExtract(
     const lir::AggregateExtractInstr& extract) -> llvm::Value* {
   llvm::Value* aggregate = LowerOperand(extract.aggregate);
+  const ValueDomain domain = DomainOf(OperandType(extract.aggregate));
+  const auto coordinates = [&](const std::vector<lir::Operand>& operands) {
+    std::vector<llvm::Value*> args = {aggregate};
+    std::vector<llvm::Type*> params = {module_->Types().Ptr()};
+    for (const lir::Operand& operand : operands) {
+      args.push_back(LowerOperand(operand));
+      params.push_back(module_->Types().Map(OperandType(operand)));
+    }
+    return std::pair{std::move(args), std::move(params)};
+  };
   return std::visit(
-      Overloaded{[&](const lir::TupleElement& element) -> llvm::Value* {
-        return builder_.CreateCall(
-            module_->Runtime().TupleExtract(),
-            {aggregate,
-             llvm::ConstantInt::get(
-                 llvm::Type::getInt64Ty(module_->Context()), element.index)});
-      }},
+      Overloaded{
+          [&](const lir::TupleElement& element) -> llvm::Value* {
+            return builder_.CreateCall(
+                module_->Runtime().TupleExtract(),
+                {aggregate, llvm::ConstantInt::get(
+                                llvm::Type::getInt64Ty(module_->Context()),
+                                element.index)});
+          },
+          [&](const lir::UnionMember&) -> llvm::Value* {
+            throw InternalError(
+                "llvm codegen: a union value is not yet realized on this "
+                "backend, so a member read has no entry");
+          },
+          [&](const lir::ContainerElement& e) -> llvm::Value* {
+            auto [args, params] = coordinates(e.operands);
+            return builder_.CreateCall(
+                module_->Runtime().ElementExtract(domain, params), args);
+          },
+          [&](const lir::ContainerSlice& s) -> llvm::Value* {
+            auto [args, params] = coordinates(s.operands);
+            return builder_.CreateCall(
+                module_->Runtime().SliceExtract(domain, params), args);
+          }},
       extract.selector);
 }
 
@@ -414,15 +441,43 @@ auto CodeGenFunction::LowerAggregateUpdate(
     const lir::AggregateUpdateInstr& update) -> llvm::Value* {
   llvm::Value* aggregate = LowerOperand(update.aggregate);
   llvm::Value* replacement = LowerOperand(update.replacement);
+  const ValueDomain domain = DomainOf(OperandType(update.aggregate));
+  const auto coordinates = [&](const std::vector<lir::Operand>& operands) {
+    std::vector<llvm::Value*> args = {aggregate};
+    std::vector<llvm::Type*> params = {module_->Types().Ptr()};
+    for (const lir::Operand& operand : operands) {
+      args.push_back(LowerOperand(operand));
+      params.push_back(module_->Types().Map(OperandType(operand)));
+    }
+    args.push_back(replacement);
+    params.push_back(module_->Types().Map(OperandType(update.replacement)));
+    return std::pair{std::move(args), std::move(params)};
+  };
   return std::visit(
-      Overloaded{[&](const lir::TupleElement& element) -> llvm::Value* {
-        return builder_.CreateCall(
-            module_->Runtime().TupleUpdate(),
-            {aggregate,
-             llvm::ConstantInt::get(
-                 llvm::Type::getInt64Ty(module_->Context()), element.index),
-             replacement});
-      }},
+      Overloaded{
+          [&](const lir::TupleElement& element) -> llvm::Value* {
+            return builder_.CreateCall(
+                module_->Runtime().TupleUpdate(),
+                {aggregate,
+                 llvm::ConstantInt::get(
+                     llvm::Type::getInt64Ty(module_->Context()), element.index),
+                 replacement});
+          },
+          [&](const lir::UnionMember&) -> llvm::Value* {
+            throw InternalError(
+                "llvm codegen: a union value is not yet realized on this "
+                "backend, so a member write has no entry");
+          },
+          [&](const lir::ContainerElement& e) -> llvm::Value* {
+            auto [args, params] = coordinates(e.operands);
+            return builder_.CreateCall(
+                module_->Runtime().ElementUpdate(domain, params), args);
+          },
+          [&](const lir::ContainerSlice& s) -> llvm::Value* {
+            auto [args, params] = coordinates(s.operands);
+            return builder_.CreateCall(
+                module_->Runtime().SliceUpdate(domain, params), args);
+          }},
       update.selector);
 }
 

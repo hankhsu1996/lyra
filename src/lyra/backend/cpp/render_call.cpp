@@ -153,15 +153,6 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Element";
     case support::BuiltinFn::kSlice:
       return "Slice";
-    case support::BuiltinFn::kWithElement:
-    case support::BuiltinFn::kWithSlice:
-      // The functional interior writes are synthesized only at MIR-to-LIR for
-      // the execution backend; the C++ backend realizes a descent step in place
-      // through the value library's write proxies, so it never renders one.
-      throw InternalError(
-          "BuiltinFnCppName: a functional interior write is an "
-          "execution-backend synthesis entry, never rendered by the C++ "
-          "backend");
     case support::BuiltinFn::kSize:
       return "Size";
     case support::BuiltinFn::kBitstreamWidth:
