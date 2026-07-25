@@ -697,6 +697,7 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   out += "#include \"lyra/value/unpacked_array.hpp\"\n";
   out += "#include \"lyra/value/dynamic_array.hpp\"\n";
   out += "#include \"lyra/value/union.hpp\"\n";
+  out += "#include \"lyra/value/tagged_union.hpp\"\n";
   for (const auto& name : CollectExternalUnitNames(unit)) {
     out += std::format("#include \"{}.hpp\"\n", ToCppName(name));
   }

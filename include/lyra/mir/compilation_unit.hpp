@@ -1,12 +1,15 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -310,6 +313,40 @@ struct CompilationUnit {
                       .signedness = Signedness::kSigned,
                       .state_kind = IntegralStateKind::kTwoState}},
       .type = int_type};
+}
+
+// The component type a tagged union carries at `tag_index` (LRM 7.3.2).
+// Positions are the tag, so a component is reached by index and never by
+// type -- two members may share one type.
+[[nodiscard]] inline auto TaggedComponentType(
+    const CompilationUnit& unit, TypeId tagged_union, std::size_t tag_index)
+    -> TypeId {
+  const auto* tu =
+      std::get_if<TaggedUnionType>(&unit.types.Get(tagged_union).data);
+  if (tu == nullptr) {
+    throw InternalError("TaggedComponentType: type is not a tagged union");
+  }
+  if (tag_index >= tu->elements.size()) {
+    throw InternalError("TaggedComponentType: tag index out of range");
+  }
+  return tu->elements[tag_index];
+}
+
+// 1-bit unsigned 2-state literal. The value a boolean fold yields when it has
+// nothing to fold, and the constant a synthesized flag is seeded with.
+[[nodiscard]] inline auto MakeBit1Literal(TypeId bit1_type, bool value)
+    -> Expr {
+  return Expr{
+      .data =
+          IntegerLiteral{
+              .value =
+                  IntegralConstant{
+                      .value_words = {value ? 1ULL : 0ULL},
+                      .state_words = {},
+                      .width = 1,
+                      .signedness = Signedness::kUnsigned,
+                      .state_kind = IntegralStateKind::kTwoState}},
+      .type = bit1_type};
 }
 
 // 4-state signed 32-bit literal, typed `integer` (LRM 6.11.1). Used by sites

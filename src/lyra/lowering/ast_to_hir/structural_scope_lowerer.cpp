@@ -85,7 +85,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     -> diag::Result<hir::StructuralScope> {
   hir::StructuralScope scope;
   const WalkFrame frame = parent_frame.WithStructuralFrame(
-      frame_, slang_scope_, &scope, &scope.exprs);
+      frame_, slang_scope_, &scope, &scope.exprs, &scope.patterns);
   scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
 
   // Forward-declare every subroutine's binding before lowering any body so a

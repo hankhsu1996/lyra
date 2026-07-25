@@ -58,6 +58,9 @@ auto IsExprRootedAtStructuralDataObject(
           [&](const mir::UnionGetRefExpr& g) {
             return IsExprRootedAtStructuralDataObject(block, g.union_value);
           },
+          [&](const mir::TaggedGetRefExpr& g) {
+            return IsExprRootedAtStructuralDataObject(block, g.union_value);
+          },
           [&](const mir::CallExpr& c) {
             if (!mir::IsContainerAccessCallee(c.callee) ||
                 c.arguments.empty()) {
@@ -151,6 +154,19 @@ auto CloneLhsSelectorChainOntoRef(
                     .data =
                         mir::UnionGetRefExpr{
                             .union_value = base, .index = index},
+                    .type = type});
+          },
+          [&](const mir::TaggedGetRefExpr& g) -> mir::ExprId {
+            const auto tag_index = g.tag_index;
+            const mir::TypeId type = outer_expr.type;
+            const mir::ExprId base = CloneLhsSelectorChainOntoRef(
+                unit_lowerer, outer_frame, closure, g.union_value, root_id,
+                captured_root);
+            return body.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::TaggedGetRefExpr{
+                            .union_value = base, .tag_index = tag_index},
                     .type = type});
           },
           [&](const auto&) -> mir::ExprId {

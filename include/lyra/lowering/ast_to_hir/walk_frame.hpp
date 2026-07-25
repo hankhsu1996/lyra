@@ -85,6 +85,12 @@ struct WalkFrame {
   // owning pointers below.
   base::Arena<hir::Expr, hir::ExprId>* current_exprs = nullptr;
 
+  // The current pattern write target, set on the same entries and for the
+  // same reason as the expression one above: a pattern's meaning does not
+  // depend on whether a procedural body or a structural scope encloses it, so
+  // one handler serves both and appends here (LRM 12.6).
+  base::Arena<hir::Pattern, hir::PatternId>* current_patterns = nullptr;
+
   // The current structural-scope write target for member and generate handlers.
   // Set when a StructuralScope task constructs its scope on the stack and
   // entered via `WithStructuralFrame`. Null outside structural-scope handlers.
@@ -170,6 +176,14 @@ struct WalkFrame {
     return *current_exprs;
   }
 
+  [[nodiscard]] auto Patterns() const
+      -> base::Arena<hir::Pattern, hir::PatternId>& {
+    if (current_patterns == nullptr) {
+      throw InternalError("WalkFrame::Patterns: no pattern write target");
+    }
+    return *current_patterns;
+  }
+
   // Pushes a new structural scope onto the chain and points
   // current_structural_scope at the new scope. The scope is owned by the
   // caller's stack frame (typically a Lowerer's Run); this frame just
@@ -178,13 +192,14 @@ struct WalkFrame {
   // stays free of the HIR scope definition.
   [[nodiscard]] auto WithStructuralFrame(
       ScopeFrameId child_frame, const slang::ast::Scope* slang_scope,
-      hir::StructuralScope* scope,
-      base::Arena<hir::Expr, hir::ExprId>* exprs) const -> WalkFrame {
+      hir::StructuralScope* scope, base::Arena<hir::Expr, hir::ExprId>* exprs,
+      base::Arena<hir::Pattern, hir::PatternId>* patterns) const -> WalkFrame {
     WalkFrame next = *this;
     next.structural_chain.push_back(child_frame);
     next.reader_scope = slang_scope;
     next.current_structural_scope = scope;
     next.current_exprs = exprs;
+    next.current_patterns = patterns;
     return next;
   }
 
@@ -195,11 +210,12 @@ struct WalkFrame {
   // procedural body is flat. `exprs` is the body's expr arena, passed by the
   // caller for the same reason as `WithStructuralFrame`.
   [[nodiscard]] auto WithProceduralBody(
-      hir::ProceduralBody* body,
-      base::Arena<hir::Expr, hir::ExprId>* exprs) const -> WalkFrame {
+      hir::ProceduralBody* body, base::Arena<hir::Expr, hir::ExprId>* exprs,
+      base::Arena<hir::Pattern, hir::PatternId>* patterns) const -> WalkFrame {
     WalkFrame next = *this;
     next.current_procedural_body = body;
     next.current_exprs = exprs;
+    next.current_patterns = patterns;
     return next;
   }
 

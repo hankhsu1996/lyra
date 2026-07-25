@@ -6,7 +6,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/inside_item.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -24,13 +23,5 @@ template <ExprLowerer Lowerer>
 auto LowerInsideExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::InsideExpression& in,
     diag::SourceSpan span) -> diag::Result<hir::Expr>;
-
-// Lower one slang range_list entry. A ValueRange entry becomes an
-// InsideRangePair; any other expression becomes a plain ExprId. Used by
-// `inside` operator lowering and by `case ... inside` statement lowering.
-template <ExprLowerer Lowerer>
-auto LowerInsideItemImpl(
-    Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& item_expr)
-    -> diag::Result<hir::InsideItem>;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -17,7 +17,6 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -65,6 +64,11 @@ auto TypeContainsChandle(const mir::CompilationUnit& unit, mir::TypeId type)
             });
           },
           [&](const mir::UnionType& t) {
+            return std::ranges::any_of(t.elements, [&](mir::TypeId e) {
+              return TypeContainsChandle(unit, e);
+            });
+          },
+          [&](const mir::TaggedUnionType& t) {
             return std::ranges::any_of(t.elements, [&](mir::TypeId e) {
               return TypeContainsChandle(unit, e);
             });

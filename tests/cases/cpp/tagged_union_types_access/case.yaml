@@ -1,0 +1,19 @@
+id: cpp.tagged_union_types_access
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    valid_read: 57
+    copy_read: 57
+    add_r1_initial: 7
+    add_r2_after_write: 15
+    add_r1_after_compound: 9
+    jmp_read: 0x1F0
+    struct_init_read: 42
+    struct_assigned_read: 77
+    struct_nested_read: 3

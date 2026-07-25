@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <expected>
+#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -12,9 +13,12 @@
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -88,6 +92,34 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       return mir::BinaryOp::kArithmeticShiftRight;
   }
   throw InternalError("LowerBinaryOp: unknown HIR BinaryOp");
+}
+
+auto BuildMirLogicalAnd(
+    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
+    std::span<const mir::ExprId> tests) -> mir::ExprId {
+  if (tests.empty()) {
+    return block.exprs.Add(mir::MakeBit1Literal(bit1_type, true));
+  }
+  mir::ExprId acc = tests.front();
+  for (const mir::ExprId test : tests.subspan(1)) {
+    acc = block.exprs.Add(BuildMirBinaryExpr(
+        unit, block, mir::BinaryOp::kLogicalAnd, acc, test, bit1_type));
+  }
+  return acc;
+}
+
+auto BuildMirLogicalOr(
+    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
+    std::span<const mir::ExprId> tests) -> mir::ExprId {
+  if (tests.empty()) {
+    return block.exprs.Add(mir::MakeBit1Literal(bit1_type, false));
+  }
+  mir::ExprId acc = tests.front();
+  for (const mir::ExprId test : tests.subspan(1)) {
+    acc = block.exprs.Add(BuildMirBinaryExpr(
+        unit, block, mir::BinaryOp::kLogicalOr, acc, test, bit1_type));
+  }
+  return acc;
 }
 
 namespace {
@@ -454,11 +486,29 @@ auto LowerHirConditionalExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  auto cond_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.condition), frame);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  auto& unit = lowerer.Owner().Unit();
+  const mir::TypeId bit1_type = unit.builtins.bit1;
+
+  if (c.conditions.empty()) {
+    throw InternalError(
+        "LowerHirConditionalExpr: hir::ConditionalExpr has no clauses");
+  }
+
+  // Every clause's predicate is conjoined left to right; `&&` short-circuits,
+  // so a clause is evaluated only when the ones before it held (LRM 12.6.3).
+  // A clause carrying no pattern contributes its own expression, which is the
+  // whole predicate for a plain `cond ? a : b`.
+  std::vector<mir::ExprId> clauses;
+  clauses.reserve(c.conditions.size());
+  for (const hir::ConditionClause& clause : c.conditions) {
+    auto clause_or =
+        lowerer.LowerExpr(lowerer.HirExprs().Get(clause.expr), frame);
+    if (!clause_or) return std::unexpected(std::move(clause_or.error()));
+    clauses.push_back(block.exprs.Add(*std::move(clause_or)));
+  }
   const mir::ExprId cond_id = ReduceToCondition(
-      block, block.exprs.Add(*std::move(cond_or)),
-      lowerer.Owner().Unit().builtins.bit1);
+      block, BuildMirLogicalAnd(unit, block, bit1_type, clauses), bit1_type);
+
   auto then_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.then_value), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const mir::ExprId then_id = block.exprs.Add(*std::move(then_or));
@@ -472,6 +522,69 @@ auto LowerHirConditionalExpr(
               .then_value = then_id,
               .else_value = else_id},
       .type = result_type};
+}
+
+template <ExprLowerer Lowerer>
+auto LowerHirBindingConditionalExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto& unit = lowerer.Owner().Unit();
+  const mir::TypeId bit1_type = unit.builtins.bit1;
+  auto& block = *frame.current_block;
+
+  // A clause pattern declares an identifier, so this predicate cannot be an
+  // rvalue: the arms become assignments into a result local under the same
+  // clause chain an `if` uses, and the expression is a read of that local.
+  const mir::LocalId result_local = frame.bindings->DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_cond_result", .type = result_type});
+  block.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = result_local,
+          .init = block.exprs.Add(
+              BuildDefaultValueExpr(lowerer.Owner(), frame, result_type))});
+
+  // A conditional expression always has both arms, so the else-arm is always
+  // reachable and the chain always has to report whether it held.
+  const mir::LocalId taken_flag = frame.bindings->DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_cond_taken", .type = bit1_type});
+  block.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = taken_flag,
+          .init = block.exprs.Add(mir::MakeBit1Literal(bit1_type, false))});
+
+  auto assign_arm = [&](WalkFrame arm_frame,
+                        hir::ExprId value) -> diag::Result<void> {
+    auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(value), arm_frame);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    auto& arm_block = *arm_frame.current_block;
+    const mir::ExprId value_id = arm_block.exprs.Add(*std::move(value_or));
+    const mir::ExprId target =
+        arm_block.exprs.Add(mir::MakeLocalRefExpr(result_local, result_type));
+    arm_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = arm_block.exprs.Add(
+                mir::MakeAssignExpr(target, value_id, result_type))});
+    return {};
+  };
+
+  auto chain_or = BuildClauseChainIf(
+      lowerer, frame, std::span<const hir::ConditionClause>{c.conditions},
+      taken_flag, [&](WalkFrame arm_frame) -> diag::Result<void> {
+        return assign_arm(arm_frame, c.then_value);
+      });
+  if (!chain_or) return std::unexpected(std::move(chain_or.error()));
+  block.AppendStmt(*std::move(chain_or));
+
+  mir::Block else_block;
+  const WalkFrame else_frame = frame.WithBlock(&else_block);
+  auto else_or = assign_arm(else_frame, c.else_value);
+  if (!else_or) return std::unexpected(std::move(else_or.error()));
+  const mir::BlockId else_scope = block.child_scopes.Add(std::move(else_block));
+
+  block.AppendStmt(BuildChainElseIf(block, taken_flag, bit1_type, else_scope));
+
+  return mir::Expr{
+      .data = mir::LocalRef{.var = result_local}, .type = result_type};
 }
 
 auto LowerHirIncDecExprProc(
@@ -533,9 +646,17 @@ template auto LowerHirBinaryExpr(
 template auto LowerHirBinaryExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::BinaryExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirBindingConditionalExpr(
+    ProcessLowerer&, WalkFrame, const hir::ConditionalExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirBindingConditionalExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::ConditionalExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+
 template auto LowerHirConditionalExpr(
     ProcessLowerer&, WalkFrame, const hir::ConditionalExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
+
 template auto LowerHirConditionalExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::ConditionalExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;

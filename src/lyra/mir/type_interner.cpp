@@ -111,6 +111,10 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           for (TypeId element : t.elements) {
             HashId(seed, element);
           }
+        } else if constexpr (std::is_same_v<T, TaggedUnionType>) {
+          for (TypeId element : t.elements) {
+            HashId(seed, element);
+          }
         } else if constexpr (std::is_same_v<T, ObservableType>) {
           HashId(seed, t.value);
         } else if constexpr (std::is_same_v<T, ResolvedType>) {
@@ -179,6 +183,8 @@ auto TypeInterner::ObservableCellOf(TypeId value_type) -> TypeId {
     case TypeKind::kRealTime:
     case TypeKind::kTuple:
     case TypeKind::kUnion:
+    case TypeKind::kTaggedUnion:
+    case TypeKind::kEmpty:
       return Intern(ObservableType{.value = value_type});
     // Not value storage, so its own declaration shape is its storage and it is
     // not wrapped: a handle or container (pointer, managed / borrowed

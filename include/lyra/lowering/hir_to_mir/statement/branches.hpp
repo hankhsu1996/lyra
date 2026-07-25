@@ -25,9 +25,9 @@ auto LowerCaseStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::CaseStmt& c, diag::SourceSpan span) -> diag::Result<mir::Stmt>;
 
-auto LowerCaseInsideStmt(
+auto LowerPatternCaseStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CaseInsideStmt& c, diag::SourceSpan span)
+    const hir::PatternCaseStmt& c, diag::SourceSpan span)
     -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

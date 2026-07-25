@@ -13,7 +13,6 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/inside_item.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
@@ -100,8 +99,6 @@ class ProcessLowerer {
       -> diag::Result<hir::Expr>;
   auto LowerStmt(const slang::ast::Statement& stmt, WalkFrame frame)
       -> diag::Result<hir::Stmt>;
-  auto LowerInsideItem(const slang::ast::Expression& item_expr, WalkFrame frame)
-      -> diag::Result<hir::InsideItem>;
   auto LowerForeachStmt(
       const slang::ast::ForeachLoopStatement& fs, WalkFrame frame)
       -> diag::Result<hir::Stmt>;

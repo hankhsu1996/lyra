@@ -211,7 +211,7 @@ auto LowerSubroutineDeclImpl(
   std::vector<hir::ProceduralVarId> root_declarations;
   std::vector<hir::ProceduralScopeId> root_children;
   const WalkFrame body_frame =
-      frame.WithProceduralBody(&body, &body.exprs)
+      frame.WithProceduralBody(&body, &body.exprs, &body.patterns)
           .WithProceduralScopeAccumulators(&root_declarations, &root_children);
 
   std::vector<hir::SubroutineParam> params;
@@ -333,7 +333,7 @@ auto LowerMethodPrototypeDecl(
   std::vector<hir::ProceduralScopeId> root_children;
   const WalkFrame body_frame =
       WalkFrame{}
-          .WithProceduralBody(&body, &body.exprs)
+          .WithProceduralBody(&body, &body.exprs, &body.patterns)
           .WithProceduralScopeAccumulators(&root_declarations, &root_children);
 
   std::vector<hir::SubroutineParam> params;

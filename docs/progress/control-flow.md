@@ -21,12 +21,12 @@ complete.
 
 ### Statements
 
-- [x] C1 -- `if` / `else` (procedural conditional). Pattern forms and `unique` / `priority`
-      qualifiers are rejected as unsupported; the qualifier work is C13.
-  - [x] A multi-condition `if` (`if (a &&& b)`, LRM 12.4): the `&&&`-separated conditions form a
-        conjunction, so the branch is taken iff every condition is true (X / Z counting as false).
-        It desugars to a chained logical-AND, so no multi-condition form reaches a lower layer.
-  - [ ] Pattern matching in an `if` condition (`if (e matches p)`, LRM 12.6) is rejected.
+- [x] C1 -- `if` / `else` (procedural conditional). Covers a single-expression predicate, a
+      multi-clause predicate (`&&&`, LRM 12.4), and pattern matching in a predicate (`matches`, LRM
+      12.6) in every pattern form. Clauses form a conjunction evaluated left to right, so the branch
+      is taken only when every clause holds (X / Z counting as false), and the identifiers a pattern
+      binds are visible to the clauses to its right and to the arm's statement. The `unique` /
+      `priority` qualifiers are C13.
 - [x] C2 -- `for` (procedural for-loop). Includes inline and external init, multi-init / multi-step,
       countdown, zero-iteration, and `if`-in-body composition. `break` / `continue` are C7.
 - [x] C3 -- `case` (plain, `==` semantics, LRM 12.5). Reproduces the core archive subset: basic
@@ -71,15 +71,13 @@ complete.
       with `==?` for value items and `(>= lo) && (<= hi)` for ranges; OR-reduction across items.
       `1'bx` from inside is correctly excluded from match per LRM 12.5.4 ("match only when inside
       returns `1'b1`").
-- [x] C13 -- `unique` / `unique0` / `priority` qualifiers on `if` and `case`. Each branch's
-      predicate is snapshotted; the qualifier check runs in the Observed region and emits a runtime
-      warning when violated (`unique`: count != 1; `unique0`: count > 1; `priority`: count == 0).
-      Glitch-driven false positives within one time slot are suppressed. Source-location reporting
-      in the warning text is a follow-up. A body that carries no receiver -- a package function (LRM
-      26.3) -- runs a qualified case as an ordinary cascade and drops the runtime warning because
-      the check reaches the engine services through the enclosing body's receiver; the branch
-      semantics are preserved, only the warning is skipped. Reinstating the warning depends on
-      threading services into package bodies, which the current runtime does not.
+- [x] C13 -- `unique` / `unique0` / `priority` qualifiers on `if` and `case`. Every arm's predicate
+      is evaluated even once one has held, and only the first holding arm's statement runs (LRM
+      12.4.2 / 12.5.3); the qualifier check runs in the Observed region and emits a source-located
+      runtime warning when violated (`unique`: count != 1; `unique0`: count > 1; `priority`: count
+      == 0). Glitch-driven false positives within one time slot are suppressed. Arms whose predicate
+      is a multi-clause or `matches` chain are covered, including an arm whose pattern binds an
+      identifier its own statement reads.
 - [x] C15 -- `case` with non-constant labels and with duplicate labels (first-match-wins per LRM
       12.5). The C3 cascade handles both: non-constant labels render as runtime `==`; duplicate
       labels honour top-down ordering.
@@ -90,10 +88,11 @@ complete.
 
 ### Expressions
 
-- [x] C14 -- Ternary `cond ? a : b`, including an `&&&` multi-condition predicate (LRM 12.4) that
-      desugars to the same chained logical-AND the `if` statement uses. The `matches` pattern form
-      is rejected as unsupported. 4-state X/Z propagation on the condition rides on the broader
-      4-state work in `operators.md`.
+- [x] C14 -- Ternary `cond ? a : b`. The predicate takes the same forms C1 accepts: a single
+      expression, a multi-clause `&&&` predicate, or a `matches` pattern whose bindings are visible
+      to the clauses to its right and to the chosen value (LRM 12.6). Every form works both in a
+      procedural body and in a structural expression such as a continuous assign. 4-state X/Z
+      propagation on the condition rides on the broader 4-state work in `operators.md`.
 
 ## Out of Scope
 

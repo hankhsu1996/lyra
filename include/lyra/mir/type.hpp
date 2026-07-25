@@ -31,6 +31,7 @@ enum class TypeKind {
   kRealTime,
   kChandle,
   kVoid,
+  kEmpty,
   kObject,
   kExternalUnitObject,
   kExternalClass,
@@ -45,6 +46,7 @@ enum class TypeKind {
   kVector,
   kTuple,
   kUnion,
+  kTaggedUnion,
   kObservable,
   kResolved,
   kDriver,
@@ -512,6 +514,32 @@ struct UnionType {
   auto operator==(const UnionType&) const -> bool = default;
 };
 
+// A value type carrying no information: it has exactly one value, so nothing
+// distinguishes two of them. Distinct from `VoidType`, which marks the absence
+// of a type -- a callable that yields nothing, a pointee left unspecified.
+// SystemVerilog reaches this through a tagged union's `void` member (LRM
+// 7.3.2), the one position where `void` names a data type; a value slot needs
+// a type that has a value, which absence-of-a-type cannot supply.
+struct EmptyType {
+  auto operator==(const EmptyType&) const -> bool = default;
+};
+
+// Type-checked sum: one of an ordered list of component types is the value at
+// a time, with the tag observably part of the value. The value-layer
+// realization of an SV tagged unpacked union (LRM 7.3.2 / 11.9). Distinct from
+// `UnionType`: an untagged union erases the tag and gives a cross-member read
+// a deterministic fallback; here the tag is observable through the pattern-
+// matching surface (LRM 12.6) and a member access whose type is inconsistent
+// with the tag is a run-time error. `elements` carries component types only,
+// positions carry the tag: names were dropped at HIR-to-MIR, exactly as for
+// `UnionType`. A `void` element -- allowed only in tagged unions (LRM 7.3.2)
+// -- carries `EmptyType`.
+struct TaggedUnionType {
+  std::vector<TypeId> elements;
+
+  auto operator==(const TaggedUnionType&) const -> bool = default;
+};
+
 // Observable storage wrapper around a value type. Declares that a member's
 // storage is a module-scope cell that exposes Set / Get / Mutate
 // (LRM 9.4.2 update event) -- writes route through the engine so subscribers
@@ -555,8 +583,8 @@ using TypeData = std::variant<
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
     ExternalClassType, RuntimeEffectsType, FilesType, DiagnosticType,
     RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
-    VectorType, TupleType, UnionType, ObservableType, ResolvedType, DriverType,
-    StructType, ClosureType>;
+    VectorType, TupleType, UnionType, TaggedUnionType, EmptyType,
+    ObservableType, ResolvedType, DriverType, StructType, ClosureType>;
 
 struct Type {
   TypeData data;

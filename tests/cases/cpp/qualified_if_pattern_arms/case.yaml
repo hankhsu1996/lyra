@@ -1,0 +1,16 @@
+id: cpp.qualified_if_pattern_arms
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stderr:
+    exact: "main.sv:33:5: warning: unique check failed: matched 2 of 2 conditions\n"
+  variables:
+    unique_first: 7
+    priority_filtered: 70
+    overlap_first: 7
+    rebound_name: 105

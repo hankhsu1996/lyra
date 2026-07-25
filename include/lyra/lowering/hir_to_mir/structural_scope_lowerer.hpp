@@ -136,6 +136,13 @@ class StructuralScopeLowerer {
     return hir_scope_->exprs;
   }
 
+  // The pattern arena of the scope being lowered, exposed with the same shape
+  // on both pass classes for the same reason the expression arena is.
+  [[nodiscard]] auto HirPatterns() const
+      -> const base::Arena<hir::Pattern, hir::PatternId>& {
+    return hir_scope_->patterns;
+  }
+
   // Resolve a subroutine reference to its HIR declaration by walking `hops`
   // scopes outward. The HIR declaration is complete before any body is lowered,
   // so a call can read a peer's formals even when the peer's MIR declaration is

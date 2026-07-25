@@ -8,11 +8,8 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -36,42 +33,6 @@ struct CaseSnapshotRefs {
 auto AppendCaseSnapshot(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId cond_expr_id)
     -> CaseSnapshotRefs;
-
-// Builds (sel <op> L_0) || (sel <op> L_1) || ... into the enclosing scope
-// reached via `frame.current_block` and returns the final predicate
-// ExprId. `compare_op` selects the per-label primitive (kEquality for plain
-// case / case-inside-value items, kCasezEquality / kCasexEquality for casez /
-// casex). `lower_label(label_frame, label_idx)` lowers one label into the
-// scope reached via `label_frame.current_block` and returns its
-// ExprId. The snapshot var is a body-local, named directly. label_count must
-// be >= 1.
-template <typename LabelLowerer>
-auto BuildEqualityChain(
-    WalkFrame frame, CaseSnapshotRefs snapshot, mir::TypeId bit_type,
-    mir::BinaryOp compare_op, std::size_t label_count,
-    LabelLowerer&& lower_label, mir::CompilationUnit& unit)
-    -> diag::Result<mir::ExprId> {
-  auto& enc_scope = *frame.current_block;
-  std::optional<mir::ExprId> acc;
-  for (std::size_t i = 0; i < label_count; ++i) {
-    auto label_or = std::forward<LabelLowerer>(lower_label)(frame, i);
-    if (!label_or) {
-      return std::unexpected(std::move(label_or.error()));
-    }
-    const mir::ExprId label_id = *label_or;
-    const mir::ExprId sel_ref = enc_scope.exprs.Add(
-        mir::MakeLocalRefExpr(snapshot.sel_var, snapshot.sel_type));
-    const mir::ExprId cmp = enc_scope.exprs.Add(BuildMirBinaryExpr(
-        unit, enc_scope, compare_op, sel_ref, label_id, bit_type));
-    if (acc.has_value()) {
-      acc = enc_scope.exprs.Add(BuildMirBinaryExpr(
-          unit, enc_scope, mir::BinaryOp::kLogicalOr, *acc, cmp, bit_type));
-    } else {
-      acc = cmp;
-    }
-  }
-  return *acc;
-}
 
 // Assembles the SV-case if/else-if cascade. `wrapper_block` already holds the
 // snapshot decl + assign (from AppendCaseSnapshot); it is moved in. body_scopes

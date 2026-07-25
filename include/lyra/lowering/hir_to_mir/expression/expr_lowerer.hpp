@@ -6,6 +6,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/pattern.hpp"
+#include "lyra/hir/pattern_id.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 
@@ -20,18 +22,19 @@ namespace lyra::lowering::hir_to_mir {
 // deep template error. It is deliberately not a base class -- the two pass
 // classes build different things and share no v-table.
 template <typename L>
-concept ExprLowerer =
-    requires(L& lowerer, const hir::Expr& expr, WalkFrame frame) {
-      {
-        lowerer.LowerExpr(expr, frame)
-      } -> std::same_as<diag::Result<mir::Expr>>;
-      {
-        lowerer.LowerLhsExpr(expr, frame)
-      } -> std::same_as<diag::Result<mir::Expr>>;
-      {
-        lowerer.HirExprs()
-      } -> std::convertible_to<const base::Arena<hir::Expr, hir::ExprId>&>;
-      lowerer.Owner();
-    };
+concept ExprLowerer = requires(
+    L& lowerer, const hir::Expr& expr, WalkFrame frame) {
+  { lowerer.LowerExpr(expr, frame) } -> std::same_as<diag::Result<mir::Expr>>;
+  {
+    lowerer.LowerLhsExpr(expr, frame)
+  } -> std::same_as<diag::Result<mir::Expr>>;
+  {
+    lowerer.HirExprs()
+  } -> std::convertible_to<const base::Arena<hir::Expr, hir::ExprId>&>;
+  {
+    lowerer.HirPatterns()
+  } -> std::convertible_to<const base::Arena<hir::Pattern, hir::PatternId>&>;
+  lowerer.Owner();
+};
 
 }  // namespace lyra::lowering::hir_to_mir
