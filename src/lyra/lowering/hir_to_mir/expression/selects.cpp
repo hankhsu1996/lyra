@@ -411,15 +411,14 @@ auto LowerHirElementSelectExpr(
   auto& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
-  const WalkFrame sub_frame = frame.WithLvalueTarget(false);
 
   const auto& hir_base = exprs.Get(sel.base_value);
-  auto base_or = lowerer.LowerExpr(hir_base, sub_frame);
+  auto base_or = lowerer.LowerExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   const auto& hir_idx = exprs.Get(sel.index);
-  auto idx_or = lowerer.LowerExpr(hir_idx, sub_frame);
+  auto idx_or = lowerer.LowerExpr(hir_idx, frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 

@@ -250,8 +250,7 @@ auto LowerObservableAssign(
   auto rhs_or = process.LowerExpr(hir_process.exprs.Get(a.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
-  auto lhs_or = process.LowerLhsExpr(
-      hir_process.exprs.Get(a.lhs), frame.WithLvalueTarget(true));
+  auto lhs_or = process.LowerLhsExpr(hir_process.exprs.Get(a.lhs), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const mir::ExprId lhs_id = block.exprs.Add(*std::move(lhs_or));
 
