@@ -28,7 +28,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/foreign_export_wrapper.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/dpi_abi.hpp"
@@ -231,6 +230,20 @@ auto MarshalCarrierToSv(
   throw InternalError("MarshalCarrierToSv: unknown DpiScalarAbi");
 }
 
+// The SV-side projection an import call marshals through (LRM 35.5.6). An
+// import is the only foreign callable SV can name at a call site, and every
+// import publishes this projection, so a call site reaching a callable without
+// one resolved to something that is not an import.
+auto ImportMarshal(const mir::CallableDecl& callable)
+    -> const mir::ForeignMarshal& {
+  if (!callable.foreign.has_value() || !callable.foreign->marshal.has_value()) {
+    throw InternalError(
+        "ImportMarshal: a DPI-C import call resolved to a callable that "
+        "publishes no marshaling projection");
+  }
+  return *callable.foreign->marshal;
+}
+
 // A canonical-vector actual crosses by pointer to a boundary buffer, regardless
 // of direction -- even an input, since the C ABI is `const svLogicVecVal*`. The
 // buffer is a `DpiBitBuffer` / `DpiLogicBuffer` value, so it needs a boundary
@@ -267,34 +280,6 @@ auto BuildBufferDataCall(
               carrier_type, mir::PointerOwnership::kBorrowed)});
 }
 
-// The MIR type of one foreign wrapper parameter, the ABI carrier realized as a
-// concrete type so a backend spells it through ordinary type mapping. A scalar
-// `input` is its by-value carrier; a scalar `output` / `inout` is a borrowed
-// pointer to it. A packed vector is a borrowed pointer to its canonical chunk,
-// read-only for an `input` the wrapper only reads (rendering `const
-// svBitVecVal*` through the pointer's mutability) and mutable for a writeback
-// direction.
-auto ExportParamType(
-    mir::CompilationUnit& unit, const support::DpiCarrier& carrier,
-    support::DpiDirection direction) -> mir::TypeId {
-  if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
-    const mir::TypeId chunk = unit.types.Intern(
-        mir::TypeData{mir::RuntimeLibraryType{
-            .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicChunk
-                                    : mir::RuntimeLibraryKind::kDpiBitChunk}});
-    const mir::Mutability mutability =
-        direction == support::DpiDirection::kInput ? mir::Mutability::kReadOnly
-                                                   : mir::Mutability::kMutable;
-    return unit.types.PointerTo(
-        chunk, mir::PointerOwnership::kBorrowed, mutability);
-  }
-  const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
-  if (support::DpiDirectionWritesBack(direction)) {
-    return unit.types.PointerTo(carrier_type, mir::PointerOwnership::kBorrowed);
-  }
-  return carrier_type;
-}
-
 // The builtin that writes an SV value out into a foreign-owned canonical
 // buffer, the write direction that pairs with the vector read builtin.
 [[nodiscard]] auto VectorWriteBuiltin(const support::VectorCarrier& v)
@@ -312,12 +297,13 @@ auto ExportParamType(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportInputsOnly(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::ExternalCallable& decl, mir::CallableTarget target,
+    const mir::CallableDecl& callable, mir::CallableTarget target,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   auto& block = *frame.current_block;
   const auto& hir_exprs = lowerer.HirExprs();
+  const mir::ForeignMarshal& decl = ImportMarshal(callable);
 
   std::vector<mir::ExprId> carrier_args;
   carrier_args.reserve(c.arguments.size());
@@ -363,12 +349,13 @@ auto LowerForeignImportInputsOnly(
 template <ExprLowerer Lowerer>
 auto PopulateForeignImportBoundary(
     Lowerer& lowerer, ClosureBuilder& closure, const hir::CallExpr& c,
-    const mir::ExternalCallable& decl, mir::CallableTarget target,
+    const mir::CallableDecl& callable, mir::CallableTarget target,
     mir::EnclosingHops hops) -> diag::Result<std::optional<mir::LocalId>> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
   const mir::TypeId void_t = unit.builtins.void_type;
+  const mir::ForeignMarshal& decl = ImportMarshal(callable);
 
   mir::Block& body = closure.Body();
   const WalkFrame& cframe = closure.Frame();
@@ -379,7 +366,7 @@ auto PopulateForeignImportBoundary(
   // on the calling process's DPI scope chain for the foreign call's duration.
   // Declared first so its scope-exit pop is the last effect, on a normal return
   // or an unwind.
-  if (decl.external.is_context) {
+  if (callable.foreign->is_context) {
     const mir::TypeId guard_type = unit.types.Intern(
         mir::RuntimeLibraryType{
             .kind = mir::RuntimeLibraryKind::kDpiScopeGuard});
@@ -564,15 +551,16 @@ auto PopulateForeignImportBoundary(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportSequenced(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::ExternalCallable& decl, mir::CallableTarget target,
+    const mir::CallableDecl& callable, mir::CallableTarget target,
     mir::EnclosingHops hops, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
+  const mir::ForeignMarshal& decl = ImportMarshal(callable);
 
   ClosureBuilder closure(unit, frame);
-  auto ret_temp =
-      PopulateForeignImportBoundary(lowerer, closure, c, decl, target, hops);
+  auto ret_temp = PopulateForeignImportBoundary(
+      lowerer, closure, c, callable, target, hops);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   if (!ret_temp->has_value()) {
@@ -603,12 +591,12 @@ auto LowerForeignImportSequenced(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportTask(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::ExternalCallable& decl, mir::CallableTarget target,
+    const mir::CallableDecl& callable, mir::CallableTarget target,
     mir::EnclosingHops hops) -> diag::Result<mir::Expr> {
   auto& unit = lowerer.Owner().Unit();
   ClosureBuilder closure(unit, frame);
-  auto ret_temp =
-      PopulateForeignImportBoundary(lowerer, closure, c, decl, target, hops);
+  auto ret_temp = PopulateForeignImportBoundary(
+      lowerer, closure, c, callable, target, hops);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
   return closure.BuildCoroutine();
 }
@@ -627,7 +615,67 @@ auto EnclosingClassIdAtHops(
   return std::get<mir::ObjectType>(unit.types.Get(ptr.pointee).data).class_id;
 }
 
+// The MIR type one foreign formal crosses the boundary as, the ABI carrier
+// realized as a concrete type so every consumer spells it through ordinary type
+// mapping. A scalar `input` is its by-value carrier; a scalar `output` /
+// `inout` is a borrowed pointer to it. A packed vector is a borrowed pointer to
+// its canonical chunk, read-only for an `input` the boundary only reads
+// (rendering `const svBitVecVal*` through the pointer's mutability) and mutable
+// for a writeback direction.
+auto ForeignBoundaryType(
+    mir::CompilationUnit& unit, const support::DpiCarrier& carrier,
+    support::DpiDirection direction) -> mir::TypeId {
+  if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
+    const mir::TypeId chunk = unit.types.Intern(
+        mir::TypeData{mir::RuntimeLibraryType{
+            .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicChunk
+                                    : mir::RuntimeLibraryKind::kDpiBitChunk}});
+    const mir::Mutability mutability =
+        direction == support::DpiDirection::kInput ? mir::Mutability::kReadOnly
+                                                   : mir::Mutability::kMutable;
+    return unit.types.PointerTo(
+        chunk, mir::PointerOwnership::kBorrowed, mutability);
+  }
+  const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
+  if (support::DpiDirectionWritesBack(direction)) {
+    return unit.types.PointerTo(carrier_type, mir::PointerOwnership::kBorrowed);
+  }
+  return carrier_type;
+}
+
+// The MIR type a foreign entry point returns. A task carries no SV return
+// value; its C entry returns the disable-acknowledgment int instead (LRM 35.8).
+auto ForeignBoundaryReturnType(
+    mir::CompilationUnit& unit, support::DpiScalarAbi ret_abi, bool is_task)
+    -> mir::TypeId {
+  if (is_task) {
+    return CarrierTypeId(
+        unit, support::ScalarCarrier{support::DpiScalarAbi::kInt});
+  }
+  if (ret_abi == support::DpiScalarAbi::kVoid) {
+    return unit.builtins.void_type;
+  }
+  return CarrierTypeId(unit, support::ScalarCarrier{ret_abi});
+}
+
 }  // namespace
+
+auto MakeForeignSignature(
+    mir::CompilationUnit& unit, std::span<const hir::DpiParamAbi> params,
+    support::DpiScalarAbi ret_abi, bool is_task) -> mir::CallableCode {
+  mir::CallableCode code;
+  CallableBindings bindings(unit, code);
+  code.params.reserve(params.size());
+  for (std::size_t i = 0; i < params.size(); ++i) {
+    code.params.push_back(bindings.DeclareAnonymous(
+        mir::LocalDecl{
+            .name = "arg" + std::to_string(i),
+            .type = ForeignBoundaryType(
+                unit, params[i].carrier, params[i].direction)}));
+  }
+  code.result_type = ForeignBoundaryReturnType(unit, ret_abi, is_task);
+  return code;
+}
 
 template <ExprLowerer Lowerer>
 auto LowerForeignImportCall(
@@ -646,23 +694,21 @@ auto LowerForeignImportCall(
       .slot = mir::CallableId{ref.id.value}};
   const mir::CallableDecl& callable =
       frame.EnclosingClassAtHops(hops).callables.Get(target.slot);
-  // A DPI import always resolves to the external implementation form; its ABI
-  // projection drives the marshaling below.
-  const auto& decl = std::get<mir::ExternalCallable>(callable.impl);
+  const mir::ForeignMarshal& decl = ImportMarshal(callable);
 
   if (decl.is_task) {
-    return LowerForeignImportTask(lowerer, frame, c, decl, target, hops);
+    return LowerForeignImportTask(lowerer, frame, c, callable, target, hops);
   }
   // A context import sequences through a closure even when every actual is a
   // by-value input, because its scope guard is a scoped body local the plain
   // single-expression form has no room for.
   const bool needs_temp = std::ranges::any_of(decl.params, NeedsBoundaryTemp);
-  if (needs_temp || decl.external.is_context) {
+  if (needs_temp || callable.foreign->is_context) {
     return LowerForeignImportSequenced(
-        lowerer, frame, c, decl, target, hops, result_type);
+        lowerer, frame, c, callable, target, hops, result_type);
   }
   return LowerForeignImportInputsOnly(
-      lowerer, frame, c, decl, target, result_type);
+      lowerer, frame, c, callable, target, result_type);
 }
 
 template auto LowerForeignImportCall(
@@ -674,26 +720,36 @@ template auto LowerForeignImportCall(
     const hir::CallExpr& c, const hir::ForeignImportRef& ref,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
-auto SynthesizeForeignExportWrapper(
+auto SynthesizeForeignExportEntry(
     UnitLowerer& module, const WalkFrame& context_frame,
     mir::DirectTarget target, mir::TypeId result_type,
-    const hir::ForeignExportDecl& export_decl) -> mir::ForeignExportWrapper {
+    const hir::ForeignExportDecl& export_decl) -> mir::CallableDecl {
   mir::CompilationUnit& unit = module.Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
 
-  mir::CallableCode code;
+  // An exported task lowers to a coroutine -- the result type is the call
+  // protocol -- while a function's result is its payload directly.
+  const bool is_task = unit.types.IsCoroutine(result_type);
+
+  // The entry point publishes the same signature an import of the same shape
+  // would, and then defines it -- which is the whole difference between the two
+  // directions of the boundary.
+  mir::CallableCode code = MakeForeignSignature(
+      unit, export_decl.params, export_decl.ret_abi, is_task);
+  code.body.emplace();
   CallableBindings bindings(unit, code);
-  mir::Block& body = code.body;
+  mir::Block& body = code.Body();
+  const std::vector<mir::LocalId> params = code.params;
 
   const WalkFrame body_frame =
       context_frame.WithBlock(&body).WithBindings(&bindings);
 
-  // The wrapper recovers its leading context argument from the running design
-  // (LRM 35.5.3), not from a foreign caller, so it is a body local initialized
-  // as the wrapper's first statement -- keeping the whole body (recovery,
-  // marshaling, call, writeback) MIR a backend renders mechanically. The
-  // callable model gives the two export forms different leading arguments, so
-  // the wrapper mirrors whichever the target expects and recovers its value: a
+  // The entry point recovers its leading context argument from the running
+  // design (LRM 35.5.3), not from a foreign caller, so it is a body local
+  // initialized first -- keeping the whole body (recovery, marshaling, call,
+  // writeback) MIR a backend renders mechanically. The callable model gives the
+  // two export forms different leading arguments, so the body mirrors whichever
+  // the target expects and recovers its value: a
   // module method (LRM 8.6) takes a `self` receiver, recovered as the current
   // DPI scope pointer narrowed to the exported subroutine's instance type; a
   // receiver-less package function (LRM 26.3) takes the run's effects,
@@ -729,19 +785,6 @@ auto SynthesizeForeignExportWrapper(
   }
   body.AppendStmt(
       mir::LocalDeclStmt{.target = context_local, .init = context_init});
-
-  // One foreign parameter per SV formal, in declaration order (the C ABI
-  // order). The parameter's MIR type is the ABI carrier realized concretely, so
-  // nothing downstream re-derives the C signature from the direction / carrier.
-  std::vector<mir::LocalId> params;
-  params.reserve(export_decl.params.size());
-  for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
-    const hir::DpiParamAbi& p = export_decl.params[i];
-    params.push_back(bindings.DeclareAnonymous(
-        mir::LocalDecl{
-            .name = "arg" + std::to_string(i),
-            .type = ExportParamType(unit, p.carrier, p.direction)}));
-  }
 
   const auto param_ref = [&](std::size_t i) -> mir::ExprId {
     return body.exprs.Add(
@@ -792,13 +835,10 @@ auto SynthesizeForeignExportWrapper(
     call_args.push_back(body.exprs.Add(mir::MakeLocalRefExpr(sv_in, sv_type)));
   }
 
-  // An exported task lowers to a coroutine -- the result type is the call
-  // protocol -- while a function's result is its payload directly. The
-  // completion payload the writeback loop below destructures is that payload
-  // either way; for a task it is the coroutine's payload, reached past the
-  // protocol.
+  // The completion payload the writeback loop below destructures is the
+  // exported subroutine's result either way; for a task it is the coroutine's
+  // payload, reached past the protocol.
   const mir::TypeId method_result_type = result_type;
-  const bool is_task = unit.types.IsCoroutine(method_result_type);
   const mir::TypeId payload_type =
       is_task ? unit.types.CoroutinePayload(method_result_type)
               : method_result_type;
@@ -811,8 +851,8 @@ auto SynthesizeForeignExportWrapper(
           .type = method_result_type});
 
   // The foreign caller is synchronous C and cannot await the task body, so the
-  // wrapper drives the coroutine to completion here; a function call already
-  // yields its payload.
+  // entry point drives the coroutine to completion here; a function call
+  // already yields its payload.
   const mir::ExprId completion_source =
       is_task ? body.exprs.Add(
                     mir::Expr{
@@ -915,31 +955,38 @@ auto SynthesizeForeignExportWrapper(
     // disable-acknowledgment int (LRM 35.8), 0 while no disable is active on
     // the thread (LRM 35.9). The disable protocol is not yet modeled, so it is
     // 0.
-    const mir::TypeId int_carrier = CarrierTypeId(
-        unit, support::ScalarCarrier{support::DpiScalarAbi::kInt});
     body.AppendStmt(
         mir::ReturnStmt{
             .value = body.exprs.Add(
                 mir::Expr{
                     .data = mir::MachineIntLiteral{.value = 0},
-                    .type = int_carrier})});
-    code.result_type = int_carrier;
+                    .type = code.result_type})});
   } else if (has_return) {
     const mir::ExprId ret_carrier = MarshalSvToCarrier(
         unit, body, component_value(0),
         support::ScalarCarrier{export_decl.ret_abi});
     body.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
-    code.result_type =
-        CarrierTypeId(unit, support::ScalarCarrier{export_decl.ret_abi});
   } else {
     body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-    code.result_type = void_type;
   }
 
-  code.params = std::move(params);
-
-  return mir::ForeignExportWrapper{
-      .foreign_name = export_decl.foreign_name, .code = std::move(code)};
+  // The entry point's identity is its linkage name: it is a program-global
+  // symbol in the DPI name space, not an SV declaration the source can call
+  // (LRM 35.4, 35.7), so it shares no name with the subroutine it dispatches
+  // into. Every export is a context callable (LRM 35.7). It publishes no
+  // marshaling projection: no SV call site reaches it, and the marshaling it
+  // does is already lowered into the body above.
+  return mir::CallableDecl{
+      .name = export_decl.foreign_name,
+      .code = std::move(code),
+      .foreign =
+          mir::ForeignLinkage{
+              .foreign_name = export_decl.foreign_name,
+              .is_pure = false,
+              .is_context = true,
+              .marshal = std::nullopt},
+      .virtual_dispatch = std::nullopt,
+      .visibility = mir::CallableVisibility::kInternal};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

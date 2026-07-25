@@ -26,7 +26,9 @@ struct ClosureDecl {
   // only pins a stable listing regardless of the order captures were
   // discovered.
   std::vector<FieldId> field_order;
-  CallableCode invoke;
+  // A closure exists only where a body is synthesized for it, so its code is
+  // always a definition.
+  CallableCode invoke = CallableCode::Defined();
 };
 
 }  // namespace lyra::mir

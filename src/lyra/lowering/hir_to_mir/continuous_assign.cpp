@@ -191,7 +191,7 @@ auto LowerContinuousAssign(
     attached = *attached_or;
   }
 
-  mir::CallableCode code;
+  mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
       BindingOriginId::Receiver(),
@@ -245,19 +245,20 @@ auto LowerContinuousAssign(
       body_block, body_frame, lowerer, src.sensitivity_list));
 
   const mir::BlockId body_scope_id =
-      code.body.child_scopes.Add(std::move(body_block));
-  code.body.AppendStmt(
+      code.Body().child_scopes.Add(std::move(body_block));
+  code.Body().AppendStmt(
       mir::ForStmt{
           .init = {},
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{
       .name = std::move(name),
-      .impl = mir::InternalCallable{.code = std::move(code)},
+      .code = std::move(code),
+      .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
       .visibility = mir::CallableVisibility::kInternal};
 }

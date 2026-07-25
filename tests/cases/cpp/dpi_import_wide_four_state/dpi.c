@@ -1,14 +1,9 @@
-#include <stdint.h>
-
-/* Minimal canonical DPI-C representation (LRM Annex H.10.1). A user who does
-   not include svdpi.h declares the same standardized, binary-compatible layout.
-   aval == the value plane, bval == the X/Z (unknown) plane. */
-typedef unsigned char svLogic; /* sv_0=0 sv_1=1 sv_z=2 sv_x=3 */
-typedef uint32_t svBitVecVal;  /* a 32-bit chunk of a packed bit vector */
-typedef struct {
-  uint32_t aval;
-  uint32_t bval;
-} svLogicVecVal; /* a 32-bit chunk of a packed logic vector */
+/* The generated ABI header carries this design's import prototypes and, through
+   the standard header, the canonical representation they marshal (LRM Annex
+   H.10.1): aval is the value plane, bval the X/Z (unknown) plane, and a scalar
+   svLogic encodes sv_0=0, sv_1=1, sv_z=2, sv_x=3. Each definition below is
+   checked against its generated prototype. */
+#include "dpi.h"
 
 /* Scalar 4-state logic, by value both ways. */
 svLogic scalar_id(svLogic x) {

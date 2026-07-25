@@ -69,21 +69,14 @@ class MirDumper {
       DumpClass(id, cls);
     }
     Dedent();
-    // A rootless unit (a package) owns its callables directly in the namespace.
+    // A unit owns callables directly in its namespace: a package's own
+    // subroutines, and every DPI-C export's C entry point.
     if (!unit.callables.empty()) {
       Line("Callables:");
       Indent();
       for (std::size_t i = 0; i < unit.callables.size(); ++i) {
         DumpCallable(
             unit.callables.Get(CallableId{static_cast<std::uint32_t>(i)}), i);
-      }
-      Dedent();
-    }
-    if (!unit.foreign_export_wrappers.empty()) {
-      Line("ForeignExportWrappers:");
-      Indent();
-      for (std::size_t i = 0; i < unit.foreign_export_wrappers.size(); ++i) {
-        DumpForeignExportWrapper(unit.foreign_export_wrappers[i], i);
       }
       Dedent();
     }
@@ -954,85 +947,69 @@ class MirDumper {
     }
   }
 
+  void DumpForeignMarshal(const ForeignMarshal& marshal) {
+    Line(
+        std::format(
+            "Marshal:{} ret={} : {}", marshal.is_task ? " task" : "",
+            support::DpiScalarAbiName(marshal.ret_abi),
+            FormatVarType(marshal.ret_sv_type)));
+    Indent();
+    for (std::size_t i = 0; i < marshal.params.size(); ++i) {
+      Line(
+          std::format(
+              "Param[{}] {} {} : {}", i,
+              support::DpiDirectionName(marshal.params[i].direction),
+              support::DpiCarrierName(marshal.params[i].carrier),
+              FormatVarType(marshal.params[i].sv_type)));
+    }
+    Dedent();
+  }
+
+  void DumpForeignLinkage(const ForeignLinkage& linkage) {
+    Line(
+        std::format(
+            R"(ForeignLinkage: c_name="{}"{}{})", linkage.foreign_name,
+            linkage.is_pure ? " pure" : "",
+            linkage.is_context ? " context" : ""));
+    if (!linkage.marshal.has_value()) {
+      return;
+    }
+    Indent();
+    DumpForeignMarshal(*linkage.marshal);
+    Dedent();
+  }
+
   void DumpCallable(const CallableDecl& d, std::size_t index) {
-    std::visit(
-        Overloaded{
-            [&](const InternalCallable& in) {
-              Line(
-                  std::format(
-                      "[{}] \"{}\" : Type[{}]", index, d.name,
-                      in.code.result_type.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Visibility: {}",
-                      d.visibility == CallableVisibility::kPublic
-                          ? "public"
-                          : "internal"));
-              if (d.virtual_dispatch.has_value()) {
-                Line(
-                    std::format(
-                        "VirtualDispatch: {}",
-                        FormatVirtualDispatchRole(*d.virtual_dispatch)));
-              }
-              for (std::size_t i = 0; i < in.code.params.size(); ++i) {
-                const auto& param = in.code.locals.Get(in.code.params[i]);
-                Line(
-                    std::format(
-                        "Param[{}] \"{}\" : Type[{}]", i, param.name,
-                        param.type.value));
-              }
-              DumpCallableBody(in.code);
-              Dedent();
-            },
-            [&](const ExternalCallable& ext) {
-              Line(
-                  std::format(
-                      R"([{}] "{}" external c_name="{}"{}{} ret={} : {})",
-                      index, d.name, ext.external.foreign_name,
-                      ext.external.is_pure ? " pure" : "",
-                      ext.is_task ? " task" : "",
-                      support::DpiScalarAbiName(ext.ret_abi),
-                      FormatVarType(ext.ret_sv_type)));
-              Indent();
-              for (std::size_t i = 0; i < ext.params.size(); ++i) {
-                Line(
-                    std::format(
-                        "Param[{}] {} {} : {}", i,
-                        support::DpiDirectionName(ext.params[i].direction),
-                        support::DpiCarrierName(ext.params[i].carrier),
-                        FormatVarType(ext.params[i].sv_type)));
-              }
-              Dedent();
-            },
-            [&](const PurePrototype& proto) {
-              Line(
-                  std::format(
-                      "[{}] \"{}\" : Type[{}] prototype", index, d.name,
-                      proto.code.result_type.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Visibility: {}",
-                      d.visibility == CallableVisibility::kPublic
-                          ? "public"
-                          : "internal"));
-              if (d.virtual_dispatch.has_value()) {
-                Line(
-                    std::format(
-                        "VirtualDispatch: {}",
-                        FormatVirtualDispatchRole(*d.virtual_dispatch)));
-              }
-              for (std::size_t i = 0; i < proto.code.params.size(); ++i) {
-                const auto& param = proto.code.locals.Get(proto.code.params[i]);
-                Line(
-                    std::format(
-                        "Param[{}] \"{}\" : Type[{}]", i, param.name,
-                        param.type.value));
-              }
-              Dedent();
-            }},
-        d.impl);
+    Line(
+        std::format(
+            R"([{}] "{}"{} : Type[{}])", index, d.name,
+            d.code.body.has_value() ? "" : " declaration",
+            d.code.result_type.value));
+    Indent();
+    Line(
+        std::format(
+            "Visibility: {}", d.visibility == CallableVisibility::kPublic
+                                  ? "public"
+                                  : "internal"));
+    if (d.virtual_dispatch.has_value()) {
+      Line(
+          std::format(
+              "VirtualDispatch: {}",
+              FormatVirtualDispatchRole(*d.virtual_dispatch)));
+    }
+    if (d.foreign.has_value()) {
+      DumpForeignLinkage(*d.foreign);
+    }
+    for (std::size_t i = 0; i < d.code.params.size(); ++i) {
+      const auto& param = d.code.locals.Get(d.code.params[i]);
+      Line(
+          std::format(
+              "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
+    }
+    if (d.code.body.has_value()) {
+      DumpCallableBody(d.code);
+    }
+    Dedent();
   }
 
   void DumpStruct(StructId id, const StructDecl& decl) {
@@ -1064,23 +1041,6 @@ class MirDumper {
     Indent();
     DumpCallableBody(decl.invoke);
     Dedent();
-    Dedent();
-  }
-
-  void DumpForeignExportWrapper(
-      const ForeignExportWrapper& w, std::size_t index) {
-    Line(
-        std::format(
-            R"([{}] c_name="{}" : Type[{}])", index, w.foreign_name,
-            w.code.result_type.value));
-    Indent();
-    for (std::size_t i = 0; i < w.code.params.size(); ++i) {
-      const auto& param = w.code.locals.Get(w.code.params[i]);
-      Line(
-          std::format(
-              "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
-    }
-    DumpCallableBody(w.code);
     Dedent();
   }
 
@@ -1118,7 +1078,7 @@ class MirDumper {
       }
       Dedent();
     }
-    DumpBlock(code.body);
+    DumpBlock(code.Body());
     code_ = saved;
   }
 

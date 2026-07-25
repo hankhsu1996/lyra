@@ -1,25 +1,9 @@
 #include <string.h>
 
-/* Context DPI-C surface (LRM 35.5.3, Annex H). Declared here rather than via
-   svdpi.h so the link input needs no extra include path; the runtime provides
-   the definitions. */
-typedef void* svScope;
-extern svScope svGetScope(void);
-extern const char* svGetNameFromScope(svScope scope);
-extern svScope svGetScopeFromName(const char* name);
-extern svScope svSetScope(svScope scope);
-extern int svPutUserData(svScope scope, void* key, void* data);
-extern void* svGetUserData(svScope scope, void* key);
-
-typedef struct {
-  int type;
-  unsigned int high;
-  unsigned int low;
-  double real;
-} svTimeVal;
-extern int svGetTime(svScope scope, svTimeVal* t);
-extern int svGetTimeUnit(svScope scope, int* time_unit);
-extern int svGetTimePrecision(svScope scope, int* time_precision);
+/* The generated ABI header brings in the context DPI-C surface through the
+   standard header (LRM 35.5.3, Annex H); the runtime provides the definitions
+   the link resolves against. */
+#include "dpi.h"
 
 /* A context import observes the instantiated scope of its declaration. */
 int scope_ends_with(const char* suffix) {

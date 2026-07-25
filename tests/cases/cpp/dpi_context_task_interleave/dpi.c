@@ -1,14 +1,10 @@
 #include <string.h>
 
-typedef void* svScope;
-extern svScope svGetScope(void);
-extern const char* svGetNameFromScope(svScope scope);
-
 /* Exported SV tasks that consume time, driven across the boundary so the calling
    import task suspends. The long one outlives the short one, so the two imports
-   are suspended concurrently. */
-extern int nap_long(void);
-extern int nap_short(void);
+   are suspended concurrently. The generated ABI header declares them and, via
+   the standard header, the svdpi scope surface. */
+#include "dpi.h"
 
 /* Reads the observing scope, suspends inside the exported task, then confirms
    the scope observed after the suspension is the same one -- its own
@@ -29,10 +25,14 @@ static void observe(int (*nap)(void), int* ok) {
   *ok = (after != 0 && strcmp(before, after) == 0) ? 1 : 0;
 }
 
-void observe_long(int* ok) {
+/* An imported task's C entry returns the disable-acknowledgment int (LRM 35.8),
+   0 while no disable is active. */
+int observe_long(int* ok) {
   observe(nap_long, ok);
+  return 0;
 }
 
-void observe_short(int* ok) {
+int observe_short(int* ok) {
   observe(nap_short, ok);
+  return 0;
 }

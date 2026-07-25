@@ -1,15 +1,8 @@
-#include <stdint.h>
-
 /* A scalar output / inout crosses by pointer to its by-value carrier; a packed
    bit vector crosses by pointer as a canonical svBitVecVal chunk buffer (LRM
-   35.5.6, Annex H.10.1). The emitted program provides each exported function as
-   an extern "C" symbol; this imported driver calls them back. */
-typedef uint32_t svBitVecVal;
-
-extern void get_pair(int* lo, int* hi);
-extern void accumulate(int* acc);
-extern void fill_wide(svBitVecVal* w);
-extern int sum_wide(const svBitVecVal* w);
+   35.5.6, Annex H.10.1). The generated ABI header declares each exported entry
+   point; this imported driver calls them back. */
+#include "dpi.h"
 
 int drive(void) {
   int lo = 0;

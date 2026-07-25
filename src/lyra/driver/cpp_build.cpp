@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
-#include <fstream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -14,6 +13,8 @@
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/driver/dpi_boundary.hpp"
+#include "lyra/driver/file_output.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
@@ -25,25 +26,6 @@ namespace {
 
 auto IoError(std::string message) {
   return diag::Fail(diag::DiagCode::kHostIoError, std::move(message));
-}
-
-auto WriteFile(const std::filesystem::path& path, std::string_view content)
-    -> diag::Result<void> {
-  std::error_code ec;
-  std::filesystem::create_directories(path.parent_path(), ec);
-  if (ec) {
-    return IoError(
-        std::format(
-            "failed to create '{}': {}", path.parent_path().string(),
-            ec.message()));
-  }
-  std::ofstream out(path, std::ios::binary);
-  out << content;
-  out.flush();
-  if (!out) {
-    return IoError(std::format("failed to write '{}'", path.string()));
-  }
-  return {};
 }
 
 // Replace every `@KEY@` occurrence in `tpl` with its mapped substitution.
@@ -118,11 +100,46 @@ if [ "$USE_PCH" = "1" ]; then
   fi
   PCH_FLAG="-include-pch $PCH"
 fi
-"$CXX" @STD@ -I @INCLUDE@ $PCH_FLAG @MAIN@ @LIBDIR@/@LIB@ -o @PROG@
+@DPICOMPILE@"$CXX" @STD@ -I @INCLUDE@ $PCH_FLAG @MAIN@@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
 )sh";
 
-auto RenderBuildScript() -> std::string {
-  const std::array<std::pair<std::string_view, std::string_view>, 8> bindings =
+// Where a DPI-C source sits once copied into the project, relative to it. The
+// recipe and the copy read the location from here, so neither restates it.
+auto DpiSourceRelPath(const DpiLinkInput& input) -> std::string {
+  return std::format("{}/{}", kDpiSourceDir, input.source.filename().string());
+}
+
+// The build recipe's DPI-C contribution (LRM 35), rendered from the already
+// classified link inputs so the script carries no language detection of its
+// own: each C source gets its own compile step that keeps its symbols' C
+// linkage, and everything else joins the C++ link line directly. Both halves
+// are empty for a design with no foreign sources, which is why the recipe needs
+// no branch for that case.
+struct DpiRecipe {
+  std::string compile_steps;
+  std::string link_inputs;
+};
+
+auto RenderDpiRecipe(std::span<const DpiLinkInput> inputs) -> DpiRecipe {
+  DpiRecipe recipe;
+  for (const DpiLinkInput& input : inputs) {
+    const std::string relative = DpiSourceRelPath(input);
+    if (!input.compile_as_c) {
+      recipe.link_inputs += std::format(" {}", relative);
+      continue;
+    }
+    const std::string object = relative + ".o";
+    recipe.compile_steps +=
+        std::format("\"$CXX\" -x c -c {} -I . -o {}\n", relative, object);
+    recipe.link_inputs += std::format(" {}", object);
+  }
+  return recipe;
+}
+
+auto RenderBuildScript(std::span<const DpiLinkInput> dpi_inputs)
+    -> std::string {
+  const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs);
+  const std::array<std::pair<std::string_view, std::string_view>, 10> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", kPreludeHeader},
@@ -132,6 +149,8 @@ auto RenderBuildScript() -> std::string {
           {"@LIBDIR@", kRuntimeLibDir},
           {"@LIB@", kRuntimeLibFile},
           {"@PROG@", kProgramName},
+          {"@DPICOMPILE@", dpi.compile_steps},
+          {"@DPIOBJS@", dpi.link_inputs},
       }};
   return SubstituteTokens(kBuildScriptTemplate, bindings);
 }
@@ -153,6 +172,21 @@ void FormatSources(
   (void)support::RunProcessCaptured(*clang_format, args);
 }
 
+// Copies the user's DPI-C sources into the project (LRM 35) so the directory
+// builds on another machine: the recipe reaches them by a project-relative
+// path, which an absolute path back to the originals could not survive.
+auto CopyDpiSources(
+    std::span<const DpiLinkInput> inputs, const std::filesystem::path& dir)
+    -> diag::Result<void> {
+  for (const DpiLinkInput& input : inputs) {
+    if (auto r = CopyFileWritable(input.source, dir / DpiSourceRelPath(input));
+        !r) {
+      return r;
+    }
+  }
+  return {};
+}
+
 auto EmitAndWriteSources(
     std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root, const std::filesystem::path& dir,
@@ -169,31 +203,24 @@ auto EmitAndWriteSources(
   return {};
 }
 
-// Prepares one DPI-C link input for the final link (LRM 35). A `.c` source is
+// Prepares one DPI-C link input for the final link (LRM 35). A C source is
 // compiled to an object in its own step so its symbols keep C linkage -- the
-// emitted `extern "C"` declaration expects that, and the C++ driver would
-// otherwise mangle a `.c` compiled in the C++ invocation. A `.cpp` joins the
-// C++ link directly (the user gives it C linkage with `extern "C"`). Returns
-// the path to add to the link line.
+// emitted declaration expects that, and the C++ driver would otherwise mangle a
+// C source compiled in the C++ invocation. A C++ source joins the C++ link
+// directly. `header_dir` holds the generated ABI header the source may include.
+// Returns the path to add to the link line.
 auto PrepareDpiLinkInput(
-    const std::filesystem::path& cxx, const std::string& src,
+    const std::filesystem::path& cxx, const DpiLinkInput& input,
+    const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir) -> diag::Result<std::string> {
-  const std::filesystem::path src_path{src};
-  const std::string ext = src_path.extension().string();
-  if (ext == ".cpp" || ext == ".cc" || ext == ".cxx") {
-    return src;
-  }
-  if (ext != ".c") {
-    return diag::Fail(
-        diag::DiagCode::kHostBuildFailed,
-        std::format(
-            "unsupported DPI-C link input '{}': only .c and .cpp are supported",
-            src));
+  const std::string source = input.source.string();
+  if (!input.compile_as_c) {
+    return source;
   }
   const std::filesystem::path obj =
-      work_dir / (src_path.stem().string() + ".dpi.o");
-  const std::vector<std::string> compile_args = {"-x", "c",  "-c",
-                                                 src,  "-o", obj.string()};
+      work_dir / (input.source.filename().string() + ".o");
+  const std::vector<std::string> compile_args = {
+      "-x", "c", "-c", source, "-I", header_dir.string(), "-o", obj.string()};
   auto compiled = support::RunProcessCaptured(cxx, compile_args);
   if (!compiled) {
     return IoError(std::move(compiled.error()));
@@ -202,7 +229,7 @@ auto PrepareDpiLinkInput(
     return diag::Fail(
         diag::DiagCode::kHostBuildFailed,
         std::format(
-            "compiling DPI-C source '{}' failed:\n{}", src,
+            "compiling DPI-C source '{}' failed:\n{}", source,
             compiled->stderr_text));
   }
   return obj.string();
@@ -212,15 +239,19 @@ auto CompileProgram(
     const std::filesystem::path& main_cpp,
     const std::filesystem::path& include_root, const std::filesystem::path& lib,
     const std::filesystem::path& program, const pch::Options& pch_opts,
-    std::span<const std::string> dpi_link_sources) -> diag::Result<void> {
+    std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
   auto cxx_or = support::ResolveCxxCompiler();
   if (!cxx_or) {
     return IoError(std::move(cxx_or.error()));
   }
+  // The generated ABI header sits beside the emitted program source, so that
+  // directory is the include path a foreign source resolves it through.
+  const std::filesystem::path header_dir = main_cpp.parent_path();
   std::vector<std::string> link_inputs;
-  link_inputs.reserve(dpi_link_sources.size());
-  for (const std::string& src : dpi_link_sources) {
-    auto prepared = PrepareDpiLinkInput(*cxx_or, src, program.parent_path());
+  link_inputs.reserve(dpi_inputs.size());
+  for (const DpiLinkInput& input : dpi_inputs) {
+    auto prepared =
+        PrepareDpiLinkInput(*cxx_or, input, header_dir, program.parent_path());
     if (!prepared) {
       return std::unexpected(std::move(prepared.error()));
     }
@@ -259,13 +290,20 @@ auto CompileProgram(
 auto AssembleProject(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root, const std::filesystem::path& dir,
-    bool format) -> diag::Result<void> {
+    bool format, std::span<const DpiLinkInput> dpi_inputs)
+    -> diag::Result<void> {
   if (auto r = EmitAndWriteSources(units, root, dir, format); !r) {
+    return r;
+  }
+  if (auto r = WriteDpiSurface(runtime, units, root, dir); !r) {
+    return r;
+  }
+  if (auto r = CopyDpiSources(dpi_inputs, dir); !r) {
     return r;
   }
 
   const auto script_path = dir / "build.sh";
-  if (auto r = WriteFile(script_path, RenderBuildScript()); !r) {
+  if (auto r = WriteFile(script_path, RenderBuildScript(dpi_inputs)); !r) {
     return r;
   }
   std::error_code ec;
@@ -281,21 +319,18 @@ auto AssembleProject(
             ec.message()));
   }
 
-  if (auto exported = ExportRuntimeTree(runtime, dir); !exported) {
-    return IoError(std::move(exported.error()));
-  }
-  return {};
+  return ExportRuntimeTree(runtime, dir);
 }
 
 auto BuildProject(
     const std::filesystem::path& dir, const pch::Options& pch_opts,
-    std::span<const std::string> dpi_link_sources)
+    std::span<const DpiLinkInput> dpi_inputs)
     -> diag::Result<std::filesystem::path> {
   const auto program = dir / kProgramName;
   if (auto r = CompileProgram(
           dir / kMainSource, dir / kRuntimeIncludeDir,
           dir / kRuntimeLibDir / kRuntimeLibFile, program, pch_opts,
-          dpi_link_sources);
+          dpi_inputs);
       !r) {
     return std::unexpected(std::move(r.error()));
   }
@@ -307,14 +342,17 @@ auto RunInPlace(
     const mir::CompilationUnit& root, const std::filesystem::path& work_dir,
     bool format, const pch::Options& pch_opts,
     std::span<const std::string> child_args,
-    std::span<const std::string> dpi_link_sources) -> diag::Result<int> {
+    std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int> {
   if (auto r = EmitAndWriteSources(units, root, work_dir, format); !r) {
+    return std::unexpected(std::move(r.error()));
+  }
+  if (auto r = WriteDpiSurface(runtime, units, root, work_dir); !r) {
     return std::unexpected(std::move(r.error()));
   }
   const auto program = work_dir / kProgramName;
   if (auto r = CompileProgram(
           work_dir / kMainSource, runtime.include_root, runtime.lib, program,
-          pch_opts, dpi_link_sources);
+          pch_opts, dpi_inputs);
       !r) {
     return std::unexpected(std::move(r.error()));
   }

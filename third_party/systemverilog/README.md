@@ -36,11 +36,7 @@ Prohibited changes:
 
 ## Boundary Isolation
 
-`svdpi.h` must only be included from DPI boundary code and external companion
-test sources. The standard C ABI surface is frozen at that boundary; internal
-Lyra code uses Lyra-owned types and helpers.
-
-Examples:
-
-- `src/lyra/runtime/svdpi_runtime.cpp`
-- DPI companion C test sources
+`svdpi.h` is not included by Lyra's own sources at all. It is shipped alongside
+the generated DPI-C ABI header so a user's foreign C compiles against the
+standard declarations; internal Lyra code uses Lyra-owned types and helpers that
+are binary-compatible with them.

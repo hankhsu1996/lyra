@@ -242,6 +242,18 @@ cc_library(
 )
 
 cc_library(
+    name = "dpi",
+    srcs = glob(["src/lyra/dpi/*.cpp"]),
+    hdrs = glob(["include/lyra/dpi/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":mir",
+    ],
+)
+
+cc_library(
     name = "unit_metadata",
     srcs = ["src/lyra/compiler/unit_metadata.cpp"],
     hdrs = ["include/lyra/compiler/unit_metadata.hpp"],
@@ -313,6 +325,7 @@ cc_library(
     deps = [
         ":backend_cpp",
         ":diag",
+        ":dpi",
         ":mir",
         ":support",
         "@bazel_tools//tools/cpp/runfiles",
@@ -326,6 +339,7 @@ cc_binary(
     data = [
         ":cpp_runtime",
         ":runtime_headers",
+        "//third_party/systemverilog:svdpi.h",
     ],
     linkopts = ["-rdynamic"],
     visibility = ["//visibility:public"],

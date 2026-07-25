@@ -353,10 +353,10 @@ enum class BuiltinFn : std::uint16_t {
   // prototype's shape (`args[0]` the buffer pointer, `args[1]` the prototype);
   // the `kWriteCanonical*` helpers are their inverse, writing an SV value out
   // into a canonical buffer (`args[0]` the buffer pointer, `args[1]` the SV
-  // value), as an export wrapper does through the foreign caller's pointer.
-  // These are free functions in `lyra::value`. An import's packed copy-in is
-  // not
-  // a builtin: the boundary buffer is a `DpiBitBuffer` / `DpiLogicBuffer` value
+  // value), as an export's C entry point does through the foreign caller's
+  // pointer. These are free functions in `lyra::value`. An import's packed
+  // copy-in is not a builtin: the boundary buffer is a `DpiBitBuffer` /
+  // `DpiLogicBuffer` value
   // constructed from the SV value, and `kDpiBufferData` (an instance method)
   // reads its writable chunk pointer for the foreign call and the copy-back
   // read. `Bit` carries a 2-state (aval-only) buffer, `Logic` a 4-state buffer
@@ -370,11 +370,11 @@ enum class BuiltinFn : std::uint16_t {
   kDpiBufferData,
   // Runs an exported SV task's coroutine body to completion synchronously and
   // yields its completion payload. A foreign C caller of an exported task (LRM
-  // 35.8) is not a coroutine and cannot await the task body, so its wrapper
-  // enters the body through this runtime driver instead of the `co_await` an SV
-  // enabler uses. A free function over the task's coroutine value.
+  // 35.8) is not a coroutine and cannot await the task body, so the C entry
+  // point enters the body through this runtime driver instead of the `co_await`
+  // an SV enabler uses. A free function over the task's coroutine value.
   kRunExportedTaskToCompletion,
-  // The current DPI scope a module-scoped DPI-C export wrapper runs against,
+  // The current DPI scope a module-scoped DPI-C export's C entry point runs in,
   // recovered from the running design rather than passed by the foreign caller
   // (LRM 35.5.3) as the exported method's receiver. A no-argument free function
   // yielding the borrowed scope pointer a `PointerCastExpr` narrows to the
