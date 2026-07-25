@@ -89,6 +89,22 @@ class UnpackedArray {
       : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
 
+  // LRM 10.9.1 / Table 7-1: a uniform array value built as `count` tilings of
+  // `unit`. Covers both a fixed array's all-default state (`unit` is one
+  // element default) and an `'{count{...}}` replicated pattern (`unit` is the
+  // replicated items) -- the two arise from the same repeat-unit-plus-count
+  // shape, so they construct through one path. Building from (unit, count)
+  // keeps a uniform array O(unit) to construct where an enumerated element
+  // list would be O(unit * count); the seeded shield is the OOB / discard
+  // source, the payload is `unit` laid down `count` times.
+  UnpackedArray(T element_default, std::span<const T> unit, std::size_t count)
+      : shield_(std::move(element_default)) {
+    data_.reserve(unit.size() * count);
+    for (std::size_t i = 0; i < count; ++i) {
+      data_.insert(data_.end(), unit.begin(), unit.end());
+    }
+  }
+
   // LRM 5.9 / 21.3.3: a string value assigned to an unpacked array of bytes is
   // left-justified -- the first character lands at the array's left bound and
   // runs toward the right bound, an element past the end of the text keeps the

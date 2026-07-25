@@ -54,6 +54,16 @@ class Queue {
       : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
 
+  // LRM 10.9.1 `'{count{...}}` replicated pattern: `count` tilings of `unit`.
+  // Built from the repeat unit and a count so the value costs O(unit), not
+  // O(unit * count); mirrors `UnpackedArray`'s tiling ctor.
+  Queue(T element_default, std::span<const T> unit, std::size_t count)
+      : shield_(std::move(element_default)) {
+    for (std::size_t i = 0; i < count; ++i) {
+      data_.insert(data_.end(), unit.begin(), unit.end());
+    }
+  }
+
   // LRM 7.10.5 bounded queue `int q[$:N]`: the empty start is unchanged, but
   // the maximum index N is recorded so growth past N+1 elements is discarded
   // with a warning. The bound arrives as a PackedArray construction argument.
@@ -69,6 +79,20 @@ class Queue {
       : shield_(std::move(element_default)),
         data_(init.begin(), init.end()),
         max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
+    EnforceBound();
+  }
+
+  // LRM 7.10.5 bounded queue initialized by a replicated pattern: tile `unit`
+  // `count` times, record the bound, and trim any overflow on entry. The
+  // tiling counterpart of the `(element_default, init, max_bound)` ctor.
+  Queue(
+      T element_default, std::span<const T> unit, std::size_t count,
+      const PackedArray& max_bound)
+      : shield_(std::move(element_default)),
+        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
+    for (std::size_t i = 0; i < count; ++i) {
+      data_.insert(data_.end(), unit.begin(), unit.end());
+    }
     EnforceBound();
   }
 
