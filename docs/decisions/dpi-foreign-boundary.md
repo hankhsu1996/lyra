@@ -22,12 +22,14 @@ before implementation begins.
 
 ## The model
 
-`callable.md` already states that a callable's implementation form is either an internal body or an
-external symbol. DPI is the first client of the external form; it is not a special case:
+`callable.md` already states that a callable carries its signature and a body only where the
+declaration defines it, and that foreign linkage is an axis over that. DPI is the first client of
+both; it is not a special case:
 
 ```
-Internal callable = signature + body
-External callable = signature + foreign symbol + ABI
+definition          = signature + body
+import              = signature, no body, foreign linkage
+export entry point  = signature + body,  foreign linkage
 ```
 
 DPI marshaling is a value operation of the same kind the value model already uses everywhere else: a
@@ -37,16 +39,15 @@ conversion is one more such primitive, not backend-special lowering.
 
 ## Decisions
 
-### 1. A DPI import is a receiver-less associated callable with an external-symbol implementation form
+### 1. A DPI import is a receiver-less associated callable declared without a body
 
 An imported subroutine lowers to a callable -- not a member of any object, and not a separate DPI
 call family. Three structural facts fix its shape:
 
-- **The implementation form is a variant on the callable.** A callable's code is either an internal
-  body or an external symbol (a foreign linkage name, source language, and calling convention, with
-  no body). External-ness is a structural variant on the callable's code, not a flag on an internal
-  callable and not a separate incompatible declaration type -- `callable.md` invariant 7, mirroring
-  how an object type is intra-unit or external-unit.
+- **Not defining it is the whole of what makes it external.** The callable carries its signature and
+  simply has no body, and its foreign linkage names the symbol the linker resolves it against.
+  Neither is a flag on a callable and neither is a separate declaration type -- `callable.md`
+  invariant 7.
 - **It has no receiver, so it is an associated callable, not an instance method.** A DPI import is
   called by name with no `self`: a non-context import cannot touch SV state, and a context import
   reaches its scope through the DPI scope handle, never an instance receiver. A receiver-less
@@ -54,21 +55,14 @@ call family. Three structural facts fix its shape:
   distinct from the instance method set (`object_model.md` invariants 7 and 8). It is stored in a
   class-level static-callable namespace -- `StaticCallableDecl`, the callable peer of the existing
   `StaticConstantDecl` -- never in the instance method arena.
-- **It shares one declaration shape with SV class statics.** A DPI external callable and a future SV
-  class static method are the same shape (a receiver-less associated callable, the former with an
-  external-symbol code form, the latter with an internal one), reached through one associated
-  call-target identity. This is the shared callable-declaration shape the callable model
-  anticipates; the associated call-target arm is permanent and serves statics too, so it is added
-  once, never as a temporary DPI-only variant refactored away later.
+- **It shares one declaration shape with SV class statics.** A DPI import and a future SV class
+  static method are the same shape -- a receiver-less associated callable, the former declared
+  without a body and the latter with one -- reached through one associated call-target identity.
+  This is the shared callable-declaration shape the callable model anticipates; the associated
+  call-target arm is permanent and serves statics too, so it is added once, never as a temporary
+  DPI-only variant refactored away later.
 
 An import call is an ordinary call whose target is that associated callable.
-
-The internal/external implementation variant is realized at the callable declaration layer -- the
-static-callable declaration is either a bodied callable or an external symbol -- not inside the
-shared callable-code struct. This still realizes the structural variant of `callable.md` invariant 7
-(a variant, not a flag on a method), while leaving every instance-method, constructor, and closure
-consumer of the callable code untouched; moving the variant into the callable code is a later
-unification option, not a prerequisite.
 
 Reason: putting the import in the instance method arena is a category error (it has no receiver and
 is not an instance member); a separate incompatible external-declaration type contradicts the one
@@ -77,25 +71,38 @@ variant. The associated-callable home follows the object model's receiver-less-f
 directly, reuses the static-constant precedent, and is the home a future static method needs, so it
 is built once.
 
-### 2. Two signatures, separate but linked
+### 2. The C prototype is the callable's own signature; linkage is a separate record
 
-DPI keeps the SV semantic signature and its ABI projection as distinct, connected records:
+DPI keeps the SV semantic signature and the C prototype distinct, but the C prototype is not a
+record of its own -- it is the callable's signature, in the shape every callable already carries:
 
 ```
-CallableSignature   = the SV semantic signature (type checking, diagnostics; slang already validated it)
-ForeignAbiSignature = the ABI projection of that signature: per parameter an ABI type class,
-                      direction, and passing mode; a return ABI class and return kind
-ExternalSymbol      = foreign name + language + calling convention + ForeignAbiSignature
+CallableSignature = the SV semantic signature (type checking, diagnostics; slang already validated it)
+callable code     = the C prototype: one binding per formal, typed as the value crosses the
+                    boundary, plus the result type. A bodyless callable carries it with an empty
+                    body, exactly as a pure virtual prototype does.
+ForeignLinkage    = linkage name + language + calling convention + purity / context
 ```
 
-The ABI type class is a fixed function of an SV type and direction, computed once at lowering and
-carried on the signature; a backend reads it and never re-derives it. Header generation, ABI
-diagnostics, and the foreign-call ABI all read `ForeignAbiSignature`; SV semantic checking stays on
-`CallableSignature`. The import C linkage name (which slang does not persist for imports) and the
-pure/context properties live on `ExternalSymbol`, not on the SV callable.
+`ForeignLinkage` is an independent axis on a callable declaration, not part of the bodyless
+implementation form: a bodyless callable carrying it is an import, a bodied one is the entry point
+an export publishes, and nothing tags which. Because the prototype lives on the callable rather than
+beside it, both directions publish it the same way and every consumer -- an emitted declaration, an
+emitted definition, a generated ABI header, an entry point's own parameter bindings -- reads one
+signature. There is no second signature representation that only one direction uses, so no two of
+them can disagree.
 
-Reason: conflating the SV signature with the C ABI signature loses the separation that keeps type
-checking, diagnostics, and header emission each reading the surface they need.
+The boundary type of a formal is a fixed function of its SV type and direction, computed once at
+lowering and interned there. The ABI **classification** that computes it -- the carrier and the
+direction, LRM 35.5.6 and 35.5.1.2 -- rides on the bodyless arm, where an import's call site reads
+it to build its marshaling; an export's marshaling is already lowered into its body, so nothing
+downstream reads a classification for it. SV semantic checking stays on `CallableSignature`.
+
+Reason: conflating the SV signature with the C prototype loses the separation that keeps type
+checking, diagnostics, and header emission each reading the surface they need. Keeping the prototype
+as MIR-typed bindings rather than a carrier list is what lets every consumer render it mechanically
+through its target's ordinary type mapping; a carrier list would have each of them re-implement LRM
+35.5.6, and two implementations of one mapping drift.
 
 ### 3. Marshaling is a cross-ABI carrier conversion through runtime primitives, expressed in MIR
 
@@ -125,10 +132,13 @@ type in an existing category, and the conversion is an ordinary call.
 
 ### 4. A DPI export is an internal callable plus foreign-wrapper metadata; context is a thread-local ambient handle
 
-An exported subroutine is an ordinary internal SV callable. The export contributes metadata that
-tells a backend to also materialize a foreign-linkage wrapper: the wrapper marshals the ABI
-arguments, obtains the runtime context, calls the internal callable, and marshals the result back.
-The wrapper is a backend realization; the metadata and the ABI signature are backend-neutral.
+An exported subroutine is an ordinary internal SV callable. The export additionally contributes a
+second callable the unit's namespace owns -- the C entry point foreign code calls -- carrying the
+foreign linkage above: it marshals the ABI arguments, obtains the runtime context, calls the
+exported subroutine, and marshals the result back. Its body is ordinary MIR a backend renders
+mechanically; only the external linkage of the entry point is the backend's shell. The entry point
+is a program-global symbol in the DPI name space and never a class member (LRM 35.4, 35.7), so the
+unit owns it even when the subroutine it dispatches into is a module method.
 
 The wrapper obtains its context (design object, engine, and, for a module-scoped export, the calling
 instance) from a **thread-local ambient context** installed for the duration of a run, not from the
@@ -183,6 +193,28 @@ usage inflate the scope.
   associated-callable namespace, not the instance method set.
 - **A temporary DPI-only callable-target variant, unified later.** Leaves a DPI-specific identity in
   the IR to be refactored away; the unification is done once, consistent with the reset.
+- **The export's C entry point as its own species beside the callable arena.** It is exactly what a
+  unit-level namespace callable already is -- receiver-less, bodied, owned by the unit -- plus a
+  linkage name, so a parallel container gives it a second declaration shape, a second render path,
+  and a second thing every consumer must walk. Worse, it leaves the export with no prototype record
+  while the import has one, so the two directions of one boundary are modeled differently and a
+  generated header must derive the same LRM 35.5.6 mapping twice.
+- **The C prototype as a record beside the callable rather than the callable's signature.** A
+  bodyless callable looks like it has no signature to put it on, so the prototype gets its own home
+  and only the bodyless direction reads it -- which forces a second signature-rendering path for
+  imports beside the ordinary one every other callable uses, and the two agree only by construction.
+  A bodyless callable carrying its signature is the shape a pure virtual prototype already uses for
+  exactly this reason.
+- **Foreign linkage as part of the bodyless implementation form.** Ties "reached under a C symbol"
+  to "has no body", which the export half contradicts: its entry point has both. Linkage and body
+  presence are independent, and keeping them independent is what makes the direction readable from
+  the structure instead of from a tag.
+- **An implementation-form species -- internal, external, prototype -- as the discriminator.** Once
+  every arm carries the signature, the species stops discriminating structure and only restates
+  which of the other facts is present: external means "no body and foreign", prototype means "no
+  body and a dispatch role". Two facts that must agree drift, and the peer languages this IR models
+  itself on do not carry the species either -- a declaration has an optional body, a separate
+  language linkage, and a separate pure marker.
 
 ## Consequences
 

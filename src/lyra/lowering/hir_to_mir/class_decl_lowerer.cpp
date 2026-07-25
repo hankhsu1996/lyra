@@ -128,11 +128,11 @@ auto LowerStaticInit(
     UnitLowerer& unit_lowerer, const hir::ClassDecl& hir_class,
     mir::Class& mir_class, mir::ClassId class_id)
     -> diag::Result<mir::CallableCode> {
-  mir::CallableCode code;
+  mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit_lowerer.Unit(), code);
   code.params = {};
   code.result_type = unit_lowerer.Unit().builtins.void_type;
-  mir::Block& block = code.body;
+  mir::Block& block = code.Body();
   ScopeChainNode link{};
   const WalkFrame frame = WalkFrame{}
                               .WithClass(&mir_class, class_id, link)
@@ -276,12 +276,12 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   // the class's callable arena last so its id sits after every
   // declaration-ordered SV method -- each SV method keeps its natural
   // declaration index.
-  mir::CallableCode ctor_code;
+  mir::CallableCode ctor_code = mir::CallableCode::Defined();
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
   const mir::LocalId self_id = ctor_bindings.Declare(
       BindingOriginId::Receiver(),
       mir::LocalDecl{.name = "self", .type = shape.self_pointer_type});
-  mir::Block& ctor_block = ctor_code.body;
+  mir::Block& ctor_block = ctor_code.Body();
   ScopeChainNode scope_link{};
   const WalkFrame frame = WalkFrame{}
                               .WithClass(&mir_class, class_id_, scope_link)
@@ -381,8 +381,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   // A pure virtual prototype (LRM 8.21) has no source-defined body to walk;
   // its MIR record still carries the signature -- receiver, named parameters,
   // and result type -- so the backend can emit the class's declaration, but
-  // no callable body is produced. The `PurePrototype` variant arm of
-  // `CallableDecl::impl` states the shape structurally.
+  // no body is produced, and the absence of one is what states the shape.
   for (std::size_t i = 0; i < hir_class.methods.size(); ++i) {
     const hir::MethodId method_id{static_cast<std::uint32_t>(i)};
     const auto& method = hir_class.methods.Get(method_id);
@@ -407,12 +406,13 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       }
       proto_code.params = std::move(proto_params);
       proto_code.result_type = unit_lowerer.TranslateType(method.result_type);
-      // proto_code.body stays default-constructed (empty Block); the
-      // `PurePrototype` variant arm is what marks the shape as bodyless.
+      // `proto_code.body` stays absent: this declaration does not define the
+      // method, and the deriving class supplies it.
       mir_class.callables.Add(
           mir::CallableDecl{
               .name = method.name,
-              .impl = mir::PurePrototype{.code = std::move(proto_code)},
+              .code = std::move(proto_code),
+              .foreign = std::nullopt,
               .virtual_dispatch = method_dispatch,
               .visibility = mir::CallableVisibility::kPublic});
       continue;
@@ -430,7 +430,8 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
     mir_class.callables.Add(
         mir::CallableDecl{
             .name = method.name,
-            .impl = mir::InternalCallable{.code = *std::move(method_code_or)},
+            .code = *std::move(method_code_or),
+            .foreign = std::nullopt,
             .virtual_dispatch = method_dispatch,
             .visibility = mir::CallableVisibility::kPublic});
     for (const auto& pending : method_lowerer.TakePendingStaticInitializers()) {

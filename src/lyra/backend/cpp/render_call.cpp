@@ -465,17 +465,16 @@ auto RenderDirectCallableCall(
   }
   const auto& cls = view.Unit().GetClass(target.owner);
   const auto& callable = cls.callables.Get(target.slot);
-  if (const auto* ext = std::get_if<mir::ExternalCallable>(&callable.impl)) {
-    return {.expr = ext->external.foreign_name, .leading_arg_count = 0};
+  // A foreign-linkage callable is reached by its linkage name, not by any
+  // SV-scoped spelling (LRM 35.4).
+  if (callable.foreign.has_value()) {
+    return {.expr = callable.foreign->foreign_name, .leading_arg_count = 0};
   }
   // Instance vs static (LRM 8.10) reads off the target's signature: an
   // instance call binds the receiver as `(recv)->Owner::name(rest)`, a
   // static call is the free type-qualified form `Owner::name(args)` with no
   // receiver absorbed.
-  const mir::CallableCode& code =
-      std::holds_alternative<mir::PurePrototype>(callable.impl)
-          ? std::get<mir::PurePrototype>(callable.impl).code
-          : std::get<mir::InternalCallable>(callable.impl).code;
+  const mir::CallableCode& code = callable.code;
   if (!code.HasReceiver(cls.self_pointer_type)) {
     return {
         .expr = std::format("{}::{}", ToCppName(cls.name), callable.name),
@@ -740,8 +739,9 @@ auto IsForeignTaskCall(const ScopeView& view, const mir::CallExpr& call)
   }
   const auto& callable =
       view.Unit().GetClass(target->owner).callables.Get(target->slot);
-  const auto* external = std::get_if<mir::ExternalCallable>(&callable.impl);
-  return external != nullptr && external->is_task;
+  return callable.foreign.has_value() &&
+         callable.foreign->marshal.has_value() &&
+         callable.foreign->marshal->is_task;
 }
 
 auto RenderCallExpr(

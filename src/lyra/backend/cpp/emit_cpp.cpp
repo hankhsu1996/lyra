@@ -21,7 +21,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -120,12 +119,7 @@ auto RenderClassCallable(
     const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
     const mir::Class& s, const mir::CallableDecl& m, std::size_t indent)
     -> std::string {
-  // A pure virtual prototype (LRM 8.21) exposes only the signature; body
-  // rendering is skipped in favor of a `= 0` marker on the declaration.
-  const mir::CallableCode& code =
-      std::holds_alternative<mir::PurePrototype>(m.impl)
-          ? std::get<mir::PurePrototype>(m.impl).code
-          : std::get<mir::InternalCallable>(m.impl).code;
+  const mir::CallableCode& code = m.code;
   const std::string ret = RenderTypeAsCpp(unit, code.result_type);
   // Instance vs static (LRM 8.10) is a signature-level fact carried by the
   // presence of a self-typed `params[0]`. The C++ `static` prefix and the
@@ -143,7 +137,11 @@ auto RenderClassCallable(
   }
   sig += std::format(") -> {}{}", ret, OverrideSuffix(m));
 
-  if (std::holds_alternative<mir::PurePrototype>(m.impl)) {
+  // A class method this declaration does not define is a pure virtual (LRM
+  // 8.21) -- the only bodyless form a class member takes, since a foreign
+  // callable is never one. `= 0` states that, and C++ then treats the enclosing
+  // class as abstract with no class-level marker of its own.
+  if (!code.body.has_value()) {
     return std::format("{}{} = 0;\n", Indent(indent), sig);
   }
 
@@ -341,7 +339,7 @@ auto RenderStaticConstant(
 auto RenderClassStaticInit(
     const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent)
     -> std::string {
-  if (s.static_init.body.root_stmts.empty()) return "";
+  if (s.static_init.Body().root_stmts.empty()) return "";
   const ScopeView view = ScopeView::ForRoot(unit, s, s.static_init);
   std::string out;
   out += std::format(
@@ -467,15 +465,15 @@ auto RenderScopeAsClass(
   // are internal -- and the access specifier follows that stated visibility,
   // coalescing a run of callables that share one. The constructor is not in
   // this arena; it was emitted above with C++ mem-init-list syntax. An
-  // external (DPI-C import) callable is a global `extern "C"` symbol, not a
-  // class member; it is emitted as a prototype outside the class. A pure
-  // virtual prototype (LRM 8.21) is a class member and renders inline with
-  // its `= 0` marker.
+  // foreign callable (a DPI-C import) is a program-global symbol, not a class
+  // member; it is emitted as a prototype outside the class. A pure virtual
+  // prototype (LRM 8.21) is a class member and renders inline with its `= 0`
+  // marker.
   std::optional<mir::CallableVisibility> open_section;
   for (std::size_t i = 0; i < s.callables.size(); ++i) {
     const mir::CallableId cid{static_cast<std::uint32_t>(i)};
     const auto& callable = s.callables.Get(cid);
-    if (std::holds_alternative<mir::ExternalCallable>(callable.impl)) continue;
+    if (callable.foreign.has_value()) continue;
     if (open_section != callable.visibility) {
       open_section = callable.visibility;
       out += std::format(
@@ -525,16 +523,34 @@ auto RenderScopeAsClass(
   return out;
 }
 
-// The `extern "C"` declarations for every DPI-C import the unit calls: each
-// import's foreign symbol as a C-linkage prototype over its ABI carrier types
-// (LRM 35.4 / 35.5.6). An output / inout argument crosses by pointer, so its
-// carrier type gains a trailing `*` (a scalar `int` -> `int*`, a `const char*`
-// string -> `const char**`); an input argument crosses by value. A task's
-// foreign symbol returns the DPI disable-acknowledgment `int` (LRM 35.8), which
-// the call discards; a function returns its result carrier. Emitted before the
-// classes that call them so a foreign call resolves against a declared
-// signature; the definitions come from the user's linked C. Empty when the unit
-// declares no import.
+// The free-function signature of a callable the unit's namespace or the DPI-C
+// name space owns: its storage class, the symbol it is reached by, its named
+// parameters, and its result type. A plain callable is `inline`, because its
+// definition sits in the header every caller includes; a foreign one takes C
+// linkage, since its symbol is program-global (LRM 35.4). Every use of this --
+// an import's declaration, an export entry point's definition, a package
+// function's definition -- reads the one signature the callable carries, so no
+// two of them can disagree.
+auto RenderFreeCallableSignature(
+    const mir::CompilationUnit& unit, const mir::CallableDecl& callable)
+    -> std::string {
+  const mir::CallableCode& code = callable.code;
+  std::string params;
+  for (std::size_t i = 0; i < code.params.size(); ++i) {
+    if (i != 0) params += ", ";
+    params += RenderCallableParam(unit, code.locals.Get(code.params[i]));
+  }
+  return std::format(
+      "{} auto {}({}) -> {}",
+      callable.foreign.has_value() ? R"(extern "C")" : "inline",
+      callable.LinkedName(), params, RenderTypeAsCpp(unit, code.result_type));
+}
+
+// The declaration of every DPI-C import the unit calls (LRM 35.4): a
+// class-owned callable under foreign linkage is one, since a class never owns
+// an export's entry point. Emitted before the classes that call them so a
+// foreign call resolves against a declared signature; the definitions come from
+// the user's linked C. Empty when the unit declares no import.
 auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
     -> std::string {
   std::string out;
@@ -542,37 +558,8 @@ auto RenderForeignImportDeclarations(const mir::CompilationUnit& unit)
     const mir::ClassId id{static_cast<std::uint32_t>(i)};
     if (!unit.classes.IsDefined(id)) continue;
     for (const auto& callable : unit.GetClass(id).callables) {
-      const auto* ext = std::get_if<mir::ExternalCallable>(&callable.impl);
-      if (ext == nullptr) {
-        continue;
-      }
-      std::string params;
-      for (std::size_t p = 0; p < ext->params.size(); ++p) {
-        if (p != 0) params += ", ";
-        const bool writes_back =
-            support::DpiDirectionWritesBack(ext->params[p].direction);
-        if (const auto* scalar =
-                std::get_if<support::ScalarCarrier>(&ext->params[p].carrier)) {
-          // A by-value scalar crosses by value for input, by pointer for a
-          // writeback direction.
-          params += std::string{DpiScalarCarrierCppType(scalar->abi)};
-          if (writes_back) params += "*";
-        } else {
-          // A canonical vector always crosses by pointer to its chunk buffer;
-          // an input is read-only (`const`).
-          const auto& vec =
-              std::get<support::VectorCarrier>(ext->params[p].carrier);
-          if (!writes_back) params += "const ";
-          params += vec.four_state ? "svLogicVecVal*" : "svBitVecVal*";
-        }
-      }
-      const std::string_view ret_type =
-          ext->is_task ? DpiScalarCarrierCppType(support::DpiScalarAbi::kInt)
-                       : DpiScalarCarrierCppType(ext->ret_abi);
-      out += std::format(
-                 R"(extern "C" {} {}({});)", ret_type,
-                 ext->external.foreign_name, params) +
-             "\n";
+      if (!callable.foreign.has_value()) continue;
+      out += RenderFreeCallableSignature(unit, callable) + ";\n";
     }
   }
   return out;
@@ -608,44 +595,59 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
   return names;
 }
 
-// A DPI-C export's foreign-linkage entry point (LRM 35.5): a free `extern "C"`
-// definition foreign code calls. Its `extern "C"` prototype is the C linkage
-// name, the C ABI result type, and one parameter per marshaled carrier, each
-// rendered from its MIR type through ordinary type mapping (a packed-vector
-// carrier's C spelling `svBitVecVal*` / `svLogicVecVal*` is carried by that
-// type). The body -- context recovery, marshaling, the exported-subroutine
-// call, writeback -- is all MIR, rendered mechanically against a namespace
-// scope view; the entry point is receiver-less, so the class it may dispatch
-// into reaches its inner call through that call's own target, never through the
-// scope view. Emitted at file scope after the class or namespace it calls into
-// is complete.
-auto RenderForeignExportWrapper(
-    const mir::CompilationUnit& unit, const mir::ForeignExportWrapper& w)
+// A callable the unit owns directly, rendered as a free function definition:
+// there is no receiver and no enclosing class, so the body renders against a
+// classless scope view and its types resolve against the namespace's own
+// declarations. For a DPI-C export entry point that means its context recovery,
+// marshaling, exported-subroutine call, and writeback all render mechanically,
+// the inner call reaching its class through its own target.
+auto RenderFreeCallable(
+    const mir::CompilationUnit& unit, const mir::CallableDecl& callable)
     -> std::string {
-  std::string sig = std::format(
-      "extern \"C\" {} {}(", RenderTypeAsCpp(unit, w.code.result_type),
-      w.foreign_name);
-  for (std::size_t i = 0; i < w.code.params.size(); ++i) {
-    if (i != 0) sig += ", ";
-    sig += RenderCallableParam(unit, w.code.locals.Get(w.code.params[i]));
-  }
-  sig += ")";
-
   std::string out;
-  out += std::format("{} {{\n", sig);
-  out += RenderBlockStatements(ScopeView::ForNamespace(unit, w.code), 1);
+  out += std::format("{} {{\n", RenderFreeCallableSignature(unit, callable));
+  out += RenderBlockStatements(ScopeView::ForNamespace(unit, callable.code), 1);
   out += "}\n";
   return out;
 }
 
-auto RenderForeignExportWrappers(const mir::CompilationUnit& unit)
-    -> std::string {
-  std::string out;
-  for (const mir::ForeignExportWrapper& w : unit.foreign_export_wrappers) {
-    out += "\n";
-    out += RenderForeignExportWrapper(unit, w);
+struct UnitCallableText {
+  std::string in_namespace;
+  std::string at_file_scope;
+};
+
+// The unit's own callables, split by the name space each symbol belongs to: a
+// plain one is a member of the unit's namespace (LRM 26.3 for a package), while
+// a DPI-C export entry point is program-global and never inside it (LRM 35.4,
+// 35.7). One walk produces both halves, so the two placements stay one
+// decision; each unit kind then wraps its namespace block around the first and
+// emits the second after it, once the class or namespace they call into is
+// complete.
+auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitCallableText {
+  UnitCallableText text;
+  for (std::size_t i = 0; i < unit.callables.size(); ++i) {
+    const auto& callable =
+        unit.callables.Get(mir::CallableId{static_cast<std::uint32_t>(i)});
+    std::string& target =
+        callable.foreign.has_value() ? text.at_file_scope : text.in_namespace;
+    target += "\n";
+    target += RenderFreeCallable(unit, callable);
   }
-  return out;
+  return text;
+}
+
+// Whether the unit defines a symbol in the program-global DPI-C name space. A
+// unit whose only consumer is foreign C has no SV referrer to pull its header
+// into the include graph, so the program entry must include it directly for
+// that definition to land and link (LRM 35.7).
+auto DefinesForeignSymbol(const mir::CompilationUnit& unit) -> bool {
+  for (std::size_t i = 0; i < unit.callables.size(); ++i) {
+    if (unit.callables.Get(mir::CallableId{static_cast<std::uint32_t>(i)})
+            .foreign.has_value()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The include preamble every emitted unit header shares: the standard library,
@@ -768,31 +770,9 @@ auto RenderScopeHeaderFile(
   }
 
   out += RenderScopeAsClass(unit, s, 0, nullptr);
-  out += RenderForeignExportWrappers(unit);
-  return out;
-}
-
-// A callable the unit's namespace owns, rendered as a free function (LRM 26.3
-// for a package): no receiver, no enclosing class, so its body renders against
-// a classless scope view and its types resolve against the namespace's own
-// declarations. `inline` because the definition sits in the header every caller
-// includes.
-auto RenderNamespaceCallable(
-    const mir::CompilationUnit& unit, const std::string& name,
-    const mir::CallableCode& code) -> std::string {
-  const ScopeView body_view = ScopeView::ForNamespace(unit, code);
-  const std::string ret = RenderTypeAsCpp(unit, code.result_type);
-  std::string sig = std::format("inline auto {}(", name);
-  for (std::size_t i = 0; i < code.params.size(); ++i) {
-    if (i != 0) sig += ", ";
-    sig += RenderCallableParam(unit, code.locals.Get(code.params[i]));
-  }
-  sig += std::format(") -> {}", ret);
-
-  std::string out;
-  out += std::format("{} {{\n", sig);
-  out += RenderBlockStatements(body_view, 1);
-  out += "}\n";
+  // A rooted unit has no namespace block of its own, so only the file-scope
+  // half can arise here -- a DPI-C export entry point its module contributes.
+  out += RenderUnitCallables(unit).at_file_scope;
   return out;
 }
 
@@ -834,18 +814,10 @@ auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
         unit, mir::ClassId{static_cast<std::uint32_t>(i)}, emitted, out);
   }
 
-  for (std::size_t i = 0; i < unit.callables.size(); ++i) {
-    const auto& callable =
-        unit.callables.Get(mir::CallableId{static_cast<std::uint32_t>(i)});
-    const auto& code = std::get<mir::InternalCallable>(callable.impl).code;
-    out += RenderNamespaceCallable(unit, callable.name, code);
-    out += "\n";
-  }
-  out += std::format("}}  // namespace {}\n", ToCppName(unit.name));
-
-  // The export wrappers are free `extern "C"` definitions at file scope,
-  // emitted after the namespace so each package function they call is declared.
-  out += RenderForeignExportWrappers(unit);
+  const UnitCallableText callables = RenderUnitCallables(unit);
+  out += callables.in_namespace;
+  out += std::format("\n}}  // namespace {}\n", ToCppName(unit.name));
+  out += callables.at_file_scope;
   return out;
 }
 
@@ -877,14 +849,8 @@ auto RenderHostMain(
   out += "\n";
   out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
-  // A unit that contributes a DPI-C export wrapper reached only from foreign C
-  // (LRM 35.7) -- a package with no SV referrer to pull it in through the
-  // include graph -- must be included so its `extern "C"` wrapper lands in this
-  // translation unit and links. A module's export wrapper lives on its class,
-  // whose header is already reached through the instantiation it takes part in,
-  // so only namespace-unit wrappers need this.
   for (const auto& unit : units) {
-    if (!unit.foreign_export_wrappers.empty()) {
+    if (DefinesForeignSymbol(unit)) {
       out += std::format("#include \"{}.hpp\"\n", ToCppName(unit.name));
     }
   }

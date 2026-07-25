@@ -24,6 +24,11 @@ layer directly.
       dangerous for a backgrounded run. Related to D5 but more fundamental: D5 is about seeing _why_
       a case failed; this is about not missing _that_ it failed.
 
+- [ ] D7 -- Project mode: a design is named by a project file rather than by repeating its sources,
+      include directories, defines, and top on every command line. The file also names the native
+      sources that supply DPI-C foreign symbols, which today only the command line can name. Until
+      this lands, any multi-file design must be spelled out in full at each invocation.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

@@ -48,12 +48,14 @@ dispatch (D4a) now runs too: a module-scoped export dispatches to the instance t
 targets -- the current DPI scope the caller established, or one `svSetScope` redirected to -- rather
 than a single hardcoded instance, and a receiver-less package- or `$unit`-scoped export calls its
 free function directly with no instance (D4a, D4c); reaching any export now requires a valid scope
-context, so its caller must be a context import or set the scope with `svSetScope`. What remains is
-the generated ABI header and export linkage (D9), and the disable protocol across the boundary
-(D6c). On the execution backend scalar import (D10) is in: a foreign call lowers to an
-external-linkage symbol and the by-value carriers marshal. The rest of the import surface (D11) is
-blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a closure, which that
-backend does not yet lower at all (`architecture-reset.md`).
+context, so its caller must be a context import or set the scope with `svSetScope`. The user-facing
+surface (D9) is in too: the design's foreign declarations generate a C header the user's own sources
+compile against, and an emitted project carries that header alongside a copy of every foreign source
+and a recipe that builds them, so it links and runs standalone. What remains is the disable protocol
+across the boundary (D6c). On the execution backend scalar import (D10) is in: a foreign call lowers
+to an external-linkage symbol and the by-value carriers marshal. The rest of the import surface
+(D11) is blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a closure,
+which that backend does not yet lower at all (`architecture-reset.md`).
 
 ## Sub-Steps
 
@@ -175,9 +177,19 @@ protocol on top of it.
 
 ### Driver and link
 
-- [ ] D9 -- Link-input orchestration: a repeatable `--dpi-link` CLI option and a `lyra.toml` DPI
-      link-inputs array, validated before any backend runs, added to the emitted build recipe's link
-      line. A generated ABI header lets the user compile their C against the correct signatures.
+- [x] D9 -- The ABI header and link-input orchestration. A repeatable `--dpi-link` option names each
+      native source that supplies foreign symbols; the inputs are classified and checked before any
+      backend runs, so a mistyped path is reported against the command line rather than as a
+      compiler error much later. A generated C header declares every DPI-C name the design takes
+      part in -- the imports the user's C must define and the exports it may call -- so their C
+      compiles against the real signatures instead of hand-copied ones, and a definition that
+      disagrees with its declaration is now a compile error rather than a silent ABI mismatch. It is
+      generated from the design's own foreign declarations and is target-language-neutral, so the
+      same header serves either backend. An emitted project carries that header, the standard DPI-C
+      header its types are spelled in, and a copy of each foreign source, and its build recipe
+      compiles and links them -- so a project that crosses the boundary still builds where neither
+      Lyra nor the original foreign sources are reachable. Naming the same link inputs from a
+      project file rides on project mode itself (`dev-ergonomics.md`), not on anything DPI owns.
 
 ### Execution backend
 

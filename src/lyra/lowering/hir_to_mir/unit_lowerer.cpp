@@ -57,19 +57,19 @@ auto PopulatePackageStaticVariables(
     -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
 
-  mir::CallableCode install_code;
+  mir::CallableCode install_code = mir::CallableCode::Defined();
   install_code.result_type = unit.builtins.void_type;
-  mir::Block& install_block = install_code.body;
+  mir::Block& install_block = install_code.Body();
   const WalkFrame install_frame = WalkFrame{}.WithBlock(&install_block);
 
-  mir::CallableCode value_code;
+  mir::CallableCode value_code = mir::CallableCode::Defined();
   value_code.result_type = unit.builtins.void_type;
   CallableBindings value_bindings(unit, value_code);
   const mir::LocalId runtime_local = value_bindings.Declare(
       BindingOriginId::Runtime(),
       mir::LocalDecl{.name = "runtime", .type = unit.builtins.effects});
   value_code.params.push_back(runtime_local);
-  mir::Block& value_block = value_code.body;
+  mir::Block& value_block = value_code.Body();
   const WalkFrame value_frame =
       WalkFrame{}.WithBlock(&value_block).WithBindings(&value_bindings);
 
@@ -143,7 +143,8 @@ auto PopulatePackageStaticVariables(
     unit.callables.Add(
         mir::CallableDecl{
             .name = std::string{kPackageInstallCallableName},
-            .impl = mir::InternalCallable{.code = std::move(install_code)},
+            .code = std::move(install_code),
+            .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
   }
@@ -167,7 +168,8 @@ auto PopulatePackageStaticVariables(
     unit.callables.Add(
         mir::CallableDecl{
             .name = std::string{kPackageInitializeCallableName},
-            .impl = mir::InternalCallable{.code = std::move(value_code)},
+            .code = std::move(value_code),
+            .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
   }
@@ -301,13 +303,14 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
     unit_.callables.Add(
         mir::CallableDecl{
             .name = src.name,
-            .impl = mir::InternalCallable{.code = *std::move(code_or)},
+            .code = *std::move(code_or),
+            .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
             .visibility = mir::CallableVisibility::kInternal});
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
-  // foreign-linkage wrapper recovers the run's services instead of a calling
+  // C entry point recovers the run's services instead of a calling
   // instance and calls the package's own free function by name. The callables
   // above were added in structural-subroutine order and a package has no
   // leading DPI imports, so an export's callable id is its subroutine index.
@@ -327,9 +330,8 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
           "callable");
     }
     const mir::TypeId result_type =
-        std::get<mir::InternalCallable>(unit_.callables.Get(*callable_id).impl)
-            .code.result_type;
-    unit_.foreign_export_wrappers.push_back(SynthesizeForeignExportWrapper(
+        unit_.callables.Get(*callable_id).code.result_type;
+    unit_.callables.Add(SynthesizeForeignExportEntry(
         *this, WalkFrame{},
         mir::ExternalUnitCallableTarget{
             .unit_name = unit_.name, .callable_name = export_decl.sv_name},

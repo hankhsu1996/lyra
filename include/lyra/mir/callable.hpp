@@ -3,13 +3,10 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <variant>
-#include <vector>
 
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_ref.hpp"
-#include "lyra/mir/type_id.hpp"
-#include "lyra/support/dpi_abi.hpp"
+#include "lyra/mir/foreign_linkage.hpp"
 
 namespace lyra::mir {
 
@@ -22,93 +19,42 @@ namespace lyra::mir {
 // role.
 enum class CallableVisibility : std::uint8_t { kPublic, kInternal };
 
-// One parameter of an external callable's ABI projection (LRM 35.5.6): the SV
-// type the boundary marshals from, the C ABI carrier it crosses as, and its
-// direction (LRM 35.5.1.2). All three are fixed once at HIR-to-MIR and read by
-// a backend's marshaling, never re-derived from the type. The carrier decides
-// how the value crosses -- a scalar in a register, a canonical vector by
-// pointer to a buffer -- and the direction decides whether the boundary copies
-// it in, back, or both.
-struct ForeignParam {
-  TypeId sv_type;
-  support::DpiCarrier carrier;
-  support::DpiDirection direction;
-};
-
-// The external implementation form of a callable: a foreign linkage name plus
-// the pure and context properties, with no SV body. A DPI-C import is realized
-// as one (LRM 35.4). `is_pure` marks an import the LRM lets the simulator treat
-// as side-effect-free (LRM 35.5.4). `is_context` marks an import that observes
-// the instantiated scope of its declaration and may reach SV state or call an
-// exported subroutine back (LRM 35.5.3); the call site establishes that scope
-// for the duration of the foreign call. The source language and calling
-// convention are implicitly C, the only foreign linkage today; a second linkage
-// adds them here.
-struct ExternalSymbol {
-  std::string foreign_name;
-  bool is_pure;
-  bool is_context;
-};
-
-// A callable realized as a foreign symbol (LRM 35.4): a DPI-C import. The
-// signature is the ABI projection -- each parameter's SV type and carrier, and
-// the return SV type and carrier. A function result is restricted to a small
-// value (LRM 35.5.5), so the return carrier is always a by-value scalar
-// (`DpiScalarAbi`, not the full carrier variant, which makes a vector return
-// unrepresentable). The SV semantic signature stays on the frontend where type
-// checking ran; this carries only what marshaling and linkage need.
-// `is_task` marks a task rather than a function (LRM 35.5): a task carries no
-// SV return value, its call is a suspension point the caller awaits, and its
-// foreign symbol returns the DPI disable-acknowledgment `int` (LRM 35.8) that
-// the call discards. A `void`-returning function also has no return value, so
-// the task distinction cannot be recovered from the return alone.
-struct ExternalCallable {
-  std::vector<ForeignParam> params;
-  TypeId ret_sv_type;
-  support::DpiScalarAbi ret_abi;
-  bool is_task;
-  ExternalSymbol external;
-};
-
-// A callable realized as an ordinary SV body. Its signature and body are the
-// `CallableCode`: `self` is `code.params[0]` for an instance method (LRM 8.6)
-// and simply absent for a receiver-less one (a package function, a static class
-// method, LRM 26.3). The result type carries the call protocol and completion
-// payload; a backend reads task-versus-function from it, not a side enum.
-struct InternalCallable {
-  CallableCode code;
-};
-
-// A pure virtual class method's prototype (LRM 8.21): the source declared the
-// method without a body. `code` still carries the signature -- the receiver,
-// the named parameters, and the result type -- so a backend can emit the
-// declaration, but `code.body` is a default-constructed empty `Block` that no
-// consumer traverses. Only a virtual class method can carry this arm, so a
-// callable with `impl = PurePrototype` always has `virtual_dispatch` set. A
-// bodyless prototype and a legal empty body (LRM 8.21 note) are distinct
-// forms body emptiness alone cannot separate.
-struct PurePrototype {
-  CallableCode code;
-};
-
-// A named callable a class or a package namespace owns. Every SystemVerilog
+// A named callable a class or a unit namespace owns. Every SystemVerilog
 // function and task, every process body, every synthesized lifecycle body, and
-// every DPI-C import is this one concept, distinguished only by its
-// implementation form (an SV body, a foreign symbol, or a pure virtual
-// prototype), whether its signature carries a receiver, and how a referencing
-// site reaches it -- a direct call, a constructor-time process registration,
-// an engine-dispatched lifecycle hook. The receiver is not a kind of
-// callable: an instance method carries `self` as its first parameter, a
-// static callable omits it. `virtual_dispatch`, when present, states this
-// callable's role in the class's dispatch table (LRM 8.20) -- introducing a
-// new slot or overriding an ancestor's -- so a backend renders the marker off
-// stated structure, never re-deriving virtualness by name; it is absent for a
-// direct-only callable (every static callable and DPI import).
+// both directions of the DPI-C boundary are this one concept. What varies among
+// them is stated by independent structure, never by a kind:
+//
+//   - `code` always carries the signature; its body is present exactly when
+//     this declaration also defines the callable. A pure virtual method (LRM
+//     8.21) and a DPI-C import (LRM 35.4) are the two that do not.
+//   - `foreign`, when present, is the C linkage the callable is reached under.
+//     It is orthogonal to the body: bodyless plus foreign is an import the
+//     user's C defines, bodied plus foreign is the entry point of an export the
+//     user's C calls.
+//   - `virtual_dispatch`, when present, states this callable's role in the
+//     class's dispatch table (LRM 8.20) -- introducing a new slot or overriding
+//     an ancestor's -- so a backend renders the marker off stated structure,
+//     never re-deriving virtualness by name. It is absent for a direct-only
+//     callable: every static callable and every foreign one.
+//   - The receiver is not a kind either: an instance method carries `self` as
+//     its first parameter and a static callable omits it, which the signature
+//     already says.
+//
+// A pure virtual prototype is therefore the combination of no body and a
+// dispatch role, and needs no third fact to say so.
 struct CallableDecl {
   std::string name;
-  std::variant<InternalCallable, ExternalCallable, PurePrototype> impl;
+  CallableCode code;
+  std::optional<ForeignLinkage> foreign;
   std::optional<VirtualDispatchRole> virtual_dispatch;
   CallableVisibility visibility;
+
+  // The name the emitted symbol is reached by. A foreign callable's linkage
+  // name is program-global and independent of the SV name it was declared under
+  // (LRM 35.4); every other callable is reached by its declared name.
+  [[nodiscard]] auto LinkedName() const -> const std::string& {
+    return foreign.has_value() ? foreign->foreign_name : name;
+  }
 };
 
 // A named class-owned callable whose identity is a plain function pointer the

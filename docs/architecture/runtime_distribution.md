@@ -38,6 +38,30 @@ runfiles are present (the Bazel build tree and the tests). This is a property of
 _its own_ runtime, not of the emitted output: an emitted project, once produced, carries its own
 runtime copy and build recipe and is independent of how `lyra` itself was distributed.
 
+## The foreign-language boundary surface
+
+A design that crosses the DPI-C boundary (LRM 35) has a second consumer of its output: the user's
+own C sources. They need the prototype of every foreign name the design takes part in -- the imports
+they must define and the exports they may call -- plus the standard header those prototypes are
+spelled in. Both are produced next to the emitted sources, for every design, so a foreign source
+compiles against one include path and never restates the ABI by hand.
+
+This surface is one artifact for the whole design rather than one per unit, and that does not
+contradict the per-unit artifact boundary. A DPI-C name is program-global and lives in its own name
+space rather than in any compilation unit's (LRM 35.4, 35.7), and every declaration of one name must
+publish the same prototype (LRM 35.5.4), so the surface is a program-level fact by construction.
+Nothing the design itself compiles includes it; it sits outside the design's compilation graph
+entirely, so it neither serializes nor constrains the per-unit compilation `emission_model.md`
+protects. Splitting it per unit would instead invent a boundary the language says is not there, and
+would leave the program-global uniqueness rule with nowhere to be checked.
+
+The header is also target-language-neutral: it projects the same prototypes any backend links
+against, so a foreign source compiled against it stays correct whichever backend runs the design.
+
+A bundled project carries this surface, and a copy of every foreign source it was given, so it
+builds where neither Lyra nor the original foreign sources are reachable. The in-place path produces
+the same surface in its work directory; it copies nothing else, as before.
+
 ## Command output contract
 
 `run` executes the simulation; its stdout and stderr are the simulation's own. Compile-phase

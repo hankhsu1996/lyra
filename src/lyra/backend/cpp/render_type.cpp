@@ -11,34 +11,8 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::backend::cpp {
-
-auto DpiScalarCarrierCppType(support::DpiScalarAbi abi) -> std::string_view {
-  switch (abi) {
-    case support::DpiScalarAbi::kBitScalar:
-    case support::DpiScalarAbi::kLogicScalar:
-      return "unsigned char";
-    case support::DpiScalarAbi::kByte:
-      return "std::int8_t";
-    case support::DpiScalarAbi::kShortInt:
-      return "std::int16_t";
-    case support::DpiScalarAbi::kInt:
-      return "std::int32_t";
-    case support::DpiScalarAbi::kLongInt:
-      return "std::int64_t";
-    case support::DpiScalarAbi::kReal:
-      return "double";
-    case support::DpiScalarAbi::kString:
-      return "const char*";
-    case support::DpiScalarAbi::kChandle:
-      return "void*";
-    case support::DpiScalarAbi::kVoid:
-      return "void";
-  }
-  throw InternalError("DpiScalarCarrierCppType: unknown DpiScalarAbi");
-}
 
 auto RenderPackedType(const mir::PackedArrayType& pa) -> std::string {
   const char* signed_lit =

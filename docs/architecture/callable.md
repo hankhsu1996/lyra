@@ -11,8 +11,8 @@ and how a referencing site uses them. None is a distinct kind of callable.
 
 The concept has two structural levels:
 
-- **Callable code** -- a declaration: a signature plus an implementation form, which is either an
-  internal body or an external symbol.
+- **Callable code** -- a declaration: a signature, plus a body where this declaration also defines
+  the callable.
 - **Callable value** -- callable code plus a bound environment: the runtime value built, held, and
   later invoked. A closure is a callable value with a captured environment; a registered process is
   a callable value that binds its instance receiver.
@@ -23,13 +23,13 @@ closure is code plus a captured environment, and "async" is the result type (`as
 
 ## Owns
 
-- The callable concept: callable code (signature plus implementation form) and callable value (code
-  plus a bound environment).
+- The callable concept: callable code (a signature, and a body where defined) and callable value
+  (code plus a bound environment).
 - The signature: a parameter list (each parameter a typed binding) and a result type that carries
   the call protocol.
 - The environment model: how a callable value binds the state its body needs, and the
   snapshot-versus-alias distinction for a bound field, carried by the field's type.
-- The implementation-form distinction: an internal body versus an external (foreign) symbol.
+- The declaration-versus-definition distinction, and the foreign-linkage axis orthogonal to it.
 
 ## Does Not Own
 
@@ -88,12 +88,17 @@ closure is code plus a captured environment, and "async" is the result type (`as
    climbing out of its own scope. _Consequence: a value reference inside the body stays within the
    body's own scope nesting; outer storage reaches the body only as a bound field._
 
-7. **The implementation form is internal or external.** An internal callable has a body. An external
-   callable -- a DPI import -- is a foreign-symbol declaration: a signature plus a linkage name, a
-   foreign language, and a calling convention, with no body. This symbol contract is explicit
-   structure, read identically by every backend; only the mechanical value marshaling is backend
-   realization. _Consequence: a bodyless callable is a structural variant, mirroring how an object
-   is intra-unit or external-unit -- not a flag on an internal callable._
+7. **Every callable carries its signature; a body is what a definition adds.** A declaration this
+   program does not define simply has no body -- a DPI import, whose definition the user's foreign
+   code provides, and a pure virtual method, which a deriving class supplies. An absent body is
+   distinct from a present empty one, which is a definition that does nothing, and the presence of
+   the body is what says which. Foreign linkage -- a fixed symbol name, source language, and calling
+   convention -- is an independent axis over that: bodyless plus foreign is an import, bodied plus
+   foreign is the entry point an export publishes, and pure-virtualness is bodyless plus a dispatch
+   role. The linkage contract is explicit structure, read identically by every backend; only the
+   mechanical value marshaling is backend realization. _Consequence: there is no species of callable
+   for "internal" versus "external" versus "prototype"; the whole variety falls out of independent
+   facts on one declaration, and nothing tags a combination the structure already states._
 
 ## Boundary to Adjacent Layers
 

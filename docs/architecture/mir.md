@@ -60,8 +60,8 @@ what the construct means.
   generic-language distinctions (C++/Rust/LLVM carry them). "Activation frame" is a lowering role
   name for a `Shared<>` scope struct, not a type category; a closure is not a struct-with-invoke but
   its own callable-value category.
-- Callables: one concept -- callable code (a signature plus an internal body or an external symbol)
-  and a callable value (code plus a bound environment). Every callable body's first binding is
+- Callables: one concept -- callable code (a signature, plus a body where the declaration defines
+  it) and a callable value (code plus a bound environment). Every callable body's first binding is
   `self`, a pointer to the enclosing class; the body reaches every value it needs through its
   parameters and bound environment, never through implicit context. `callable.md` is the canonical
   contract.
@@ -332,7 +332,7 @@ expression set that decomposes the ternary. Value-build primitives for aggregate
 expressions are access primitives. Each of these stays in MIR for the same reason: removing it would
 require expanding into a statement-form rewrite that does not fit the expression context.
 
-A callable is one concept: callable code (a signature plus an internal body or an external symbol)
+A callable is one concept: callable code (a signature, plus a body where the declaration defines it)
 and a callable value (code plus a bound environment). A closure is a callable value with a captured
 environment, synthesized only by HIR-to-MIR. `self` is the code's receiver parameter, the result
 type is the call protocol, and a bound field is a snapshot or an alias by its type. `callable.md` is

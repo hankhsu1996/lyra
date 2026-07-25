@@ -823,9 +823,9 @@ enough to warrant its own focused review.
       render must hide is a redundancy in MIR (`../architecture/backend_contract.md`). Target shape:
       the unit holds one record per foreign symbol, keyed by its linkage name, that the
       type-associated declarations reference -- the single source of truth a generated ABI header
-      and the JIT's external-symbol resolution both read. Deferred until one of those consumers
-      exists, so the record is built for a real reader rather than to hide duplicate prototypes.
-      **Blocker**: none.
+      and the JIT's external-symbol resolution both read. That first reader now exists: the ABI
+      header collapses the copies by linkage name as it collects them, which is correct but is the
+      consumer doing what the record should have done. **Blocker**: none.
 
 - [x] R57 -- A condition is a value; reducing it to a control predicate is an explicit conversion,
       not a backend's contextual one. MIR already owns the primitive: `BoolCastExpr` reduces any

@@ -68,24 +68,23 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
   }
   out.constructor = *std::move(constructor);
 
-  // Only bodied callables become LIR functions, appended in arena order; a
-  // DPI-C import (external) is a foreign symbol reached by a `ForeignTarget`,
-  // so it takes no slot here. `Callee` resolution reaches a method through the
-  // same slot assignment `MethodSlot` memoizes, so each append must land
-  // exactly on the slot it assigns.
+  // Only a callable this program defines becomes a LIR function, appended in
+  // arena order; a DPI-C import is reached as a foreign symbol and a pure
+  // virtual has no implementation here, so neither takes a slot. Callee
+  // resolution reaches a method through the same slot assignment memoized
+  // below, so each append must land exactly on the slot it assigns.
   const mir::ClassId owner{class_id.value};
   for (std::size_t i = 0; i < cls.callables.size(); ++i) {
     const mir::CallableId cid{static_cast<std::uint32_t>(i)};
     const mir::CallableDecl& callable = cls.callables.Get(cid);
-    const auto* internal = std::get_if<mir::InternalCallable>(&callable.impl);
-    if (internal == nullptr) continue;
+    if (!callable.code.body.has_value()) continue;
     if (out.methods.size() != MethodSlot(owner, cid).index) {
       throw InternalError(
           "mir_to_lir: LIR method slot diverged from the callable arena "
           "compaction");
     }
     auto fn =
-        FunctionLowerer(*this, internal->code, callable.name, class_id).Run();
+        FunctionLowerer(*this, callable.code, callable.name, class_id).Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
@@ -102,8 +101,7 @@ auto UnitLowerer::MethodSlot(mir::ClassId owner, mir::CallableId callable)
     std::vector<std::optional<lir::MethodRef>> slots(cls.callables.size());
     std::uint32_t index = 0;
     for (std::uint32_t i = 0; i < cls.callables.size(); ++i) {
-      if (std::holds_alternative<mir::InternalCallable>(
-              cls.callables.Get(mir::CallableId{i}).impl)) {
+      if (cls.callables.Get(mir::CallableId{i}).code.body.has_value()) {
         slots[i] = lir::MethodRef{
             .class_id = lir::ClassId{owner.value}, .index = index++};
       }

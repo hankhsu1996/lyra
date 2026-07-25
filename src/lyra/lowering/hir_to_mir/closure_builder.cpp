@@ -26,7 +26,7 @@ ClosureBuilder::ClosureBuilder(
       bindings_(
           unit, closure_decl_, closure_id_, *enclosing.bindings, *outer_,
           std::move(policy)),
-      frame_(enclosing.WithBlock(&closure_decl_.invoke.body)
+      frame_(enclosing.WithBlock(&closure_decl_.invoke.Body())
                  .WithBindings(&bindings_)) {
 }
 
@@ -63,13 +63,14 @@ auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
 
 auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
   const mir::TypeId result_type =
-      closure_decl_.invoke.body.exprs.Get(result).type;
-  closure_decl_.invoke.body.AppendStmt(mir::ReturnStmt{.value = result});
+      closure_decl_.invoke.Body().exprs.Get(result).type;
+  closure_decl_.invoke.Body().AppendStmt(mir::ReturnStmt{.value = result});
   return Finish(result_type);
 }
 
 auto ClosureBuilder::BuildCoroutine() -> mir::Expr {
-  closure_decl_.invoke.body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  closure_decl_.invoke.Body().AppendStmt(
+      mir::ReturnStmt{.value = std::nullopt});
   return Finish(unit_->builtins.coroutine_void);
 }
 

@@ -60,7 +60,7 @@ class ClosureBuilder {
   }
   // The body block to append statements / exprs into.
   [[nodiscard]] auto Body() -> mir::Block& {
-    return closure_decl_.invoke.body;
+    return closure_decl_.invoke.Body();
   }
   // The body's binding context, for a caller that materializes a binding by
   // hand (a receiver for a deferred check, an explicit carrier).

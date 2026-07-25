@@ -15,7 +15,6 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/foreign_export_wrapper.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
@@ -99,17 +98,14 @@ struct CompilationUnit {
   base::Registry<Class, ClassId> classes;
   std::optional<ClassId> root;
   // Callables the unit's namespace owns directly rather than through one of its
-  // classes -- a package's functions and tasks (LRM 26.3), receiver-less and
-  // bodied. A class's own callables live on that class; these are the
-  // unit-level namespace's, one scope up.
+  // classes -- a package's functions and tasks (LRM 26.3), and the C entry
+  // point of every DPI-C export the unit contributes (LRM 35.5). All are
+  // receiver-less and bodied: an export's entry point is a program-global
+  // symbol in its own name space and never a class member (LRM 35.4, 35.7), so
+  // a module-scoped export and a package-scoped one are owned here alike, each
+  // body recovering whatever context it needs. A class's own callables live on
+  // that class; these are the unit-level namespace's, one scope up.
   base::Arena<CallableDecl, CallableId> callables;
-  // Every DPI-C export foreign-linkage wrapper (LRM 35.5) this unit
-  // contributes. An export is a program-global symbol in its own name space,
-  // never a class member (LRM 35.4, 35.7), so a module-scoped export (a method)
-  // and a package-scoped export (a receiver-less function) are owned here at
-  // the unit alike; each wrapper's body recovers whatever context it needs, so
-  // they are one uniform list.
-  std::vector<ForeignExportWrapper> foreign_export_wrappers;
   // Static variables the unit's namespace owns directly rather than through one
   // of its classes -- a package's variables (LRM 26.2), one program-global cell
   // each, shared and reached by name. A class's own static storage lives on

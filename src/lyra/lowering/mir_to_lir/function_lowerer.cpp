@@ -213,16 +213,15 @@ auto LowerCallTarget(
                 Overloaded{
                     [&](const mir::CallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      // An internal callable lowers to a direct method call; a
-                      // DPI-C import (external) to its foreign symbol. The
-                      // target names its own owner, so either is reached
-                      // without a receiver to recover it from.
+                      // An ordinary callable lowers to a direct method call; a
+                      // foreign-linkage one to its linkage symbol. The target
+                      // names its own owner, so either is reached without a
+                      // receiver to recover it from.
                       const mir::CallableDecl& decl =
                           unit.Mir().GetClass(t.owner).callables.Get(t.slot);
-                      if (const auto* ext =
-                              std::get_if<mir::ExternalCallable>(&decl.impl)) {
+                      if (decl.foreign.has_value()) {
                         return lir::CallTarget{lir::ForeignTarget{
-                            .symbol = ext->external.foreign_name}};
+                            .symbol = decl.foreign->foreign_name}};
                       }
                       if (qualifier.has_value()) {
                         return Unsupported(
@@ -295,7 +294,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   fn_.result_type = unit_->TranslateType(code_->result_type);
   const bool is_coroutine = unit_->Mir().types.IsCoroutine(code_->result_type);
 
-  CollectPlacedLocals(code_->body, placed_);
+  CollectPlacedLocals(code_->Body(), placed_);
 
   // In a suspending body every value-typed, non-managed local and parameter is
   // an activation-frame value, not a transient: a value's handle cannot safely
@@ -353,7 +352,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     }
   }
 
-  auto lowered = LowerBlockInto(code_->body);
+  auto lowered = LowerBlockInto(code_->Body());
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
   }

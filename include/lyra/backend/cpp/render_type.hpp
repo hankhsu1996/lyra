@@ -6,19 +6,8 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::backend::cpp {
-
-// The C ABI type spelling a by-value scalar SV value crosses the DPI-C boundary
-// as (LRM 35.5.6, Table H.1): the single carrier-to-C++ mapping both the
-// carrier type render and the emitted `extern "C"` foreign declaration read.
-// The 2-state named integer carriers are signed to match SV `byte` / `shortint`
-// / `int` / `longint`; a 1-bit `bit` / `logic` crosses as `unsigned char`,
-// `real` as `double`, a string as a C string, and a `void` return has no
-// carrier value.
-[[nodiscard]] auto DpiScalarCarrierCppType(support::DpiScalarAbi abi)
-    -> std::string_view;
 
 // Renders a MIR type as the corresponding C++ type expression. A nominal type
 // name (an enum) is resolved against the unit's own type declarations, the same

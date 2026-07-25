@@ -22,7 +22,7 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/driver/cpp_build.hpp"
-#include "lyra/driver/dpi_link.hpp"
+#include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/frontend/load.hpp"
@@ -386,6 +386,16 @@ auto main(int argc, char** argv) -> int {
       return 1;
     }
 
+    // Classify and check the DPI-C link inputs before compiling anything, so a
+    // mistyped path is reported against the command line rather than after a
+    // full frontend and lowering pass.
+    auto dpi_inputs =
+        lyra::driver::ValidateDpiLinkInputs(args.dpi_link_sources);
+    if (!dpi_inputs) {
+      report(std::move(dpi_inputs.error()));
+      return 1;
+    }
+
     lyra::diag::DiagnosticSink sink;
     const auto stop_after = [&] {
       switch (args.cmd) {
@@ -484,7 +494,7 @@ auto main(int argc, char** argv) -> int {
         const auto& units = *result.artifacts.mir_units;
         const auto& root = *result.artifacts.root_unit;
         auto assembled = lyra::driver::AssembleProject(
-            *runtime, units, root, dir, args.format);
+            *runtime, units, root, dir, args.format, *dpi_inputs);
         if (!assembled) {
           report(std::move(assembled.error()), mgr);
           return 1;
@@ -501,13 +511,12 @@ auto main(int argc, char** argv) -> int {
         const auto& units = *result.artifacts.mir_units;
         const auto& root = *result.artifacts.root_unit;
         auto assembled = lyra::driver::AssembleProject(
-            *runtime, units, root, dir, args.format);
+            *runtime, units, root, dir, args.format, *dpi_inputs);
         if (!assembled) {
           report(std::move(assembled.error()), mgr);
           return 1;
         }
-        auto built =
-            lyra::driver::BuildProject(dir, pch_opts, args.dpi_link_sources);
+        auto built = lyra::driver::BuildProject(dir, pch_opts, *dpi_inputs);
         if (!built) {
           report(std::move(built.error()), mgr);
           return 1;
@@ -520,10 +529,15 @@ auto main(int argc, char** argv) -> int {
           case Backend::kJit: {
             // A JIT image has no link step, so the design's DPI-C sources are
             // compiled into a library the execution session resolves the
-            // imports' foreign symbols from. The temp dir holds it for the run.
+            // imports' foreign symbols from. The temp dir holds that library
+            // and the ABI header the sources compile against.
             std::optional<std::filesystem::path> dpi_library;
-            auto dpi_dir = lyra::support::MakeTempDir();
-            if (!args.dpi_link_sources.empty()) {
+            if (!dpi_inputs->empty()) {
+              auto runtime = resolve_runtime();
+              if (!runtime) {
+                return 1;
+              }
+              auto dpi_dir = lyra::support::MakeTempDir();
               if (!dpi_dir) {
                 report(
                     lyra::diag::Make(
@@ -531,8 +545,15 @@ auto main(int argc, char** argv) -> int {
                         std::move(dpi_dir.error())));
                 return 1;
               }
+              if (auto surface = lyra::driver::WriteDpiSurface(
+                      *runtime, *result.artifacts.mir_units,
+                      *result.artifacts.root_unit, *dpi_dir);
+                  !surface) {
+                report(std::move(surface.error()), mgr);
+                return 1;
+              }
               auto built = lyra::driver::BuildDpiSharedLibrary(
-                  args.dpi_link_sources, *dpi_dir);
+                  *dpi_inputs, *dpi_dir, *dpi_dir);
               if (!built) {
                 report(std::move(built.error()), mgr);
                 return 1;
@@ -571,7 +592,7 @@ auto main(int argc, char** argv) -> int {
             const auto& root = *result.artifacts.root_unit;
             auto exit_code = lyra::driver::RunInPlace(
                 *runtime, units, root, *tmp_or, args.format, pch_opts,
-                args.plusargs, args.dpi_link_sources);
+                args.plusargs, *dpi_inputs);
             if (!exit_code) {
               report(std::move(exit_code.error()), mgr);
               return 1;
