@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -24,10 +25,9 @@ namespace lyra::lowering::hir_to_mir {
 
 // Builds a primitive MIR expression evaluating to the LRM Table 6-7 default
 // value of `type`, returning the top node detached for the caller to intern.
-// Composite types (UnpackedArray, DynamicArray, Queue) recurse and register
-// each element default into `frame.current_block` as children before
-// returning the outer composite, so interning the result yields a
-// self-contained subtree of arena entries.
+// A composite default registers the child expressions it references into
+// `frame.current_block` before returning the outer node, so interning the
+// result yields a self-contained subtree of arena entries.
 //
 // `int x;` and `int x = 0;` are different in SV source -- HIR preserves that
 // distinction via `optional<initializer>`. By MIR every variable has an
@@ -49,6 +49,11 @@ namespace lyra::lowering::hir_to_mir {
     const UnitLowerer& unit_lowerer, WalkFrame frame, hir::TypeId hir_type)
     -> mir::Expr;
 
+// The element type of an array container type (unpacked, dynamic, or queue).
+// Throws `InternalError` if `array_type` is not one of those.
+[[nodiscard]] auto ArrayContainerElementType(
+    const mir::CompilationUnit& unit, mir::TypeId array_type) -> mir::TypeId;
+
 // Wraps a list of element ExprIds destined for an array container constructor
 // (`UnpackedArrayType` or `DynamicArrayType`) in a construction call whose
 // arguments are `[element_default, ArrayLiteralExpr{elements}]`. This is the
@@ -60,6 +65,20 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto BuildArrayConstructionCall(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr;
+
+// Builds the construction call for a uniform array-container value: `count`
+// tilings of the repeat unit `unit`, seeded with `element_default` (the
+// wrapper's OOB / discard source). The unit rides in an `ArrayLiteralExpr` and
+// the count in a `MachineIntLiteral`, so the constructor arguments are
+// `[element_default, ArrayLiteralExpr{unit}, count]` (plus the LRM 7.10.5 bound
+// for a bounded queue). This is the shape every site that produces an
+// all-default or `'{count{...}}` array value must use, so the value's MIR and
+// emitted text stay O(unit) rather than O(unit * count). A distinct-element
+// list uses `BuildArrayConstructionCall` instead.
+[[nodiscard]] auto BuildArrayRepeatCall(
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
+    mir::ExprId element_default, std::vector<mir::ExprId> unit,
+    std::uint64_t count) -> mir::Expr;
 
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
 // Each (key, value) entry becomes a `TupleExpr`; the entries ride in an
