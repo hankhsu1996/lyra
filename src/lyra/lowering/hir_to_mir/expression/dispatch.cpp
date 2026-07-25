@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <concepts>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
+#include "lyra/lowering/hir_to_mir/expression/tagged_union.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -58,6 +60,18 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirBinaryExpr(lowerer, frame, b, result_type);
           },
           [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
+            const bool declares_bindings = std::ranges::any_of(
+                c.conditions, [](const hir::ConditionClause& clause) {
+                  return clause.pattern.has_value();
+                });
+            // A predicate that declares identifiers cannot stay an rvalue:
+            // the arms become assignments under the clause chain that brings
+            // those identifiers into scope (LRM 12.6.3). Both contexts have a
+            // statement stream to put that chain in, so neither is special.
+            if (declares_bindings) {
+              return LowerHirBindingConditionalExpr(
+                  lowerer, frame, c, result_type);
+            }
             return LowerHirConditionalExpr(lowerer, frame, c, result_type);
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
@@ -86,6 +100,15 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           },
           [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirCallExpr(lowerer, frame, c, expr.span, result_type);
+          },
+          // LRM 11.4.13: a value range has no value of its own -- it only
+          // means something as an operand of a membership test, and the
+          // lowering of that test consumes it directly. Reaching the generic
+          // dispatcher means it appeared where slang would not have put one.
+          [&](const hir::ValueRangeExpr&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "expression lowering: a value range is lowered by the "
+                "membership test that consumes it, never on its own");
           },
           [&](const hir::InsideExpr& in) -> diag::Result<mir::Expr> {
             return LowerHirInsideExpr(lowerer, frame, in, result_type);
@@ -154,6 +177,9 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                         .callee = mir::Construct{},
                         .arguments = std::move(args)},
                 .type = result_type};
+          },
+          [&](const hir::TaggedUnionExpr& t) -> diag::Result<mir::Expr> {
+            return LowerHirTaggedUnionExpr(lowerer, frame, t, result_type);
           },
       },
       expr.data);

@@ -6,6 +6,7 @@
 #include <variant>
 
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -90,6 +91,18 @@ struct IterationBindingRef {
   IterationBindingRole role;
 
   auto operator==(const IterationBindingRef&) const -> bool = default;
+};
+
+// A reference to the identifier a pattern binds (LRM 12.6). The pattern
+// introduces the scope the identifier is declared in, so the declaration is
+// the `VariablePattern` node itself and its `PatternId` is the identity a
+// reference carries -- there is no separate variable arena to index. That
+// holds wherever the pattern appears: a case item, an if predicate, or a
+// conditional expression, in a procedural body or a structural one.
+struct PatternVarRef {
+  PatternId pattern = {};
+
+  auto operator==(const PatternVarRef&) const -> bool = default;
 };
 
 // A reference to a variable that belongs to another compilation unit's

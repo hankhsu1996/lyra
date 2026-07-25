@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 // Lowering of operator-family expressions (LRM 11.4): unary, binary,
 // conditional (`?:`), conversion, and increment / decrement.
 
@@ -39,6 +41,22 @@ auto BuildMirBinaryExpr(
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
     -> mir::Expr;
 
+// The conjunction / disjunction of `tests`, appended to `block`: the n-ary
+// form of the binary operator above. MIR has only binary operators, so a
+// lowering that synthesizes a boolean from a list -- a case item's labels, a
+// membership test's items, a clause sequence, a structure pattern's fields --
+// folds it here instead of growing the chain by hand. Having nothing to fold
+// is not a case for the caller to branch on: it is the empty fold, whose value
+// is that operator's identity. Both operators short-circuit, so argument order
+// is evaluation order.
+auto BuildMirLogicalAnd(
+    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
+    std::span<const mir::ExprId> tests) -> mir::ExprId;
+
+auto BuildMirLogicalOr(
+    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
+    std::span<const mir::ExprId> tests) -> mir::ExprId;
+
 // Symmetric helper for unary operators: reduction ops lift to a `CallExpr`
 // against `BuiltinFn`, a real `kLogicalNot` wraps in `kFromBool`, every
 // other op produces a native `UnaryExpr`.
@@ -72,6 +90,16 @@ auto LowerHirConversionExpr(
 // it stays a procedural-only handler rather than a shared template.
 auto LowerHirIncDecExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+
+// The clause-chain `?:` whose predicate declares identifiers (LRM 12.6.3).
+// A binding needs storage and a statement to initialize it, so the arms
+// become assignments into a result local and the expression reads it back.
+// A structural predicate cannot declare bindings -- AST-to-HIR rejects one --
+// so this form is procedural only.
+template <ExprLowerer Lowerer>
+auto LowerHirBindingConditionalExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

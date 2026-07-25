@@ -39,6 +39,7 @@ namespace {
 // classification serves every reference-lowering entry so a symbol cannot be
 // read as a constant through one syntax and rejected through another.
 enum class Referent {
+  kPatternBinding,
   kParameterConstant,
   kEnumConstant,
   kClassProperty,
@@ -67,6 +68,8 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
     case SymbolKind::FormalArgument:
     case SymbolKind::Iterator:
       return Referent::kVariableStorage;
+    case SymbolKind::PatternVar:
+      return Referent::kPatternBinding;
     case SymbolKind::Net:
       return Referent::kNetStorage;
     case SymbolKind::Unknown:
@@ -133,7 +136,6 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
     case SymbolKind::GenericClassDef:
     case SymbolKind::MethodPrototype:
     case SymbolKind::UninstantiatedDef:
-    case SymbolKind::PatternVar:
     case SymbolKind::ConstraintBlock:
     case SymbolKind::DefParam:
     case SymbolKind::Specparam:
@@ -166,6 +168,28 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
       return Referent::kUnsupported;
   }
   throw InternalError("ClassifyReferent: unknown slang SymbolKind");
+}
+
+// A pattern-bound identifier (LRM 12.6) resolves to the `VariablePattern` node
+// that declares it. That node is reached the same way from every context --
+// the pattern lowering registered it on the unit before any body naming it was
+// walked -- so one resolution serves the procedural, structural, and
+// hierarchical entries alike.
+auto MakePatternVarRefExpr(
+    UnitLowerer& unit_lowerer, const slang::ast::PatternVarSymbol& sym,
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  const auto pattern = unit_lowerer.LookupPatternVar(sym);
+  if (!pattern.has_value()) {
+    throw InternalError(
+        "MakePatternVarRefExpr: pattern-bound identifier has no registered "
+        "declaring pattern; the pattern lowering runs before any body that "
+        "names it");
+  }
+  auto type_id = unit_lowerer.InternType(type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::MakeRefExpr(
+      hir::PatternVarRef{.pattern = *pattern}, *type_id, span);
 }
 
 auto MakeEnumValueExpr(
@@ -338,6 +362,10 @@ auto LowerNamedValueProc(
     // variable-family symbols; each binds to procedural-var storage when the
     // enclosing process declares it, otherwise to the structural signal of the
     // same name reached through the reference-route translator.
+    case Referent::kPatternBinding:
+      return MakePatternVarRefExpr(
+          unit_lowerer, sym.as<slang::ast::PatternVarSymbol>(), *named.type,
+          span);
     case Referent::kVariableStorage: {
       const auto& var = sym.as<slang::ast::VariableSymbol>();
       if (auto local = proc.LookupProceduralVar(var)) {
@@ -401,6 +429,10 @@ auto LowerHierarchicalValue(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "hierarchical reference to this declaration kind is not yet "
           "supported");
+    case Referent::kPatternBinding:
+      return MakePatternVarRefExpr(
+          unit_lowerer, target.as<slang::ast::PatternVarSymbol>(), *hve.type,
+          span);
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
       const auto& value = target.as<slang::ast::ValueSymbol>();
@@ -437,6 +469,10 @@ auto LowerNamedValueStructural(
           unit_lowerer, frame, sym, *named.type, span);
     case Referent::kEnumConstant:
       return MakeEnumConstantExpr(unit_lowerer, sym, *named.type, span);
+    case Referent::kPatternBinding:
+      return MakePatternVarRefExpr(
+          unit_lowerer, sym.as<slang::ast::PatternVarSymbol>(), *named.type,
+          span);
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
       const auto& value = sym.as<slang::ast::ValueSymbol>();

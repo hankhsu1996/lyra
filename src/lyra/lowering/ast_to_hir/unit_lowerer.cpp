@@ -243,6 +243,18 @@ auto UnitLowerer::LookupForeignImportBinding(
   return it->second;
 }
 
+void UnitLowerer::MapPatternVar(
+    const slang::ast::PatternVarSymbol& sym, hir::PatternId pattern) {
+  pattern_var_bindings_.insert_or_assign(&sym, pattern);
+}
+
+auto UnitLowerer::LookupPatternVar(const slang::ast::PatternVarSymbol& sym)
+    const -> std::optional<hir::PatternId> {
+  const auto it = pattern_var_bindings_.find(&sym);
+  if (it == pattern_var_bindings_.end()) return std::nullopt;
+  return it->second;
+}
+
 void UnitLowerer::MapOwnedChildBinding(
     const slang::ast::Symbol& child, ScopeFrameId home_frame,
     hir::DownwardHead head) {

@@ -245,6 +245,19 @@ auto BuildDefaultValueExpr(
                 .data = mir::UnionExpr{.index = 0, .value = member_default},
                 .type = type};
           },
+          // LRM 11.9: an uninitialized tagged union variable is undefined. The
+          // deterministic Lyra fallback -- same policy as untagged unions --
+          // is tag 0 carrying that member's Table 6-7 default.
+          [&](const mir::TaggedUnionType& u) -> mir::Expr {
+            const mir::TypeId first = u.elements.front();
+            return mir::Expr{
+                .data =
+                    mir::TaggedExpr{
+                        .tag_index = 0,
+                        .payload = block.exprs.Add(
+                            BuildDefaultValueExpr(unit_lowerer, frame, first))},
+                .type = type};
+          },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
           // construction so OOB reads and resize-fills have a shape source.
@@ -327,6 +340,14 @@ auto BuildDefaultValueExpr(
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
           [&](const mir::VectorType&) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
+                .type = type};
+          },
+          // A type carrying no information has exactly one value, so that
+          // value is its default.
+          [&](const mir::EmptyType&) -> mir::Expr {
             return mir::Expr{
                 .data =
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},

@@ -286,15 +286,10 @@ auto LowerUnpackedStruct(
 auto LowerUnpackedUnion(
     const slang::ast::UnpackedUnionType& union_type, diag::SourceSpan decl_span,
     UnitLowerer& unit_lowerer) -> diag::Result<hir::UnpackedUnionType> {
-  // A tagged union (LRM 7.3.2) is a type-checked sum type, a separate concept
-  // from the untagged overlapping-storage form; reject it here where the
-  // declaration span is available, so MIR translation only ever sees untagged
-  // unions.
-  if (union_type.isTagged) {
-    return diag::Fail(
-        decl_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
-        "tagged unions are not yet supported");
-  }
+  // Both the untagged overlapping-storage form (LRM 7.3) and the tagged
+  // type-checked sum form (LRM 7.3.2) come through here; HIR-to-MIR routes
+  // them to distinct MIR types (`UnionType` vs `TaggedUnionType`) by reading
+  // the `tagged` flag.
   auto fields_or =
       LowerUnpackedAggregateFields(union_type.fields, decl_span, unit_lowerer);
   if (!fields_or) return std::unexpected(std::move(fields_or.error()));
@@ -623,7 +618,7 @@ auto BuildInterfaceForwardingMethod(
     params.push_back(
         hir::SubroutineParam{
             .var = var, .direction = hir::ParamDirection::kInput});
-    args.push_back(body.exprs.Add(
+    args.emplace_back(body.exprs.Add(
         hir::Expr{
             .type = *param_type_or,
             .data = hir::PrimaryExpr{hir::ProceduralVarRef{.var = var}},
@@ -1111,7 +1106,7 @@ auto UnitLowerer::InternLocalClass(
   // the class's position.
   ProcessLowerer init_lowerer(*this, cls);
   const WalkFrame init_frame = WalkFrame{}.WithProceduralBody(
-      &constructor.body, &constructor.body.exprs);
+      &constructor.body, &constructor.body.exprs, &constructor.body.patterns);
   // A static property initializer (LRM 8.9 / 10.5) runs once at design init,
   // not per instance, so its expression lands in the class's `static_init`
   // arena rather than the constructor body's. It cannot read a per-instance
@@ -1120,7 +1115,7 @@ auto UnitLowerer::InternLocalClass(
   // the same class reads it as `Cls::other_prop` (a `StaticPropertyRef`),
   // never through the constructor's receiver.
   const WalkFrame static_init_frame = WalkFrame{}.WithProceduralBody(
-      &decl.static_init, &decl.static_init.exprs);
+      &decl.static_init, &decl.static_init.exprs, &decl.static_init.patterns);
   for (const auto& prop :
        cls.membersOfType<slang::ast::ClassPropertySymbol>()) {
     if (prop.getParentScope() != &cls) continue;

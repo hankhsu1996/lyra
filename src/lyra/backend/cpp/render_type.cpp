@@ -250,6 +250,17 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             }
             return std::format("lyra::value::Union<{}>", inners);
           },
+          [](const mir::EmptyType&) -> std::string {
+            return std::string{"lyra::value::Empty"};
+          },
+          [&](const mir::TaggedUnionType& u) -> std::string {
+            std::string inners;
+            for (std::size_t i = 0; i < u.elements.size(); ++i) {
+              if (i != 0) inners += ", ";
+              inners += RenderTypeAsCpp(unit, u.elements[i]);
+            }
+            return std::format("lyra::value::TaggedUnion<{}>", inners);
+          },
           [&](const mir::ObservableType& o) -> std::string {
             return std::format(
                 "lyra::runtime::Var<{}>", RenderTypeAsCpp(unit, o.value));

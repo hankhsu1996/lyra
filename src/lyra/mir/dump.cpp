@@ -392,6 +392,19 @@ class MirDumper {
               }
               return std::format("Union(elems=[{}])", elements);
             },
+            [](const EmptyType&) -> std::string {
+              return std::string{"Empty"};
+            },
+            [](const TaggedUnionType& u) -> std::string {
+              std::string elements;
+              for (std::size_t i = 0; i < u.elements.size(); ++i) {
+                if (i != 0) {
+                  elements += ", ";
+                }
+                elements += std::format("Type[{}]", u.elements[i].value);
+              }
+              return std::format("TaggedUnion(elems=[{}])", elements);
+            },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);
             },
@@ -844,6 +857,26 @@ class MirDumper {
               return std::format(
                   "UnionGetRefExpr union=Expr[{}] index={}",
                   g.union_value.value, g.index);
+            },
+            [](const TaggedExpr& t) -> std::string {
+              return std::format(
+                  "TaggedExpr tag={} payload=Expr[{}]", t.tag_index,
+                  t.payload.value);
+            },
+            [](const TaggedGetExpr& g) -> std::string {
+              return std::format(
+                  "TaggedGetExpr union=Expr[{}] tag={}", g.union_value.value,
+                  g.tag_index);
+            },
+            [](const TaggedGetRefExpr& g) -> std::string {
+              return std::format(
+                  "TaggedGetRefExpr union=Expr[{}] tag={}", g.union_value.value,
+                  g.tag_index);
+            },
+            [](const TaggedIsExpr& g) -> std::string {
+              return std::format(
+                  "TaggedIsExpr union=Expr[{}] tag={}", g.union_value.value,
+                  g.tag_index);
             },
         },
         e.data);

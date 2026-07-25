@@ -217,6 +217,9 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [](const mir::VoidType&) -> lir::TypeData {
             return lir::TypeData{lir::VoidType{}};
           },
+          [](const mir::EmptyType&) -> lir::TypeData {
+            return lir::TypeData{lir::EmptyType{}};
+          },
           [](const mir::ObjectType& ob) -> lir::TypeData {
             return lir::TypeData{
                 lir::ObjectType{.class_id = lir::ClassId{ob.class_id.value}}};
@@ -282,6 +285,15 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
             }
             return lir::TypeData{
                 lir::UnionType{.elements = std::move(elements)}};
+          },
+          [&](const mir::TaggedUnionType& u) -> lir::TypeData {
+            std::vector<lir::TypeId> elements;
+            elements.reserve(u.elements.size());
+            for (const mir::TypeId element : u.elements) {
+              elements.push_back(TranslateType(element));
+            }
+            return lir::TypeData{
+                lir::TaggedUnionType{.elements = std::move(elements)}};
           },
           [&](const mir::ResolvedType& r) -> lir::TypeData {
             return lir::TypeData{

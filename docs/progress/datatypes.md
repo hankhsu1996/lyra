@@ -9,15 +9,20 @@ unpacked arrays here; the variable-size aggregate family in `aggregate.md`), `da
 
 ## Actionable
 
-The datatype surface in scope is complete but for one gap (below). Enum, real, string, fixed-size
-unpacked arrays, the integral-family declaration initializers, and parameter references in
-expressions are complete. The variable-size aggregate family (dynamic array, queue, associative
-array) is complete; see `aggregate.md`. Untagged unpacked struct and union are complete. Default
-initialization (LRM Table 6-7) and value representation, including a wide value carrying X/Z across
-the 64-bit word boundary, are complete. Chandle is complete.
+The datatype surface in scope is complete. Enum, real, string, fixed-size unpacked arrays, the
+integral-family declaration initializers, and parameter references in expressions are complete. The
+variable-size aggregate family (dynamic array, queue, associative array) is complete; see
+`aggregate.md`. Unpacked struct and union, tagged and untagged, are complete. Default initialization
+(LRM Table 6-7) and value representation, including a wide value carrying X/Z across the 64-bit word
+boundary, are complete. Chandle is complete.
 
-- [ ] A tagged unpacked union (LRM 7.3.2) is rejected; only the untagged unpacked union is
-      supported. Its packed counterpart is tracked as `packed.md` P4.
+## Tagged union
+
+LRM 7.3.2: a tagged unpacked union carries a tag naming the active member, and every read of a
+member checks it. Construction (`tagged Member value`, or the bare `tagged Member` of a void
+member), member read and write including nested and compound writes, whole-value copy, equality, and
+Table 6-7 default initialization are complete. Pattern matching over one (LRM 12.6) is tracked in
+`control-flow.md`. The packed counterpart is tracked as `packed.md` P4.
 
 ## Enum
 

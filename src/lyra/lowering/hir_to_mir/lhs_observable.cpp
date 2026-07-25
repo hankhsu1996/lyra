@@ -47,6 +47,10 @@ auto FindLhsRootId(
       lhs_id = m->union_value;
       continue;
     }
+    if (const auto* m = std::get_if<mir::TaggedGetRefExpr>(&expr.data)) {
+      lhs_id = m->union_value;
+      continue;
+    }
     if (const auto* base = AsContainerAccessBase(expr)) {
       lhs_id = *base;
       continue;
@@ -79,6 +83,13 @@ auto RewriteLhsRootWithMutate(
   }
   if (const auto* m = std::get_if<mir::UnionGetRefExpr>(&expr.data)) {
     mir::UnionGetRefExpr rewritten = *m;
+    const mir::TypeId result_ty = expr.type;
+    rewritten.union_value = RewriteLhsRootWithMutate(
+        unit, block, rewritten.union_value, runtime_id);
+    return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
+  }
+  if (const auto* m = std::get_if<mir::TaggedGetRefExpr>(&expr.data)) {
+    mir::TaggedGetRefExpr rewritten = *m;
     const mir::TypeId result_ty = expr.type;
     rewritten.union_value = RewriteLhsRootWithMutate(
         unit, block, rewritten.union_value, runtime_id);

@@ -54,8 +54,8 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::CaseStmt& c) {
             return LowerCaseStmt(*this, frame, stmt.label, c, stmt.span);
           },
-          [&](const hir::CaseInsideStmt& c) {
-            return LowerCaseInsideStmt(*this, frame, stmt.label, c, stmt.span);
+          [&](const hir::PatternCaseStmt& c) {
+            return LowerPatternCaseStmt(*this, frame, stmt.label, c, stmt.span);
           },
           [&](const hir::ForStmt& f) {
             return LowerForStmt(*this, frame, stmt.label, f);

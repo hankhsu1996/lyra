@@ -129,6 +129,15 @@ class CallableBindings {
   auto Finalize() -> std::vector<mir::FieldInit>;
 
  private:
+  // Adds a local to this callable's arena under a name no other local of the
+  // body already holds. Two locals must never share a name: a body-scoped
+  // target language renders each declaration where the lowering emitted it, so
+  // a repeated identifier -- two arms of one statement each binding the same
+  // pattern name, two selector snapshots, an inner block reusing an outer
+  // name -- would collide there. Only a colliding name is suffixed, so the
+  // first local to claim a name keeps it.
+  auto AddLocal(mir::LocalDecl decl) -> mir::LocalId;
+
   [[nodiscard]] auto NameOf(BodyBindingRef ref) const -> const std::string&;
 
   struct CaptureEntry {
