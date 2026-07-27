@@ -48,10 +48,15 @@ below LIR, at LIR-to-LLVM.
 - A self-contained type graph: LIR-owned type identities that type every local, value, place
   projection, return, and call argument. Each is translated from a generic-PL type at MIR-to-LIR and
   carries no live reference back to MIR.
-- The place vocabulary: a place is a base local plus a projection chain (member, index, dereference,
-  slice, downcast). Every load, store, and address-of names a place by logical identity.
+- The place vocabulary: a place is a base local plus a projection chain of member and dereference
+  steps. Every load, store, and address-of names a place by logical identity. There is no index or
+  slice step: a value aggregate's interior is not independently addressable, and an array of storage
+  is reached through the indirection its elements already carry.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
+- The value-aggregate selector vocabulary: which subvalue a step names -- a component slot, a
+  runtime coordinate, a fixed-width window. One extract and one update carry every step; the
+  selector never says how the step is realized.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
   identity of every class member and callable a node refers to.
 - Effect ordering within a block.
@@ -96,8 +101,8 @@ identity is the suspect, not the analysis.
    codegen knows for every value whether it lives in memory or in a register-class temporary; no
    value's storage class must be inferred._
 3. LIR fixes logical storage topology, not physical layout. A place names storage by logical
-   identity -- a base local and a projection chain of member, index, and dereference steps -- never
-   as a byte offset, an address, or pointer arithmetic. The physical realization of that topology is
+   identity -- a base local and a projection chain of member and dereference steps -- never as a
+   byte offset, an address, or pointer arithmetic. The physical realization of that topology is
    derived below LIR. _Machine-execution consequence: one LIR program is valid for every target; the
    target-specific layout is a separate derivation, not a property baked into a place._
 4. LIR identity is self-contained. Every type, class, member, and callable a LIR node names is a
@@ -254,15 +259,16 @@ so it is a pair of value operations, an extract and an insert (the aggregate pee
 real, not because one is a special case of the other. The same principle governs the rest of the
 value-aggregate family: a packed slice, a container element, and a union member are value
 sub-accesses, so a sub-write is a functional whole-value update, never a store into an independently
-addressable sub-place -- a static, structural selector (a struct component) may ride a dedicated
-value instruction, a dynamic, runtime-indexed one (a container element) a runtime-library call, but
-the principle that a value sub-write produces a new whole value is the same. A whole-value mutating
-method on a value receiver -- a container's `delete`, a queue's `push` -- follows the same rule: it
-is realized as a functional operation whose result is stored back through the receiver's owner, not
-an in-place mutation of the value. How a target keeps value semantics for such a store is below LIR:
-a target with language-level value copies may fulfill it by mutating a private copy in place, while
-one whose container value is reached through a shared handle must produce a new value, so the model
-LIR states -- a new whole value written back to the owner -- holds for both.
+addressable sub-place. One extract and one update carry every one of them, and the selector says
+only which subvalue is named -- a component slot, a runtime coordinate, a fixed-width window. Which
+library entry realizes a step, and whether it is an instruction or a call at all, is a realization
+question answered below LIR; it never decides which node the step is expressed as. A whole-value
+mutating method on a value receiver -- a container's `delete`, a queue's `push` -- follows the same
+rule: it is realized as a functional operation whose result is stored back through the receiver's
+owner, not an in-place mutation of the value. How a target keeps value semantics for such a store is
+below LIR: a target with language-level value copies may fulfill it by mutating a private copy in
+place, while one whose container value is reached through a shared handle must produce a new value,
+so the model LIR states -- a new whole value written back to the owner -- holds for both.
 
 LIR carries the fact that a packed value is two-state or four-state; it does not carry how a
 four-state value is stored. The canonical encoding of a four-state value -- value bits plus a state

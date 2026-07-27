@@ -70,9 +70,10 @@ what the construct means.
   blocks at this layer.
 - A primitive expression set: literals, references, unary / binary / conditional operators, calls,
   conversions, closures, member access through an explicit receiver expression, access primitives
-  for element and range selection, and value-build primitives for aggregate construction. The set is
-  closed under what a generic programming-language AST needs to express; it does not grow to model a
-  particular backend's storage realization or runtime library shape.
+  for element and range selection, value-build primitives for aggregate construction, and a
+  designator naming a part of a value by the place that owns the whole and the descent that reaches
+  the part. The set is closed under what a generic programming-language AST needs to express; it
+  does not grow to model a particular backend's storage realization or runtime library shape.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection, validation, and golden testing. The dumper is
@@ -351,15 +352,15 @@ it the same way it emits any other call. The wrapper type's target-language spel
 spellings are backend-internal -- `backend_contract.md` owns the rules that keep those out of
 value-emission sites.
 
-An assignment whose target is a place-producing access -- a container element, a struct component, a
-union member -- states an abstract update of the owning value: which owner, which selector, how many
-times the selector evaluates, the value written and its coercion, and that the owning value is the
-value updated. A place names where the write lands; it does not assert that the interior is
-independently addressable storage, an alias with its own identity, or a reference that outlives the
-owner. How that update keeps value semantics is a lower layer's concern: MIR-to-LIR legalizes a
-value-owned projection into explicit whole-value operations -- an extract and an insert, or a
-container primitive -- where the target's representation requires it (`lir.md`), and a backend may
-instead realize the same semantics by mutating private storage in place. A write-side selector whose
-name carries `Ref` marks the write side of the access, not a first-class interior reference; a
-reference that could escape the owner or alias it would be a distinct concept, not this target
-place.
+An assignment whose target descends into a value -- a container element, a struct component, a union
+member, a fixed-width range -- states an abstract update of the owning value: which owner, which
+selectors, how many times each evaluates, the value written and its coercion, and that the owning
+value is the value updated. The owner is a place; the descent is not. Nothing about the target
+asserts that the interior is independently addressable storage, an alias with its own identity, or a
+reference that outlives the owner -- a value aggregate has no such interior to name. How that update
+keeps value semantics is a lower layer's concern: MIR-to-LIR legalizes the descent into explicit
+whole-value operations, an extract and an insert (`lir.md`), and a backend may instead realize the
+same semantics by mutating private storage in place. A construct that binds the designated part
+rather than writing it -- a reference actual, an output pack component, a nonblocking update --
+binds the same statement of owner and descent; it is owner-relative, so it names no interior pointer
+and aliases nothing the owner does not already own.

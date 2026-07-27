@@ -9,6 +9,35 @@ coverage. The roll-up entry is the "Execution backend" item in `architecture-res
 Contracts: `../architecture/backend_contract.md`, `../architecture/lir.md`,
 `../architecture/runtime_distribution.md`, `../architecture/object_lifetime.md`.
 
+## Divergences from the C++ backend
+
+Source both backends accept, where the execution backend gives a different answer. These are a
+distinct class from the gaps below: a gap refuses to lower and announces itself the moment it is
+reached, while a divergence returns an answer that is simply wrong. In each one the semantic is
+stated in full upstream and the C++ backend honors it, so the shared MIR is not what needs to change
+-- only this backend's realization of it. The coverage item under "Other backend surfaces" is why
+they stay invisible: each was found by hand rather than by a suite.
+
+- [ ] **A four-state or wide integral literal loses its value.** A literal's unknown bits (`x` /
+      `z`) do not survive into generated code, so an `x`-bearing constant compares and prints as a
+      known value; a literal wider than one machine word keeps only its low word and reads as a
+      different number. Both backends are handed the literal's complete value, and the C++ backend
+      materializes whichever construction that value calls for.
+
+- [ ] **A task that suspends is abandoned by its enabler.** Enabling a task that contains a timing
+      control runs it up to its first suspension and never resumes it: the enabler continues
+      immediately and every statement past the suspension is skipped, with no diagnostic. Control
+      returning to the enabler only after the task completes (LRM 13.3) holds on the C++ backend.
+      The suspension protocol is stated once for every awaitable; only the awaitables that register
+      their own wakeup are realized here, not one whose completion is another body's to signal. A
+      value-carrying suspension is separately rejected outright, so the silent case is the void one.
+
+- [ ] **A net cannot be driven.** A continuous assignment to a net fails to lower: the write
+      capability a driver hands generated code is treated as storage rather than as the first-class
+      handle the net model (`../decisions/net-driver-resolution.md`) defines it to be, so installing
+      a driver is rejected. Nets resolve end to end on the C++ backend, so every net-bearing design
+      parts ways here.
+
 ## Runtime-value lifetime
 
 A runtime value crosses the execution boundary as an opaque handle into runtime-owned storage

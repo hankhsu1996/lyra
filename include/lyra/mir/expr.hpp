@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -91,23 +92,20 @@ struct ConditionalExpr {
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`.
 //
-// `target` is an ExprId pointing at one of: a PrimaryExpr var reference,
-// an addressable selector chain (per `mir::IsContainerAccessCall`), or a
-// queue write-side access call that returns the element reference. The
-// ConcatExpr-as-target form (LRM 11.4.12 destructuring LHS) is desugared
-// upstream into a snapshot + per-part assignment sequence, so render does
-// not encounter it.
+// `target` is either a place, whose write is a store, or a
+// `ValueProjectionExpr`, whose write is a functional whole-value update through
+// the designated part's owner. The ConcatExpr-as-target form (LRM 11.4.12
+// destructuring LHS) is desugared upstream into a snapshot + per-part
+// assignment sequence, so render does not encounter it.
 struct AssignExpr {
   ExprId target;
   std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId value;
 };
 
-// LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Mirrors hir::IncDecExpr. The
-// `target` ExprId points at an addressable expression (a PrimaryExpr var
-// reference or an addressable container-access chain per
-// `mir::IsContainerAccessCallee`); ConcatExpr-as-target is illegal per
-// slang.
+// LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Mirrors hir::IncDecExpr. `target`
+// takes the same two forms an assignment target does, a place or a designated
+// part; ConcatExpr-as-target is illegal per slang.
 struct IncDecExpr {
   IncDecOp op;
   ExprId target;
@@ -493,24 +491,10 @@ struct UnionExpr {
 // union member access and the active-member analogue of `TupleGetExpr` (both
 // `std::get<I>`-style positional access). `Expr::type` is the component's type.
 // Reading an inactive member is undefined in SV (LRM 7.3) and the backend
-// returns that member's default. The write side is `UnionGetRefExpr`; the read
-// and write are separate access forms because a union member's read realization
-// (a value) differs from its write realization (a reference that activates the
-// member), exactly as a packed array element splits into element-value and
-// element-reference forms.
+// returns that member's default. A write is not this node's dual: writing a
+// member is a descent step on the target's designator, which makes the member
+// active as part of the whole-value update.
 struct UnionGetExpr {
-  ExprId union_value;
-  std::size_t index;
-};
-
-// The writable location of union member `index` (`u.f` as an assignment
-// target), the write side and by-reference counterpart of `UnionGetExpr`.
-// `Expr::type` is the component's type. As an `AssignExpr` target it carries
-// `u.f = v`, `u.f op= v`, and a nested `u.f.g = v` uniformly with every other
-// lvalue; the backend renders it as a reference to the active member (making
-// the member active first if needed), so further member or element projection
-// composes on it as on a struct member.
-struct UnionGetRefExpr {
   ExprId union_value;
   std::size_t index;
 };
@@ -540,11 +524,11 @@ struct TaggedGetExpr {
 };
 
 // The writable location of tagged-union component `tag_index` (`u.Member` as an
-// assignment target), the write side of tagged-union member access and the
-// tagged analogue of `UnionGetRefExpr`. Unlike its untagged counterpart, which
-// activates the member on write, this is a run-time error when `tag_index` is
-// not the current tag (LRM 11.9): re-tagging goes through a whole-value
-// `TaggedExpr` construction, not a member write.
+// assignment target), the write side of tagged-union member access. Writing an
+// untagged union's member makes that member active; a tagged union's does not
+// -- a write whose `tag_index` is not the current tag is a run-time error (LRM
+// 11.9), and re-tagging goes through a whole-value `TaggedExpr` construction
+// rather than a member write.
 struct TaggedGetRefExpr {
   ExprId union_value;
   std::size_t tag_index;
@@ -615,6 +599,66 @@ struct ExternalStaticPropertyRef {
   std::string property_name;
 };
 
+// One descent step into a value, naming a part of it. A step is positional (a
+// product component, a union member) or coordinate-bearing (an element, a
+// window). A coordinate-bearing step's operands are the source-level
+// coordinates followed by the operands the value's family takes from its static
+// type rather than from the value -- the declared range for the unpacked
+// family, the declared result shape for a packed window. No operand is ever a
+// rebased position: the coordinate system belongs to the value being selected.
+// Each step states the type of the part it reaches, so a consumer descending
+// the path knows every intermediate value's type without reimplementing the
+// projection rules. The value a step descends into is the previous step's part,
+// or the owner's value at the first step.
+struct ComponentSelector {
+  std::size_t index;
+  TypeId projected_type;
+};
+
+// Selecting a union member makes it the active one; the update carries that
+// activation (LRM 7.3).
+struct UnionMemberSelector {
+  std::size_t index;
+  TypeId projected_type;
+};
+
+// LRM 7.4.5 / 7.5 / 7.8 / 7.10 / 11.5.1 positional access: an array, queue, or
+// associative element, a string character, a packed bit-select.
+struct ElementSelector {
+  std::vector<ExprId> operands;
+  TypeId projected_type;
+};
+
+// LRM 7.4.6 / 11.5.1 fixed-width window: a packed part-select, an unpacked
+// slice, and a packed aggregate's member, which projects to a constant-bounds
+// window over the aggregate's base.
+struct SliceSelector {
+  std::vector<ExprId> operands;
+  TypeId projected_type;
+};
+
+using Selector = std::variant<
+    ComponentSelector, UnionMemberSelector, ElementSelector, SliceSelector>;
+
+// Designates a part of the value held by a place: the place that owns the whole
+// value, and the descent that reaches the part. Writing through it is a
+// functional whole-value update -- read the owner, rebuild it with the part
+// replaced, store it back -- because a value aggregate's interior is not
+// independently addressable. `Expr::type` is the designated part's type.
+//
+// The owner is a place and the path never crosses a dereference: where a chain
+// re-enters storage, that dereference terminates the path and whatever
+// projection reached the referent is an ordinary read inside `owner`.
+//
+// This is the write-side form. A read composes bottom-up through ordinary
+// select expressions and needs no owner, because every step of a read is a
+// function from a value to a part of it; a write has to name where the rebuilt
+// value goes.
+struct ValueProjectionExpr {
+  ExprId owner;
+  std::vector<Selector> path;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     MachineIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
@@ -622,8 +666,8 @@ using ExprData = std::variant<
     MoveExpr, PointerCastExpr, IntCastExpr, FieldAccessExpr,
     StructConstructExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
     ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr, UnionExpr,
-    UnionGetExpr, UnionGetRefExpr, TaggedExpr, TaggedGetExpr, TaggedGetRefExpr,
-    TaggedIsExpr, FunctionRef, StaticConstantRef, StaticPropertyRef,
+    UnionGetExpr, TaggedExpr, TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr,
+    ValueProjectionExpr, FunctionRef, StaticConstantRef, StaticPropertyRef,
     ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 struct Expr {
@@ -655,7 +699,6 @@ struct Expr {
 
 // Whether the call's `args[0]` is the container being accessed (indexed or
 // sliced). LHS-chain walkers use this to reach the root primary.
-[[nodiscard]] auto IsContainerAccessCallee(const Callee& callee) -> bool;
 
 // `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
 // capability view through a thread-local pointer the Runtime publishes for

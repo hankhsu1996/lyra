@@ -19,9 +19,14 @@ auto lyra_rt_time_format(void* runtime) -> const void*;
 auto lyra_rt_make_string(void* cstr) -> void*;
 auto lyra_rt_make_print_literal_item(void* string_value) -> void*;
 auto lyra_rt_format(LyraSpan items, const void* time_format) -> void*;
+// A packed constant carries its full dimension stack (a flat `{left, right}`
+// pair array of `dims_count` ranges) so a multi-dim packed value keeps its
+// shape into element / slice access -- the same `PackedType` the C++ backend
+// renders inline. `value` fills the low word; a wider constant's upper words
+// are sign/zero filled.
 auto lyra_rt_packed_const(
-    std::int64_t value, std::int32_t width, bool is_signed, bool is_four_state)
-    -> void*;
+    std::int64_t value, const std::int64_t* dims, std::int64_t dims_count,
+    bool is_signed, bool is_four_state) -> void*;
 void lyra_rt_writeln(void* files, void* descriptor, void* text);
 void lyra_rt_write(void* files, void* descriptor, void* text);
 // Wraps a generated process body in a runtime-owned coroutine. `ramp` starts
@@ -170,6 +175,22 @@ auto lyra_rt_packed_reduction_nand(const void* value) -> void*;
 auto lyra_rt_packed_reduction_nor(const void* value) -> void*;
 auto lyra_rt_packed_reduction_xnor(const void* value) -> void*;
 auto lyra_rt_packed_to_owned(const void* value) -> void*;
+// Positional access (LRM 11.5.1). `element` copies the bit-select / element
+// out; `with_element` returns a copy with that element replaced -- the
+// functional write the execution backend uses because it cannot mutate a packed
+// value in place.
+auto lyra_rt_packed_element(const void* value, const void* index) -> void*;
+auto lyra_rt_packed_with_element(
+    const void* value, const void* index, const void* replacement) -> void*;
+// A part-select states the shape its result takes through `shape`, a value of
+// the result's declared type: the bounds decide which bits are selected, that
+// type decides how they are structured.
+auto lyra_rt_packed_slice(
+    const void* value, const void* a, const void* b, const void* form,
+    const void* shape) -> void*;
+auto lyra_rt_packed_with_slice(
+    const void* value, const void* a, const void* b, const void* form,
+    const void* shape, const void* replacement) -> void*;
 
 auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
 // The C string a `string` crosses the DPI-C boundary as (LRM 35.5.6). It points
@@ -178,6 +199,12 @@ auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
 auto lyra_rt_string_string_cstr(const void* value) -> const char*;
 auto lyra_rt_string_len(const void* value) -> void*;
 auto lyra_rt_string_getc(const void* value, const void* index) -> void*;
+// Positional access (LRM 6.16.2). `element` reads the character; `with_element`
+// returns a copy with one character replaced -- the functional write the
+// execution backend uses because it cannot mutate a string in place.
+auto lyra_rt_string_element(const void* value, const void* index) -> void*;
+auto lyra_rt_string_with_element(
+    const void* value, const void* index, const void* replacement) -> void*;
 auto lyra_rt_string_toupper(const void* value) -> void*;
 auto lyra_rt_string_tolower(const void* value) -> void*;
 auto lyra_rt_string_compare(const void* lhs, const void* rhs) -> void*;

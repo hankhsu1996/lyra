@@ -362,6 +362,228 @@ auto WriteDynArraySource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// Every descent step a write target can take, composed and nested: a product
+// component reached through another component, a packed bit-select, a packed
+// window (plain and compound), a string character, a union member, and an
+// increment. One source so the paths are exercised together rather than each in
+// isolation, which is where a shared write path would break first.
+auto WriteInteriorWriteSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  typedef struct {\n"
+      << "    logic [15:0] w;\n"
+      << "    string s;\n"
+      << "  } Inner;\n"
+      << "  typedef struct {\n"
+      << "    Inner i;\n"
+      << "    int n;\n"
+      << "  } Outer;\n"
+      << "  typedef union packed {\n"
+      << "    logic [15:0] a;\n"
+      << "    logic signed [15:0] b;\n"
+      << "  } U;\n"
+      << "  typedef struct { int a; int b; } Pair;\n"
+      << "  typedef struct { int v[]; } Box;\n"
+      << "  Outer o;\n"
+      << "  U u;\n"
+      << "  int idx;\n"
+      << "  Pair pr[];\n"
+      << "  Box bx;\n"
+      << "  int aa[][];\n"
+      << "  Pair psig[];\n"
+      << "  int mirror = 0;\n"
+      << "  always_comb mirror = psig[0].a * 100 + psig[0].b;\n"
+      << "  function automatic logic [15:0] setbits(logic [15:0] x);\n"
+      << "    logic [15:0] v;\n"
+      << "    v = x;\n"
+      << "    v[0] = 1'b1;\n"
+      << "    v[7:4] = 4'hC;\n"
+      << "    return v;\n"
+      << "  endfunction\n"
+      << "  initial begin\n"
+      << "    idx = 1;\n"
+      << "    o.n = 7;\n"
+      << "    o.n++;\n"
+      << "    $display(\"n=%0d\", o.n);\n"
+      << "    o.i.w = 16'h0000;\n"
+      << "    o.i.w[idx] = 1'b1;\n"
+      << "    o.i.w[20] = 1'b1;\n"
+      << "    o.i.w[7:4] = 4'hA;\n"
+      << "    o.i.w[11:8] += 4'h3;\n"
+      << "    o.i.w[12 +: 4] = 4'h5;\n"
+      << "    o.i.w[3 -: 4] = 4'hF;\n"
+      << "    $display(\"w=%h\", o.i.w);\n"
+      << "    o.i.w = setbits(16'h0000);\n"
+      << "    $display(\"fn=%h\", o.i.w);\n"
+      << "    o.i.s = \"hello\";\n"
+      << "    o.i.s[0] = \"H\";\n"
+      << "    o.i.s[100] = \"X\";\n"
+      << "    o.i.s[2] = 8'h00;\n"
+      << "    $display(\"s=%s\", o.i.s);\n"
+      << "    u.a = 16'hFFFF;\n"
+      << "    u.b = 16'h0000;\n"
+      << "    u.a[3:0] = 4'h5;\n"
+      << "    $display(\"u=%h\", u.a);\n"
+      << "    pr = new[2];\n"
+      << "    pr[0].a = 5;\n"
+      << "    pr[0].b = 6;\n"
+      << "    pr[0].a += 10;\n"
+      << "    $display(\"da a0=%0d b0=%0d\", pr[0].a, pr[0].b);\n"
+      << "    bx.v = new[3];\n"
+      << "    bx.v[0] = 10;\n"
+      << "    bx.v[0] += 5;\n"
+      << "    $display(\"sd v0=%0d\", bx.v[0]);\n"
+      << "    aa = new[2];\n"
+      << "    aa[0] = new[2];\n"
+      << "    aa[0][1] = 42;\n"
+      << "    aa[0][1] += 8;\n"
+      << "    $display(\"aa 01=%0d\", aa[0][1]);\n"
+      << "    psig = new[1];\n"
+      << "    psig[0].a = 1;\n"
+      << "    psig[0].b = 2;\n"
+      << "    #1;\n"
+      << "    $display(\"obs mirror=%0d\", mirror);\n"
+      << "    psig[0].a = 7;\n"
+      << "    #1;\n"
+      << "    $display(\"obs2 mirror=%0d a=%0d\", mirror, psig[0].a);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+// A multi-dimensional packed value keeps its declared shape wherever it lives:
+// a variable, a packed struct's member, a packed union's member. The shape is
+// what decides how wide one element is, so an element read, an element write, a
+// compound update, and a window inside an element all depend on it reaching the
+// runtime. The execution backend carries a packed value behind an opaque
+// handle, so a shape it fails to carry is only visible as a wrong element width
+// here.
+auto WritePackedShapeSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  typedef struct packed {\n"
+      << "    logic [1:0][7:0] f;\n"
+      << "    logic [15:0] g;\n"
+      << "  } S;\n"
+      << "  typedef union packed {\n"
+      << "    logic [15:0] w;\n"
+      << "    logic [1:0][7:0] b;\n"
+      << "  } U;\n"
+      << "  logic [1:0][3:0] m;\n"
+      << "  logic [3:0] e;\n"
+      << "  S s;\n"
+      << "  U u;\n"
+      << "  logic [7:0] c;\n"
+      << "  int idx;\n"
+      << "  initial begin\n"
+      << "    m = 8'h00;\n"
+      << "    idx = 1;\n"
+      << "    m[1] = 4'hA;\n"
+      << "    m[0] = 4'h5;\n"
+      << "    $display(\"w m=%h\", m);\n"
+      << "    e = m[1];\n"
+      << "    $display(\"r e=%h\", e);\n"
+      << "    m[idx] += 4'h1;\n"
+      << "    $display(\"c m=%h\", m);\n"
+      << "    m[0][1] = 1'b1;\n"
+      << "    $display(\"b m=%h\", m);\n"
+      << "    s = 32'h0;\n"
+      << "    s.f[0] = 8'hAB;\n"
+      << "    s.f[1] = 8'hCD;\n"
+      << "    $display(\"sf=%h g=%h\", s.f, s.g);\n"
+      << "    c = s.f[1];\n"
+      << "    $display(\"se=%h\", c);\n"
+      << "    s.f[0][3:0] = 4'h5;\n"
+      << "    $display(\"ss=%h\", s.f);\n"
+      << "    u.w = 16'h0000;\n"
+      << "    u.b[0] = 8'hAB;\n"
+      << "    u.b[1] = 8'hCD;\n"
+      << "    $display(\"uw=%h\", u.w);\n"
+      << "    c = u.b[0];\n"
+      << "    $display(\"ue=%h\", c);\n"
+      << "    u.b[0][3:0] = 4'h5;\n"
+      << "    $display(\"us=%h\", u.w);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+TEST(LyraRun, JitAndCppAgreeOnInteriorWrite) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteInteriorWriteSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "n=8\n"
+      "w=53af\n"
+      "fn=00c1\n"
+      "s=Hello\n"
+      "u=0005\n"
+      "da a0=15 b0=6\n"
+      "sd v0=15\n"
+      "aa 01=50\n"
+      "obs mirror=102\n"
+      "obs2 mirror=702 a=7\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnPackedShape) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WritePackedShapeSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "w m=a5\n"
+      "r e=a\n"
+      "c m=b5\n"
+      "b m=b7\n"
+      "sf=cdab g=0000\n"
+      "se=cd\n"
+      "ss=cda5\n"
+      "uw=cdab\n"
+      "ue=ab\n"
+      "us=cda5\n")
+      << "stdout: " << jit.stdout_text;
+}
+
 TEST(LyraRun, ExecutesSourceEndToEnd) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();

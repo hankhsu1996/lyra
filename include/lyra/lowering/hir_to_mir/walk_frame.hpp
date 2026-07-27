@@ -68,13 +68,6 @@ struct WalkFrame {
   // callable; replaced at a callable boundary.
   CallableBindings* bindings = nullptr;
 
-  // True while lowering an assignment's left-hand side. A queue
-  // element-select dispatches to its write-side callee (LRM 7.10.1
-  // append-aware) under this flag; the index and other rvalue
-  // sub-expressions clear it. Read only by the queue element-select
-  // lowering -- the other selector forms have explicit LHS entry points.
-  bool is_lvalue_target = false;
-
   // Pushes `cls` as the current class and links the previous `current_class`
   // into the outer chain through `chain_node`, which the caller stack-allocates
   // so its lifetime spans the descent.
@@ -145,12 +138,6 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.bindings = callable_bindings;
-    return next;
-  }
-
-  [[nodiscard]] auto WithLvalueTarget(bool is_target) const -> WalkFrame {
-    WalkFrame next = *this;
-    next.is_lvalue_target = is_target;
     return next;
   }
 };

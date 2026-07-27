@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -399,14 +400,40 @@ auto CodeGenFunction::LowerTupleAggregate(
 auto CodeGenFunction::LowerAggregateExtract(
     const lir::AggregateExtractInstr& extract) -> llvm::Value* {
   llvm::Value* aggregate = LowerOperand(extract.aggregate);
+  const ValueDomain domain = DomainOf(OperandType(extract.aggregate));
+  const auto coordinates = [&](const std::vector<lir::Operand>& operands) {
+    std::vector<llvm::Value*> args = {aggregate};
+    std::vector<llvm::Type*> params = {module_->Types().Ptr()};
+    for (const lir::Operand& operand : operands) {
+      args.push_back(LowerOperand(operand));
+      params.push_back(module_->Types().Map(OperandType(operand)));
+    }
+    return std::pair{std::move(args), std::move(params)};
+  };
   return std::visit(
-      Overloaded{[&](const lir::TupleElement& element) -> llvm::Value* {
-        return builder_.CreateCall(
-            module_->Runtime().TupleExtract(),
-            {aggregate,
-             llvm::ConstantInt::get(
-                 llvm::Type::getInt64Ty(module_->Context()), element.index)});
-      }},
+      Overloaded{
+          [&](const lir::TupleElement& element) -> llvm::Value* {
+            return builder_.CreateCall(
+                module_->Runtime().TupleExtract(),
+                {aggregate, llvm::ConstantInt::get(
+                                llvm::Type::getInt64Ty(module_->Context()),
+                                element.index)});
+          },
+          [&](const lir::UnionMember&) -> llvm::Value* {
+            throw InternalError(
+                "llvm codegen: a union value is not yet realized on this "
+                "backend, so a member read has no entry");
+          },
+          [&](const lir::ContainerElement& e) -> llvm::Value* {
+            auto [args, params] = coordinates(e.operands);
+            return builder_.CreateCall(
+                module_->Runtime().ElementExtract(domain, params), args);
+          },
+          [&](const lir::ContainerSlice& s) -> llvm::Value* {
+            auto [args, params] = coordinates(s.operands);
+            return builder_.CreateCall(
+                module_->Runtime().SliceExtract(domain, params), args);
+          }},
       extract.selector);
 }
 
@@ -414,15 +441,43 @@ auto CodeGenFunction::LowerAggregateUpdate(
     const lir::AggregateUpdateInstr& update) -> llvm::Value* {
   llvm::Value* aggregate = LowerOperand(update.aggregate);
   llvm::Value* replacement = LowerOperand(update.replacement);
+  const ValueDomain domain = DomainOf(OperandType(update.aggregate));
+  const auto coordinates = [&](const std::vector<lir::Operand>& operands) {
+    std::vector<llvm::Value*> args = {aggregate};
+    std::vector<llvm::Type*> params = {module_->Types().Ptr()};
+    for (const lir::Operand& operand : operands) {
+      args.push_back(LowerOperand(operand));
+      params.push_back(module_->Types().Map(OperandType(operand)));
+    }
+    args.push_back(replacement);
+    params.push_back(module_->Types().Map(OperandType(update.replacement)));
+    return std::pair{std::move(args), std::move(params)};
+  };
   return std::visit(
-      Overloaded{[&](const lir::TupleElement& element) -> llvm::Value* {
-        return builder_.CreateCall(
-            module_->Runtime().TupleUpdate(),
-            {aggregate,
-             llvm::ConstantInt::get(
-                 llvm::Type::getInt64Ty(module_->Context()), element.index),
-             replacement});
-      }},
+      Overloaded{
+          [&](const lir::TupleElement& element) -> llvm::Value* {
+            return builder_.CreateCall(
+                module_->Runtime().TupleUpdate(),
+                {aggregate,
+                 llvm::ConstantInt::get(
+                     llvm::Type::getInt64Ty(module_->Context()), element.index),
+                 replacement});
+          },
+          [&](const lir::UnionMember&) -> llvm::Value* {
+            throw InternalError(
+                "llvm codegen: a union value is not yet realized on this "
+                "backend, so a member write has no entry");
+          },
+          [&](const lir::ContainerElement& e) -> llvm::Value* {
+            auto [args, params] = coordinates(e.operands);
+            return builder_.CreateCall(
+                module_->Runtime().ElementUpdate(domain, params), args);
+          },
+          [&](const lir::ContainerSlice& s) -> llvm::Value* {
+            auto [args, params] = coordinates(s.operands);
+            return builder_.CreateCall(
+                module_->Runtime().SliceUpdate(domain, params), args);
+          }},
       update.selector);
 }
 
@@ -472,11 +527,30 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
       constant.value.state_kind == lir::IntegralStateKind::kFourState;
   auto* i64_ty = llvm::Type::getInt64Ty(module_->Context());
   auto* i1_ty = llvm::Type::getInt1Ty(module_->Context());
+
+  // The declared dimension stack travels with the constant so a multi-dim
+  // packed value keeps its shape into element / slice access -- the same
+  // PackedType the C++ backend renders inline.
+  const std::vector<lir::PackedRange>& dims =
+      lir::PackedShape(module_->Unit().types, constant.type).dims;
+  std::vector<llvm::Constant*> bounds;
+  bounds.reserve(dims.size() * 2);
+  for (const lir::PackedRange& range : dims) {
+    bounds.push_back(llvm::ConstantInt::get(i64_ty, range.left));
+    bounds.push_back(llvm::ConstantInt::get(i64_ty, range.right));
+  }
+  auto* bounds_ty = llvm::ArrayType::get(i64_ty, bounds.size());
+  auto* bounds_global = new llvm::GlobalVariable(
+      module_->Module(), bounds_ty, true, llvm::GlobalValue::PrivateLinkage,
+      llvm::ConstantArray::get(bounds_ty, bounds));
+  bounds_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  llvm::Value* bounds_ptr =
+      builder_.CreateConstInBoundsGEP2_64(bounds_ty, bounds_global, 0, 0);
+
   return builder_.CreateCall(
       module_->Runtime().PackedConst(),
-      {llvm::ConstantInt::get(i64_ty, value),
-       llvm::ConstantInt::get(
-           llvm::Type::getInt32Ty(module_->Context()), constant.value.width),
+      {llvm::ConstantInt::get(i64_ty, value), bounds_ptr,
+       llvm::ConstantInt::get(i64_ty, static_cast<std::uint64_t>(dims.size())),
        llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0),
        llvm::ConstantInt::get(i1_ty, is_four_state ? 1 : 0)});
 }

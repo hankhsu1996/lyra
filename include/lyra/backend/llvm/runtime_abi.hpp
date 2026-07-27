@@ -174,6 +174,14 @@ class RuntimeAbi {
   // when the product is shared.
   auto TupleMake() -> llvm::FunctionCallee;
   auto TupleExtract() -> llvm::FunctionCallee;
+  auto ElementExtract(ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+      -> llvm::FunctionCallee;
+  auto SliceExtract(ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+      -> llvm::FunctionCallee;
+  auto ElementUpdate(ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+      -> llvm::FunctionCallee;
+  auto SliceUpdate(ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+      -> llvm::FunctionCallee;
   auto TupleUpdate() -> llvm::FunctionCallee;
 
   // The dynamic-array constructors (LRM 7.5.1 / 10.9.1): the empty array, the

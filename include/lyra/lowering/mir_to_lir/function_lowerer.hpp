@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <variant>
@@ -93,21 +94,29 @@ class FunctionLowerer {
       -> diag::Result<lir::Operand>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
-  // A write to one component of a product value (`s.f = x`). The chain of
-  // component projections is rebuilt bottom-up as pure functional-update values
-  // over the product's current whole value, then the rebuilt whole value is
-  // stored back through the product's storage owner -- so value semantics hold
-  // and, when the owner is an observable cell, the whole-cell update fires.
-  auto LowerComponentAssign(
-      const mir::Block& block, const mir::AssignExpr& assign)
-      -> diag::Result<lir::Operand>;
-  // A write to one element of a value container (`arr[i] = x`). The container
-  // is a value reached by an opaque handle, so the element write is a
-  // functional whole-value update: read the whole container, produce a new one
-  // with the element replaced, store it back through the container's owner --
-  // the runtime-library counterpart of `LowerComponentAssign`'s static value
-  // instructions, for a dynamic, runtime-indexed selector.
-  auto LowerElementAssign(
+  // Extracts the designated part's current value; called at most once, and only
+  // by a leaf transform that needs the old value.
+  using LeafReader = std::function<lir::Operand()>;
+  // Produces the designated part's new value, given a reader for its current
+  // one and the part's type.
+  using LeafTransform =
+      std::function<diag::Result<lir::Operand>(const LeafReader&, lir::TypeId)>;
+  // The shared realization of every write through a designator: read the
+  // owner's whole value, descend the path, transform the part, rebuild the
+  // whole value outward, store it back. The owner and every coordinate evaluate
+  // exactly once, and the store back through the owner is a single one -- for
+  // an observable owner, one cell write whatever the path's depth.
+  auto LowerProjectionUpdate(
+      const mir::Block& block, mir::ExprId target,
+      const LeafTransform& make_leaf) -> diag::Result<lir::Operand>;
+  // A write through a designated part of an owner's value (`s.f = x`,
+  // `arr[i] = x`, `a[i].f = x`). The owner's whole value is read, the path is
+  // folded into a functional whole-value update -- a product component a static
+  // value instruction, a container element a runtime-library call -- and the
+  // rebuilt whole value is stored back through the owner, so value semantics
+  // hold and, when the owner is an observable cell, the whole-cell update
+  // fires once whatever the path's depth.
+  auto LowerProjectionAssign(
       const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
   // A receiver-mutating value-container method (`arr.delete()`). The container
