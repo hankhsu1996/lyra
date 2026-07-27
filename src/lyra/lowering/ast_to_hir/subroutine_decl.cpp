@@ -1,9 +1,12 @@
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -47,9 +50,21 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
 
 namespace {
 
-// Classifies an SV type into its DPI-C carrier (LRM 35.5.6, Annex H.10 /
-// Table H.1). This is the one place slang types are inspected for DPI. The
-// dispatch is on the declared type shape, not the bit width -- WYSIWYG
+// The ABI projection of one DPI-C type: the carrier it crosses as, and the SV
+// type whose values the boundary marshals. The two differ for an open array,
+// whose extent is the actual's (LRM 35.6.1.1) -- the declaration fixes only the
+// element type, so that is what the boundary marshals values of.
+struct DpiTypeAbi {
+  support::DpiCarrier carrier;
+  const slang::ast::Type* marshaled_type = nullptr;
+};
+
+auto ClassifyDpiType(const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<DpiTypeAbi>;
+
+// Classifies one SV value type into its DPI-C carrier (LRM 35.5.6, Annex H.10 /
+// Table H.1). The dispatch is on the declared type shape, not the bit width --
+// WYSIWYG
 // (LRM 35.6.1.1) makes `int` (by-value C `int`) and `bit [31:0]` (canonical
 // `svBitVecVal*`) different DPI ABIs even though both are 32-bit 2-state.
 //
@@ -59,9 +74,9 @@ namespace {
 //   packed `bit [N:0]`                    -> canonical bit vector
 //   packed `logic [N:0]`                  -> canonical logic vector
 //
-// `real`, `string`, `chandle`, `void` are by-value scalars. `shortreal`, packed
-// struct / union, and open arrays are a located Unsupported so the gap stays a
-// clean diagnostic.
+// `real`, `string`, `chandle`, `void` are by-value scalars. `shortreal` and
+// packed struct / union are a located Unsupported so the gap stays a clean
+// diagnostic.
 auto ClassifyDpiCarrier(const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<support::DpiCarrier> {
   const auto& t = type.getCanonicalType();
@@ -121,16 +136,108 @@ auto ClassifyDpiCarrier(const slang::ast::Type& type, diag::SourceSpan span)
       span, diag::DiagCode::kUnsupportedDpi, "DPI-C type is not yet supported");
 }
 
+// LRM 35.5.6.1: a formal leaving at least one dimension unsized crosses as an
+// open array. Walks the declared dimensions outermost-first -- a sized one is a
+// fixed unpacked layer, an unsized one an open layer -- to the element type,
+// recording per dimension the range the declaration fixes or nothing where the
+// actual supplies it (Annex H.7.6).
+//
+// An array with no unsized dimension is not an open array and is rejected:
+// Annex H.11.4 requires it to have C-compiler layout, which an SV value does
+// not have. An element type Annex H.7.3 puts in C-compatible rather than
+// canonical form is rejected for the same reason -- the LRM permits it, Lyra
+// cannot yet represent it.
+auto ClassifyOpenArray(const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<DpiTypeAbi> {
+  support::OpenArrayCarrier open;
+  const slang::ast::Type* cursor = &type;
+  while (true) {
+    const auto& layer = cursor->getCanonicalType();
+    if (layer.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+      const auto& fixed = layer.as<slang::ast::FixedSizeUnpackedArrayType>();
+      open.unpacked.emplace_back(
+          support::DpiRange{
+              .left = static_cast<std::int64_t>(fixed.range.left),
+              .right = static_cast<std::int64_t>(fixed.range.right)});
+      cursor = &fixed.elementType;
+      continue;
+    }
+    if (layer.kind != slang::ast::SymbolKind::DPIOpenArrayType) {
+      break;
+    }
+    const auto& unsized = layer.as<slang::ast::DPIOpenArrayType>();
+    cursor = &unsized.elementType;
+    if (unsized.isPacked) {
+      open.packed_unsized = true;
+      break;
+    }
+    open.unpacked.emplace_back();
+  }
+
+  const auto dimension_is_unsized =
+      [](const std::optional<support::DpiRange>& declared) {
+        return !declared.has_value();
+      };
+  if (!open.packed_unsized &&
+      !std::ranges::any_of(open.unpacked, dimension_is_unsized)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedDpi,
+        "a sized unpacked array is not yet supported as a DPI-C argument; "
+        "leave a dimension unsized to pass it as an open array");
+  }
+  // The foreign side reaches an element through the indexing entries Annex
+  // H.12.3 specializes for one, two, and three indices. Its variable-argument
+  // forms, which an array of more dimensions would need, are not published.
+  if (open.unpacked.size() > 3) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedDpi,
+        "an open array of more than three unpacked dimensions is not yet "
+        "supported");
+  }
+
+  auto element = ClassifyDpiType(*cursor, span);
+  if (!element) return std::unexpected(std::move(element.error()));
+  if (const auto* scalar =
+          std::get_if<support::ScalarCarrier>(&element->carrier);
+      scalar != nullptr && !DpiScalarAbiIsIntegral(scalar->abi)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedDpi,
+        "an open array of this element type is not yet supported; only 2- and "
+        "4-state scalar and packed element types are");
+  }
+  // An unsized packed dimension makes every element a packed vector of the
+  // actual's own width, which the foreign side reaches through the canonical
+  // representation whatever the declared element atom is (LRM Annex H.12.1).
+  // With the packed dimension sized, the element's own ABI family decides.
+  open.element_crosses_as_canonical_vector =
+      open.packed_unsized ||
+      std::holds_alternative<support::VectorCarrier>(element->carrier);
+  return DpiTypeAbi{
+      .carrier = std::move(open), .marshaled_type = element->marshaled_type};
+}
+
+auto ClassifyDpiType(const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<DpiTypeAbi> {
+  const slang::ast::SymbolKind kind = type.getCanonicalType().kind;
+  if (kind == slang::ast::SymbolKind::DPIOpenArrayType ||
+      kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+    return ClassifyOpenArray(type, span);
+  }
+  auto carrier = ClassifyDpiCarrier(type, span);
+  if (!carrier) return std::unexpected(std::move(carrier.error()));
+  return DpiTypeAbi{.carrier = *std::move(carrier), .marshaled_type = &type};
+}
+
 // Classifies a DPI-C function result. LRM 35.5.5 restricts a result to a small
 // value -- a by-value scalar; a canonical vector (a packed value, `integer`, or
-// `time`) cannot be returned. So a vector carrier here is an error, not a
-// by-pointer result.
+// `time`) and an open array cannot be returned. So anything but a scalar
+// carrier here is an error, not a by-pointer or by-handle result.
 auto ClassifyDpiScalarResult(
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<support::DpiScalarAbi> {
-  auto carrier = ClassifyDpiCarrier(type, span);
-  if (!carrier) return std::unexpected(std::move(carrier.error()));
-  if (const auto* scalar = std::get_if<support::ScalarCarrier>(&*carrier)) {
+  auto abi = ClassifyDpiType(type, span);
+  if (!abi) return std::unexpected(std::move(abi.error()));
+  if (const auto* scalar = std::get_if<support::ScalarCarrier>(&abi->carrier)) {
     return scalar->abi;
   }
   return diag::Fail(
@@ -365,8 +472,11 @@ auto LowerMethodPrototypeDecl(
 }
 
 // Classifies each formal argument's ABI projection (LRM 35.5.6): its direction,
-// C ABI carrier, and SV type. Import and export declarations project their
-// arguments identically, so both build their parameter list here.
+// C ABI carrier, and the SV type the boundary marshals values of. Import and
+// export declarations build their parameter list here alike -- the forms they
+// admit differ (an export cannot take an open array, LRM 35.5.6.1), but the
+// frontend rejects such a declaration before it reaches this classification, so
+// no arm here is direction-specific.
 auto ClassifyDpiParams(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<std::vector<hir::DpiParamAbi>> {
@@ -377,14 +487,14 @@ auto ClassifyDpiParams(
     const auto floc = mapper.PointSpanOf(formal->location);
     auto direction = ClassifyDpiDirection(*formal, floc);
     if (!direction) return std::unexpected(std::move(direction.error()));
-    auto carrier = ClassifyDpiCarrier(formal->getType(), floc);
-    if (!carrier) return std::unexpected(std::move(carrier.error()));
-    auto param_type = unit_lowerer.InternType(formal->getType(), floc);
+    auto abi = ClassifyDpiType(formal->getType(), floc);
+    if (!abi) return std::unexpected(std::move(abi.error()));
+    auto param_type = unit_lowerer.InternType(*abi->marshaled_type, floc);
     if (!param_type) return std::unexpected(std::move(param_type.error()));
     abi_params.push_back(
         hir::DpiParamAbi{
             .sv_type = *param_type,
-            .carrier = *carrier,
+            .carrier = std::move(abi->carrier),
             .direction = *direction});
   }
   return abi_params;

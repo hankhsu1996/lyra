@@ -681,6 +681,7 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/sim_time.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
+  out += "#include \"lyra/value/dpi_open_array.hpp\"\n";
   out += "#include \"lyra/value/enum.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";
   out += "#include \"lyra/value/packed_type.hpp\"\n";

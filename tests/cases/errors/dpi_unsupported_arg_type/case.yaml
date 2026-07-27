@@ -1,0 +1,16 @@
+id: errors.dpi_unsupported_arg_type
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "shortreal"
+    not_contains:
+      - "internal error"

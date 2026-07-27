@@ -5,13 +5,14 @@
 
 #include "lyra/value/packed_array.hpp"
 
-// The canonical DPI-C representation of packed values (LRM Annex H.10.1.2): the
-// C ABI a packed SV value crosses the foreign boundary as. The layout is fixed
-// by the standard and matches svdpi.h, so an emitted `extern "C"` declaration
-// and a user's svdpi.h agree at the ABI level. A `svBitVecVal` chunk is 32 bits
-// of a 2-state value; a `svLogicVecVal` chunk is 32 bits of a 4-state value,
-// with `aval` the value plane and `bval` the unknown (X/Z) plane -- exactly
-// Lyra's internal two-plane representation, split into 32-bit chunks.
+// The DPI-C ABI names an emitted artifact needs, spelled here so it compiles
+// without the standard header while still agreeing with a user's svdpi.h at the
+// ABI level. The canonical representation of packed values (LRM Annex H.7.7 /
+// H.10.1.2) is a sequence of 32-bit groups: a `svBitVecVal` group is 32 bits of
+// a 2-state value; a `svLogicVecVal` group is 32 bits of a 4-state value, with
+// `aval` the value plane and `bval` the unknown (X/Z) plane -- exactly Lyra's
+// internal two-plane representation, split into 32-bit groups. An open array
+// crosses as an opaque handle instead (LRM Annex H.8.6).
 #ifndef LYRA_SV_CANONICAL_DEFINED
 #define LYRA_SV_CANONICAL_DEFINED
 using svBitVecVal = std::uint32_t;
@@ -19,6 +20,7 @@ struct svLogicVecVal {
   std::uint32_t aval;
   std::uint32_t bval;
 };
+using svOpenArrayHandle = void*;
 #endif
 
 namespace lyra::value {

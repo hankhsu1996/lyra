@@ -359,6 +359,15 @@ enum class BuiltinFn : std::uint16_t {
   kWriteCanonicalBitVec,
   kWriteCanonicalLogicVec,
   kDpiBufferData,
+  // The open-array boundary image (LRM 35.5.6.1, Annex H.12).
+  // `kDpiOpenArrayHandle`
+  // reads the opaque handle the foreign side receives in place of the actual;
+  // `kDpiOpenArrayValue` reads the image back as an SV value shaped like the
+  // prototype it takes (`args[1]`), which is what an `output` / `inout` open
+  // array stores into its actual. Instance methods on the image (`args[0]`),
+  // which the call site builds from the actual before the foreign call.
+  kDpiOpenArrayHandle,
+  kDpiOpenArrayValue,
   // Runs an exported SV task's coroutine body to completion synchronously and
   // yields its completion payload. A foreign C caller of an exported task (LRM
   // 35.8) is not a coroutine and cannot await the task body, so the C entry

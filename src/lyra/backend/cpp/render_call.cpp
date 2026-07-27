@@ -285,6 +285,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "WriteCanonicalLogicVec";
     case support::BuiltinFn::kDpiBufferData:
       return "Data";
+    case support::BuiltinFn::kDpiOpenArrayHandle:
+      return "Handle";
+    case support::BuiltinFn::kDpiOpenArrayValue:
+      return "ToValue";
     case support::BuiltinFn::kRunExportedTaskToCompletion:
       return "RunExportedTaskToCompletion";
     case support::BuiltinFn::kCurrentExportScope:

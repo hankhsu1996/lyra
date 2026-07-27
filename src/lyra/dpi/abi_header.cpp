@@ -24,8 +24,8 @@ namespace {
 // The C spelling of a type that crosses the DPI-C boundary (LRM 35.5.6, Annex
 // H) -- the C target's type mapping, the peer of the emitted backend's. The
 // set is closed: a foreign signature names only machine scalars, a borrowed
-// pointer to one, or a canonical vector chunk, so anything else reaching here
-// is a boundary the lowering should have rejected.
+// pointer to one, a canonical vector chunk, or an open-array handle, so
+// anything else reaching here is a boundary the lowering should have rejected.
 auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
     -> std::string {
   return std::visit(
@@ -63,6 +63,12 @@ auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
             }
             if (r.kind == mir::RuntimeLibraryKind::kDpiLogicChunk) {
               return "svLogicVecVal";
+            }
+            // LRM Annex H.8.6: an open array is passed by handle in either
+            // direction, and the handle carries a `const` qualifier because the
+            // foreign side may not modify it.
+            if (r.kind == mir::RuntimeLibraryKind::kDpiOpenArrayHandle) {
+              return "const svOpenArrayHandle";
             }
             throw InternalError(
                 "RenderTypeAsC: this runtime library type does not cross the "
