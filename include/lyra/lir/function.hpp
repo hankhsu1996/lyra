@@ -156,17 +156,35 @@ struct AggregateInstr {
 };
 
 // Names a subvalue within an aggregate value. A `TupleElement` selects a
-// product component by its declaration-order position -- the static, structural
-// selector an unpacked struct uses. Other aggregate families (a packed slice, a
-// union member) add their own selectors here; a dynamic, runtime-indexed access
-// (a dynamic array or queue element) is a runtime-library call, not one of
-// these, because its bounds and index are runtime values, not a static
-// projection.
+// product component by its declaration-order position, carrying no operands
+// because the position is the whole coordinate. A `UnionMember` selects a
+// union's member by the same kind of position but is a distinct selector: a
+// union holds one member at a time, so an update makes the selected member the
+// live one rather than replacing one of several that coexist.
 struct TupleElement {
   std::uint32_t index;
 };
 
-using AggregateSelector = std::variant<TupleElement>;
+struct UnionMember {
+  std::uint32_t index;
+};
+
+// One coordinate into a homogeneous or keyed value, and one fixed-width range
+// of a value. `operands` carries the source coordinates followed by whatever
+// the value's family takes from its static type rather than from the value -- a
+// declared range, a declared result shape. Which runtime entry realizes a step
+// follows from the aggregate's type, below this layer; the selector says only
+// which subvalue is named.
+struct ContainerElement {
+  std::vector<Operand> operands;
+};
+
+struct ContainerSlice {
+  std::vector<Operand> operands;
+};
+
+using AggregateSelector =
+    std::variant<TupleElement, UnionMember, ContainerElement, ContainerSlice>;
 
 // Extracts a subvalue of an aggregate value, named by `selector`. The aggregate
 // is a value, reached by value: the subvalue is copied out, not aliased. This

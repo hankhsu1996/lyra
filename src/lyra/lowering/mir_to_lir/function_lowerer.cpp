@@ -936,25 +936,13 @@ auto FunctionLowerer::LowerCall(
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
-  // A write to a product component is not a place store: the product is an
-  // opaque value, so the component write is a whole-value rebuild stored back
-  // through the product's owner.
-  if (std::holds_alternative<mir::TupleGetExpr>(
+  // A target that projects into a value aggregate -- a product component, a
+  // value-container element, or any composition of them -- is not a place: the
+  // aggregate is an opaque value, so the write folds into a functional
+  // whole-value update stored back through the owner.
+  if (std::holds_alternative<mir::ValueProjectionExpr>(
           block.exprs.Get(assign.target).data)) {
-    return LowerComponentAssign(block, assign);
-  }
-
-  // A write to a value-container element (`arr[i] = x`) targets the container-
-  // access write reference. The container is likewise an opaque value, so the
-  // write is a functional whole-value update stored back through its owner.
-  if (const auto* call =
-          std::get_if<mir::CallExpr>(&block.exprs.Get(assign.target).data)) {
-    if (const auto fn = DirectBuiltinFn(*call);
-        fn == support::BuiltinFn::kElementRef &&
-        RequiresFunctionalMutation(
-            unit_->Mir().types.Get(block.exprs.Get(call->arguments[0]).type))) {
-      return LowerElementAssign(block, assign);
-    }
+    return LowerProjectionAssign(block, assign);
   }
 
   const lir::TypeId type =
@@ -1099,148 +1087,162 @@ auto FunctionLowerer::WriteWholeValue(
   return value;
 }
 
-auto FunctionLowerer::LowerComponentAssign(
-    const mir::Block& block, const mir::AssignExpr& assign)
+// Read the owner's whole value, descend the path, let `make_leaf` produce the
+// part's new value, rebuild the whole value outward, and store it back. The
+// owner and every coordinate evaluate exactly once, whatever the path's depth,
+// and the store back through the owner is a single one. `make_leaf` receives a
+// reader that extracts the part's current value on demand, so a plain store
+// never reads it and a compound or an increment reads it once.
+auto FunctionLowerer::LowerProjectionUpdate(
+    const mir::Block& block, mir::ExprId target, const LeafTransform& make_leaf)
     -> diag::Result<lir::Operand> {
-  // Walk the component-projection chain from the target down to its storage
-  // root, collecting each level's component index and product type.
-  struct Level {
-    std::uint32_t index;
-    lir::TypeId tuple_type;
-    lir::TypeId component_type;
+  const mir::Expr& target_expr = block.exprs.Get(target);
+  const auto& projection = std::get<mir::ValueProjectionExpr>(target_expr.data);
+  const lir::TypeId designated_type = unit_->TranslateType(target_expr.type);
+  const std::vector<mir::Selector>& path = projection.path;
+
+  auto owner_value = ReadWholeValue(block, projection.owner);
+  if (!owner_value) {
+    return std::unexpected(std::move(owner_value.error()));
+  }
+
+  // A step's key expressions are evaluated once, shared by a compound read and
+  // the write-back; a positional step has none.
+  std::vector<std::vector<lir::Operand>> keys(path.size());
+  for (std::size_t depth = 0; depth < path.size(); ++depth) {
+    const std::vector<mir::ExprId>* operands = std::visit(
+        Overloaded{
+            [](const mir::ComponentSelector&) {
+              return static_cast<const std::vector<mir::ExprId>*>(nullptr);
+            },
+            [](const mir::UnionMemberSelector&) {
+              return static_cast<const std::vector<mir::ExprId>*>(nullptr);
+            },
+            [](const mir::ElementSelector& e) { return &e.operands; },
+            [](const mir::SliceSelector& s) { return &s.operands; }},
+        path[depth]);
+    if (operands == nullptr) {
+      continue;
+    }
+    for (const mir::ExprId operand : *operands) {
+      auto key = LowerExpr(block, operand);
+      if (!key) {
+        return std::unexpected(std::move(key.error()));
+      }
+      keys[depth].push_back(*std::move(key));
+    }
+  }
+
+  // The type of the value each step descends into, and of the part it reaches.
+  const auto projected_type = [&](std::size_t depth) {
+    return unit_->TranslateType(
+        std::visit(
+            [](const auto& selector) { return selector.projected_type; },
+            path[depth]));
   };
-  std::vector<Level> levels;
-  mir::ExprId cursor = assign.target;
-  while (true) {
-    const mir::Expr& expr = block.exprs.Get(cursor);
-    const auto* get = std::get_if<mir::TupleGetExpr>(&expr.data);
-    if (get == nullptr) {
-      break;
-    }
-    levels.push_back(
-        Level{
-            .index = static_cast<std::uint32_t>(get->index),
-            .tuple_type =
-                unit_->TranslateType(block.exprs.Get(get->tuple).type),
-            .component_type = unit_->TranslateType(expr.type)});
-    cursor = get->tuple;
-  }
-  std::ranges::reverse(levels);
-  const mir::ExprId root = cursor;
+  const auto container_type = [&](std::size_t depth) {
+    return depth == 0
+               ? unit_->TranslateType(block.exprs.Get(projection.owner).type)
+               : projected_type(depth - 1);
+  };
 
-  auto root_value = ReadWholeValue(block, root);
-  if (!root_value) {
-    return std::unexpected(std::move(root_value.error()));
-  }
-
-  // The product value at each chain level, descending from the root toward the
-  // component being written.
-  std::vector<lir::Operand> tuples;
-  tuples.reserve(levels.size());
-  tuples.push_back(*std::move(root_value));
-  for (std::size_t depth = 1; depth < levels.size(); ++depth) {
-    tuples.push_back(Emit(
-        levels[depth].tuple_type,
+  // The step's selector, in LIR's own vocabulary. A positional step names a
+  // component slot; a coordinate-bearing one carries the operands it was
+  // evaluated with. Which runtime entry realizes a step follows from the
+  // aggregate's type, below this layer.
+  const auto selector = [&](std::size_t depth) -> lir::AggregateSelector {
+    return std::visit(
+        Overloaded{
+            [&](const mir::ComponentSelector& c) -> lir::AggregateSelector {
+              return lir::TupleElement{
+                  .index = static_cast<std::uint32_t>(c.index)};
+            },
+            [&](const mir::UnionMemberSelector& m) -> lir::AggregateSelector {
+              return lir::UnionMember{
+                  .index = static_cast<std::uint32_t>(m.index)};
+            },
+            [&](const mir::ElementSelector&) -> lir::AggregateSelector {
+              return lir::ContainerElement{.operands = keys[depth]};
+            },
+            [&](const mir::SliceSelector&) -> lir::AggregateSelector {
+              return lir::ContainerSlice{.operands = keys[depth]};
+            }},
+        path[depth]);
+  };
+  const auto extract = [&](const lir::Operand& container,
+                           std::size_t depth) -> lir::Operand {
+    return Emit(
+        projected_type(depth),
         lir::AggregateExtractInstr{
-            .aggregate = tuples[depth - 1],
-            .selector = lir::TupleElement{.index = levels[depth - 1].index}}));
+            .aggregate = container, .selector = selector(depth)});
+  };
+  const auto update = [&](const lir::Operand& container, std::size_t depth,
+                          lir::Operand replacement) -> lir::Operand {
+    return Emit(
+        container_type(depth), lir::AggregateUpdateInstr{
+                                   .aggregate = container,
+                                   .selector = selector(depth),
+                                   .replacement = std::move(replacement)});
+  };
+
+  // The whole value at each chain level, descending from the owner toward the
+  // sub-value being written.
+  std::vector<lir::Operand> containers;
+  containers.reserve(path.size());
+  containers.push_back(*std::move(owner_value));
+  for (std::size_t depth = 1; depth < path.size(); ++depth) {
+    containers.push_back(extract(containers[depth - 1], depth - 1));
   }
 
-  auto rhs = LowerExpr(block, assign.value);
-  if (!rhs) {
-    return std::unexpected(std::move(rhs.error()));
+  // The last step reaches what the designator denotes, so the two statements of
+  // that type must agree; a disagreement means the path and the node's type
+  // came from different lowerings.
+  const std::size_t leaf = path.size() - 1;
+  if (projected_type(leaf) != designated_type) {
+    throw InternalError(
+        "mir_to_lir: a designator's last step reaches a different type than "
+        "the designator states");
   }
-  const std::size_t leaf = levels.size() - 1;
-  lir::Operand leaf_value = *std::move(rhs);
-  if (assign.compound_op.has_value()) {
-    const std::optional<lir::BinaryOp> op =
-        TranslateBinaryOp(*assign.compound_op);
-    if (!op) {
-      return Unsupported(
-          "mir_to_lir: compound assignment operator has no direct realization");
-    }
-    lir::Operand old = Emit(
-        levels[leaf].component_type,
-        lir::AggregateExtractInstr{
-            .aggregate = tuples[leaf],
-            .selector = lir::TupleElement{.index = levels[leaf].index}});
-    leaf_value = Emit(
-        levels[leaf].component_type,
-        lir::BinaryInstr{
-            .op = *op, .lhs = std::move(old), .rhs = std::move(leaf_value)});
+  auto leaf_value = make_leaf(
+      [&] { return extract(containers[leaf], leaf); }, designated_type);
+  if (!leaf_value) {
+    return std::unexpected(std::move(leaf_value.error()));
   }
 
-  // Rebuild the whole value from the written component outward.
-  lir::Operand rebuilt = std::move(leaf_value);
-  for (std::size_t depth = levels.size(); depth-- > 0;) {
-    rebuilt = Emit(
-        levels[depth].tuple_type,
-        lir::AggregateUpdateInstr{
-            .aggregate = tuples[depth],
-            .selector = lir::TupleElement{.index = levels[depth].index},
-            .replacement = std::move(rebuilt)});
+  // Rebuild the whole value from the written sub-value outward.
+  lir::Operand rebuilt = *std::move(leaf_value);
+  for (std::size_t depth = path.size(); depth-- > 0;) {
+    rebuilt = update(containers[depth], depth, std::move(rebuilt));
   }
-
-  return WriteWholeValue(block, root, std::move(rebuilt));
+  return WriteWholeValue(block, projection.owner, std::move(rebuilt));
 }
 
-auto FunctionLowerer::LowerElementAssign(
+auto FunctionLowerer::LowerProjectionAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
-  const auto& target =
-      std::get<mir::CallExpr>(block.exprs.Get(assign.target).data);
-  const mir::ExprId container = target.arguments[0];
-  const mir::ExprId index = target.arguments[1];
-  const lir::TypeId container_type =
-      unit_->TranslateType(block.exprs.Get(container).type);
-  const lir::TypeId element_type =
-      unit_->TranslateType(block.exprs.Get(assign.target).type);
-
-  auto array = ReadWholeValue(block, container);
-  if (!array) {
-    return std::unexpected(std::move(array.error()));
-  }
-  const lir::Operand array_value = *std::move(array);
-  auto index_value = LowerExpr(block, index);
-  if (!index_value) {
-    return std::unexpected(std::move(index_value.error()));
-  }
-  auto rhs = LowerExpr(block, assign.value);
-  if (!rhs) {
-    return std::unexpected(std::move(rhs.error()));
-  }
-
-  lir::Operand replacement = *std::move(rhs);
-  if (assign.compound_op.has_value()) {
-    const std::optional<lir::BinaryOp> op =
-        TranslateBinaryOp(*assign.compound_op);
-    if (!op) {
-      return Unsupported(
-          "mir_to_lir: compound assignment operator has no direct realization");
-    }
-    lir::Operand old = Emit(
-        element_type, lir::CallInstr{
-                          .target =
-                              lir::BuiltinTarget{
-                                  .fn = support::BuiltinFn::kElement,
-                                  .qualifier = std::nullopt},
-                          .args = {array_value, *index_value}});
-    replacement = Emit(
-        element_type,
-        lir::BinaryInstr{
-            .op = *op, .lhs = std::move(old), .rhs = std::move(replacement)});
-  }
-
-  lir::Operand updated = Emit(
-      container_type,
-      lir::CallInstr{
-          .target =
-              lir::BuiltinTarget{
-                  .fn = support::BuiltinFn::kWithElement,
-                  .qualifier = std::nullopt},
-          .args = {
-              array_value, *std::move(index_value), std::move(replacement)}});
-  return WriteWholeValue(block, container, std::move(updated));
+  return LowerProjectionUpdate(
+      block, assign.target,
+      [&](const LeafReader& read_leaf,
+          lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
+        auto rhs = LowerExpr(block, assign.value);
+        if (!rhs) {
+          return std::unexpected(std::move(rhs.error()));
+        }
+        if (!assign.compound_op.has_value()) {
+          return *std::move(rhs);
+        }
+        const std::optional<lir::BinaryOp> op =
+            TranslateBinaryOp(*assign.compound_op);
+        if (!op) {
+          return Unsupported(
+              "mir_to_lir: compound assignment operator has no direct "
+              "realization");
+        }
+        return Emit(
+            leaf_type,
+            lir::BinaryInstr{
+                .op = *op, .lhs = read_leaf(), .rhs = *std::move(rhs)});
+      });
 }
 
 auto FunctionLowerer::LowerMutatingCall(
@@ -1284,6 +1286,28 @@ auto FunctionLowerer::LowerIncDec(
                          inc_dec.op == mir::IncDecOp::kPreDec;
   const lir::UnaryOp op =
       is_increment ? lir::UnaryOp::kIncrement : lir::UnaryOp::kDecrement;
+
+  // A designated part increments through its owner: the part's current value is
+  // read out of the owner's whole value, stepped, and folded back in.
+  if (std::holds_alternative<mir::ValueProjectionExpr>(
+          block.exprs.Get(inc_dec.target).data)) {
+    std::optional<lir::Operand> old;
+    std::optional<lir::Operand> stepped;
+    auto written = LowerProjectionUpdate(
+        block, inc_dec.target,
+        [&](const LeafReader& read_leaf,
+            lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
+          old = read_leaf();
+          stepped = Emit(leaf_type, lir::UnaryInstr{.op = op, .operand = *old});
+          return *stepped;
+        });
+    if (!written) {
+      return std::unexpected(std::move(written.error()));
+    }
+    // What was stored is the owner's whole value; the statement's own value is
+    // the part, before or after the step.
+    return is_prefix ? *stepped : *old;
+  }
 
   // An activation-frame value local increments through its handle: read the old
   // value out, apply the step, overwrite.

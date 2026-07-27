@@ -451,12 +451,34 @@ class PackedArray {
   // `concepts.hpp` for the `Indexable` / `Sliceable` protocol shape.
   [[nodiscard]] auto ElementRef(const PackedArray& idx) -> PackedArrayRef;
   [[nodiscard]] auto Element(const PackedArray& idx) const -> PackedArray;
+  // The functional counterpart of the in-place element write, for a value
+  // reached by an opaque handle that cannot be mutated in place: a new value
+  // equal to the receiver with the element at `idx` replaced, under the same
+  // LRM 11.5.1 out-of-range / X-Z index no-op as the in-place write.
+  [[nodiscard]] auto WithElement(
+      const PackedArray& idx, const PackedArray& value) const -> PackedArray;
+  // A part-select's bit window is computed from its bounds, but its result
+  // shape is declared, so `shape` states it: the selected bits are materialized
+  // with `shape`'s dimension stack rather than one derived from the receiver.
+  // The two agree for a select over an array, and differ when the receiver is a
+  // packed aggregate's flat base -- its bits carry no member structure, so the
+  // member's own declared shape can only come from the select's result type
+  // (LRM 7.2.1 / 7.3.1 member access, projected onto the same part-select the
+  // LRM 11.5.1 range form uses).
   [[nodiscard]] auto SliceRef(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form)
-      -> PackedArrayRef;
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& shape) -> PackedArrayRef;
   [[nodiscard]] auto Slice(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
-      -> PackedArray;
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& shape) const -> PackedArray;
+  // The functional counterpart of the in-place part-select write, for a value
+  // reached by an opaque handle that cannot be mutated in place: a new value
+  // equal to the receiver with the range selected by `a` / `b` / `form`
+  // replaced, under the same LRM 11.5.1 out-of-range no-op as the in-place
+  // write.
+  [[nodiscard]] auto WithSlice(
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& shape, const PackedArray& value) const -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;
@@ -657,8 +679,8 @@ class PackedArrayRef {
   // units; the proxy scales internally based on `dims_`.
   [[nodiscard]] auto ElementRef(const PackedArray& idx) const -> PackedArrayRef;
   [[nodiscard]] auto SliceRef(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
-      -> PackedArrayRef;
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& shape) const -> PackedArrayRef;
 
  private:
   PackedArray* root_;
@@ -670,8 +692,8 @@ class PackedArrayRef {
 static_assert(LyraValue<PackedArray>);
 static_assert(BitstreamSizable<PackedArray>);
 static_assert(Indexable<PackedArray>);
-static_assert(Sliceable<PackedArray>);
-static_assert(SliceableRef<PackedArray>);
+static_assert(ShapedSliceable<PackedArray>);
+static_assert(ShapedSliceableRef<PackedArray>);
 static_assert(Ownable<PackedArray>);
 static_assert(Defaultable<PackedArray>);
 

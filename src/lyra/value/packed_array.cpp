@@ -1705,6 +1705,22 @@ auto ResolveRawRangeSelector(
       .shift = PackedArray::Int(static_cast<std::int32_t>(shift))};
 }
 
+// The dimension stack a part-select materializes its result with. The declared
+// shape wins: the bounds decide which bits are selected, the result type
+// decides how those bits are structured. They span the same bits -- a
+// disagreement means the select and its stated result type were built from
+// different types.
+auto ShapeDimsOf(const PackedArray& shape, std::span<const PackedRange> derived)
+    -> std::vector<PackedRange> {
+  const std::span<const PackedRange> declared = shape.Dims();
+  if (PackedType::WidthOf(declared) != PackedType::WidthOf(derived)) {
+    throw InternalError(
+        "PackedArray::Slice: the stated result shape spans a different bit "
+        "count than the selected range");
+  }
+  return {declared.begin(), declared.end()};
+}
+
 }  // namespace
 
 auto PackedArray::ElementRef(const PackedArray& idx) -> PackedArrayRef {
@@ -1717,22 +1733,37 @@ auto PackedArray::Element(const PackedArray& idx) const -> PackedArray {
   return ExtractBits(sel.bit_offset, sel.dims);
 }
 
+auto PackedArray::WithElement(
+    const PackedArray& idx, const PackedArray& value) const -> PackedArray {
+  PackedArray result{*this};
+  result.ElementRef(idx) = value;
+  return result;
+}
+
 auto PackedArray::SliceRef(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form)
-    -> PackedArrayRef {
+    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& shape) -> PackedArrayRef {
   const auto raw = ResolveRawRangeSelector(type_.dims.front(), a, b, form);
   auto sel = ResolveSlice(
       type_.bit_width, type_.dims, raw.anchor, raw.count, raw.shift);
-  return PackedArrayRef{*this, sel.bit_offset, std::move(sel.dims)};
+  return PackedArrayRef{*this, sel.bit_offset, ShapeDimsOf(shape, sel.dims)};
 }
 
 auto PackedArray::Slice(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form) const
-    -> PackedArray {
+    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& shape) const -> PackedArray {
   const auto raw = ResolveRawRangeSelector(type_.dims.front(), a, b, form);
   auto sel = ResolveSlice(
       type_.bit_width, type_.dims, raw.anchor, raw.count, raw.shift);
-  return ExtractBits(sel.bit_offset, sel.dims);
+  return ExtractBits(sel.bit_offset, ShapeDimsOf(shape, sel.dims));
+}
+
+auto PackedArray::WithSlice(
+    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& shape, const PackedArray& value) const -> PackedArray {
+  PackedArray result{*this};
+  result.SliceRef(a, b, form, shape) = value;
+  return result;
 }
 
 PackedArrayRef::PackedArrayRef(
@@ -1761,12 +1792,12 @@ auto PackedArrayRef::ElementRef(const PackedArray& idx) const
 }
 
 auto PackedArrayRef::SliceRef(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form) const
-    -> PackedArrayRef {
+    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& shape) const -> PackedArrayRef {
   const auto raw = ResolveRawRangeSelector(dims_.front(), a, b, form);
   auto sel = ResolveSlice(bit_width_, dims_, raw.anchor, raw.count, raw.shift);
   return PackedArrayRef{
-      *root_, bit_offset_ + sel.bit_offset, std::move(sel.dims)};
+      *root_, bit_offset_ + sel.bit_offset, ShapeDimsOf(shape, sel.dims)};
 }
 
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {

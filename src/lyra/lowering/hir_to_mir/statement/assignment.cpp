@@ -152,12 +152,17 @@ auto LowerDestructuringAssign(
             .dims = {mir::PackedRange{
                 .left = static_cast<std::int64_t>(w) - 1, .right = 0}},
             .form = mir::PackedArrayForm::kExplicit});
+    const mir::ExprId shape_id = BuildPackedShapePrototype(
+        wrapper,
+        process.Owner().Unit().types.Get(slice_type).AsIntegralPacked(),
+        slice_type);
     const mir::ExprId raw_slice_id = wrapper.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
                     .callee = mir::Direct{.target = support::BuiltinFn::kSlice},
-                    .arguments = {temp_ref, offset_id, count_id, form_id}},
+                    .arguments =
+                        {temp_ref, offset_id, count_id, form_id, shape_id}},
             .type = slice_type});
     const mir::ExprId slice_id = wrapper.exprs.Add(
         mir::Expr{

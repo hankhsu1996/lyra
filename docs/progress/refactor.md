@@ -927,6 +927,27 @@ enough to warrant its own focused review.
     that pays off only when several sites route through it; scope the cut so at least the queue /
     packed / managed-new forms land together with the dispatch table itself.
 
+- [x] R61 -- A value-aggregate interior write reached MIR as a write onto a nested lvalue
+      expression, and each backend recovered the owner and the selectors by walking that expression
+      and consulting each receiver's type. Two backends deriving one semantic fact is the shape
+      `../architecture/mir.md`'s Forbidden Shapes name, and it made every new container family
+      arrive as another per-type branch. MIR now states the write target as a designator -- the
+      place that owns the whole value, and the descent that reaches the part -- with a closed
+      selector set covering a product component, a union member, an element, and a window. Each
+      backend is a fixed function of that node: the C++ backend composes the value library's write
+      proxies in place, the execution backend folds one functional whole-value update. The nested
+      write encoding, the write-side access entries, the target decomposition, and its per-type
+      predicate are gone. Every interior write -- struct component, union member, packed slice,
+      packed or unpacked element, string character -- and every increment through one now takes the
+      same path on both backends. The full model and the questions it settles are recorded in
+      `../decisions/value-projection-write.md` and `../decisions/value-projection-designator.md`.
+  - [ ] A `ref` / `output` / `inout` actual bound to an interior, and a nonblocking assignment into
+        one, are the designator's evaluated form -- a projection reference. It is rejected on the
+        execution backend today. Landing it needs that reference to exist as a runtime value on both
+        backends, able to cross a suspension.
+  - [ ] The queue and associative-array interior writes connect to the same path once those value
+        domains are realized on the execution backend.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

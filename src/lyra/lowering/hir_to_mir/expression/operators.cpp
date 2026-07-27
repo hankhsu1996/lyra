@@ -591,10 +591,10 @@ auto LowerHirIncDecExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  // The target is written in place, so a queue element dispatches to its
-  // write-side access just as an assignment target does.
-  auto target_or = process.LowerLhsExpr(
-      process.HirExprs().Get(inc.target), frame.WithLvalueTarget(true));
+  // An increment both reads and writes its target, so the target lowers as a
+  // write target (LRM 11.4.2), not as a read.
+  auto target_or =
+      process.LowerLhsExpr(process.HirExprs().Get(inc.target), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   mir::ExprId target_id = block.exprs.Add(*std::move(target_or));
 

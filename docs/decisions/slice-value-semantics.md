@@ -6,7 +6,10 @@
 
 ## Status
 
-Accepted
+Accepted. The write-side conclusion is reframed for value interiors by
+[value-projection-write](value-projection-write.md) -- a value-aggregate interior write is an
+owner-relative value projection, not an addressable reference or write-back location. The
+slice-read-as-materialized-value model, this document's thesis, remains in force.
 
 ## Context
 
