@@ -51,11 +51,16 @@ free function directly with no instance (D4a, D4c); reaching any export now requ
 context, so its caller must be a context import or set the scope with `svSetScope`. The user-facing
 surface (D9) is in too: the design's foreign declarations generate a C header the user's own sources
 compile against, and an emitted project carries that header alongside a copy of every foreign source
-and a recipe that builds them, so it links and runs standalone. What remains is the disable protocol
-across the boundary (D6c). On the execution backend scalar import (D10) is in: a foreign call lowers
-to an external-linkage symbol and the by-value carriers marshal. The rest of the import surface
-(D11) is blocked, and not by anything DPI owns: by-pointer marshaling is expressed as a closure,
-which that backend does not yet lower at all (`architecture-reset.md`).
+and a recipe that builds them, so it links and runs standalone. Open-array arguments (D8) close the
+type surface: one imported subroutine now serves actuals of any size and range, in every direction,
+the foreign side reading them through the Annex H.12 introspection, addressing, and element
+accessors. What remains is the disable protocol across the boundary (D6c) and the element types
+Annex H.7.3 puts in C-compatible representation. A DPI-C import is still reachable only from the
+compilation unit that declares it; one declared in a package or at `$unit` scope is rejected. On the
+execution backend scalar import (D10) is in: a foreign call lowers to an external-linkage symbol and
+the by-value carriers marshal. The rest of the import surface (D11) is blocked, and not by anything
+DPI owns: by-pointer marshaling is expressed as a closure, which that backend does not yet lower at
+all (`architecture-reset.md`).
 
 ## Sub-Steps
 
@@ -81,12 +86,10 @@ on the execution backend, mirroring the C++-backend items one surface at a time.
       `bit [31:0]` (canonical vector) get distinct C ABIs; the canonical layout matches Lyra's
       two-plane representation, so marshaling is a plane reshape. A 4-state scalar `logic` result
       crosses by value; a wider result stays restricted to a small value (LRM 35.5.5).
-  - [ ] `shortreal` as a DPI-C argument or result type (LRM 35.5.6) is rejected; `real` is
-        supported.
-  - [ ] A packed struct / union as a DPI-C argument (LRM 35.5.6, Annex H) is rejected; only the
-        packed-vector, scalar, `real`, `string`, and `chandle` carriers are wired.
-  - [ ] A DPI-C signature carrying any other unmapped type (LRM 35.5.6, Table H.1) is rejected
-        rather than mis-marshalled.
+  - [x] A signature carrying a type outside that mapping (LRM 35.5.6, Table H.1) is rejected at the
+        declaration rather than mis-marshalled at the call. The wired carriers are the packed
+        vector, the by-value scalar, `real`, `string`, and `chandle`; `shortreal` and a packed
+        struct / union are the notable types outside them.
 
 ### Export: foreign C calls SV
 
@@ -172,8 +175,25 @@ protocol on top of it.
 
 ### Open arrays
 
-- [ ] D8 -- Open-array arguments (LRM 35.5.6.1): the introspection and pointer surface (array
-      bounds, size, dimension queries, element pointers) and packed / scalar element access.
+- [x] D8 -- Open-array arguments (LRM 35.5.6.1): a formal that leaves a dimension unsized accepts
+      actuals of any size and range, in every direction. The actual crosses as a canonical image of
+      the whole array (LRM Annex H.7.3, the representation `"DPI-C"` specifies for an open array),
+      and a writeback direction reconstructs one SV value from that image and stores it, so nothing
+      aliases the actual's storage. The foreign side gets the introspection surface (bounds, size,
+      increment, dimension count, reported per dimension from the declared range the call site
+      supplied), the addressing surface (whole-array and element addresses, answered where an
+      element's canonical form is also how an individual value of its type crosses and with a null
+      where it is not, per Annex H.12.4), and the canonical and scalar element accessors. Element
+      types are the 2- and 4-state scalar and packed ones; the design record is
+      `../decisions/dpi-open-array-boundary.md`.
+  - [ ] An element type Annex H.7.3 puts in C-compatible rather than canonical representation
+        (`real`, `shortreal`, `string`, `chandle`, an unpacked struct) is legal SystemVerilog that
+        is rejected: serving it needs C-compiler layout for the element, which a SystemVerilog value
+        does not have. The same limitation rejects a sized (non-open) unpacked array argument, which
+        Annex H.11.4 requires to have that layout.
+  - [ ] An open array of more than three unpacked dimensions is rejected. The foreign side reaches
+        an element through the one-, two-, and three-index entries of Annex H.12.3; the
+        variable-argument forms a deeper array needs are not published.
 
 ### Driver and link
 
@@ -224,7 +244,8 @@ and the out-of-scope boundary. Work proceeds against that record.
 ## Cross-references
 
 - Design record: `../decisions/dpi-foreign-boundary.md` (the settled callable / marshaling / export
-  model and the rejected alternatives).
+  model and the rejected alternatives) and `../decisions/dpi-open-array-boundary.md` (the open-array
+  boundary object and where the formal's unsized shape lives).
 - LRM 35: 35.4 (imported subroutines), 35.5 (functions and tasks; type mapping 35.5.6; scope
   35.5.3), 35.9 (disable protocol).
 - Architecture: `callable.md` (the external-symbol callable), `backend_contract.md` (mechanical

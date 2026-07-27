@@ -369,6 +369,14 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // layout-equivalent word / record.
   kDpiBitChunk,
   kDpiLogicChunk,
+  // A DPI-C open array as the foreign side sees it (LRM 35.5.6.1, Annex H.12):
+  // `lyra::value::DpiOpenArray`, the canonical image of a whole actual plus the
+  // declared coordinate system of each dimension, built at the call site and
+  // read back after it. `kDpiOpenArrayHandle` is the opaque handle the foreign
+  // side receives in its place -- `svOpenArrayHandle`, the ABI spelling of a
+  // reference to that image, and the only one of the two a prototype names.
+  kDpiOpenArray,
+  kDpiOpenArrayHandle,
   // The RAII bracket a `context` DPI import's marshaling body opens over its
   // declaration scope (LRM 35.5.3): `lyra::runtime::DpiScopeGuard`, constructed
   // from the run services and the declaration scope, pushing that scope on the

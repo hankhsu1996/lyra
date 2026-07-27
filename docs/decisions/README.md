@@ -198,6 +198,15 @@ the detail lives in the entry itself.
   addressed, never read as a value. Physical in-frame layout is a later optimization, the
   member-storage counterpart of the opaque-handle value baseline.
 
+### Foreign-language boundary
+
+- [dpi-foreign-boundary](dpi-foreign-boundary.md) -- DPI-C is the foreign arm of the one callable
+  model: an import is a bodyless callable with foreign linkage, marshaling is a cross-ABI carrier
+  conversion expressed in MIR, and an export's context is a thread-local ambient handle.
+- [dpi-open-array-boundary](dpi-open-array-boundary.md) -- an open array crosses as a canonical
+  boundary object owning its own storage, never as a borrow of the actual; the formal's unsized
+  shape rides the ABI carrier rather than the type system.
+
 ### Compile-time model and specialization
 
 - [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) -- every

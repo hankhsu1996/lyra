@@ -388,6 +388,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "write_canonical_logic_vec";
     case BuiltinFn::kDpiBufferData:
       return "dpi_buffer_data";
+    case BuiltinFn::kDpiOpenArrayHandle:
+      return "dpi_open_array_handle";
+    case BuiltinFn::kDpiOpenArrayValue:
+      return "dpi_open_array_value";
     case BuiltinFn::kRunExportedTaskToCompletion:
       return "run_exported_task_to_completion";
     case BuiltinFn::kCurrentExportScope:

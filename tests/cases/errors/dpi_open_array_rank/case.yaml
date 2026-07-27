@@ -1,0 +1,16 @@
+id: errors.dpi_open_array_rank
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "more than three unpacked dimensions"
+    not_contains:
+      - "internal error"

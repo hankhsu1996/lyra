@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -36,15 +37,21 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The type a value has once it is marshaled to a DPI-C carrier (LRM 35.5.6,
-// Table H.1). The carrier classifies the *formal*'s ABI; the value that crosses
-// is an ordinary machine value, so it is typed as one -- an integer of the
+// The type of the object one argument crosses the DPI-C boundary in (LRM
+// 35.5.6, Table H.1). The carrier classifies the *formal*'s ABI; a by-value
+// scalar is an ordinary machine value and is typed as one -- an integer of the
 // declared C width, a machine float, a borrowed C string, a raw pointer. A
-// packed vector crosses in a canonical chunk buffer, which is a runtime library
-// value. No type exists solely to mark a value as being at the boundary.
+// packed vector crosses in a canonical chunk buffer and an open array in a
+// canonical image of the whole actual, both runtime library values. No type
+// exists solely to mark a value as being at the boundary.
 auto CarrierTypeId(
     mir::CompilationUnit& unit, const support::DpiCarrier& carrier)
     -> mir::TypeId {
+  if (std::holds_alternative<support::OpenArrayCarrier>(carrier)) {
+    return unit.types.Intern(
+        mir::TypeData{mir::RuntimeLibraryType{
+            .kind = mir::RuntimeLibraryKind::kDpiOpenArray}});
+  }
   if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
     return unit.types.Intern(
         mir::TypeData{mir::RuntimeLibraryType{
@@ -82,21 +89,21 @@ auto CarrierTypeId(
   throw InternalError("CarrierTypeId: unknown DPI-C scalar ABI");
 }
 
-// SV value -> foreign ABI carrier (LRM 35.5.6). An integral value yields its
-// widest machine integer, narrowed to the carrier's C width by a machine cast;
-// a real yields its native floating value; a string borrows a NUL-terminated C
-// string that stays valid for the call. Reuses the ordinary value accessors;
-// the boundary conversion is a plain expression, not a DPI-specific primitive.
-// Feeds both an input argument (crossed by value) and the copy-in of an inout /
-// output argument (seeding its boundary temp).
+// SV value -> by-value machine carrier (LRM 35.5.6). An integral value yields
+// its widest machine integer, narrowed to the carrier's C width by a machine
+// cast; a real yields its native floating value; a string borrows a
+// NUL-terminated C string that stays valid for the call. Reuses the ordinary
+// value accessors; the boundary conversion is a plain expression, not a
+// DPI-specific primitive. Feeds an argument that crosses by value and the seed
+// of a scalar boundary object the callee writes back through.
 auto MarshalSvToCarrier(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId sv_id,
     const support::DpiCarrier& carrier_desc) -> mir::ExprId {
   const auto* scalar = std::get_if<support::ScalarCarrier>(&carrier_desc);
   if (scalar == nullptr) {
     throw InternalError(
-        "MarshalSvToCarrier: a canonical-vector carrier is not yet "
-        "implemented");
+        "MarshalSvToCarrier: only a by-value scalar converts to a machine "
+        "value; every other carrier crosses through a boundary object");
   }
   const mir::TypeId carrier = CarrierTypeId(unit, carrier_desc);
   switch (scalar->abi) {
@@ -176,8 +183,9 @@ auto MarshalCarrierToSv(
   const auto* scalar = std::get_if<support::ScalarCarrier>(&carrier_desc);
   if (scalar == nullptr) {
     throw InternalError(
-        "MarshalCarrierToSv: a canonical-vector carrier is not yet "
-        "implemented");
+        "MarshalCarrierToSv: only a by-value scalar converts back from a "
+        "machine value; every other carrier reads back from its boundary "
+        "object");
   }
   mir::Block& block = *frame.current_block;
   switch (scalar->abi) {
@@ -244,13 +252,17 @@ auto ImportMarshal(const mir::CallableDecl& callable)
   return *callable.foreign->marshal;
 }
 
-// A canonical-vector actual crosses by pointer to a boundary buffer, regardless
-// of direction -- even an input, since the C ABI is `const svLogicVecVal*`. The
-// buffer is a `DpiBitBuffer` / `DpiLogicBuffer` value, so it needs a boundary
-// temp and the sequenced closure path.
-[[nodiscard]] auto NeedsBoundaryTemp(const mir::ForeignParam& p) -> bool {
-  return support::DpiDirectionWritesBack(p.direction) ||
-         std::holds_alternative<support::VectorCarrier>(p.carrier);
+// An argument crosses the boundary in one of two shapes (LRM 35.5.6). It
+// crosses **by value** when it is a scalar the callee only reads: the SV value
+// converts to a machine value the call passes directly, with no local and no
+// sequencing. Every other argument crosses **through a boundary object** -- a
+// local the call site builds from the actual, whose address or handle the call
+// receives and which a writeback direction reads back afterwards. A canonical
+// vector and an open array are the second shape in either direction, because
+// the C ABI reaches them by pointer and by handle respectively even to read.
+[[nodiscard]] auto CrossesByValue(const mir::ForeignParam& p) -> bool {
+  return std::holds_alternative<support::ScalarCarrier>(p.carrier) &&
+         !support::DpiDirectionWritesBack(p.direction);
 }
 
 // The read-back builtin for a canonical-vector carrier: 4-state reads both
@@ -286,6 +298,166 @@ auto BuildBufferDataCall(
     -> support::BuiltinFn {
   return v.four_state ? support::BuiltinFn::kWriteCanonicalLogicVec
                       : support::BuiltinFn::kWriteCanonicalBitVec;
+}
+
+// The declared coordinate system each unpacked dimension of an open array
+// reports to the foreign side (LRM Annex H.7.6): the range the declaration
+// fixes, or the actual's own where the declaration left the dimension unsized.
+// The actual's ranges come from its static type, the only place an unsized
+// extent is fixed (LRM 35.6.1.1). The pairs flatten outermost-first into one
+// array literal, the shape a runtime entry takes a bounds list in.
+auto BuildOpenArrayBounds(
+    mir::CompilationUnit& unit, mir::Block& block,
+    const support::OpenArrayCarrier& open, mir::TypeId actual_type)
+    -> mir::ExprId {
+  const mir::TypeId int_type = unit.builtins.int_type;
+  std::vector<mir::ExprId> bounds;
+  bounds.reserve(open.unpacked.size() * 2);
+  mir::TypeId cursor = actual_type;
+  for (const std::optional<support::DpiRange>& declared : open.unpacked) {
+    const auto* layer =
+        std::get_if<mir::UnpackedArrayType>(&unit.types.Get(cursor).data);
+    if (layer == nullptr) {
+      throw InternalError(
+          "BuildOpenArrayBounds: the actual of an open-array formal has fewer "
+          "unpacked dimensions than the declaration");
+    }
+    const support::DpiRange range = declared.value_or(
+        support::DpiRange{.left = layer->dim.left, .right = layer->dim.right});
+    bounds.push_back(
+        block.exprs.Add(mir::MakeIntLiteral(int_type, range.left)));
+    bounds.push_back(
+        block.exprs.Add(mir::MakeIntLiteral(int_type, range.right)));
+    cursor = layer->element_type;
+  }
+  const mir::TypeId bounds_type = unit.types.Intern(
+      mir::UnpackedArrayType{
+          .element_type = int_type,
+          .dim = mir::UnpackedRange::ZeroBased(bounds.size())});
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(bounds)},
+          .type = bounds_type});
+}
+
+// The initializer of one argument's boundary object, seeded from the actual's
+// current value. A scalar's object is the by-value carrier itself; a canonical
+// vector's is a buffer its constructor fills; an open array's is the canonical
+// image of the whole actual, which additionally takes the coordinate system of
+// each dimension and whether an element's canonical form is how an individual
+// value of its type crosses (LRM Annex H.12.4).
+auto BuildBoundaryInit(
+    mir::CompilationUnit& unit, mir::Block& block,
+    const support::DpiCarrier& carrier, mir::ExprId seed_sv,
+    mir::TypeId actual_type, mir::TypeId carrier_type) -> mir::ExprId {
+  const auto construct = [&](std::vector<mir::ExprId> arguments) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::Construct{},
+                    .arguments = std::move(arguments)},
+            .type = carrier_type});
+  };
+  return std::visit(
+      Overloaded{
+          [&](const support::ScalarCarrier&) {
+            return MarshalSvToCarrier(unit, block, seed_sv, carrier);
+          },
+          [&](const support::VectorCarrier&) { return construct({seed_sv}); },
+          [&](const support::OpenArrayCarrier& open) {
+            const mir::ExprId addressable = block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::MachineIntLiteral{
+                            .value = static_cast<std::int64_t>(
+                                open.element_crosses_as_canonical_vector)},
+                    .type = unit.builtins.machine_int64});
+            return construct(
+                {seed_sv, BuildOpenArrayBounds(unit, block, open, actual_type),
+                 addressable});
+          }},
+      carrier);
+}
+
+// The argument the foreign call receives for one boundary object: a scalar's
+// address, a buffer's canonical chunk pointer, or an open array's handle.
+auto BuildBoundaryArgument(
+    mir::CompilationUnit& unit, mir::Block& block,
+    const support::DpiCarrier& carrier, mir::LocalId temp,
+    mir::TypeId carrier_type) -> mir::ExprId {
+  const mir::ExprId object =
+      block.exprs.Add(mir::MakeLocalRefExpr(temp, carrier_type));
+  return std::visit(
+      Overloaded{
+          [&](const support::ScalarCarrier&) {
+            return block.exprs.Add(
+                mir::MakeAddressOfExpr(
+                    object,
+                    unit.types.PointerTo(
+                        carrier_type, mir::PointerOwnership::kBorrowed)));
+          },
+          [&](const support::VectorCarrier&) {
+            return BuildBufferDataCall(unit, block, object, carrier_type);
+          },
+          [&](const support::OpenArrayCarrier&) {
+            return block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target = support::BuiltinFn::
+                                        kDpiOpenArrayHandle},
+                            .arguments = {object}},
+                    .type = unit.types.Intern(
+                        mir::TypeData{mir::RuntimeLibraryType{
+                            .kind = mir::RuntimeLibraryKind::
+                                kDpiOpenArrayHandle}})});
+          }},
+      carrier);
+}
+
+// The SV value one boundary object holds once the call returns, the read-back
+// that pairs with its build: a scalar marshals its by-value carrier, a vector
+// reads its buffer's canonical chunks, an open array reads its whole image.
+// Each yields one value, so the store into the actual is the ordinary one
+// whatever the carrier. Reading through a prototype of the destination's type
+// is what gives the value its declared width, signedness, and state domain,
+// which no carrier carries.
+auto BuildBoundaryReadback(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const support::DpiCarrier& carrier, mir::ExprId object,
+    mir::TypeId carrier_type, mir::TypeId sv_type) -> mir::ExprId {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *frame.current_block;
+  const auto prototype = [&] {
+    return block.exprs.Add(BuildDefaultValueExpr(unit_lowerer, frame, sv_type));
+  };
+  const auto read = [&](support::BuiltinFn target, mir::ExprId source) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::Direct{.target = target},
+                    .arguments = {source, prototype()}},
+            .type = sv_type});
+  };
+  return std::visit(
+      Overloaded{
+          [&](const support::ScalarCarrier&) {
+            return block.exprs.Add(MarshalCarrierToSv(
+                unit_lowerer, frame, object, carrier, sv_type));
+          },
+          [&](const support::VectorCarrier& vector) {
+            return read(
+                VectorReadBuiltin(vector),
+                BuildBufferDataCall(unit, block, object, carrier_type));
+          },
+          [&](const support::OpenArrayCarrier&) {
+            return read(support::BuiltinFn::kDpiOpenArrayValue, object);
+          }},
+      carrier);
 }
 
 // The all-input function import call: every actual crosses by value, so the
@@ -337,15 +509,15 @@ auto LowerForeignImportInputsOnly(
       result_type);
 }
 
-// Populates `closure`'s body with the DPI import boundary: each actual
-// marshaled to its carrier -- a by-value scalar input crossing by value, a
-// writeback direction or a canonical vector of any direction seeded into a
-// boundary temp passed by pointer -- then the foreign call, then the copy-back
-// of each writeback into its actual's cell. A valued call captures its carrier
-// result in a temp, returned so the caller marshals it after the copy-backs; a
-// void call (including a task, whose foreign symbol's disable-ack `int` is
-// discarded) is a bare statement and returns no temp. Shared by the function
-// and task import lowerings, which differ only in how they finish the closure.
+// Populates `closure`'s body with the DPI import boundary: each actual crossed
+// in its own shape -- by value, or through a boundary object the foreign call
+// reaches by pointer or by handle -- then the foreign call, then the read-back
+// of each writeback direction into its actual's cell. A valued call captures
+// its carrier result in a temp, returned so the caller marshals it after the
+// read-backs; a void call (including a task, whose foreign symbol's disable-ack
+// `int` is discarded) is a bare statement and returns no temp. Shared by the
+// function and task import lowerings, which differ only in how they finish the
+// closure.
 template <ExprLowerer Lowerer>
 auto PopulateForeignImportBoundary(
     Lowerer& lowerer, ClosureBuilder& closure, const hir::CallExpr& c,
@@ -388,7 +560,8 @@ auto PopulateForeignImportBoundary(
                     .type = guard_type})});
   }
 
-  // One output / inout argument to copy back after the call.
+  // One output / inout argument, and what its boundary object needs to be read
+  // back into the actual once the call returns.
   struct Writeback {
     mir::LocalId temp{};
     mir::TypeId carrier_type{};
@@ -405,76 +578,51 @@ auto PopulateForeignImportBoundary(
       throw InternalError("DPI-C import call argument unexpectedly elided");
     }
     const hir::ExprId actual = *c.arguments[i];
-    const support::DpiCarrier& carrier = decl.params[i].carrier;
-    const support::DpiDirection direction = decl.params[i].direction;
-    const bool writes_back = support::DpiDirectionWritesBack(direction);
-    const auto* vector = std::get_if<support::VectorCarrier>(&carrier);
+    const mir::ForeignParam& param = decl.params[i];
+    const support::DpiCarrier& carrier = param.carrier;
 
-    // A by-value scalar input crosses by value: no boundary temp, no
-    // sequencing.
-    if (vector == nullptr && !writes_back) {
-      auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
-      if (!sv_or) return std::unexpected(std::move(sv_or.error()));
-      const mir::ExprId sv_id = body.exprs.Add(*std::move(sv_or));
-      call_args.push_back(MarshalSvToCarrier(unit, body, sv_id, carrier));
+    auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
+    if (!sv_or) return std::unexpected(std::move(sv_or.error()));
+    const mir::TypeId actual_type = sv_or->type;
+    const mir::ExprId seed_sv = body.exprs.Add(*std::move(sv_or));
+
+    if (CrossesByValue(param)) {
+      call_args.push_back(MarshalSvToCarrier(unit, body, seed_sv, carrier));
       continue;
     }
 
-    // Every other actual seeds a boundary temp from the actual's current value.
-    // inout requires that initial value (LRM 35.5.1.2); for output the initial
-    // carrier value is implementation-defined, so seeding from the actual is a
-    // legal, uniform choice; a vector input seeds the same way. The foreign
-    // side writes through the pointer (for writeback directions); the copy-back
-    // below lands the result back in the actual's cell.
+    // Every other actual seeds a boundary object from the actual's current
+    // value. inout requires that initial value (LRM 35.5.1.2); for output the
+    // initial carrier value is implementation-defined, so seeding from the
+    // actual is a legal, uniform choice; an input that crosses this way seeds
+    // the same way. The foreign side reads and writes the object, and the
+    // read-back below lands the result in the actual's cell.
     const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
     const mir::LocalId temp = closure.Bindings().DeclareAnonymous(
         mir::LocalDecl{
             .name = "_lyra_dpi_arg" + std::to_string(i), .type = carrier_type});
-    auto seed_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
-    if (!seed_or) return std::unexpected(std::move(seed_or.error()));
-    const mir::ExprId seed_sv = body.exprs.Add(*std::move(seed_or));
+    body.AppendStmt(
+        mir::LocalDeclStmt{
+            .target = temp,
+            .init = BuildBoundaryInit(
+                unit, body, carrier, seed_sv, actual_type, carrier_type)});
+    call_args.push_back(
+        BuildBoundaryArgument(unit, body, carrier, temp, carrier_type));
 
-    if (vector != nullptr) {
-      // A canonical vector's boundary temp is a buffer value constructed from
-      // the seed (its constructor fills it). The foreign call and the copy-back
-      // read reach the chunks through its writable data pointer.
-      body.AppendStmt(
-          mir::LocalDeclStmt{
-              .target = temp,
-              .init = body.exprs.Add(
-                  mir::Expr{
-                      .data =
-                          mir::CallExpr{
-                              .callee = mir::Construct{},
-                              .arguments = {seed_sv}},
-                      .type = carrier_type})});
-      const mir::ExprId buffer_ref =
-          body.exprs.Add(mir::MakeLocalRefExpr(temp, carrier_type));
-      call_args.push_back(
-          BuildBufferDataCall(unit, body, buffer_ref, carrier_type));
-    } else {
-      // A scalar output / inout's boundary temp is the by-value carrier, seeded
-      // by the marshal-in rvalue and passed by pointer.
-      body.AppendStmt(
-          mir::LocalDeclStmt{
-              .target = temp,
-              .init = MarshalSvToCarrier(unit, body, seed_sv, carrier)});
-      const mir::TypeId ptr_type =
-          unit.types.PointerTo(carrier_type, mir::PointerOwnership::kBorrowed);
-      const mir::ExprId temp_ref =
-          body.exprs.Add(mir::MakeLocalRefExpr(temp, carrier_type));
-      call_args.push_back(
-          body.exprs.Add(mir::MakeAddressOfExpr(temp_ref, ptr_type)));
-    }
-
-    if (writes_back) {
+    if (support::DpiDirectionWritesBack(param.direction)) {
       writebacks.push_back(
           Writeback{
               .temp = temp,
               .carrier_type = carrier_type,
               .actual = actual,
               .carrier = carrier,
-              .sv_type = decl.params[i].sv_type});
+              // An open array's shape is the actual's, fixed only at the call
+              // (LRM 35.6.1.1), where every other carrier reads back into the
+              // shape the declaration fixed.
+              .sv_type =
+                  std::holds_alternative<support::OpenArrayCarrier>(carrier)
+                      ? actual_type
+                      : param.sv_type});
     }
   }
 
@@ -511,26 +659,9 @@ auto PopulateForeignImportBoundary(
     const mir::ExprId temp_ref =
         body.exprs.Add(mir::MakeLocalRefExpr(wb.temp, wb.carrier_type));
 
-    // A scalar carrier marshals its by-value temp back; a vector carrier reads
-    // its buffer's chunks back through the buffer's data pointer.
-    mir::ExprId rhs_id{};
-    if (const auto* vector = std::get_if<support::VectorCarrier>(&wb.carrier)) {
-      const mir::ExprId data =
-          BuildBufferDataCall(unit, body, temp_ref, wb.carrier_type);
-      const mir::ExprId prototype = body.exprs.Add(
-          BuildDefaultValueExpr(unit_lowerer, cframe, wb.sv_type));
-      rhs_id = body.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{.target = VectorReadBuiltin(*vector)},
-                      .arguments = {data, prototype}},
-              .type = wb.sv_type});
-    } else {
-      rhs_id = body.exprs.Add(MarshalCarrierToSv(
-          unit_lowerer, cframe, temp_ref, wb.carrier, wb.sv_type));
-    }
+    const mir::ExprId rhs_id = BuildBoundaryReadback(
+        unit_lowerer, cframe, wb.carrier, temp_ref, wb.carrier_type,
+        wb.sv_type);
     const mir::ExprId runtime_id =
         body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
     const mir::Expr assign = BuildObservableAssignExpr(
@@ -542,12 +673,11 @@ auto PopulateForeignImportBoundary(
   return ret_temp;
 }
 
-// The general function import call: at least one actual needs a boundary temp
-// -- an output / inout of any carrier, or a canonical vector of any direction
-// (a vector crosses by pointer even as an input). The boundary is a statement
-// sequence yielding a value, so it lowers to an immediately-invoked closure,
-// uniform for void / valued and statement / expression position. A by-value
-// scalar input still crosses by value with no temp.
+// The general function import call: at least one actual crosses through a
+// boundary object rather than by value, so the boundary is a statement sequence
+// yielding a value. It lowers to an immediately-invoked closure, uniform for
+// void / valued and statement / expression position. A by-value scalar input in
+// the same call still crosses by value, with no object of its own.
 template <ExprLowerer Lowerer>
 auto LowerForeignImportSequenced(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -615,16 +745,23 @@ auto EnclosingClassIdAtHops(
   return std::get<mir::ObjectType>(unit.types.Get(ptr.pointee).data).class_id;
 }
 
-// The MIR type one foreign formal crosses the boundary as, the ABI carrier
-// realized as a concrete type so every consumer spells it through ordinary type
-// mapping. A scalar `input` is its by-value carrier; a scalar `output` /
-// `inout` is a borrowed pointer to it. A packed vector is a borrowed pointer to
-// its canonical chunk, read-only for an `input` the boundary only reads
-// (rendering `const svBitVecVal*` through the pointer's mutability) and mutable
-// for a writeback direction.
+// The MIR type one foreign formal is declared with, the ABI carrier realized as
+// a concrete type so every consumer spells it through ordinary type mapping. A
+// scalar `input` is its by-value carrier; a scalar `output` / `inout` is a
+// borrowed pointer to it. A packed vector is a borrowed pointer to its
+// canonical chunk, read-only for an `input` the boundary only reads (rendering
+// `const svBitVecVal*` through the pointer's mutability) and mutable for a
+// writeback direction. An open array is an opaque handle either way.
 auto ForeignBoundaryType(
     mir::CompilationUnit& unit, const support::DpiCarrier& carrier,
     support::DpiDirection direction) -> mir::TypeId {
+  // An open array crosses by handle in either direction (LRM Annex H.8.6), so
+  // its boundary type does not read the direction at all.
+  if (std::holds_alternative<support::OpenArrayCarrier>(carrier)) {
+    return unit.types.Intern(
+        mir::TypeData{mir::RuntimeLibraryType{
+            .kind = mir::RuntimeLibraryKind::kDpiOpenArrayHandle}});
+  }
   if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
     const mir::TypeId chunk = unit.types.Intern(
         mir::TypeData{mir::RuntimeLibraryType{
@@ -702,7 +839,7 @@ auto LowerForeignImportCall(
   // A context import sequences through a closure even when every actual is a
   // by-value input, because its scope guard is a scoped body local the plain
   // single-expression form has no room for.
-  const bool needs_temp = std::ranges::any_of(decl.params, NeedsBoundaryTemp);
+  const bool needs_temp = !std::ranges::all_of(decl.params, CrossesByValue);
   if (needs_temp || callable.foreign->is_context) {
     return LowerForeignImportSequenced(
         lowerer, frame, c, callable, target, hops, result_type);
@@ -726,6 +863,18 @@ auto SynthesizeForeignExportEntry(
     const hir::ForeignExportDecl& export_decl) -> mir::CallableDecl {
   mir::CompilationUnit& unit = module.Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
+
+  // An exported subroutine cannot take an open array (LRM 35.5.6.1, Annex
+  // H.8.2), and its declaration is rejected before any of this runs, so the
+  // marshaling below reads only the two fixed-shape carriers.
+  const auto crosses_by_handle = [](const hir::DpiParamAbi& p) {
+    return std::holds_alternative<support::OpenArrayCarrier>(p.carrier);
+  };
+  if (std::ranges::any_of(export_decl.params, crosses_by_handle)) {
+    throw InternalError(
+        "SynthesizeForeignExportEntry: an export declared an open-array "
+        "formal");
+  }
 
   // An exported task lowers to a coroutine -- the result type is the call
   // protocol -- while a function's result is its payload directly.

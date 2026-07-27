@@ -45,6 +45,22 @@ struct UnpackedRange {
   [[nodiscard]] auto FromOrdinal(std::int64_t ordinal) const -> std::int64_t {
     return IsAscending() ? ordinal + left : left - ordinal;
   }
+  // A declared range spans `|left - right| + 1` elements and is never empty.
+  // `[0:-1]` is the one exception -- the synthetic empty range standing in for
+  // a dimension that does not exist, which no real declared range spells.
+  [[nodiscard]] auto Count() const -> std::size_t {
+    if (left == 0 && right == -1) {
+      return 0;
+    }
+    return static_cast<std::size_t>(
+               IsAscending() ? right - left : left - right) +
+           1U;
+  }
+  // The lowest declared index, which is C index 0 in the DPI layout of an
+  // unpacked dimension (LRM Annex H.7.3).
+  [[nodiscard]] auto Low() const -> std::int64_t {
+    return IsAscending() ? left : right;
+  }
 };
 
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2). One C++ container layer
@@ -130,12 +146,12 @@ class UnpackedArray {
     return data_.size();
   }
 
-  // Flat-storage element read. `i` is in [0, RawSize()); no SV-index
-  // translation, no invalid-index handling. Sole consumer is the
-  // aggregate-format path
-  // (`Formatter<UnpackedArray<T>>::Format`), which traverses storage to defer
-  // each element to its own `Formatter` specialization. SV-semantics access
-  // goes through `Element(PackedArray)`.
+  // Flat-storage element read: `i` is a storage ordinal in [0, RawSize()), with
+  // no SV-index translation and no invalid-index handling. It serves a
+  // traversal that already walks storage in ordinal order and needs no
+  // coordinate resolution; access by a source-level index is a separate
+  // operation that resolves the coordinate against the receiver's declared
+  // range (LRM 7.4.5).
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
     return data_[i];
   }
