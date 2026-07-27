@@ -8,10 +8,11 @@
 
 namespace lyra::hir {
 
-// One argument of a DPI-C import's ABI projection (LRM 35.5.6): the SV type it
-// was declared with, the C ABI carrier it crosses the boundary as, and its
+// One argument of a DPI-C import's ABI projection (LRM 35.5.6): the SV type
+// whose values the boundary marshals, the C ABI carrier it crosses as, and its
 // direction (LRM 35.5.1.2), which decides whether the boundary copies the value
-// in, back, or both.
+// in, back, or both. For an open array `sv_type` is the element type, since the
+// declaration fixes nothing else about the actual's shape (LRM 35.6.1.1).
 struct DpiParamAbi {
   TypeId sv_type{};
   support::DpiCarrier carrier =

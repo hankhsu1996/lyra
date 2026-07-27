@@ -1,9 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace lyra::support {
 
@@ -52,15 +55,52 @@ struct VectorCarrier {
   auto operator==(const VectorCarrier&) const -> bool = default;
 };
 
-// The C ABI carrier an SV value crosses the DPI-C boundary as. Exactly one of a
-// by-value scalar or a by-pointer canonical vector -- the two are different
-// families (register value vs boundary buffer), so the variant carries each
-// family's own payload. It is the ABI-family projection of a formal, not the
-// whole formal: the SV type shape (width, signedness) stays on the formal's SV
-// type, carried alongside this, and this never duplicates it. Shared by HIR and
-// MIR so no layer re-derives the classification. Kept in `support` as pure data
-// (no HIR / MIR / slang types) so it stays IR-agnostic.
-using DpiCarrier = std::variant<ScalarCarrier, VectorCarrier>;
+// One declared unpacked dimension of an open-array formal, `[left:right]`.
+// Spelled here rather than reused from an IR layer so the carrier stays
+// IR-agnostic.
+struct DpiRange {
+  std::int64_t left = 0;
+  std::int64_t right = 0;
+
+  auto operator==(const DpiRange&) const -> bool = default;
+};
+
+// A by-handle open-array carrier (LRM 35.5.6.1, Annex H.8.6): the formal leaves
+// at least one dimension unsized, so the actual's extent is fixed per call and
+// the value crosses as a handle to a canonical image of the whole array.
+//
+// Only what the formal's SV type does not already fix lives here. `unpacked`
+// runs outermost-first, one entry per unpacked dimension, holding the range the
+// declaration fixes or nothing where the dimension is unsized and the actual
+// supplies it at the call (LRM Annex H.7.6). `packed_unsized` says the same for
+// the sole packed dimension, whose width then comes from the actual; a sized
+// one takes its width from the element type. The element type itself, its
+// width, and its state domain stay on the formal's SV type and are read from
+// there.
+//
+// `element_crosses_as_canonical_vector` is the element's own ABI family: it
+// says an individual value of the element type crosses in the same canonical
+// form the array image holds it in, which is what decides whether the foreign
+// side may take the address of the whole array or of one element (LRM Annex
+// H.12.4).
+struct OpenArrayCarrier {
+  bool packed_unsized = false;
+  bool element_crosses_as_canonical_vector = false;
+  std::vector<std::optional<DpiRange>> unpacked;
+
+  auto operator==(const OpenArrayCarrier&) const -> bool = default;
+};
+
+// The C ABI carrier an SV value crosses the DPI-C boundary as: a by-value
+// scalar, a by-pointer canonical vector, or a by-handle open array. The three
+// are different families (register value, boundary buffer, boundary image), so
+// the variant carries each family's own payload. It is the ABI-family
+// projection of a formal, not the whole formal: the SV type shape (width,
+// signedness) stays on the formal's SV type, carried alongside this, and this
+// never duplicates it. Shared by HIR and MIR so no layer re-derives the
+// classification. Kept in `support` as pure data (no HIR / MIR / slang types)
+// so it stays IR-agnostic.
+using DpiCarrier = std::variant<ScalarCarrier, VectorCarrier, OpenArrayCarrier>;
 
 // The direction of a DPI-C formal argument (LRM 35.5.1.2). `ref` is illegal in
 // import declarations, so the set is exactly input / output / inout. The
@@ -72,6 +112,28 @@ enum class DpiDirection : std::uint8_t {
   kOutput,
   kInout,
 };
+
+// Whether the category is one of the 2- and 4-state scalar and packed types --
+// the ones an open array holds in canonical form (LRM Annex H.7.3). The
+// remainder (`real`, `string`, `chandle`, and `void`, which is not an argument
+// at all) are the C-compatible-representation half of that rule.
+[[nodiscard]] constexpr auto DpiScalarAbiIsIntegral(DpiScalarAbi abi) -> bool {
+  switch (abi) {
+    case DpiScalarAbi::kBitScalar:
+    case DpiScalarAbi::kLogicScalar:
+    case DpiScalarAbi::kByte:
+    case DpiScalarAbi::kShortInt:
+    case DpiScalarAbi::kInt:
+    case DpiScalarAbi::kLongInt:
+      return true;
+    case DpiScalarAbi::kVoid:
+    case DpiScalarAbi::kReal:
+    case DpiScalarAbi::kString:
+    case DpiScalarAbi::kChandle:
+      return false;
+  }
+  return false;
+}
 
 // Whether the direction writes the actual back after the call: output and inout
 // copy the foreign-written carrier back into the SV actual, input does not.
@@ -124,14 +186,24 @@ enum class DpiDirection : std::uint8_t {
 }
 
 // A human-readable spelling of a carrier, for HIR and MIR dumps: a scalar names
-// its ABI category, a vector names its chunk kind and declared width.
+// its ABI category, a vector its chunk kind, an open array its per-dimension
+// shape with `[]` for each dimension the actual sizes.
 [[nodiscard]] inline auto DpiCarrierName(const DpiCarrier& carrier)
     -> std::string {
   if (const auto* scalar = std::get_if<ScalarCarrier>(&carrier)) {
     return std::string{DpiScalarAbiName(scalar->abi)};
   }
-  const auto& vec = std::get<VectorCarrier>(carrier);
-  return vec.four_state ? "logicvec" : "bitvec";
+  if (const auto* vec = std::get_if<VectorCarrier>(&carrier)) {
+    return vec->four_state ? "logicvec" : "bitvec";
+  }
+  const auto& open = std::get<OpenArrayCarrier>(carrier);
+  std::string out = "openarray";
+  out += open.packed_unsized ? "[]" : "";
+  for (const std::optional<DpiRange>& dim : open.unpacked) {
+    out += dim.has_value() ? std::format("[{}:{}]", dim->left, dim->right)
+                           : std::string{"[]"};
+  }
+  return out;
 }
 
 }  // namespace lyra::support

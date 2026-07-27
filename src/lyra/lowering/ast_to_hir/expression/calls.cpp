@@ -698,6 +698,17 @@ auto LowerCallExpr(
   // boundary exactly as an intra-unit one. The call's result type is the
   // enclosing expression's own type and is not recorded again here.
   if (const auto* unit = DeclaringUnitOfSubroutine(*sym)) {
+    // A DPI-C import declared outside this unit is not reached this way: it has
+    // no SV body to call across the boundary, and its formals carry an ABI
+    // classification rather than the ordinary marshalling interface recomputed
+    // below -- some of which, such as an open array (LRM 35.5.6.1), are not
+    // data types at all. Reject it here so the gap reads as the one it is.
+    if (sym->flags.has(slang::ast::MethodFlags::DPIImport)) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedDpi,
+          "a DPI-C import declared outside the calling unit is not yet "
+          "supported");
+    }
     std::vector<hir::ExternalUnitParam> params;
     params.reserve(sym->getArguments().size());
     for (const auto* formal : sym->getArguments()) {
