@@ -201,8 +201,9 @@ the detail lives in the entry itself.
 ### Foreign-language boundary
 
 - [dpi-foreign-boundary](dpi-foreign-boundary.md) -- DPI-C is the foreign arm of the one callable
-  model: an import is a bodyless callable with foreign linkage, marshaling is a cross-ABI carrier
-  conversion expressed in MIR, and an export's context is a thread-local ambient handle.
+  model: a foreign symbol is a bodyless or bodied callable the unit owns, marshaling is a cross-ABI
+  carrier conversion expressed in MIR at each call, and an export's context is a thread-local
+  ambient handle.
 - [dpi-open-array-boundary](dpi-open-array-boundary.md) -- an open array crosses as a canonical
   boundary object owning its own storage, never as a borrow of the actual; the formal's unsized
   shape rides the ABI carrier rather than the type system.

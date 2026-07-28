@@ -101,13 +101,17 @@ struct CompilationUnit {
   base::Registry<Class, ClassId> classes;
   std::optional<ClassId> root;
   // Callables the unit's namespace owns directly rather than through one of its
-  // classes -- a package's functions and tasks (LRM 26.3), and the C entry
-  // point of every DPI-C export the unit contributes (LRM 35.5). All are
-  // receiver-less and bodied: an export's entry point is a program-global
-  // symbol in its own name space and never a class member (LRM 35.4, 35.7), so
-  // a module-scoped export and a package-scoped one are owned here alike, each
-  // body recovering whatever context it needs. A class's own callables live on
-  // that class; these are the unit-level namespace's, one scope up.
+  // classes -- a package's functions and tasks (LRM 26.3), and both directions
+  // of the DPI-C boundary (LRM 35.5): the prototype of every import the unit
+  // takes part in, and the C entry point of every export it contributes. All
+  // are receiver-less. A DPI-C name is program-global, in a name space no
+  // compilation-unit scope contains (LRM 35.4, 35.7), so no class ever owns
+  // one, and a module-scoped export and a package-scoped one are owned here
+  // alike, each body recovering whatever context it needs. Which direction a
+  // foreign callable is reads off its body: an import is the declaration the
+  // user's C defines, an export entry point the definition the user's C calls.
+  // A class's own callables live on that class; these are the unit-level
+  // namespace's, one scope up.
   base::Arena<CallableDecl, CallableId> callables;
   // Static variables the unit's namespace owns directly rather than through one
   // of its classes -- a package's variables (LRM 26.2), one program-global cell

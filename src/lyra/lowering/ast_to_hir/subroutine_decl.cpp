@@ -501,13 +501,16 @@ auto ClassifyDpiParams(
 }
 
 // Lowers a DPI-C import declaration (LRM 35.4) to a bodyless external callable.
-// It has no SV body, so it is not a `SubroutineDecl`; the caller records it
-// among the scope's foreign imports, not its subroutines. The ABI
+// It has no SV body, so it is not a `SubroutineDecl`; the unit records it among
+// its foreign imports, not in a scope's subroutine arena. The ABI
 // classification and the foreign name are resolved once here and never
 // re-derived downstream. A function or a task is accepted; a task carries no
 // return, so its `void` return classifies as `kVoid` through the same path. A
 // `context` import (LRM 35.5.3) carries its context property forward; the call
-// site establishes the declaration scope around the foreign call.
+// site establishes the declaration scope around the foreign call. Every
+// diagnostic here is reported against the declaration, so a unit that reaches
+// an unsupported signature through a call still names the declaration that
+// wrote it.
 auto LowerForeignImport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<hir::ForeignImportDecl> {

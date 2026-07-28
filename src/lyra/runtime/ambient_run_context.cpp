@@ -37,9 +37,14 @@ auto CurrentExportScope() -> Scope* {
       AmbientRunContext::Current().Effects().TryCurrentProcess();
   Scope* scope = process == nullptr ? nullptr : process->CurrentDpiScope();
   if (scope == nullptr) {
+    // The foreign side reached an instance-bound export with no scope
+    // established. An import declared in a package or at `$unit` scope observes
+    // no scope of its own (LRM 35.5.3), so reaching such an export from one
+    // requires svSetScope first.
     throw InternalError(
         "DPI export reached without a scope context: the calling import must "
-        "be a context import or set the scope with svSetScope (LRM 35.5.3)");
+        "be a context import declared in an instantiated scope, or set the "
+        "scope with svSetScope (LRM 35.5.3)");
   }
   return scope;
 }

@@ -289,6 +289,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Handle";
     case support::BuiltinFn::kDpiOpenArrayValue:
       return "ToValue";
+    case support::BuiltinFn::kRunForeignTaskOnFiber:
+      return "RunForeignTaskOnFiber";
     case support::BuiltinFn::kRunExportedTaskToCompletion:
       return "RunExportedTaskToCompletion";
     case support::BuiltinFn::kCurrentExportScope:
@@ -414,6 +416,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kValuePlusargs:
     case support::BuiltinFn::kReadMem:
     case support::BuiltinFn::kWriteMem:
+    case support::BuiltinFn::kRunForeignTaskOnFiber:
     case support::BuiltinFn::kRunExportedTaskToCompletion:
     case support::BuiltinFn::kCurrentExportScope:
       return "lyra::runtime";
@@ -436,10 +439,8 @@ struct CalleeRender {
 };
 
 // Renders a `Direct` callee naming an owner-qualified callable this class
-// owns -- an instance method (LRM 8.6), a static method (LRM 8.10), or a
-// DPI-C import, all one arena. A DPI-C import (external) is a global
-// `extern "C"` symbol reached by its foreign linkage name, no receiver
-// absorbed. An instance callable renders as `(receiver)->Owner::name`, an
+// owns -- an instance method (LRM 8.6) or a static method (LRM 8.10), one
+// arena. An instance callable renders as `(receiver)->Owner::name`, an
 // owner-qualified C++ member call: the owner prefix is a fixed function of
 // the target's owner, redundant for a non-virtual method and, for a virtual
 // method reached through Direct (LRM 8.15 super), forcing C++ to bypass the
@@ -458,11 +459,6 @@ auto RenderDirectCallableCall(
   }
   const auto& cls = view.Unit().GetClass(target.owner);
   const auto& callable = cls.callables.Get(target.slot);
-  // A foreign-linkage callable is reached by its linkage name, not by any
-  // SV-scoped spelling (LRM 35.4).
-  if (callable.foreign.has_value()) {
-    return {.expr = callable.foreign->foreign_name, .leading_arg_count = 0};
-  }
   // Instance vs static (LRM 8.10) reads off the target's signature: an
   // instance call binds the receiver as `(recv)->Owner::name(rest)`, a
   // static call is the free type-qualified form `Owner::name(args)` with no
@@ -584,6 +580,14 @@ auto RenderDirectImportedRuntimeCall(
       .leading_arg_count = 0};
 }
 
+// Renders a call to a name in the DPI-C name space (LRM 35.4). The symbol is
+// program-global, so it is spelled unqualified and carries no receiver; the
+// prototype it resolves against is declared once in this artifact.
+auto RenderDirectForeignSymbolCall(const mir::ForeignSymbolTarget& target)
+    -> CalleeRender {
+  return {.expr = target.linkage_name, .leading_arg_count = 0};
+}
+
 auto RenderCalleePart(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> CalleeRender {
@@ -609,6 +613,9 @@ auto RenderCalleePart(
                     },
                     [&](const mir::ImportedRuntimeCallTarget& i) {
                       return RenderDirectImportedRuntimeCall(i);
+                    },
+                    [](const mir::ForeignSymbolTarget& f) {
+                      return RenderDirectForeignSymbolCall(f);
                     },
                 },
                 d.target);
@@ -716,27 +723,6 @@ auto RenderMakeQueueConcatCall(
   return out;
 }
 
-// Whether the call is to an imported foreign task (LRM 35.5.2). A foreign task
-// may consume simulation time, so its call runs on a fiber that can suspend
-// across the boundary rather than as a plain synchronous call; a foreign
-// function never does.
-auto IsForeignTaskCall(const ScopeView& view, const mir::CallExpr& call)
-    -> bool {
-  const auto* direct = std::get_if<mir::Direct>(&call.callee);
-  if (direct == nullptr) {
-    return false;
-  }
-  const auto* target = std::get_if<mir::CallableTarget>(&direct->target);
-  if (target == nullptr) {
-    return false;
-  }
-  const auto& callable =
-      view.Unit().GetClass(target->owner).callables.Get(target->slot);
-  return callable.foreign.has_value() &&
-         callable.foreign->marshal.has_value() &&
-         callable.foreign->marshal->is_task;
-}
-
 auto RenderCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> std::string {
@@ -753,16 +739,7 @@ auto RenderCallExpr(
     if (i != callee.leading_arg_count) args += ", ";
     args += RenderExpr(view, view.Expr(call.arguments[i]));
   }
-  const std::string call_text = std::format("{}({})", callee.expr, args);
-
-  // A foreign task's call is awaited on a fiber so an exported task it reaches
-  // can suspend across the boundary; the call itself is the fiber's entry.
-  if (IsForeignTaskCall(view, call)) {
-    return std::format(
-        "co_await ::lyra::runtime::RunForeignTaskOnFiber([&] {{ {}; }})",
-        call_text);
-  }
-  return call_text;
+  return std::format("{}({})", callee.expr, args);
 }
 
 }  // namespace lyra::backend::cpp

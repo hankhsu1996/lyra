@@ -7,6 +7,7 @@
 #include <format>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -178,7 +179,7 @@ auto PopulatePackageStaticVariables(
 
 }  // namespace
 
-auto UnitLowerer::PopulateTypesAndClasses() -> diag::Result<void> {
+auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   unit_.name = hir_->name;
 
   // Every class identity is minted before any type is translated, so a class
@@ -200,6 +201,14 @@ auto UnitLowerer::PopulateTypesAndClasses() -> diag::Result<void> {
     const mir::TypeId mir_id =
         unit_.types.Intern(TranslateTypeData(hir_type.data));
     MapType(hir_id, mir_id);
+  }
+
+  // The prototype of every DPI-C import this unit takes part in (LRM 35.4),
+  // published as a bodyless callable of the unit: the DPI-C name space contains
+  // no class, so no class owns one. Every call to the import resolves against
+  // this one declaration, whichever unit wrote the source declaration.
+  for (const hir::ForeignImportDecl& import : hir_->foreign_imports) {
+    unit_.callables.Add(MakeForeignImportDecl(unit_, import));
   }
 
   // Two-stage class lowering. Stage 1 publishes every class's shape so a
@@ -238,7 +247,7 @@ auto UnitLowerer::RunDesignRoot(PackageInitializationPlan package_init_plan)
 auto UnitLowerer::LowerModuleUnit(PackageInitializationPlan package_init_plan)
     -> diag::Result<mir::CompilationUnit> {
   WalkFrame root_frame;
-  if (auto prologue = PopulateTypesAndClasses(); !prologue) {
+  if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
   }
 
@@ -259,7 +268,7 @@ auto UnitLowerer::LowerModuleUnit(PackageInitializationPlan package_init_plan)
 }
 
 auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
-  if (auto prologue = PopulateTypesAndClasses(); !prologue) {
+  if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
   }
 
@@ -284,53 +293,37 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
       unit_.nominal_type_names.try_emplace(target, alias.name);
     }
   }
-  // A DPI-C import declared in a package (LRM 35.4) has no lowering here yet;
-  // it would otherwise drop silently, since only the subroutines below are
-  // walked.
-  if (!scope.foreign_imports.empty()) {
-    return diag::Fail(
-        diag::DiagCode::kUnsupportedExpressionForm,
-        "a DPI-C import declared in a package is not yet supported");
-  }
-  for (std::size_t i = 0; i < scope.structural_subroutines.size(); ++i) {
-    const hir::SubroutineDecl& src = scope.structural_subroutines.Get(
-        hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
+  // The callable each package subroutine lowered to, recorded where it is
+  // created so an export below names its own by identity.
+  std::unordered_map<std::string_view, mir::CallableId> subroutine_callables;
+  for (const hir::SubroutineDecl& src : scope.structural_subroutines) {
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.name, WalkFrame{},
         empty_storage_plan);
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    unit_.callables.Add(
-        mir::CallableDecl{
-            .name = src.name,
-            .code = *std::move(code_or),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .visibility = mir::CallableVisibility::kInternal});
+    subroutine_callables.emplace(
+        src.name, unit_.callables.Add(
+                      mir::CallableDecl{
+                          .name = src.name,
+                          .code = *std::move(code_or),
+                          .foreign = std::nullopt,
+                          .virtual_dispatch = std::nullopt,
+                          .visibility = mir::CallableVisibility::kInternal}));
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
   // C entry point recovers the run's services instead of a calling
-  // instance and calls the package's own free function by name. The callables
-  // above were added in structural-subroutine order and a package has no
-  // leading DPI imports, so an export's callable id is its subroutine index.
+  // instance and calls the package's own free function by name.
   for (const hir::ForeignExportDecl& export_decl : scope.foreign_exports) {
-    std::optional<mir::CallableId> callable_id;
-    for (std::size_t i = 0; i < scope.structural_subroutines.size(); ++i) {
-      if (scope.structural_subroutines
-              .Get(hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)})
-              .name == export_decl.sv_name) {
-        callable_id = mir::CallableId{static_cast<std::uint32_t>(i)};
-        break;
-      }
-    }
-    if (!callable_id.has_value()) {
+    const auto entry = subroutine_callables.find(export_decl.sv_name);
+    if (entry == subroutine_callables.end()) {
       throw InternalError(
           "UnitLowerer::RunPackage: exported subroutine has no lowered "
           "callable");
     }
     const mir::TypeId result_type =
-        unit_.callables.Get(*callable_id).code.result_type;
+        unit_.callables.Get(entry->second).code.result_type;
     unit_.callables.Add(SynthesizeForeignExportEntry(
         *this, WalkFrame{},
         mir::ExternalUnitCallableTarget{

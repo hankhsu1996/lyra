@@ -392,6 +392,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "dpi_open_array_handle";
     case BuiltinFn::kDpiOpenArrayValue:
       return "dpi_open_array_value";
+    case BuiltinFn::kRunForeignTaskOnFiber:
+      return "run_foreign_task_on_fiber";
     case BuiltinFn::kRunExportedTaskToCompletion:
       return "run_exported_task_to_completion";
     case BuiltinFn::kCurrentExportScope:

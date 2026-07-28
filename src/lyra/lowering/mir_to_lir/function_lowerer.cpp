@@ -213,16 +213,6 @@ auto LowerCallTarget(
                 Overloaded{
                     [&](const mir::CallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      // An ordinary callable lowers to a direct method call; a
-                      // foreign-linkage one to its linkage symbol. The target
-                      // names its own owner, so either is reached without a
-                      // receiver to recover it from.
-                      const mir::CallableDecl& decl =
-                          unit.Mir().GetClass(t.owner).callables.Get(t.slot);
-                      if (decl.foreign.has_value()) {
-                        return lir::CallTarget{lir::ForeignTarget{
-                            .symbol = decl.foreign->foreign_name}};
-                      }
                       if (qualifier.has_value()) {
                         return Unsupported(
                             "mir_to_lir: a qualified method call is not yet "
@@ -230,6 +220,15 @@ auto LowerCallTarget(
                       }
                       return lir::CallTarget{lir::MethodTarget{
                           .method = unit.MethodSlot(t.owner, t.slot)}};
+                    },
+                    [&](const mir::ForeignSymbolTarget& f)
+                        -> diag::Result<lir::CallTarget> {
+                      // A name in the DPI-C name space is reached as an
+                      // external-linkage symbol the execution session resolves
+                      // (LRM 35.4); nothing about the call names a unit or a
+                      // class.
+                      return lir::CallTarget{
+                          lir::ForeignTarget{.symbol = f.linkage_name}};
                     },
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {

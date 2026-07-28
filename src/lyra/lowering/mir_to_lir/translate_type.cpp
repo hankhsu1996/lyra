@@ -114,10 +114,12 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
           "compile-time constant consumed by the backend directly and does not "
           "flow through MIR-to-LIR");
     case mir::RuntimeLibraryKind::kDpiScopeGuard:
+    case mir::RuntimeLibraryKind::kForeignTaskAwaitable:
       throw InternalError(
-          "TranslateRuntimeLibraryKind: the DPI context scope guard is a "
-          "C++-backend marshaling artifact; the execution backend does not "
-          "consume the DPI context surface");
+          "TranslateRuntimeLibraryKind: the DPI context scope guard and the "
+          "foreign-task fiber awaitable are C++-backend marshaling artifacts; "
+          "the execution backend does not consume the DPI context or task "
+          "surface");
   }
   throw InternalError(
       "TranslateRuntimeLibraryKind: unknown RuntimeLibraryKind");

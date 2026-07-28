@@ -56,17 +56,21 @@ struct SubroutineBinding {
 using SubroutineBindings =
     std::unordered_map<const slang::ast::SubroutineSymbol*, SubroutineBinding>;
 
-// A DPI-C import call resolves to the scope that declares the import, reached
-// through `owner_frame`, and to the import's `foreign_imports` id. A separate
-// binding space from SubroutineBinding: an import is a bodyless external
-// callable, not a body-bearing structural subroutine.
-struct ForeignImportBinding {
-  ScopeFrameId owner_frame{};
-  hir::ForeignImportId import_id{};
-};
-
+// A DPI-C import call resolves to the unit's own record of the import. An
+// import is a bodyless external callable, not a body-bearing structural
+// subroutine, so it binds in a space of its own. The map is also what makes one
+// entry per declaration: a unit that both declares an import and calls it, or
+// calls one declaration from several places, interns it once.
 using ForeignImportBindings = std::unordered_map<
-    const slang::ast::SubroutineSymbol*, ForeignImportBinding>;
+    const slang::ast::SubroutineSymbol*, hir::ForeignImportId>;
+
+// The instantiated scope a DPI-C import declaration sits in, for the imports
+// written inside this unit's own scopes. A `context` import observes that scope
+// for the duration of its foreign call (LRM 35.5.3). An import declared in a
+// package or at `$unit` scope has no entry, because such a namespace is never
+// instantiated and the import therefore observes no scope.
+using ForeignImportScopes =
+    std::unordered_map<const slang::ast::SubroutineSymbol*, ScopeFrameId>;
 
 // A downward reference's leading component names an owned child this scope
 // declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
@@ -306,12 +310,19 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& sym) const
       -> std::optional<SubroutineBinding>;
 
-  void MapForeignImportBinding(
-      const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
-      hir::ForeignImportId import_id);
-  [[nodiscard]] auto LookupForeignImportBinding(
+  // Interns this unit's record of a DPI-C import (LRM 35.4), classifying its
+  // ABI projection on first sight and answering with the same id every later
+  // time. Both the declaration walk and a call site reach an import through
+  // here, so a unit that calls an import declared elsewhere holds an entry
+  // identical to the declaring unit's, classified from the same declaration.
+  auto EnsureForeignImport(const slang::ast::SubroutineSymbol& sym)
+      -> diag::Result<hir::ForeignImportId>;
+
+  void MapForeignImportScope(
+      const slang::ast::SubroutineSymbol& sym, ScopeFrameId declaring_frame);
+  [[nodiscard]] auto LookupForeignImportScope(
       const slang::ast::SubroutineSymbol& sym) const
-      -> std::optional<ForeignImportBinding>;
+      -> std::optional<ScopeFrameId>;
 
   // Pattern-bound identifiers (LRM 12.6). The declaration is the
   // `VariablePattern` node itself, so a reference resolves to that node's
@@ -431,6 +442,7 @@ class UnitLowerer {
   StructuralDataObjectBindings structural_data_object_bindings_;
   SubroutineBindings subroutine_bindings_;
   ForeignImportBindings foreign_import_bindings_;
+  ForeignImportScopes foreign_import_scopes_;
   OwnedChildBindings owned_child_bindings_;
   std::unordered_map<const slang::ast::PatternVarSymbol*, hir::PatternId>
       pattern_var_bindings_;

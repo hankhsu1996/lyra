@@ -27,8 +27,8 @@ declared with an initializer, initialized once at time zero before the top modul
 written from another unit by name, including from a package function or task, by explicit
 `pkg::item` or by a bare name (brought into scope by import, or lying at `$unit` scope), and
 including waking a process on its change. A package or `$unit` task enabled from another unit
-suspends its caller until it completes. The remaining PK2 and PK3 increments (checkboxes below) are
-the independent follow-ups.
+suspends its caller until it completes. The remaining PK3 increments (checkboxes below) are the
+independent follow-ups.
 
 ## Sub-Steps
 
@@ -56,8 +56,6 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
         intra-unit call does (LRM 13.5): output and inout are copied back after the call, and ref /
         const ref alias the caller's cell. Covers a function whose return value and an output
         argument are written back together, and a task whose output crosses a suspension.
-  - [ ] A DPI-C import declared inside a package (LRM 35.4), which is rejected with a diagnostic
-        rather than mis-emitted.
 - [x] PK3 -- Package variables. A package variable is static storage owned by the namespace -- one
       program-global cell, shared, not a member of any instance -- read and written from other units
       by name. It is the same type-associated storage a class static property uses, not a
@@ -106,15 +104,15 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
 
 ## Blocked
 
-Nothing blocked. The remaining PK2 and PK3 increment checkboxes are the actionable follow-ups.
+Nothing blocked. The remaining PK3 increment checkboxes are the actionable follow-ups.
 
 ## Out of Scope
 
 - Classes declared inside a package (LRM 26.2). The class is an ordinary type-level member of the
   namespace; its own semantics ride the class workstream, not this one.
-- Package / `$unit`-scoped DPI export wrappers. The export makes a package-scoped subroutine
-  callable from foreign C; it rides on PK1-PK2 for the package unit and the callable, and is tracked
-  as the next C++-backend deliverable in `dpi.md`.
+- Package / `$unit`-scoped DPI imports and exports. An export makes a package-scoped subroutine
+  callable from foreign C; an import declared at package or `$unit` scope is called from any unit.
+  Both ride on PK1-PK2 for the package unit and the callable, and are tracked in `dpi.md`.
 
 ## Cross-references
 
@@ -127,5 +125,5 @@ Nothing blocked. The remaining PK2 and PK3 increment checkboxes are the actionab
   object type), `../architecture/reference_resolution.md` and `../architecture/emission_model.md`
   (by-name cross-unit resolution and per-unit emission), `../architecture/north_star.md` (the
   cross-unit dependency is explicitly declared, per the incremental / parallel constraints).
-- Unblocks: `ibex.md` (the Ibex design leans on `ibex_pkg`), `dpi.md` D4 (package / `$unit`-scoped
-  export hangs off the package unit and callable established here).
+- Unblocks: `ibex.md` (the Ibex design leans on `ibex_pkg`), `dpi.md` (the package / `$unit`-scoped
+  side of both DPI directions hangs off the package unit and callable established here).

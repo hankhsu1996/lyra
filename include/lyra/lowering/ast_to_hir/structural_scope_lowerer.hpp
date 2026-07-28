@@ -80,8 +80,7 @@ class StructuralScopeLowerer {
   auto PopulateSubroutineMember(
       const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
       -> diag::Result<void>;
-  auto PopulateForeignImportMember(
-      const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
+  auto PopulateForeignImportMember(const slang::ast::SubroutineSymbol& sym)
       -> diag::Result<void>;
   auto PopulateProceduralBlockMember(
       const slang::ast::ProceduralBlockSymbol& proc, WalkFrame frame)
