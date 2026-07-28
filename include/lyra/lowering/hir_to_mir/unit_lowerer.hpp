@@ -277,11 +277,13 @@ class UnitLowerer {
   auto LowerModuleUnit(PackageInitializationPlan package_init_plan)
       -> diag::Result<mir::CompilationUnit>;
 
-  // Mints every class identity, interns every HIR type, and lowers every HIR
-  // class body into the unit. Shared prologue of `Run` and `RunPackage`: both a
-  // module and a package own the same declaration kinds; they differ only in
-  // whether the root scope becomes a top class or a set of namespace callables.
-  auto PopulateTypesAndClasses() -> diag::Result<void>;
+  // Publishes everything the unit declares before any root-scope body lowers:
+  // every class identity and body, every interned type, and the prototype of
+  // every foreign symbol the unit takes part in. Shared prologue of every unit
+  // kind -- a module and a package own the same declaration kinds; they differ
+  // only in whether the root scope becomes a top class or a set of namespace
+  // callables.
+  auto PublishUnitDeclarations() -> diag::Result<void>;
 
   [[nodiscard]] auto TranslateTypeData(const hir::TypeData& data)
       -> mir::TypeData;

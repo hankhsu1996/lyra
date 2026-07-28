@@ -25,7 +25,6 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/dpi_abi.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::mir {
@@ -331,6 +330,8 @@ class MirDumper {
                   return "RuntimeLibrary(DpiLogicChunk)";
                 case RuntimeLibraryKind::kDpiScopeGuard:
                   return "RuntimeLibrary(DpiScopeGuard)";
+                case RuntimeLibraryKind::kForeignTaskAwaitable:
+                  return "RuntimeLibrary(ForeignTaskAwaitable)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
@@ -579,6 +580,9 @@ class MirDumper {
               return std::format(
                   "external_class_method={}::{}::{}", e.unit_name, e.class_name,
                   e.method_name);
+            },
+            [](const ForeignSymbolTarget& f) -> std::string {
+              return std::format("foreign_symbol=\"{}\"", f.linkage_name);
             }},
         target);
   }
@@ -1013,36 +1017,8 @@ class MirDumper {
     }
   }
 
-  void DumpForeignMarshal(const ForeignMarshal& marshal) {
-    Line(
-        std::format(
-            "Marshal:{} ret={} : {}", marshal.is_task ? " task" : "",
-            support::DpiScalarAbiName(marshal.ret_abi),
-            FormatVarType(marshal.ret_sv_type)));
-    Indent();
-    for (std::size_t i = 0; i < marshal.params.size(); ++i) {
-      Line(
-          std::format(
-              "Param[{}] {} {} : {}", i,
-              support::DpiDirectionName(marshal.params[i].direction),
-              support::DpiCarrierName(marshal.params[i].carrier),
-              FormatVarType(marshal.params[i].sv_type)));
-    }
-    Dedent();
-  }
-
   void DumpForeignLinkage(const ForeignLinkage& linkage) {
-    Line(
-        std::format(
-            R"(ForeignLinkage: c_name="{}"{}{})", linkage.foreign_name,
-            linkage.is_pure ? " pure" : "",
-            linkage.is_context ? " context" : ""));
-    if (!linkage.marshal.has_value()) {
-      return;
-    }
-    Indent();
-    DumpForeignMarshal(*linkage.marshal);
-    Dedent();
+    Line(std::format(R"(ForeignLinkage: c_name="{}")", linkage.foreign_name));
   }
 
   void DumpCallable(const CallableDecl& d, std::size_t index) {

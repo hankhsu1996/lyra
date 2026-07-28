@@ -36,3 +36,15 @@ If:
   PathMatch: playground/.*
 Diagnostics:
   Suppress: '*'
+
+---
+
+# A test case's own C sources are inputs to the project lyra emits, not to this
+# repository's build: they include the ABI header lyra generates for that
+# project, which exists only after an emit. clangd has no compilation database
+# entry for them and can only report the generated header and everything it
+# declares as missing.
+If:
+  PathMatch: tests/cases/.*
+Diagnostics:
+  Suppress: '*'

@@ -1,7 +1,6 @@
 #include "lyra/dpi/abi_header.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <span>
 #include <string>
@@ -13,7 +12,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable.hpp"
-#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -161,19 +159,11 @@ void RecordCallable(
       .push_back(std::move(entry));
 }
 
+// A DPI-C name is program-global and belongs to no class (LRM 35.4, 35.7), so
+// the unit's own callables are the whole of its foreign surface.
 void CollectUnit(const mir::CompilationUnit& unit, ForeignSurface& surface) {
-  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    const mir::ClassId id{static_cast<std::uint32_t>(i)};
-    if (!unit.classes.IsDefined(id)) continue;
-    for (const mir::CallableDecl& callable : unit.GetClass(id).callables) {
-      RecordCallable(unit, callable, surface);
-    }
-  }
-  for (std::size_t i = 0; i < unit.callables.size(); ++i) {
-    RecordCallable(
-        unit,
-        unit.callables.Get(mir::CallableId{static_cast<std::uint32_t>(i)}),
-        surface);
+  for (const mir::CallableDecl& callable : unit.callables) {
+    RecordCallable(unit, callable, surface);
   }
 }
 

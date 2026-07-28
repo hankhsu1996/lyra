@@ -157,6 +157,19 @@ struct ImportedRuntimeCallTarget {
   auto operator==(const ImportedRuntimeCallTarget&) const -> bool = default;
 };
 
+// Identity of a symbol in the DPI-C name space (LRM 35.4): the program-global
+// linkage names imported and exported subroutines resolve to, a name space of
+// its own that no compilation-unit scope contains. It is therefore neither a
+// callable of this unit nor one of another unit's namespace, and a call names
+// it by linkage name alone. A backend renders the unqualified symbol; the
+// prototype it resolves against is published once by the unit that declares the
+// import.
+struct ForeignSymbolTarget {
+  std::string linkage_name;
+
+  auto operator==(const ForeignSymbolTarget&) const -> bool = default;
+};
+
 // Identity of a receiver-less callable owned by another compilation unit's
 // namespace -- a package function or task (LRM 26.3) reached from this unit.
 // The target lives outside this unit, so it carries no unit-local id: it names
@@ -188,18 +201,19 @@ struct ExternalUnitClassMethodTarget {
 };
 
 // The target of a `Direct` call -- the symbol identity. The identity spaces: an
-// owner-qualified callable of this unit (`CallableTarget` -- an instance
-// method, a receiver-less static callable, or a DPI-C import, all one arena), a
-// built-in runtime entry (closed-namespace `BuiltinFn`), a method the runtime
-// library provides for an imported class (`ImportedRuntimeCallTarget`,
-// LRM 9.7), a receiver-less callable of another compilation unit
-// (`ExternalUnitCallableTarget`, named across the unit boundary), and a class
-// method of another compilation unit
-// (`ExternalUnitClassMethodTarget`, class-qualified across the unit boundary).
-// None is recovered from the receiver's runtime type.
+// owner-qualified callable of this unit (`CallableTarget` -- an instance method
+// or a receiver-less static callable, one arena), a built-in runtime entry
+// (closed-namespace `BuiltinFn`), a method the runtime library provides for an
+// imported class (`ImportedRuntimeCallTarget`, LRM 9.7), a receiver-less
+// callable of another compilation unit (`ExternalUnitCallableTarget`, named
+// across the unit boundary), a class method of another compilation unit
+// (`ExternalUnitClassMethodTarget`, class-qualified across the unit boundary),
+// and a name in the DPI-C name space (`ForeignSymbolTarget`, LRM 35.4). None is
+// recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
     CallableTarget, support::BuiltinFn, ImportedRuntimeCallTarget,
-    ExternalUnitCallableTarget, ExternalUnitClassMethodTarget>;
+    ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
+    ForeignSymbolTarget>;
 
 // A direct call to a named symbol. The single shape for every direct
 // invocation -- user method, built-in instance method, type-qualified

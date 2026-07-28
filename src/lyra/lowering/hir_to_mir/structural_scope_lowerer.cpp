@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -1065,14 +1066,12 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
   // Reserve each subroutine's MIR id before any body lowers, so a call in one
   // body resolves a forward or mutual reference to a peer (LRM 13.7). The id is
-  // the index the decl will occupy in the class's callable arena; the DPI-C
-  // imports are the arena's first entries, so a subroutine sits past them.
-  const auto callable_prefix =
-      static_cast<std::uint32_t>(hir_scope.foreign_imports.size());
+  // the index the decl will occupy in the class's callable arena, which the
+  // subroutines fill in declaration order.
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
     lowerer.MapStructuralSubroutine(
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)},
-        mir::CallableId{callable_prefix + static_cast<std::uint32_t>(i)});
+        mir::CallableId{static_cast<std::uint32_t>(i)});
   }
 
   // Recursively declare every owned generate child's class shape; each child
@@ -1524,46 +1523,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   mir_class.fields = shape.fields;
   mir_class.contained = shape.contained;
 
-  // A DPI-C import declares no body, so it never enters the subroutine body
-  // machinery below. Its ABI projection and foreign name were resolved once at
-  // AST-to-HIR; here they translate straight into a receiver-less bodyless
-  // callable of the class carrying that linkage, the callable the import call
-  // lowers against. The imports are the class's first callables, so a
-  // body-bearing subroutine sits past them (its reserved id accounts for the
-  // import count).
-  for (std::size_t i = 0; i < hir_scope.foreign_imports.size(); ++i) {
-    const hir::ForeignImportDecl& imp = hir_scope.foreign_imports.Get(
-        hir::ForeignImportId{static_cast<std::uint32_t>(i)});
-    std::vector<mir::ForeignParam> params;
-    params.reserve(imp.params.size());
-    for (const hir::DpiParamAbi& p : imp.params) {
-      params.push_back(
-          mir::ForeignParam{
-              .sv_type = unit_lowerer.TranslateType(p.sv_type),
-              .carrier = p.carrier,
-              .direction = p.direction});
-    }
-    mir_class.callables.Add(
-        mir::CallableDecl{
-            .name = imp.name,
-            .code = MakeForeignSignature(
-                unit_lowerer.Unit(), imp.params, imp.ret_abi, imp.is_task),
-            .foreign =
-                mir::ForeignLinkage{
-                    .foreign_name = imp.foreign_name,
-                    .is_pure = imp.is_pure,
-                    .is_context = imp.is_context,
-                    .marshal =
-                        mir::ForeignMarshal{
-                            .params = std::move(params),
-                            .ret_sv_type =
-                                unit_lowerer.TranslateType(imp.ret_sv_type),
-                            .ret_abi = imp.ret_abi,
-                            .is_task = imp.is_task}},
-            .virtual_dispatch = std::nullopt,
-            .visibility = mir::CallableVisibility::kInternal});
-  }
-
   const mir::TypeId void_type = unit_lowerer.Unit().builtins.void_type;
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
   ScopeChainNode outer_scope_link{};
@@ -1948,6 +1907,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     exported_names.insert(e.sv_name);
   }
 
+  // The callable each subroutine lowered to, recorded where it is created so an
+  // export below names its own by identity.
+  std::unordered_map<std::string_view, mir::CallableId> subroutine_callables;
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
     const auto& src = hir_scope.structural_subroutines.Get(
         hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
@@ -1965,11 +1927,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .visibility = exported_names.contains(src.name)
                               ? mir::CallableVisibility::kPublic
                               : mir::CallableVisibility::kInternal});
-    if (added.value != hir_scope.foreign_imports.size() + i) {
+    // A body lowered earlier may already name this one through the id reserved
+    // for it, so the arena position it actually lands in has to be that id.
+    if (added.value != i) {
       throw InternalError(
           "StructuralScopeLowerer::PopulateBodies: subroutine added out of "
           "mapped id order");
     }
+    subroutine_callables.emplace(src.name, added);
     for (const auto& pending :
          subroutine_lowerer.TakePendingStaticInitializers()) {
       auto integ = IntegratePendingStaticInitializer(
@@ -1978,34 +1943,23 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
   }
 
-  // Each exported subroutine (LRM 35.5) already lowered as a callable above, in
-  // structural-subroutine id order past the leading DPI imports, so its
-  // callable id is the import count plus its subroutine index. Its C entry
-  // point calls that method on the receiver recovered from the current DPI
-  // scope (LRM 35.5.3) -- the instance the foreign call chain targets, which
-  // svSetScope may have redirected -- and the unit owns it, since a DPI-C name
-  // is program-global and never a class member (LRM 35.4, 35.7).
+  // An exported subroutine's C entry point calls that method on the receiver
+  // recovered from the current DPI scope (LRM 35.5.3) -- the instance the
+  // foreign call chain targets, which svSetScope may have redirected -- and the
+  // unit owns the entry point, since a DPI-C name is program-global and never a
+  // class member (LRM 35.4, 35.7).
   for (const hir::ForeignExportDecl& export_decl : hir_scope.foreign_exports) {
-    std::optional<mir::CallableId> method_id;
-    for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
-      if (hir_scope.structural_subroutines
-              .Get(hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)})
-              .name == export_decl.sv_name) {
-        method_id = mir::CallableId{
-            static_cast<std::uint32_t>(hir_scope.foreign_imports.size() + i)};
-        break;
-      }
-    }
-    if (!method_id.has_value()) {
+    const auto entry = subroutine_callables.find(export_decl.sv_name);
+    if (entry == subroutine_callables.end()) {
       throw InternalError(
           "StructuralScopeLowerer::PopulateBodies: exported subroutine has no "
           "lowered method");
     }
     const mir::TypeId method_result_type =
-        mir_class.callables.Get(*method_id).code.result_type;
+        mir_class.callables.Get(entry->second).code.result_type;
     unit_lowerer.Unit().callables.Add(SynthesizeForeignExportEntry(
         unit_lowerer, ctor_frame,
-        mir::CallableTarget{.owner = class_id_, .slot = *method_id},
+        mir::CallableTarget{.owner = class_id_, .slot = entry->second},
         method_result_type, export_decl));
   }
 

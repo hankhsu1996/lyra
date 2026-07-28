@@ -5,7 +5,7 @@
 // carrier, calls the foreign symbol, and marshals results back; an `export
 // "DPI-C"` synthesizes the C entry point foreign code calls to reach an SV
 // subroutine. Both sides share the carrier-marshaling vocabulary, kept here so
-// the ordinary-call dispatch in `calls.hpp` stays free of the DPI ABI surface.
+// the ordinary-call dispatch stays free of the DPI ABI surface.
 
 #include <span>
 
@@ -18,7 +18,6 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
@@ -28,22 +27,28 @@ class UnitLowerer;
 
 // The signature a DPI-C declaration publishes to the C side (LRM 35.5.6): one
 // binding per formal, typed as the value crosses the boundary, plus the type
-// the entry point returns. The result carries no body, since this is what an
-// import -- a declaration the user's C defines -- is made of; carrying the
-// prototype as an ordinary signature is what lets an import's declaration and
-// an export's definition render through one path.
+// the entry point returns. It is the signature alone; a direction that defines
+// the callable adds its body on top. Carrying the prototype as an ordinary
+// signature is what lets an import's declaration and an export's definition
+// render through one path, so the two can never disagree.
 auto MakeForeignSignature(
     mir::CompilationUnit& unit, std::span<const hir::DpiParamAbi> params,
     support::DpiScalarAbi ret_abi, bool is_task) -> mir::CallableCode;
 
-// LRM 35.4 import call: an ordinary call to the external static callable,
-// wrapped in boundary marshaling. The carriers and directions are read from the
-// callable's own declaration, resolved once at its declaration lowering. A task
-// call is a coroutine the caller awaits, so it always sequences through a
-// closure; a function call whose every actual is a by-value scalar input is a
-// plain expression, and one with any actual that needs a boundary temp (an
-// output / inout, or a canonical vector of any direction) sequences through a
-// closure.
+// The bodyless callable that publishes an import's foreign prototype (LRM
+// 35.4). The unit owns it, because the DPI-C name space is program-global and
+// contains no class; a backend emits it as the declaration the foreign call
+// resolves against, and the user's C supplies the definition.
+auto MakeForeignImportDecl(
+    mir::CompilationUnit& unit, const hir::ForeignImportDecl& import)
+    -> mir::CallableDecl;
+
+// LRM 35.4 import call: a call to the foreign symbol, wrapped in boundary
+// marshaling. The marshaling is built here, at the call, because an open-array
+// formal leaves a dimension unsized (LRM 35.5.6.1) and the actual's own static
+// type is what fixes it -- a fact only the call site holds. A boundary that
+// needs body locals of its own lowers to a statement sequence; one that needs
+// none is a plain expression.
 template <ExprLowerer Lowerer>
 auto LowerForeignImportCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,

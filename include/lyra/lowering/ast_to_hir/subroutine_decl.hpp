@@ -75,8 +75,10 @@ auto LowerMethodPrototypeDecl(
 // Lowers a slang `import "DPI-C"` subroutine (LRM 35.4) into a bodyless
 // hir::ForeignImportDecl: the resolved foreign name, the pure property, and the
 // ABI projection of its signature. Distinct from LowerSubroutineDecl because a
-// DPI import has no SV body; the caller records the result in the scope's
-// `foreign_imports` arena, never in its subroutine arena.
+// DPI import has no SV body; the unit records the result among its foreign
+// imports, never in a scope's subroutine arena. The result reads only the
+// declaration, so every unit that lowers the same declaration gets the same
+// record.
 auto LowerForeignImport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<hir::ForeignImportDecl>;

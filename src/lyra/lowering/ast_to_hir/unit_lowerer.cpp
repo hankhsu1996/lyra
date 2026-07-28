@@ -36,6 +36,7 @@
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -220,27 +221,38 @@ auto UnitLowerer::LookupSubroutineBinding(
   return it->second;
 }
 
-void UnitLowerer::MapForeignImportBinding(
-    const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
-    hir::ForeignImportId import_id) {
-  const auto [_, inserted] = foreign_import_bindings_.emplace(
-      &sym,
-      ForeignImportBinding{.owner_frame = owner_frame, .import_id = import_id});
+void UnitLowerer::MapForeignImportScope(
+    const slang::ast::SubroutineSymbol& sym, ScopeFrameId declaring_frame) {
+  const auto [_, inserted] =
+      foreign_import_scopes_.emplace(&sym, declaring_frame);
   if (!inserted) {
     throw InternalError(
-        "UnitLowerer::MapForeignImportBinding: DPI import symbol already "
-        "mapped");
+        "UnitLowerer::MapForeignImportScope: DPI import symbol already mapped");
   }
 }
 
-auto UnitLowerer::LookupForeignImportBinding(
+auto UnitLowerer::LookupForeignImportScope(
     const slang::ast::SubroutineSymbol& sym) const
-    -> std::optional<ForeignImportBinding> {
-  const auto it = foreign_import_bindings_.find(&sym);
-  if (it == foreign_import_bindings_.end()) {
+    -> std::optional<ScopeFrameId> {
+  const auto it = foreign_import_scopes_.find(&sym);
+  if (it == foreign_import_scopes_.end()) {
     return std::nullopt;
   }
   return it->second;
+}
+
+auto UnitLowerer::EnsureForeignImport(const slang::ast::SubroutineSymbol& sym)
+    -> diag::Result<hir::ForeignImportId> {
+  if (const auto it = foreign_import_bindings_.find(&sym);
+      it != foreign_import_bindings_.end()) {
+    return it->second;
+  }
+  auto decl_or = LowerForeignImport(*this, sym);
+  if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+  const hir::ForeignImportId id =
+      unit_.foreign_imports.Add(*std::move(decl_or));
+  foreign_import_bindings_.emplace(&sym, id);
+  return id;
 }
 
 void UnitLowerer::MapPatternVar(

@@ -660,17 +660,25 @@ auto LowerCallExpr(
     };
   }
 
-  // A DPI-C import is a bodyless external callable, bound in a separate space
-  // from body-bearing subroutines. Resolve it to a ForeignImportRef; its ABI
-  // and foreign name were classified once at declaration and are not re-derived
-  // here.
-  if (const auto import_binding =
-          unit_lowerer.LookupForeignImportBinding(*sym)) {
-    const auto import_hops = frame.HopsTo(import_binding->owner_frame);
-    if (!import_hops.has_value()) {
-      throw InternalError(
-          "AST->HIR call: DPI import owner frame is not on the current scope "
-          "stack");
+  // A DPI-C import is a bodyless external callable whose symbol is
+  // program-global (LRM 35.4), so this unit reaches it through its own record
+  // and never across a unit boundary -- which is why a declaration in a
+  // package or at `$unit` scope resolves here exactly as one written in this
+  // unit's own scope does, before the cross-unit branch below.
+  if (sym->flags.has(slang::ast::MethodFlags::DPIImport)) {
+    auto import_id = unit_lowerer.EnsureForeignImport(*sym);
+    if (!import_id) return std::unexpected(std::move(import_id.error()));
+    // The declaration's own instantiated scope, reached from here. It is absent
+    // when the declaring scope is a namespace that is never instantiated.
+    std::optional<hir::StructuralHops> declaring_scope;
+    if (const auto declaring_frame =
+            unit_lowerer.LookupForeignImportScope(*sym)) {
+      declaring_scope = frame.HopsTo(*declaring_frame);
+      if (!declaring_scope.has_value()) {
+        throw InternalError(
+            "AST->HIR call: the scope declaring this DPI import is not on the "
+            "current scope stack");
+      }
     }
     auto import_result_type = unit_lowerer.InternType(*call.type, span);
     if (!import_result_type) {
@@ -682,7 +690,7 @@ auto LowerCallExpr(
             hir::CallExpr{
                 .callee =
                     hir::ForeignImportRef{
-                        .hops = *import_hops, .id = import_binding->import_id},
+                        .id = *import_id, .declaring_scope = declaring_scope},
                 .arguments = std::move(arg_ids),
             },
         .span = span,
@@ -698,17 +706,6 @@ auto LowerCallExpr(
   // boundary exactly as an intra-unit one. The call's result type is the
   // enclosing expression's own type and is not recorded again here.
   if (const auto* unit = DeclaringUnitOfSubroutine(*sym)) {
-    // A DPI-C import declared outside this unit is not reached this way: it has
-    // no SV body to call across the boundary, and its formals carry an ABI
-    // classification rather than the ordinary marshalling interface recomputed
-    // below -- some of which, such as an open array (LRM 35.5.6.1), are not
-    // data types at all. Reject it here so the gap reads as the one it is.
-    if (sym->flags.has(slang::ast::MethodFlags::DPIImport)) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedDpi,
-          "a DPI-C import declared outside the calling unit is not yet "
-          "supported");
-    }
     std::vector<hir::ExternalUnitParam> params;
     params.reserve(sym->getArguments().size());
     for (const auto* formal : sym->getArguments()) {

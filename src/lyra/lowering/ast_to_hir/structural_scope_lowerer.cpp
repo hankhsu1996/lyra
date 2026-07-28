@@ -91,19 +91,23 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // Forward-declare every subroutine's binding before lowering any body so a
   // call resolves regardless of source order: direct self-recursion, mutual
   // recursion, and forward references (LRM 13.4.2). Ids are sequential in
-  // source order and match the index `PopulateSubroutineMember` will write to.
+  // source order and match the arena index the member walk below fills.
+  // A DPI-C import declares no body and is not one of these: the unit interns
+  // its record on first sight from either side, so it reserves no id. What it
+  // does record here is the scope it is declared in, which a `context` import
+  // observes during its foreign call (LRM 35.5.3) -- established ahead of the
+  // bodies for the same reason the ids are, so a call preceding the declaration
+  // resolves it too.
   std::uint32_t reserved_subroutine_id = 0;
-  std::uint32_t reserved_foreign_import_id = 0;
   for (const auto& member : slang_scope_->members()) {
     if (member.kind != slang::ast::SymbolKind::Subroutine) continue;
     const auto& sub = member.as<slang::ast::SubroutineSymbol>();
     if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-      owner_->MapForeignImportBinding(
-          sub, frame_, hir::ForeignImportId{reserved_foreign_import_id++});
-    } else {
-      owner_->MapSubroutineBinding(
-          sub, frame_, hir::StructuralSubroutineId{reserved_subroutine_id++});
+      owner_->MapForeignImportScope(sub, frame_);
+      continue;
     }
+    owner_->MapSubroutineBinding(
+        sub, frame_, hir::StructuralSubroutineId{reserved_subroutine_id++});
   }
 
   // Instance member decls are built ahead of the port-connection synthesis
@@ -174,7 +178,7 @@ auto StructuralScopeLowerer::PopulateMember(
     case slang::ast::SymbolKind::Subroutine: {
       const auto& sub = member.as<slang::ast::SubroutineSymbol>();
       if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-        return PopulateForeignImportMember(sub, frame);
+        return PopulateForeignImportMember(sub);
       }
       return PopulateSubroutineMember(sub, frame);
     }
@@ -338,22 +342,13 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
 }
 
 auto StructuralScopeLowerer::PopulateForeignImportMember(
-    const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
-    -> diag::Result<void> {
-  auto decl_or = LowerForeignImport(*owner_, sym);
-  if (!decl_or) return std::unexpected(std::move(decl_or.error()));
-
-  const auto binding = owner_->LookupForeignImportBinding(sym);
-  if (!binding.has_value() ||
-      binding->import_id.value !=
-          static_cast<std::uint32_t>(
-              frame.current_structural_scope->foreign_imports.size())) {
-    throw InternalError(
-        "StructuralScopeLowerer::PopulateForeignImportMember: DPI import added "
-        "out of reserved order; the reserve pass must run first in the same "
-        "order");
-  }
-  frame.current_structural_scope->foreign_imports.Add(*std::move(decl_or));
+    const slang::ast::SubroutineSymbol& sym) -> diag::Result<void> {
+  // The declaration is classified here even when nothing in this unit calls it,
+  // so a signature outside the DPI-C type mapping (LRM 35.5.6) is reported
+  // against the declaration that wrote it rather than against a call site far
+  // away, or nowhere at all.
+  auto id_or = owner_->EnsureForeignImport(sym);
+  if (!id_or) return std::unexpected(std::move(id_or.error()));
   return {};
 }
 
