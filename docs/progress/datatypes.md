@@ -13,9 +13,9 @@ The datatype surface in scope is complete but for the gaps below. Real, string, 
 arrays, the integral-family declaration initializers, and parameter references in expressions are
 complete; enum is complete but for the package-context method gap E4 below. The variable-size
 aggregate family (dynamic array, queue, associative array) is complete; see `aggregate.md`. Unpacked
-struct and union, tagged and untagged, are complete. Default initialization (LRM Table 6-7) and value
-representation, including a wide value carrying X/Z across the 64-bit word boundary, are complete.
-Chandle is complete.
+struct and union, tagged and untagged, are complete. Default initialization (LRM Table 6-7) and
+value representation, including a wide value carrying X/Z across the 64-bit word boundary, are
+complete. Chandle is complete.
 
 ## Tagged union
 
