@@ -233,9 +233,7 @@ auto CallSuspends(ProcessLowerer& process, const hir::CallExpr& call) -> bool {
             return support::ImportedRuntimeMethodSuspends(m.method);
           },
           [&](const hir::ForeignImportRef& f) {
-            return process.EnclosingScopeLowerer()
-                .LookupForeignImport(f.hops, f.id)
-                .is_task;
+            return process.Owner().Hir().foreign_imports.Get(f.id).is_task;
           },
           [](const hir::ExternalUnitSubroutineRef& e) {
             // A cross-unit task enable (LRM 26.3) awaits, the same as an

@@ -238,20 +238,6 @@ auto MarshalCarrierToSv(
   throw InternalError("MarshalCarrierToSv: unknown DpiScalarAbi");
 }
 
-// The SV-side projection an import call marshals through (LRM 35.5.6). An
-// import is the only foreign callable SV can name at a call site, and every
-// import publishes this projection, so a call site reaching a callable without
-// one resolved to something that is not an import.
-auto ImportMarshal(const mir::CallableDecl& callable)
-    -> const mir::ForeignMarshal& {
-  if (!callable.foreign.has_value() || !callable.foreign->marshal.has_value()) {
-    throw InternalError(
-        "ImportMarshal: a DPI-C import call resolved to a callable that "
-        "publishes no marshaling projection");
-  }
-  return *callable.foreign->marshal;
-}
-
 // An argument crosses the boundary in one of two shapes (LRM 35.5.6). It
 // crosses **by value** when it is a scalar the callee only reads: the SV value
 // converts to a machine value the call passes directly, with no local and no
@@ -260,7 +246,7 @@ auto ImportMarshal(const mir::CallableDecl& callable)
 // receives and which a writeback direction reads back afterwards. A canonical
 // vector and an open array are the second shape in either direction, because
 // the C ABI reaches them by pointer and by handle respectively even to read.
-[[nodiscard]] auto CrossesByValue(const mir::ForeignParam& p) -> bool {
+[[nodiscard]] auto CrossesByValue(const hir::DpiParamAbi& p) -> bool {
   return std::holds_alternative<support::ScalarCarrier>(p.carrier) &&
          !support::DpiDirectionWritesBack(p.direction);
 }
@@ -460,6 +446,34 @@ auto BuildBoundaryReadback(
       carrier);
 }
 
+// Whether the foreign symbol hands a value back that the call marshals into the
+// SV result. A function result is restricted to a small value (LRM 35.5.5), so
+// it is always a by-value scalar; a `void` function and a task both yield none,
+// and a task's disable-acknowledgment `int` (LRM 35.8) is not an SV result.
+[[nodiscard]] auto ReturnsValue(const hir::ForeignImportDecl& import) -> bool {
+  return import.ret_abi != support::DpiScalarAbi::kVoid;
+}
+
+// The call to the foreign symbol itself, over already-marshaled arguments. The
+// callee is the linkage name in the DPI-C name space (LRM 35.4), reached by
+// name and never through a class or another unit's namespace.
+auto BuildForeignSymbolCall(
+    mir::CompilationUnit& unit, const hir::ForeignImportDecl& import,
+    std::vector<mir::ExprId> carrier_args) -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target =
+                          mir::ForeignSymbolTarget{
+                              .linkage_name = import.foreign_name}},
+              .arguments = std::move(carrier_args)},
+      .type = ReturnsValue(import)
+                  ? CarrierTypeId(unit, support::ScalarCarrier{import.ret_abi})
+                  : unit.builtins.void_type};
+}
+
 // The all-input function import call: every actual crosses by value, so the
 // call is a plain expression -- no statement sequencing, no boundary temps.
 // Each actual is marshaled to its ABI carrier, the foreign symbol is called
@@ -469,13 +483,12 @@ auto BuildBoundaryReadback(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportInputsOnly(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::CallableDecl& callable, mir::CallableTarget target,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    const hir::ForeignImportDecl& import, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   auto& block = *frame.current_block;
   const auto& hir_exprs = lowerer.HirExprs();
-  const mir::ForeignMarshal& decl = ImportMarshal(callable);
 
   std::vector<mir::ExprId> carrier_args;
   carrier_args.reserve(c.arguments.size());
@@ -487,25 +500,17 @@ auto LowerForeignImportInputsOnly(
     if (!sv_or) return std::unexpected(std::move(sv_or.error()));
     const mir::ExprId sv_id = block.exprs.Add(*std::move(sv_or));
     carrier_args.push_back(
-        MarshalSvToCarrier(unit, block, sv_id, decl.params[i].carrier));
+        MarshalSvToCarrier(unit, block, sv_id, import.params[i].carrier));
   }
 
-  const bool is_void = decl.ret_abi == support::DpiScalarAbi::kVoid;
-  const mir::TypeId call_type =
-      is_void ? unit.builtins.void_type
-              : CarrierTypeId(unit, support::ScalarCarrier{decl.ret_abi});
-  mir::Expr foreign_call{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = target},
-              .arguments = std::move(carrier_args)},
-      .type = call_type};
-  if (is_void) {
+  mir::Expr foreign_call =
+      BuildForeignSymbolCall(unit, import, std::move(carrier_args));
+  if (!ReturnsValue(import)) {
     return foreign_call;
   }
   const mir::ExprId call_id = block.exprs.Add(std::move(foreign_call));
   return MarshalCarrierToSv(
-      unit_lowerer, frame, call_id, support::ScalarCarrier{decl.ret_abi},
+      unit_lowerer, frame, call_id, support::ScalarCarrier{import.ret_abi},
       result_type);
 }
 
@@ -516,49 +521,20 @@ auto LowerForeignImportInputsOnly(
 // its carrier result in a temp, returned so the caller marshals it after the
 // read-backs; a void call (including a task, whose foreign symbol's disable-ack
 // `int` is discarded) is a bare statement and returns no temp. Shared by the
-// function and task import lowerings, which differ only in how they finish the
-// closure.
+// function and task import lowerings, which differ only in what they wrap the
+// finished boundary in.
 template <ExprLowerer Lowerer>
 auto PopulateForeignImportBoundary(
     Lowerer& lowerer, ClosureBuilder& closure, const hir::CallExpr& c,
-    const mir::CallableDecl& callable, mir::CallableTarget target,
-    mir::EnclosingHops hops) -> diag::Result<std::optional<mir::LocalId>> {
+    const hir::ForeignImportDecl& import)
+    -> diag::Result<std::optional<mir::LocalId>> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
   const mir::TypeId void_t = unit.builtins.void_type;
-  const mir::ForeignMarshal& decl = ImportMarshal(callable);
 
   mir::Block& body = closure.Body();
   const WalkFrame& cframe = closure.Frame();
-
-  // A context import (LRM 35.5.3) observes the scope of its declaration and may
-  // call an exported subroutine back, so the boundary opens with an RAII guard
-  // that pushes the declaration scope (the enclosing instance `hops` levels up)
-  // on the calling process's DPI scope chain for the foreign call's duration.
-  // Declared first so its scope-exit pop is the last effect, on a normal return
-  // or an unwind.
-  if (callable.foreign->is_context) {
-    const mir::TypeId guard_type = unit.types.Intern(
-        mir::RuntimeLibraryType{
-            .kind = mir::RuntimeLibraryKind::kDpiScopeGuard});
-    const mir::LocalId guard = closure.Bindings().DeclareAnonymous(
-        mir::LocalDecl{.name = "_lyra_dpi_scope", .type = guard_type});
-    const mir::ExprId services_id =
-        body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-    const mir::ExprId decl_scope_id =
-        BuildEnclosingScopeReceiver(cframe, unit, hops);
-    body.AppendStmt(
-        mir::LocalDeclStmt{
-            .target = guard,
-            .init = body.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee = mir::Construct{},
-                            .arguments = {services_id, decl_scope_id}},
-                    .type = guard_type})});
-  }
 
   // One output / inout argument, and what its boundary object needs to be read
   // back into the actual once the call returns.
@@ -578,7 +554,7 @@ auto PopulateForeignImportBoundary(
       throw InternalError("DPI-C import call argument unexpectedly elided");
     }
     const hir::ExprId actual = *c.arguments[i];
-    const mir::ForeignParam& param = decl.params[i];
+    const hir::DpiParamAbi& param = import.params[i];
     const support::DpiCarrier& carrier = param.carrier;
 
     auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
@@ -622,25 +598,18 @@ auto PopulateForeignImportBoundary(
               .sv_type =
                   std::holds_alternative<support::OpenArrayCarrier>(carrier)
                       ? actual_type
-                      : param.sv_type});
+                      : unit_lowerer.TranslateType(param.sv_type)});
     }
   }
 
-  const bool is_void = decl.ret_abi == support::DpiScalarAbi::kVoid;
-  const mir::TypeId call_type =
-      is_void ? void_t
-              : CarrierTypeId(unit, support::ScalarCarrier{decl.ret_abi});
-  mir::Expr foreign_call{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = target},
-              .arguments = std::move(call_args)},
-      .type = call_type};
+  mir::Expr foreign_call =
+      BuildForeignSymbolCall(unit, import, std::move(call_args));
+  const mir::TypeId call_type = foreign_call.type;
 
   // A valued call captures its carrier result in a temp so the copy-backs run
-  // before it is marshaled and returned; a void call is a bare statement.
+  // before it is marshaled and returned.
   std::optional<mir::LocalId> ret_temp;
-  if (!is_void) {
+  if (ReturnsValue(import)) {
     ret_temp = closure.Bindings().DeclareAnonymous(
         mir::LocalDecl{.name = "_lyra_dpi_ret", .type = call_type});
     body.AppendStmt(
@@ -673,6 +642,45 @@ auto PopulateForeignImportBoundary(
   return ret_temp;
 }
 
+// The DPI scope a `context` import observes (LRM 35.5.3): an RAII guard pushing
+// the declaration's own instantiated scope on the calling process's DPI scope
+// chain, so an export the foreign side calls back resolves against that scope.
+// It opens the boundary, so its scope-exit pop is the last effect, on a normal
+// return or an unwind. A declaration in a namespace that is never instantiated
+// -- a package or `$unit` scope -- observes no scope and pushes a null one; the
+// push still happens, so the call never inherits an enclosing chain entry that
+// is not its declaration's.
+auto BuildDpiScopeGuard(
+    UnitLowerer& unit_lowerer, ClosureBuilder& closure,
+    std::optional<hir::StructuralHops> declaring_scope) -> mir::LocalDeclStmt {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& body = closure.Body();
+  const mir::TypeId guard_type = unit.types.Intern(
+      mir::RuntimeLibraryType{.kind = mir::RuntimeLibraryKind::kDpiScopeGuard});
+  const mir::LocalId guard = closure.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_dpi_scope", .type = guard_type});
+  const mir::ExprId services_id =
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId decl_scope_id =
+      declaring_scope.has_value()
+          ? BuildEnclosingScopeReceiver(
+                closure.Frame(), unit,
+                mir::EnclosingHops{.value = declaring_scope->value})
+          : body.exprs.Add(
+                mir::Expr{
+                    .data = mir::NullLiteral{},
+                    .type = unit.builtins.scope_ptr});
+  return mir::LocalDeclStmt{
+      .target = guard,
+      .init = body.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee = mir::Construct{},
+                      .arguments = {services_id, decl_scope_id}},
+              .type = guard_type})};
+}
+
 // The general function import call: at least one actual crosses through a
 // boundary object rather than by value, so the boundary is a statement sequence
 // yielding a value. It lowers to an immediately-invoked closure, uniform for
@@ -681,16 +689,18 @@ auto PopulateForeignImportBoundary(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportSequenced(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::CallableDecl& callable, mir::CallableTarget target,
-    mir::EnclosingHops hops, mir::TypeId result_type)
+    const hir::ForeignImportDecl& import,
+    std::optional<hir::StructuralHops> declaring_scope, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
-  const mir::ForeignMarshal& decl = ImportMarshal(callable);
 
   ClosureBuilder closure(unit, frame);
-  auto ret_temp = PopulateForeignImportBoundary(
-      lowerer, closure, c, callable, target, hops);
+  if (import.is_context) {
+    closure.Body().AppendStmt(
+        BuildDpiScopeGuard(unit_lowerer, closure, declaring_scope));
+  }
+  auto ret_temp = PopulateForeignImportBoundary(lowerer, closure, c, import);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   if (!ret_temp->has_value()) {
@@ -700,49 +710,70 @@ auto LowerForeignImportSequenced(
   mir::Block& body = closure.Body();
   const WalkFrame& cframe = closure.Frame();
   const mir::TypeId call_type =
-      CarrierTypeId(unit, support::ScalarCarrier{decl.ret_abi});
+      CarrierTypeId(unit, support::ScalarCarrier{import.ret_abi});
   const mir::ExprId ret_ref =
       body.exprs.Add(mir::MakeLocalRefExpr(**ret_temp, call_type));
   const mir::ExprId result_id = body.exprs.Add(MarshalCarrierToSv(
-      unit_lowerer, cframe, ret_ref, support::ScalarCarrier{decl.ret_abi},
+      unit_lowerer, cframe, ret_ref, support::ScalarCarrier{import.ret_abi},
       result_type));
   return BuildClosureCallExpr(
       unit, *frame.current_block, closure.Build(result_id));
 }
 
-// The task import call (LRM 35.5.2): the same boundary as a function, but a
-// task has no SV return, so the closure finishes as a coroutine -- the
-// awaitable the caller drives, the same call protocol as a native task enable
-// (LRM 35.8), uniform whether or not the foreign side consumes time. The
-// boundary always sequences through the closure, even all-input, because the
-// await needs a coroutine to drive. The coroutine closure is returned directly,
-// not called: it renders self-invoking to a `Coroutine`, and the statement
-// lowering awaits it.
+// The task import call (LRM 35.5.2): a task has no SV return, so the call
+// finishes as a coroutine -- the awaitable the caller drives, the same call
+// protocol as a native task enable (LRM 35.8), uniform whether or not the
+// foreign side consumes time. The coroutine closure is returned directly, not
+// called: it renders self-invoking to a `Coroutine`, and the statement lowering
+// awaits it.
+//
+// A foreign task may consume simulation time, which it does by calling back an
+// exported task that suspends. The foreign call therefore runs on a fiber whose
+// native stack can be parked and resumed, and awaiting that fiber is what
+// suspends the caller. Both facts are stated here as ordinary MIR -- a call to
+// the runtime's fiber entry over a closure of the whole boundary, awaited --
+// rather than left for a backend to infer from the callee being a foreign task.
+// The scope guard stays outside the fiber, on the awaiting coroutine, so the
+// scope is pushed on the process before the native stack is entered.
 template <ExprLowerer Lowerer>
 auto LowerForeignImportTask(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const mir::CallableDecl& callable, mir::CallableTarget target,
-    mir::EnclosingHops hops) -> diag::Result<mir::Expr> {
-  auto& unit = lowerer.Owner().Unit();
-  ClosureBuilder closure(unit, frame);
-  auto ret_temp = PopulateForeignImportBoundary(
-      lowerer, closure, c, callable, target, hops);
-  if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
-  return closure.BuildCoroutine();
-}
+    const hir::ForeignImportDecl& import,
+    std::optional<hir::StructuralHops> declaring_scope)
+    -> diag::Result<mir::Expr> {
+  auto& unit_lowerer = lowerer.Owner();
+  auto& unit = unit_lowerer.Unit();
+  ClosureBuilder outer(unit, frame);
+  if (import.is_context) {
+    outer.Body().AppendStmt(
+        BuildDpiScopeGuard(unit_lowerer, outer, declaring_scope));
+  }
 
-// The compilation-unit identity of the class `hops` enclosing levels up. A
-// receiver-less callable names its owner in the call target, so that owner must
-// be a unit-stable class identity rather than a position in the lowering walk;
-// a class carries its own identity in its self-pointer type, so recover it from
-// there.
-auto EnclosingClassIdAtHops(
-    const WalkFrame& frame, const mir::CompilationUnit& unit,
-    mir::EnclosingHops hops) -> mir::ClassId {
-  const mir::TypeId self_ptr =
-      frame.EnclosingClassAtHops(hops).self_pointer_type;
-  const auto& ptr = std::get<mir::PointerType>(unit.types.Get(self_ptr).data);
-  return std::get<mir::ObjectType>(unit.types.Get(ptr.pointee).data).class_id;
+  ClosureBuilder fiber_body(unit, outer.Frame());
+  auto ret_temp = PopulateForeignImportBoundary(lowerer, fiber_body, c, import);
+  if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
+
+  mir::Block& body = outer.Body();
+  const mir::TypeId awaitable = unit.types.Intern(
+      mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kForeignTaskAwaitable});
+  const mir::ExprId fiber_id = body.exprs.Add(fiber_body.BuildVoid());
+  const mir::ExprId run_id = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kRunForeignTaskOnFiber},
+                  .arguments = {fiber_id}},
+          .type = awaitable});
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(
+              mir::Expr{
+                  .data = mir::AwaitExpr{.awaitable = run_id},
+                  .type = unit.builtins.void_type})});
+  return outer.BuildCoroutine();
 }
 
 // The MIR type one foreign formal is declared with, the ABI carrier realized as
@@ -814,38 +845,40 @@ auto MakeForeignSignature(
   return code;
 }
 
+auto MakeForeignImportDecl(
+    mir::CompilationUnit& unit, const hir::ForeignImportDecl& import)
+    -> mir::CallableDecl {
+  return mir::CallableDecl{
+      .name = import.name,
+      .code = MakeForeignSignature(
+          unit, import.params, import.ret_abi, import.is_task),
+      .foreign = mir::ForeignLinkage{.foreign_name = import.foreign_name},
+      .virtual_dispatch = std::nullopt,
+      .visibility = mir::CallableVisibility::kInternal};
+}
+
 template <ExprLowerer Lowerer>
 auto LowerForeignImportCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const hir::ForeignImportRef& ref, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  // An import is a receiver-less associated callable of the scope that declares
-  // it. `hops` is how far out that scope sits from the caller -- a declaration
-  // lookup distance, resolved here and then gone; the callable has no body and
-  // no receiver, so nothing is reached at run time and the call names its owner
-  // directly.
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const mir::EnclosingHops hops{.value = ref.hops.value};
-  const mir::CallableTarget target{
-      .owner = EnclosingClassIdAtHops(frame, unit, hops),
-      .slot = mir::CallableId{ref.id.value}};
-  const mir::CallableDecl& callable =
-      frame.EnclosingClassAtHops(hops).callables.Get(target.slot);
-  const mir::ForeignMarshal& decl = ImportMarshal(callable);
+  const hir::ForeignImportDecl& import =
+      lowerer.Owner().Hir().foreign_imports.Get(ref.id);
 
-  if (decl.is_task) {
-    return LowerForeignImportTask(lowerer, frame, c, callable, target, hops);
+  if (import.is_task) {
+    return LowerForeignImportTask(
+        lowerer, frame, c, import, ref.declaring_scope);
   }
-  // A context import sequences through a closure even when every actual is a
-  // by-value input, because its scope guard is a scoped body local the plain
-  // single-expression form has no room for.
-  const bool needs_temp = !std::ranges::all_of(decl.params, CrossesByValue);
-  if (needs_temp || callable.foreign->is_context) {
+  // The boundary needs a statement sequence when anything in it is a scoped
+  // body local: an actual crossing through a boundary object, or a context
+  // import's scope guard, which a plain single-expression call has no room for.
+  const bool sequences =
+      import.is_context || !std::ranges::all_of(import.params, CrossesByValue);
+  if (sequences) {
     return LowerForeignImportSequenced(
-        lowerer, frame, c, callable, target, hops, result_type);
+        lowerer, frame, c, import, ref.declaring_scope, result_type);
   }
-  return LowerForeignImportInputsOnly(
-      lowerer, frame, c, callable, target, result_type);
+  return LowerForeignImportInputsOnly(lowerer, frame, c, import, result_type);
 }
 
 template auto LowerForeignImportCall(
@@ -1122,18 +1155,11 @@ auto SynthesizeForeignExportEntry(
   // The entry point's identity is its linkage name: it is a program-global
   // symbol in the DPI name space, not an SV declaration the source can call
   // (LRM 35.4, 35.7), so it shares no name with the subroutine it dispatches
-  // into. Every export is a context callable (LRM 35.7). It publishes no
-  // marshaling projection: no SV call site reaches it, and the marshaling it
-  // does is already lowered into the body above.
+  // into.
   return mir::CallableDecl{
       .name = export_decl.foreign_name,
       .code = std::move(code),
-      .foreign =
-          mir::ForeignLinkage{
-              .foreign_name = export_decl.foreign_name,
-              .is_pure = false,
-              .is_context = true,
-              .marshal = std::nullopt},
+      .foreign = mir::ForeignLinkage{.foreign_name = export_decl.foreign_name},
       .virtual_dispatch = std::nullopt,
       .visibility = mir::CallableVisibility::kInternal};
 }

@@ -653,10 +653,13 @@ class HirDumper {
                   "BuiltinFn \"{}\"", support::BuiltinFnName(b.method));
             },
             [this](const ForeignImportRef& f) -> std::string {
-              const auto& owner = ResolveScope(f.hops);
-              const auto& decl = owner.foreign_imports.Get(f.id);
+              const auto& decl = unit_->foreign_imports.Get(f.id);
               return std::format(
-                  "ForeignImport[{}](hops={}) \"{}\"", f.id.value, f.hops.value,
+                  "ForeignImport[{}]({}) \"{}\"", f.id.value,
+                  f.declaring_scope.has_value()
+                      ? std::format(
+                            "declaring_scope=hops:{}", f.declaring_scope->value)
+                      : "declaring_scope=none",
                   decl.name);
             },
             [](const ImportedMethodRef& i) -> std::string {
@@ -938,6 +941,12 @@ class HirDumper {
     }
     Dedent();
 
+    for (std::size_t i = 0; i < u.foreign_imports.size(); ++i) {
+      DumpForeignImport(
+          i, u.foreign_imports.Get(
+                 ForeignImportId{static_cast<std::uint32_t>(i)}));
+    }
+
     if (u.classes.size() > 0) {
       Line("Classes:");
       Indent();
@@ -1026,11 +1035,6 @@ class HirDumper {
           "StructuralSubroutine", i,
           s.structural_subroutines.Get(
               StructuralSubroutineId{static_cast<std::uint32_t>(i)}));
-    }
-    for (std::size_t i = 0; i < s.foreign_imports.size(); ++i) {
-      DumpForeignImport(
-          i, s.foreign_imports.Get(
-                 ForeignImportId{static_cast<std::uint32_t>(i)}));
     }
     if (!s.exprs.empty()) {
       Line("Exprs:");

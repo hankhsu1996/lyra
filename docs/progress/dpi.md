@@ -31,42 +31,26 @@ context surface, a generated ABI header, and link-input orchestration.
 
 ## Actionable
 
-Two frontiers are open. On the C++ backend the function import surface (D1-D3) is in, the export
-marshaling surface (D4, D4b) runs -- an export executes end to end through the import -> export
-chain across every argument direction and both value families (by-value scalars, by-pointer scalar
-`output` / `inout`, and canonical 2-state / 4-state packed vectors), its wrapper recovering the
-exported subroutine's receiver from the running design -- and the DPI task surface runs in both
-directions: the import task (D5) has SV call a foreign C task, and the export task (D6) has foreign
-C call back an SV task, both under the uniform task protocol. A foreign task also consumes
-simulation time (D6b): its call runs on a fiber, so an exported task it reaches suspends on a delay
-across the boundary and resumes when time advances. The `svdpi` context surface (D7) runs: a
-`context` import observes the fully qualified scope of its declaration, foreign code sets and gets
-the current scope and resolves a scope to and from its name, stores per-scope user data, and reads
-the scope's effective time unit and precision and the current time scaled to it -- the current scope
-riding the calling process so concurrent time-consuming imports never cross. Instance-bound export
-dispatch (D4a) now runs too: a module-scoped export dispatches to the instance the foreign call
-targets -- the current DPI scope the caller established, or one `svSetScope` redirected to -- rather
-than a single hardcoded instance, and a receiver-less package- or `$unit`-scoped export calls its
-free function directly with no instance (D4a, D4c); reaching any export now requires a valid scope
-context, so its caller must be a context import or set the scope with `svSetScope`. The user-facing
-surface (D9) is in too: the design's foreign declarations generate a C header the user's own sources
-compile against, and an emitted project carries that header alongside a copy of every foreign source
-and a recipe that builds them, so it links and runs standalone. Open-array arguments (D8) close the
-type surface: one imported subroutine now serves actuals of any size and range, in every direction,
-the foreign side reading them through the Annex H.12 introspection, addressing, and element
-accessors. What remains is the disable protocol across the boundary (D6c) and the element types
-Annex H.7.3 puts in C-compatible representation. A DPI-C import is still reachable only from the
-compilation unit that declares it; one declared in a package or at `$unit` scope is rejected. On the
-execution backend scalar import (D10) is in: a foreign call lowers to an external-linkage symbol and
-the by-value carriers marshal. The rest of the import surface (D11) is blocked, and not by anything
-DPI owns: by-pointer marshaling is expressed as a closure, which that backend does not yet lower at
-all (`architecture-reset.md`).
+Two frontiers are open, the two backends.
+
+On the C++ backend the boundary runs in both directions and the surfaces below are closed: import
+(D1-D3, D13) including open arrays (D8), export (D4, D4a-D4c) including instance-bound and
+receiver-less dispatch, DPI tasks in both directions including one that consumes simulation time
+(D5, D6, D6b, D6d), the `svdpi` context surface (D7), and the generated ABI header with link-input
+orchestration (D9). What remains is the disable protocol across the boundary (D6c) and the element
+types Annex H.7.3 puts in C-compatible representation.
+
+On the execution backend scalar import (D10) is in: a foreign call lowers to an external-linkage
+symbol and the by-value carriers marshal. The rest of the import surface (D11) is blocked, and not
+by anything DPI owns: by-pointer marshaling is expressed as a closure, which that backend does not
+yet lower at all (`architecture-reset.md`). Export and tasks there (D12) follow once the C++-backend
+items fix their shape.
 
 ## Sub-Steps
 
 The `D*` IDs are stable references. They do not impose a total order; real dependencies are stated
-inline. D1-D9 are deliverables on the C++ backend; D10 onward bring the same backend-agnostic MIR up
-on the execution backend, mirroring the C++-backend items one surface at a time.
+inline. D1-D9 and D13 are deliverables on the C++ backend; D10-D12 bring the same backend-agnostic
+MIR up on the execution backend, mirroring the C++-backend items one surface at a time.
 
 ### Import: SV calls foreign C
 
@@ -90,6 +74,15 @@ on the execution backend, mirroring the C++-backend items one surface at a time.
         declaration rather than mis-marshalled at the call. The wired carriers are the packed
         vector, the by-value scalar, `real`, `string`, and `chandle`; `shortreal` and a packed
         struct / union are the notable types outside them.
+- [x] D13 -- Where an import is declared does not restrict who calls it. A declaration in a package
+      (LRM 26.3) or at `$unit` scope (LRM 3.12.1) is called from any unit, exactly as one in the
+      calling scope is: an imported subroutine resolves to a program-global symbol in a name space
+      of its own (LRM 35.4), so the declaration's position is a name-resolution fact only and the
+      call crosses no unit boundary -- the calling unit holds its own record of the ABI projection
+      and depends on no other unit's artifact. A `context` import declared in such a namespace
+      observes no scope (LRM 35.5.3), a package and `$unit` never being instantiated; a
+      receiver-less export stays directly reachable from it, and any other needs `svSetScope`, which
+      is what the LRM already requires of a caller with no scope of its own.
 
 ### Export: foreign C calls SV
 

@@ -12,8 +12,6 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/foreign_export.hpp"
-#include "lyra/hir/foreign_import.hpp"
-#include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
@@ -244,10 +242,9 @@ struct StructuralScope {
   std::vector<PortConnection> port_connections;
   base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
   // Body-bearing SV subroutines only. A bodyless DPI-C import never enters this
-  // arena; it lives in `foreign_imports` (invariant relied on by the
-  // per-subroutine body lowering, which assumes every entry here has a body).
+  // arena; the unit owns it, because its foreign symbol is program-global and
+  // belongs to no scope (LRM 35.4).
   base::Arena<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
-  base::Arena<ForeignImportDecl, ForeignImportId> foreign_imports;
   std::vector<ForeignExportDecl> foreign_exports;
   base::Arena<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
   std::vector<TypeAliasDecl> type_aliases;

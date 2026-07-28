@@ -39,7 +39,7 @@ conversion is one more such primitive, not backend-special lowering.
 
 ## Decisions
 
-### 1. A DPI import is a receiver-less associated callable declared without a body
+### 1. A DPI import is a bodyless receiver-less callable the unit owns
 
 An imported subroutine lowers to a callable -- not a member of any object, and not a separate DPI
 call family. Three structural facts fix its shape:
@@ -49,27 +49,29 @@ call family. Three structural facts fix its shape:
   Neither is a flag on a callable and neither is a separate declaration type -- `callable.md`
   invariant 7.
 - **It has no receiver, so it is an associated callable, not an instance method.** A DPI import is
-  called by name with no `self`: a non-context import cannot touch SV state, and a context import
-  reaches its scope through the DPI scope handle, never an instance receiver. A receiver-less
-  callable is a type-associated function in the enclosing unit's associated namespace, a category
-  distinct from the instance method set (`object_model.md` invariants 7 and 8). It is stored in a
-  class-level static-callable namespace -- `StaticCallableDecl`, the callable peer of the existing
-  `StaticConstantDecl` -- never in the instance method arena.
-- **It shares one declaration shape with SV class statics.** A DPI import and a future SV class
-  static method are the same shape -- a receiver-less associated callable, the former declared
-  without a body and the latter with one -- reached through one associated call-target identity.
-  This is the shared callable-declaration shape the callable model anticipates; the associated
-  call-target arm is permanent and serves statics too, so it is added once, never as a temporary
-  DPI-only variant refactored away later.
+  called by name with no `self`. A non-context import cannot touch SV state at all; a context import
+  observes the instantiated scope of its declaration, which the call site establishes around the
+  foreign call rather than binding as a receiver on the callable. A receiver-less callable is a
+  type-associated function (`object_model.md` invariants 7 and 8), a category distinct from the
+  instance method set.
+- **Its symbol is global, so the unit owns it.** The linkage name lives in the DPI-C name space,
+  which is separate from every compilation-unit scope name space (LRM 35.4). No class contains it,
+  so the unit that takes part in the import publishes the prototype, beside the entry point an
+  export publishes: both directions of the boundary are owned alike and separated only by whether
+  the declaration has a body.
 
-An import call is an ordinary call whose target is that associated callable.
+An import call names that symbol directly. Because the name space is its own, the call reaches it
+without naming a class or a unit, and a declaration written in a package or at `$unit` scope is
+called from any unit with no cross-unit reference at all. What the calling unit needs is the
+declaration's ABI projection -- a fact of the declaration, identical wherever it is read -- so it
+holds its own copy and depends on no other unit's artifact.
 
-Reason: putting the import in the instance method arena is a category error (it has no receiver and
-is not an instance member); a separate incompatible external-declaration type contradicts the one
-callable-declaration shape the model unifies toward; a DPI-specific target id would be a temporary
-variant. The associated-callable home follows the object model's receiver-less-function category
-directly, reuses the static-constant precedent, and is the home a future static method needs, so it
-is built once.
+Reason: putting the import in a class's callable arena is a category error twice over -- it has no
+receiver, and its symbol belongs to a name space no class contains -- and it makes an import's
+presence shift the identity of the class's other callables. A separate incompatible
+external-declaration type contradicts the one callable-declaration shape the model unifies toward.
+Owning the declaration at the unit and naming the symbol by its linkage name is what makes the
+package and `$unit` cases fall out with no mechanism of their own.
 
 ### 2. The C prototype is the callable's own signature; linkage is a separate record
 
@@ -81,7 +83,8 @@ CallableSignature = the SV semantic signature (type checking, diagnostics; slang
 callable code     = the C prototype: one binding per formal, typed as the value crosses the
                     boundary, plus the result type. A bodyless callable carries it with an empty
                     body, exactly as a pure virtual prototype does.
-ForeignLinkage    = linkage name + language + calling convention + purity / context
+ForeignLinkage    = the linkage name the symbol is reached by. Source language and calling
+                    convention are implicitly C, the only foreign linkage; a second one adds them.
 ```
 
 `ForeignLinkage` is an independent axis on a callable declaration, not part of the bodyless
@@ -94,9 +97,11 @@ them can disagree.
 
 The boundary type of a formal is a fixed function of its SV type and direction, computed once at
 lowering and interned there. The ABI **classification** that computes it -- the carrier and the
-direction, LRM 35.5.6 and 35.5.1.2 -- rides on the bodyless arm, where an import's call site reads
-it to build its marshaling; an export's marshaling is already lowered into its body, so nothing
-downstream reads a classification for it. SV semantic checking stays on `CallableSignature`.
+direction, LRM 35.5.6 and 35.5.1.2 -- stays on the source-near declaration, which is where a call
+site reads it to build its marshaling and where the diagnostic for a signature outside the mapping
+is reported. Nothing below reads it: an import's marshaling is expanded at the call, an export's is
+lowered into its entry point's body, so by the time a backend sees a foreign callable all that
+remains is its signature and its linkage name. SV semantic checking stays on `CallableSignature`.
 
 Reason: conflating the SV signature with the C prototype loses the separation that keeps type
 checking, diagnostics, and header emission each reading the surface they need. Keeping the prototype
@@ -110,6 +115,11 @@ The boundary conversion between an SV value and its foreign ABI carrier is an or
 against a runtime conversion primitive, emitted at HIR-to-MIR. An import call desugars to: marshal
 each input to its carrier, call the external symbol over the carriers, marshal each output carrier
 back to the actual's write path.
+
+That desugaring happens at each call rather than once per declaration, because an open-array formal
+leaves a dimension unsized (LRM 35.5.6.1): what crosses is then a function of the _actual's_ static
+type, which only the call site holds. One mechanism serves every import, so the call site is where
+all of them marshal.
 
 The carrier is a **backend-ABI carrier type**, not an SV value-semantic type. It lives in the same
 category as the runtime plumbing types the MIR type system already carries (the services, scope,
@@ -187,10 +197,9 @@ usage inflate the scope.
 - **A process-global (non-thread-local) export context.** Works under a single-threaded engine but
   assumes one global engine and aliases across concurrent or multi-engine runs; the thread-local
   form is the precise scope.
-- **The imported callable stored as an instance method (in the per-class method arena).** A DPI
-  import has no receiver and is not an instance member; a receiver-less callable is a
-  type-associated function (`object_model.md` invariants 7, 8), so its home is the
-  associated-callable namespace, not the instance method set.
+- **The imported callable owned by a class.** Beyond the category error decision 1 states, a class
+  arena orders its entries, so an import's presence shifts the identity of every callable declared
+  after it -- and a package, which has no class at all, could then declare no import.
 - **A temporary DPI-only callable-target variant, unified later.** Leaves a DPI-specific identity in
   the IR to be refactored away; the unification is done once, consistent with the reset.
 - **The export's C entry point as its own species beside the callable arena.** It is exactly what a

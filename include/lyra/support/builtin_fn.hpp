@@ -368,6 +368,14 @@ enum class BuiltinFn : std::uint16_t {
   // which the call site builds from the actual before the foreign call.
   kDpiOpenArrayHandle,
   kDpiOpenArrayValue,
+  // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose
+  // native stack can be parked while simulation time advances, and yields the
+  // awaitable that suspends the caller until the call returns. The call itself
+  // is `args[0]`, a closure of the whole boundary; a foreign task may consume
+  // time by calling back an exported task that suspends, and the fiber is what
+  // lets that suspension cross a native stack the runtime does not own. A free
+  // function over that closure.
+  kRunForeignTaskOnFiber,
   // Runs an exported SV task's coroutine body to completion synchronously and
   // yields its completion payload. A foreign C caller of an exported task (LRM
   // 35.8) is not a coroutine and cannot await the task body, so the C entry

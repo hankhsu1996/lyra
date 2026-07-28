@@ -26,12 +26,22 @@ struct StructuralSubroutineRef {
   StructuralSubroutineId subroutine;
 };
 
-// Calls a DPI-C import (LRM 35.4) declared in the unit (or an enclosing scope,
-// reached through `hops`). A bodyless external callable, resolved separately
-// from a body-bearing structural subroutine.
+// Calls a DPI-C import (LRM 35.4). `id` names the unit's own record of the
+// import; the import's foreign symbol is program-global, so the call reaches it
+// without naming whichever unit spelled the declaration, and a declaration in a
+// package or at `$unit` scope is called exactly as one in this unit's own scope
+// is.
+//
+// The instantiated scope the declaration sits in, so many enclosing levels up
+// from the call site, is the one thing about an import that is not global: a
+// `context` import observes it for the duration of its foreign call (LRM
+// 35.5.3). It is absent when the declaration sits in a namespace that is never
+// instantiated -- a package or `$unit` scope -- and the import then observes no
+// scope, so only a receiver-less export is directly reachable from it and any
+// other needs `svSetScope`.
 struct ForeignImportRef {
-  StructuralHops hops;
-  ForeignImportId id;
+  ForeignImportId id{};
+  std::optional<StructuralHops> declaring_scope;
 };
 
 // The receiver form of an instance-method call (LRM 8.6, 8.15). The three

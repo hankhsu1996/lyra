@@ -384,6 +384,13 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // popping it when the body's scope exits. An inert scoped value MIR never
   // inspects; its lifetime -- not its contents -- is the effect.
   kDpiScopeGuard,
+  // What a DPI-C import task's foreign call is awaited through (LRM 35.5.2):
+  // `lyra::runtime::ForeignTaskAwaitable`, which runs the call on a fiber whose
+  // native stack can be parked while simulation time advances, so an exported
+  // task the call reaches can suspend across the boundary. It is the result of
+  // the runtime's fiber entry and the operand of the await that consumes it,
+  // and nothing else names it.
+  kForeignTaskAwaitable,
 };
 
 struct RuntimeLibraryType {

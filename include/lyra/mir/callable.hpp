@@ -30,7 +30,8 @@ enum class CallableVisibility : std::uint8_t { kPublic, kInternal };
 //   - `foreign`, when present, is the C linkage the callable is reached under.
 //     It is orthogonal to the body: bodyless plus foreign is an import the
 //     user's C defines, bodied plus foreign is the entry point of an export the
-//     user's C calls.
+//     user's C calls. A foreign name is program-global and belongs to no class
+//     (LRM 35.4, 35.7), so only a unit's own callables ever carry one.
 //   - `virtual_dispatch`, when present, states this callable's role in the
 //     class's dispatch table (LRM 8.20) -- introducing a new slot or overriding
 //     an ancestor's -- so a backend renders the marker off stated structure,

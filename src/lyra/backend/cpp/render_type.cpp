@@ -192,6 +192,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"const svOpenArrayHandle"};
               case mir::RuntimeLibraryKind::kDpiScopeGuard:
                 return std::string{"lyra::runtime::DpiScopeGuard"};
+              case mir::RuntimeLibraryKind::kForeignTaskAwaitable:
+                return std::string{"lyra::runtime::ForeignTaskAwaitable"};
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },

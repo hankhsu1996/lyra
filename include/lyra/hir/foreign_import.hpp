@@ -27,7 +27,12 @@ struct DpiParamAbi {
 // projection of the signature are resolved once here (where slang types are
 // available) and are the sole downstream source for the import; no layer below
 // reads slang.
-// Lowered to a MIR static external callable at HIR-to-MIR.
+//
+// The record is self-contained: it names the foreign symbol and states how each
+// value crosses, and nothing in it refers to the scope or the unit the
+// declaration was written in. That is what lets a unit hold its own entry for
+// an import declared in a package or at `$unit` scope, identical to the one the
+// declaring unit holds.
 struct ForeignImportDecl {
   std::string name;
   std::string foreign_name;
