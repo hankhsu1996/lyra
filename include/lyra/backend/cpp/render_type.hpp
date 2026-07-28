@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <string_view>
 
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -9,9 +8,9 @@
 
 namespace lyra::backend::cpp {
 
-// Renders a MIR type as the corresponding C++ type expression. A nominal type
-// name (an enum) is resolved against the unit's own type declarations, the same
-// way a struct name is resolved through the unit's struct registry.
+// Renders a MIR type as the corresponding C++ type expression. An enum is a
+// nominal type over a base integral, so its value renders as that base --
+// `lyra::value::PackedArray` -- with no distinct emitted enum type.
 [[nodiscard]] auto RenderTypeAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> std::string;
 
@@ -27,16 +26,5 @@ namespace lyra::backend::cpp {
 // construction takes.
 [[nodiscard]] auto RenderPackedType(const mir::PackedArrayType& pa)
     -> std::string;
-
-// Renders the emitted C++ class name for a MIR enum type. The name is the first
-// unit type declaration targeting `id` (so a `typedef enum {...} foo;` makes
-// the class `foo`); when none exists, falls back to a numeric internal name.
-//
-// EnumType itself carries no name (an enum and its typedef are orthogonal: an
-// anonymous enum has none, a multi-typedef enum has many), so the name is not
-// on the type; it is a unit-level fact, resolved by this lookup like a struct
-// name.
-[[nodiscard]] auto RenderEnumClassName(
-    const mir::CompilationUnit& unit, mir::TypeId id) -> std::string;
 
 }  // namespace lyra::backend::cpp

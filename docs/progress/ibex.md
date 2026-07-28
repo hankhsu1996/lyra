@@ -137,6 +137,19 @@ full support.
       part-select whose width comes from `$bits` (the `ibex_top` parity check,
       `assign unused = ^busy_q[$bits(mubi_t)-1:1]`). `$bits` lowers to an elaboration constant and
       the mixed-domain part-select bound reads correctly (`operators.md` W14).
+- [x] **Enum value as an operand of a packed concatenation** -- the compressed decoder builds a
+      32-bit instruction by concatenating an enum member (the opcode). Cleared by representing an
+      enum value as its base packed integral (the enum value model is now base-integral; see
+      `datatypes.md` Enum). The same change removed the anonymous-enum cross-module name collision
+      that otherwise blocked the full-system C++ compile.
+- [ ] **Cross-unit reference to a package's enum-member or `localparam` constant** -- a module reads
+      a package-scoped compile-time constant by its qualified name (an `exc_cause_e` member, a CSR
+      bit-index / register parameter); the constant is not materialized in the referenced package,
+      so the emitted C++ names an undefined symbol. It should fold to its value or resolve as a
+      link-time symbol. Hits `ibex_controller`, `ibex_if_stage`, `ibex_cs_registers`.
+- [ ] **DPI-C export from inside a generate scope** -- an `export "DPI-C"` declared within a
+      generate block (the icache scramble-key helpers in `ibex_if_stage`); the emitted C entry names
+      the generate scope's type without the qualification that reaches it.
 - [ ] Further structural-expression forms surfaced as later passes get deeper (recorded here as
       discovery continues).
 

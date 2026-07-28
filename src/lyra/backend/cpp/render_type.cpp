@@ -35,18 +35,6 @@ auto RenderPackedType(const mir::PackedArrayType& pa) -> std::string {
       four_state_lit);
 }
 
-auto RenderEnumClassName(const mir::CompilationUnit& unit, mir::TypeId id)
-    -> std::string {
-  // The enum's source name, when a typedef gave it one. SV identifiers are
-  // valid C++ identifiers, so the name flows directly; an anonymous enum falls
-  // back to a name synthesized from its id.
-  const auto it = unit.nominal_type_names.find(id);
-  if (it != unit.nominal_type_names.end()) {
-    return it->second;
-  }
-  return std::format("lyra_anon_enum_{}", id.value);
-}
-
 auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
     -> std::string {
   return std::visit(
@@ -54,8 +42,11 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [](const mir::PackedArrayType&) -> std::string {
             return std::string{"lyra::value::PackedArray"};
           },
-          [&](const mir::EnumType&) -> std::string {
-            return RenderEnumClassName(unit, type_id);
+          [](const mir::EnumType&) -> std::string {
+            // An enum value is its base integral -- a `PackedArray`. The enum's
+            // nominal content is consumed at HIR-to-MIR, never emitted as a
+            // type.
+            return std::string{"lyra::value::PackedArray"};
           },
           [](const mir::StringType&) -> std::string {
             return std::string{"lyra::value::String"};

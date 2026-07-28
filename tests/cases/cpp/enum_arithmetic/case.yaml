@@ -9,3 +9,4 @@ expect:
   exit: 0
   variables:
     result: 15
+    packed_result: 0x133

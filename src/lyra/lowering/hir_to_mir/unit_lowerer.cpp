@@ -283,16 +283,6 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
   const CallableStoragePlan empty_storage_plan;
   const hir::StructuralScope& scope = hir_->root_scope;
 
-  // An enum the package declares carries no name of its own, so the typedef
-  // naming it records that name at the unit for the backend to resolve against;
-  // a typedef of an already-named type records nothing (see the same rule in
-  // the structural path).
-  for (const hir::TypeAliasDecl& alias : scope.type_aliases) {
-    const mir::TypeId target = TranslateType(alias.target);
-    if (std::holds_alternative<mir::EnumType>(unit_.types.Get(target).data)) {
-      unit_.nominal_type_names.try_emplace(target, alias.name);
-    }
-  }
   // The callable each package subroutine lowered to, recorded where it is
   // created so an export below names its own by identity.
   std::unordered_map<std::string_view, mir::CallableId> subroutine_callables;
