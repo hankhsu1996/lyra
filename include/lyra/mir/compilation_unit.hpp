@@ -119,15 +119,6 @@ struct CompilationUnit {
   // that class; these are the unit-level namespace's, one scope up. Their
   // initializers run in the unit's synthesized initializer at time zero.
   base::Arena<StaticVariableDecl, StaticVariableId> static_variables;
-  // The source name of each nominal type that carries none of its own, keyed by
-  // that type's id. An enum is the case: it has no intrinsic name (an anonymous
-  // enum has none, a multi-typedef enum has several), so a `typedef` names it
-  // and that name lives here, first typedef winning. An anonymous enum has no
-  // entry and renders a synthesized name. A struct is not here -- it carries
-  // its own name in its declaration. This is the unit-level fact a backend
-  // resolves an enum's emitted name against, the peer of the struct registry's
-  // name.
-  std::unordered_map<TypeId, std::string> nominal_type_names;
   // Every compiler-generated nominal struct of this unit -- a promoted
   // automatic scope's storage. Its `StructId` is the struct's type identity; a
   // backend derives the C++ emission host from the struct's lexical synthesis

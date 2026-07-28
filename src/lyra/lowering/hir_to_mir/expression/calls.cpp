@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
@@ -489,6 +490,20 @@ auto LowerBuiltinMethodCall(
   // calls handled by the generic path below.
   if (support::IsAssociativeTraversalFn(b.method)) {
     return LowerAssociativeTraversal(lowerer, frame, c, b.method, result_type);
+  }
+  // LRM 6.19.5 `first` / `last` / `num` are compile-time constants of the enum
+  // type; they fold here rather than surviving as a runtime call.
+  if (b.method == support::BuiltinFn::kEnumFirst ||
+      b.method == support::BuiltinFn::kEnumLast ||
+      b.method == support::BuiltinFn::kEnumNum) {
+    return LowerEnumConstantMethod(lowerer, c, b, result_type);
+  }
+  // LRM 6.19.5 `name` / `next` / `prev` lower to a synthesized per-enum
+  // callable.
+  if (b.method == support::BuiltinFn::kEnumName ||
+      b.method == support::BuiltinFn::kEnumNext ||
+      b.method == support::BuiltinFn::kEnumPrev) {
+    return LowerEnumMethodCall(lowerer, frame, c, b, result_type);
   }
   const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();

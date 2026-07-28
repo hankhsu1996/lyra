@@ -1016,19 +1016,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   shape.time_resolution = hir_scope.time_resolution;
 
   AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
-  // An enum carries no name of its own, so a typedef naming one records that
-  // name at the unit -- keyed by the enum's id, first typedef winning -- the
-  // one place a backend resolves the emitted name against, shared by every
-  // scope. A typedef of an already-named type (a scalar alias resolves to its
-  // underlying type, a struct carries its own name) adds nothing a backend
-  // consults, so it is not recorded.
-  for (const auto& alias : hir_scope.type_aliases) {
-    const mir::TypeId target = unit_lowerer.TranslateType(alias.target);
-    if (std::holds_alternative<mir::EnumType>(
-            unit_lowerer.Unit().types.Get(target).data)) {
-      unit_lowerer.Unit().nominal_type_names.try_emplace(target, alias.name);
-    }
-  }
 
   for (std::size_t i = 0; i < hir_scope.structural_data_objects.size(); ++i) {
     const hir::StructuralDataObjectId hir_id{static_cast<std::uint32_t>(i)};

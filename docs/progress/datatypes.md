@@ -9,12 +9,13 @@ unpacked arrays here; the variable-size aggregate family in `aggregate.md`), `da
 
 ## Actionable
 
-The datatype surface in scope is complete. Enum, real, string, fixed-size unpacked arrays, the
-integral-family declaration initializers, and parameter references in expressions are complete. The
-variable-size aggregate family (dynamic array, queue, associative array) is complete; see
-`aggregate.md`. Unpacked struct and union, tagged and untagged, are complete. Default initialization
-(LRM Table 6-7) and value representation, including a wide value carrying X/Z across the 64-bit word
-boundary, are complete. Chandle is complete.
+The datatype surface in scope is complete but for the gaps below. Real, string, fixed-size unpacked
+arrays, the integral-family declaration initializers, and parameter references in expressions are
+complete; enum is complete but for the package-context method gap E4 below. The variable-size
+aggregate family (dynamic array, queue, associative array) is complete; see `aggregate.md`. Unpacked
+struct and union, tagged and untagged, are complete. Default initialization (LRM Table 6-7) and
+value representation, including a wide value carrying X/Z across the 64-bit word boundary, are
+complete. Chandle is complete.
 
 ## Tagged union
 
@@ -35,6 +36,8 @@ integral -> enum requires an explicit cast.
       Non-member receivers fall back to a zero default; LRM Table 6-7 4-state `'x` behaviour is
       tracked under `datatypes/default_init`.
 - [x] E3 -- `name()` method (LRM 6.19.5.6); empty string for non-member values.
+- [ ] E4 -- `name` / `next` / `prev` invoked from inside a package subroutine's body are not yet
+      supported; the same methods in a module, interface, or program context are complete.
 
 ### Cross-references
 

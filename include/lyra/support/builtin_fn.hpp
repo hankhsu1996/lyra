@@ -453,16 +453,14 @@ enum class BuiltinFn : std::uint16_t {
   kHierarchicalPath,
 };
 
-// True iff `id` is a type-namespace-qualified static call -- no receiver,
-// the qualifier rides on the call site as the `Direct::qualification`
-// (e.g. `MyEnum::first()`). Used by HIR-to-MIR to decide whether to attach
-// a qualification to the call.
+// True iff `id` is a type-namespace-qualified static call -- no receiver, the
+// qualifier (the destination type of a cast / conversion) rides on the call
+// site as the `Direct::qualification`. Used by HIR-to-MIR to decide whether to
+// attach a qualification to the call.
 [[nodiscard]] constexpr auto IsStaticBuiltinFn(BuiltinFn id) -> bool {
-  return id == BuiltinFn::kEnumFirst || id == BuiltinFn::kEnumLast ||
-         id == BuiltinFn::kEnumNum || id == BuiltinFn::kFromInt ||
-         id == BuiltinFn::kConvertFrom || id == BuiltinFn::kFromPackedArray ||
-         id == BuiltinFn::kFromByteArray || id == BuiltinFn::kFromBool ||
-         id == BuiltinFn::kFromString;
+  return id == BuiltinFn::kFromInt || id == BuiltinFn::kConvertFrom ||
+         id == BuiltinFn::kFromPackedArray || id == BuiltinFn::kFromByteArray ||
+         id == BuiltinFn::kFromBool || id == BuiltinFn::kFromString;
 }
 
 // True iff the function modifies its receiver argument's storage in place.
