@@ -130,12 +130,9 @@ auto RenderIntegerLiteralExpr(
         "RenderIntegerLiteralExpr: IntegerLiteral not typed as "
         "PackedArrayType, EnumType, or MachineIntType");
   }
-  auto body = RenderPackedArrayIntegerLiteral(ty.AsIntegralPacked(), lit.value);
-  if (ty.IsEnum()) {
-    return std::format(
-        "{}{{{}}}", RenderEnumClassName(view.Unit(), expr.type), body);
-  }
-  return body;
+  // An enum literal is its base integral value -- a bare `PackedArray` at the
+  // enum's base shape, no distinct enum type.
+  return RenderPackedArrayIntegerLiteral(ty.AsIntegralPacked(), lit.value);
 }
 
 auto RenderRealLiteralExpr(
@@ -752,7 +749,7 @@ auto RenderConcatExpr(
     return out;
   };
   if (result_ty.IsIntegralPacked()) {
-    return join("lyra::value::PackedArray::Concat(", ", ", ")");
+    return join("lyra::value::PackedArray::Concat({", ", ", "})");
   }
   if (result_ty.Kind() == mir::TypeKind::kString) {
     // LRM 6.16: string concat joins contents via std::string `operator+`.

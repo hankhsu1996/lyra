@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -269,6 +270,18 @@ class UnitLowerer {
     return *class_shapes_[id.value];
   }
 
+  // Per-unit dedup of the callables synthesized for the LRM 6.19.5 `name` and
+  // shared `next` / `prev` step operations, keyed by the enum's MIR type value.
+  // One callable per enum is reused across every call site.
+  [[nodiscard]] auto EnumNameHelpers()
+      -> std::unordered_map<std::uint32_t, mir::CallableTarget>& {
+    return enum_name_helpers_;
+  }
+  [[nodiscard]] auto EnumStepHelpers()
+      -> std::unordered_map<std::uint32_t, mir::CallableTarget>& {
+    return enum_step_helpers_;
+  }
+
  private:
   // Lowers a scope whose root is an object type into the unit's top class. The
   // package initialization plan is empty for a source module and carries the
@@ -300,6 +313,8 @@ class UnitLowerer {
   // lowering. Lives only on the lowerer; the finished compilation unit holds
   // the only authoritative class representation.
   std::vector<std::optional<mir::ClassShape>> class_shapes_;
+  std::unordered_map<std::uint32_t, mir::CallableTarget> enum_name_helpers_;
+  std::unordered_map<std::uint32_t, mir::CallableTarget> enum_step_helpers_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

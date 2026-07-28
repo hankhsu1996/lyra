@@ -631,16 +631,16 @@ auto BlitBits(
 
 }  // namespace
 
-auto PackedArray::Concat(std::span<const PackedArray* const> operands)
+auto PackedArray::Concat(std::initializer_list<PackedArray> operands)
     -> PackedArray {
-  if (operands.empty()) {
+  if (operands.size() == 0) {
     throw InternalError("PackedArray::Concat: empty operand list");
   }
   std::uint64_t total = 0;
   bool any_four_state = false;
-  for (const auto* op : operands) {
-    total += op->BitWidth();
-    any_four_state = any_four_state || op->IsFourState();
+  for (const auto& op : operands) {
+    total += op.BitWidth();
+    any_four_state = any_four_state || op.IsFourState();
   }
   if (total == 0U) {
     throw InternalError("PackedArray::Concat: total bit width is zero");
@@ -663,12 +663,12 @@ auto PackedArray::Concat(std::span<const PackedArray* const> operands)
     std::ranges::fill(dst_unknown, std::uint64_t{0});
   }
   std::uint64_t cursor = 0;
-  for (const auto* op : operands | std::views::reverse) {
-    BlitBits(dst_value, cursor, op->ValueWords(), op->BitWidth());
-    if (any_four_state && op->IsFourState()) {
-      BlitBits(dst_unknown, cursor, op->UnknownWords(), op->BitWidth());
+  for (const auto& op : operands | std::views::reverse) {
+    BlitBits(dst_value, cursor, op.ValueWords(), op.BitWidth());
+    if (any_four_state && op.IsFourState()) {
+      BlitBits(dst_unknown, cursor, op.UnknownWords(), op.BitWidth());
     }
-    cursor += op->BitWidth();
+    cursor += op.BitWidth();
   }
   return result;
 }

@@ -18,10 +18,6 @@
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
-namespace slang::ast {
-class TypeAliasType;
-}  // namespace slang::ast
-
 namespace lyra::lowering::ast_to_hir {
 
 // Per-structural-scope lowerer: produces one hir::StructuralScope populated
@@ -64,9 +60,6 @@ class StructuralScopeLowerer {
  private:
   // Per-member dispatch and per-kind helpers used by Run.
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
-      -> diag::Result<void>;
-  auto PopulateTypeAliasMember(
-      const slang::ast::TypeAliasType& alias, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateVariableMember(
       const slang::ast::VariableSymbol& var, WalkFrame frame)

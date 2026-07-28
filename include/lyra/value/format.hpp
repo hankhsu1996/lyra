@@ -121,10 +121,9 @@ struct FormatArg {
   // reaches the formatter as a bare arg carrying no spec of its own. Building
   // one straight from a value is what lets that path construct its operands the
   // same way the print-item path does. The overload set is closed on the leaf
-  // formattable types rather than a single greedy template so an operand that
-  // is not itself formattable but converts to one -- an `Enum<T>` decaying to
-  // `PackedArray` -- selects the converted overload instead of instantiating an
-  // undefined `Formatter`.
+  // formattable types rather than a single greedy template so a non-formattable
+  // operand fails to match cleanly instead of instantiating an undefined
+  // `Formatter`.
   explicit FormatArg(const PackedArray& value);
   explicit FormatArg(const String& value);
   template <typename Host>
@@ -251,12 +250,10 @@ struct PrintValueItem {
 
   // The emit side constructs this directly (`PrintValueItem(x, spec)`). The
   // overload set is closed on the leaf formattable types rather than a single
-  // greedy template so an operand that is not itself formattable but converts
-  // to one -- an `Enum<T>` decaying to `PackedArray` -- selects the converted
-  // overload instead of instantiating an undefined `Formatter`. `const T&` so
-  // a caller-side temporary (an arithmetic rvalue) binds via lifetime
-  // extension through the full expression that contains the runtime print
-  // call.
+  // greedy template so a non-formattable operand fails to match cleanly instead
+  // of instantiating an undefined `Formatter`. `const T&` so a caller-side
+  // temporary (an arithmetic rvalue) binds via lifetime extension through the
+  // full expression that contains the runtime print call.
   PrintValueItem(const PackedArray& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }

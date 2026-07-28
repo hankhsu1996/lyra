@@ -18,7 +18,6 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
-#include "lyra/hir/type_alias.hpp"
 #include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
@@ -247,7 +246,6 @@ struct StructuralScope {
   base::Arena<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
   std::vector<ForeignExportDecl> foreign_exports;
   base::Arena<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
-  std::vector<TypeAliasDecl> type_aliases;
 
   [[nodiscard]] auto NextGenerateId() const -> GenerateId {
     return GenerateId{static_cast<std::uint32_t>(generates.size())};
@@ -256,9 +254,6 @@ struct StructuralScope {
       -> StructuralSubroutineId {
     return StructuralSubroutineId{
         static_cast<std::uint32_t>(structural_subroutines.size())};
-  }
-  void AddTypeAlias(TypeAliasDecl decl) {
-    type_aliases.push_back(std::move(decl));
   }
 };
 

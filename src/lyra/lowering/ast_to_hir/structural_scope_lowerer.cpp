@@ -167,9 +167,6 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
 auto StructuralScopeLowerer::PopulateMember(
     const slang::ast::Symbol& member, WalkFrame frame) -> diag::Result<void> {
   switch (member.kind) {
-    case slang::ast::SymbolKind::TypeAlias:
-      return PopulateTypeAliasMember(
-          member.as<slang::ast::TypeAliasType>(), frame);
     case slang::ast::SymbolKind::Variable:
       return PopulateVariableMember(
           member.as<slang::ast::VariableSymbol>(), frame);
@@ -197,19 +194,6 @@ auto StructuralScopeLowerer::PopulateMember(
     default:
       return {};
   }
-}
-
-auto StructuralScopeLowerer::PopulateTypeAliasMember(
-    const slang::ast::TypeAliasType& alias, WalkFrame frame)
-    -> diag::Result<void> {
-  const auto& mapper = owner_->SourceMapper();
-  auto target_or = owner_->InternType(
-      alias.targetType.getType(), mapper.PointSpanOf(alias.location));
-  if (!target_or) return std::unexpected(std::move(target_or.error()));
-  frame.current_structural_scope->AddTypeAlias(
-      hir::TypeAliasDecl{
-          .name = std::string{alias.name}, .target = *target_or});
-  return {};
 }
 
 auto StructuralScopeLowerer::PopulateVariableMember(

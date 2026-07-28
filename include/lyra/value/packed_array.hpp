@@ -1,12 +1,10 @@
 #pragma once
 
-#include <array>
-#include <concepts>
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <string_view>
-#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -155,21 +153,12 @@ class PackedArray {
       bool is_signed, bool is_four_state) -> std::optional<PackedArray>;
 
   // LRM 11.4.12: `{a, b, c, ...}`. First operand occupies the result's MSBs,
-  // last occupies the LSBs. Total bit width is the sum of operand widths.
-  // Result is unsigned (LRM 11.8.1); 4-state iff any operand is 4-state.
-  // Variadic-template wrapper so each operand binds by `const&`, accepting
-  // both lvalues and prvalue temporaries (e.g., emitted literals) without
-  // copy. Forwards to the span-based impl below.
-  template <typename... Ops>
-    requires(
-        sizeof...(Ops) > 0 &&
-        (std::same_as<std::remove_cvref_t<Ops>, PackedArray> && ...))
-  [[nodiscard]] static auto Concat(const Ops&... ops) -> PackedArray {
-    const std::array<const PackedArray*, sizeof...(Ops)> ptrs{&ops...};
-    return Concat(std::span<const PackedArray* const>{ptrs});
-  }
-
-  [[nodiscard]] static auto Concat(std::span<const PackedArray* const> operands)
+  // last the LSBs; the result width is the sum, unsigned (LRM 11.8.1), 4-state
+  // iff any operand is. Concatenation is variadic-arity with no smaller
+  // decomposition, so the operands arrive as one `initializer_list` the emit
+  // site fills with a brace list -- no per-arity overload and no template. A
+  // single-element `{a}` is the unsigned reinterpretation.
+  [[nodiscard]] static auto Concat(std::initializer_list<PackedArray> operands)
       -> PackedArray;
 
   // LRM 11.4.12.1: `{count{operand}}`. Result bit width is

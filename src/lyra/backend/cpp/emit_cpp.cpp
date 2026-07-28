@@ -14,7 +14,6 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
-#include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -664,7 +663,6 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   out += "#include \"lyra/runtime/sim_time.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
   out += "#include \"lyra/value/dpi_open_array.hpp\"\n";
-  out += "#include \"lyra/value/enum.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";
   out += "#include \"lyra/value/packed_type.hpp\"\n";
   out += "#include \"lyra/value/packed.hpp\"\n";
@@ -687,46 +685,6 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   return out;
 }
 
-// The unit's named type definitions, rendered as C++ definitions: each enum in
-// the unit's type universe as an `Enum<>` class under its source name. A pure
-// typedef (a scalar alias, a struct alias) needs no definition -- it resolved
-// to its underlying type before MIR, so it is not a distinct type here. A
-// caller places the result inside the unit's C++ peer: a class's header region
-// for a rooted unit, the namespace block for a rootless one.
-auto RenderUnitTypeDeclarations(const mir::CompilationUnit& unit)
-    -> std::string {
-  std::string out;
-  bool any_enum = false;
-  for (std::size_t i = 0; i < unit.types.size(); ++i) {
-    const mir::TypeId type_id{static_cast<std::uint32_t>(i)};
-    const auto* enum_type =
-        std::get_if<mir::EnumType>(&unit.types.Get(type_id).data);
-    if (enum_type == nullptr) continue;
-    any_enum = true;
-    const auto class_name = RenderEnumClassName(unit, type_id);
-    const auto& base = enum_type->base;
-    out += std::format(
-        "class {} final : public lyra::value::Enum<{}> {{\n", class_name,
-        class_name);
-    out += " public:\n";
-    out += "  using Enum::Enum;\n";
-    out += std::format(
-        "  static inline const auto kBase = {};\n", RenderPackedType(base));
-    out += "  static constexpr lyra::value::EnumMember kMembers[] = {\n";
-    for (const auto& member : enum_type->members) {
-      out += std::format(
-          "      {{{}, {}}},\n", RenderCStringLiteral(member.name),
-          member.value);
-    }
-    out += "  };\n";
-    out += "};\n";
-  }
-  if (any_enum) {
-    out += "\n";
-  }
-  return out;
-}
-
 auto RenderScopeHeaderFile(
     const mir::CompilationUnit& unit, const mir::Class& s) -> std::string {
   const UnitCallableText callables = RenderUnitCallables(unit);
@@ -735,7 +693,6 @@ auto RenderScopeHeaderFile(
   out += RenderUnitIncludes(unit);
   out += "\n";
   out += callables.declarations;
-  out += RenderUnitTypeDeclarations(unit);
 
   // A SystemVerilog class is a free-standing registry object with no
   // structural parent, so it is not reached by the scope tree's `contained`
@@ -774,7 +731,6 @@ auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
   // resolves against is declared at file scope, exactly as a rooted unit's is.
   out += callables.declarations;
   out += std::format("namespace {} {{\n\n", ToCppName(unit.name));
-  out += RenderUnitTypeDeclarations(unit);
   // A package variable is one program-global observable cell (LRM 26.2). C++17
   // `inline` gives it a single definition across every translation unit that
   // includes the header, matching the header-only, link-by-name model the

@@ -101,18 +101,6 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "IsUnknown";
     case support::BuiltinFn::kClog2:
       return "Clog2";
-    case support::BuiltinFn::kEnumFirst:
-      return "First";
-    case support::BuiltinFn::kEnumLast:
-      return "Last";
-    case support::BuiltinFn::kEnumNum:
-      return "Num";
-    case support::BuiltinFn::kEnumName:
-      return "Name";
-    case support::BuiltinFn::kEnumNext:
-      return "Next";
-    case support::BuiltinFn::kEnumPrev:
-      return "Prev";
     case support::BuiltinFn::kLen:
       return "Len";
     case support::BuiltinFn::kGetc:
@@ -151,6 +139,18 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Realtoa";
     case support::BuiltinFn::kElement:
       return "Element";
+    case support::BuiltinFn::kEnumFirst:
+    case support::BuiltinFn::kEnumLast:
+    case support::BuiltinFn::kEnumNum:
+    case support::BuiltinFn::kEnumName:
+    case support::BuiltinFn::kEnumNext:
+    case support::BuiltinFn::kEnumPrev:
+      // LRM 6.19.5 enum methods are resolved at HIR-to-MIR -- to constants
+      // (first / last / num) or synthesized callables (name / next / prev) --
+      // so no enum method ever reaches the backend as a builtin.
+      throw InternalError(
+          "BuiltinFnCppName: enum methods are lowered at HIR-to-MIR and never "
+          "reach the backend");
     case support::BuiltinFn::kSlice:
       return "Slice";
     case support::BuiltinFn::kSize:
