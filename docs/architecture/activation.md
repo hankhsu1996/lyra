@@ -153,6 +153,16 @@ the awaiter consumes, not of the scheduler.
    publishing the outcome before the body stops, lets a waiter observe a terminated activation that
    is still executing._
 
+9. **An activation has exactly one live next-resume entitlement, and every handover revokes the
+   prior.** The single means by which an activation will next run -- its place on the running stack,
+   a scheduler-queue registration, a wait-target registration, or a saved suspended disposition --
+   is one entitlement at any instant, never two. Runnable enrollment and blocked enrollment are the
+   same registration on different lists (`activation-registration.md`); a transition -- a wake, a
+   suspend, a cancellation -- revokes the prior entitlement before establishing the next, so no two
+   holders can resume the same activation. _Consequence: a cancellation invalidates the one
+   entitlement and lets every affected activation reconcile at a single gate, rather than branching
+   on which holder currently has it._
+
 ## Boundary to Adjacent Layers
 
 - **To the scheduler (`scheduling.md`).** The activation exposes a token the engine parks on a
@@ -247,6 +257,12 @@ the awaiter consumes, not of the scheduler.
   stays reachable from its parent while any descendant is still live. Releasing the node with the
   frame loses that reach; retaining the frame to keep the node pins the activation storage the frame
   solely owns. Node lifetime and execution lifetime are distinct.
+
+- **A cancellation or scheduling decision that branches on whether an activation is running,
+  waiting, or runnable.** The next-resume entitlement is one thing across every holder (invariant
+  8); an operation that asks "is this activation blocked or runnable" to decide how to reach it has
+  taken on the scheduler's placement job and duplicated the holder state the disposition already
+  owns. A cancellation invalidates the entitlement and lets the activation reconcile at its gate.
 
 ## Notes / Examples
 

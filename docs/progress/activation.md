@@ -73,10 +73,30 @@ or incomplete relative to the contract.
       condition (join, wait fork, await) re-checks. `status()` reports SUSPENDED. See the activation
       contract and the activation-disposition decision.
 
-- [ ] **Static-block disable remains.** `disable` of a named block or task (LRM 9.6.2) is not
-      cancellation over the dynamic domain at all: it selects its targets from static, syntactic
-      block identity, and transfers control in the disabling process (execution resumes after the
-      named block), so it is a control-flow construct layered on this model rather than a use of it.
+- [x] **Disable of a named block or task.** `disable` (LRM 9.6.2) selects its target by static block
+      or task identity and reaches every execution currently inside it, without regard to the
+      process lineage: each such execution resumes after the scope, and every activity enabled
+      within it terminates. Unlike `disable fork`, the cancellation domain is static declaration
+      identity, not the dynamic lineage. The target is invalidated and every affected execution
+      leaves it through one control effect the naming region consumes (see the
+      disable-scope-invalidation decision). Implemented for a named block and a task, at any nesting
+      depth, reached from the same process or a concurrent one, and across every activation of a
+      reentrant task. Membership is carried by the running process rather than derived from where a
+      body is written, so it spans a call: a task called from inside a disabled scope terminates
+      with it instead of running to completion. An activity spawned inside the scope takes that
+      membership at the spawn, so a fork child terminates whether it was spawned directly, spawned
+      by a task called from the scope, or not yet started when the disable landed; such a child
+      reports KILLED (LRM 9.7), the same status a `disable fork` or `kill` gives it. The runtime
+      raises the effect where an execution regains control -- a wait resuming, the `disable`
+      statement itself -- and a spawned activity disabled before it ever runs is terminated without
+      executing a statement, so an ordinary suspend, call or `disable` lowers the same whether or
+      not a target encloses it. Two cases remain. A target in another module instance or generate
+      scope needs hierarchical addressing to the owning instance's scope, and a class method body is
+      inside no structural scope that mints one; both are a located diagnostic until then. And a
+      design containing a named block runs only on the C++ backend: every named scope is a region
+      that can be left from anywhere within it, which the execution backend cannot yet express
+      because it has no exception handling. The storage every scope owns is realized on both
+      backends; only the leaving is missing.
 
 - [ ] **Runtime vocabulary trails the model.** The execution code names the activation and its core
       in coroutine-implementation terms; the contract's vocabulary is activation / completion slot /

@@ -128,6 +128,13 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
           "foreign-task fiber awaitable are C++-backend marshaling artifacts; "
           "the execution backend does not consume the DPI context or task "
           "surface");
+    case mir::RuntimeLibraryKind::kCancellationSource:
+      return lir::RuntimeLibraryKind::kCancellationSource;
+    case mir::RuntimeLibraryKind::kCancellationGuard:
+    case mir::RuntimeLibraryKind::kAbort:
+      throw InternalError(
+          "TranslateRuntimeLibraryKind: a cancellation type is realized in the "
+          "C++ backend, not through MIR-to-LIR");
   }
   throw InternalError(
       "TranslateRuntimeLibraryKind: unknown RuntimeLibraryKind");

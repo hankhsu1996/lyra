@@ -606,6 +606,13 @@ auto FunctionLowerer::LowerStmtInto(
           [&](const mir::BlockStmt& s) -> diag::Result<void> {
             return LowerBlockInto(block.child_scopes.Get(s.scope));
           },
+          [](const mir::TryStmt&) -> diag::Result<void> {
+            // A region that consumes a control effect needs an exceptional
+            // edge out of its body, which this layer does not yet build.
+            return Unsupported(
+                "mir_to_lir: a region consuming a control effect is not yet "
+                "lowerable to LIR");
+          },
           [&](const mir::LocalDeclStmt& s) -> diag::Result<void> {
             auto init = LowerExpr(block, s.init);
             if (!init) {

@@ -150,6 +150,11 @@ void RuntimeEffects::Spawn(Coroutine<void> coroutine) {
   auto child = std::make_shared<RuntimeProcess>(
       parent.OwningScope(), ProcessKind::kSpawned, std::move(coroutine));
   const CoroutineHandle handle = child->TopHandle();
+  // The spawned activity is enabled within whatever disable targets the spawner
+  // is inside (LRM 9.6.2), so it takes that membership here rather than
+  // rebuilding it once it starts running: it is spawned already enclosed, and a
+  // `disable` landing before its first resumption still reaches it.
+  child->InheritEnclosingTargets(parent);
   parent.AdoptChild(child);
   rt.RegisterProcessInRegistry(child);
   handle->Park(rt.queues_.active);

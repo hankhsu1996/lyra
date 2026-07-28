@@ -67,14 +67,11 @@ enum class JoinMode : std::uint8_t {
 // (VarDeclStmt) -- initialized at block entry, before any branch spawns, to
 // give each branch a by-value snapshot; they precede the parallel statements in
 // the fork's scope. Each branch in `branches` is a statement run as its own
-// concurrent process; `mode` sets when the parent resumes. `scope` is the
-// fork's lexical declaration scope -- distinct from the enclosing scope so
-// `locals` are owned here, not by the parent.
+// concurrent process; `mode` sets when the parent resumes.
 struct ForkStmt {
   JoinMode mode;
   std::vector<StmtId> locals;
   std::vector<StmtId> branches;
-  ProceduralScopeId scope;
 };
 
 enum class UniquePriorityCheck : std::uint8_t {
@@ -280,11 +277,21 @@ struct WaitForkStmt {};
 // caller.
 struct DisableForkStmt {};
 
+// LRM 9.6.2 `disable <named block or task>`: terminate the activity of the
+// named scope so execution resumes at the statement following it. `target` is a
+// typed reference to that scope's declaration -- selected by static identity,
+// so the target may sit in another process. How the termination is realized --
+// the scope's runtime endpoint, the resumption gate, the unwind -- is
+// synthesized at HIR-to-MIR, not carried here.
+struct DisableStmt {
+  ProceduralScopeId target;
+};
+
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
     PatternCaseStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
     BreakStmt, ContinueStmt, ReturnStmt, TimedStmt, EventTriggerStmt, WaitStmt,
-    WaitForkStmt, DisableForkStmt>;
+    WaitForkStmt, DisableForkStmt, DisableStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

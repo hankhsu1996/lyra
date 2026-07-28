@@ -4,11 +4,13 @@
 
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/blocks.hpp"
@@ -134,6 +136,35 @@ auto LowerStatement(
     case slang::ast::StatementKind::DisableFork:
       return hir::Stmt{
           .label = std::nullopt, .data = hir::DisableForkStmt{}, .span = span};
+
+    case slang::ast::StatementKind::Disable: {
+      const auto& dis = stmt.as<slang::ast::DisableStatement>();
+      // A disable names a block or a task (LRM 9.6.2) and slang rejects every
+      // other target, so what arrives here always denotes a procedural scope.
+      if (dis.target.kind != slang::ast::ExpressionKind::ArbitrarySymbol) {
+        throw InternalError(
+            "LowerStatement: a disable target is not a symbol reference");
+      }
+      const slang::ast::Symbol& target =
+          *dis.target.as<slang::ast::ArbitrarySymbolExpression>().symbol;
+      // The target resolves to the identity its own structural scope minted.
+      // A class method body is inside none, and a target in another instance
+      // or generate scope belongs to a different one; reaching either is a
+      // hierarchical reference this statement does not yet route.
+      if (frame.current_structural_scope == nullptr ||
+          proc.Owner().OwningScopeFrame(target) != frame.Current()) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "disable of a block or task outside the enclosing structural scope "
+            "is not yet supported");
+      }
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data =
+              hir::DisableStmt{
+                  .target = proc.Owner().LookupProceduralScope(target)},
+          .span = span};
+    }
 
     case slang::ast::StatementKind::Timed:
       return LowerTimedStmt(

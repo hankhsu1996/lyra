@@ -404,6 +404,13 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
         .domain = AbiDomain(
             backend::llvm_backend::ValueDomainOf(unit, observable->value))};
   }
+  if (const auto* library = std::get_if<lir::RuntimeLibraryType>(&data);
+      library != nullptr &&
+      library->kind == lir::RuntimeLibraryKind::kCancellationSource) {
+    return runtime::MemberStorageDescriptor{
+        .kind = runtime::MemberStorageKind::kCancellationSource,
+        .domain = runtime::ValueDomain::kNone};
+  }
   if (lir::Pointee(unit.types, type).has_value()) {
     return runtime::MemberStorageDescriptor{
         .kind = runtime::MemberStorageKind::kBorrowedHandle,

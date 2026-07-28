@@ -1663,6 +1663,12 @@ class HirDumper {
             [&](const DisableForkStmt&) {
               Line(std::format("Stmt[{}] DisableForkStmt", id.value));
             },
+            [&](const DisableStmt& d) {
+              Line(
+                  std::format(
+                      "Stmt[{}] DisableStmt target={}", id.value,
+                      d.target.value));
+            },
         },
         s.data);
   }

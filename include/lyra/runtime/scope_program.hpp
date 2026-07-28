@@ -106,6 +106,10 @@ enum class MemberStorageKind : std::uint8_t {
   kBorrowedHandle,
   kObservableCell,
   kInlineValue,
+  // A scope's cancellation source (LRM 9.6.2). Every scope owns one, so every
+  // backend realizes the storage; whether a backend can also raise and consume
+  // the control effect a `disable` sends through it is a separate question.
+  kCancellationSource,
 };
 
 struct MemberStorageDescriptor {

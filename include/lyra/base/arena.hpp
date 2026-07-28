@@ -16,6 +16,11 @@ namespace lyra::base {
 // stays valid for the life of the arena, lookup is by id alone, and one element
 // references another by id, never by pointer.
 //
+// An id is defined the instant it is minted, so `Get` never faces an absent
+// value. That totality is why this is the default pool; `base::Registry` is the
+// counterpart that gives it up to make an identity referable before its value
+// exists, and is reached for only when that is needed.
+//
 // A node is built before it is appended and is never edited in place. This
 // value immutability is load-bearing: an appended node's value is final, so
 // other nodes reference it by id and a later shard caches it without

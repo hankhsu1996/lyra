@@ -391,6 +391,16 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // the runtime's fiber entry and the operand of the await that consumes it,
   // and nothing else names it.
   kForeignTaskAwaitable,
+  // LRM 9.6.2 `disable`, in the three parts it takes: the per-instance
+  // `lyra::runtime::CancellationSource` a scope is named through, carrying the
+  // generation an execution captures on entry and `disable` advances; the
+  // `lyra::runtime::CancellationGuard` whose lifetime marks the executing
+  // process as inside that scope; and `lyra::runtime::Abort`, the effect
+  // raised by leaving a disabled scope, which the region naming that scope
+  // binds and consumes.
+  kCancellationSource,
+  kCancellationGuard,
+  kAbort,
 };
 
 struct RuntimeLibraryType {

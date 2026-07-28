@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
@@ -245,7 +246,13 @@ struct StructuralScope {
   // belongs to no scope (LRM 35.4).
   base::Arena<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
   std::vector<ForeignExportDecl> foreign_exports;
-  base::Arena<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
+  // Every scope's identity is minted before any body is lowered, so a `disable`
+  // naming one (LRM 9.6.2) -- possibly from another process lowered first --
+  // carries a stable typed id rather than a name it would have to resolve
+  // later. That is what the declare-then-define gap buys: the id exists up
+  // front and the body pass fills the contents when it reaches the scope.
+  base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
+  std::vector<TypeAliasDecl> type_aliases;
 
   [[nodiscard]] auto NextGenerateId() const -> GenerateId {
     return GenerateId{static_cast<std::uint32_t>(generates.size())};

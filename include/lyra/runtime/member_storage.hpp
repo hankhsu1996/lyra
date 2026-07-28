@@ -2,6 +2,7 @@
 
 #include <variant>
 
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
@@ -36,7 +37,7 @@ class MemberStorage {
   std::variant<
       void*, Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
       Var<value::ShortReal>, value::Chandle, Var<value::RuntimeTuple>,
-      Var<value::RuntimeDynamicArray>>
+      Var<value::RuntimeDynamicArray>, CancellationSource>
       object_;
 };
 

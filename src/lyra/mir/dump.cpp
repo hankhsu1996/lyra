@@ -296,6 +296,12 @@ class MirDumper {
                   return "RuntimeLibrary(PrintLiteralItem)";
                 case RuntimeLibraryKind::kPrintValueItem:
                   return "RuntimeLibrary(PrintValueItem)";
+                case RuntimeLibraryKind::kCancellationSource:
+                  return "RuntimeLibrary(CancellationSource)";
+                case RuntimeLibraryKind::kCancellationGuard:
+                  return "RuntimeLibrary(CancellationGuard)";
+                case RuntimeLibraryKind::kAbort:
+                  return "RuntimeLibrary(Abort)";
                 case RuntimeLibraryKind::kFormatSpec:
                   return "RuntimeLibrary(FormatSpec)";
                 case RuntimeLibraryKind::kFormatArg:
@@ -1187,6 +1193,7 @@ class MirDumper {
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(enclosing, s, id); },
+            [&](const TryStmt& s) { DumpTryStmt(enclosing, s, id); },
             [&](const IfStmt& s) { DumpIfStmt(enclosing, s, id); },
             [&](const ForStmt& s) { DumpForStmt(enclosing, s, id); },
             [&](const WhileStmt& s) { DumpWhileStmt(enclosing, s, id); },
@@ -1427,6 +1434,20 @@ class MirDumper {
             "Stmt[{}] BlockStmt scope=BlockId{{{}}}", id.value, s.scope.value));
     Indent();
     DumpBlock(enclosing.child_scopes.Get(s.scope));
+    Dedent();
+  }
+
+  void DumpTryStmt(const Block& enclosing, const TryStmt& s, StmtId id) {
+    Line(
+        std::format(
+            "Stmt[{}] TryStmt body=BlockId{{{}}} caught=Local[{}] "
+            "handler=Expr[{}]",
+            id.value, s.body.value, s.caught.value, s.handler.value));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", s.handler.value, FormatExpr(enclosing, s.handler)));
+    DumpBlock(enclosing.child_scopes.Get(s.body));
     Dedent();
   }
 

@@ -39,6 +39,39 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+namespace {
+
+// Mints the identity of every procedural scope this structural scope contains.
+// A procedural scope is what slang records as one: a process body, a subroutine
+// body, and each block that introduces declarations or carries a name (LRM
+// 9.3.4 / 9.3.5). A construct that introduces neither is transparent and is no
+// scope at all, so nothing is minted for it. Instance and generate members are
+// not crossed, being their own structural scopes with their own identities.
+void DeclareProceduralScopes(
+    const slang::ast::Scope& slang_scope, UnitLowerer& owner,
+    hir::StructuralScope& hir_scope) {
+  for (const auto& member : slang_scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
+      owner.DeclareProceduralScope(
+          member, hir_scope.procedural_scopes.Declare());
+    } else if (member.kind == slang::ast::SymbolKind::StatementBlock) {
+      const auto& block = member.as<slang::ast::StatementBlockSymbol>();
+      owner.DeclareProceduralScope(
+          block, hir_scope.procedural_scopes.Declare());
+      DeclareProceduralScopes(block, owner, hir_scope);
+    } else if (member.kind == slang::ast::SymbolKind::Subroutine) {
+      const auto& sub = member.as<slang::ast::SubroutineSymbol>();
+      if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
+        continue;
+      }
+      owner.DeclareProceduralScope(sub, hir_scope.procedural_scopes.Declare());
+      DeclareProceduralScopes(sub, owner, hir_scope);
+    }
+  }
+}
+
+}  // namespace
+
 StructuralScopeLowerer::StructuralScopeLowerer(
     UnitLowerer& unit_lowerer, const slang::ast::Scope& slang_scope)
     : owner_(&unit_lowerer),
@@ -109,6 +142,12 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     owner_->MapSubroutineBinding(
         sub, frame_, hir::StructuralSubroutineId{reserved_subroutine_id++});
   }
+
+  // Forward-declare every procedural scope for the same reason, one step
+  // further out: a `disable` names a block or task by static identity (LRM
+  // 9.6.2), so it can name one whose body lowers later, or lives in another
+  // process entirely. Each body then only fills in the scope it was given.
+  DeclareProceduralScopes(*slang_scope_, *owner_, scope);
 
   // Instance member decls are built ahead of the port-connection synthesis
   // below, which reads them to wire each connection. The owned-child binding a

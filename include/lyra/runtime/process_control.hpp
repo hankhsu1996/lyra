@@ -127,10 +127,11 @@ class ProcessAwaitAwaitable : public PendingWait {
   void await_suspend(std::coroutine_handle<P> waiter) {
     CoroutineHandle token = &waiter.promise();
     target_->ArmTerminatedWaiter(token);
-    token->process->BlockLeaf(token, this);
+    BlockOn(token);
   }
 
-  void await_resume() const noexcept {
+  void await_resume() const {
+    CheckAbortOnResume();
   }
 
   // Termination is monotonic (LRM 9.7): the target terminates once. On resume,

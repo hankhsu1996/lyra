@@ -1165,7 +1165,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       if (self_ref(self_ref, child, body)) descendant_materializes = true;
     }
     const bool addressable = decl.label.has_value();
-    bool owns_static = false;
+    // Every scope owns a cancellation source, which is static-lifetime storage,
+    // so every scope owns storage for that reason alone.
+    bool owns_static = true;
     for (const auto var_id : decl.direct_declarations) {
       if (body.procedural_vars.Get(var_id).lifetime ==
           hir::VariableLifetime::kStatic) {
@@ -1220,6 +1222,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   std::vector<std::vector<std::optional<StaticStoragePlacement>>>
       process_placements(hir_scope.processes.size());
 
+  const mir::TypeId cancellation_source_type = unit_lowerer.Unit().types.Intern(
+      mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kCancellationSource});
+
   const auto owner_shape_of = [&](StorageOwner owner) -> mir::ClassShape& {
     return std::visit(
         Overloaded{
@@ -1244,6 +1250,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     const auto& scope = hir_scope.procedural_scopes.Get(scope_id);
     StorageOwner static_owner = nearest_owner;
     StorageOwner child_nearest = nearest_owner;
+    MaterializedProceduralScope entry;
     if (materializes[scope_id.value]) {
       const mir::ClassId my_class = scope_classes[scope_id.value];
       mir::ClassShape& parent_shape = owner_shape_of(nearest_owner);
@@ -1261,16 +1268,32 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
               .name = std::format("{}_companion", *scope.label),
               .source_name = *scope.label,
               .type = companion_type});
-      scope_materialization_.Record(
-          scope_id, MaterializedProceduralScope{
-                        .materialized = true,
-                        .class_id = my_class,
-                        .companion_field = companion_id,
-                        .label = *scope.label,
-                        .runtime_parent = nearest_owner});
+      entry = MaterializedProceduralScope{
+          .materialized = true,
+          .class_id = my_class,
+          .companion_field = companion_id,
+          .label = *scope.label,
+          .runtime_parent = nearest_owner,
+          .cancellation_source = std::nullopt};
       static_owner = StorageOwner{scope_id};
       child_nearest = StorageOwner{scope_id};
     }
+
+    // Every scope owns a cancellation source, so a `disable` naming any of them
+    // resolves without the shape phase first having to find out which ones some
+    // `disable` names. It rides the same placement rule as a static body local:
+    // it lands on the scope's own class when the scope materialized, and
+    // otherwise flows out to the nearest one that did.
+    const mir::FieldId cancel_field =
+        owner_shape_of(static_owner)
+            .fields.Add(
+                mir::FieldDecl{
+                    .name = std::format(
+                        "{}__cancel_{}", callable_name, scope_id.value),
+                    .type = cancellation_source_type});
+    entry.cancellation_source =
+        StaticStoragePlacement{.owner = static_owner, .field = cancel_field};
+    scope_materialization_.Record(scope_id, std::move(entry));
 
     if (per_callable.size() < body.procedural_vars.size()) {
       per_callable.resize(body.procedural_vars.size());
