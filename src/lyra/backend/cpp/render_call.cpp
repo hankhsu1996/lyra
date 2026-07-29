@@ -77,8 +77,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "SetTimeFormat";
     case support::BuiltinFn::kResetTimeFormat:
       return "ResetTimeFormat";
-    case support::BuiltinFn::kScan:
-      return "Scan";
+    case support::BuiltinFn::kScanString:
+      return "ScanString";
+    case support::BuiltinFn::kScanFile:
+      return "ScanFile";
     case support::BuiltinFn::kPeekBuffered:
       return "PeekBuffered";
     case support::BuiltinFn::kAdvanceFd:
@@ -389,7 +391,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
 // not need one (instance and static forms) leave this unset.
 auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
   switch (id) {
-    case support::BuiltinFn::kScan:
+    case support::BuiltinFn::kScanString:
+    case support::BuiltinFn::kScanFile:
     case support::BuiltinFn::kFormat:
     case support::BuiltinFn::kFormatRuntime:
     case support::BuiltinFn::kToSvLogic:

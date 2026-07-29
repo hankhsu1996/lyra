@@ -15,15 +15,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/scan_source.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::value {
 
 namespace {
-
-using detail::ScanSource;
-using detail::StringScanSource;
 
 // One scanned bit as it leaves a per-spec parser. The val/unk pair mirrors
 // PackedArray's storage planes: 0=(0,0), 1=(1,0), X=(1,1), Z=(0,1).
@@ -61,7 +57,73 @@ struct ScannedBit {
   return -1;
 }
 
-void SkipSourceWhitespace(ScanSource& src) {
+// The byte stream the format walker reads through. The parser looks at most
+// one byte ahead of what it has accepted, so a single-byte pushback slot is
+// the whole rewind capability it needs. Which bytes separate input fields is
+// a property of the scan the caller asked for (LRM 21.3.4.3(a)), so the
+// stream answers that question rather than a free helper.
+class ScanCursor {
+ public:
+  ScanCursor(std::string_view buf, detail::NullByte null_byte)
+      : buf_(buf), null_byte_(null_byte) {
+  }
+
+  auto Peek() -> int {
+    if (pushback_.has_value()) {
+      return *pushback_;
+    }
+    if (cursor_ >= buf_.size()) {
+      return -1;
+    }
+    return static_cast<unsigned char>(buf_[cursor_]);
+  }
+
+  auto Consume() -> int {
+    if (pushback_.has_value()) {
+      const int byte = *pushback_;
+      pushback_.reset();
+      return byte;
+    }
+    if (cursor_ >= buf_.size()) {
+      return -1;
+    }
+    const int byte = static_cast<unsigned char>(buf_[cursor_]);
+    ++cursor_;
+    return byte;
+  }
+
+  void Unget(int byte) {
+    if (pushback_.has_value()) {
+      throw InternalError(
+          "ScanCursor::Unget: pushback slot already holds a byte; scanner "
+          "attempted to Unget twice without an intervening Consume");
+    }
+    if (byte == -1) {
+      return;
+    }
+    pushback_ = byte;
+  }
+
+  [[nodiscard]] auto IsWhitespace(int ch) const -> bool {
+    if (ch == '\0') {
+      return null_byte_ == detail::NullByte::kWhiteSpace;
+    }
+    return IsAsciiWhitespace(ch);
+  }
+
+  // Offset of the next unread byte, ignoring any pending pushback.
+  [[nodiscard]] auto Position() const -> std::size_t {
+    return cursor_;
+  }
+
+ private:
+  std::string_view buf_;
+  detail::NullByte null_byte_;
+  std::size_t cursor_ = 0;
+  std::optional<int> pushback_ = std::nullopt;
+};
+
+void SkipSourceWhitespace(ScanCursor& src) {
   while (true) {
     const int ch = src.Peek();
     if (ch == -1 || !src.IsWhitespace(ch)) {
@@ -181,7 +243,7 @@ struct DecimalResult {
 // (with `_` separators) or a single x/X/z/Z/? that fills the entire dest.
 // `max_width == 0` means no limit; non-zero caps the digit / `_` chars
 // consumed (C-scanf convention: the sign does not count toward the width).
-[[nodiscard]] auto ScanDecimal(ScanSource& src, std::size_t max_width)
+[[nodiscard]] auto ReadDecimal(ScanCursor& src, std::size_t max_width)
     -> std::optional<DecimalResult> {
   SkipSourceWhitespace(src);
   int ch = src.Peek();
@@ -234,7 +296,7 @@ struct DecimalResult {
 }
 
 // LRM 21.3.4.3 Table 21-7 `%h` / `%x`. Each character -> one 4-bit nibble.
-[[nodiscard]] auto ScanHex(ScanSource& src, std::size_t max_width)
+[[nodiscard]] auto ReadHex(ScanCursor& src, std::size_t max_width)
     -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
   std::vector<ScannedBit> bits;
@@ -280,7 +342,7 @@ struct DecimalResult {
 }
 
 // LRM 21.3.4.3 Table 21-7 `%o`. 3 bits per octal digit.
-[[nodiscard]] auto ScanOctal(ScanSource& src, std::size_t max_width)
+[[nodiscard]] auto ReadOctal(ScanCursor& src, std::size_t max_width)
     -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
   std::vector<ScannedBit> bits;
@@ -326,7 +388,7 @@ struct DecimalResult {
 }
 
 // LRM 21.3.4.3 Table 21-7 `%b`. Per-character to one bit.
-[[nodiscard]] auto ScanBinary(ScanSource& src, std::size_t max_width)
+[[nodiscard]] auto ReadBinary(ScanCursor& src, std::size_t max_width)
     -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
   std::vector<ScannedBit> bits;
@@ -366,7 +428,7 @@ struct DecimalResult {
 
 // Standard scanf `%s`: skip leading whitespace, then read non-whitespace
 // chars until whitespace or EOF.
-[[nodiscard]] auto ScanString(ScanSource& src, std::size_t max_width)
+[[nodiscard]] auto ReadString(ScanCursor& src, std::size_t max_width)
     -> std::optional<std::string> {
   SkipSourceWhitespace(src);
   std::string buf;
@@ -389,7 +451,7 @@ struct DecimalResult {
 // extension (read N bytes into a char array) needs a string-slot output
 // shape, which is a separate feature; reject it here so the gap stays
 // visible.
-[[nodiscard]] auto ScanChar(ScanSource& src, std::size_t max_width)
+[[nodiscard]] auto ReadChar(ScanCursor& src, std::size_t max_width)
     -> std::optional<unsigned char> {
   if (max_width > 1U) {
     throw SimulationError(
@@ -439,7 +501,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
 }
 
 [[nodiscard]] auto ScanFromSource(
-    ScanSource& src, std::string_view fmt, std::span<const ScanTarget> targets)
+    ScanCursor& src, std::string_view fmt, std::span<const ScanTarget> targets)
     -> std::int32_t {
   std::int32_t items = 0;
   std::size_t target_ix = 0;
@@ -530,7 +592,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
     bool ok = false;
     switch (spec) {
       case 'd': {
-        if (auto parsed = ScanDecimal(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadDecimal(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
             auto* dest = RequireIntegralTarget(targets[target_ix], "d");
@@ -541,7 +603,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
       }
       case 'h':
       case 'x': {
-        if (auto parsed = ScanHex(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadHex(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
             auto* dest = RequireIntegralTarget(
@@ -552,7 +614,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
         break;
       }
       case 'b': {
-        if (auto parsed = ScanBinary(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadBinary(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
             auto* dest = RequireIntegralTarget(targets[target_ix], "b");
@@ -562,7 +624,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
         break;
       }
       case 'o': {
-        if (auto parsed = ScanOctal(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadOctal(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
             auto* dest = RequireIntegralTarget(targets[target_ix], "o");
@@ -572,7 +634,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
         break;
       }
       case 's': {
-        if (auto parsed = ScanString(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadString(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
             auto* dest = RequireStringTarget(targets[target_ix], "s");
@@ -582,7 +644,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
         break;
       }
       case 'c': {
-        if (auto parsed = ScanChar(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadChar(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
             auto* dest = RequireIntegralTarget(targets[target_ix], "c");
@@ -618,10 +680,10 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
 namespace detail {
 
 auto ScanImpl(
-    const value::String& input, const value::String& format,
+    const value::String& input, const value::String& format, NullByte null_byte,
     value::PackedArray& consumed, std::initializer_list<ScanTarget> targets)
     -> value::PackedArray {
-  StringScanSource src(input.View());
+  ScanCursor src(input.View(), null_byte);
   const std::int32_t items = ScanFromSource(
       src, format.View(),
       std::span<const ScanTarget>{targets.begin(), targets.size()});

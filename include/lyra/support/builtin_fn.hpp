@@ -196,10 +196,15 @@ enum class BuiltinFn : std::uint16_t {
   kTimeFormat,
   kSetTimeFormat,
   kResetTimeFormat,
-  // LRM 21.3.4.3 scan primitives. `Scan` is a pure value-layer parser;
-  // `PeekBuffered` / `AdvanceFd` are the file-side bytes-and-position
-  // operations a `$fscanf` lowering composes with `Scan`.
-  kScan,
+  // LRM 21.3.4.3 scan primitives. The two parse entries are pure value-layer
+  // parsers that differ only in whether a null character separates input
+  // fields (LRM 21.3.4.3(a) grants that to `$sscanf` alone); distinct entries
+  // rather than one taking a mode operand, mirroring the print `Write` /
+  // `Writeln` and diagnostic `EmitX` splits. `PeekBuffered` / `AdvanceFd` are
+  // the file-side bytes-and-position operations a `$fscanf` lowering composes
+  // with the file parse.
+  kScanString,
+  kScanFile,
   kPeekBuffered,
   kAdvanceFd,
   // LRM 21.3 file-IO subsystem methods on the `files` broker. Each is a
