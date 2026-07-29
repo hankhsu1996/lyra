@@ -105,21 +105,19 @@ struct PatternVarRef {
   auto operator==(const PatternVarRef&) const -> bool = default;
 };
 
-// A reference to a variable that belongs to another compilation unit's
-// namespace -- a package variable (LRM 26.2), reached by name. Like
-// `ExternalUnitSubroutineRef` for a call, it carries no unit-local id: a
-// package has no instance and no receiver, so its variable is named and
-// resolved against the target unit's interface at link time, never through a
-// `self`-based route within any unit. The same by-name form serves a referrer
-// in another unit and the package's own callable reading its own variable,
-// since neither has a receiver to reach it through. One form serves read,
-// write, and observation.
+// A reference to a variable declared in a namespace unit -- a package (LRM
+// 26.2) or the anonymous `$unit` scope (LRM 3.12.1) -- reached by name. Such a
+// unit has no instance and no receiver, so its variable is one program-global
+// cell, resolved against that unit's interface at link time rather than reached
+// by a route out of anyone's storage. The same by-name form serves a referrer
+// in another unit and the declaring unit's own body, neither of which has a
+// receiver to reach it through.
 struct ExternalUnitValueRef {
   std::string unit_name;
   std::string variable_name;
-  // The variable's value type. Carried on the node so it is self-describing: a
-  // sensitivity leaf reaches the observed cell's type from the reference alone,
-  // with no enclosing expression to type it.
+  // The cell's type. The declaring unit compiles separately, so no member of
+  // this unit states it; it crosses as part of what this unit knows of that
+  // unit's interface.
   TypeId value_type;
 
   auto operator==(const ExternalUnitValueRef&) const -> bool = default;
@@ -127,16 +125,17 @@ struct ExternalUnitValueRef {
 
 // A reader-relative reference to a value: either a direct member of the
 // reader's own scope, or a routed reference sealed to a per-instance endpoint
-// in the resolve phase. One route serves every consumer of the reference --
-// value read, value write, and change observation -- so the name is neutral to
-// the consumer, not owned by sensitivity.
+// in the resolve phase.
 using ReferenceRoute = std::variant<DirectMemberRef, RoutedRef>;
 
-// What a sensitivity leaf watches: a reader-relative route to an intra-unit
-// observable cell, or a by-name reference to a package variable's one
-// program-global cell (LRM 26.2). A package variable's change wakes the process
-// the same way an intra-unit signal's does, but it is reached by name, not
-// through a route, since a package has no per-instance storage to route to.
-using SensitivityTarget = std::variant<ReferenceRoute, ExternalUnitValueRef>;
+// Where a value's cell is, as the reader reaches it: through a reader-relative
+// route to a cell in the reader's own unit, or by name across the boundary to a
+// namespace unit's one program-global cell (LRM 26.2, 3.12.1), which has no
+// per-instance storage to route to. One target serves every consumer of the
+// reference -- value read, value write, and change observation -- so the name
+// is neutral to the consumer and owned by none of them. A value with no cell at
+// all has no target: a compile-time constant folds where it is used, leaving
+// nothing to read through and nothing to observe.
+using ValueTarget = std::variant<ReferenceRoute, ExternalUnitValueRef>;
 
 }  // namespace lyra::hir

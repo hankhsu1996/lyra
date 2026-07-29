@@ -115,8 +115,7 @@ one translation; they must not each re-derive it.
 1. `TranslateSensitivityReads` stops dropping on a failed `HopsTo`: a dependency whose target is not
    an enclosing structural object is routed through the reference the body resolved, never
    discarded. This removes the order-dependent loss for every consumer that infers a read set
-   (`always_comb`, `always @*`, continuous assign, `wait`, port connection). Interim correctness
-   repair; it does not yet remove the parallel classifier.
+   (`always_comb`, `always @*`, continuous assign, `wait`, port connection).
 2. `always_comb` / `always_latch` read `AnalyzedProcedure::getSensitivityList()` rather than raw
    `getRValues()`, so function-body reads contribute per LRM 9.2.2.2.1. The other consumers already
    read the surface their semantics require -- `always @*` and `wait` the reads of their controlled

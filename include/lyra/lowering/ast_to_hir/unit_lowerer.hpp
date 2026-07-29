@@ -25,8 +25,10 @@
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/event_edge.hpp"
 
 namespace slang::ast {
 class Expression;
@@ -120,16 +122,14 @@ class LoweringFacts {
   bool disable_assertions_;
 };
 
-// Per-unit lowerer, over a module instance body or a package.
+// Per-unit lowerer, over a module instance body or a package. It holds the
+// in-progress compilation unit together with the registries that record which
+// HIR identity this unit gave each slang symbol, so a reference resolves
+// against what the unit already decided rather than by re-reading the frontend.
 //
-// Facts: the shared lowering facts (source mapper + sensitivity analyzer) and
-// a reference to the slang scope being walked.
-// Registries: type cache (slang canonical type -> hir TypeId), structural-var
-// / subroutine / loop-var / owned-child binding tables, per-frame cross-unit
-// ref slot tables, and a scope-frame counter.
-// Root output: the in-progress `hir::CompilationUnit`. Constructed in the ctor
-// with the unit's name and an initial builtins table; populated by `Run`; moved
-// out by `Run`'s return. After `Run` returns the class holds no IR pointer.
+// The unit is constructed with its name and an initial builtins table,
+// populated by `Run`, and moved out by `Run`'s return; afterwards the lowerer
+// holds no IR.
 class UnitLowerer {
  public:
   UnitLowerer(
@@ -282,7 +282,6 @@ class UnitLowerer {
         "recorded id; the owning class was not interned before this lookup");
   }
 
-  // Facts.
   [[nodiscard]] auto SourceMapper() const
       -> const frontend::SlangSourceMapper& {
     return facts_.SourceMapper();
@@ -294,8 +293,6 @@ class UnitLowerer {
     return facts_.DisableAssertions();
   }
 
-  // Binding registries. Each Map* asserts no double-mapping for the same
-  // slang symbol.
   void MapStructuralDataObjectBinding(
       const slang::ast::ValueSymbol& var, ScopeFrameId home_frame,
       hir::StructuralDataObjectId local, hir::TypeId type);
@@ -385,45 +382,53 @@ class UnitLowerer {
   auto InternOwnClassDeclarations() -> diag::Result<void>;
 
   // Builds a HIR Expr referring to a leaf reached by navigating `path` down
-  // from `head`. `target` is the leaf value symbol (routed-ref dedup key);
-  // `slot_owner_frame` is the frame whose `routed_refs` arena holds the slot
-  // (see `MapOrGetRoutedRef`).
+  // from `head`. `target` is the leaf value symbol, which is also the key two
+  // references to one target dedup on; `slot_owner_frame` is the frame whose
+  // routed-reference arena holds the slot.
   auto MakeRoutedMemberRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
       hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
       hir::TypeId type, diag::SourceSpan span) -> hir::Expr;
 
-  // Translates slang-side reads to HIR SensitivityEntries. Each read resolves
-  // to the same reader-relative route the reader would use to reach the target,
-  // derived from the target's elaborated position -- not reclassified from a
-  // global table lookup.
-  [[nodiscard]] auto TranslateSensitivityReads(
-      const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
-      -> std::vector<hir::SensitivityEntry>;
+  // Where a named value lives, as this unit reaches it. One answer serves
+  // every consumer of a reference -- reading it, writing it, and waiting on it
+  // changing. A variable or net resolves to a route from the reader to its
+  // cell, sealed once at elaboration; a variable of a namespace unit, which has
+  // no instance to route through, resolves to its name across the boundary. A
+  // constant resolves to nothing at all -- it names a value, not a cell, so
+  // there is nothing to read through and nothing to wait on -- as does a target
+  // whose route form is not yet supported. Asking here, once, is what stops one
+  // symbol being a value to one consumer and a signal to another.
+  [[nodiscard]] auto ResolveValueTarget(
+      const WalkFrame& frame, const slang::ast::ValueSymbol& value)
+      -> diag::Result<std::optional<hir::ValueTarget>>;
 
-  // The one route translator for every reference consumer -- value read, value
-  // write, and change observation. From the reader's elaborated position
-  // (`frame.reader_scope` and its unit-local chain) and the target symbol it
-  // computes the reader-relative route and classifies each segment by layout
-  // visibility: a direct member when the target sits on the reader's own scope,
-  // a routed reference otherwise -- a typed enclosing climb to a this-unit
-  // ancestor member, a typed downward head when the head's class this unit
-  // emits, or a by-name head where the route crosses the compilation-unit
-  // boundary. Returns nullopt when the target is not an addressable signal or
-  // its form is not yet supported.
+  // The reads of a dependency set that name a cell, as the entries that wake on
+  // it under `edge`. A read of anything else contributes none, so a constant
+  // read alongside a signal leaves only the signal subscribed (LRM 9.2.2.2.1).
+  // An inferred sensitivity wakes on any change; only an explicit event control
+  // qualifies its terms with a polarity (LRM 9.4.2), and every leaf of one term
+  // carries that term's own.
+  [[nodiscard]] auto TranslateSensitivityReads(
+      const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
+      support::EventEdge edge)
+      -> diag::Result<std::vector<hir::SensitivityEntry>>;
+
+ private:
+  // The reader-relative route to a cell in an instantiated scope: a direct
+  // member when the target sits on the reader's own scope, a routed reference
+  // otherwise -- a typed enclosing climb to a this-unit ancestor member, a
+  // typed downward head when this unit emits the head's class, or a by-name
+  // head where the route crosses into another instance's unit.
   [[nodiscard]] auto TranslateReferenceRoute(
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
       -> std::optional<hir::ReferenceRoute>;
 
- private:
-  // Facts.
   LoweringFacts facts_;
   const slang::ast::Scope* scope_;
 
-  // Root output.
   hir::CompilationUnit unit_;
 
-  // Registries.
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the
   // Local / External arm chosen by walking slang's parent chain to find the

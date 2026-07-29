@@ -507,8 +507,7 @@ class HirDumper {
         ref);
   }
 
-  static auto FormatSensitivityTarget(const SensitivityTarget& target)
-      -> std::string {
+  static auto FormatValueTarget(const ValueTarget& target) -> std::string {
     return std::visit(
         Overloaded{
             [](const ReferenceRoute& route) -> std::string {
@@ -565,7 +564,7 @@ class HirDumper {
                   if (j != 0) out += ", ";
                   const auto& r = e.triggers[i].sensitivity_list[j];
                   out += std::format(
-                      "{{{} bits={} edge={}}}", FormatSensitivityTarget(r.ref),
+                      "{{{} bits={} edge={}}}", FormatValueTarget(r.ref),
                       FormatFootprint(r.footprint),
                       FormatEventEdge(r.edge_kind));
                 }
@@ -580,7 +579,7 @@ class HirDumper {
                 if (i != 0) out += ", ";
                 const auto& r = ie.sensitivity_list[i];
                 out += std::format(
-                    "{{{} bits={} edge={}}}", FormatSensitivityTarget(r.ref),
+                    "{{{} bits={} edge={}}}", FormatValueTarget(r.ref),
                     FormatFootprint(r.footprint), FormatEventEdge(r.edge_kind));
               }
               out += "]";
@@ -1230,7 +1229,7 @@ class HirDumper {
       for (const auto& r : p.implicit_sensitivity_list) {
         Line(
             std::format(
-                "{} bits={}", FormatSensitivityTarget(r.ref),
+                "{} bits={}", FormatValueTarget(r.ref),
                 FormatFootprint(r.footprint)));
       }
       Dedent();
@@ -1299,7 +1298,7 @@ class HirDumper {
       for (const auto& r : ca.sensitivity_list) {
         Line(
             std::format(
-                "{} bits={}", FormatSensitivityTarget(r.ref),
+                "{} bits={}", FormatValueTarget(r.ref),
                 FormatFootprint(r.footprint)));
       }
       Dedent();
@@ -1643,7 +1642,7 @@ class HirDumper {
                 if (i != 0) sens += ", ";
                 const auto& r = w.sensitivity_list[i];
                 sens += std::format(
-                    "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
+                    "{{{} bits={}}}", FormatValueTarget(r.ref),
                     FormatFootprint(r.footprint));
               }
               sens += "]";

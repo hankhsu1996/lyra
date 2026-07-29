@@ -19,20 +19,21 @@ namespace lyra::lowering::ast_to_hir {
 namespace {
 
 // Assembles a continuous assignment (LRM 10.3.2) from its two already-built
-// operand expressions and the read set its sensitivity derives from. The
-// sensitivity list is always `TranslateSensitivityReads(reads)`, the single
-// place a read set is mapped to its runtime projection.
+// operand expressions and the read set its sensitivity derives from.
 auto BuildContinuousAssign(
     UnitLowerer& unit_lowerer, WalkFrame frame, diag::SourceSpan span,
     hir::Expr lhs, hir::Expr rhs, const std::vector<SensitivityRead>& reads)
-    -> hir::ContinuousAssign {
+    -> diag::Result<hir::ContinuousAssign> {
+  auto sensitivity = unit_lowerer.TranslateSensitivityReads(
+      reads, frame, support::EventEdge::kAnyChange);
+  if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(std::move(lhs));
   const hir::ExprId rhs_id = frame.Exprs().Add(std::move(rhs));
   return hir::ContinuousAssign{
       .span = span,
       .lhs = lhs_id,
       .rhs = rhs_id,
-      .sensitivity_list = unit_lowerer.TranslateSensitivityReads(reads, frame),
+      .sensitivity_list = *std::move(sensitivity),
   };
 }
 

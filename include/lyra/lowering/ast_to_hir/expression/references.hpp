@@ -1,9 +1,10 @@
 #pragma once
 
 // Lowering of name resolution expressions: NamedValue (LRM 6.6 names) and
-// HierarchicalValue (LRM 23.6 hierarchical references). Routed reference
-// construction lives on UnitLowerer; this file handles the expression-level
-// resolution into DirectMemberRef / ProceduralVarRef / RoutedRef per context.
+// HierarchicalValue (LRM 23.6 hierarchical references). Where a named value's
+// cell is gets settled once, for every consumer of a name; this file turns
+// that answer -- together with the forms that have no cell at all, a folded
+// constant, a class property, a pattern binding -- into an Expr.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -19,16 +20,6 @@ class ValueSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
-
-// The compilation unit a value is declared directly in when that unit is
-// reached by name across the boundary -- a package (LRM 26.2) or the anonymous
-// `$unit` scope (LRM 3.12.1) -- or nullptr when the value belongs to this unit
-// and routes locally. Such a value is one program-global cell reached by name;
-// both the value-reference path and the sensitivity path detect it here so a
-// read and a wait on its change agree on the by-name form. The returned symbol
-// is the declaring unit, from which the caller computes its published name.
-auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
-    -> const slang::ast::Symbol*;
 
 auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,

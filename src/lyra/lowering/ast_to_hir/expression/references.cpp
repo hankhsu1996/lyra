@@ -12,20 +12,19 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
-#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/ConstantValue.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
-#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -268,72 +267,49 @@ auto MakeClassPropertyRefExpr(
       *type_id, span);
 }
 
-// Wraps a resolved reader-relative route as a reference Expr. A route is one of
-// two primaries -- a direct member of the reader's own scope or a routed
-// reference sealed to a per-instance endpoint -- and each wraps identically.
-auto RouteRefExpr(
-    const hir::ReferenceRoute& route, hir::TypeId type, diag::SourceSpan span)
+// Wraps a resolved value target as a reference Expr. Every way of reaching a
+// cell -- a direct member of the reader's own scope, a routed reference sealed
+// to a per-instance endpoint, a namespace unit's cell named across the boundary
+// -- is a reference primary, so one wrap serves them all.
+auto ValueTargetRefExpr(
+    const hir::ValueTarget& target, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr {
+  const auto wrap = [&](const auto& primary) -> hir::Expr {
+    return hir::MakeRefExpr(primary, type, span);
+  };
   return std::visit(
-      [&](const auto& primary) -> hir::Expr {
-        return hir::MakeRefExpr(primary, type, span);
+      Overloaded{
+          [&](const hir::ReferenceRoute& route) -> hir::Expr {
+            return std::visit(wrap, route);
+          },
+          [&](const hir::ExternalUnitValueRef& external) -> hir::Expr {
+            return wrap(external);
+          },
       },
-      route);
+      target);
 }
 
-// Lowers a reference to a variable owned by another unit's namespace as an
-// `ExternalUnitValueRef` naming that unit and the variable. The same by-name
-// form serves a referrer in another unit and the owning unit's own callable
-// reading its own variable; neither has a receiver to route through. The unit
-// is a package or the anonymous `$unit` scope, already resolved to its
-// published name by the caller.
-auto LowerExternalUnitValueRef(
-    UnitLowerer& unit_lowerer, std::string unit_name,
-    const slang::ast::ValueSymbol& value, const slang::ast::Type& type,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = unit_lowerer.InternType(type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return hir::MakeRefExpr(
-      hir::ExternalUnitValueRef{
-          .unit_name = std::move(unit_name),
-          .variable_name = std::string{value.name},
-          .value_type = *type_id},
-      *type_id, span);
-}
-
-// Lowers a reference to a structural signal (a variable or net of an enclosing
-// scope) through the one reference-route translator. Shared by the procedural
-// and structural named-value paths once each has ruled out the non-signal forms
-// its context admits. A simple name is always lexically enclosing, so the route
-// is always available and its absence is a compiler-bug invariant.
-auto LowerStructuralSignalRef(
+// Lowers a reference to a value that has a cell -- a variable or a net --
+// wherever that cell lives, through the one resolver. Shared by every
+// named-value entry once each has ruled out the forms its context admits that
+// have no cell. A storage referent always resolves here: a simple name is
+// lexically enclosing and a hierarchical path is fully elaborated by the
+// frontend, so absence is a compiler-bug invariant.
+auto LowerValueRef(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::ValueSymbol& value, const slang::ast::Type& type,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto route = unit_lowerer.TranslateReferenceRoute(frame, value);
-  if (!route) {
-    throw InternalError(
-        "LowerStructuralSignalRef: structural signal has no reader-relative "
-        "route");
+  auto target = unit_lowerer.ResolveValueTarget(frame, value);
+  if (!target) return std::unexpected(std::move(target.error()));
+  if (!target->has_value()) {
+    throw InternalError("LowerValueRef: storage symbol has no reachable cell");
   }
-  return RouteRefExpr(*route, *type_id, span);
+  return ValueTargetRefExpr(**target, *type_id, span);
 }
 
 }  // namespace
-
-auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
-    -> const slang::ast::Symbol* {
-  const slang::ast::Scope* scope = value.getParentScope();
-  if (scope == nullptr) return nullptr;
-  const slang::ast::Symbol& owner = scope->asSymbol();
-  if (owner.kind != slang::ast::SymbolKind::Package &&
-      owner.kind != slang::ast::SymbolKind::CompilationUnit) {
-    return nullptr;
-  }
-  return &owner;
-}
 
 auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,
@@ -358,14 +334,15 @@ auto LowerNamedValueProc(
     // receiver, so it lowers to a receiver-relative property reference.
     case Referent::kClassProperty:
       return MakeClassPropertyRefExpr(unit_lowerer, sym, *named.type, span);
-    // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
-    // variable-family symbols; each binds to procedural-var storage when the
-    // enclosing process declares it, otherwise to the structural signal of the
-    // same name reached through the reference-route translator.
     case Referent::kPatternBinding:
       return MakePatternVarRefExpr(
           unit_lowerer, sym.as<slang::ast::PatternVarSymbol>(), *named.type,
           span);
+    // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
+    // variable-family symbols too, so this arm covers a name bound to the
+    // enclosing body's own storage as well as one naming a cell elsewhere. The
+    // lexical binding wins: only a name the body does not declare is a value
+    // reached through the object graph.
     case Referent::kVariableStorage: {
       const auto& var = sym.as<slang::ast::VariableSymbol>();
       if (auto local = proc.LookupProceduralVar(var)) {
@@ -374,17 +351,11 @@ auto LowerNamedValueProc(
         return hir::MakeRefExpr(
             hir::ProceduralVarRef{.var = *local}, type, span);
       }
-      const auto& value = sym.as<slang::ast::ValueSymbol>();
-      if (const auto* unit = DeclaringUnitOfValue(value)) {
-        return LowerExternalUnitValueRef(
-            unit_lowerer, CompilationUnitName(*unit), value, *named.type, span);
-      }
-      return LowerStructuralSignalRef(
-          unit_lowerer, frame, value, *named.type, span);
+      return LowerValueRef(unit_lowerer, frame, var, *named.type, span);
     }
     // A net (LRM 6.5) is always a structural signal, never a procedural local.
     case Referent::kNetStorage:
-      return LowerStructuralSignalRef(
+      return LowerValueRef(
           unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
           span);
     case Referent::kUnsupported:
@@ -396,9 +367,10 @@ auto LowerNamedValueProc(
 }
 
 // LRM 23.6 hierarchical reference. A reached constant folds to its value; a
-// reached signal's route is produced by the one canonical route translator from
-// the reader's elaborated position and the target symbol. slang's resolved
-// `ref.path` is provenance, not a routing authority, so it is not consulted.
+// reached cell is located from the reader's elaborated position and the target
+// symbol, the same way a simple name's is -- the path a reference was written
+// with is provenance, not a routing authority, so slang's resolved `ref.path`
+// is not consulted.
 auto LowerHierarchicalValue(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
@@ -436,19 +408,18 @@ auto LowerHierarchicalValue(
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
       const auto& value = target.as<slang::ast::ValueSymbol>();
-      if (const auto* unit = DeclaringUnitOfValue(value)) {
-        return LowerExternalUnitValueRef(
-            unit_lowerer, CompilationUnitName(*unit), value, *hve.type, span);
-      }
       auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
-      auto route = unit_lowerer.TranslateReferenceRoute(frame, value);
-      if (!route) {
+      auto reached = unit_lowerer.ResolveValueTarget(frame, value);
+      if (!reached) return std::unexpected(std::move(reached.error()));
+      // A path this unit cannot yet express reaches a real cell the user
+      // named, so it is a lowering gap rather than a compiler-bug invariant.
+      if (!reached->has_value()) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedExpressionForm,
             "hierarchical reference to this target form is not yet supported");
       }
-      return RouteRefExpr(*route, *type_id, span);
+      return ValueTargetRefExpr(**reached, *type_id, span);
     }
   }
   throw InternalError("LowerHierarchicalValue: unknown Referent");
@@ -474,15 +445,10 @@ auto LowerNamedValueStructural(
           unit_lowerer, sym.as<slang::ast::PatternVarSymbol>(), *named.type,
           span);
     case Referent::kVariableStorage:
-    case Referent::kNetStorage: {
-      const auto& value = sym.as<slang::ast::ValueSymbol>();
-      if (const auto* unit = DeclaringUnitOfValue(value)) {
-        return LowerExternalUnitValueRef(
-            unit_lowerer, CompilationUnitName(*unit), value, *named.type, span);
-      }
-      return LowerStructuralSignalRef(
-          unit_lowerer, frame, value, *named.type, span);
-    }
+    case Referent::kNetStorage:
+      return LowerValueRef(
+          unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
+          span);
     // A static property (LRM 8.9) is one cell owned by the class, reached
     // without a receiver, so it reads here exactly as it does in a process. An
     // instance property is reachable only through a receiver, which a

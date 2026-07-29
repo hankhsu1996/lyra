@@ -26,7 +26,10 @@ The whole Ibex RTL already parses, type-checks, and elaborates through the front
 
 ## Two walls
 
-1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below.
+1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. No construct in the
+   design is rejected: the whole `ibex_simple_system_tb` lowers and emits C++ with no diagnostics.
+   The frontier is one stage later, at the emitted program's own correctness -- each form left open
+   below emits C++ that a host compiler refuses, so the design does not link.
 2. **Execution backend** -- the C++ path is wired and runs end to end: `lyra run` emits, builds, and
    executes a supported design. The blanket "no way to run anything" wall is down, so a
    fully-lowered Ibex can in principle run. What remains here is not the ability to run at all but
@@ -63,7 +66,7 @@ full support.
       rather than reconstructed in the deferred body. Pervasive in banked, width-parameterized RTL:
       with this, the counter, prefetch-buffer, fetch-FIFO, decoder, and compressed-decoder families
       lower and emit C++ end-to-end.
-- [ ] **Variable-width part-select inside a conditional generate** -- a part-select whose _width_
+- [x] **Variable-width part-select inside a conditional generate** -- a part-select whose _width_
       depends on a `genvar` (e.g. `x[i-1:0]`, which widens with `i`) appearing in a
       `generate     if`/`else` branch. Distinct from the genvar-dependent select _bounds_ of
       constant width above (the ibex_alu butterfly form), which already lower; here the selected
@@ -117,9 +120,8 @@ full support.
       reference, written inside a conditional or loop generate block, that descends into a module
       instance owned by an enclosing scope (the RVFI trap logic in `ibex_core`, and `ibex_ex_block`
       reaching its generate-instantiated multiplier and divider the same way). No longer a lowering
-      blocker: with `$readmemh` cleared, the whole `ibex_simple_system_tb` now lowers to MIR with no
-      diagnostics, so this form lowers as part of the full design. C++ emit / build / run of the
-      full top is the next thing to verify and is not yet re-checked.
+      blocker: with `$readmemh` cleared, the whole `ibex_simple_system_tb` lowers to MIR with no
+      diagnostics and emits C++, so this form carries through the full design.
 - [x] **`$value$plusargs` / `$test$plusargs`** -- runtime plusarg query (LRM 21.6). The full surface
       is live: `$test$plusargs` probes for a prefix, `$value$plusargs` parses the matched plusarg's
       remainder under `%d` / `%o` / `%h` / `%x` / `%b` / `%s`, and the host command line populates
@@ -142,14 +144,20 @@ full support.
       enum value as its base packed integral (the enum value model is now base-integral; see
       `datatypes.md` Enum). The same change removed the anonymous-enum cross-module name collision
       that otherwise blocked the full-system C++ compile.
-- [ ] **Cross-unit reference to a package's enum-member or `localparam` constant** -- a module reads
-      a package-scoped compile-time constant by its qualified name (an `exc_cause_e` member, a CSR
-      bit-index / register parameter); the constant is not materialized in the referenced package,
-      so the emitted C++ names an undefined symbol. It should fold to its value or resolve as a
-      link-time symbol. Hits `ibex_controller`, `ibex_if_stage`, `ibex_cs_registers`.
+- [x] **A constant read where sensitivity is inferred** -- a `parameter`, `localparam`, or enum
+      member read inside `always_comb`, `always @*`, a `wait`, or a continuous assign (an
+      `exc_cause_e` member, a CSR bit-index parameter, the instruction-encoding `casez` in
+      `ibex_tracer`). LRM 9.2.2.2.1 infers the implicit sensitivity list from net and variable
+      identifiers, and a constant is neither, so such a read contributes nothing to it -- neither
+      folding it into the subscription nor materializing a cell for it is right, since a value that
+      cannot change is not something a process can wait on. Hits `ibex_controller`, `ibex_if_stage`,
+      `ibex_cs_registers`, `ibex_tracer`.
 - [ ] **DPI-C export from inside a generate scope** -- an `export "DPI-C"` declared within a
       generate block (the icache scramble-key helpers in `ibex_if_stage`); the emitted C entry names
       the generate scope's type without the qualification that reaches it.
+- [ ] **A net whose value is an unpacked array** -- an unpacked-array port declared with no data
+      type is an implicit net array (LRM 6.9), which net resolution does not admit. The system bus
+      (`shared/rtl/bus.sv`) declares its per-host request, address, and write-enable ports this way.
 - [ ] Further structural-expression forms surfaced as later passes get deeper (recorded here as
       discovery continues).
 
