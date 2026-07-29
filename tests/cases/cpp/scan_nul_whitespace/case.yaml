@@ -1,4 +1,4 @@
-id: cpp.sscanf_nul_whitespace
+id: cpp.scan_nul_whitespace
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -14,3 +14,6 @@ expect:
     count_strs: 2
     s1: "hello"
     s2: "world"
+    count_file: 1
+    f1_len: 11
+    f2: ""
