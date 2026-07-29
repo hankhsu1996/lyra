@@ -249,11 +249,16 @@ auto LowerScanSystemSubroutineCall(
     scan_args.push_back(
         body.exprs.Add(mir::MakeLocalRefExpr(temp_ids[k], target_types[k])));
   }
+  // LRM 21.3.4.3(a) gives `$sscanf` alone the rule that a null character
+  // counts as white space, so which of the two parses runs is fixed by the
+  // system function the source names, not by the bytes it receives.
+  const support::BuiltinFn parse_fn =
+      is_file ? support::BuiltinFn::kScanFile : support::BuiltinFn::kScanString;
   const mir::ExprId parse_call_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = support::BuiltinFn::kScan},
+                  .callee = mir::Direct{.target = parse_fn},
                   .arguments = std::move(scan_args)},
           .type = integer_t});
 

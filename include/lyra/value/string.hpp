@@ -34,9 +34,8 @@ class String {
 
   // LRM 21.3.4.3: $sscanf accepts an unpacked array of byte as input,
   // viewed as a contiguous character sequence in element order. The low
-  // byte of each element becomes one std::string byte (embedded NULs
-  // preserved); StringScanSource::IsWhitespace handles the sscanf-only
-  // NUL-as-whitespace rule.
+  // byte of each element becomes one byte of the result, embedded NULs
+  // included -- the scan itself decides what a NUL means there.
   [[nodiscard]] static auto FromByteArray(
       const UnpackedArray<PackedArray>& bytes) -> String {
     std::string out;

@@ -272,8 +272,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "write";
     case BuiltinFn::kWriteln:
       return "writeln";
-    case BuiltinFn::kScan:
-      return "scan";
+    case BuiltinFn::kScanString:
+      return "scan_string";
+    case BuiltinFn::kScanFile:
+      return "scan_file";
     case BuiltinFn::kPeekBuffered:
       return "peek_buffered";
     case BuiltinFn::kAdvanceFd:

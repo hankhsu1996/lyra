@@ -253,6 +253,13 @@ Unlocks the `ports/*` archive group.
 - Connection shorthands (`.*`, `.name` implicit) resolve to the same connection set as explicit
   named connections in the frontend; whether any need distinct handling is open. Positional and
   explicit named connections are both supported.
+- An array of owned children carries no member on its parent's class: each element is handed to the
+  runtime tree at construction and is reached again by its hierarchy segment. A scalar child keeps a
+  typed handle, so a route through it stays typed, while a route through an array element crosses to
+  by-name reach even though the element's class belongs to the same artifact. The architecture
+  states multiplicity as a wrapper over the child member's type, which would keep the whole route
+  typed; closing the gap means deciding how the parent holds the elements alongside the runtime
+  tree's ownership of them.
 
 ## Out of Scope
 

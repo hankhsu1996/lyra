@@ -97,11 +97,10 @@ should close as the corresponding behaviour lands.
       outside LRM 21.3.4.3's three permitted shapes (string, integral, unpacked array of byte) is an
       upstream-validation invariant; the lowering throws `InternalError` because slang's type-check
       is expected to reject it.
-- [x] `$sscanf` NUL-as-whitespace (LRM 21.3.4.3 sscanf-only). The scan-source interface gained an
-      `IsWhitespace` policy that the string source overrides to also accept NUL;
-      `SkipSourceWhitespace` and `%s`'s stop condition both consult the source rather than a free
-      helper, so NUL acts as a field separator under `$sscanf` only -- `$fscanf` keeps the
-      ASCII-only policy.
+- [x] NUL-as-whitespace (LRM 21.3.4.3(a), which grants the rule to `$sscanf` alone). A null
+      character separates input fields under `$sscanf` and is ordinary input under `$fscanf`. The
+      white-space set is fixed by which system function the source names, not by the bytes that
+      reach the parser, so the same input scans differently under the two.
 - [x] `$sscanf` / `$fscanf` integral str / format and the LRM 21.3.4.3 x/z -> EOF (-1) corner.
       Packed bit vectors lift to string via a shared `value::String::FromPackedArray` conversion
       (LRM 5.9 MSB-first byte order), so any integral expression in str or format position now
