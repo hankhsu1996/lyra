@@ -5,7 +5,7 @@
 #include <utility>
 #include <variant>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/packed_array.hpp"
 
@@ -95,9 +95,9 @@ class TaggedUnion {
       -> const std::variant_alternative_t<I, std::variant<Ts...>>& {
     const auto* active = std::get_if<I>(&data_);
     if (active == nullptr) {
-      throw InternalError(
-          "TaggedUnion::Get: read of a member inconsistent with the current "
-          "tag (LRM 11.9)");
+      throw SimulationError(
+          "read of a tagged union member inconsistent with the current tag "
+          "(LRM 11.9)");
     }
     return *active;
   }
@@ -112,9 +112,9 @@ class TaggedUnion {
       -> std::variant_alternative_t<I, std::variant<Ts...>>& {
     auto* active = std::get_if<I>(&data_);
     if (active == nullptr) {
-      throw InternalError(
-          "TaggedUnion::GetRef: write to a member inconsistent with the "
-          "current tag (LRM 11.9)");
+      throw SimulationError(
+          "write to a tagged union member inconsistent with the current tag "
+          "(LRM 11.9)");
     }
     return *active;
   }

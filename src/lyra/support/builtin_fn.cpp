@@ -108,6 +108,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "element";
     case BuiltinFn::kSlice:
       return "slice";
+    case BuiltinFn::kRequire:
+      return "require";
     case BuiltinFn::kSize:
       return "size";
     case BuiltinFn::kLen:

@@ -23,17 +23,19 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The boolean test `pattern` imposes on `receiver`, or nullopt when the
-// pattern matches unconditionally (a wildcard, a bare binding, a structure of
-// those). Emits only the predicate's own nodes into `frame.current_block`.
+// The boolean test a pattern imposes on `subject`, the expression reaching the
+// value it is matched against, or nullopt when the pattern matches
+// unconditionally (a wildcard, a bare binding, a structure of those). Emits
+// only the predicate's own nodes into the frame's block. Descending is one
+// expression deep: how a level comes apart is read from that level's pattern
+// node, which carries the type of what it matches.
 template <ExprLowerer Lowerer>
 auto BuildPatternPredicate(
-    Lowerer& lowerer, WalkFrame frame, mir::ExprId receiver_id,
-    mir::TypeId receiver_type, hir::PatternId pattern_id)
-    -> diag::Result<std::optional<mir::ExprId>>;
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId subject,
+    hir::PatternId pattern_id) -> diag::Result<std::optional<mir::ExprId>>;
 
-// Declares each identifier `pattern` introduces as a local of `decl_frame`'s
-// block and assigns it, from the matching position of `receiver_id`, in
+// Declares each identifier the pattern introduces as a local of `decl_frame`'s
+// block and assigns it, from the matching position of the subject, in
 // `assign_frame`'s block; registers it so the arm's body resolves references
 // to it. Assignment belongs where the predicate has already succeeded, while
 // the declaration has to reach every reader, and those are not always the
@@ -42,8 +44,7 @@ auto BuildPatternPredicate(
 template <ExprLowerer Lowerer>
 void EmitPatternBindings(
     Lowerer& lowerer, WalkFrame decl_frame, WalkFrame assign_frame,
-    mir::ExprId receiver_id, mir::TypeId receiver_type,
-    hir::PatternId pattern_id);
+    mir::ExprId subject, hir::PatternId pattern_id);
 
 // The `if` that runs a chain's else-arm: it guards on the chain having failed,
 // read from the same flag the chain sets. An `else` cannot simply hang off the
@@ -88,21 +89,21 @@ auto BuildClauseChainLevel(
 
   std::optional<mir::ExprId> predicate = clause_id;
   if (clause.pattern.has_value()) {
-    const mir::TypeId receiver_type =
+    const mir::TypeId subject_mir_type =
         lowerer.Owner().TranslateType(clause_hir.type);
-    const mir::LocalId receiver_var =
+    const mir::LocalId subject_var =
         AppendCaseSnapshot(lowerer.Owner(), frame, clause_id).sel_var;
     auto pred_or = BuildPatternPredicate(
         lowerer, frame,
-        block.exprs.Add(mir::MakeLocalRefExpr(receiver_var, receiver_type)),
-        receiver_type, *clause.pattern);
+        block.exprs.Add(mir::MakeLocalRefExpr(subject_var, subject_mir_type)),
+        *clause.pattern);
     if (!pred_or) return std::unexpected(std::move(pred_or.error()));
     predicate = *pred_or;
     EmitPatternBindings(
         lowerer, decl_frame, level_frame,
         level_block.exprs.Add(
-            mir::MakeLocalRefExpr(receiver_var, receiver_type)),
-        receiver_type, *clause.pattern);
+            mir::MakeLocalRefExpr(subject_var, subject_mir_type)),
+        *clause.pattern);
   }
 
   if (clauses.size() == 1) {

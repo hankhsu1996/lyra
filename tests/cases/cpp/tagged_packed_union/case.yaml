@@ -1,0 +1,29 @@
+id: cpp.tagged_packed_union
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    vint_width: 33
+    five_width: 15
+    outer_width: 10
+    read_valid: 42
+    raw_valid: "33'h10000002A"
+    after_write: 7
+    raw_written: "33'h100000007"
+    raw_invalid: "33'h0"
+    copies_equal: 1
+    copies_differ: 1
+    raw_b: "15'h12AA"
+    case_result: 682
+    if_result: 683
+    ternary_result: 684
+    raw_b_written: "15'h1155"
+    void_arm: 5
+    nested_result: 12
+    member_struct_result: 305
+    packed_struct_result: 209

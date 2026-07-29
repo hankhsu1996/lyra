@@ -25,8 +25,11 @@ complete.
       multi-clause predicate (`&&&`, LRM 12.4), and pattern matching in a predicate (`matches`, LRM
       12.6) in every pattern form. Clauses form a conjunction evaluated left to right, so the branch
       is taken only when every clause holds (X / Z counting as false), and the identifiers a pattern
-      binds are visible to the clauses to its right and to the arm's statement. The `unique` /
-      `priority` qualifiers are C13.
+      binds are visible to the clauses to its right and to the arm's statement. A pattern
+      destructures either aggregate representation: an unpacked struct or tagged union by component,
+      a packed one by bit range, including a tagged union nested inside another. A tag that is
+      unknown names no member, so it matches no tagged pattern rather than failing the run. The
+      `unique` / `priority` qualifiers are C13.
 - [x] C2 -- `for` (procedural for-loop). Includes inline and external init, multi-init / multi-step,
       countdown, zero-iteration, and `if`-in-body composition. `break` / `continue` are C7.
 - [x] C3 -- `case` (plain, `==` semantics, LRM 12.5). Reproduces the core archive subset: basic

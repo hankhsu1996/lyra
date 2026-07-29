@@ -143,6 +143,19 @@ class HirDumper {
     return s == Signedness::kSigned ? "signed" : "unsigned";
   }
 
+  // A packed aggregate's members in declaration order, which is the only
+  // thing that positions them: where each lands in the vector is projected
+  // downstream, so there is nothing positional to print here.
+  static auto FormatPackedAggregateFields(
+      const std::vector<PackedAggregateField>& fields) -> std::string {
+    std::string out;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+      if (i > 0) out += ", ";
+      out += std::format("{}:Type[{}]", fields[i].name, fields[i].type.value);
+    }
+    return out;
+  }
+
   static auto FormatUniquePriorityCheck(
       std::optional<UniquePriorityCheck> check) -> std::string {
     if (!check.has_value()) return "";
@@ -194,30 +207,16 @@ class HirDumper {
               return FormatPackedArray(p);
             },
             [](const PackedStructType& s) -> std::string {
-              std::string fields;
-              for (std::size_t i = 0; i < s.fields.size(); ++i) {
-                if (i > 0) fields += ", ";
-                fields += std::format(
-                    "{}@bit{}+{}:Type[{}]", s.fields[i].name,
-                    s.fields[i].bit_offset, s.fields[i].bit_width,
-                    s.fields[i].type.value);
-              }
               return std::format(
-                  "PackedStruct(signed={}, four_state={}, fields=[{}])",
-                  FormatSignedness(s.signedness), s.four_state, fields);
+                  "PackedStruct(signed={}, fields=[{}])",
+                  FormatSignedness(s.signedness),
+                  FormatPackedAggregateFields(s.fields));
             },
             [](const PackedUnionType& u) -> std::string {
-              std::string fields;
-              for (std::size_t i = 0; i < u.fields.size(); ++i) {
-                if (i > 0) fields += ", ";
-                fields += std::format(
-                    "{}@bit{}+{}:Type[{}]", u.fields[i].name,
-                    u.fields[i].bit_offset, u.fields[i].bit_width,
-                    u.fields[i].type.value);
-              }
               return std::format(
-                  "PackedUnion(signed={}, four_state={}, fields=[{}])",
-                  FormatSignedness(u.signedness), u.four_state, fields);
+                  "PackedUnion(signed={}, tagged={}, fields=[{}])",
+                  FormatSignedness(u.signedness), u.tagged,
+                  FormatPackedAggregateFields(u.fields));
             },
             [](const EnumType& e) -> std::string {
               std::string members;
@@ -699,6 +698,42 @@ class HirDumper {
         "InsideExpr lhs=Expr[{}] items=[{}]", in.lhs.value, items);
   }
 
+  [[nodiscard]] static auto FormatPattern(const Pattern& p) -> std::string {
+    std::string formatted = std::visit(
+        Overloaded{
+            [](const WildcardPattern&) -> std::string {
+              return "WildcardPattern";
+            },
+            [](const ConstantPattern& c) -> std::string {
+              return std::format(
+                  "ConstantPattern value=Expr[{}]", c.value.value);
+            },
+            [](const VariablePattern& v) -> std::string {
+              return std::format("VariablePattern \"{}\"", v.name);
+            },
+            [](const TaggedPattern& t) -> std::string {
+              if (!t.value_pattern.has_value()) {
+                return std::format("TaggedPattern member={}", t.member_index);
+              }
+              return std::format(
+                  "TaggedPattern member={} value=Pattern[{}]", t.member_index,
+                  t.value_pattern->value);
+            },
+            [](const StructurePattern& s) -> std::string {
+              std::string fields;
+              for (std::size_t i = 0; i < s.field_patterns.size(); ++i) {
+                if (i != 0) fields += ", ";
+                fields += std::format(
+                    "{}=Pattern[{}]", s.field_patterns[i].first,
+                    s.field_patterns[i].second.value);
+              }
+              return std::format("StructurePattern fields=[{}]", fields);
+            },
+        },
+        p.data);
+    return std::format("{} : Type[{}]", formatted, p.subject_type.value);
+  }
+
   [[nodiscard]] auto FormatExpr(const Expr& e) const -> std::string {
     std::string formatted = std::visit(
         Overloaded{
@@ -1048,6 +1083,7 @@ class HirDumper {
       }
       Dedent();
     }
+    DumpPatterns(s.patterns);
     for (const auto& p : s.processes) {
       DumpProcess(p);
     }
@@ -1203,6 +1239,22 @@ class HirDumper {
     Dedent();
   }
 
+  // A pattern tree is reached by id from the clause or case item that names its
+  // root, so the arena is dumped whole rather than inline at the reference.
+  void DumpPatterns(const base::Arena<Pattern, PatternId>& patterns) {
+    if (patterns.empty()) return;
+    Line("Patterns:");
+    Indent();
+    for (std::size_t i = 0; i < patterns.size(); ++i) {
+      Line(
+          std::format(
+              "Pattern[{}] {}", i,
+              FormatPattern(
+                  patterns.Get(PatternId{static_cast<std::uint32_t>(i)}))));
+    }
+    Dedent();
+  }
+
   void DumpProceduralBody(const ProceduralBody& body) {
     if (!body.procedural_vars.empty()) {
       Line("ProceduralVars:");
@@ -1231,6 +1283,7 @@ class HirDumper {
       }
       Dedent();
     }
+    DumpPatterns(body.patterns);
     DumpStmt(body, body.root_stmt);
   }
 

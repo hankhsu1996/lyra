@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/gc_ref.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
@@ -165,7 +166,7 @@ inline auto ProcessAwait(
     const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime)
     -> ProcessAwaitAwaitable {
   if (self.Get() == &runtime.CurrentProcess()) {
-    throw InternalError(
+    throw SimulationError(
         "process::await on the calling process is not allowed (LRM 9.7)");
   }
   return ProcessAwaitAwaitable{self};
@@ -179,7 +180,7 @@ inline void ProcessSuspend(
     const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime) {
   RuntimeProcess& target = *self;
   if (&target == &runtime.CurrentProcess()) {
-    throw InternalError(
+    throw SimulationError(
         "process::suspend on the calling process is not allowed (LRM 9.7)");
   }
   target.Suspend();

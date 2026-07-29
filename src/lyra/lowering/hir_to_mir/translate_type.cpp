@@ -5,6 +5,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -83,17 +84,17 @@ auto FlattenPackedArray(
   };
 }
 
-// A packed aggregate's single-vector projection (LRM 7.2.1 / 7.3.1): one flat
-// `width`-bit vector, `logic` iff the aggregate is 4-state. The width is the
-// caller's -- a struct sums its fields, a union takes its widest.
+// A packed aggregate's single-vector projection (LRM 7.2.1 / 7.3.1 / 7.3.2):
+// one flat vector as wide as the aggregate's members place it, `logic` iff any
+// member is 4-state.
 auto FlattenPackedAggregate(
-    std::uint64_t width, hir::Signedness signedness, bool four_state)
+    const PackedProjection& layout, hir::Signedness signedness)
     -> mir::PackedArrayType {
   return mir::PackedArrayType{
-      .atom = four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
+      .atom = layout.four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
       .signedness = TranslateSignedness(signedness),
       .dims = {mir::PackedRange{
-          .left = static_cast<std::int64_t>(width) - 1, .right = 0}},
+          .left = static_cast<std::int64_t>(layout.bit_width) - 1, .right = 0}},
       .form = mir::PackedArrayForm::kExplicit,
   };
 }
@@ -117,26 +118,15 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
             return FlattenPackedArray(*this, src);
           },
           [&](const hir::PackedStructType& src) -> mir::TypeData {
-            // LRM 7.2.1: a packed struct projects to one vector summing its
-            // fields. Per-field offset / width bake into constant-bounds
-            // RangeSelect at expression lowering, so MIR keeps no struct type.
-            std::uint64_t width = 0;
-            for (const auto& field : src.fields) {
-              width += field.bit_width;
-            }
+            // Per-member position bakes into a constant-bounds slice at
+            // expression lowering, so MIR keeps no aggregate type -- only the
+            // vector the members are placed in.
             return FlattenPackedAggregate(
-                width, src.signedness, src.four_state);
+                ProjectPackedAggregate(*this, data), src.signedness);
           },
           [&](const hir::PackedUnionType& src) -> mir::TypeData {
-            // LRM 7.3.1: an untagged packed union projects to one vector as
-            // wide as its widest member; members overlap at the LSBs and each
-            // flows to RangeSelect at expression lowering.
-            std::uint64_t width = 0;
-            for (const auto& field : src.fields) {
-              width = field.bit_width > width ? field.bit_width : width;
-            }
             return FlattenPackedAggregate(
-                width, src.signedness, src.four_state);
+                ProjectPackedAggregate(*this, data), src.signedness);
           },
           [&](const hir::EnumType& src) -> mir::TypeData {
             // Enum is kept as a distinct mir::EnumType wrapping its base

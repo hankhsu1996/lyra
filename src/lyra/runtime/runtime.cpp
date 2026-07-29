@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/process_kind.hpp"
@@ -178,7 +179,9 @@ void Runtime::ExecuteCurrentTimeSlot() {
   while (true) {
     while (!queues_.active.Empty() || !queues_.inactive.Empty()) {
       if (++current_work_iterations > kMaxCurrentTimeIterations) {
-        throw InternalError("Runtime: current time slot did not settle");
+        throw SimulationError(
+            "the current time slot did not settle: the design keeps "
+            "scheduling work without advancing time");
       }
       ExecuteActiveRegion();
       ExecuteInactiveRegion();
@@ -278,9 +281,9 @@ void Runtime::ExecuteFinalProcesses() {
     if (finished_) {
       break;
     }
-    throw InternalError(
-        "Runtime::ExecuteFinalProcesses: final block suspended; "
-        "time-controlling statements are not allowed inside `final`");
+    throw SimulationError(
+        "a final block suspended: time-controlling statements are not allowed "
+        "inside `final` (LRM 9.2.3)");
   }
   queues_.finals.Clear();
 }
@@ -288,7 +291,8 @@ void Runtime::ExecuteFinalProcesses() {
 void Runtime::AdvanceDeltaCycle() {
   ++current_delta_;
   if (current_delta_ > kMaxDeltaCyclesPerTimeSlot) {
-    throw InternalError("Runtime: delta cycle limit exceeded");
+    throw SimulationError(
+        "delta cycle limit exceeded: the design has a zero-delay loop");
   }
 }
 
@@ -376,7 +380,8 @@ void Runtime::ScheduleActive(CoroutineHandle handle) {
 
 auto Runtime::CheckedAdd(SimTime base, SimDuration delta) -> SimTime {
   if (delta > std::numeric_limits<SimTime>::max() - base) {
-    throw InternalError("Runtime::CheckedAdd: wake time overflow");
+    throw SimulationError(
+        "a delay would advance simulation time past its representable range");
   }
   return base + delta;
 }

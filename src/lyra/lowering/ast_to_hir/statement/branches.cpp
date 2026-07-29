@@ -133,7 +133,7 @@ auto LowerPatternCaseStmt(
   std::vector<hir::PatternCaseItem> items;
   items.reserve(cs.items.size());
   for (const auto& item : cs.items) {
-    auto pat_or = AddPattern(proc, frame, *item.pattern, span);
+    auto pat_or = AddPattern(proc, frame, *item.pattern, *cs.expr.type, span);
     if (!pat_or) return std::unexpected(std::move(pat_or.error()));
     std::optional<hir::ExprId> filter_id;
     if (item.filter != nullptr) {

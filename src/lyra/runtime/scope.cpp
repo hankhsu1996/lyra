@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 
 namespace lyra::runtime {
@@ -148,9 +148,12 @@ auto Scope::ResolveVisibleChild(
       return child;
     }
   }
-  throw InternalError(
-      "Scope::ResolveVisibleChild: no child named " + std::string(head_name) +
-      " visible from this scope's enclosing chain");
+  // The indices are values the design computes, so a reference that names no
+  // instance is the design's own failure and not a compiler invariant (LRM
+  // 23.6 upward name resolution).
+  throw SimulationError(
+      "upward reference names no instance: no child named " +
+      std::string(head_name) + " is visible from this scope");
 }
 
 auto Scope::ResolveRoot() -> Scope* {

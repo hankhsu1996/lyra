@@ -19,11 +19,11 @@ complete. Chandle is complete.
 
 ## Tagged union
 
-LRM 7.3.2: a tagged unpacked union carries a tag naming the active member, and every read of a
-member checks it. Construction (`tagged Member value`, or the bare `tagged Member` of a void
-member), member read and write including nested and compound writes, whole-value copy, equality, and
-Table 6-7 default initialization are complete. Pattern matching over one (LRM 12.6) is tracked in
-`control-flow.md`. The packed counterpart is tracked as `packed.md` P4.
+LRM 7.3.2: a tagged union carries a tag naming the active member, and every read of a member checks
+it. Construction (`tagged Member value`, or the bare `tagged Member` of a void member), member read
+and write including nested and compound writes, whole-value copy, equality, and Table 6-7 default
+initialization are complete for the unpacked form. Pattern matching over one (LRM 12.6) is tracked
+in `control-flow.md`. The packed form, whose bit layout the LRM fixes, is tracked as `packed.md` P4.
 
 ## Enum
 

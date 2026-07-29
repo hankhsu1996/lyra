@@ -12,39 +12,89 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/pattern.hpp"
+#include "lyra/hir/pattern_id.hpp"
+#include "lyra/hir/type.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
+#include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_id.hpp"
+#include "lyra/mir/unary_op.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto StructureComponentType(
-    const mir::CompilationUnit& unit, mir::TypeId receiver_type,
-    std::size_t field_index) -> mir::TypeId {
-  const auto& ty = unit.types.Get(receiver_type);
-  const auto* tp = std::get_if<mir::TupleType>(&ty.data);
-  if (tp == nullptr) {
-    throw InternalError(
-        "StructureComponentType: pattern's receiver is not a tuple / unpacked "
-        "struct");
+// Component `index` of `subject`, whose type is `subject_type`. The single step
+// by which a pattern walk descends a level. Reaching a tagged union's component
+// is checked against the tag (LRM 11.9), which the tag test below guards.
+auto SubjectComponent(
+    UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
+    hir::TypeId subject_type, std::size_t index) -> mir::ExprId {
+  const hir::Type& ty = owner.Hir().types.Get(subject_type);
+  const auto unpacked_component =
+      [&](const std::vector<hir::UnpackedAggregateField>& fields,
+          mir::ExprData access) -> mir::ExprId {
+    if (index >= fields.size()) {
+      throw InternalError("SubjectComponent: component index out of range");
+    }
+    return block.exprs.Add(
+        mir::Expr{
+            .data = std::move(access),
+            .type = owner.TranslateType(fields[index].type)});
+  };
+  if (const auto* s = std::get_if<hir::UnpackedStructType>(&ty.data)) {
+    return unpacked_component(
+        s->fields, mir::TupleGetExpr{.tuple = subject, .index = index});
   }
-  if (field_index >= tp->elements.size()) {
-    throw InternalError("StructureComponentType: field_index out of range");
+  // Only a tagged union is destructured by a pattern (LRM 12.6): an untagged
+  // one has no tag to name the component a pattern would ask for.
+  if (const auto* u = std::get_if<hir::UnpackedUnionType>(&ty.data)) {
+    return unpacked_component(
+        u->fields,
+        mir::TaggedGetExpr{.union_value = subject, .tag_index = index});
   }
-  return tp->elements[field_index];
+  const PackedProjection projection = ProjectPackedAggregate(owner, ty.data);
+  if (index >= projection.members.size()) {
+    throw InternalError("SubjectComponent: component index out of range");
+  }
+  return block.exprs.Add(BuildPackedMemberRead(
+      owner, block, subject, projection, index,
+      owner.TranslateType(projection.members[index].type)));
+}
+
+// The 1-bit test that `subject`, whose type is `subject_type`, currently holds
+// the component at `index`. The two representations answer it differently -- an
+// unpacked union carries the tag as its own discriminant, a packed one as a run
+// of the vector -- so the test is the one place a pattern walk still sees which
+// representation it is standing on.
+auto BuildTagTest(
+    UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
+    hir::TypeId subject_type, std::size_t index) -> mir::Expr {
+  const hir::Type& ty = owner.Hir().types.Get(subject_type);
+  if (std::holds_alternative<hir::UnpackedUnionType>(ty.data)) {
+    return mir::Expr{
+        .data = mir::TaggedIsExpr{.union_value = subject, .tag_index = index},
+        .type = owner.Unit().builtins.bit1};
+  }
+  const PackedProjection projection = ProjectPackedAggregate(owner, ty.data);
+  return block.exprs.Get(
+      BuildPackedTagTest(owner, block, subject, projection, index));
 }
 
 }  // namespace
@@ -69,9 +119,8 @@ auto BuildChainElseIf(
 template <ExprLowerer Lowerer>
 void EmitPatternBindings(
     Lowerer& lowerer, WalkFrame decl_frame, WalkFrame assign_frame,
-    mir::ExprId receiver_id, mir::TypeId receiver_type,
-    hir::PatternId pattern_id) {
-  auto& unit = lowerer.Owner().Unit();
+    mir::ExprId subject, hir::PatternId pattern_id) {
+  auto& owner = lowerer.Owner();
   const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
   auto& assign_block = *assign_frame.current_block;
   std::visit(
@@ -80,7 +129,7 @@ void EmitPatternBindings(
           [&](const hir::ConstantPattern&) {},
           [&](const hir::VariablePattern& v) {
             const mir::TypeId local_type =
-                lowerer.Owner().TranslateType(v.type);
+                owner.TranslateType(pattern.subject_type);
             const mir::LocalId local_id = assign_frame.bindings->Declare(
                 BindingOriginId::Pattern(pattern_id),
                 mir::LocalDecl{.name = v.name, .type = local_type});
@@ -96,35 +145,24 @@ void EmitPatternBindings(
             assign_block.AppendStmt(
                 mir::ExprStmt{
                     .expr = assign_block.exprs.Add(
-                        mir::MakeAssignExpr(target, receiver_id, local_type))});
+                        mir::MakeAssignExpr(target, subject, local_type))});
           },
           [&](const hir::TaggedPattern& tp) {
             if (!tp.value_pattern.has_value()) return;
-            const mir::TypeId component_type =
-                TaggedComponentType(unit, receiver_type, tp.member_index);
-            const mir::ExprId payload_id = assign_block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::TaggedGetExpr{
-                            .union_value = receiver_id,
-                            .tag_index = tp.member_index},
-                    .type = component_type});
             EmitPatternBindings(
-                lowerer, decl_frame, assign_frame, payload_id, component_type,
+                lowerer, decl_frame, assign_frame,
+                SubjectComponent(
+                    owner, assign_block, subject, pattern.subject_type,
+                    tp.member_index),
                 *tp.value_pattern);
           },
           [&](const hir::StructurePattern& sp) {
             for (const auto& [field_index, sub_pat_id] : sp.field_patterns) {
-              const mir::TypeId field_type =
-                  StructureComponentType(unit, receiver_type, field_index);
-              const mir::ExprId field_id = assign_block.exprs.Add(
-                  mir::Expr{
-                      .data =
-                          mir::TupleGetExpr{
-                              .tuple = receiver_id, .index = field_index},
-                      .type = field_type});
               EmitPatternBindings(
-                  lowerer, decl_frame, assign_frame, field_id, field_type,
+                  lowerer, decl_frame, assign_frame,
+                  SubjectComponent(
+                      owner, assign_block, subject, pattern.subject_type,
+                      field_index),
                   sub_pat_id);
             }
           },
@@ -134,10 +172,10 @@ void EmitPatternBindings(
 
 template <ExprLowerer Lowerer>
 auto BuildPatternPredicate(
-    Lowerer& lowerer, WalkFrame frame, mir::ExprId receiver_id,
-    mir::TypeId receiver_type, hir::PatternId pattern_id)
-    -> diag::Result<std::optional<mir::ExprId>> {
-  auto& unit = lowerer.Owner().Unit();
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId subject,
+    hir::PatternId pattern_id) -> diag::Result<std::optional<mir::ExprId>> {
+  auto& owner = lowerer.Owner();
+  auto& unit = owner.Unit();
   const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
   const mir::TypeId bit1_type = unit.builtins.bit1;
   auto& enc_block = *frame.current_block;
@@ -154,7 +192,7 @@ auto BuildPatternPredicate(
             if (!lit_or) return std::unexpected(std::move(lit_or.error()));
             const mir::ExprId lit_id = enc_block.exprs.Add(*std::move(lit_or));
             return enc_block.exprs.Add(BuildMirBinaryExpr(
-                unit, enc_block, mir::BinaryOp::kEquality, receiver_id, lit_id,
+                unit, enc_block, mir::BinaryOp::kEquality, subject, lit_id,
                 bit1_type));
           },
           [&](const hir::VariablePattern&)
@@ -163,27 +201,21 @@ auto BuildPatternPredicate(
           },
           [&](const hir::TaggedPattern& tp)
               -> diag::Result<std::optional<mir::ExprId>> {
-            const mir::ExprId tag_check = enc_block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::TaggedIsExpr{
-                            .union_value = receiver_id,
-                            .tag_index = tp.member_index},
-                    .type = bit1_type});
+            // The tag test guards the component read, which is checked (LRM
+            // 11.9): the read is the operand LRM 11.3.5 short-circuits away
+            // when the tag names another member.
+            const mir::ExprId tag_check = enc_block.exprs.Add(BuildTagTest(
+                owner, enc_block, subject, pattern.subject_type,
+                tp.member_index));
             if (!tp.value_pattern.has_value()) {
               return std::optional<mir::ExprId>{tag_check};
             }
-            const mir::TypeId component_type =
-                TaggedComponentType(unit, receiver_type, tp.member_index);
-            const mir::ExprId payload_id = enc_block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::TaggedGetExpr{
-                            .union_value = receiver_id,
-                            .tag_index = tp.member_index},
-                    .type = component_type});
             auto inner_or = BuildPatternPredicate(
-                lowerer, frame, payload_id, component_type, *tp.value_pattern);
+                lowerer, frame,
+                SubjectComponent(
+                    owner, enc_block, subject, pattern.subject_type,
+                    tp.member_index),
+                *tp.value_pattern);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             if (!inner_or->has_value()) {
               return std::optional<mir::ExprId>{tag_check};
@@ -196,16 +228,12 @@ auto BuildPatternPredicate(
             std::vector<mir::ExprId> tests;
             tests.reserve(sp.field_patterns.size());
             for (const auto& [field_index, sub_pat_id] : sp.field_patterns) {
-              const mir::TypeId field_type =
-                  StructureComponentType(unit, receiver_type, field_index);
-              const mir::ExprId field_id = enc_block.exprs.Add(
-                  mir::Expr{
-                      .data =
-                          mir::TupleGetExpr{
-                              .tuple = receiver_id, .index = field_index},
-                      .type = field_type});
               auto sub_or = BuildPatternPredicate(
-                  lowerer, frame, field_id, field_type, sub_pat_id);
+                  lowerer, frame,
+                  SubjectComponent(
+                      owner, enc_block, subject, pattern.subject_type,
+                      field_index),
+                  sub_pat_id);
               if (!sub_or) return std::unexpected(std::move(sub_or.error()));
               if (sub_or->has_value()) tests.push_back(**sub_or);
             }
@@ -219,16 +247,15 @@ auto BuildPatternPredicate(
 }
 
 template void EmitPatternBindings(
-    ProcessLowerer&, WalkFrame, WalkFrame, mir::ExprId, mir::TypeId,
-    hir::PatternId);
+    ProcessLowerer&, WalkFrame, WalkFrame, mir::ExprId, hir::PatternId);
 template void EmitPatternBindings(
     const StructuralScopeLowerer&, WalkFrame, WalkFrame, mir::ExprId,
-    mir::TypeId, hir::PatternId);
+    hir::PatternId);
 template auto BuildPatternPredicate(
-    ProcessLowerer&, WalkFrame, mir::ExprId, mir::TypeId, hir::PatternId)
+    ProcessLowerer&, WalkFrame, mir::ExprId, hir::PatternId)
     -> diag::Result<std::optional<mir::ExprId>>;
 template auto BuildPatternPredicate(
-    const StructuralScopeLowerer&, WalkFrame, mir::ExprId, mir::TypeId,
-    hir::PatternId) -> diag::Result<std::optional<mir::ExprId>>;
+    const StructuralScopeLowerer&, WalkFrame, mir::ExprId, hir::PatternId)
+    -> diag::Result<std::optional<mir::ExprId>>;
 
 }  // namespace lyra::lowering::hir_to_mir

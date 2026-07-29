@@ -310,6 +310,12 @@ struct CompilationUnit {
       .type = int_type};
 }
 
+[[nodiscard]] inline auto MakeStringLiteral(
+    TypeId string_type, std::string text) -> Expr {
+  return Expr{
+      .data = StringLiteral{.value = std::move(text)}, .type = string_type};
+}
+
 // The component type a tagged union carries at `tag_index` (LRM 7.3.2).
 // Positions are the tag, so a component is reached by index and never by
 // type -- two members may share one type.

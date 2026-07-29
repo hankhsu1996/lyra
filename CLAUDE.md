@@ -99,15 +99,23 @@ against them.
 
 The active error policy:
 
-| Error Type           | When to Use                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `diag::Result<T>`    | Recoverable lowering / backend failures with structured codes |
-| `InternalError`      | Compiler bugs (invariant violations)                          |
-| `std::runtime_error` | Runtime errors                                                |
+| Error Type        | When to Use                                                   |
+| ----------------- | ------------------------------------------------------------- |
+| `diag::Result<T>` | Recoverable lowering / backend failures with structured codes |
+| `InternalError`   | Compiler bugs (invariant violations)                          |
+| `SimulationError` | Failures of the simulated design at run time                  |
+
+`InternalError` and `SimulationError` are the only exception types anyone may throw; `std::`
+exception types are banned outside their own definitions. The dividing question is whether the
+condition depends on a value the simulated program computes: a negative `new[N]` size, a
+tagged-union access inconsistent with the tag, or a malformed run-time format string is the design's
+failure and gets `SimulationError`, while a width, plane, or arena invariant the compiler itself
+established gets `InternalError` and tells the reader to report a bug. An operation a legal program
+requests that Lyra does not yet carry out is also `SimulationError` -- the reader's next step is to
+ask for support, not to report a bug.
 
 Avoid `assert()` and `<cassert>` (use `InternalError` instead). `catch(...)` is allowed only in
-`src/lyra/driver/`. Throw `InternalError` only for compiler-bug invariants, not for user-facing
-diagnostics.
+`src/lyra/driver/`.
 
 ## Approach to Changes
 

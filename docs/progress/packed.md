@@ -26,12 +26,16 @@ The numeric IDs are stable references.
       4-state member conversion (LRM 7.2.1 fourth paragraph) tracks the struct-level atom; per-field
       state-promotion at the boundary is a follow-up.
 
-- [x] P4 -- Packed union (LRM 7.3.1). Untagged hard and soft packed unions; members overlay at the
-      LSBs and reads / writes reinterpret per the accessed member's declared type, including signed
-      reinterpretation. Whole-union copy, equality, bit / part selects ride on the "treated as a
-      single vector" projection.
-  - [ ] A tagged packed union (LRM 7.3.2) is rejected; it needs runtime tag-bit logic per LRM 11.9.
-        Only untagged hard / soft packed unions are supported.
+- [x] P4 -- Packed union (LRM 7.3.1 / 7.3.2), tagged and untagged. Untagged hard and soft unions
+      overlay their members at the LSBs, and reads / writes reinterpret per the accessed member's
+      declared type, including signed reinterpretation. A tagged union additionally carries a tag at
+      the MSBs naming the member held: construction sets tag and member together, the bits between
+      them are undefined, and a dot-notation read or write that disagrees with the tag is a run-time
+      error (LRM 11.9), including when the tag itself is unknown. The tag width is what separates
+      the two forms, so an untagged union is the case where nothing distinguishes the members.
+      Whole-union copy, equality, bit / part selects, `$bits`, and default initialization all ride
+      on the "treated as a single vector" projection. Pattern matching over a tagged packed union
+      (LRM 12.6) is covered in `control-flow.md`.
 
 - [x] P5 -- Assignment patterns over packed aggregates (LRM 10.9). Positional `'{a, b, c}`, named /
       type-key / index-key `'{x: v, default: w}`, `'{default: v}`, and replication `'{N{items}}`

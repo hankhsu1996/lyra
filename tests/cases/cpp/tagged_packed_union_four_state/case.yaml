@@ -1,0 +1,15 @@
+id: cpp.tagged_packed_union_four_state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    raw_narrow: "9'b1xxxx0101"
+    raw_fresh: "9'bxxxxxxxxx"
+    narrow_read: "4'h5"
+    narrow_arm: 5
+    fresh_arm: -1
