@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <utility>
@@ -10,11 +11,16 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
+#include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -46,14 +52,12 @@ auto ElementAccessCallee() -> mir::Direct {
   return mir::Direct{.target = support::BuiltinFn::kElement};
 }
 
-// LRM 7.2.1 / 7.2.2: packed struct or union field table accessor. Used by
-// the member-access lowerings.
-auto GetAggregateFields(const hir::Type& t)
-    -> const std::vector<hir::PackedAggregateField>& {
-  if (t.IsPackedStruct()) return t.AsPackedStruct().fields;
-  if (t.IsPackedUnion()) return t.AsPackedUnion().fields;
-  throw InternalError(
-      "GetAggregateFields: base type is not a packed struct or union");
+auto ProjectedMemberAt(const PackedProjection& projection, std::size_t index)
+    -> const ProjectedMember& {
+  if (index >= projection.members.size()) {
+    throw InternalError("ProjectedMemberAt: member index out of range");
+  }
+  return projection.members[index];
 }
 
 // Read-side wrap that materialises a borrowed packed view into an owning value
@@ -352,6 +356,54 @@ auto ProjectFieldSlice(
       result_type);
 }
 
+// The value `base_id` names, guarded by the tag naming member `index` (LRM
+// 11.9). The guard yields that value, so a read composes the ordinary member
+// slice onto it and a write designates a part of it -- either way the access
+// itself stays the one every packed member uses. The check has to be part of
+// evaluating the access and not a test hoisted ahead of it: LRM 11.3.5
+// requires a short-circuited operand to raise none of the run-time errors its
+// evaluation would have.
+auto BuildTagGuard(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
+    const PackedProjection& projection, std::size_t index,
+    std::string_view message) -> mir::Expr {
+  auto& unit = unit_lowerer.Unit();
+  // A write-side base still designates the storage, while the tag is a fact of
+  // the value that storage holds, so the test reads the value while the guard
+  // passes the base through at the value's type.
+  const mir::TypeId base_type = block.exprs.Get(base_id).type;
+  const bool base_is_cell =
+      mir::IsObservableCellType(unit.types.Get(base_type));
+  const mir::TypeId value_type =
+      base_is_cell ? mir::ObservableInnerValueType(unit.types.Get(base_type))
+                   : base_type;
+  const mir::ExprId tag_subject =
+      base_is_cell
+          ? block.exprs.Add(mir::MakeObservableGetCallExpr(base_id, value_type))
+          : base_id;
+  const mir::ExprId test =
+      BuildPackedTagTest(unit_lowerer, block, tag_subject, projection, index);
+  const mir::ExprId message_id = block.exprs.Add(
+      mir::MakeStringLiteral(unit.builtins.string, std::string{message}));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = support::BuiltinFn::kRequire},
+              .arguments = {base_id, test, message_id}},
+      .type = value_type};
+}
+
+// The subject a member access reaches through: the base itself when nothing
+// distinguishes the members, and the tag guard's result when a tag does.
+auto GuardedSubject(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
+    const PackedProjection& projection, std::size_t index,
+    std::string_view message) -> mir::ExprId {
+  if (projection.tag_bits == 0) return base_id;
+  return block.exprs.Add(
+      BuildTagGuard(unit_lowerer, block, base_id, projection, index, message));
+}
+
 // Per-kind inner helpers that combine the factory call with the
 // read/write-side wrapping. RHS readers wrap with `WrapPackedAsOwned`
 // (no-op for queue / AA); LHS writers leave the borrowed-view chain
@@ -388,14 +440,20 @@ auto LowerRangeSelectInner(
 // representation when the assignment lands.
 auto LowerMemberAccessInner(
     UnitLowerer& unit_lowerer, mir::Block& block,
-    const hir::PackedAggregateField& field, mir::ExprId base_id,
+    const PackedProjection& projection, std::size_t index, mir::ExprId base_id,
     mir::TypeId result_type) -> mir::Expr {
   const mir::TypeId source_type = block.exprs.Get(base_id).type;
   const mir::TypeId slice_type =
       PartSelectNaturalType(unit_lowerer.Unit(), source_type, result_type);
+  const ProjectedMember& member = ProjectedMemberAt(projection, index);
+  const mir::ExprId subject = GuardedSubject(
+      unit_lowerer, block, base_id, projection, index,
+      "read of a tagged union member inconsistent with the current tag "
+      "(LRM 11.9)");
   mir::Expr slice_call = BuildFieldSliceCallExpr(
-      unit_lowerer, block, base_id, field.bit_offset, field.bit_width,
-      slice_type);
+      unit_lowerer, block, subject,
+      static_cast<std::uint32_t>(member.bit_offset),
+      static_cast<std::uint32_t>(member.bit_width), slice_type);
   mir::Expr owned = WrapPackedAsOwned(
       unit_lowerer.Unit(), block, std::move(slice_call), slice_type);
   return WrapSliceToDeclaredType(
@@ -403,6 +461,50 @@ auto LowerMemberAccessInner(
 }
 
 }  // namespace
+
+auto BuildPackedRunRead(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
+    std::uint64_t bit_offset, std::uint64_t bit_width, mir::TypeId result_type)
+    -> mir::Expr {
+  mir::Expr run = BuildFieldSliceCallExpr(
+      unit_lowerer, block, base, static_cast<std::uint32_t>(bit_offset),
+      static_cast<std::uint32_t>(bit_width), result_type);
+  return WrapPackedAsOwned(
+      unit_lowerer.Unit(), block, std::move(run), result_type);
+}
+
+auto BuildPackedMemberRead(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
+    const PackedProjection& projection, std::size_t index,
+    mir::TypeId result_type) -> mir::Expr {
+  return LowerMemberAccessInner(
+      unit_lowerer, block, projection, index, base, result_type);
+}
+
+auto BuildPackedTagTest(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
+    const PackedProjection& projection, std::size_t index) -> mir::ExprId {
+  if (projection.tag_bits == 0) {
+    throw InternalError(
+        "BuildPackedTagTest: value carries no tag to test against");
+  }
+  auto& unit = unit_lowerer.Unit();
+  // The tag is a run of the aggregate's own vector, so it is read in the
+  // aggregate's state domain -- which the projection states, and the base
+  // expression may not (a write-side base is still the storage cell).
+  const mir::TypeId tag_type = InternFlatPacked(
+      unit, projection.tag_bits,
+      projection.four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit);
+  const mir::ExprId tag = block.exprs.Add(BuildPackedRunRead(
+      unit_lowerer, block, base, projection.bit_width - projection.tag_bits,
+      projection.tag_bits, tag_type));
+  const mir::ExprId named = block.exprs.Add(
+      mir::MakeIntLiteral(
+          unit.builtins.int_type, static_cast<std::int64_t>(index)));
+  return block.exprs.Add(BuildMirBinaryExpr(
+      unit, block, mir::BinaryOp::kCaseEquality, tag,
+      ConvertToType(unit, block, named, tag_type), unit.builtins.bit1));
+}
 
 template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExpr(
@@ -506,16 +608,14 @@ auto LowerHirMemberAccessExpr(
                 .union_value = base_id, .index = sel.field_index.value},
         .type = result_type};
   }
-  const auto& fields =
-      GetAggregateFields(unit_lowerer.Hir().types.Get(base_hir_expr.type));
-  if (sel.field_index.value >= fields.size()) {
-    throw InternalError("LowerHirMemberAccessExpr: field_index out of range");
-  }
+  const PackedProjection projection = ProjectPackedAggregate(
+      unit_lowerer, unit_lowerer.Hir().types.Get(base_hir_expr.type).data);
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
-      unit_lowerer, block, fields[sel.field_index.value], base_id, result_type);
+      unit_lowerer, block, projection, sel.field_index.value, base_id,
+      result_type);
 }
 
 // LRM 8.4: a class property read reaches the object through the handle.
@@ -627,18 +727,27 @@ auto LowerHirMemberAccessExprLhs(
             .index = sel.field_index.value, .projected_type = result_type},
         result_type);
   }
-  const auto& fields =
-      GetAggregateFields(unit_lowerer.Hir().types.Get(base_hir_expr.type));
-  if (sel.field_index.value >= fields.size()) {
-    throw InternalError(
-        "LowerHirMemberAccessExprLhs: field_index out of range");
-  }
+  const PackedProjection projection = ProjectPackedAggregate(
+      unit_lowerer, unit_lowerer.Hir().types.Get(base_hir_expr.type).data);
   auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const hir::PackedAggregateField& field = fields[sel.field_index.value];
+  const ProjectedMember& member =
+      ProjectedMemberAt(projection, sel.field_index.value);
+  mir::Expr base = *std::move(base_or);
+  // A tagged member's write designates a part of the guard's result, so the
+  // guard becomes the designation's owner and the member stays one ordinary
+  // window descent step on it.
+  if (projection.tag_bits != 0) {
+    const mir::ExprId base_id = block.exprs.Add(std::move(base));
+    base = BuildTagGuard(
+        unit_lowerer, block, base_id, projection, sel.field_index.value,
+        "write to a tagged union member inconsistent with the current tag "
+        "(LRM 11.9)");
+  }
   return ProjectFieldSlice(
-      unit_lowerer, block, *std::move(base_or), field.bit_offset,
-      field.bit_width, result_type);
+      unit_lowerer, block, std::move(base),
+      static_cast<std::uint32_t>(member.bit_offset),
+      static_cast<std::uint32_t>(member.bit_width), result_type);
 }
 
 // LRM 8.4: a class property write reaches the object through the handle.

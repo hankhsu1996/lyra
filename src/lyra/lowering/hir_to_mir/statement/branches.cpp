@@ -261,8 +261,7 @@ auto LowerPatternCaseStmt(
     // body that names them. The predicate that decides the match is built
     // later, once, by the selection below.
     EmitPatternBindings(
-        process, body_frame, body_frame, subject_ref, subject_mir_type,
-        item.pattern);
+        process, body_frame, body_frame, subject_ref, item.pattern);
 
     auto user_body_or = LowerStmtIntoChildScope(process, body_frame, item.stmt);
     if (!user_body_or) {
@@ -289,8 +288,8 @@ auto LowerPatternCaseStmt(
     const auto& item = c.items[item_idx];
     const mir::ExprId subject_ref = level_block.exprs.Add(
         mir::MakeLocalRefExpr(snapshot.sel_var, subject_mir_type));
-    auto match_or = BuildPatternPredicate(
-        process, level_frame, subject_ref, subject_mir_type, item.pattern);
+    auto match_or =
+        BuildPatternPredicate(process, level_frame, subject_ref, item.pattern);
     if (!match_or) return std::unexpected(std::move(match_or.error()));
 
     // LRM 12.6.1: an item is selected when its pattern matches and its filter

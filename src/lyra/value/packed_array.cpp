@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_bitwise.hpp"
 #include "lyra/value/packed_convert.hpp"
@@ -315,7 +316,7 @@ auto PackedArray::FromDigits(
       unknown = true;
     } else {
       const int d = HexDigitValue(c);
-      if (d < 0 || static_cast<unsigned>(d) >= base) return std::nullopt;
+      if (d < 0 || std::cmp_greater_equal(d, base)) return std::nullopt;
       digit_value = static_cast<unsigned>(d);
     }
     any_digit = true;
@@ -2051,8 +2052,9 @@ auto PackedArray::Pow(const PackedArray& exponent) const -> PackedArray {
   const auto exp_words = exponent.ValueWords();
   for (std::size_t i = 1; i < exp_words.size(); ++i) {
     if (exp_words[i] != 0U && exp_words[i] != ~std::uint64_t{0}) {
-      throw InternalError(
-          "PackedArray::Pow: exponent magnitude exceeds 64 bits");
+      throw SimulationError(
+          "the ** operator's exponent magnitude exceeds 64 bits, which is not "
+          "yet supported");
     }
   }
   const std::uint64_t exp_low = exp_words.empty() ? 0U : exp_words[0];

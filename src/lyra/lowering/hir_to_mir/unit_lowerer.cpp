@@ -285,39 +285,37 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
 
   // The callable each package subroutine lowered to, recorded where it is
   // created so an export below names its own by identity.
-  std::unordered_map<std::string_view, mir::CallableId> subroutine_callables;
+  std::vector<mir::CallableId> subroutine_callables;
+  subroutine_callables.reserve(scope.structural_subroutines.size());
   for (const hir::SubroutineDecl& src : scope.structural_subroutines) {
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.name, WalkFrame{},
         empty_storage_plan);
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    subroutine_callables.emplace(
-        src.name, unit_.callables.Add(
-                      mir::CallableDecl{
-                          .name = src.name,
-                          .code = *std::move(code_or),
-                          .foreign = std::nullopt,
-                          .virtual_dispatch = std::nullopt,
-                          .visibility = mir::CallableVisibility::kInternal}));
+    subroutine_callables.push_back(unit_.callables.Add(
+        mir::CallableDecl{
+            .name = src.name,
+            .code = *std::move(code_or),
+            .foreign = std::nullopt,
+            .virtual_dispatch = std::nullopt,
+            .visibility = mir::CallableVisibility::kInternal}));
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
   // C entry point recovers the run's services instead of a calling
   // instance and calls the package's own free function by name.
   for (const hir::ForeignExportDecl& export_decl : scope.foreign_exports) {
-    const auto entry = subroutine_callables.find(export_decl.sv_name);
-    if (entry == subroutine_callables.end()) {
-      throw InternalError(
-          "UnitLowerer::RunPackage: exported subroutine has no lowered "
-          "callable");
-    }
+    const mir::CallableId callable_id =
+        subroutine_callables[export_decl.subroutine.value];
     const mir::TypeId result_type =
-        unit_.callables.Get(entry->second).code.result_type;
+        unit_.callables.Get(callable_id).code.result_type;
     unit_.callables.Add(SynthesizeForeignExportEntry(
         *this, WalkFrame{},
         mir::ExternalUnitCallableTarget{
-            .unit_name = unit_.name, .callable_name = export_decl.sv_name},
+            .unit_name = unit_.name,
+            .callable_name =
+                scope.structural_subroutines.Get(export_decl.subroutine).name},
         result_type, export_decl));
   }
 

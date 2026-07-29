@@ -12,6 +12,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/format_parse.hpp"
 #include "lyra/value/integral_format.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -104,10 +105,9 @@ auto FormatRuntime(
   const auto power = static_cast<std::int32_t>(timeunit_power.ToInt64());
   const FormatParseResult parsed = ParseFormatString(format.View());
   if (parsed.error != FormatParseError::kNone) {
-    throw InternalError(
+    throw SimulationError(
         std::format(
-            "FormatRuntime: malformed format string at offset {}",
-            parsed.error_offset));
+            "malformed format string at offset {}", parsed.error_offset));
   }
 
   const FormatContext ctx{.time_format = &time_format};
@@ -173,8 +173,8 @@ auto Formatter<PackedArray>::Format(
 auto Formatter<String>::Format(const FormatSpec& spec, const String& value)
     -> std::string {
   if (spec.kind == FormatKind::kTime) {
-    throw InternalError(
-        "Formatter<String>::Format: string operand cannot be formatted as %t");
+    throw SimulationError(
+        "a string operand cannot be formatted as %t (LRM 21.2.1.3)");
   }
   std::string body{value.View()};
   // LRM 21.2.1.6: a string with %p prints quoted.

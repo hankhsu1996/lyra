@@ -7,8 +7,26 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+namespace {
+
+// The operand a guard yields, when `expr` is one. A guard states a condition
+// the language requires an access to meet and hands the guarded value back
+// unchanged, so a walk that is following where storage lives passes through it.
+auto GuardedOperand(const mir::Expr& expr) -> const mir::ExprId* {
+  const auto* call = std::get_if<mir::CallExpr>(&expr.data);
+  if (call == nullptr || call->arguments.empty()) return nullptr;
+  const auto* direct = std::get_if<mir::Direct>(&call->callee);
+  if (direct == nullptr) return nullptr;
+  const auto* id = std::get_if<support::BuiltinFn>(&direct->target);
+  if (id == nullptr || *id != support::BuiltinFn::kRequire) return nullptr;
+  return &call->arguments.front();
+}
+
+}  // namespace
 
 auto FindLhsRootId(
     const mir::CompilationUnit& unit, const mir::Block& block,
@@ -27,6 +45,12 @@ auto FindLhsRootId(
     if (const auto* projection =
             std::get_if<mir::ValueProjectionExpr>(&expr.data)) {
       lhs_id = projection->owner;
+      continue;
+    }
+    // A guard yields the value it guards, so the storage a write reaches is
+    // whatever the guarded expression reaches.
+    if (const mir::ExprId* guarded = GuardedOperand(expr)) {
+      lhs_id = *guarded;
       continue;
     }
     if (const auto* m = std::get_if<mir::TaggedGetRefExpr>(&expr.data)) {
@@ -67,6 +91,16 @@ auto RewriteLhsRootWithMutate(
     rewritten.union_value = RewriteLhsRootWithMutate(
         unit, block, rewritten.union_value, runtime_id);
     return block.exprs.Add(mir::Expr{.data = rewritten, .type = result_ty});
+  }
+  if (GuardedOperand(expr) != nullptr) {
+    auto rewritten = std::get<mir::CallExpr>(expr.data);
+    // Read the type out before the recursion below: it appends to the same
+    // arena, which invalidates the `expr` reference.
+    const mir::TypeId result_ty = expr.type;
+    rewritten.arguments.front() = RewriteLhsRootWithMutate(
+        unit, block, rewritten.arguments.front(), runtime_id);
+    return block.exprs.Add(
+        mir::Expr{.data = std::move(rewritten), .type = result_ty});
   }
   throw InternalError(
       "RewriteLhsRootWithMutate: LHS root is neither an observable cell nor a "

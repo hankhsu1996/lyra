@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/scan_source.hpp"
 #include "lyra/value/string.hpp"
@@ -144,7 +145,7 @@ auto MakePackedFromI64(
     const ScanTarget& target, std::string_view spec) -> value::PackedArray* {
   auto* const* slot = std::get_if<value::PackedArray*>(&target);
   if (slot == nullptr) {
-    throw InternalError(
+    throw SimulationError(
         std::format(
             "$sscanf/$fscanf: format spec '%{}' expects an integral output "
             "argument, but the corresponding actual is not integral",
@@ -157,7 +158,7 @@ auto MakePackedFromI64(
     const ScanTarget& target, std::string_view spec) -> value::String* {
   auto* const* slot = std::get_if<value::String*>(&target);
   if (slot == nullptr) {
-    throw InternalError(
+    throw SimulationError(
         std::format(
             "$sscanf/$fscanf: format spec '%{}' expects a string output "
             "argument, but the corresponding actual is not a string",
@@ -391,7 +392,7 @@ struct DecimalResult {
 [[nodiscard]] auto ScanChar(ScanSource& src, std::size_t max_width)
     -> std::optional<unsigned char> {
   if (max_width > 1U) {
-    throw InternalError(
+    throw SimulationError(
         "$sscanf/$fscanf: max field width on '%c' is not yet supported "
         "(needs a string-slot output shape)");
   }
@@ -459,7 +460,8 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
       if (ch == -1) {
         return first_conversion ? -1 : items;
       }
-      if (ch != static_cast<unsigned char>(fc)) {
+      const int fc_byte = static_cast<unsigned char>(fc);
+      if (ch != fc_byte) {
         return items;
       }
       src.Consume();
@@ -471,7 +473,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
     // max-field-width digits, then the conversion code (LRM 21.3.4.3(c)).
     ++fmt_ix;
     if (fmt_ix >= fmt.size()) {
-      throw InternalError(
+      throw SimulationError(
           "$sscanf/$fscanf: format string ended after '%' with no conversion "
           "specifier");
     }
@@ -481,7 +483,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
       suppress = true;
       ++fmt_ix;
       if (fmt_ix >= fmt.size()) {
-        throw InternalError(
+        throw SimulationError(
             "$sscanf/$fscanf: format string ended after '%*' with no "
             "conversion specifier");
       }
@@ -495,7 +497,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
       ++fmt_ix;
     }
     if (fmt_ix >= fmt.size()) {
-      throw InternalError(
+      throw SimulationError(
           "$sscanf/$fscanf: format string ended in a conversion spec with no "
           "specifier code");
     }
@@ -504,7 +506,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
 
     if (spec == '%') {
       if (suppress || max_width != 0) {
-        throw InternalError(
+        throw SimulationError(
             "$sscanf/$fscanf: '%%' literal does not accept assignment "
             "suppression or field width modifiers");
       }
@@ -520,7 +522,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
     }
 
     if (!suppress && target_ix >= targets.size()) {
-      throw InternalError(
+      throw SimulationError(
           "$sscanf/$fscanf: format string has more (non-suppressed) "
           "conversion specifiers than output arguments");
     }
@@ -590,7 +592,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
         break;
       }
       default:
-        throw InternalError(
+        throw SimulationError(
             std::format(
                 "$sscanf/$fscanf: unsupported conversion specifier '%{}'",
                 spec));

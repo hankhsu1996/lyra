@@ -30,13 +30,13 @@ struct ConstantPattern {
 
 // LRM 12.6 variable pattern `.identifier`: always matches, and declares the
 // identifier it names. LRM 12.6 puts that declaration in the pattern's own
-// scope, so this node is the declaration -- it carries the name and type
-// directly, and a reference to the identifier names this node's `PatternId`
-// (`PatternVarRef`). Keeping the declaration here is what lets one lowering
-// serve every position a pattern can appear in.
+// scope, so this node is the declaration, and a reference to the identifier
+// names this node's `PatternId` (`PatternVarRef`). Keeping the declaration here
+// is what lets one lowering serve every position a pattern can appear in. The
+// identifier's type is the node's `subject_type`: the pattern binds whatever it
+// is matched against, whole.
 struct VariablePattern {
   std::string name;
-  TypeId type;
 };
 
 // LRM 12.6 tagged pattern `tagged Member [pattern]`: matches iff the tagged
@@ -63,6 +63,12 @@ using PatternData = std::variant<
 
 struct Pattern {
   PatternData data;
+  // The type of the value this pattern is matched against. Resolving the
+  // pattern already required it -- naming a member is what fixes its position
+  // (LRM 12.6) -- so it is recorded where it was resolved. A consumer
+  // descending the tree reads each level's type here instead of walking the
+  // subject's type in step with the pattern and keeping the two aligned.
+  TypeId subject_type;
   diag::SourceSpan span;
 };
 

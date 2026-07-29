@@ -6,7 +6,7 @@
 #include <memory>
 #include <utility>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
 namespace lyra::runtime {
@@ -84,8 +84,10 @@ auto MakeForeignExecution(std::function<void()> entry)
 
 void YieldForeignExecution() {
   if (RunningFiberSlot() == nullptr) {
-    throw InternalError(
-        "YieldForeignExecution: no foreign execution running on this thread");
+    throw SimulationError(
+        "an exported task suspended outside a foreign call: a task that "
+        "consumes simulation time is callable only from a foreign call the "
+        "simulation made (LRM 35.5.3)");
   }
   RunningFiberSlot()->Yield();
 }
@@ -105,8 +107,10 @@ ForeignExecutionGuard::~ForeignExecutionGuard() {
 
 auto CurrentForeignProcess() -> RuntimeProcess& {
   if (ForeignProcessSlot() == nullptr) {
-    throw InternalError(
-        "CurrentForeignProcess: no foreign call running on this thread");
+    throw SimulationError(
+        "DPI export reached from outside a foreign call: an exported "
+        "subroutine runs as the process that entered the foreign call, so "
+        "there must be one (LRM 35.5.3)");
   }
   return *ForeignProcessSlot();
 }

@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
@@ -50,8 +50,8 @@ class DynamicArray {
       : shield_(std::move(element_default)) {
     const std::int64_t n_val = n.ToInt64();
     if (n_val < 0) {
-      throw InternalError(
-          "DynamicArray::new[N]: size operand is negative (LRM 7.5.1)");
+      throw SimulationError(
+          "dynamic array new[N]: size operand is negative (LRM 7.5.1)");
     }
     data_.assign(static_cast<std::size_t>(n_val), shield_.Default());
   }
@@ -64,8 +64,8 @@ class DynamicArray {
       : shield_(std::move(element_default)), data_(src.data_) {
     const std::int64_t n_val = n.ToInt64();
     if (n_val < 0) {
-      throw InternalError(
-          "DynamicArray::new[N](src): size operand is negative (LRM 7.5.1)");
+      throw SimulationError(
+          "dynamic array new[N](src): size operand is negative (LRM 7.5.1)");
     }
     data_.resize(static_cast<std::size_t>(n_val), shield_.Default());
   }

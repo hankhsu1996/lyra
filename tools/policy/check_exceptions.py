@@ -4,7 +4,9 @@
 Rules:
   E001: No std::runtime_error or std::logic_error
   E002: No catch(...) except in driver
-  E003: No throw except InternalError (rethrow 'throw;' also banned outside driver)
+  E003: No throw except InternalError (a compiler-invariant violation) or
+        SimulationError (a failure of the simulated design); rethrow 'throw;'
+        also banned outside driver
   E004: No assert() or <cassert>/<assert.h> (use InternalError for invariants)
   E005: Bug report messages only in internal_error.hpp (prevents duplicates)
 
@@ -25,6 +27,8 @@ CATCH_ALL_ALLOWLIST = ("src/lyra/driver",)
 FULL_ALLOWLIST = frozenset({
     "include/lyra/base/internal_error.hpp",
     "src/lyra/base/internal_error.cpp",
+    "include/lyra/base/simulation_error.hpp",
+    "src/lyra/base/simulation_error.cpp",
 })
 EXTENSIONS = frozenset({".cpp", ".hpp", ".cc", ".cxx",
                        ".h", ".hh", ".hxx", ".inl", ".ipp"})
@@ -41,6 +45,7 @@ RE_CATCH_ALL = re.compile(r'\bcatch\s*\(\s*\.\.\.\s*\)', re.DOTALL)
 RE_THROW_STMT = re.compile(r'\bthrow\s+([^;]+);', re.DOTALL)
 RE_RETHROW = re.compile(r'\bthrow\s*;')
 RE_INTERNAL_ERROR = re.compile(r'\b(support::)?InternalError\b')
+RE_SIMULATION_ERROR = re.compile(r'\bSimulationError\b')
 RE_ASSERT_CALL = re.compile(r'\bassert\s*\(')
 RE_CASSERT_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*cassert\s*>', re.MULTILINE)
 RE_ASSERT_H_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*assert\.h\s*>', re.MULTILINE)
@@ -139,10 +144,12 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
             errors.append(
                 f"{filepath}:{line}: E002 catch(...) banned outside driver")
 
-    # E003: No throw except InternalError
+    # E003: No throw except InternalError / SimulationError
     for match in RE_THROW_STMT.finditer(content):
         thrown_expr = match.group(1).strip()
         if RE_INTERNAL_ERROR.search(thrown_expr):
+            continue
+        if RE_SIMULATION_ERROR.search(thrown_expr):
             continue
         if (filepath in TERMINATION_UNWIND_ALLOWLIST
                 and RE_TERMINATION_SENTINEL.match(thrown_expr)):
@@ -152,7 +159,8 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
         if len(thrown_expr) > 40:
             snippet += "..."
         errors.append(
-            f"{filepath}:{line}: E003 throw {snippet} - use InternalError")
+            f"{filepath}:{line}: E003 throw {snippet} - "
+            "use InternalError or SimulationError")
 
     # E003: Rethrow 'throw;' also banned outside driver
     if not in_driver:

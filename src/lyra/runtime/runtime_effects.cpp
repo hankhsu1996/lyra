@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -85,9 +86,9 @@ auto RuntimeEffects::PlusArgs() -> PlusArgsSource& {
 void RuntimeEffects::SubmitNba(std::function<void(RuntimeEffects&)> closure) {
   Runtime& rt = AsRuntime(*this);
   if (rt.phase_ == SchedulerPhase::kCommitNba) {
-    throw InternalError(
-        "RuntimeEffects::SubmitNba: re-entrant NBA submission during NBA "
-        "region is not supported");
+    throw SimulationError(
+        "a nonblocking assignment scheduled from inside the NBA region is not "
+        "yet supported");
   }
   rt.queues_.nba.push_back(std::move(closure));
 }
@@ -95,9 +96,9 @@ void RuntimeEffects::SubmitNba(std::function<void(RuntimeEffects&)> closure) {
 void RuntimeEffects::SubmitPostponed(std::function<void()> closure) {
   Runtime& rt = AsRuntime(*this);
   if (rt.phase_ == SchedulerPhase::kPostponed) {
-    throw InternalError(
-        "RuntimeEffects::SubmitPostponed: re-entrant postponed submission "
-        "during postponed region is not supported");
+    throw SimulationError(
+        "work scheduled into the postponed region from inside that region is "
+        "not yet supported");
   }
   rt.queues_.postponed.push_back(std::move(closure));
 }

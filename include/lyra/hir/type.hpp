@@ -96,41 +96,36 @@ struct EnumType {
   std::vector<EnumMember> members;
 };
 
-// A named bit-range member of a packed aggregate (struct or union). For a
-// packed struct each field has its own contiguous slot computed by slang
-// (`FieldSymbol::bitOffset`); for an untagged packed union every field has
-// `bit_offset = 0` and `bit_width = member's own width` (LRM 7.3.1: members
-// are right-justified to the LSBs).
+// A named member of a packed aggregate (struct or union), identified by its
+// declaration position. Where the member sits in the aggregate's vector and
+// how wide it is both follow from the member list and the members' own types,
+// so they are projected at HIR-to-MIR rather than carried here -- a stored
+// position could disagree with the declaration it came from.
 struct PackedAggregateField {
   std::string name;
   TypeId type;
-  std::uint64_t bit_offset;
-  std::uint64_t bit_width;
 };
 
 // LRM 7.2.1: a packed struct is a heterogeneous set of bit-fields packed into
-// one vector. `fields` is the per-member offset/width table member-access
-// consults; `signedness` and `four_state` are the integral attributes the
-// struct carries as a whole (4-state iff any field is, LRM 7.2.1). The
-// single-vector projection -- total width is the sum of the field widths -- is
-// computed at HIR-to-MIR, not stored.
+// one vector, the first member declared occupying the most significant bits.
+// `signedness` is declared (`struct packed signed`); the struct's width and
+// its 4-state-ness follow from the fields and are projected at HIR-to-MIR.
 struct PackedStructType {
   std::vector<PackedAggregateField> fields;
   Signedness signedness;
-  bool four_state;
 };
 
-// LRM 7.3.1 untagged packed union. Members overlap at the LSBs (each field's
-// `bit_offset` is 0); for hard packed unions every member equals the union
-// width, for soft packed unions a narrower member's bits sit at the LSBs.
-// `signedness` and `four_state` are the union's integral attributes. The
-// single-vector projection -- total width is the widest member -- is computed
-// at HIR-to-MIR. Tagged unions are a separate future feature (runtime tag-bit
-// logic, LRM 11.9).
+// LRM 7.3.1 / 7.3.2: a packed union's members overlap at the least significant
+// bits. `tagged` is the source keyword: a tagged union additionally carries a
+// tag at the most significant bits naming the member it holds, and every
+// dot-notation access is checked against it (LRM 11.9), where an untagged
+// union lets a member written as another be read back. `signedness` is
+// declared; the union's width, its tag width, and its 4-state-ness follow from
+// the members and are projected at HIR-to-MIR.
 struct PackedUnionType {
   std::vector<PackedAggregateField> fields;
   Signedness signedness;
-  bool four_state;
+  bool tagged;
 };
 
 // A named member of an unpacked aggregate (struct or union). Unlike a packed

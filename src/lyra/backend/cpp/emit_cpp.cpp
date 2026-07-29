@@ -20,6 +20,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/runtime_prelude.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -631,54 +632,15 @@ auto DefinesForeignSymbol(const mir::CompilationUnit& unit) -> bool {
   });
 }
 
-// The include preamble every emitted unit header shares: the standard library,
-// the Lyra runtime and value libraries the rendered bodies call into, and one
-// include per external unit this unit references (instantiated or called), so a
-// cross-unit name resolves against the other unit's emitted header.
+// The include preamble every emitted unit header shares: the runtime umbrella
+// naming everything a rendered body may call into, and one include per
+// external unit this unit references (instantiated or called), so a cross-unit
+// name resolves against the other unit's emitted header. Naming the umbrella
+// rather than the individual headers is what keeps the emit's include set and
+// the precompiled header's coverage the same set.
 auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   std::string out;
-  out += "#include <array>\n";
-  out += "#include <cmath>\n";
-  out += "#include <cstdint>\n";
-  out += "#include <functional>\n";
-  out += "#include <memory>\n";
-  out += "#include <span>\n";
-  out += "#include <stdexcept>\n";
-  out += "#include <string>\n";
-  out += "#include <vector>\n";
-  out += "#include \"lyra/runtime/ambient_run_context.hpp\"\n";
-  out += "#include \"lyra/runtime/coroutine.hpp\"\n";
-  out += "#include \"lyra/runtime/delay.hpp\"\n";
-  out += "#include \"lyra/runtime/dpi_context.hpp\"\n";
-  out += "#include \"lyra/runtime/file_table.hpp\"\n";
-  out += "#include \"lyra/runtime/finish.hpp\"\n";
-  out += "#include \"lyra/runtime/fork.hpp\"\n";
-  out += "#include \"lyra/runtime/gc_ref.hpp\"\n";
-  out += "#include \"lyra/runtime/named_event.hpp\"\n";
-  out += "#include \"lyra/runtime/net.hpp\"\n";
-  out += "#include \"lyra/runtime/process_control.hpp\"\n";
-  out += "#include \"lyra/runtime/runtime.hpp\"\n";
-  out += "#include \"lyra/runtime/runtime_effects.hpp\"\n";
-  out += "#include \"lyra/runtime/scope.hpp\"\n";
-  out += "#include \"lyra/runtime/sim_time.hpp\"\n";
-  out += "#include \"lyra/runtime/var.hpp\"\n";
-  out += "#include \"lyra/value/dpi_open_array.hpp\"\n";
-  out += "#include \"lyra/value/format.hpp\"\n";
-  out += "#include \"lyra/value/packed_type.hpp\"\n";
-  out += "#include \"lyra/value/packed.hpp\"\n";
-  out += "#include \"lyra/value/packed_array.hpp\"\n";
-  out += "#include \"lyra/value/packed_bitwise.hpp\"\n";
-  out += "#include \"lyra/value/packed_convert.hpp\"\n";
-  out += "#include \"lyra/value/packed_reduction.hpp\"\n";
-  out += "#include \"lyra/value/real.hpp\"\n";
-  out += "#include \"lyra/value/scan.hpp\"\n";
-  out += "#include \"lyra/value/string.hpp\"\n";
-  out += "#include \"lyra/value/string_op.hpp\"\n";
-  out += "#include \"lyra/value/tuple.hpp\"\n";
-  out += "#include \"lyra/value/unpacked_array.hpp\"\n";
-  out += "#include \"lyra/value/dynamic_array.hpp\"\n";
-  out += "#include \"lyra/value/union.hpp\"\n";
-  out += "#include \"lyra/value/tagged_union.hpp\"\n";
+  out += std::format("#include \"{}\"\n", support::kRuntimePreludeHeader);
   for (const auto& name : CollectExternalUnitNames(unit)) {
     out += std::format("#include \"{}.hpp\"\n", ToCppName(name));
   }
@@ -742,7 +704,7 @@ auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
     out += std::format(
         "inline {} {}{{}};\n", RenderTypeAsCpp(unit, var.type), var.name);
   }
-  if (unit.static_variables.size() != 0) {
+  if (!unit.static_variables.empty()) {
     out += "\n";
   }
 

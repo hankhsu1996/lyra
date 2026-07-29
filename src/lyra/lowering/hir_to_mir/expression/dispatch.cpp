@@ -179,7 +179,8 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 .type = result_type};
           },
           [&](const hir::TaggedUnionExpr& t) -> diag::Result<mir::Expr> {
-            return LowerHirTaggedUnionExpr(lowerer, frame, t, result_type);
+            return LowerHirTaggedUnionExpr(
+                lowerer, frame, t, expr.type, result_type);
           },
       },
       expr.data);

@@ -12,6 +12,7 @@
 #include <fmt/core.h>
 
 #include "lyra/driver/runtime_export.hpp"
+#include "lyra/support/runtime_prelude.hpp"
 #include "lyra/support/subprocess.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
@@ -104,7 +105,8 @@ TEST(PchCoverage, EveryInputIsCovered) {
                  << cxx_or->string() << ")";
   }
 
-  const auto prelude = loc_or->include_root / "lyra/runtime/prelude.hpp";
+  const auto prelude =
+      loc_or->include_root / lyra::support::kRuntimePreludeHeader;
   const std::vector<std::string> args = {
       "-std=c++23",   "-H",
       "-I",           loc_or->include_root.string(),

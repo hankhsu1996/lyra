@@ -18,6 +18,7 @@
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
+#include "lyra/support/runtime_prelude.hpp"
 #include "lyra/support/subprocess.hpp"
 
 namespace lyra::driver {
@@ -142,7 +143,7 @@ auto RenderBuildScript(std::span<const DpiLinkInput> dpi_inputs)
   const std::array<std::pair<std::string_view, std::string_view>, 10> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
-          {"@PRELUDE@", kPreludeHeader},
+          {"@PRELUDE@", support::kRuntimePreludeHeader},
           {"@CACHE@", kRuntimeCacheDir},
           {"@STD@", kCxxStandardFlag},
           {"@MAIN@", kMainSource},
