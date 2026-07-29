@@ -19,6 +19,7 @@
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/support/runtime_prelude.hpp"
 #include "lyra/support/subprocess.hpp"
 
 namespace lyra::driver::pch {
@@ -182,7 +183,7 @@ auto RandomTmpSuffix() -> std::string {
 auto BuildAt(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const std::filesystem::path& pch_path) -> diag::Result<void> {
-  const auto prelude = include_root / kPreludeHeader;
+  const auto prelude = include_root / support::kRuntimePreludeHeader;
   const auto tmp = pch_path.parent_path() /
                    std::format(".prelude.pch.tmp.{}", RandomTmpSuffix());
   const std::vector<std::string> args = {

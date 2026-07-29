@@ -316,7 +316,8 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   const auto& compilation = sym.getParentScope()->getCompilation();
   for (const auto& dpi : compilation.getDPIExports()) {
     if (dpi.subroutine != &sym) continue;
-    auto export_or = LowerForeignExport(*owner_, sym, dpi.cIdentifier);
+    auto export_or = LowerForeignExport(
+        *owner_, sym, binding->subroutine_id, dpi.cIdentifier);
     if (!export_or) return std::unexpected(std::move(export_or.error()));
     frame.current_structural_scope->foreign_exports.push_back(
         *std::move(export_or));

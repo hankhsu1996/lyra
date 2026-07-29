@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -45,6 +46,9 @@ auto RunDesignHost(int argc, char** argv, RootBuilder builder) -> int {
 auto RunSimulation(Runtime& runtime) -> int {
   try {
     return runtime.Run();
+  } catch (const SimulationError& e) {
+    std::cerr << e.what() << "\n";
+    return EXIT_FAILURE;
   } catch (const InternalError& e) {
     std::cerr << e.what() << "\n";
     return EXIT_FAILURE;

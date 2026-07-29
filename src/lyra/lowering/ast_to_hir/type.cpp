@@ -175,32 +175,22 @@ auto LowerPackedStruct(
     if (!field_type_or) {
       return std::unexpected(std::move(field_type_or.error()));
     }
-    const auto field_width =
-        static_cast<std::uint64_t>(field.getType().getBitWidth());
     fields.push_back(
         hir::PackedAggregateField{
             .name = std::string(field.name),
             .type = *field_type_or,
-            .bit_offset = field.bitOffset,
-            .bit_width = field_width,
         });
   }
   return hir::PackedStructType{
       .fields = std::move(fields),
       .signedness = struct_type.isSigned ? hir::Signedness::kSigned
                                          : hir::Signedness::kUnsigned,
-      .four_state = struct_type.isFourState,
   };
 }
 
 auto LowerPackedUnion(
     const slang::ast::PackedUnionType& union_type, diag::SourceSpan decl_span,
     UnitLowerer& unit_lowerer) -> diag::Result<hir::PackedUnionType> {
-  if (union_type.isTagged) {
-    return diag::Fail(
-        decl_span, diag::DiagCode::kUnsupportedTaggedPackedUnion,
-        "tagged packed unions are not yet supported");
-  }
   std::vector<hir::PackedAggregateField> fields;
   for (const auto& field :
        union_type.membersOfType<slang::ast::FieldSymbol>()) {
@@ -208,21 +198,17 @@ auto LowerPackedUnion(
     if (!field_type_or) {
       return std::unexpected(std::move(field_type_or.error()));
     }
-    const auto field_width =
-        static_cast<std::uint64_t>(field.getType().getBitWidth());
     fields.push_back(
         hir::PackedAggregateField{
             .name = std::string(field.name),
             .type = *field_type_or,
-            .bit_offset = 0U,
-            .bit_width = field_width,
         });
   }
   return hir::PackedUnionType{
       .fields = std::move(fields),
       .signedness = union_type.isSigned ? hir::Signedness::kSigned
                                         : hir::Signedness::kUnsigned,
-      .four_state = union_type.isFourState,
+      .tagged = union_type.isTagged,
   };
 }
 

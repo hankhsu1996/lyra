@@ -538,7 +538,8 @@ auto LowerForeignImport(
 
 auto LowerForeignExport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
-    std::string_view foreign_name) -> diag::Result<hir::ForeignExportDecl> {
+    hir::StructuralSubroutineId subroutine, std::string_view foreign_name)
+    -> diag::Result<hir::ForeignExportDecl> {
   const auto& mapper = unit_lowerer.SourceMapper();
   const auto loc = mapper.PointSpanOf(sym.location);
   auto ret_abi = ClassifyDpiScalarResult(sym.getReturnType(), loc);
@@ -550,7 +551,7 @@ auto LowerForeignExport(
   if (!abi_params) return std::unexpected(std::move(abi_params.error()));
 
   return hir::ForeignExportDecl{
-      .sv_name = std::string{sym.name},
+      .subroutine = subroutine,
       .foreign_name = std::string{foreign_name},
       .ret_abi = *ret_abi,
       .ret_sv_type = *ret_type,

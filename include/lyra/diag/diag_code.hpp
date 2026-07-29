@@ -10,12 +10,7 @@ namespace lyra::diag {
 
 // Stable identity for primary diagnostics. Notes have no code.
 enum class DiagCode : std::uint32_t {
-  kUnsupportedTaggedPackedUnion,
-  kUnsupportedFixedSizeUnpackedArrayType,
-  kUnsupportedDynamicArrayType,
   kUnsupportedAssociativeArrayType,
-  kUnsupportedUnpackedStructType,
-  kUnsupportedUnpackedUnionType,
   kUnsupportedTypeKind,
 
   kUnsupportedNonStaticVariableLifetime,
@@ -24,7 +19,6 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedStructuralExpressionForm,
   kUnsupportedNonVariableNamedReference,
   kUnsupportedAssignmentTarget,
-  kUnsupportedBinaryOperator,
   kUnsupportedTimingControlKind,
   kUnsupportedDelayExpressionForm,
   kUnsupportedEventTriggerForm,
@@ -42,9 +36,6 @@ enum class DiagCode : std::uint32_t {
   kErrorFormatStringWidthOverflow,
   kErrorFormatStringUnknownSpecifier,
   kErrorDisplayMissingArg,
-  kSystemSubroutineExecutionNotImplemented,
-
-  kCppEmitExpressionFormNotImplemented,
 
   kHostInvalidCliArgs,
   kHostProjectModeUnimplemented,

@@ -153,6 +153,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
           "reach the backend");
     case support::BuiltinFn::kSlice:
       return "Slice";
+    case support::BuiltinFn::kRequire:
+      return "Require";
     case support::BuiltinFn::kSize:
       return "Size";
     case support::BuiltinFn::kBitstreamWidth:
@@ -396,6 +398,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kWriteCanonicalBitVec:
     case support::BuiltinFn::kWriteCanonicalLogicVec:
     case support::BuiltinFn::kFromSvLogic:
+    case support::BuiltinFn::kRequire:
       return "lyra::value";
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kRegisterInitial:

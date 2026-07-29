@@ -86,10 +86,12 @@ auto LowerForeignImport(
 // Lowers an `export "DPI-C"` binding (LRM 35.5) into a hir::ForeignExportDecl:
 // the C linkage name and the ABI projection of the exported subroutine's
 // signature. The subroutine keeps its ordinary body and is lowered separately
-// as a method; this record drives the foreign-linkage wrapper. `foreign_name`
-// is the C identifier slang resolved for the export.
+// as a method; this record drives the foreign-linkage wrapper. `subroutine` is
+// the identity the declaring scope gave that body, and `foreign_name` is the C
+// identifier slang resolved for the export.
 auto LowerForeignExport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
-    std::string_view foreign_name) -> diag::Result<hir::ForeignExportDecl>;
+    hir::StructuralSubroutineId subroutine, std::string_view foreign_name)
+    -> diag::Result<hir::ForeignExportDecl>;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -12,35 +12,10 @@ namespace {
 
 constexpr std::array kEntries{
     std::pair{
-        DiagCode::kUnsupportedTaggedPackedUnion,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_tagged_packed_union"}},
-    std::pair{
-        DiagCode::kUnsupportedFixedSizeUnpackedArrayType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_fixed_size_unpacked_array_type"}},
-    std::pair{
-        DiagCode::kUnsupportedDynamicArrayType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_dynamic_array_type"}},
-    std::pair{
         DiagCode::kUnsupportedAssociativeArrayType,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_associative_array_type"}},
-    std::pair{
-        DiagCode::kUnsupportedUnpackedStructType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_unpacked_struct_type"}},
-    std::pair{
-        DiagCode::kUnsupportedUnpackedUnionType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_unpacked_union_type"}},
     std::pair{
         DiagCode::kUnsupportedTypeKind,
         DiagCodeInfo{
@@ -76,11 +51,6 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_assignment_target"}},
-    std::pair{
-        DiagCode::kUnsupportedBinaryOperator,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_binary_operator"}},
     std::pair{
         DiagCode::kUnsupportedTimingControlKind,
         DiagCodeInfo{
@@ -156,17 +126,7 @@ constexpr std::array kEntries{
     std::pair{
         DiagCode::kErrorDisplayMissingArg,
         DiagCodeInfo{.kind = DiagKind::kError, .name = "display_missing_arg"}},
-    std::pair{
-        DiagCode::kSystemSubroutineExecutionNotImplemented,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "system_subroutine_execution_not_implemented"}},
 
-    std::pair{
-        DiagCode::kCppEmitExpressionFormNotImplemented,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "cpp_emit_expression_form_not_implemented"}},
     std::pair{
         DiagCode::kHostInvalidCliArgs,
         DiagCodeInfo{

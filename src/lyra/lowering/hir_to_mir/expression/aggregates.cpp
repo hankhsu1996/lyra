@@ -12,6 +12,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -42,25 +43,6 @@ auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
   const auto& c = lit->value;
   if (c.value_words.empty()) return 0;
   return c.value_words[0];
-}
-
-// A packed assignment pattern folds its members into one flat bit plane (LRM
-// 11.4.12), so the ConcatExpr / ReplicationExpr that materialize it carry that
-// flat unsigned shape, not the destination's. This is that flat type: a single
-// dimension of the destination's total width. A multi-dimensional destination
-// then reshapes the flat value through the ordinary store conversion, so the
-// value lands carrying its declared dimensions rather than a flat run -- the
-// "materialization builds shape" rule applied to a value-build primitive.
-auto InternFlatPacked(
-    mir::CompilationUnit& unit, std::uint64_t width, mir::BitAtom atom)
-    -> mir::TypeId {
-  return unit.types.Intern(
-      mir::PackedArrayType{
-          .atom = atom,
-          .signedness = mir::Signedness::kUnsigned,
-          .dims = {mir::PackedRange{
-              .left = static_cast<std::int64_t>(width) - 1, .right = 0}},
-          .form = mir::PackedArrayForm::kExplicit});
 }
 
 auto IsArrayContainerType(const mir::Type& ty) -> bool {

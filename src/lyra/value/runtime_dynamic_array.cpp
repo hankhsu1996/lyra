@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_value.hpp"
 
@@ -28,8 +28,8 @@ RuntimeDynamicArray::RuntimeDynamicArray(
           std::make_unique<RuntimeValue>(std::move(element_default))) {
   const std::int64_t count = n.ToInt64();
   if (count < 0) {
-    throw InternalError(
-        "RuntimeDynamicArray::new[N]: size operand is negative (LRM 7.5.1)");
+    throw SimulationError(
+        "dynamic array new[N]: size operand is negative (LRM 7.5.1)");
   }
   data_.assign(static_cast<std::size_t>(count), *element_default_);
 }
@@ -42,9 +42,8 @@ RuntimeDynamicArray::RuntimeDynamicArray(
       data_(src.data_) {
   const std::int64_t count = n.ToInt64();
   if (count < 0) {
-    throw InternalError(
-        "RuntimeDynamicArray::new[N](src): size operand is negative "
-        "(LRM 7.5.1)");
+    throw SimulationError(
+        "dynamic array new[N](src): size operand is negative (LRM 7.5.1)");
   }
   data_.resize(static_cast<std::size_t>(count), *element_default_);
 }

@@ -96,8 +96,10 @@ class ResolvedNet : public Observable {
   }
 
   // Attaches a new driver and returns its handle. The slot starts at the
-  // undriven contribution; the driver seeds its real contribution during
-  // Initialize. Slots only grow, so a slot index is a stable identity.
+  // undriven contribution, which is the fold's identity, so a driver that has
+  // not yet driven leaves the resolution exactly as it was -- attaching is not
+  // itself an act of driving. Slots only grow, so a slot index is a stable
+  // identity.
   auto AttachDriver() -> Driver<T, Resolver>;
 
  private:
@@ -169,7 +171,7 @@ class Driver {
 
 template <value::LyraValue T, class Resolver>
 auto ResolvedNet<T, Resolver>::AttachDriver() -> Driver<T, Resolver> {
-  slots_.emplace_back();
+  slots_.push_back(DriveContribution<T>{.value = undriven_});
   return Driver<T, Resolver>{*this, slots_.size() - 1};
 }
 

@@ -17,6 +17,13 @@ enum class BuiltinFn : std::uint16_t {
   // entry that realizes it is named below this layer.
   kElement,
   kSlice,
+  // Yields the receiver when a condition holds and raises the given message as
+  // a simulation error when it does not. The shape for a check the language
+  // requires to run as part of evaluating an access rather than ahead of it
+  // (LRM 11.3.5): passing the receiver through lets the access compose onto the
+  // guard, so a guarded access stays the ordinary one above, and a guarded
+  // write target designates a part of the guard's own result.
+  kRequire,
   // LRM 7.4.3 / 7.5 / 7.9 / 7.10.2. AA's `num` is an alias of `size`;
   // String's LRM 6.16.1 `len` is its own mandated spelling.
   kSize,
