@@ -195,16 +195,16 @@ struct DelayControl {
   ExprId duration;
 };
 
-// One leaf entry of a wait's projection set. Identity-only: which structural
-// variable, the flat-bit footprint of its packed encoding the leaf observes,
-// and what edge polarity the leaf was subscribed under. An absent footprint
+// One leaf entry of a wait's projection set. Identity-only: which cell, the
+// flat-bit footprint of its packed encoding the leaf observes, and what edge
+// polarity the leaf was subscribed under. An absent footprint
 // means the whole signal is observed; an edge then reduces to its LSB. Implicit
 // sensitivity sources (always_comb / always_latch / `@*` / wait cond /
 // continuous assignment) supply leaves with `edge_kind == kAnyChange`. Explicit
 // event control `@(posedge ...)` / `@(negedge ...)` / `@(edge ...)` set the
 // per-leaf edge.
 struct SensitivityEntry {
-  SensitivityTarget ref;
+  ValueTarget ref;
   std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
   support::EventEdge edge_kind = support::EventEdge::kAnyChange;
 };

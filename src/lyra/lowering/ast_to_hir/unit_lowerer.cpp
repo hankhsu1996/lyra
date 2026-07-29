@@ -257,7 +257,13 @@ auto UnitLowerer::EnsureForeignImport(const slang::ast::SubroutineSymbol& sym)
 
 void UnitLowerer::MapPatternVar(
     const slang::ast::PatternVarSymbol& sym, hir::PatternId pattern) {
-  pattern_var_bindings_.insert_or_assign(&sym, pattern);
+  const auto [_, inserted] = pattern_var_bindings_.emplace(&sym, pattern);
+  if (!inserted) {
+    throw InternalError(
+        "UnitLowerer::MapPatternVar: pattern-bound identifier already mapped; "
+        "its id indexes one body's arena, so a second mapping would silently "
+        "redirect the first body's references");
+  }
 }
 
 auto UnitLowerer::LookupPatternVar(const slang::ast::PatternVarSymbol& sym)
@@ -313,6 +319,23 @@ auto TargetNetType(const slang::ast::ValueSymbol& target)
   }
 }
 
+// The compilation unit a value is declared directly in when that unit is a
+// namespace -- a package (LRM 26.2) or the anonymous `$unit` scope (LRM
+// 3.12.1) -- or nullptr when the value belongs to an instantiated scope and is
+// reached by a route. A namespace unit has no instance, so its declarations are
+// one program-global cell each, named rather than routed to.
+auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
+    -> const slang::ast::Symbol* {
+  const slang::ast::Scope* scope = value.getParentScope();
+  if (scope == nullptr) return nullptr;
+  const slang::ast::Symbol& owner = scope->asSymbol();
+  if (owner.kind != slang::ast::SymbolKind::Package &&
+      owner.kind != slang::ast::SymbolKind::CompilationUnit) {
+    return nullptr;
+  }
+  return &owner;
+}
+
 }  // namespace
 
 auto UnitLowerer::MapOrGetRoutedRef(
@@ -361,13 +384,6 @@ auto UnitLowerer::MakeRoutedMemberRef(
 auto UnitLowerer::TranslateReferenceRoute(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value)
     -> std::optional<hir::ReferenceRoute> {
-  // Only a variable or a net is an addressable, observable signal. A genvar or
-  // parameter folds to an elaboration constant with no cell to reach.
-  if (value.kind != slang::ast::SymbolKind::Variable &&
-      value.kind != slang::ast::SymbolKind::Net) {
-    return std::nullopt;
-  }
-
   // The target sits on the reader's own scope or an ancestor scope of the same
   // unit. `hops == 0` is a direct member of `self` -- an empty route with no
   // sealed endpoint. `hops > 0` reaches an enclosing ancestor member: a routed
@@ -507,50 +523,63 @@ auto UnitLowerer::TranslateReferenceRoute(
   return std::nullopt;
 }
 
+auto UnitLowerer::ResolveValueTarget(
+    const WalkFrame& frame, const slang::ast::ValueSymbol& value)
+    -> diag::Result<std::optional<hir::ValueTarget>> {
+  // Only a variable or a net has a cell. A parameter, genvar, or enum value is
+  // a compile-time constant that folds where it is used, so there is nothing to
+  // reach: no route to seal and nothing to observe. Deciding this once, ahead
+  // of both ways of reaching a cell, is what stops a constant declared in a
+  // namespace unit from being mistaken for that unit's program-global cell.
+  if (value.kind != slang::ast::SymbolKind::Variable &&
+      value.kind != slang::ast::SymbolKind::Net) {
+    return std::nullopt;
+  }
+
+  // A namespace unit has no instance, so its cell is reached by name rather
+  // than by a route out of the reader's own storage (LRM 26.2, 3.12.1). The
+  // same by-name form serves a referrer in another unit and the owning unit's
+  // own body, neither of which has a receiver to route through.
+  if (const auto* unit = DeclaringUnitOfValue(value)) {
+    auto value_type =
+        InternType(value.getType(), SourceMapper().PointSpanOf(value.location));
+    if (!value_type) return std::unexpected(std::move(value_type.error()));
+    return hir::ValueTarget{hir::ExternalUnitValueRef{
+        .unit_name = CompilationUnitName(*unit),
+        .variable_name = std::string{value.name},
+        .value_type = *value_type}};
+  }
+
+  if (auto route = TranslateReferenceRoute(frame, value)) {
+    return hir::ValueTarget{*std::move(route)};
+  }
+  return std::nullopt;
+}
+
 auto UnitLowerer::TranslateSensitivityReads(
-    const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
-    -> std::vector<hir::SensitivityEntry> {
+    const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
+    support::EventEdge edge)
+    -> diag::Result<std::vector<hir::SensitivityEntry>> {
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
   for (const auto& read : reads) {
-    // Both a variable and a net are observable value symbols a process can wait
-    // on; sensitivity subscribes to either (a net's resolved value changing is
-    // an update event just like a variable write, LRM 9.4.2).
-    const auto* value = read.symbol->as_if<slang::ast::ValueSymbol>();
-    if (value == nullptr) continue;
+    auto target = ResolveValueTarget(frame, *read.symbol);
+    if (!target) return std::unexpected(std::move(target.error()));
+    if (!target->has_value()) continue;
     // A footprint is meaningful only for a signal the runtime bit-addresses: a
     // packed bit vector, which renders to one observable cell whose change set
     // is read per bit. For an enum, unpacked aggregate, string, or real the
     // runtime observes the whole signal on any change, so the read carries no
     // footprint regardless of the flat-bit view the DFA computed over its own
     // encoding.
-    const auto& read_type = value->getType();
-    const std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint =
-        read_type.isIntegral() && !read_type.isEnum() ? read.footprint
-                                                      : std::nullopt;
-    // A variable owned by another unit's namespace is watched the same way, but
-    // by name: it has no reader-relative route, so it wakes the process through
-    // a reference to its one program-global cell (LRM 26.2 / 3.12.1), the
-    // observation dual of reading it.
-    if (const auto* unit = DeclaringUnitOfValue(*value)) {
-      auto value_type =
-          InternType(read_type, SourceMapper().PointSpanOf(value->location));
-      if (!value_type) continue;
-      out.push_back(
-          hir::SensitivityEntry{
-              .ref =
-                  hir::ExternalUnitValueRef{
-                      .unit_name = CompilationUnitName(*unit),
-                      .variable_name = std::string{value->name},
-                      .value_type = *value_type},
-              .footprint = footprint});
-      continue;
-    }
-    if (auto ref = TranslateReferenceRoute(frame, *value)) {
-      out.push_back(
-          hir::SensitivityEntry{
-              .ref = *std::move(ref), .footprint = footprint});
-    }
+    const auto& read_type = read.symbol->getType();
+    out.push_back(
+        hir::SensitivityEntry{
+            .ref = *std::move(*target),
+            .footprint = read_type.isIntegral() && !read_type.isEnum()
+                             ? read.footprint
+                             : std::nullopt,
+            .edge_kind = edge});
   }
   return out;
 }

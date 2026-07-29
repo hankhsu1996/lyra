@@ -13,3 +13,8 @@ expect:
     col: 1
     wv: 8
     masked: 240
+    comb_masked: 240
+    assigned: 240
+    star_sum: 495
+    decoded: 3
+    waited: 1
