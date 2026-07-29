@@ -153,8 +153,11 @@ auto ConnectElementPorts(
           auto peer_or = scope.LowerExpr(*expr, frame);
           if (!peer_or) return std::unexpected(std::move(peer_or.error()));
           peer = frame.Exprs().Add(*std::move(peer_or));
-          sensitivity = unit_lowerer.TranslateSensitivityReads(
-              unit_lowerer.Sensitivity().AnalyzeReads(*expr, inst), frame);
+          auto entries = unit_lowerer.TranslateSensitivityReads(
+              unit_lowerer.Sensitivity().AnalyzeReads(*expr, inst), frame,
+              support::EventEdge::kAnyChange);
+          if (!entries) return std::unexpected(std::move(entries.error()));
+          sensitivity = *std::move(entries);
         }
         break;
       }
@@ -175,9 +178,11 @@ auto ConnectElementPorts(
             expr->as<slang::ast::AssignmentExpression>().left(), frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
         peer = frame.Exprs().Add(*std::move(peer_or));
-        sensitivity = unit_lowerer.TranslateSensitivityReads(
+        auto entries = unit_lowerer.TranslateSensitivityReads(
             {SensitivityRead{.symbol = internal, .footprint = std::nullopt}},
-            frame);
+            frame, support::EventEdge::kAnyChange);
+        if (!entries) return std::unexpected(std::move(entries.error()));
+        sensitivity = *std::move(entries);
         break;
       }
       case slang::ast::ArgumentDirection::Ref: {

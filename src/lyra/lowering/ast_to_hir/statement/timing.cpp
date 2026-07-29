@@ -67,18 +67,19 @@ auto LowerSignalEventTrigger(
 
   const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
       sig.expr, proc.ContainingSymbol());
-  auto sensitivity_list = proc.Owner().TranslateSensitivityReads(reads, frame);
   // Faithful record of SV: every leaf carries the trigger's edge identifier.
   // Whether the runtime can act on it directly (single leaf, LSB-reduce) or
   // needs a snapshot + re-eval wrapper (compound) is a HIR -> MIR decision.
-  for (auto& leaf : sensitivity_list) {
-    leaf.edge_kind = edge_kind;
+  auto sensitivity_list =
+      proc.Owner().TranslateSensitivityReads(reads, frame, edge_kind);
+  if (!sensitivity_list) {
+    return std::unexpected(std::move(sensitivity_list.error()));
   }
 
   return hir::EventTrigger{
       .signal = frame.Exprs().Add(*std::move(expr_or)),
       .edge = edge_kind,
-      .sensitivity_list = std::move(sensitivity_list),
+      .sensitivity_list = *std::move(sensitivity_list),
   };
 }
 
@@ -116,9 +117,14 @@ auto LowerNamedEventControl(
   };
 }
 
+// `controlled` is the statement the control gates. Only `@*` reads it: LRM
+// 9.4.2.2 defines its sensitivity as the reads of that statement, so the
+// control cannot be built until the statement has lowered and each read's
+// reference is resolved.
 auto LowerTimingControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
-    diag::SourceSpan span) -> diag::Result<hir::TimingControl> {
+    const slang::ast::Statement& controlled, diag::SourceSpan span)
+    -> diag::Result<hir::TimingControl> {
   switch (tc.kind) {
     case slang::ast::TimingControlKind::Delay: {
       const auto& delay = tc.as<slang::ast::DelayControl>();
@@ -161,8 +167,15 @@ auto LowerTimingControl(
       return hir::TimingControl{
           hir::EventControl{.triggers = std::move(triggers)}};
     }
-    case slang::ast::TimingControlKind::ImplicitEvent:
-      return hir::TimingControl{hir::ImplicitEventControl{}};
+    case slang::ast::TimingControlKind::ImplicitEvent: {
+      const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
+          controlled, proc.ContainingSymbol());
+      auto sensitivity = proc.Owner().TranslateSensitivityReads(
+          reads, frame, support::EventEdge::kAnyChange);
+      if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
+      return hir::TimingControl{hir::ImplicitEventControl{
+          .sensitivity_list = *std::move(sensitivity)}};
+    }
     case slang::ast::TimingControlKind::RepeatedEvent:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
@@ -179,20 +192,14 @@ auto LowerTimingControl(
 auto LowerTimedStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimedStatement& ts,
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
-  auto timing = LowerTimingControl(proc, frame, ts.timing, span);
-  if (!timing) return std::unexpected(std::move(timing.error()));
+  // The controlled statement lowers first: a control whose sensitivity is
+  // inferred from it needs each read's reference already resolved.
   auto inner_stmt = proc.LowerStmt(ts.stmt, frame);
   if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
   const hir::StmtId inner_id =
       frame.current_procedural_body->stmts.Add(*std::move(inner_stmt));
-  // LRM 9.4.2.2: `@*` watches every read in the controlled body. Inferred after
-  // the body lowers so a read's cross-unit reference is already resolved when
-  // its subscription is built.
-  if (auto* ie = std::get_if<hir::ImplicitEventControl>(&*timing)) {
-    const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
-        ts.stmt, proc.ContainingSymbol());
-    ie->sensitivity_list = proc.Owner().TranslateSensitivityReads(reads, frame);
-  }
+  auto timing = LowerTimingControl(proc, frame, ts.timing, ts.stmt, span);
+  if (!timing) return std::unexpected(std::move(timing.error()));
   return hir::Stmt{
       .label = std::nullopt,
       .data = hir::TimedStmt{.timing = *std::move(timing), .stmt = inner_id},
@@ -235,9 +242,10 @@ auto LowerEventTriggerStmt(
       .span = span};
 }
 
-// LRM 9.4.3 `wait (cond) body`. Sensitivity is precomputed by driving slang's
-// flow analysis on `w.cond` via a per-wait `DefaultDFA` run upstream; the
-// result is looked up here keyed by the cond expression.
+// LRM 9.4.3 `wait (cond) body`. The wait re-evaluates when any cell the
+// condition reads changes, so its sensitivity is that condition's own read set
+// -- narrower than the enclosing body's, which is why it is analyzed here
+// rather than inherited.
 auto LowerWaitStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::WaitStatement& w,
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
@@ -250,14 +258,16 @@ auto LowerWaitStmt(
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
   const auto& reads =
       proc.Owner().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
-  auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
+  auto sensitivity = proc.Owner().TranslateSensitivityReads(
+      reads, frame, support::EventEdge::kAnyChange);
+  if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
   return hir::Stmt{
       .label = std::nullopt,
       .data =
           hir::WaitStmt{
               .cond = cond_id,
               .body = body_id,
-              .sensitivity_list = std::move(sensitivity)},
+              .sensitivity_list = *std::move(sensitivity)},
       .span = span};
 }
 
