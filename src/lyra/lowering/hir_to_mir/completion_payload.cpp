@@ -1,28 +1,82 @@
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
+#include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-auto NormalizeCompletionPayload(
+auto SubroutineCallType(
+    mir::CompilationUnit& unit, hir::SubroutineKind kind,
+    mir::TypeId result_type) -> mir::TypeId {
+  return kind == hir::SubroutineKind::kTask
+             ? unit.types.CoroutineOf(result_type)
+             : result_type;
+}
+
+auto CompletionPayloadType(
     mir::CompilationUnit& unit, const std::vector<mir::TypeId>& components)
     -> mir::TypeId {
-  if (components.empty()) return unit.builtins.void_type;
-  if (components.size() == 1) return components.front();
   return unit.types.Intern(mir::TupleType{.elements = components});
+}
+
+auto BuildCompletionLayout(
+    const std::vector<CalleeFormal>& formals,
+    std::optional<mir::TypeId> result_type) -> CompletionLayout {
+  CompletionLayout layout;
+  if (result_type.has_value()) {
+    layout.components.push_back(*result_type);
+  }
+  layout.formals.reserve(formals.size());
+  for (const CalleeFormal& formal : formals) {
+    CompletionLayout::Formal out{
+        .direction = formal.direction,
+        .type = formal.type,
+        .component = std::nullopt};
+    if (hir::RequiresWriteback(formal.direction)) {
+      out.component = layout.components.size();
+      layout.components.push_back(formal.type);
+    }
+    layout.formals.push_back(out);
+  }
+  return layout;
+}
+
+auto CalleeFormalsOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
+    -> std::vector<CalleeFormal> {
+  std::vector<CalleeFormal> formals;
+  formals.reserve(decl.params.size());
+  for (const hir::SubroutineParam& param : decl.params) {
+    formals.push_back(
+        CalleeFormal{
+            .direction = param.direction,
+            .type = unit.TranslateType(
+                decl.body.procedural_vars.Get(param.var).type)});
+  }
+  return formals;
+}
+
+auto SubroutineCallTypeOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
+    -> mir::TypeId {
+  const mir::TypeId result = unit.TranslateType(decl.result_type);
+  const CompletionLayout layout = BuildCompletionLayout(
+      CalleeFormalsOf(unit, decl), result == unit.Unit().builtins.void_type
+                                       ? std::nullopt
+                                       : std::optional<mir::TypeId>{result});
+  return SubroutineCallType(
+      unit.Unit(), decl.kind,
+      CompletionPayloadType(unit.Unit(), layout.components));
 }
 
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
-    std::size_t component_count, std::size_t index, mir::TypeId component_type)
-    -> mir::ExprId {
-  if (component_count == 1) {
-    return block.exprs.Add(mir::MakeLocalRefExpr(completion, component_type));
-  }
+    std::size_t index, mir::TypeId component_type) -> mir::ExprId {
   const mir::ExprId tuple_ref =
       block.exprs.Add(mir::MakeLocalRefExpr(completion, payload_type));
   return block.exprs.Add(

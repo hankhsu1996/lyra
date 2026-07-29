@@ -27,6 +27,9 @@ class LirDumper {
     for (std::size_t i = 0; i < unit_->classes.size(); ++i) {
       DumpClass(ClassId{static_cast<std::uint32_t>(i)});
     }
+    for (const Function& fn : unit_->functions) {
+      DumpFunction(fn);
+    }
     Dedent();
     return std::move(out_);
   }
@@ -45,9 +48,9 @@ class LirDumper {
               "member[{}] \"{}\" : {}", i, cls.members[i].name,
               FormatType(cls.members[i].type)));
     }
-    DumpFunction(cls.constructor);
-    for (const Function& method : cls.methods) {
-      DumpFunction(method);
+    DumpFunction(unit_->functions.Get(cls.constructor));
+    for (const FunctionId method : cls.methods) {
+      DumpFunction(unit_->functions.Get(method));
     }
     Dedent();
   }
@@ -137,7 +140,7 @@ class LirDumper {
         data);
   }
 
-  [[nodiscard]] static auto FormatTerminator(const Terminator& term)
+  [[nodiscard]] auto FormatTerminator(const Terminator& term) const
       -> std::string {
     return std::visit(
         Overloaded{
@@ -187,10 +190,8 @@ class LirDumper {
               }
               return std::format("{}<{}>", name, FormatType(*b.qualifier));
             },
-            [&](const MethodTarget& m) -> std::string {
-              return unit_->classes.Get(m.method.class_id)
-                  .methods[m.method.index]
-                  .name;
+            [&](const FunctionTarget& f) -> std::string {
+              return unit_->functions.Get(f.function).name;
             },
             [](const ConstructTarget&) -> std::string { return "Construct"; },
             [](const ForeignTarget& f) -> std::string {
@@ -210,7 +211,7 @@ class LirDumper {
         target);
   }
 
-  [[nodiscard]] static auto FormatOperands(const std::vector<Operand>& ops)
+  [[nodiscard]] auto FormatOperands(const std::vector<Operand>& ops) const
       -> std::string {
     std::string out;
     for (std::size_t i = 0; i < ops.size(); ++i) {
@@ -222,7 +223,7 @@ class LirDumper {
     return out;
   }
 
-  [[nodiscard]] static auto FormatPlace(const Place& place) -> std::string {
+  [[nodiscard]] auto FormatPlace(const Place& place) const -> std::string {
     std::string out = FormatOperand(place.base);
     for (const Projection& step : place.chain) {
       std::visit(
@@ -236,7 +237,7 @@ class LirDumper {
     return out;
   }
 
-  [[nodiscard]] static auto FormatSelector(const AggregateSelector& selector)
+  [[nodiscard]] auto FormatSelector(const AggregateSelector& selector) const
       -> std::string {
     return std::visit(
         Overloaded{
@@ -246,16 +247,16 @@ class LirDumper {
             [](const UnionMember& m) -> std::string {
               return std::format("member {}", m.index);
             },
-            [](const ContainerElement& e) -> std::string {
+            [&](const ContainerElement& e) -> std::string {
               return std::format("element({})", FormatOperands(e.operands));
             },
-            [](const ContainerSlice& s) -> std::string {
+            [&](const ContainerSlice& s) -> std::string {
               return std::format("slice({})", FormatOperands(s.operands));
             }},
         selector);
   }
 
-  [[nodiscard]] static auto FormatOperand(const Operand& op) -> std::string {
+  [[nodiscard]] auto FormatOperand(const Operand& op) const -> std::string {
     return std::visit(
         Overloaded{
             [](const Use& use) -> std::string {
@@ -274,9 +275,9 @@ class LirDumper {
               return std::format("real:{}", c.value);
             },
             [](const NullConst&) -> std::string { return "null"; },
-            [](const FuncRef& f) -> std::string {
+            [&](const FuncRef& f) -> std::string {
               return std::format(
-                  "funcref {}.{}", f.method.class_id.value, f.method.index);
+                  "funcref {}", unit_->functions.Get(f.function).name);
             }},
         op);
   }

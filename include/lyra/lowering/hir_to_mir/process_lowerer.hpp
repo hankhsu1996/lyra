@@ -95,7 +95,11 @@ class ProcessLowerer {
         hir_body_(&hir_body),
         callable_name_(std::move(callable_name)),
         owner_ctor_frame_(std::move(owner_ctor_frame)),
-        storage_plan_(&storage_plan) {
+        storage_plan_(&storage_plan),
+        // A body completes for no caller until it is lowered as one that does,
+        // so this is the protocol every body starts with; lowering a subroutine
+        // replaces it with the one its completion payload states.
+        result_type_(unit_lowerer.Unit().builtins.coroutine_void) {
   }
 
   // Lowers an entire HIR process (initial / final / always / always_ff /
@@ -337,14 +341,14 @@ class ProcessLowerer {
       -> mir::Expr;
 
   // Assembles the completion-payload value a `return` should carry in the
-  // subroutine being lowered: the function's explicit return value (or its
-  // implicit result variable when a `return` supplies none) followed by each
-  // `output` / `inout` local, normalized to a bare value (one component) or a
-  // `TupleExpr` (two or more). Returns nullopt when the payload is empty -- a
-  // void function or a task with no outputs -- so the caller emits a plain
-  // `return;`. `explicit_value` is the lowered `return expr` operand, absent
-  // for a bare `return;`. Reads the pack locals at `frame`'s depth, so a return
-  // nested in an inner block resolves the correct hops.
+  // subroutine being lowered: the product of the function's explicit return
+  // value (or its implicit result variable when a `return` supplies none)
+  // followed by each `output` / `inout` local. A subroutine always carries one,
+  // a product of no components included, so the caller never decides whether a
+  // return has a value; nullopt means the body is a process, which completes
+  // for no caller. `explicit_value` is the lowered `return expr` operand,
+  // absent for a bare `return;`. Reads the pack locals at `frame`'s depth, so a
+  // return nested in an inner block resolves the correct hops.
   [[nodiscard]] auto BuildReturnPayload(
       mir::Block& block, std::optional<mir::ExprId> explicit_value)
       -> std::optional<mir::ExprId>;
@@ -363,15 +367,17 @@ class ProcessLowerer {
   // nullopt for a static var (its placement lives on the storage plan).
   std::vector<std::optional<ProceduralVarBinding>> bindings_;
 
-  // Completion-payload shape of the subroutine being lowered, set by
-  // Run(subroutine) before its body walks and read by every return site. All
-  // default for a process or an empty-payload callable: no result var, no pack
-  // locals, so BuildReturnPayload yields a plain `return;`.
+  // The result type of the body being lowered, set before its body walks. It
+  // is the call protocol, so every return site reads what its completion
+  // carries from it -- a body that completes for no caller carries nothing,
+  // and one that completes for a caller carries its completion payload. What
+  // fills that payload is the result variable, if the body has one, followed
+  // by each output / inout local.
+  mir::TypeId result_type_;
   std::optional<mir::LocalId> result_var_;
   mir::TypeId result_value_type_{};
   std::vector<mir::LocalId> output_pack_vars_;
   std::vector<mir::TypeId> output_pack_types_;
-  mir::TypeId completion_payload_type_{};
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
 

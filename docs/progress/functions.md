@@ -63,7 +63,9 @@ everything and the inline "rides on" notes record the real dependencies.
       allows (LRM 13.4): the whole right side of a blocking assignment, a bare call, and nested
       inside a larger expression (an operand, a nested call argument, a condition); a call in an
       event expression, a procedural continuous assignment, or outside any procedural statement is
-      illegal SV and rejected by the frontend.
+      illegal SV and rejected by the frontend. Not yet: a class method's `output` / `inout` / `ref`
+      formals, which the frontend rejects at the call rather than marshalling -- declaring one is
+      accepted, calling it is not.
 - [x] F6 -- Default argument values (LRM 13.5.3), binding by name (LRM 13.5.4), and the optional
       empty argument list for no-argument / all-defaulted subroutines (LRM 13.5.5). Default
       expressions evaluate in the declaration scope at each defaulting call.

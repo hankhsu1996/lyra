@@ -36,12 +36,8 @@ auto IntegralConstantToInt64(const hir::IntegralConstant& c) -> std::int64_t {
     throw InternalError(
         "IntegralConstantToInt64: 4-state literal in integer-delay context");
   }
-  if (c.value_words.empty()) {
-    return 0;
-  }
   const std::uint64_t raw = c.value_words[0];
-  if (c.signedness == hir::Signedness::kSigned && c.width > 0U &&
-      c.width < 64U) {
+  if (c.signedness == hir::Signedness::kSigned && c.width < 64U) {
     const std::uint64_t sign_bit = std::uint64_t{1} << (c.width - 1U);
     if ((raw & sign_bit) != 0U) {
       const std::uint64_t fill =

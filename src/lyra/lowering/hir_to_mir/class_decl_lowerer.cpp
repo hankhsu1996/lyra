@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
+#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -405,7 +406,9 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
         proto_params.push_back(param_id);
       }
       proto_code.params = std::move(proto_params);
-      proto_code.result_type = unit_lowerer.TranslateType(method.result_type);
+      // A prototype declares the interface its definitions implement, so it
+      // reads that interface from the same declaration they do.
+      proto_code.result_type = SubroutineCallTypeOf(unit_lowerer, method);
       // `proto_code.body` stays absent: this declaration does not define the
       // method, and the deriving class supplies it.
       mir_class.callables.Add(

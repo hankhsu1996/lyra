@@ -29,10 +29,9 @@ auto LowerFileIOSystemSubroutineCall(
     diag::SourceSpan span) -> diag::Result<mir::Expr>;
 
 // LRM 13.5 copy-out at the statement boundary for the three file IO tasks
-// that write through an output argument. Synthesizes the BlockStmt that UDF
-// `output` args use: temp local of the dest's type, call with that temp in
-// the output slot, then a writeback assign from temp to the user's actual
-// lvalue. The optional `assign_target` carries the LHS for the
+// that write through an output argument: a temp local of the destination's
+// type takes the output slot, and the user's actual lvalue is assigned from it
+// once the call returns. The optional `assign_target` carries the LHS for the
 // `lhs = $fgets(...)` shape; nullopt means a bare-call statement. The
 // result_type is the call's int32 return slot.
 auto LowerFileIOSystemSubroutineCallStmt(

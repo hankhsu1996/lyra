@@ -907,6 +907,14 @@ enough to warrant its own focused review.
     element spread/append wrapped by `QSpread(...)` / `QElem(...)` at the render site.
   - Class construction of a managed reference renders as inline `lyra::runtime::GcNew<...>` from a
     Construct call whose result type is `ManagedRefType`.
+  - A coroutine closure's captures reach its body as an argument list the render site composes,
+    because a capturing coroutine lambda would dangle once a spawned branch outlives the
+    construction site. The MIR node states those captures as fields, so the render site converts one
+    into the other and the two closure kinds stop looking alike: a synchronous closure is a value
+    that is invoked, a coroutine one is a value that already is its coroutine. Stating a coroutine
+    closure's captures as its body's leading parameters would make both kinds one shape --
+    construct, then invoke -- and would remove the reason the execution backend cannot lower a
+    coroutine closure at all.
   - The DPI-C foreign-export wrapper injects a prologue statement
     `Self self = static_cast<Self>(lyra::runtime::ResolveExportInstance("..."));` around the
     wrapper's body; the receiver recovery is not a MIR statement in the wrapper's body block, so a

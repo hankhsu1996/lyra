@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
@@ -51,14 +52,21 @@ auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
   closure_decl_.invoke.result_type = result_type;
   closure_decl_.invoke.params = invocation_params_;
   std::vector<mir::FieldInit> field_inits = bindings_.Finalize();
-  const mir::TypeId closure_type =
-      unit_->types.Intern(mir::ClosureType{.closure_id = closure_id_});
+  // What a closure expression denotes follows from its body's protocol. A
+  // synchronous body yields a callable a referencing site invokes. A body that
+  // completes as a coroutine yields the coroutine itself: its captures are
+  // frame-copied when it is built, so nothing dangles once a spawned branch
+  // outlives the site, and building it is inseparable from starting it.
+  const mir::TypeId value_type =
+      unit_->types.IsCoroutine(result_type)
+          ? result_type
+          : unit_->types.Intern(mir::ClosureType{.closure_id = closure_id_});
   unit_->DefineClosure(closure_id_, std::move(closure_decl_));
   return mir::Expr{
       .data =
           mir::ClosureExpr{
               .closure = closure_id_, .field_inits = std::move(field_inits)},
-      .type = closure_type};
+      .type = value_type};
 }
 
 auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
@@ -84,6 +92,11 @@ auto BuildClosureCallExpr(
   const auto& construct = std::get<mir::ClosureExpr>(closure.data);
   const mir::TypeId result_type =
       unit.GetClosure(construct.closure).invoke.result_type;
+  if (unit.types.IsCoroutine(result_type)) {
+    throw InternalError(
+        "BuildClosureCallExpr: a closure that completes as a coroutine is the "
+        "coroutine, so there is nothing left to invoke");
+  }
   const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
   return mir::Expr{
       .data =

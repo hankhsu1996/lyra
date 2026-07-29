@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -9,26 +10,40 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/function_id.hpp"
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
 auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   for (std::size_t i = 0; i < mir_->classes.size(); ++i) {
-    const mir::ClassId id{static_cast<std::uint32_t>(i)};
-    if (!mir_->classes.IsDefined(id)) {
+    if (!mir_->classes.IsDefined(mir::ClassId{static_cast<std::uint32_t>(i)})) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedTypeKind,
           "mir_to_lir: undefined class in unit");
     }
-    auto cls = LowerClass(
-        lir::ClassId{static_cast<std::uint32_t>(i)}, mir_->GetClass(id));
+  }
+  for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
+    if (!mir_->closures.IsDefined(
+            mir::ClosureId{static_cast<std::uint32_t>(i)})) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedTypeKind,
+          "mir_to_lir: undefined closure in unit");
+    }
+  }
+  PlanFunctions();
+
+  for (std::size_t i = 0; i < mir_->classes.size(); ++i) {
+    const mir::ClassId id{static_cast<std::uint32_t>(i)};
+    auto cls = LowerClass(id, mir_->GetClass(id));
     if (!cls) {
       return std::unexpected(std::move(cls.error()));
     }
@@ -37,6 +52,24 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       out_.root = added;
     }
   }
+
+  // A closure's invoke is a function like any other body's; the captures its
+  // referencing site supplies arrive as its leading parameters.
+  for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
+    const mir::ClosureId id{static_cast<std::uint32_t>(i)};
+    auto fn = FunctionLowerer(
+                  *this, mir_->GetClosure(id), std::format("closure_{}", i))
+                  .Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    if (out_.functions.Add(*std::move(fn)) != closure_functions_[i]) {
+      throw InternalError(
+          "mir_to_lir: a lowered function landed on an identity other than the "
+          "one planned for it");
+    }
+  }
+
   // A type reached during lowering had no LIR mirror; surface it now, once the
   // whole unit has been walked, rather than from the non-failing translator.
   if (type_error_.has_value()) {
@@ -45,7 +78,28 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   return std::move(out_);
 }
 
-auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
+void UnitLowerer::PlanFunctions() {
+  std::uint32_t next = 0;
+  class_functions_.resize(mir_->classes.size());
+  for (std::size_t i = 0; i < mir_->classes.size(); ++i) {
+    const mir::Class& cls =
+        mir_->GetClass(mir::ClassId{static_cast<std::uint32_t>(i)});
+    ClassFunctions& planned = class_functions_[i];
+    planned.constructor = lir::FunctionId{next++};
+    planned.methods.resize(cls.callables.size());
+    for (std::uint32_t c = 0; c < cls.callables.size(); ++c) {
+      if (cls.callables.Get(mir::CallableId{c}).code.body.has_value()) {
+        planned.methods[c] = lir::FunctionId{next++};
+      }
+    }
+  }
+  closure_functions_.reserve(mir_->closures.size());
+  for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
+    closure_functions_.push_back(lir::FunctionId{next++});
+  }
+}
+
+auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
   out.name = cls.name;
@@ -60,60 +114,63 @@ auto UnitLowerer::LowerClass(lir::ClassId class_id, const mir::Class& cls)
         lir::Member{.name = field.name, .type = TranslateType(field.type)});
   }
 
+  // A class's bodies become functions of the unit, so each takes a name that is
+  // unique across it: the owning class qualifies the body's own name, which is
+  // only unique within that class.
+  const ClassFunctions& planned = class_functions_[owner.value];
   auto constructor =
-      FunctionLowerer(*this, cls.constructor.code, "constructor", class_id)
+      FunctionLowerer(
+          *this, cls.constructor.code, std::format("{}.constructor", cls.name))
           .Run();
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
   }
-  out.constructor = *std::move(constructor);
+  if (out_.functions.Add(*std::move(constructor)) != planned.constructor) {
+    throw InternalError(
+        "mir_to_lir: a lowered function landed on an identity other than the "
+        "one planned for it");
+  }
+  out.constructor = planned.constructor;
 
-  // Only a callable this program defines becomes a LIR function, appended in
-  // arena order; a DPI-C import is reached as a foreign symbol and a pure
-  // virtual has no implementation here, so neither takes a slot. Callee
-  // resolution reaches a method through the same slot assignment memoized
-  // below, so each append must land exactly on the slot it assigns.
-  const mir::ClassId owner{class_id.value};
+  // Only a callable this program defines becomes a function: a DPI-C import is
+  // reached as a foreign symbol and a pure virtual has no implementation here.
+  // The interface lists the rest in arena order, so a method's position in the
+  // list is the slot a dispatch indexes.
   for (std::size_t i = 0; i < cls.callables.size(); ++i) {
     const mir::CallableId cid{static_cast<std::uint32_t>(i)};
     const mir::CallableDecl& callable = cls.callables.Get(cid);
     if (!callable.code.body.has_value()) continue;
-    if (out.methods.size() != MethodSlot(owner, cid).index) {
-      throw InternalError(
-          "mir_to_lir: LIR method slot diverged from the callable arena "
-          "compaction");
-    }
     auto fn =
-        FunctionLowerer(*this, callable.code, callable.name, class_id).Run();
+        FunctionLowerer(
+            *this, callable.code, std::format("{}.{}", cls.name, callable.name))
+            .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    out.methods.push_back(*std::move(fn));
+    if (out_.functions.Add(*std::move(fn)) != *planned.methods[i]) {
+      throw InternalError(
+          "mir_to_lir: a lowered function landed on an identity other than the "
+          "one planned for it");
+    }
+    out.methods.push_back(*planned.methods[i]);
   }
   return out;
 }
 
-auto UnitLowerer::MethodSlot(mir::ClassId owner, mir::CallableId callable)
-    -> lir::MethodRef {
-  auto it = method_slot_memo_.find(owner);
-  if (it == method_slot_memo_.end()) {
-    const mir::Class& cls = mir_->GetClass(owner);
-    std::vector<std::optional<lir::MethodRef>> slots(cls.callables.size());
-    std::uint32_t index = 0;
-    for (std::uint32_t i = 0; i < cls.callables.size(); ++i) {
-      if (cls.callables.Get(mir::CallableId{i}).code.body.has_value()) {
-        slots[i] = lir::MethodRef{
-            .class_id = lir::ClassId{owner.value}, .index = index++};
-      }
-    }
-    it = method_slot_memo_.emplace(owner, std::move(slots)).first;
-  }
-  if (callable.value >= it->second.size() ||
-      !it->second[callable.value].has_value()) {
+auto UnitLowerer::MethodFunction(
+    mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId {
+  const ClassFunctions& planned = class_functions_.at(owner.value);
+  if (callable.value >= planned.methods.size() ||
+      !planned.methods[callable.value].has_value()) {
     throw InternalError(
-        "mir_to_lir: callable has no LIR method slot in its class");
+        "mir_to_lir: callable has no body, so it is no function of this unit");
   }
-  return *it->second[callable.value];
+  return *planned.methods[callable.value];
+}
+
+auto UnitLowerer::ClosureFunction(mir::ClosureId closure) const
+    -> lir::FunctionId {
+  return closure_functions_.at(closure.value);
 }
 
 auto UnitLowerer::BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId {

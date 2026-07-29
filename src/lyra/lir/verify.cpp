@@ -1,7 +1,5 @@
 #include "lyra/lir/verify.hpp"
 
-#include <cstddef>
-#include <cstdint>
 #include <format>
 #include <optional>
 #include <variant>
@@ -191,12 +189,8 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
 }  // namespace
 
 void Verify(const CompilationUnit& unit) {
-  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    const Class& cls = unit.classes.Get(ClassId{static_cast<std::uint32_t>(i)});
-    VerifyFunction(unit, cls.constructor);
-    for (const Function& method : cls.methods) {
-      VerifyFunction(unit, method);
-    }
+  for (const Function& fn : unit.functions) {
+    VerifyFunction(unit, fn);
   }
 }
 
