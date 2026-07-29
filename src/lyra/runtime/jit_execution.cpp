@@ -207,8 +207,10 @@ auto lyra_rt_format(LyraSpan items, const void* time_format) -> void* {
 }
 
 auto lyra_rt_packed_const(
-    std::int64_t value, const std::int64_t* dims, std::int64_t dims_count,
-    bool is_signed, bool is_four_state) -> void* {
+    const std::uint64_t* value_words, std::int64_t value_word_count,
+    const std::uint64_t* unknown_words, std::int64_t unknown_word_count,
+    const std::int64_t* dims, std::int64_t dims_count, bool is_signed,
+    bool is_four_state) -> void* {
   const auto count = static_cast<std::size_t>(dims_count);
   const std::span<const std::int64_t> bounds{dims, count * 2};
   std::vector<PackedRange> ranges;
@@ -218,8 +220,12 @@ auto lyra_rt_packed_const(
         PackedRange{.left = bounds[i * 2], .right = bounds[(i * 2) + 1]});
   }
   return GeneratedCallScope::Current().Arena().New<PackedArray>(
-      PackedArray::FromInt(
-          value, PackedType{std::move(ranges), is_signed, is_four_state}));
+      PackedArray::FromWords(
+          std::span<const std::uint64_t>{
+              value_words, static_cast<std::size_t>(value_word_count)},
+          std::span<const std::uint64_t>{
+              unknown_words, static_cast<std::size_t>(unknown_word_count)},
+          PackedType{std::move(ranges), is_signed, is_four_state}));
 }
 
 void lyra_rt_writeln(void* files, void* descriptor, void* text) {

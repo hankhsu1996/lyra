@@ -6,14 +6,14 @@
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/function.hpp"
+#include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/type_query.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -37,9 +37,8 @@ class UnitLowerer {
 
   // Translates a MIR type to its LIR-owned identity, minting it on first use.
   // Mirrors the MIR type universe: a generic type maps mechanically to its LIR
-  // counterpart. A type whose LIR mirror is not yet built (a nominal struct or
-  // a closure, which need the LIR aggregate registries) records an unsupported-
-  // type error read at `Run`; it never silently mistranslates.
+  // counterpart. A type with no LIR mirror yet records an unsupported-type
+  // error read at `Run`; it never silently mistranslates.
   auto TranslateType(mir::TypeId id) -> lir::TypeId;
 
   [[nodiscard]] auto Types() const -> const lir::TypeArena& {
@@ -53,22 +52,37 @@ class UnitLowerer {
   auto MachineBoolType() -> lir::TypeId;
   auto VoidType() -> lir::TypeId;
 
-  // The LIR method slot a class's callable lowers to. The LIR method list holds
-  // a class's bodied callables in arena order; a DPI-C import (external) takes
-  // a `CallableId` but no method slot, so the slots compact past it. Each
-  // class's slots are assigned once and memoized: the first query builds the
-  // class's table, later queries read it. Throws if `callable` is not a method
-  // of `owner` (an external, or an out-of-range id).
-  auto MethodSlot(mir::ClassId owner, mir::CallableId callable)
-      -> lir::MethodRef;
+  // The LIR function a class's callable lowers to. Throws if `callable` has no
+  // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
+  // virtual has no implementation here, so neither is a function of this unit.
+  [[nodiscard]] auto MethodFunction(
+      mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
+
+  // The LIR function a closure's invoke lowers to.
+  [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
+      -> lir::FunctionId;
 
  private:
+  // The function identities of one class, in the order the unit lowers them:
+  // the constructor, then each callable that has a body. A callable with no
+  // body is not a function of this unit and holds none.
+  struct ClassFunctions {
+    lir::FunctionId constructor{};
+    std::vector<std::optional<lir::FunctionId>> methods;
+  };
+
+  // Assigns every function identity the unit will hold, before any body is
+  // lowered, because a body may call a function whose own body is lowered later
+  // -- including itself. Assignment walks in the same order the lowering
+  // appends, so an append always lands on the identity planned for it.
+  void PlanFunctions();
+
   auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
   // Records `what` (a human phrase like "a closure") as the unit's first
   // unmirrored-type error and returns a benign placeholder type; the unit fails
   // at `Run` before the placeholder is observed.
   auto RecordUnsupportedType(std::string_view what) -> lir::TypeData;
-  auto LowerClass(lir::ClassId class_id, const mir::Class& cls)
+  auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
   static auto LowerBase(const mir::ClassRef& base) -> lir::Base;
 
@@ -76,11 +90,8 @@ class UnitLowerer {
   lir::CompilationUnit out_;
   std::unordered_map<mir::TypeId, lir::TypeId> type_memo_;
   std::unordered_map<lir::TypeId, lir::TypeId> pointer_memo_;
-  // Per-class map from a callable to the compacted LIR method slot it occupies,
-  // built lazily on first `MethodSlot` query. Keyed by class id; a callable
-  // that is not a method (an external) has no slot.
-  std::unordered_map<mir::ClassId, std::vector<std::optional<lir::MethodRef>>>
-      method_slot_memo_;
+  std::vector<ClassFunctions> class_functions_;
+  std::vector<lir::FunctionId> closure_functions_;
   std::optional<lir::TypeId> machine_bool_type_;
   std::optional<lir::TypeId> void_type_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as

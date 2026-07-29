@@ -12,11 +12,11 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
@@ -34,10 +34,9 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/lowering/hir_to_mir/writeback_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -382,87 +381,6 @@ auto LowerSystemSubroutineCall(
           },
       },
       desc.semantic);
-}
-
-// LRM 13.5 intra-unit subroutine call in value position: the callee takes only
-// `input` values and `ref` / const-ref aliases here. A `ref` / const-ref formal
-// aliases the actual's cell (LRM 13.5.2); the body's `Ref<T>` binds it. An
-// output / inout call is intercepted before this dispatch and lowered through
-// the completion-payload writeback path, so it never reaches here. The callee
-// body receives its instance handle as `arguments[0]`; SV actuals follow.
-template <ExprLowerer Lowerer>
-auto LowerStructuralSubroutineCall(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::StructuralSubroutineRef& usr, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_exprs = lowerer.HirExprs();
-  auto& block = *frame.current_block;
-  const hir::SubroutineDecl& decl =
-      lowerer.LookupHirSubroutine(usr.hops, usr.subroutine);
-  if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
-    // An output / inout formal only reaches value lowering in a structural
-    // context; the procedural path intercepts it as a completion-payload
-    // closure. The frontend rejects an output / inout call outside procedural
-    // code (LRM 13.4), so a structural one is a compiler-invariant violation
-    // rather than a user-diagnosable form.
-    for (const auto& param : decl.params) {
-      if (hir::RequiresWriteback(param.direction)) {
-        throw InternalError(
-            "structural subroutine call carries an output / inout argument; "
-            "the "
-            "frontend rejects these outside procedural code (LRM 13.4)");
-      }
-    }
-  }
-  std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size() + 1);
-  // The callee is reached through the object that owns it: at hops 0 the
-  // current body's `self`, above that an enclosing scope's object navigated
-  // through `Parent()`. The same receiver path a structural member access
-  // takes, so the callee's class is named by this receiver's type.
-  args.push_back(BuildEnclosingScopeReceiver(
-      frame, lowerer.Owner().Unit(),
-      mir::EnclosingHops{.value = usr.hops.value}));
-  for (std::size_t i = 0; i < c.arguments.size(); ++i) {
-    if (!c.arguments[i].has_value()) {
-      throw InternalError("user-function call argument unexpectedly elided");
-    }
-    // A ref / const-ref formal aliases the actual's cell. The body's
-    // `Ref<T>` either binds the wrapped cell directly (bare observable
-    // actual -- `Ref<T>` to `Var<T>&`) or holds a `ScopedMutation`
-    // snapshot (selector / range on an observable actual). The bare-cell
-    // case skips the mutate wrap, since the helper would otherwise
-    // detach the body from the underlying cell.
-    const bool is_ref_formal =
-        i < decl.params.size() &&
-        (decl.params[i].direction == hir::ParamDirection::kRef ||
-         decl.params[i].direction == hir::ParamDirection::kConstRef);
-    mir::ExprId actual_id{};
-    if (is_ref_formal) {
-      auto arg_or = lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments[i]), frame);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      actual_id = block.exprs.Add(*std::move(arg_or));
-      const mir::ExprId root_id =
-          FindLhsRootId(lowerer.Owner().Unit(), block, actual_id);
-      if (root_id != actual_id) {
-        actual_id = MaybeWrapObservableLhsWithMutate(lowerer, block, actual_id);
-      }
-      args.push_back(BuildReferenceArg(
-          lowerer.Owner().Unit(), block, actual_id,
-          block.exprs.Get(actual_id).type));
-    } else {
-      auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      args.push_back(block.exprs.Add(*std::move(arg_or)));
-    }
-  }
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = lowerer.TranslateStructuralSubroutine(
-                  usr.hops, usr.subroutine),
-              .arguments = std::move(args)},
-      .type = result_type};
 }
 
 // Built-in method dispatch (LRM 6.16 / 6.19.5 / 7.9 / 7.10 / 7.12 / 15.5).
@@ -844,76 +762,6 @@ auto LowerStaticMethodCall(
       .type = result_type};
 }
 
-// A call to a package or `$unit` subroutine (LRM 26.3 / 3.12.1) in value
-// position: a receiver-less callable of another compilation unit, reached by
-// name. It takes no receiver but does take the engine services as its leading
-// argument -- the receiver-less peer of `self`, so the callee body can wake a
-// variable's subscribers or suspend. A ref / const-ref formal aliases the
-// actual's cell exactly as an intra-unit call does. An output / inout call is
-// intercepted before this dispatch and lowered through the completion-payload
-// writeback path, so it never reaches here.
-template <ExprLowerer Lowerer>
-auto LowerExternalUnitSubroutineCall(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::ExternalUnitSubroutineRef& ref, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_exprs = lowerer.HirExprs();
-  auto& block = *frame.current_block;
-  if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
-    // As with an intra-unit call, an output / inout formal only reaches value
-    // lowering in a structural context; the procedural path intercepts it. The
-    // frontend rejects such a call outside procedural code (LRM 13.4).
-    for (const auto& param : ref.params) {
-      if (hir::RequiresWriteback(param.direction)) {
-        throw InternalError(
-            "cross-unit subroutine call carries an output / inout argument; "
-            "the "
-            "frontend rejects these outside procedural code (LRM 13.4)");
-      }
-    }
-  }
-  std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size() + 1);
-  // The caller supplies services from its own ambient handle: an instance
-  // body's `self`, or an enclosing package callable's own services parameter.
-  args.push_back(block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
-  for (std::size_t i = 0; i < c.arguments.size(); ++i) {
-    if (!c.arguments[i].has_value()) {
-      throw InternalError("package call argument unexpectedly elided");
-    }
-    const bool is_ref_formal =
-        i < ref.params.size() &&
-        (ref.params[i].direction == hir::ParamDirection::kRef ||
-         ref.params[i].direction == hir::ParamDirection::kConstRef);
-    if (is_ref_formal) {
-      auto arg_or = lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments[i]), frame);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      mir::ExprId actual_id = block.exprs.Add(*std::move(arg_or));
-      const mir::ExprId root_id =
-          FindLhsRootId(lowerer.Owner().Unit(), block, actual_id);
-      if (root_id != actual_id) {
-        actual_id = MaybeWrapObservableLhsWithMutate(lowerer, block, actual_id);
-      }
-      args.push_back(BuildReferenceArg(
-          lowerer.Owner().Unit(), block, actual_id,
-          block.exprs.Get(actual_id).type));
-      continue;
-    }
-    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    args.push_back(block.exprs.Add(*std::move(arg_or)));
-  }
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target =
-                          lowerer.Owner().MakeExternalCallableTarget(ref)},
-              .arguments = std::move(args)},
-      .type = result_type};
-}
-
 }  // namespace
 
 // A call to a method the runtime library provides for an imported class (LRM
@@ -967,37 +815,60 @@ auto LowerImportedMethodCall(
       .type = result_type};
 }
 
+// A user subroutine hands its completion back as a product -- its result
+// followed by each value it writes back -- so a call is typed with the payload
+// its callee produces and the caller projects the component it wants (LRM 13.4,
+// 13.5). A callee with no writeback formals carries only its result, and a void
+// one carries nothing at all: an empty payload has no component to read, so the
+// call stands as a value nothing consumes.
+template <ExprLowerer Lowerer>
+auto ProjectCompletionResult(
+    Lowerer& lowerer, WalkFrame frame, mir::TypeId result_type,
+    diag::Result<mir::Expr> call) -> diag::Result<mir::Expr> {
+  if (!call) return call;
+  auto& unit = lowerer.Owner().Unit();
+  const bool has_result = result_type != unit.builtins.void_type;
+  std::vector<mir::TypeId> components;
+  if (has_result) components.push_back(result_type);
+  call->type = CompletionPayloadType(unit, components);
+  if (!has_result) return call;
+  auto& block = *frame.current_block;
+  const mir::ExprId completion = block.exprs.Add(*std::move(call));
+  return mir::Expr{
+      .data = mir::TupleGetExpr{.tuple = completion, .index = 0},
+      .type = result_type};
+}
+
 template <ExprLowerer Lowerer>
 auto LowerHirCallExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  // A call whose callee has an output / inout formal carries its writebacks
-  // through a completion payload; in value position it lowers to an
-  // immediately-invoked closure that writes them back and yields the function
-  // result (LRM 13.4). Procedural-only -- the frontend rejects an output /
-  // inout / ref call outside procedural code (LRM 13.4), so no such call
-  // reaches a structural HIR -- so the interception is guarded here, and the
-  // per-callee dispatch below sees only input / ref arguments.
-  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-    if (auto plan = PlanWritebackCall(lowerer, c, result_type)) {
-      return LowerWritebackCallExpr(lowerer, frame, c, *plan);
-    }
+  // A user subroutine call carries its completion through a payload the caller
+  // projects its result and its writebacks out of (LRM 13.4, 13.5). The
+  // dispatch below covers the callees that are not user subroutines and have
+  // their own boundary.
+  if (auto lowered = LowerSubroutineCall(lowerer, frame, c, result_type)) {
+    return *std::move(lowered);
   }
   return std::visit(
       Overloaded{
           [&](const hir::SystemSubroutineRef& sys) -> diag::Result<mir::Expr> {
             return LowerSystemSubroutineCall(lowerer, frame, c, sys, span);
           },
-          [&](const hir::StructuralSubroutineRef& usr)
-              -> diag::Result<mir::Expr> {
-            return LowerStructuralSubroutineCall(
-                lowerer, frame, c, usr, result_type);
+          [](const hir::StructuralSubroutineRef&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerHirCallExpr: a user subroutine call is planned before "
+                "this dispatch");
           },
           [&](const hir::MethodCallRef& m) -> diag::Result<mir::Expr> {
-            return LowerMethodCall(lowerer, frame, c, m, result_type);
+            return ProjectCompletionResult(
+                lowerer, frame, result_type,
+                LowerMethodCall(lowerer, frame, c, m, result_type));
           },
           [&](const hir::StaticMethodCallRef& s) -> diag::Result<mir::Expr> {
-            return LowerStaticMethodCall(lowerer, frame, c, s, result_type);
+            return ProjectCompletionResult(
+                lowerer, frame, result_type,
+                LowerStaticMethodCall(lowerer, frame, c, s, result_type));
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);
@@ -1008,10 +879,10 @@ auto LowerHirCallExpr(
           [&](const hir::ImportedMethodRef& im) -> diag::Result<mir::Expr> {
             return LowerImportedMethodCall(lowerer, frame, c, im, result_type);
           },
-          [&](const hir::ExternalUnitSubroutineRef& ext)
-              -> diag::Result<mir::Expr> {
-            return LowerExternalUnitSubroutineCall(
-                lowerer, frame, c, ext, result_type);
+          [](const hir::ExternalUnitSubroutineRef&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerHirCallExpr: a cross-unit subroutine call is planned "
+                "before this dispatch");
           },
       },
       c.callee);

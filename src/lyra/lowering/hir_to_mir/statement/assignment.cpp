@@ -13,7 +13,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -25,9 +24,8 @@
 #include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/lowering/hir_to_mir/writeback_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -214,36 +212,40 @@ auto LowerDestructuringAssign(
       .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
-// Whether enabling this callee suspends the caller (LRM 13.3): a task enable
-// awaits its completion, a function call returns without yielding. The visit is
-// exhaustive over the callee kinds, so a kind that becomes suspendable forces a
-// decision here rather than silently defaulting to non-suspending.
-auto CallSuspends(ProcessLowerer& process, const hir::CallExpr& call) -> bool {
+// Whether this call statement is a suspension point (LRM 13.3). A callee whose
+// completion the caller awaits states that in its call's type, so that is read
+// from the type rather than re-derived -- the type is the single carrier of a
+// call protocol, and reading it here is what keeps it so. The visit answers
+// what a type cannot: a callee that parks the process through a runtime entry
+// instead of completing, and one whose enable lowers to something other than a
+// call. It is exhaustive over the callee kinds, so a kind that becomes
+// suspendable forces a decision here rather than silently defaulting to
+// non-suspending.
+auto CallStatementSuspends(
+    ProcessLowerer& process, const hir::CallExpr& call, mir::TypeId call_type)
+    -> bool {
+  if (process.Owner().Unit().types.IsCoroutine(call_type)) {
+    return true;
+  }
   return std::visit(
       Overloaded{
           [](const hir::SystemSubroutineRef& sys) {
             return support::LookupSystemSubroutine(sys.id).suspends;
           },
-          [&](const hir::StructuralSubroutineRef& s) {
-            return process.EnclosingScopeLowerer()
-                       .LookupHirSubroutine(s.hops, s.subroutine)
-                       .kind == hir::SubroutineKind::kTask;
-          },
           [](const hir::ImportedMethodRef& m) {
             return support::ImportedRuntimeMethodSuspends(m.method);
           },
-          [&](const hir::ForeignImportRef& f) {
-            return process.Owner().Hir().foreign_imports.Get(f.id).is_task;
-          },
-          [](const hir::ExternalUnitSubroutineRef& e) {
-            // A cross-unit task enable (LRM 26.3) awaits, the same as an
-            // intra-unit one; the callee's kind rides its by-name reference.
-            return e.kind == hir::SubroutineKind::kTask;
-          },
+          // An intra-unit task enable and a cross-unit one (LRM 26.3) both
+          // complete as coroutines, which the call's type already answered.
+          [](const hir::StructuralSubroutineRef&) { return false; },
+          [](const hir::ExternalUnitSubroutineRef&) { return false; },
+          // A foreign task import (LRM 35.5.2) completes as a coroutine too,
+          // which the call's type already answered.
+          [](const hir::ForeignImportRef&) { return false; },
           // A class method is always a function today -- a task declared in a
           // class body is rejected at AST-to-HIR -- so no receiver-bearing call
           // yields. When a class task method becomes lowerable, its enable
-          // suspends and these arms state that instead.
+          // completes as a coroutine and the type answers it too.
           [](const hir::MethodCallRef&) { return false; },
           [](const hir::StaticMethodCallRef&) { return false; },
           // A built-in method (LRM 6.16 / 7.9 / 7.12 / 15.5) computes a value
@@ -355,18 +357,12 @@ auto LowerExprStmt(
     }
   }
 
-  // A call statement. Resolving the callee here -- once -- decides both the
-  // output-arg desugar shape (LRM 13.5) and whether the call is a suspension
-  // point. A suspending callee ($finish, a task) lowers to an awaited
-  // expression whose completion yields nothing here (a bare call with no
-  // outputs), so the await result is void and the enclosing statement discards
-  // it.
+  // A call statement. A suspending callee ($finish, a task) is awaited here,
+  // and what the await produces is what the awaitable carries: a callee that
+  // completes as a coroutine hands over its completion payload, one that parks
+  // the process through a runtime entry hands over nothing. Either way the
+  // statement is the discard.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
-    if (auto plan = PlanWritebackCall(
-            process, *call, process.Owner().TranslateType(inner.type))) {
-      return LowerWritebackCallStmt(
-          process, frame, std::move(label), *call, *plan, std::nullopt);
-    }
     if (const auto* sys_ref =
             std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
       if (auto stmt = LowerSystemSubroutineCallStmtForm(
@@ -375,15 +371,18 @@ auto LowerExprStmt(
         return *std::move(stmt);
       }
     }
-    const bool suspends = CallSuspends(process, *call);
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));
     const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
-    if (suspends) {
+    const mir::TypeId call_type = block.exprs.Get(call_id).type;
+    if (CallStatementSuspends(process, *call, call_type)) {
+      const mir::TypeInterner& types = process.Owner().Unit().types;
       const mir::ExprId await_id = block.exprs.Add(
           mir::Expr{
               .data = mir::AwaitExpr{.awaitable = call_id},
-              .type = process.Owner().Unit().builtins.void_type});
+              .type = types.IsCoroutine(call_type)
+                          ? types.CoroutinePayload(call_type)
+                          : process.Owner().Unit().builtins.void_type});
       return mir::Stmt{
           .label = std::move(label), .data = mir::ExprStmt{.expr = await_id}};
     }
@@ -405,14 +404,6 @@ auto LowerExprStmt(
         conv_target_type = rhs->type;
       }
       if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
-        if (auto plan = PlanWritebackCall(
-                process, *call,
-                process.Owner().TranslateType(call_carrier->type))) {
-          if (!conv_target_type.has_value()) {
-            return LowerWritebackCallStmt(
-                process, frame, std::move(label), *call, *plan, assign->lhs);
-          }
-        }
         if (const auto* sys_ref =
                 std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
           const mir::TypeId result_type = process.Owner().TranslateType(

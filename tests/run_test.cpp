@@ -506,6 +506,98 @@ auto WritePackedShapeSource(const std::filesystem::path& path) -> void {
       << "endmodule\n";
 }
 
+// An integral literal carries its whole value: every word of a width past one
+// machine word, and the X / Z bits of a 4-state one (LRM 5.7.1). A literal that
+// arrives short is not only printed wrong -- it decides comparisons, so a case
+// equality against a mangled literal answers true for the wrong reason. The
+// cases pair each literal with a case equality (LRM 11.4.5) for that reason:
+// a positive one alone passes when both sides degrade the same way, so a
+// negative one against the value the degradation would produce is what tells
+// them apart.
+auto WriteIntegralLiteralSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  logic [15:0] xz;\n"
+      << "  logic [95:0] wide;\n"
+      << "  logic [63:0] edge64;\n"
+      << "  logic [71:0] wxz;\n"
+      << "  logic [7:0] narrow;\n"
+      << "  initial begin\n"
+      << "    xz = 16'hAxAz;\n"
+      << "    $display(\"xz=%h\", xz);\n"
+      << "    if (xz === 16'hAxAz) $display(\"xz ceq yes\");\n"
+      << "    else $display(\"xz ceq no\");\n"
+      << "    if (xz === 16'hAFA0) $display(\"xz bad yes\");\n"
+      << "    else $display(\"xz bad no\");\n"
+      << "    wide = 96'h1234_5678_9ABC_DEF0_1111_2222;\n"
+      << "    $display(\"wide=%h\", wide);\n"
+      << "    if (wide === 96'h1234_5678_9ABC_DEF0_1111_2222)\n"
+      << "      $display(\"wide ceq yes\");\n"
+      << "    else $display(\"wide ceq no\");\n"
+      << "    edge64 = 64'hFEDC_BA98_7654_3210;\n"
+      << "    $display(\"e64=%h\", edge64);\n"
+      << "    wxz = 72'hAB_CDEF_0123_4567_89xz;\n"
+      << "    $display(\"wxz=%h\", wxz);\n"
+      << "    narrow = 8'd200;\n"
+      << "    $display(\"narrow=%0d\", narrow);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+// A call hands its completion back as a product -- the result, then each value
+// an `output` / `inout` formal carries back (LRM 13.5) -- and the caller writes
+// each of those into the actual it came from. A callee that carries nothing
+// back needs no such sequencing, so the two shapes must still agree: the cases
+// pair a callee with all three component kinds against a void one, a
+// nothing-back one, and a call nested inside a larger expression, where the
+// sequencing has to happen without a statement of its own. `inout` is read
+// twice across the two calls so a completion that silently drops a component
+// shows up as a stale accumulator rather than only as a wrong return. A `ref`
+// formal rides along because it is the opposite shape (LRM 13.5.2): it carries
+// nothing back at all, writing the caller's storage as the body runs, so a
+// realization that confused the two would answer differently here.
+auto WriteSubroutineCallSource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  function automatic int split(input int a, output int lo,\n"
+      << "                               inout int acc);\n"
+      << "    lo = a % 256;\n"
+      << "    acc = acc + a;\n"
+      << "    return a / 256;\n"
+      << "  endfunction\n"
+      << "  function automatic void store(input int a, output int dst);\n"
+      << "    dst = a + 1;\n"
+      << "  endfunction\n"
+      << "  function automatic int plain(input int a);\n"
+      << "    return a * 3;\n"
+      << "  endfunction\n"
+      << "  function automatic void bump(ref int r, input int by);\n"
+      << "    r = r + by;\n"
+      << "  endfunction\n"
+      << "  function automatic int aliased(input int seed);\n"
+      << "    int tmp;\n"
+      << "    tmp = seed;\n"
+      << "    bump(tmp, 5);\n"
+      << "    return tmp;\n"
+      << "  endfunction\n"
+      << "  int hi;\n"
+      << "  int lo;\n"
+      << "  int acc;\n"
+      << "  int dst;\n"
+      << "  initial begin\n"
+      << "    acc = 100;\n"
+      << "    hi = split(4660, lo, acc);\n"
+      << "    $display(\"res hi=%0d lo=%0d acc=%0d\", hi, lo, acc);\n"
+      << "    $display(\"nested=%0d\", split(513, lo, acc) + 1);\n"
+      << "    $display(\"after lo=%0d acc=%0d\", lo, acc);\n"
+      << "    store(41, dst);\n"
+      << "    $display(\"void dst=%0d\", dst);\n"
+      << "    $display(\"plain=%0d\", plain(14));\n"
+      << "    $display(\"aliased=%0d\", aliased(7));\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 TEST(LyraRun, JitAndCppAgreeOnInteriorWrite) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -581,6 +673,78 @@ TEST(LyraRun, JitAndCppAgreeOnPackedShape) {
       "uw=cdab\n"
       "ue=ab\n"
       "us=cda5\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnIntegralLiteral) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteIntegralLiteralSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "xz=axaz\n"
+      "xz ceq yes\n"
+      "xz bad no\n"
+      "wide=123456789abcdef011112222\n"
+      "wide ceq yes\n"
+      "e64=fedcba9876543210\n"
+      "wxz=abcdef0123456789xz\n"
+      "narrow=200\n")
+      << "stdout: " << jit.stdout_text;
+}
+
+TEST(LyraRun, JitAndCppAgreeOnSubroutineCall) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteSubroutineCallSource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_EQ(
+      jit.stdout_text,
+      "res hi=18 lo=52 acc=4760\n"
+      "nested=3\n"
+      "after lo=1 acc=5273\n"
+      "void dst=42\n"
+      "plain=42\n"
+      "aliased=12\n")
       << "stdout: " << jit.stdout_text;
 }
 

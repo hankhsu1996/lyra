@@ -723,9 +723,11 @@ auto LowerForeignImportSequenced(
 // The task import call (LRM 35.5.2): a task has no SV return, so the call
 // finishes as a coroutine -- the awaitable the caller drives, the same call
 // protocol as a native task enable (LRM 35.8), uniform whether or not the
-// foreign side consumes time. The coroutine closure is returned directly, not
-// called: it renders self-invoking to a `Coroutine`, and the statement lowering
-// awaits it.
+// foreign side consumes time. The boundary always sequences through the
+// closure, even all-input, because the await needs a coroutine to drive. The
+// closure is returned directly, not called: building a coroutine closure is
+// starting it, which is what its type says, and the statement lowering awaits
+// it.
 //
 // A foreign task may consume simulation time, which it does by calling back an
 // exported task that suspends. The foreign call therefore runs on a fiber whose
@@ -1077,22 +1079,16 @@ auto SynthesizeForeignExportEntry(
     }
   }
 
-  // Bind the completion value to a local every component projects out of; the
-  // projection encoding (bare value vs tuple) lives in one shared place. An
-  // empty payload has nothing to bind, so the call is a bare statement.
-  std::optional<mir::LocalId> completion;
-  if (!components.empty()) {
-    completion = bindings.DeclareAnonymous(
-        mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
-    body.AppendStmt(
-        mir::LocalDeclStmt{.target = *completion, .init = completion_source});
-  } else {
-    body.AppendStmt(mir::ExprStmt{.expr = completion_source});
-  }
+  // Bind the completion value to a local every component projects out of. A
+  // completion is a product at every count, so it binds the same way whether or
+  // not anything is projected back out of it.
+  const mir::LocalId completion = bindings.DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
+  body.AppendStmt(
+      mir::LocalDeclStmt{.target = completion, .init = completion_source});
   const auto component_value = [&](std::size_t k) -> mir::ExprId {
     return ProjectCompletionComponent(
-        body, *completion, payload_type, components.size(), k,
-        components[k].sv_type);
+        body, completion, payload_type, k, components[k].sv_type);
   };
 
   // Copy each `output` / `inout` component back through its foreign pointer: a

@@ -7,6 +7,7 @@
 
 #include "lyra/backend/llvm/runtime_abi.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace llvm {

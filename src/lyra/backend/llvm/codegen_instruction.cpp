@@ -231,8 +231,8 @@ auto CodeGenFunction::ResolveCallee(
           [&](const lir::BuiltinTarget& t) -> llvm::FunctionCallee {
             return BuiltinCallee(t, call, result_type);
           },
-          [&](const lir::MethodTarget& t) -> llvm::FunctionCallee {
-            return module_->MethodFunction(t.method.class_id, t.method.index);
+          [&](const lir::FunctionTarget& t) -> llvm::FunctionCallee {
+            return module_->UnitFunction(t.function);
           },
           [&](const lir::ConstructTarget&) -> llvm::FunctionCallee {
             return ConstructCallee(call);
@@ -501,7 +501,7 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
             return LowerNullConst(c);
           },
           [&](const lir::FuncRef& f) -> llvm::Value* {
-            return module_->MethodFunction(f.method.class_id, f.method.index);
+            return module_->UnitFunction(f.function);
           }},
       operand);
 }
@@ -513,46 +513,62 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
 // derived below this layer.
 auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
     -> llvm::Value* {
-  const std::uint64_t value = constant.value.value_words.empty()
-                                  ? 0
-                                  : constant.value.value_words.front();
-  const bool is_signed = constant.value.signedness == lir::Signedness::kSigned;
   if (const auto* machine = std::get_if<lir::MachineIntType>(
           &module_->Unit().types.Get(constant.type).data)) {
     return llvm::ConstantInt::get(
-        llvm::IntegerType::get(module_->Context(), machine->bit_width), value,
-        is_signed);
+        llvm::IntegerType::get(module_->Context(), machine->bit_width),
+        constant.value.value_words.front(),
+        machine->signedness == lir::Signedness::kSigned);
   }
-  const bool is_four_state =
-      constant.value.state_kind == lir::IntegralStateKind::kFourState;
   auto* i64_ty = llvm::Type::getInt64Ty(module_->Context());
   auto* i1_ty = llvm::Type::getInt1Ty(module_->Context());
+  const auto words_global = [&](const std::vector<llvm::Constant*>& entries) {
+    auto* array_ty = llvm::ArrayType::get(i64_ty, entries.size());
+    auto* global = new llvm::GlobalVariable(
+        module_->Module(), array_ty, true, llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantArray::get(array_ty, entries));
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    return global;
+  };
+  const auto plane = [&](const std::vector<std::uint64_t>& words) {
+    std::vector<llvm::Constant*> entries;
+    entries.reserve(words.size());
+    for (const std::uint64_t word : words) {
+      entries.push_back(llvm::ConstantInt::get(i64_ty, word));
+    }
+    return words_global(entries);
+  };
 
-  // The declared dimension stack travels with the constant so a multi-dim
-  // packed value keeps its shape into element / slice access -- the same
-  // PackedType the C++ backend renders inline.
-  const std::vector<lir::PackedRange>& dims =
-      lir::PackedShape(module_->Unit().types, constant.type).dims;
+  // The declared shape travels with the constant: its dimension stack so a
+  // multi-dim packed value keeps its shape into element / slice access, and its
+  // signedness and state-ness so the runtime builds the value the destination
+  // type declares -- the literal is already in that type by here.
+  const lir::PackedArrayType& shape =
+      lir::PackedShape(module_->Unit().types, constant.type);
   std::vector<llvm::Constant*> bounds;
-  bounds.reserve(dims.size() * 2);
-  for (const lir::PackedRange& range : dims) {
+  bounds.reserve(shape.dims.size() * 2);
+  for (const lir::PackedRange& range : shape.dims) {
     bounds.push_back(llvm::ConstantInt::get(i64_ty, range.left));
     bounds.push_back(llvm::ConstantInt::get(i64_ty, range.right));
   }
-  auto* bounds_ty = llvm::ArrayType::get(i64_ty, bounds.size());
-  auto* bounds_global = new llvm::GlobalVariable(
-      module_->Module(), bounds_ty, true, llvm::GlobalValue::PrivateLinkage,
-      llvm::ConstantArray::get(bounds_ty, bounds));
-  bounds_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  llvm::Value* bounds_ptr =
-      builder_.CreateConstInBoundsGEP2_64(bounds_ty, bounds_global, 0, 0);
 
+  // Both planes cross exactly as the constant holds them, so a width past one
+  // machine word and the X / Z bits of a 4-state literal reach the runtime
+  // intact. Checking them against the width the shape spans is the runtime's:
+  // a concrete size is derived below this layer, never here.
   return builder_.CreateCall(
       module_->Runtime().PackedConst(),
-      {llvm::ConstantInt::get(i64_ty, value), bounds_ptr,
-       llvm::ConstantInt::get(i64_ty, static_cast<std::uint64_t>(dims.size())),
-       llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0),
-       llvm::ConstantInt::get(i1_ty, is_four_state ? 1 : 0)});
+      {plane(constant.value.value_words),
+       llvm::ConstantInt::get(i64_ty, constant.value.value_words.size()),
+       plane(constant.value.state_words),
+       llvm::ConstantInt::get(i64_ty, constant.value.state_words.size()),
+       words_global(bounds),
+       llvm::ConstantInt::get(
+           i64_ty, static_cast<std::uint64_t>(shape.dims.size())),
+       llvm::ConstantInt::get(
+           i1_ty, shape.signedness == lir::Signedness::kSigned ? 1 : 0),
+       llvm::ConstantInt::get(
+           i1_ty, shape.atom != lir::BitAtom::kBit ? 1 : 0)});
 }
 
 // A string literal materializes as its native constant bytes; the owning

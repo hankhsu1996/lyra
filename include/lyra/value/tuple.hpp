@@ -24,7 +24,13 @@ class Tuple {
  public:
   Tuple() = default;
 
-  explicit Tuple(Ts... values) : data_(std::move(values)...) {
+  // Deduced rather than taking `Ts...` directly so that the component list may
+  // be empty: a product of no components is a value like any other, and a
+  // non-template constructor over an empty pack would collide with the default
+  // one instead of simply taking no arguments.
+  template <typename... Us>
+    requires(sizeof...(Us) == sizeof...(Ts))
+  explicit Tuple(Us&&... values) : data_(std::forward<Us>(values)...) {
   }
 
   // Component access by declaration-order index. The reference qualifier tracks
@@ -116,6 +122,18 @@ class Tuple {
  private:
   std::tuple<Ts...> data_;
 };
+
+// Every arity is a product, so the contract is asserted at none, one, and many
+// components rather than only at the shape that happens to be common.
+static_assert(LyraValue<Tuple<>>);
+static_assert(CaseEqualComparable<Tuple<>>);
+static_assert(BitstreamSizable<Tuple<>>);
+static_assert(Defaultable<Tuple<>>);
+
+static_assert(LyraValue<Tuple<PackedArray>>);
+static_assert(CaseEqualComparable<Tuple<PackedArray>>);
+static_assert(BitstreamSizable<Tuple<PackedArray>>);
+static_assert(Defaultable<Tuple<PackedArray>>);
 
 static_assert(LyraValue<Tuple<PackedArray, PackedArray>>);
 static_assert(CaseEqualComparable<Tuple<PackedArray, PackedArray>>);

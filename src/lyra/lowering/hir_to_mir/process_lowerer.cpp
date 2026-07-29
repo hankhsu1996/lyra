@@ -262,7 +262,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // A callable's leading parameter is the ambient handle its body reaches
   // enclosing state through. An instance method (LRM 8.6) takes `self`, the
   // pointer to its object; a package callable (LRM 26.3) has no object and
-  // instead takes the engine services directly -- the receiver-less peer of
+  // instead takes the runtime handle directly -- the receiver-less peer of
   // `self`, through which it wakes a package variable's subscribers or suspends
   // a task. A static class method (LRM 8.10) has an owner class but no object,
   // so it takes neither. The handle is seeded for every callable of its form,
@@ -280,9 +280,6 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
         mir::LocalDecl{
             .name = "runtime", .type = owner_->Unit().builtins.effects}));
   }
-  // A task body suspends on timing controls, so its call protocol is the
-  // coroutine one; a function body executes synchronously.
-  const bool body_is_coroutine = src.kind == hir::SubroutineKind::kTask;
   const WalkFrame body_frame =
       parent.WithBlock(&code.Body()).WithBindings(&bindings);
 
@@ -340,7 +337,6 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // self-recursive call still resolves to the method): the leading
   // completion-payload component, the value a fall-through or value-less
   // `return` carries. void functions and tasks have none.
-  std::vector<mir::TypeId> payload_components;
   if (src.result_var.has_value()) {
     const mir::TypeId ret_type = owner_->TranslateType(src.result_type);
     const mir::ExprId default_init = code.Body().exprs.Add(
@@ -353,34 +349,22 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     MapProceduralVar(*src.result_var, AutomaticVarBinding{.type = ret_type});
     result_var_ = result_local;
     result_value_type_ = ret_type;
-    payload_components.push_back(ret_type);
-  }
-  for (const mir::TypeId t : output_pack_types_) {
-    payload_components.push_back(t);
   }
 
-  // The completion payload is the function return (if any) plus each output /
-  // inout value, normalized by count. A task wraps it in the coroutine call
-  // protocol (LRM 13.3); a function's result is the payload itself (LRM 13.4).
-  completion_payload_type_ =
-      NormalizeCompletionPayload(owner_->Unit(), payload_components);
-  const mir::TypeId result_type =
-      body_is_coroutine
-          ? owner_->Unit().types.CoroutineOf(completion_payload_type_)
-          : completion_payload_type_;
+  // A definition produces the completion its declaration fixes, so it reads
+  // that interface from the declaration rather than assembling it from the
+  // locals it just built.
+  const mir::TypeId result_type = SubroutineCallTypeOf(*owner_, src);
+  result_type_ = result_type;
 
   auto lowered = LowerStraightLineBodyInto(*this, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
 
-  // Close the body with a trailing return of the fall-through payload, or with
-  // a bare return when the payload is empty (a void function, or a task with no
-  // outputs, which completes by falling off its end -- LRM 13.3). Either way
-  // the completion is a real body statement, not a backend-appended epilogue.
-  if (auto trailing = BuildReturnPayload(code.Body(), std::nullopt)) {
-    code.Body().AppendStmt(mir::ReturnStmt{.value = trailing});
-  } else if (body_is_coroutine) {
-    code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  }
+  // Close the body with a trailing return of the fall-through payload, the same
+  // completion a body falling off its end carries (LRM 13.3). The completion is
+  // a real body statement, not a backend-appended epilogue.
+  code.Body().AppendStmt(
+      mir::ReturnStmt{.value = BuildReturnPayload(code.Body(), std::nullopt)});
 
   code.params = std::move(params);
   code.result_type = result_type;
@@ -415,6 +399,12 @@ auto ProcessLowerer::LowerConstructorBodyInto(const WalkFrame& frame)
 auto ProcessLowerer::BuildReturnPayload(
     mir::Block& block, std::optional<mir::ExprId> explicit_value)
     -> std::optional<mir::ExprId> {
+  const mir::TypeInterner& types = owner_->Unit().types;
+  const mir::TypeId payload_type = types.IsCoroutine(result_type_)
+                                       ? types.CoroutinePayload(result_type_)
+                                       : result_type_;
+  if (payload_type == owner_->Unit().builtins.void_type) return std::nullopt;
+
   std::vector<mir::ExprId> components;
   if (result_var_.has_value()) {
     components.push_back(
@@ -427,12 +417,10 @@ auto ProcessLowerer::BuildReturnPayload(
     components.push_back(block.exprs.Add(
         mir::MakeLocalRefExpr(output_pack_vars_[i], output_pack_types_[i])));
   }
-  if (components.empty()) return std::nullopt;
-  if (components.size() == 1) return components.front();
   return block.exprs.Add(
       mir::Expr{
           .data = mir::TupleExpr{.components = std::move(components)},
-          .type = completion_payload_type_});
+          .type = payload_type});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -16,15 +16,17 @@ auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
 
 // A type whose storage object has no first-class value in LIR: operations on it
 // consume its address. A storage cell (an observable variable, a net resolution
-// node, a driver slot) and every object-tree node (a class object, a scope, an
-// instance) are such a type -- there is nothing to read out of the storage,
-// write into it, or hand to a callee except where it lives.
+// node) and every object-tree node (a class object, a scope, an instance) are
+// such a type -- there is nothing to read out of the storage, write into it, or
+// hand to a callee except where it lives.
 //
-// This is about the storage object, not about how a value is represented. A
-// packed value is a runtime object reached through an opaque handle, and that
-// handle is an ordinary first-class value: a place holding one is loaded and
-// stored like any other. The cell that holds a packed value is what is
-// address-only, never the value itself.
+// This is about the storage object, not about how a value is represented, and
+// not about a capability that reaches one. A packed value is a runtime object
+// reached through an opaque handle, and a net's driver is a handle naming one
+// of a resolution node's slots; either handle is an ordinary first-class value
+// its holder owns, so a place holding one is loaded and stored like any other.
+// The cell is what is address-only, never the value or the capability reaching
+// it.
 auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool;
 
 // The packed shape an integral type's value is structured by: a packed array is

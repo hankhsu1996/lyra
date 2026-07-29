@@ -7,18 +7,21 @@
 
 namespace lyra::mir {
 
-// Construction of a closure value -- the lambda (`[caps](args){body}`), the way
-// a `ClosureType` is built. `closure` names the declaration (its capture fields
-// and its invoke body) in the unit's closure registry; `field_inits` supplies
-// each captured field's value in evaluation order. The `Expr::type` is the
-// `ClosureType` naming `closure`.
+// Construction of a closure value -- the lambda (`[caps](args){body}`).
+// `closure` names the declaration (its capture fields and its invoke body) in
+// the unit's closure registry; `field_inits` supplies each captured field's
+// value in evaluation order.
+//
+// What is constructed follows from the invoke's protocol, and `Expr::type`
+// states it. A synchronous invoke constructs a callable object -- a
+// `ClosureType` naming `closure`, invoked through an `Indirect` call. A
+// coroutine invoke constructs the coroutine: its captures are frame-copied at
+// construction so nothing dangles once a spawned branch outlives the site,
+// which makes constructing it inseparable from starting it, so the type is the
+// coroutine and the site awaits or spawns it with no call in between.
 //
 // Distinct from `StructConstructExpr` because a closure is a distinct type
-// category: its declaration carries an invoke body, and a backend realizes it
-// as an anonymous callable object (a C++ lambda whose captures are the fields
-// `[field = init]`), or a coroutine closure passing those fields as
-// frame-copied parameters supplied by an immediate call so nothing dangles once
-// a spawned branch outlives the construction site.
+// category: its declaration carries an invoke body.
 struct ClosureExpr {
   ClosureId closure{};
   std::vector<FieldInit> field_inits;

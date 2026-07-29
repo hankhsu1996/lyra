@@ -21,17 +21,6 @@
 
 namespace lyra::backend::llvm_backend {
 
-namespace {
-
-// The LLVM symbol a callable is emitted under: its class and its name. The
-// symbol is for readability and linkage; method identity is resolved
-// structurally, never by reconstructing this name.
-auto SymbolName(const lir::Class& cls, const lir::Function& fn) -> std::string {
-  return std::format("{}.{}", cls.name, fn.name);
-}
-
-}  // namespace
-
 CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
     : context_(std::make_unique<llvm::LLVMContext>()),
       module_(std::make_unique<llvm::Module>("lyra", *context_)),
@@ -41,17 +30,16 @@ CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
 }
 
 auto CodeGenModule::Run() -> EmittedModule {
-  for (std::uint32_t i = 0; i < unit_->classes.size(); ++i) {
-    const lir::ClassId class_id{i};
-    const lir::Class& cls = unit_->classes.Get(class_id);
-    DeclareCallable(cls, class_id, cls.constructor, std::nullopt);
-    for (std::uint32_t m = 0; m < cls.methods.size(); ++m) {
-      DeclareCallable(cls, class_id, cls.methods[m], m);
-    }
+  // Every function is declared before any body is generated, because a body may
+  // call one whose own body is generated later, including itself.
+  functions_.reserve(unit_->functions.size());
+  for (const lir::Function& fn : unit_->functions) {
+    functions_.push_back(DeclareCallable(fn));
   }
-
-  for (const auto& [lir_fn, llvm_fn] : callables_) {
-    CodeGenFunction(*this, *lir_fn, llvm_fn).Run();
+  for (std::uint32_t i = 0; i < unit_->functions.size(); ++i) {
+    CodeGenFunction(
+        *this, unit_->functions.Get(lir::FunctionId{i}), functions_[i])
+        .Run();
   }
 
   std::string error;
@@ -63,9 +51,8 @@ auto CodeGenModule::Run() -> EmittedModule {
   return {std::move(context_), std::move(module_)};
 }
 
-void CodeGenModule::DeclareCallable(
-    const lir::Class& cls, lir::ClassId class_id, const lir::Function& fn,
-    std::optional<std::uint32_t> method_index) {
+auto CodeGenModule::DeclareCallable(const lir::Function& fn)
+    -> llvm::Function* {
   std::vector<llvm::Type*> params;
   params.reserve(fn.params.size());
   for (const lir::ValueId param : fn.params) {
@@ -73,18 +60,12 @@ void CodeGenModule::DeclareCallable(
   }
   auto* fn_ty =
       llvm::FunctionType::get(types_.Map(fn.result_type), params, false);
-  auto* value = llvm::Function::Create(
-      fn_ty, llvm::Function::ExternalLinkage, SymbolName(cls, fn),
-      module_.get());
-  callables_.emplace_back(&fn, value);
-  if (method_index.has_value()) {
-    methods_.emplace(std::pair{class_id.value, *method_index}, value);
-  }
+  return llvm::Function::Create(
+      fn_ty, llvm::Function::ExternalLinkage, fn.name, module_.get());
 }
 
-auto CodeGenModule::MethodFunction(lir::ClassId class_id, std::uint32_t index)
-    -> llvm::Function* {
-  return methods_.at(std::pair{class_id.value, index});
+auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {
+  return functions_.at(function.value);
 }
 
 auto CodeGenModule::UnitDefinitionRef(lir::TypeId object_type)

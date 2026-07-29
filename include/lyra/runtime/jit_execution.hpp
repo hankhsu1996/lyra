@@ -19,14 +19,19 @@ auto lyra_rt_time_format(void* runtime) -> const void*;
 auto lyra_rt_make_string(void* cstr) -> void*;
 auto lyra_rt_make_print_literal_item(void* string_value) -> void*;
 auto lyra_rt_format(LyraSpan items, const void* time_format) -> void*;
-// A packed constant carries its full dimension stack (a flat `{left, right}`
-// pair array of `dims_count` ranges) so a multi-dim packed value keeps its
-// shape into element / slice access -- the same `PackedType` the C++ backend
-// renders inline. `value` fills the low word; a wider constant's upper words
-// are sign/zero filled.
+// A packed constant crosses as its own word planes so that no part of its value
+// is lost at the boundary: the value plane holds every word of the constant,
+// and the unknown plane the X / Z mask a 4-state constant carries (empty when
+// it carries none, and always empty for a 2-state one). It also carries its
+// full dimension stack (a flat `{left, right}` pair array of `dims_count`
+// ranges) so a multi-dim packed value keeps its shape into element / slice
+// access. Whether the planes span the width those dimensions describe is
+// checked here, where the width is a concrete size.
 auto lyra_rt_packed_const(
-    std::int64_t value, const std::int64_t* dims, std::int64_t dims_count,
-    bool is_signed, bool is_four_state) -> void*;
+    const std::uint64_t* value_words, std::int64_t value_word_count,
+    const std::uint64_t* unknown_words, std::int64_t unknown_word_count,
+    const std::int64_t* dims, std::int64_t dims_count, bool is_signed,
+    bool is_four_state) -> void*;
 void lyra_rt_writeln(void* files, void* descriptor, void* text);
 void lyra_rt_write(void* files, void* descriptor, void* text);
 // Wraps a generated process body in a runtime-owned coroutine. `ramp` starts

@@ -29,7 +29,6 @@ auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool {
       Overloaded{
           [](const ObservableType&) { return true; },
           [](const ResolvedType&) { return true; },
-          [](const DriverType&) { return true; },
           [](const ObjectType&) { return true; },
           [](const ExternalUnitObjectType&) { return true; },
           [](const ExternalClassType&) { return true; },
