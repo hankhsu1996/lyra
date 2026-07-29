@@ -15,12 +15,12 @@ enum class ParamDirection : std::uint8_t {
   kConstRef,
 };
 
-// LRM 13.5 data flow at the call boundary. `output` and `inout` carry a value
-// back to the actual at return, so a call desugars them into a temp with a
-// copy-out assignment after the call (`inout` also copies in before). `input`
-// passes a value and `ref` / `const ref` alias the actual directly, so neither
-// writes back. Only the writeback directions force the call into statement
-// position, where the copy-out can be sequenced.
+// LRM 13.5 data flow at the call boundary: whether the callee hands a value
+// back to the actual when it completes. `output` and `inout` do, so each takes
+// a component of the completion the caller writes into the actual (`inout` also
+// passes its incoming value in). `input` only passes a value in, and `ref` /
+// `const ref` alias the actual's own storage, which the callee has already
+// written -- so neither hands anything back.
 [[nodiscard]] constexpr auto RequiresWriteback(ParamDirection direction)
     -> bool {
   return direction == ParamDirection::kOutput ||

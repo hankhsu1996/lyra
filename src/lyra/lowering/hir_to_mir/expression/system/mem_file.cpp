@@ -240,8 +240,8 @@ auto LowerMemFileSystemSubroutineCallStmt(
       wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   return BuildCopyOutBlock(
       unit_lowerer.Unit(), runtime_id, frame, std::move(wrapper),
-      std::move(label), builtins.void_type, std::move(call_expr), false,
-      std::nullopt, slots);
+      std::move(label), builtins.void_type, std::move(call_expr), std::nullopt,
+      slots);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

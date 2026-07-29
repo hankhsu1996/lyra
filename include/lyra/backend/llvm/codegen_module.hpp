@@ -1,10 +1,6 @@
 #pragma once
 
-#include <cstdint>
-#include <map>
 #include <memory>
-#include <optional>
-#include <utility>
 #include <vector>
 
 #include <llvm/IR/LLVMContext.h>
@@ -13,7 +9,7 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/runtime_abi.hpp"
-#include "lyra/lir/class_id.hpp"
+#include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace llvm {
@@ -22,7 +18,6 @@ class Function;
 }  // namespace llvm
 
 namespace lyra::lir {
-struct Class;
 struct CompilationUnit;
 struct Function;
 }  // namespace lyra::lir
@@ -55,10 +50,10 @@ class CodeGenModule {
     return *unit_;
   }
 
-  // The LLVM function a `MethodRef` names. Method identity is structural -- the
-  // class and the method's index -- never a reconstructed symbol name.
-  auto MethodFunction(lir::ClassId class_id, std::uint32_t index)
-      -> llvm::Function*;
+  // The LLVM function a unit function was emitted as, reached by the identity a
+  // call or a code reference carries. Identity is the function's own, never a
+  // reconstructed symbol name.
+  auto UnitFunction(lir::FunctionId function) -> llvm::Function*;
 
   // The definition-reference projection of an external-unit object type: the
   // address of that unit's runtime definition, as an external symbol the host
@@ -67,17 +62,14 @@ class CodeGenModule {
   auto UnitDefinitionRef(lir::TypeId object_type) -> llvm::Constant*;
 
  private:
-  void DeclareCallable(
-      const lir::Class& cls, lir::ClassId class_id, const lir::Function& fn,
-      std::optional<std::uint32_t> method_index);
+  auto DeclareCallable(const lir::Function& fn) -> llvm::Function*;
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::Module> module_;
   const lir::CompilationUnit* unit_;
   CodeGenTypes types_;
   RuntimeAbi runtime_abi_;
-  std::vector<std::pair<const lir::Function*, llvm::Function*>> callables_;
-  std::map<std::pair<std::uint32_t, std::uint32_t>, llvm::Function*> methods_;
+  std::vector<llvm::Function*> functions_;
 };
 
 }  // namespace lyra::backend::llvm_backend

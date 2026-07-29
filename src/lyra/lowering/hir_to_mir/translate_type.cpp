@@ -145,10 +145,8 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
             std::vector<mir::EnumMember> members;
             members.reserve(src.members.size());
             for (const auto& m : src.members) {
-              const std::int64_t value =
-                  m.value.value_words.empty()
-                      ? 0
-                      : static_cast<std::int64_t>(m.value.value_words[0]);
+              const auto value =
+                  static_cast<std::int64_t>(m.value.value_words[0]);
               members.push_back(
                   mir::EnumMember{.name = m.name, .value = value});
             }

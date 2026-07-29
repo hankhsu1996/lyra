@@ -55,7 +55,6 @@ auto TryExtractLiteralInt(const hir::Expr& expr)
   if (lit == nullptr) return std::nullopt;
   const auto& c = lit->value;
   if (c.state_kind == hir::IntegralStateKind::kFourState) return std::nullopt;
-  if (c.value_words.empty()) return 0;
   return static_cast<std::int64_t>(c.value_words[0]);
 }
 

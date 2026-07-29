@@ -43,7 +43,7 @@ struct BodyBindingRef {
 };
 
 // The per-body capture policy: how this body views each origin it captures. The
-// receiver and the engine services are stable design-wide handles (snapshot); a
+// receiver and the runtime handle are stable design-wide handles (snapshot); a
 // synthesized activation handle is owned (refcount copy); an origin in the
 // construction-scope set -- a `fork` branch's own block-item declarations -- is
 // snapshotted; any other enclosing origin aliases the live cell. A non-fork

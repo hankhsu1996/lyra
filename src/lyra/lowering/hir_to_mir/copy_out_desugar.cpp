@@ -46,8 +46,7 @@ auto BuildCopyOutBlock(
     const mir::CompilationUnit& unit, mir::ExprId runtime_id,
     WalkFrame parent_frame, mir::Block wrapper,
     std::optional<std::string> label, mir::TypeId result_type,
-    mir::Expr call_expr, bool call_suspends,
-    std::optional<mir::ExprId> assign_target_id,
+    mir::Expr call_expr, std::optional<mir::ExprId> assign_target_id,
     const std::vector<OutputArgSlot>& slots) -> mir::Stmt {
   const mir::TypeId call_type = call_expr.type;
   const mir::ExprId call_id = wrapper.exprs.Add(std::move(call_expr));
@@ -64,7 +63,7 @@ auto BuildCopyOutBlock(
         result_type, void_type);
     const mir::ExprId assign_id = wrapper.exprs.Add(assign_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
-  } else if (call_suspends) {
+  } else if (unit.types.IsCoroutine(call_type)) {
     const mir::ExprId await_id = wrapper.exprs.Add(
         mir::Expr{
             .data = mir::AwaitExpr{.awaitable = call_id}, .type = void_type});

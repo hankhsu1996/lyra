@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/lir/class_id.hpp"
+#include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -48,13 +48,6 @@ struct Local {
   LocalKind kind;
 };
 
-// A reference to a class method of this unit: the class and the method's index
-// in that class's method list. Resolved against the LIR unit's own class arena.
-struct MethodRef {
-  ClassId class_id;
-  std::uint32_t index;
-};
-
 struct Use {
   ValueId value;
 };
@@ -82,11 +75,11 @@ struct NullConst {
   TypeId type;
 };
 
-// The code address of a method, as a value. A closure is built from a code
-// reference plus its environment, so a method's address is an operand, not a
+// The code address of a function, as a value. A closure is built from a code
+// reference plus its environment, so a function's address is an operand, not a
 // call target.
 struct FuncRef {
-  MethodRef method;
+  FunctionId function;
 };
 
 // An instruction input: a prior value, an inline constant, or a code reference.
@@ -106,8 +99,13 @@ struct BuiltinTarget {
   std::optional<TypeId> qualifier;
 };
 
-struct MethodTarget {
-  MethodRef method;
+// A function of this unit, named outright. The callee is static, so it is
+// reached at compile time -- there is no code value in flight and no dispatch.
+// A function that a class lists in its interface takes its receiver as the
+// first argument like any other, so naming one is no different from naming a
+// function no class lists.
+struct FunctionTarget {
+  FunctionId function;
 };
 
 struct ConstructTarget {
@@ -137,11 +135,11 @@ struct ActivationFrameTarget {
   Op op;
 };
 
-// The target of a call: a runtime builtin, a class method of this unit, a value
+// The target of a call: a runtime builtin, a function of this unit, a value
 // constructor named by the call's result type, a foreign symbol the host
 // resolves, or an activation-frame value operation.
 using CallTarget = std::variant<
-    BuiltinTarget, MethodTarget, ConstructTarget, ForeignTarget,
+    BuiltinTarget, FunctionTarget, ConstructTarget, ForeignTarget,
     ActivationFrameTarget>;
 
 struct CallInstr {
@@ -365,8 +363,10 @@ struct BasicBlock {
   Terminator terminator;
 };
 
-// A callable lowered to a CFG. `values` holds every value of the body --
-// parameters first, then the temporaries and place locals the lowering minted;
+// A callable lowered to a CFG. `name` is unique across the unit, so it is the
+// symbol the function is emitted and linked under; a consumer never composes
+// one from where the function is listed. `values` holds every value of the
+// body -- parameters first, then the temporaries and place locals it minted;
 // `params` names the parameter subset in signature order, with the receiver
 // `self` at `params[0]`. The entry block is `blocks[0]`, and a `BlockId`
 // indexes `blocks`. A body whose call protocol is the coroutine one carries

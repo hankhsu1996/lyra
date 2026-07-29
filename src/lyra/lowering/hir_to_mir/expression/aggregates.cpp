@@ -40,9 +40,7 @@ auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
   if (lit == nullptr) {
     throw InternalError("ExtractHirLiteralUint64: expected an integer literal");
   }
-  const auto& c = lit->value;
-  if (c.value_words.empty()) return 0;
-  return c.value_words[0];
+  return lit->value.value_words[0];
 }
 
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
