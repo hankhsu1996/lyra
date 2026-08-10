@@ -27,6 +27,10 @@ auto IsMutatingBuiltinFn(BuiltinFn id) -> bool {
   }
 }
 
+auto IsPassThroughBuiltinFn(BuiltinFn id) -> bool {
+  return id == BuiltinFn::kRequire;
+}
+
 auto ArrayMethodTakesClosure(BuiltinFn id) -> bool {
   switch (id) {
     case BuiltinFn::kSort:
@@ -238,18 +242,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "is_unknown";
     case BuiltinFn::kClog2:
       return "clog2";
-    case BuiltinFn::kGet:
-      return "get";
     case BuiltinFn::kInitialize:
       return "initialize";
-    case BuiltinFn::kSet:
-      return "set";
-    case BuiltinFn::kMutate:
-      return "mutate";
     case BuiltinFn::kAttachDriver:
       return "attach_driver";
-    case BuiltinFn::kUpdateDriver:
-      return "update_driver";
     case BuiltinFn::kCurrentRuntime:
       return "current_runtime";
     case BuiltinFn::kSubmitNba:
@@ -418,6 +414,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "conform_bound";
     case BuiltinFn::kMakeQueueConcat:
       return "make_queue_concat";
+    case BuiltinFn::kSpread:
+      return "spread";
     case BuiltinFn::kPow:
       return "pow";
     case BuiltinFn::kShiftLeft:

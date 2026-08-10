@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -33,6 +34,10 @@ class Registry {
     slot = std::move(value);
   }
 
+  // A question only a caller running mid-construction has: once the pass that
+  // builds a registry finishes, every declared identity is defined, so a
+  // consumer walks the whole range and reads each entry -- which reports a
+  // broken invariant rather than letting the consumer skip silently past it.
   [[nodiscard]] auto IsDefined(Id id) const -> bool {
     return slots_.at(id.value).has_value();
   }

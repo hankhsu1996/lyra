@@ -11,7 +11,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -43,10 +43,10 @@ auto BuildOutputArgSlot(
 }
 
 auto BuildCopyOutBlock(
-    const mir::CompilationUnit& unit, mir::ExprId runtime_id,
-    WalkFrame parent_frame, mir::Block wrapper,
-    std::optional<std::string> label, mir::TypeId result_type,
-    mir::Expr call_expr, std::optional<mir::ExprId> assign_target_id,
+    const mir::CompilationUnit& unit, WalkFrame parent_frame,
+    mir::Block wrapper, std::optional<std::string> label,
+    mir::TypeId result_type, mir::Expr call_expr,
+    std::optional<mir::ExprId> assign_target_id,
     const std::vector<OutputArgSlot>& slots) -> mir::Stmt {
   const mir::TypeId call_type = call_expr.type;
   const mir::ExprId call_id = wrapper.exprs.Add(std::move(call_expr));
@@ -58,9 +58,8 @@ auto BuildCopyOutBlock(
       value_id = wrapper.exprs.Add(
           BuildValueConversion(unit, wrapper, call_id, result_type));
     }
-    const mir::Expr assign_expr = BuildObservableAssignExpr(
-        unit, wrapper, runtime_id, *assign_target_id, value_id, std::nullopt,
-        result_type, void_type);
+    const mir::Expr assign_expr = BuildStoreExpr(
+        unit, wrapper, *assign_target_id, value_id, std::nullopt, result_type);
     const mir::ExprId assign_id = wrapper.exprs.Add(assign_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
   } else if (unit.types.IsCoroutine(call_type)) {
@@ -75,9 +74,8 @@ auto BuildCopyOutBlock(
   for (const OutputArgSlot& slot : slots) {
     const mir::ExprId temp_read =
         wrapper.exprs.Add(mir::MakeLocalRefExpr(slot.temp, slot.type));
-    const mir::Expr copy_out_expr = BuildObservableAssignExpr(
-        unit, wrapper, runtime_id, slot.actual, temp_read, std::nullopt,
-        slot.type, void_type);
+    const mir::Expr copy_out_expr = BuildStoreExpr(
+        unit, wrapper, slot.actual, temp_read, std::nullopt, slot.type);
     const mir::ExprId copy_out = wrapper.exprs.Add(copy_out_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = copy_out});
   }

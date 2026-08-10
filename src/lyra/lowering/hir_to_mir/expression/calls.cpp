@@ -30,7 +30,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -46,28 +46,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// If the lowered LHS chain `lhs_id` is rooted in an observable cell, wrap
-// the root with `Deref(Mutate(cell, runtime))` so the consumer operates on
-// a `ScopedMutation` snapshot whose destructor commits via `Var::Set`.
-// Returns `lhs_id` unchanged when no cell is at the root. Used by both the
-// mutating-method receiver path and the ref-formal actual path; the latter
-// gates its call on `root_id != lhs_id` because a bare observable cell
-// should bind `Ref<T>` directly to the underlying `Var<T>&`, not via a
-// snapshot.
-template <ExprLowerer Lowerer>
-auto MaybeWrapObservableLhsWithMutate(
-    Lowerer& lowerer, mir::Block& block, mir::ExprId lhs_id) -> mir::ExprId {
-  const mir::ExprId root_id =
-      FindLhsRootId(lowerer.Owner().Unit(), block, lhs_id);
-  const bool root_is_cell = mir::IsObservableCellType(
-      lowerer.Owner().Unit().types.Get(block.exprs.Get(root_id).type));
-  if (!root_is_cell) return lhs_id;
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  return RewriteLhsRootWithMutate(
-      lowerer.Owner().Unit(), block, lhs_id, runtime_id);
-}
 
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
 // `prev`). The method writes the visited key into `idx` and returns SV int
@@ -91,7 +69,6 @@ auto LowerAssociativeTraversal(
   const auto idx_hir = *c.arguments[1];
   const mir::TypeId key_type =
       unit_lowerer.TranslateType(hir_exprs.Get(idx_hir).type);
-  const mir::TypeId void_t = unit_lowerer.Unit().builtins.void_type;
 
   ClosureBuilder closure(lowerer.Owner().Unit(), frame);
   mir::Block& body = closure.Body();
@@ -130,11 +107,9 @@ auto LowerAssociativeTraversal(
   const mir::ExprId idx_lhs_id = body.exprs.Add(*std::move(idx_lhs_or));
   const mir::ExprId probe_writeback_id =
       body.exprs.Add(mir::MakeLocalRefExpr(probe_var, key_type));
-  const mir::ExprId runtime_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::Expr assign_expr = BuildObservableAssignExpr(
-      unit_lowerer.Unit(), body, runtime_id, idx_lhs_id, probe_writeback_id,
-      std::nullopt, key_type, void_t);
+  const mir::Expr assign_expr = BuildStoreExpr(
+      unit_lowerer.Unit(), body, idx_lhs_id, probe_writeback_id, std::nullopt,
+      key_type);
   body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
 
   const mir::ExprId found_id =
@@ -438,12 +413,11 @@ auto LowerBuiltinMethodCall(
 
   // A static call has no value receiver -- `args[0]` is the discardable
   // type-bearer, the type-namespace qualifier rides on the callee. An
-  // instance call lowers `args[0]` as the receiver, routing through
-  // `Var<T>::Mutate` when the method mutates and the LHS roots in an
-  // observable cell (so the method body operates on a `ScopedMutation`
-  // snapshot whose destructor commits via `Var::Set`); non-mutating
-  // methods consume a value, so the default value path (which auto-wraps
-  // in `Get`) applies.
+  // instance call lowers `args[0]` as the receiver, routing through the
+  // partial-write proxy when the method mutates and the LHS roots in a
+  // capability wrapper, so the method body operates on a snapshot the proxy
+  // commits back; non-mutating methods consume a value, so the ordinary value
+  // path applies.
   const auto* direct = std::get_if<mir::Direct>(&mir_callee);
   const bool has_receiver =
       direct != nullptr && !direct->qualification.has_value();
@@ -455,8 +429,7 @@ auto LowerBuiltinMethodCall(
           lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver_id = block.exprs.Add(*std::move(recv_or));
-      receiver_id =
-          MaybeWrapObservableLhsWithMutate(lowerer, block, receiver_id);
+      receiver_id = StoragePlaceOf(lowerer.Owner().Unit(), block, receiver_id);
     } else {
       auto recv_or =
           lowerer.LowerExpr(hir_exprs.Get(*c.arguments.front()), frame);

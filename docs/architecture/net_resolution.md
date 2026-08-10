@@ -12,8 +12,8 @@ places outside its own scope.
 
 - The rule that a net is a resolved observable value: its value is `resolve(contributions)`, where
   the resolver is fixed by the net type and the contributions are supplied by the net's drivers.
-- The decomposition of a net into three parts: a resolved observable value, a set of driver slots,
-  and a resolver policy.
+- The decomposition of a net into three parts: a resolved observable value, a set of driver
+  contributions, and a resolver policy.
 - The rule that each driver is an independent contribution with its own identity and provenance. A
   driver updates only its own contribution; it never writes the net's resolved value.
 - The rule that the net re-resolves whenever any contribution changes, and publishes a change only
@@ -112,3 +112,14 @@ list the net's unit builds at compile time (LRM 23.3.3).
 The single-driver `uwire` net is the N=1 case constrained so that attaching a second driver is an
 error; the constraint is checked against the count of attached drivers, each carrying its
 provenance, so the diagnostic can name the conflicting drivers (LRM 6.6.2).
+
+A net's data type may be an unpacked aggregate whose elements are themselves valid for a net (LRM
+6.7.1), and the fold then reaches an aggregate by recursing into its elements: a contribution is a
+whole-net-shaped value, and a driver that covers only part of the net carries the resolution
+identity everywhere it does not drive. The one aggregate the fold cannot always answer for is the
+unpacked union: LRM 7.3 gives it no required storage representation and, unlike a packed union, no
+reading back of a member written as another, so two contributions that are both driving different
+members overlay in no defined bit space. The cases a design has resolve exactly -- one driver on any
+member, several on the same member, and the undriven seed, which is the identity whichever member it
+carries -- and the combination the standard leaves undefined is reported as such rather than
+answered with an invented value.

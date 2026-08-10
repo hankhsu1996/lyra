@@ -21,7 +21,7 @@
 
 namespace lyra::runtime {
 
-auto RunDesignHost(int argc, char** argv, RootBuilder builder) -> int {
+auto RunDesignHost(int argc, char** argv, const RootBuilder& builder) -> int {
   // LRM 21.6: `+`-prefixed argv entries are plusargs; strip the `+` so a
   // stored token compares directly against a user-supplied prefix.
   const std::span<char*> args{argv, static_cast<std::size_t>(argc)};

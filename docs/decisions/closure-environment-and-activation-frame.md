@@ -97,14 +97,19 @@ D7. field_order and construction evaluation order are independent. field_order i
     derivable from the other, and sorting by field_order must never change initializer evaluation
     order.
 
-D8. A scope struct's identity and its emission nesting are separate stored relations. Identity is the
-    StructId in the unit's struct registry. Emission nesting is an explicit list on the nesting class
-    (mir::Class.structs), parallel to the child-class list (mir::Class.contained): lowering records a
-    scope struct on the class whose body opens it. A backend that nests emits each struct by
-    iterating that list -- a mechanical per-node render, never a walk over the body tree or a
-    payload-driven guess at "is this a scope construction" (backend_contract.md forbids exactly that).
-    The relation is NOT on the generic CallableCode -- a plain function carries no generated-storage
-    list; it is on the class, the emission unit.
+D8. A scope struct is identified, and reached, by the one name its StructId carries in the unit's
+    struct registry. A backend emits the unit's structs by iterating that registry -- a mechanical
+    per-node render, never a walk over the body tree or a payload-driven guess at "is this a scope
+    construction" (backend_contract.md forbids exactly that). Where the struct is placed in the
+    emitted output is the backend's own affair and is stored nowhere in the IR.
+
+    Revised. This entry originally also stored the emission placement -- a per-class list of the
+    structs to nest inside it -- to give the backend something mechanical to iterate. Iterating the
+    unit's own registry serves that just as mechanically, and the stored placement was the shape
+    object_model.md invariant 10 forbids outright ("a backend-emission nesting parent stored on the
+    generic object declaration; it is a backend concern"). It also made a struct's C++ name mean
+    different things at different reference sites, which is the defect that surfaced when a
+    program-global symbol outside every scope had to name one.
 
 D9. Neither category is a mir::Class. A ClosureType has one entrypoint and no inheritance / dispatch /
     managed handle; a scope StructType has no behavior at all. mir::Class stays the one object IR.
@@ -155,13 +160,13 @@ is never rewritten when the layout is canonicalized.
   differ in captures, ownership, and payload. Identity is the `ClosureId`.
 - **A closure or a scope is a `mir::Class`.** Grants inheritance / dispatch / managed-handle
   machinery neither may use.
-- **A backend derives a scope struct's emission nesting by walking the body tree** (finding
-  constructions, guessing a construction's shape from a node's payload). That is a non-mechanical
-  render `backend_contract.md` forbids -- render output must come from a node's own structural
-  fields. The nesting is an explicit stored relation instead, iterated mechanically.
-- **The generated-struct list lives on `CallableCode`.** A plain function then carries an
-  always-empty backend-placement collection. The relation lives on the nesting class (the emission
-  unit), parallel to its child-class containment list, instead.
+- **A backend derives which structs to emit by walking the body tree** (finding constructions,
+  guessing a construction's shape from a node's payload). That is a non-mechanical render
+  `backend_contract.md` forbids -- render output must come from a node's own structural fields. The
+  unit's struct registry is iterated instead.
+- **An emission-placement relation stored in the IR for a backend to read** -- a per-class list of
+  structs to nest, or the same list on `CallableCode`. Placement is a backend concern, and storing
+  it is what lets one struct's name mean different things at different reference sites.
 
 ## Consequences
 

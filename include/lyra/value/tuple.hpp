@@ -35,8 +35,8 @@ class Tuple {
 
   // Component access by declaration-order index. The reference qualifier tracks
   // the receiver's value category: a const receiver yields a const reference (a
-  // member read), a mutable one a mutable reference (a member write through a
-  // Mutate snapshot), and an rvalue one a movable reference.
+  // member read), a mutable one a mutable reference (a member write), and an
+  // rvalue one a movable reference.
   template <std::size_t I>
   [[nodiscard]] auto Get() & -> decltype(auto) {
     return std::get<I>(data_);
@@ -85,6 +85,25 @@ class Tuple {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
       return (
           std::get<I>(data_).IsBitIdentical(std::get<I>(other.data_)) && ...);
+    }(std::index_sequence_for<Ts...>{});
+  }
+
+  // LRM 6.6.1 Table 6-2 tri-state resolution, applied member-wise. LRM 6.7.1
+  // admits an unpacked struct as a net's data type when every member is itself
+  // valid for a net, and it composes a net out of its members' bits, so folding
+  // two contributions is folding each member pair.
+  [[nodiscard]] auto ResolveTriState(const Tuple& other) const -> Tuple {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      return Tuple(
+          std::get<I>(data_).ResolveTriState(std::get<I>(other.data_))...);
+    }(std::index_sequence_for<Ts...>{});
+  }
+
+  // The all-high-impedance value at `prototype`'s shape: each member's own
+  // high-impedance value (LRM 6.6.1). Only the prototype's shape is read.
+  [[nodiscard]] static auto HighImpedanceLike(const Tuple& prototype) -> Tuple {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      return Tuple(Ts::HighImpedanceLike(std::get<I>(prototype.data_))...);
     }(std::index_sequence_for<Ts...>{});
   }
 
@@ -139,5 +158,6 @@ static_assert(LyraValue<Tuple<PackedArray, PackedArray>>);
 static_assert(CaseEqualComparable<Tuple<PackedArray, PackedArray>>);
 static_assert(BitstreamSizable<Tuple<PackedArray, PackedArray>>);
 static_assert(Defaultable<Tuple<PackedArray, PackedArray>>);
+static_assert(NetResolvable<Tuple<PackedArray, PackedArray>>);
 
 }  // namespace lyra::value

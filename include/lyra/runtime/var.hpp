@@ -111,8 +111,32 @@ class Observable {
   RegistrationList waiters_;
 };
 
-template <value::LyraValue T>
+// What a partial-write chain commits through (LRM 11.5.1). A chain that writes
+// part of a value has to read the whole value first, land its part in that
+// snapshot, and hand the whole thing back, because the destination only accepts
+// whole values. This is the two operations that requires, named for that role
+// rather than for either owner's own vocabulary: a variable cell's base is its
+// current contents and it commits by storing them, while a net driver's base is
+// the contribution it currently publishes and it commits by re-publishing it
+// (LRM 6.5).
+//
+// Each sink claims the contract with a `static_assert(MutationSink<...>)`
+// beside its own definition, the way a value type claims its `lyra::value`
+// concepts; `ScopedMutation` itself takes the sink unconstrained, because a
+// sink names the handle in its own partial-write entry's return type and
+// checking the constraint there would depend on the sink being complete.
+template <class S>
+concept MutationSink =
+    requires(S sink, RuntimeEffects& runtime, typename S::ValueType value) {
+      { sink.MutationBase() } -> std::same_as<typename S::ValueType>;
+      sink.CommitMutation(runtime, value);
+    };
+
+template <class Sink>
 class ScopedMutation;
+
+template <value::LyraValue T>
+class Ref;
 
 template <value::LyraValue T>
 class Var : public Observable, public ValueStorageCore<T> {
@@ -156,7 +180,7 @@ class Var : public Observable, public ValueStorageCore<T> {
   // (fires subscribers on change). Lifetime is C++ standard full-expression
   // temporary lifetime -- the handle is non-copyable and non-movable, so
   // storing it past the statement is rejected at compile time.
-  auto Mutate(RuntimeEffects& runtime) -> ScopedMutation<T>;
+  auto Mutate(RuntimeEffects& runtime) -> ScopedMutation<Ref<T>>;
 };
 
 // A reference to a variable cell. Transparently views one of two backings:
@@ -167,6 +191,8 @@ class Var : public Observable, public ValueStorageCore<T> {
 template <value::LyraValue T>
 class Ref {
  public:
+  using ValueType = T;
+
   // A null view, default-constructed as a member and bound before first use:
   // a `ref` port's child-side member is declared with the child and filled by
   // the parent during elaboration (LRM 23.3.3.2), before simulation reads it.
@@ -195,10 +221,19 @@ class Ref {
 
   // RAII entry to partial-write context, mirroring `Var<T>::Mutate`: the
   // returned handle snapshots the referenced cell, forwards chain methods so a
-  // selector chain lands in the snapshot, and writes the snapshot back through
-  // `Ref::Set` in its destructor (firing subscribers when the backing is
-  // observable).
-  [[nodiscard]] auto Mutate(RuntimeEffects& runtime) const -> ScopedMutation<T>;
+  // selector chain lands in the snapshot, and writes the snapshot back in its
+  // destructor (firing subscribers when the backing is observable).
+  [[nodiscard]] auto Mutate(RuntimeEffects& runtime) const
+      -> ScopedMutation<Ref<T>>;
+
+  // The `MutationSink` surface: a referenced cell's whole value, and the store
+  // that commits a mutated one.
+  [[nodiscard]] auto MutationBase() const -> T {
+    return Get();
+  }
+  void CommitMutation(RuntimeEffects& runtime, const T& value) const {
+    Set(runtime, value);
+  }
 
  private:
   Var<T>* signal_ = nullptr;
@@ -345,22 +380,23 @@ void Var<T>::Set(RuntimeEffects& runtime, const T& new_val) {
   }
 }
 
-// RAII handle that owns a snapshot of the referenced cell for the lifetime of
-// one partial-write expression. The destructor writes the (possibly mutated)
-// snapshot back through `Ref<T>::Set` -- subscribers fire on change when the
-// backing is observable, a raw store when it is plain. Non-copyable and
-// non-movable: the contract is that it lives only until the end of the
-// constructing full expression. Returning it by value from `Var<T>::Mutate` /
-// `Ref<T>::Mutate` relies on C++17 mandatory copy elision (prvalues are
-// materialized in the caller's storage with no copy/move).
+// RAII handle that owns a snapshot of the sink's whole value for the lifetime
+// of one partial-write expression. The destructor commits the (possibly
+// mutated) snapshot back through the sink. Non-copyable and non-movable: the
+// contract is that it lives only until the end of the constructing full
+// expression. Returning it by value from a `Mutate` entry relies on C++17
+// mandatory copy elision (prvalues are materialized in the caller's storage
+// with no copy/move).
 //
 // `operator*` is the single access point -- all chain methods, operators,
-// and selectors are reached through the deref'd T directly.
-template <value::LyraValue T>
+// and selectors are reached through the deref'd value directly.
+template <class Sink>
 class ScopedMutation {
  public:
-  ScopedMutation(RuntimeEffects& runtime, Ref<T> ref)
-      : runtime_(&runtime), ref_(ref), snapshot_(ref.Get()) {
+  using ValueType = typename Sink::ValueType;
+
+  ScopedMutation(RuntimeEffects& runtime, Sink sink)
+      : runtime_(&runtime), sink_(sink), snapshot_(sink.MutationBase()) {
   }
 
   ScopedMutation(const ScopedMutation&) = delete;
@@ -369,27 +405,29 @@ class ScopedMutation {
   auto operator=(ScopedMutation&&) -> ScopedMutation& = delete;
 
   ~ScopedMutation() {
-    ref_.Set(*runtime_, std::move(snapshot_));
+    sink_.CommitMutation(*runtime_, snapshot_);
   }
 
-  auto operator*() -> T& {
+  auto operator*() -> ValueType& {
     return snapshot_;
   }
 
  private:
   RuntimeEffects* runtime_;
-  Ref<T> ref_;
-  T snapshot_;
+  Sink sink_;
+  ValueType snapshot_;
 };
 
 template <value::LyraValue T>
-auto Var<T>::Mutate(RuntimeEffects& runtime) -> ScopedMutation<T> {
-  return ScopedMutation<T>{runtime, Ref<T>{*this}};
+auto Var<T>::Mutate(RuntimeEffects& runtime) -> ScopedMutation<Ref<T>> {
+  return ScopedMutation<Ref<T>>{runtime, Ref<T>{*this}};
 }
 
 template <value::LyraValue T>
-auto Ref<T>::Mutate(RuntimeEffects& runtime) const -> ScopedMutation<T> {
-  return ScopedMutation<T>{runtime, *this};
+auto Ref<T>::Mutate(RuntimeEffects& runtime) const -> ScopedMutation<Ref<T>> {
+  return ScopedMutation<Ref<T>>{runtime, *this};
 }
+
+static_assert(MutationSink<Ref<value::PackedArray>>);
 
 }  // namespace lyra::runtime

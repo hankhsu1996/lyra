@@ -14,4 +14,11 @@ namespace lyra::support {
 inline constexpr std::string_view kRuntimePreludeHeader =
     "lyra/runtime/prelude.hpp";
 
+// The runtime header an emitted program's entry translation unit includes,
+// spelled the same way. It carries the host boundary, so the entry names only
+// the design's own root; naming the header here keeps that one spelling out of
+// the emitter's text.
+inline constexpr std::string_view kHostEntryHeader =
+    "lyra/runtime/simulation_entry.hpp";
+
 }  // namespace lyra::support

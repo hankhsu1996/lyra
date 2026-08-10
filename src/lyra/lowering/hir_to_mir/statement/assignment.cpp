@@ -21,7 +21,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
@@ -178,12 +178,9 @@ auto LowerDestructuringAssign(
 
     mir::ExprId per_part_expr_id{};
     if (assign.kind == hir::AssignKind::kBlocking) {
-      const mir::ExprId runtime_id =
-          wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-      const mir::Expr part_assign_expr = BuildObservableAssignExpr(
-          process.Owner().Unit(), wrapper, runtime_id, part_lhs_id,
-          rhs_for_part, std::nullopt, part_mir_type,
-          process.Owner().Unit().builtins.void_type);
+      const mir::Expr part_assign_expr = BuildStoreExpr(
+          process.Owner().Unit(), wrapper, part_lhs_id, rhs_for_part,
+          std::nullopt, part_mir_type);
       per_part_expr_id = wrapper.exprs.Add(part_assign_expr);
     } else {
       mir::Expr closure_expr = BuildNbaSubmitClosureExpr(

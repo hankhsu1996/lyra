@@ -5,3 +5,7 @@
 int round_trip(int x) {
   return sv_double(x);
 }
+
+int gen_round_trip(int x) {
+  return sv_triple(x);
+}

@@ -17,7 +17,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -598,17 +598,9 @@ auto LowerHirIncDecExprProc(
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   mir::ExprId target_id = block.exprs.Add(*std::move(target_or));
 
-  // If the LHS reaches an observable storage cell, the mutation runs inside
-  // a `ScopedMutation` snapshot so subscribers fire once on destructor commit.
-  const mir::ExprId root_id =
-      FindLhsRootId(process.Owner().Unit(), block, target_id);
-  if (mir::IsObservableCellType(
-          process.Owner().Unit().types.Get(block.exprs.Get(root_id).type))) {
-    const mir::ExprId runtime_id =
-        block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-    target_id = RewriteLhsRootWithMutate(
-        process.Owner().Unit(), block, target_id, runtime_id);
-  }
+  // An increment reads and writes the storage its target designates, so the
+  // target names that storage rather than the wrapper standing for it.
+  target_id = StoragePlaceOf(process.Owner().Unit(), block, target_id);
 
   return mir::Expr{
       .data = mir::IncDecExpr{.op = LowerIncDecOp(inc.op), .target = target_id},

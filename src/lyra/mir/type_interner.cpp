@@ -119,8 +119,10 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           HashId(seed, t.value);
         } else if constexpr (std::is_same_v<T, ResolvedType>) {
           HashId(seed, t.value);
+          HashField(seed, t.resolution);
         } else if constexpr (std::is_same_v<T, DriverType>) {
           HashId(seed, t.value);
+          HashField(seed, t.resolution);
         }
         // The remaining variants are parameter-less; the variant index above
         // is their whole identity.

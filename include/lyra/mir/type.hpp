@@ -555,37 +555,44 @@ struct TaggedUnionType {
 };
 
 // Observable storage wrapper around a value type. Declares that a member's
-// storage is a module-scope cell that exposes Set / Get / Mutate
-// (LRM 9.4.2 update event) -- writes route through the engine so subscribers
-// wake. HIR-to-MIR wraps a member declaration whose value type is a
-// SystemVerilog data type (not a handle, child instance, or external ref) in
-// this wrapper. The C++ backend renders the wrapper as `lyra::runtime::Var<T>`
-// where T is the inner value type; the C++ template requires `T` to satisfy
-// `lyra::value::LyraValue`, so a value type that forgot to implement the
-// contract fails at template instantiation.
+// storage is a module-scope cell whose write fires the LRM 9.4.2 update event,
+// so subscribers wake on a change. HIR-to-MIR wraps a member declaration whose
+// value type is a SystemVerilog data type (not a handle, child instance, or
+// external ref) in this wrapper. The C++ backend renders the wrapper as
+// `lyra::runtime::Var<T>` where T is the inner value type; the C++ template
+// requires `T` to satisfy `lyra::value::LyraValue`, so a value type that forgot
+// to implement the contract fails at template instantiation.
 struct ObservableType {
   TypeId value;
 
   auto operator==(const ObservableType&) const -> bool = default;
 };
 
+// How a net folds its drivers' contributions into its value (LRM 6.6). The
+// source net type picks it: `wire` and `tri` name the same tri-state fold, and
+// the wired-logic, charge-storage, pull, and supply net types each name their
+// own. It is part of the net's type because two nets of one data type resolve
+// differently when their net types differ, so nothing below can recover it from
+// the value type or invent it.
+enum class NetResolution : std::uint8_t { kTriState };
+
 // A net's resolved storage: an observable value produced by resolving the
 // contributions of the net's drivers (LRM 6.5, 6.6). Readable and observable
 // like an `ObservableType` cell, but never written directly -- a value reaches
-// it only through a driver. The C++ backend renders it as
-// `lyra::runtime::ResolvedNet<T, Resolver>`, where T is the inner value type
-// and Resolver is the net type's resolution policy.
+// it only through a driver.
 struct ResolvedType {
   TypeId value;
+  NetResolution resolution;
 
   auto operator==(const ResolvedType&) const -> bool = default;
 };
 
-// The write capability for a net: a handle to one of a `ResolvedType` node's
-// driver slots. A driver updates only its own contribution; the net resolves.
-// The C++ backend renders it as `lyra::runtime::Driver<T, Resolver>`.
+// The drive capability for a net: a handle to one of a `ResolvedType` net's
+// contributions. A driver updates only its own contribution; the net resolves,
+// so a driver carries the same resolution its net does.
 struct DriverType {
   TypeId value;
+  NetResolution resolution;
 
   auto operator==(const DriverType&) const -> bool = default;
 };
@@ -636,12 +643,15 @@ using ChildScope = std::variant<GenerateScopeChild, ModuleInstanceChild>;
 [[nodiscard]] auto GetChildScope(const CompilationUnit& unit, TypeId type)
     -> std::optional<ChildScope>;
 
-// True for storage forms that expose the observable-cell surface
-// (`Get` / `Set` / `Mutate`): the `ObservableType` wrapper, a `RefType`
-// procedural reference, and a net's `ResolvedType` cell.
-[[nodiscard]] auto IsObservableCellType(const Type& ty) -> bool;
+// True for a capability wrapper: a type that represents a storage place rather
+// than being a value, so the value it stands for is named one dereference
+// further and the protocol realizing that access comes from this type. The
+// family is the observable cell, a procedural reference, a net's resolved cell,
+// and a net driver's handle. Which accesses a given wrapper answers is its own
+// affair -- a net's cell takes no store, since a value reaches it only through
+// a driver (LRM 6.5).
+[[nodiscard]] auto IsCapabilityWrapperType(const Type& ty) -> bool;
 
-// The inner value type of an observable storage wrapper.
-[[nodiscard]] auto ObservableInnerValueType(const Type& ty) -> TypeId;
+[[nodiscard]] auto CapabilityWrapperValueType(const Type& ty) -> TypeId;
 
 }  // namespace lyra::mir

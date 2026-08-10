@@ -7,7 +7,6 @@
 #include <format>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -18,12 +17,12 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
-#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -33,7 +32,6 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -43,11 +41,10 @@ namespace {
 
 // Lowers a package's variables (LRM 26.2) into unit-level static storage and
 // synthesizes the two receiver-less callables that bring them up at time zero:
-// `Install` installs every cell's declared representation and default (no
-// runtime handle -- nothing to fire before any process), and `Initialize`
-// runs each LRM 10.5 value initializer through its cell (taking a runtime
-// handle as its one parameter, since a package has no `self` to reach it
-// through). The design root installs every package before initializing any,
+// `Install` installs every cell's declared representation and default, and
+// `Initialize` runs each LRM 10.5 value initializer through its cell. Neither
+// takes a parameter: a package has no `self`, and neither operation needs one.
+// The design root installs every package before initializing any,
 // so a value initializer always reaches installed storage. A package variable
 // is reached by name (`unit::name`), so a variable initializer's references
 // to sibling or other-package variables lower through the same by-name path
@@ -66,10 +63,6 @@ auto PopulatePackageStaticVariables(
   mir::CallableCode value_code = mir::CallableCode::Defined();
   value_code.result_type = unit.builtins.void_type;
   CallableBindings value_bindings(unit, value_code);
-  const mir::LocalId runtime_local = value_bindings.Declare(
-      BindingOriginId::Runtime(),
-      mir::LocalDecl{.name = "runtime", .type = unit.builtins.effects});
-  value_code.params.push_back(runtime_local);
   mir::Block& value_block = value_code.Body();
   const WalkFrame value_frame =
       WalkFrame{}.WithBlock(&value_block).WithBindings(&value_bindings);
@@ -102,7 +95,7 @@ auto PopulatePackageStaticVariables(
     }
     const mir::TypeId value_type = unit_lowerer.TranslateType(d.type);
     const mir::TypeId cell_type = unit.types.ObservableCellOf(value_type);
-    if (!mir::IsObservableCellType(unit.types.Get(cell_type))) {
+    if (!mir::IsCapabilityWrapperType(unit.types.Get(cell_type))) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedExpressionForm,
           "a package variable of this type is not yet supported");
@@ -116,26 +109,21 @@ auto PopulatePackageStaticVariables(
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
-                mir::MakeObservableInitializeCallExpr(
+                mir::MakeCapabilityInitializeCallExpr(
                     make_cell(install_block, d.name, cell_type), prototype,
                     unit.builtins.void_type))});
 
-    // Phase 2: a user initializer (LRM 10.5) writes the value through the
-    // cell; the runtime handle comes from the callable's parameter, since
-    // there is no `self`.
+    // Phase 2: a user initializer (LRM 10.5) writes the value through the cell.
     if (var->initializer.has_value()) {
       auto value_or = expr_lowerer.LowerExpr(
           scope.exprs.Get(*var->initializer), value_frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
       const mir::ExprId value_id = value_block.exprs.Add(*std::move(value_or));
-      const mir::ExprId runtime_ref = value_block.exprs.Add(
-          mir::MakeLocalRefExpr(runtime_local, unit.builtins.effects));
       value_block.AppendStmt(
           mir::ExprStmt{
-              .expr = value_block.exprs.Add(
-                  mir::MakeObservableSetCallExpr(
-                      make_cell(value_block, d.name, cell_type), runtime_ref,
-                      value_id, unit.builtins.void_type))});
+              .expr = value_block.exprs.Add(BuildStoreExpr(
+                  unit, value_block, make_cell(value_block, d.name, cell_type),
+                  value_id, std::nullopt, value_type))});
     }
   }
 
@@ -146,8 +134,7 @@ auto PopulatePackageStaticVariables(
             .name = std::string{kPackageInstallCallableName},
             .code = std::move(install_code),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .visibility = mir::CallableVisibility::kInternal});
+            .virtual_dispatch = std::nullopt});
   }
   // Only a package with a value initializer needs the initialize callable. Its
   // direct other-package variable reads are the by-name dependency the design
@@ -171,8 +158,7 @@ auto PopulatePackageStaticVariables(
             .name = std::string{kPackageInitializeCallableName},
             .code = std::move(value_code),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .visibility = mir::CallableVisibility::kInternal});
+            .virtual_dispatch = std::nullopt});
   }
   return {};
 }
@@ -298,8 +284,7 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
             .name = src.name,
             .code = *std::move(code_or),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .visibility = mir::CallableVisibility::kInternal}));
+            .virtual_dispatch = std::nullopt}));
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its

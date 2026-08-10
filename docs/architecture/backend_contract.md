@@ -6,16 +6,17 @@ Define the mechanical-translation contract a backend must satisfy when consuming
 
 The architectural target of the compiler is HIR -> MIR -> LIR -> LLVM IR. The C++ backend is a
 transitional realization: it consumes the same MIR but renders to C++ source instead of descending
-through LIR and LLVM IR. The C++ backend's emitted output is **how MIR is observed during the
-architecture reset** -- a developer reads the emitted C++ to validate that MIR's shape faithfully
-represents the source SystemVerilog through MIR's semantic model (`compiler_overview.md`).
+through LIR and LLVM IR. The C++ backend's emitted output is **how MIR is observed** -- a developer
+reads the emitted C++ to validate that MIR's shape faithfully represents the source SystemVerilog
+through MIR's semantic model (`compiler_overview.md`).
 
 The transitional status does **not** loosen the mechanical-translation discipline. The contract in
 this doc is exactly the discipline an eventual LLVM IR backend will need: every render rule is a
 fixed function of one MIR node. If the C++ backend's render needs any decision logic -- an `if` on a
-node's payload, a ternary inferring construction shape, a switch on type variant whose arms produce
-different syntactic structure -- the LLVM IR backend will need the same logic in its target. Both
-backends pay the cost; the cost is a MIR design failure visible from the backend side.
+node's payload, a ternary inferring construction shape, a switch on type variant inside a
+value-emission entry rather than in the dispatch entry that owns that variance -- the LLVM IR
+backend will need the same logic in its target. Both backends pay the cost; the cost is a MIR design
+failure visible from the backend side.
 
 The C++ backend's render therefore serves as the cross-check on MIR shape today: any place where its
 render is not a mechanical single-node translation is a place where the next stage (LIR / LLVM IR)
@@ -27,10 +28,13 @@ will hit the same obstruction. The bug is in MIR, not in render.
   MIR node and its structural context (its children, the node consuming it); output is determined by
   that input alone. The recursion structure follows the MIR node tree; the render of each node
   composes target-language wrapping around recursive renders of its child nodes.
-- The boundary between two backend entry kinds:
+- The boundary between three backend entry kinds:
   - **Type mapping** -- one dispatch per MIR type variant returning a target representation (a
     target-language type literal for C++, a size + an LLVM type for LLVM IR). This is the only entry
     that names a target-language runtime library type.
+  - **Place access** -- one dispatch per MIR type variant returning how a load through a place of
+    that type is realized, how a store through it is, and how it is lent to a callee by reference.
+    This is the only entry that names a runtime library's access protocol.
   - **Value emission** -- the entries that translate MIR expression, statement, member, and body
     nodes into target-language form. They compose mechanical syntactic wrappers around recursive
     renders; they make no decisions about what the program means.
@@ -64,21 +68,31 @@ will hit the same obstruction. The bug is in MIR, not in render.
    entries render types only via that dispatch; they never compose a target-language type literal
    directly. A runtime library type's spelling lives at one place; nowhere else.
 
-4. **Member declaration is (name, type) -- nothing else reaches member render.** A member's
+4. **Place access is one dispatch per MIR type variant, exhaustive over capability wrappers.** MIR
+   states that the storage a wrapper represents is reached by dereferencing the wrapper's place
+   (`mir.md` invariant 14); it does not state what reaching it costs in a target. Each backend
+   supplies that from the place's type through a single dispatch, sibling to type mapping, answering
+   three questions for a place of that type: how a load through it is realized, how a store through
+   it is, and how it is lent to a callee that takes it by reference. Value emission asks that
+   dispatch and never inspects the wrapper kind itself. Reading a wrapper's own value, rebinding it,
+   and taking its address name the bare place and reach no protocol, so they have no entry here.
+
+5. **Member declaration is (name, type) -- nothing else reaches member render.** A member's
    target-language declaration form is determined by its name and its type alone (the type carries
    size, offset, and target type form; the name carries the source identifier). Wrapper-typed
    members are no exception: any per-member construction state arrives later as ordinary MIR
    expressions in the constructor body, never as type payload that member render reads.
 
-5. **The LLVM IR backend is the canonical cross-check.** When the C++ backend's render needs an
+6. **The LLVM IR backend is the canonical cross-check.** When the C++ backend's render needs an
    `if`-branch or a payload-driven shape decision, ask: could a mechanical LLVM IR backend translate
    the same MIR node without that decision? If not, the MIR shape is wrong. The C++ backend's
    transitional status does not relax this check; it sharpens it, because the C++ backend's output
    is how MIR's correctness is currently observed.
 
-6. **The set of backends consuming MIR is open.** No MIR primitive and no contract entry is
+7. **The set of backends consuming MIR is open.** No MIR primitive and no contract entry is
    specialized for one backend. A new backend reads the same MIR; the only thing it brings is its
-   own type-mapping dispatch and value-emission rules for its target's syntactic form.
+   own type-mapping and place-access dispatches and value-emission rules for its target's syntactic
+   form.
 
 ## Boundary to Adjacent Layers
 
@@ -114,6 +128,12 @@ will hit the same obstruction. The bug is in MIR, not in render.
   form. Type payload is for type-mapping; value emission acting on it reads value-layer data carried
   in a type.
 
+- A value-emission entry that branches on which capability wrapper a place's type is -- an
+  observable arm, a driver arm, a reference arm -- whether in value render, assignment render,
+  projection render, or argument render. A wrapper's access protocol comes from the place-access
+  dispatch, at one site. Spread across emitters it is the same defect as a runtime library name
+  escaping type mapping, and it obliges every emitter to grow an arm each time a wrapper is added.
+
 - A member render entry that emits constructor arguments built from the member's type payload. A
   member is (name, type). Construction state arrives as ordinary MIR primitives in the constructor
   body, never as type payload.
@@ -140,11 +160,17 @@ you cannot write a mechanical translation rule for it -- if your draft contains 
 produce different LLVM instruction sequences -- the MIR primitive set is incomplete. Fix MIR; render
 then writes itself.
 
-A read of an observable signal is a `CallExpr` whose callee is the wrapper type's read method
-against the receiver expression that reaches the wrapper-typed field. The backend renders this
-`CallExpr` by rendering the callee, the receiver, the argument list, and the call syntax of its
-target form. The wrapper-type spelling reaches the call only through the type-mapping dispatch on
-the receiver's type; the call render itself does not separately know the wrapper's name.
+A read of an observable signal is a read of a dereferenced place: the `MemberAccess` reaching the
+wrapper-typed field is the wrapper's place, and dereferencing it names the storage the wrapper
+represents. Render asks the place-access dispatch how a load through a place of that type is
+realized, and composes the result around the recursive render of the place. It does not know the
+wrapper's name, its read method, or which wrapper kind it is -- one dispatch on the type answers all
+three, the same way the type-mapping dispatch answers how to spell the type. A store through the
+same place is the same shape with the store realization, and a partial store is that store applied
+to the designator's updated whole value.
+
+Rebinding a wrapper renders as an ordinary assignment to the bare place, reaching no protocol,
+because MIR states rebinding and writing-through as different nodes.
 
 A wrapper-typed member's construction follows the same shape. Construction state arrives as ordinary
 MIR primitives in the constructor body (a `CallExpr` to an initialize method on the wrapper, with

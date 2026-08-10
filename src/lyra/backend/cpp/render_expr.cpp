@@ -10,6 +10,7 @@
 #include <variant>
 
 #include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/place_access.hpp"
 #include "lyra/backend/cpp/render_call.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
@@ -449,10 +450,9 @@ auto RenderProjectionChain(
 
 // LHS expression render: produces a write-target reference (a name, a
 // dereference, or a chain of container-access `CallExpr`s whose runtime
-// overloads return write-through references). The observable-cell
-// `Mutate(svc)` adapter is already in MIR as a `DerefExpr` wrapping an
-// `ObservableMethod{kMutate}` call -- this render emits nothing implicit
-// on top of the explicit MIR shape.
+// overloads return write-through references). A dereference of a capability
+// wrapper is where the wrapper's own write protocol enters, supplied by the
+// place-access dispatch on the wrapper's type.
 auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
     -> std::string {
   return std::visit(
@@ -489,27 +489,30 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
                 "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
                 r.property_name);
           },
-          // A call in write position is the observable cell's mutate proxy,
-          // which the value-side render already produces as a writable place.
-          [&](const mir::CallExpr&) -> std::string {
-            return RenderExpr(view, expr);
+          [&](const mir::CallExpr& c) -> std::string {
+            return RenderLhsCallExpr(view, c, expr.type);
           },
           [&](const mir::DerefExpr& d) -> std::string {
-            return std::format("(*{})", RenderExpr(view, view.Expr(d.pointer)));
+            const mir::Expr& place = view.Expr(d.pointer);
+            const mir::Type& place_type = view.Unit().types.Get(place.type);
+            if (mir::IsCapabilityWrapperType(place_type)) {
+              return RenderLendThrough(place_type, RenderLhsExpr(view, place));
+            }
+            return std::format("(*{})", RenderExpr(view, place));
           },
           // An unpacked-struct member write: a tuple component reached through
-          // an addressable base (the Mutate snapshot). The deducing-this `Get`
-          // yields a mutable reference on the mutable base, so the projection
-          // is itself the assignment target.
+          // a base that is itself a place. The deducing-this `Get` yields a
+          // mutable reference on a mutable base, so the projection is itself
+          // the assignment target.
           [&](const mir::TupleGetExpr& g) -> std::string {
             return std::format(
                 "({}).template Get<{}>()",
                 RenderLhsExpr(view, view.Expr(g.tuple)), g.index);
           },
           // A union member write: a reference to the active member reached
-          // through the addressable union (the Mutate snapshot). The reference
-          // makes the member active, so the projection is itself the assignment
-          // target and composes for a nested `u.f.g`.
+          // through the union as a place. The reference makes the member
+          // active, so the projection is itself the assignment target and
+          // composes for a nested `u.f.g`.
           [&](const mir::ValueProjectionExpr& p) -> std::string {
             return RenderProjectionChain(view, p);
           },
@@ -534,12 +537,6 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
 }
 
 namespace {
-
-auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
-  return std::holds_alternative<mir::FieldAccessExpr>(expr.data) ||
-         std::holds_alternative<mir::DerefExpr>(expr.data) ||
-         std::holds_alternative<mir::LocalRef>(expr.data);
-}
 
 // Render a compound op suffix for the SV `op=` family. Arithmetic /
 // bitwise compounds use the C++ operator tokens directly because
@@ -589,25 +586,17 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
 
   const mir::Expr& lhs_expr = view.Expr(a.target);
 
-  // Mechanical render: an observable cell's write surfaces in MIR as an
-  // explicit `CallExpr` against the cell type's `Set` method, and a partial
-  // mutation surfaces as `DerefExpr` over a `Mutate` call at the chain root.
-  // Both shapes arrive from HIR-to-MIR already lowered, so this path emits a
-  // plain C++ assignment over whatever the LHS render produces.
-  if (IsLhsBarePrimary(lhs_expr)) {
-    std::string root = RenderLhsExpr(view, lhs_expr);
-    if (a.compound_op.has_value()) {
-      return std::format(
-          "({})", RenderCompoundAssign(*a.compound_op, root, value));
-    }
-    return std::format("({} = {})", root, value);
-  }
-  std::string chain = RenderLhsExpr(view, lhs_expr);
+  // Mechanical render: the target names the storage the store reaches, whether
+  // that is a plain place or the storage a capability wrapper stands for, so
+  // this path emits a plain C++ assignment over whatever the LHS render
+  // produces. An assignment is an expression, so it parenthesizes to keep its
+  // value usable wherever it appears.
+  const std::string target = RenderLhsExpr(view, lhs_expr);
   if (a.compound_op.has_value()) {
     return std::format(
-        "({})", RenderCompoundAssign(*a.compound_op, chain, value));
+        "({})", RenderCompoundAssign(*a.compound_op, target, value));
   }
-  return std::format("{} = {}", chain, value);
+  return std::format("({} = {})", target, value);
 }
 
 auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
@@ -837,13 +826,17 @@ auto RenderReplicationExpr(
       "RenderReplicationExpr: result type must be PackedArrayType or string");
 }
 
-// Read-side render of a borrowed-pointer dereference: the cell is reached
-// with `(*ptr)`. The `.Get()` unwrap, if applicable, is emitted by the
-// explicit `ObservableMethod{kGet}` call that HIR-to-MIR wraps around an
-// observable read.
+// Read-side render of a dereference: the value the operand's place stands for.
+// A pointer or handle is reached with `(*ptr)`; a capability wrapper's storage
+// is reached through the protocol its type supplies.
 auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
     -> std::string {
-  return std::format("(*{})", RenderExpr(view, view.Expr(d.pointer)));
+  const mir::Expr& place = view.Expr(d.pointer);
+  const mir::Type& place_type = view.Unit().types.Get(place.type);
+  if (mir::IsCapabilityWrapperType(place_type)) {
+    return RenderLoadThrough(place_type, RenderLhsExpr(view, place));
+  }
+  return std::format("(*{})", RenderExpr(view, place));
 }
 
 // `&place` emitted as the C++ address-of operator. Backend-side

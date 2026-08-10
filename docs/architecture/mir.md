@@ -20,7 +20,8 @@ MIR's vocabulary is what those languages share:
 SystemVerilog is one source language that flows in through HIR; SV does not shape MIR's vocabulary.
 SV-specific concepts -- signals as observable storage cells, NBA scheduling regions, event-control
 semantics, generate as elaboration -- are translated at HIR-to-MIR into MIR's generic vocabulary:
-variables with library wrapper types, method calls against those wrappers' APIs, runtime callables
+variables whose type is a capability wrapper and whose storage is reached by dereferencing it, calls
+against those wrappers' APIs for the operations that act on the wrapper itself, runtime callables
 the scheduler invokes, constructor-time logic that builds the object graph. Once MIR sees a value it
 sees a programming-language expression with a programming-language type; it does not know or care
 that the source was SystemVerilog. The same MIR could in principle express the same program reached
@@ -60,6 +61,12 @@ what the construct means.
   generic-language distinctions (C++/Rust/LLVM carry them). "Activation frame" is a lowering role
   name for a `Shared<>` scope struct, not a type category; a closure is not a struct-with-invoke but
   its own callable-value category.
+- Capability wrappers: types that represent a storage place instead of being a value -- an
+  observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
+  wrapper composes over the value type it represents, and the wrapper and that storage are distinct
+  places (invariant 14). The capability the wrapper carries -- notifying waiters on change, aliasing
+  another place, resolving contributions -- is a fact of the type alone; naming the wrapper type
+  states it, and nothing beside the type restates it.
 - Callables: one concept -- callable code (a signature, plus a body where the declaration defines
   it) and a callable value (code plus a bound environment). Every callable body's first binding is
   `self`, a pointer to the enclosing class; the body reaches every value it needs through its
@@ -175,6 +182,22 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     Rust binding once initialized refers to its target by address rather than re-locating it on
     every use, a MIR reference's runtime cost is paid at sealing, not at access._
 
+14. A capability wrapper's place and the storage it represents are distinct places, told apart by
+    structure alone. A bare wrapper place denotes the wrapper: reading it yields the wrapper as a
+    value, storing into it rebinds the wrapper, taking its address yields the wrapper's address. A
+    dereference of that place denotes the storage the wrapper represents: reading it yields the
+    stored value, storing into it writes through the wrapper, a designator rooted at it writes part
+    of that storage, and passing it as a by-reference argument lends that storage to the callee.
+    Reaching represented storage is place formation, not an operation, so it is never a call; the
+    protocol that realizes the access comes from the wrapper type at each consuming backend.
+    Operations on the wrapper itself -- installing its declared representation, attaching it to the
+    object graph -- act on the wrapper as an object and are ordinary calls against its API.
+
+    _Programming-language consequence: this is the distinction every generic language draws between
+    `p` and `*p`, applied to every type that represents storage. Rebinding a wrapper and writing
+    through it are different programs, so they are different MIR, and no consumer needs to know
+    which lowering built a store in order to tell them apart._
+
 ## Boundary to Adjacent Layers
 
 - Consumes HIR. HIR-to-MIR is the layer where SV-specific concepts get translated into MIR's generic
@@ -235,12 +258,18 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
 - A MIR node kind invented to express a backend-side storage realization or runtime library wrapper
   (a `ReadCell` / `WriteCell` / `MutateCell` node for the C++ backend's `Var<T>`, an `AcquireLock` /
   `ReleaseLock` node for some scheduling discipline). Backend storage realizations are library types
-  in the target; their operations appear in MIR as ordinary `CallExpr` nodes against the library
-  type's API. The decision that a read or write through such a wrapper is expressed as a method
-  invocation is made at HIR-to-MIR lowering, which emits a `CallExpr` against the wrapper type's
-  API; the resulting MIR carries no trace of the wrapper as a node concept. (MIR's primitive set is
-  closed; the existing `CallExpr` carries every backend-side library call the same way it carries
-  every other call.)
+  in the target. An operation on such a wrapper appears in MIR as an ordinary `CallExpr` against the
+  library type's API; access to the storage it represents is a dereference of the wrapper's place
+  (invariant 14). Either way the resulting MIR carries no trace of the wrapper as a node concept.
+  (MIR's primitive set is closed; the existing call and dereference primitives carry every
+  backend-side library operation and access the same way they carry every other call and
+  dereference.)
+- A read or write through a storage-representing wrapper encoded as a call: `Call(get, [cell])`,
+  `Call(set, [cell, value])`, or a proxy call a consumer must recognize to recover the destination
+  it stands for. Reaching storage is place formation, and stating it as a call states one backend's
+  realization -- which obliges every other consumer to decode that realization back into the
+  destination. (Invariant 14: the wrapper and the storage it represents are told apart by structure,
+  so no consumer decodes anything.)
 - A runtime helper invocation that wraps a primitive operator family as an opaque call to recover
   source-level shape (e.g., `Inside(lhs, items)`, `CaseMatch(sel, labels)`). Sugar collapses to
   primitives in MIR; readability of generated backend source is not recovered by reintroducing
@@ -339,18 +368,18 @@ environment, synthesized only by HIR-to-MIR. `self` is the code's receiver param
 type is the call protocol, and a bound field is a snapshot or an alias by its type. `callable.md` is
 the canonical contract.
 
-An access through a runtime library wrapper type illustrates the boundary between MIR's vocabulary
-and a backend's storage realization. A backend may choose to wrap observable storage in a
-target-side wrapper type that exposes read / write / mutate methods through its runtime library; MIR
-has no "cell access" node. A read of an observable signal is a `CallExpr` whose callee is the
-wrapper type's read method and whose receiver is the `MemberAccess` reaching the signal; a write is
-a `CallExpr` to the wrapper's write method. The decision that an observable read is a method call --
-not an implicit value-read -- is made at HIR-to-MIR, which sees that the signal's MIR type is the
-wrapper type and emits the corresponding call. By the time MIR is read by any backend, the program
-already says `wrapper.<read>(...)` or `wrapper.<write>(...)`; the backend reads the call and emits
-it the same way it emits any other call. The wrapper type's target-language spelling and the method
-spellings are backend-internal -- `backend_contract.md` owns the rules that keep those out of
-value-emission sites.
+An access through a capability wrapper illustrates the boundary between MIR's vocabulary and a
+backend's storage realization. A backend may wrap observable storage in a target-side library type
+that reads, writes, and mutates through its runtime library; MIR has no "cell access" node and needs
+none. The signal's MIR type is the wrapper, so the `MemberAccess` reaching the signal is the
+wrapper's place and a dereference of it is the storage: a read of the signal is a read of that
+dereferenced place, a write is a store into it, and a partial write is a designator whose owner is
+it. Rebinding the wrapper -- pointing a reference at a different place -- is a store into the bare
+place, with no dereference, which is what separates the two without either one carrying a marker. No
+node names the wrapper's read or write method, so no consumer recovers a destination by recognizing
+one. What the access becomes in a target -- a method call, a runtime-ABI call, a load or store
+against an address -- is each backend's own mapping from the wrapper type; `backend_contract.md`
+owns the rules that keep those spellings out of value-emission sites.
 
 An assignment whose target descends into a value -- a container element, a struct component, a union
 member, a fixed-width range -- states an abstract update of the owning value: which owner, which

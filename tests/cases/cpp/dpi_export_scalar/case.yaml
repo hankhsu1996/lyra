@@ -9,5 +9,6 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: |
-      r=42
+    contains:
+      - "r=42"
+      - "g=21"

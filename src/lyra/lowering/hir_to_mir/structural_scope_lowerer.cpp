@@ -9,8 +9,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -27,7 +25,7 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -246,6 +244,17 @@ void EmitInstanceMemberConstruction(
   }
 }
 
+// The fold a net's declared net type names (LRM 6.6). `wire` and `tri` differ
+// only in source spelling; both resolve under the tri-state truth table.
+auto TranslateNetResolution(hir::NetType net_type) -> mir::NetResolution {
+  switch (net_type) {
+    case hir::NetType::kWire:
+    case hir::NetType::kTri:
+      return mir::NetResolution::kTriState;
+  }
+  throw InternalError("TranslateNetResolution: unknown NetType");
+}
+
 // Allocates one MIR member per cross-unit reference. Every reference -- upward
 // or downward, `$root`-anchored or named -- takes the same borrowed-pointer
 // slot: the pointee matches the producer's actual storage cell so a read or
@@ -276,7 +285,10 @@ void DeclareRoutedRefSlots(
     const mir::TypeId leaf =
         cu.target_net_type.has_value()
             ? unit_lowerer.Unit().types.Intern(
-                  mir::ResolvedType{.value = value})
+                  mir::ResolvedType{
+                      .value = value,
+                      .resolution =
+                          TranslateNetResolution(*cu.target_net_type)})
             : unit_lowerer.Unit().types.ObservableCellOf(value);
     const mir::TypeId slot_type = unit_lowerer.Unit().types.PointerTo(
         leaf, mir::PointerOwnership::kBorrowed);
@@ -1038,7 +1050,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       }
       if (var == nullptr) {
         return unit_lowerer.Unit().types.Intern(
-            mir::ResolvedType{.value = mir_value_type});
+            mir::ResolvedType{
+                .value = mir_value_type,
+                .resolution = TranslateNetResolution(
+                    std::get<hir::StructuralNetDecl>(d.kind).net_type)});
       }
       return unit_lowerer.Unit().types.ObservableCellOf(mir_value_type);
     }();
@@ -1613,17 +1628,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                 .data = mir::ExprStmt{
                     .expr = initialize_block.exprs.Add(std::move(expr))}});
       };
-      // An observable cell init routes the value through the cell's wrapper so
-      // its engine-side change-tracking sees it; a plain field gets a regular
-      // assignment.
       const auto emit_value_store = [&](mir::ExprId value_id) {
-        const mir::ExprId runtime_id = initialize_block.exprs.Add(
-            mir::MakeCurrentRuntimeCallExpr(
-                unit_lowerer.Unit().builtins.effects));
-        append_stmt(BuildObservableAssignExpr(
-            unit_lowerer.Unit(), initialize_block, runtime_id, init_target,
-            value_id, std::nullopt, mir_value_type,
-            unit_lowerer.Unit().builtins.void_type));
+        append_stmt(BuildStoreExpr(
+            unit_lowerer.Unit(), initialize_block, init_target, value_id,
+            std::nullopt, mir_value_type));
       };
 
       // Every observable value cell installs its declared representation and
@@ -1632,12 +1640,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       // verified against it rather than discovered from whichever store runs
       // first. A non-observable value member carries no cell wrapper, so it
       // installs its representation through an ordinary store of the default.
-      if (mir::IsObservableCellType(
+      if (mir::IsCapabilityWrapperType(
               unit_lowerer.Unit().types.Get(mir_field_type))) {
         const mir::ExprId prototype = initialize_block.exprs.Add(
             BuildDefaultValueFromHir(unit_lowerer, init_frame, d.type));
         append_stmt(
-            mir::MakeObservableInitializeCallExpr(
+            mir::MakeCapabilityInitializeCallExpr(
                 init_target, prototype,
                 unit_lowerer.Unit().builtins.void_type));
         if (var->initializer.has_value()) {
@@ -1661,12 +1669,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       }
     }
 
-    // A net cell installs its empty-driver resolved value at construction (LRM
-    // 6.6.1), in the constructor rather than the initialize phase: a net is a
-    // readable, well-typed observable before any driver attaches, and before a
-    // cross-unit reader seeds from it during the parent-first initialize phase,
-    // so an undriven read sees the net type's undriven value, never an
-    // uninitialized cell. Drivers, attached at Resolve, update it from there.
+    // A net cell fixes its declared type at construction (LRM 6.6.1), in the
+    // constructor rather than the initialize phase: a net is a readable,
+    // well-typed observable before any driver attaches, and before a cross-unit
+    // reader seeds from it during the parent-first initialize phase, so a read
+    // that early sees the net type's undriven value, never an uninitialized
+    // cell. Drivers, attached at Resolve, update it from there.
     if (is_net) {
       const mir::ExprId net_target = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
@@ -1679,7 +1687,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               .label = std::nullopt,
               .data = mir::ExprStmt{
                   .expr = ctor_block.exprs.Add(
-                      mir::MakeObservableInitializeCallExpr(
+                      mir::MakeCapabilityInitializeCallExpr(
                           net_target, prototype, void_type))}});
     }
 
@@ -1749,9 +1757,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     call_package(pkg, kPackageInstallCallableName, {});
   }
   for (const std::string& pkg : package_init_plan_.value_initialize_order) {
-    const mir::ExprId runtime_id = initialize_block.exprs.Add(
-        mir::MakeCurrentRuntimeCallExpr(unit_lowerer.Unit().builtins.effects));
-    call_package(pkg, kPackageInitializeCallableName, {runtime_id});
+    call_package(pkg, kPackageInitializeCallableName, {});
   }
 
   // Build each materialized procedural-storage scope's class: copy its
@@ -1884,14 +1890,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         entry.companion_field);
   }
 
-  // An exported subroutine (LRM 35.5) is reached from foreign C through a C
-  // entry point outside the class, so it joins the class's externally callable
-  // surface rather than its internal one.
-  std::unordered_set<std::uint32_t> exported_subroutines;
-  for (const hir::ForeignExportDecl& e : hir_scope.foreign_exports) {
-    exported_subroutines.insert(e.subroutine.value);
-  }
-
   // The callable each subroutine lowered to, recorded where it is created so an
   // export below names its own by identity, indexed by that subroutine's id.
   std::vector<mir::CallableId> subroutine_callables;
@@ -1909,11 +1907,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .name = src.name,
             .code = *std::move(code_or),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .visibility =
-                exported_subroutines.contains(static_cast<std::uint32_t>(i))
-                    ? mir::CallableVisibility::kPublic
-                    : mir::CallableVisibility::kInternal});
+            .virtual_dispatch = std::nullopt});
     // A body lowered earlier may already name this one through the id reserved
     // for it, so the arena position it actually lands in has to be that id.
     if (added.value != i) {
@@ -1960,8 +1954,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .name = std::move(name),
             .code = *std::move(code_or),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .visibility = mir::CallableVisibility::kInternal});
+            .virtual_dispatch = std::nullopt});
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body, p.kind == hir::ProcessKind::kFinal);
     for (const auto& pending :
@@ -2043,8 +2036,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .name = std::move(name),
             .code = std::move(code),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .visibility = mir::CallableVisibility::kInternal});
+            .virtual_dispatch = std::nullopt});
   };
   const std::optional<mir::CallableId> resolve_body =
       add_body(resolve_block, resolve_code, resolve_self_id, "ResolveState");

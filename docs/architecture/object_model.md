@@ -37,8 +37,8 @@ direction. The governing thesis:
 - Runtime-tree participation as a base-lineage fact: an object that extends the runtime scope base
   is a node in the runtime object tree and participates in the elaboration lifecycle.
 - The unit-wide registry of local nominal object declarations, the single canonical local identity
-  of each, and the separation of that identity from lexical name resolution and from backend
-  emission nesting.
+  of each, and the separation of that identity from lexical name resolution and from where a backend
+  places the emitted code.
 
 ## Does Not Own
 
@@ -132,16 +132,18 @@ direction. The governing thesis:
    contract lives in `object_lifetime.md`._
 
 10. **A compilation unit owns one canonical registry of its local nominal object declarations, and
-    identity, lexical name resolution, and emission nesting are three separate relations.** Every
+    identity, lexical name resolution, and emitted placement are three separate relations.** Every
     object type -- a module, a generate scope, a class -- is one registry record with one canonical
     local identity, and a reference names that identity. A lexical scope resolves a source name to
     an identity; the registry is not a flat global name table. Structural containment (which object
-    builds or owns which) and a backend's emission nesting are separate relations over identities,
-    neither of which is the identity. A forward (incomplete) declaration is a registry record that
-    exists before its body, so mutually-referential and forward-declared types resolve against a
-    stable identity. _Object-model consequence: declarations are owned and identified once,
-    uniformly; lexical position, name, and emission layout are properties read off that identity,
-    never substitutes for it, and one storage serves every object type._
+    builds or owns which) is a separate relation over identities and is not the identity, and where
+    a backend places the emitted code is not a relation the registry carries at all -- which is what
+    keeps a declaration's name meaning one thing everywhere its unit is reachable. A forward
+    (incomplete) declaration is a registry record that exists before its body, so
+    mutually-referential and forward-declared types resolve against a stable identity. _Object-model
+    consequence: declarations are owned and identified once, uniformly; lexical position and name
+    are properties read off that identity, never substitutes for it, and one storage serves every
+    object type._
 
 ## Boundary to Adjacent Layers
 
@@ -184,10 +186,11 @@ direction. The governing thesis:
   of a managed reference rather than as a realization detail. (Invariant 9.)
 - Two declaration-storage systems -- one for module and generate-scope objects, another for classes.
   There is one registry. (Invariant 10.)
-- An object's lexical position or its emission nesting used as its identity; a second local identity
-  inter-convertible with the first. (Invariant 10.)
-- A backend-emission nesting parent stored on the generic object declaration; it is a backend
-  relation derived from structural containment, not a field of the declaration. (Invariant 10.)
+- An object's lexical position or its emitted placement used as its identity; a second local
+  identity inter-convertible with the first. (Invariant 10.)
+- An emission placement stored on the generic object declaration for a backend to read. Placement is
+  the backend's own; storing it is what lets one declaration's name mean different things at
+  different reference sites. (Invariant 10.)
 
 ## Notes / Examples
 

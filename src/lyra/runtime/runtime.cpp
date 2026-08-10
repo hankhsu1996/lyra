@@ -230,7 +230,7 @@ void Runtime::ExecuteNbaRegion() {
   auto pending = std::move(queues_.nba);
   queues_.nba.clear();
   for (auto& closure : pending) {
-    closure(*this);
+    closure();
   }
 }
 

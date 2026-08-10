@@ -19,7 +19,7 @@
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -531,7 +531,6 @@ auto PopulateForeignImportBoundary(
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
-  const mir::TypeId void_t = unit.builtins.void_type;
 
   mir::Block& body = closure.Body();
   const WalkFrame& cframe = closure.Frame();
@@ -631,11 +630,8 @@ auto PopulateForeignImportBoundary(
     const mir::ExprId rhs_id = BuildBoundaryReadback(
         unit_lowerer, cframe, wb.carrier, temp_ref, wb.carrier_type,
         wb.sv_type);
-    const mir::ExprId runtime_id =
-        body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-    const mir::Expr assign = BuildObservableAssignExpr(
-        unit, body, runtime_id, lhs_id, rhs_id, std::nullopt, wb.sv_type,
-        void_t);
+    const mir::Expr assign =
+        BuildStoreExpr(unit, body, lhs_id, rhs_id, std::nullopt, wb.sv_type);
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
   }
 
@@ -855,8 +851,7 @@ auto MakeForeignImportDecl(
       .code = MakeForeignSignature(
           unit, import.params, import.ret_abi, import.is_task),
       .foreign = mir::ForeignLinkage{.foreign_name = import.foreign_name},
-      .virtual_dispatch = std::nullopt,
-      .visibility = mir::CallableVisibility::kInternal};
+      .virtual_dispatch = std::nullopt};
 }
 
 template <ExprLowerer Lowerer>
@@ -1156,8 +1151,7 @@ auto SynthesizeForeignExportEntry(
       .name = export_decl.foreign_name,
       .code = std::move(code),
       .foreign = mir::ForeignLinkage{.foreign_name = export_decl.foreign_name},
-      .virtual_dispatch = std::nullopt,
-      .visibility = mir::CallableVisibility::kInternal};
+      .virtual_dispatch = std::nullopt};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

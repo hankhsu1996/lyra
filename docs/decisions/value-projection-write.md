@@ -110,7 +110,7 @@ interior moves from "a location realized by a reference" to "a projection throug
   already fixes. Owner and selectors remain structural children; only the owner boundary -- which
   the nested expression forces each backend to re-derive -- is stated.
 - **Keep a backend-specific functional-write primitive as a MIR concept.** Rejected:
-  `backend_contract.md` invariant 6 forbids a MIR primitive specialized for one backend. Under the
+  `backend_contract.md` invariant 7 forbids a MIR primitive specialized for one backend. Under the
   designator the functional update is a stated MIR fact both backends realize; the runtime call that
   builds a new whole value is a realization of that fact below MIR, not a MIR concept one backend
   rejects.
@@ -129,8 +129,9 @@ interior moves from "a location realized by a reference" to "a projection throug
   independently, but their interior writes connect to the common designator path, never a new
   per-type gate.
 - The whole-value store back through the owner is a semantic store (`value-store-discipline.md`),
-  and for an observable owner it is the observable cell's write (`value-type-concepts.md`): one
-  final writeback that fires subscribers once, whatever the selector chain's depth.
+  and for an observable owner it is the observable cell's write
+  (`storage-access-as-place-formation.md`): one final writeback that fires subscribers once,
+  whatever the selector chain's depth.
 
 ## Migration shape
 
@@ -165,5 +166,5 @@ the reference model this decision removes.
   is functional, is the driver for D2 and D3.
 - `value-store-discipline.md` -- the whole-value writeback in D2 is a semantic store that preserves
   the owner's declared type.
-- `value-type-concepts.md` -- a projection write into an observable owner reaches the cell through
-  the cell's own write, so it fires subscribers through the same single writeback.
+- `storage-access-as-place-formation.md` -- a projection write into an observable owner reaches the
+  cell through the cell's own write, so it fires subscribers through the same single writeback.

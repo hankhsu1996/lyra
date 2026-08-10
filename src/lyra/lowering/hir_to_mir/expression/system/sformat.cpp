@@ -12,15 +12,13 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
-#include "lyra/mir/compilation_unit.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -119,11 +117,8 @@ auto LowerSFormatSystemSubroutineCallStmt(
   const mir::ExprId value_id =
       ConvertToType(process.Owner().Unit(), block, call_id, out_type);
 
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::Expr assign_expr = BuildObservableAssignExpr(
-      process.Owner().Unit(), block, runtime_id, out_id, value_id, std::nullopt,
-      out_type, process.Owner().Unit().builtins.void_type);
+  const mir::Expr assign_expr = BuildStoreExpr(
+      process.Owner().Unit(), block, out_id, value_id, std::nullopt, out_type);
   const mir::ExprId assign_id = block.exprs.Add(assign_expr);
 
   return mir::Stmt{

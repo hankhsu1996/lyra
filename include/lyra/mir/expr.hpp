@@ -307,11 +307,15 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-// Dereferences a reference -- a borrowed pointer or a managed handle -- to
-// reach the object or cell it refers to. An lvalue-producing navigation like
-// ElementSelectExpr; `Expr::type` is the referent's value type. Taking the
-// address of a dereferenced managed handle is how a borrowed pointer to a
-// managed object is obtained.
+// Names the place its operand stands for: the object a borrowed pointer or a
+// managed handle refers to, or the storage a capability wrapper represents.
+// This is place formation rather than an operation -- reading it loads the
+// referent, storing into it writes the referent, a designator rooted at it
+// writes part of the referent, and passing it by reference lends the referent.
+// The bare operand keeps naming the pointer or the wrapper itself, so rebinding
+// one is a store carrying no dereference. `Expr::type` is the referent's type.
+// Taking the address of a dereferenced managed handle is how a borrowed pointer
+// to a managed object is obtained.
 struct DerefExpr {
   ExprId pointer;
 };
@@ -711,6 +715,12 @@ struct Expr {
 // else (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
 
+// Whether the call hands `args[0]` back unchanged, so the call stands for
+// whatever that argument stands for. A walk following where storage lives
+// passes through such a call, and a consumer naming the call as a place names
+// the place that argument names.
+[[nodiscard]] auto IsPassThroughCallee(const Callee& callee) -> bool;
+
 // Whether the call's `args[0]` is the container being accessed (indexed or
 // sliced). LHS-chain walkers use this to reach the root primary.
 
@@ -728,54 +738,26 @@ struct Expr {
       .type = effects};
 }
 
-// `cell.Get()` -- unwraps an observable cell to its inner value.
-[[nodiscard]] inline auto MakeObservableGetCallExpr(
-    ExprId cell, TypeId value_type) -> Expr {
-  return Expr{
-      .data =
-          CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kGet},
-              .arguments = {cell}},
-      .type = value_type};
+// `*place` -- names the storage `place` stands for. `referent_type` is what
+// that storage holds: the pointee for a pointer or handle, the represented
+// value type for a capability wrapper.
+[[nodiscard]] inline auto MakeDerefExpr(ExprId place, TypeId referent_type)
+    -> Expr {
+  return Expr{.data = DerefExpr{.pointer = place}, .type = referent_type};
 }
 
-// `cell.Initialize(prototype)` -- installs the cell's declared representation
-// (and default contents) once at construction. `prototype` is a value of the
-// cell's declared type; only its representation is used. No runtime handle: it
-// runs before any process, so there are no subscribers to fire.
-[[nodiscard]] inline auto MakeObservableInitializeCallExpr(
-    ExprId cell, ExprId prototype, TypeId void_type) -> Expr {
+// `wrapper.Initialize(prototype)` -- fixes the declared representation (and
+// default contents) once at construction. `prototype` is a value of that
+// declared type; only its representation is used. No runtime handle: it runs
+// before any process, so there are no subscribers to fire.
+[[nodiscard]] inline auto MakeCapabilityInitializeCallExpr(
+    ExprId wrapper, ExprId prototype, TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee = Direct{.target = support::BuiltinFn::kInitialize},
-              .arguments = {cell, prototype}},
+              .arguments = {wrapper, prototype}},
       .type = void_type};
-}
-
-// `cell.Set(runtime, value)` -- whole-cell write that fires subscribers
-// on change.
-[[nodiscard]] inline auto MakeObservableSetCallExpr(
-    ExprId cell, ExprId runtime_id, ExprId value, TypeId void_type) -> Expr {
-  return Expr{
-      .data =
-          CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kSet},
-              .arguments = {cell, runtime_id, value}},
-      .type = void_type};
-}
-
-// `cell.Mutate(runtime)` -- opens a partial-write proxy. The MIR result
-// type is the inner value T; consumers wrap the call in a `DerefExpr` so
-// downstream selectors / operators run on T directly.
-[[nodiscard]] inline auto MakeObservableMutateCallExpr(
-    ExprId cell, ExprId runtime_id, TypeId value_type) -> Expr {
-  return Expr{
-      .data =
-          CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kMutate},
-              .arguments = {cell, runtime_id}},
-      .type = value_type};
 }
 
 // `net.AttachDriver()` -- attaches a driver to a net's resolution node and
@@ -788,18 +770,6 @@ struct Expr {
               .callee = Direct{.target = support::BuiltinFn::kAttachDriver},
               .arguments = {net}},
       .type = driver_type};
-}
-
-// `driver.Update(runtime, value)` -- updates one driver's contribution; the
-// net re-resolves and publishes on a real change.
-[[nodiscard]] inline auto MakeNetDriverUpdateCallExpr(
-    ExprId driver, ExprId runtime_id, ExprId value, TypeId void_type) -> Expr {
-  return Expr{
-      .data =
-          CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kUpdateDriver},
-              .arguments = {driver, runtime_id, value}},
-      .type = void_type};
 }
 
 // `&place` -- the address-of dual of `DerefExpr`. `pointer_type` must be

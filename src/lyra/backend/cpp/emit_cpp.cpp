@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <format>
-#include <optional>
 #include <span>
 #include <string>
 #include <variant>
@@ -10,538 +10,16 @@
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
-#include "lyra/backend/cpp/render_expr.hpp"
-#include "lyra/backend/cpp/render_stmt.hpp"
+#include "lyra/backend/cpp/render_decl.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
-#include "lyra/backend/cpp/scope_view.hpp"
-#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/field.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
 namespace lyra::backend::cpp {
 
 namespace {
-
-// A field declaration is (name, type): the type carries the target storage
-// form, the name the source identifier. Per-field construction state -- a
-// cell's declared representation, its initial value -- arrives as ordinary MIR
-// statements in the constructor body; render never composes it here from type
-// payload. The field value-initializes; an integral cell's declared
-// representation is established by its first store.
-auto RenderField(
-    const ScopeView& ctor_view, const mir::FieldDecl& field, std::size_t indent)
-    -> std::string {
-  const auto& unit = ctor_view.Unit();
-  const std::string type = RenderTypeAsCpp(unit, field.type);
-  return std::format("{}{} {}{{}};\n", Indent(indent), type, field.name);
-}
-
-// The value-init field declarations of any field-bearing storage -- a class's
-// fields, a promoted scope's fields. Shared so a generated struct carries no
-// field-emission of its own; it feeds the same declarations a class does.
-auto RenderFieldList(
-    const ScopeView& view,
-    const base::Arena<mir::FieldDecl, mir::FieldId>& fields, std::size_t indent)
-    -> std::string {
-  std::string out;
-  for (const auto& field : fields) {
-    out += RenderField(view, field, indent);
-  }
-  return out;
-}
-
-// A class static property (LRM 8.9) renders as an `inline static` member of
-// the C++ class: one cell owned by the type, value-initialized at
-// program-startup time before any process runs, which matches LRM 10.5's
-// "before any initial or always" ordering natively. The declaration is
-// bare `<type> <name>{}`; a source-declared initializer, when present,
-// arrives as a class-level assignment statement in the design-init body,
-// never baked into the declaration.
-auto RenderClassStaticProperty(
-    const mir::CompilationUnit& unit, const mir::StaticPropertyDecl& sp,
-    std::size_t indent) -> std::string {
-  const std::string type = RenderTypeAsCpp(unit, sp.type);
-  return std::format(
-      "{}inline static {} {}{{}};\n", Indent(indent), type, sp.name);
-}
-
-auto RenderCallableParam(
-    const mir::CompilationUnit& unit, const mir::LocalDecl& param)
-    -> std::string {
-  // Every formal is a value parameter: an `input` by value (LRM 13.5.1), a
-  // `ref` / `const ref` whose `RefType` already renders as `(const) Ref<T>` so
-  // the reference value carries the aliasing (LRM 13.5.2). `output` / `inout`
-  // are not parameters -- they ride the completion payload.
-  return std::format("{} {}", RenderTypeAsCpp(unit, param.type), param.name);
-}
-
-// The C++ specifier this callable's dispatch role prefixes its declaration
-// with: `virtual` when the callable introduces a new dispatch slot on this
-// class, empty otherwise; the source of virtualness for an override is the
-// slot the base already declares, which the `override` suffix records
-// separately.
-auto VirtualPrefix(const mir::CallableDecl& m) -> std::string_view {
-  if (!m.virtual_dispatch.has_value()) return "";
-  if (std::holds_alternative<mir::IntroducesVirtualSlot>(*m.virtual_dispatch)) {
-    return "virtual ";
-  }
-  return "";
-}
-
-// The trailing specifier attached after the return type when this callable
-// fills an inherited dispatch slot: `override` records that the base's slot
-// resolves through this implementation, so a name-only compilation cannot
-// silently disagree with the intended override target.
-auto OverrideSuffix(const mir::CallableDecl& m) -> std::string_view {
-  if (!m.virtual_dispatch.has_value()) return "";
-  if (std::holds_alternative<mir::IntroducesVirtualSlot>(*m.virtual_dispatch)) {
-    return "";
-  }
-  return " override";
-}
-
-// The renderer for a class-owned callable -- an instance method (LRM 8.6),
-// a static method (LRM 8.10), a process, or a lifecycle body. An instance
-// callable renders as a C++ instance member function whose body opens with
-// a one-line `self = this` adapter, so the body's expressions resolve
-// receiver-relative references uniformly. A static callable renders with
-// the `static` keyword and no receiver alias. The callable's dispatch role
-// decorates the declaration with `virtual` or `override` where applicable.
-// A pure virtual prototype (LRM 8.21) is rendered as a bodyless declaration
-// suffixed with `= 0`; C++ then treats the enclosing class as abstract
-// without any class-level marker required. A namespace's receiver-less
-// callable renders through the free-function path instead.
-auto RenderClassCallable(
-    const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
-    const mir::Class& s, const mir::CallableDecl& m, std::size_t indent)
-    -> std::string {
-  const mir::CallableCode& code = m.code;
-  const std::string ret = RenderTypeAsCpp(unit, code.result_type);
-  // Instance vs static (LRM 8.10) is a signature-level fact carried by the
-  // presence of a self-typed `params[0]`. The C++ `static` prefix and the
-  // body's receiver-alias are gated on the same check so no side flag
-  // restates what the signature already fixes.
-  const bool has_receiver = code.HasReceiver(s.self_pointer_type);
-  const std::size_t user_params_start = has_receiver ? 1 : 0;
-  const std::string_view static_prefix = has_receiver ? "" : "static ";
-
-  std::string sig =
-      std::format("{}{}auto {}(", static_prefix, VirtualPrefix(m), m.name);
-  for (std::size_t i = user_params_start; i < code.params.size(); ++i) {
-    if (i != user_params_start) sig += ", ";
-    sig += RenderCallableParam(unit, code.locals.Get(code.params[i]));
-  }
-  sig += std::format(") -> {}{}", ret, OverrideSuffix(m));
-
-  // A class method this declaration does not define is a pure virtual (LRM
-  // 8.21) -- the only bodyless form a class member takes, since a foreign
-  // callable is never one. `= 0` states that, and C++ then treats the enclosing
-  // class as abstract with no class-level marker of its own.
-  if (!code.body.has_value()) {
-    return std::format("{}{} = 0;\n", Indent(indent), sig);
-  }
-
-  const ScopeView body_view = (parent_struct_view == nullptr)
-                                  ? ScopeView::ForRoot(unit, s, code)
-                                  : parent_struct_view->WithClass(s, code);
-
-  std::string out;
-  out += std::format("{}{} {{\n", Indent(indent), sig);
-  if (has_receiver) {
-    const mir::LocalId self_local = code.params[0];
-    const auto& self_decl = code.locals.Get(self_local);
-    const std::string self_type = RenderTypeAsCpp(unit, self_decl.type);
-    out += std::format(
-        "{}{} {} = this;\n", Indent(indent + 1), self_type, self_decl.name);
-  }
-  out += RenderBlockStatements(body_view, indent + 1);
-  out += std::format("{}}}\n", Indent(indent));
-  return out;
-}
-
-// The renderer for a runtime-callback adapter: a static class member so its
-// address decays to a plain function pointer of the shape the runtime
-// callback table requires. The receiver is the callable's first explicit
-// parameter, rendered like any other formal.
-auto RenderAbiAdapter(
-    const ScopeView* parent_struct_view, const mir::CompilationUnit& unit,
-    const mir::Class& s, const mir::AbiAdapter& a, std::size_t indent)
-    -> std::string {
-  const ScopeView body_view = (parent_struct_view == nullptr)
-                                  ? ScopeView::ForRoot(unit, s, a.code)
-                                  : parent_struct_view->WithClass(s, a.code);
-
-  const std::string ret = RenderTypeAsCpp(unit, a.code.result_type);
-  std::string sig = std::format("static auto {}(", a.name);
-  for (std::size_t i = 0; i < a.code.params.size(); ++i) {
-    if (i != 0) sig += ", ";
-    sig += RenderCallableParam(unit, a.code.locals.Get(a.code.params[i]));
-  }
-  sig += std::format(") -> {}", ret);
-
-  std::string out;
-  out += std::format("{}{} {{\n", Indent(indent), sig);
-  out += RenderBlockStatements(body_view, indent + 1);
-  out += std::format("{}}}\n", Indent(indent));
-  return out;
-}
-
-// Joins string parts with ", " for emission of ctor sig args, base-init
-// forwards, and member-init list entries.
-auto JoinCommaSeparated(const std::vector<std::string>& parts) -> std::string {
-  std::string out;
-  for (const auto& part : parts) {
-    if (!out.empty()) {
-      out.append(", ");
-    }
-    out.append(part);
-  }
-  return out;
-}
-
-auto RenderConstructor(
-    const ScopeView& scope_view, const mir::Class& s, std::size_t indent)
-    -> std::string {
-  // The C++ ctor is composed from the class's construction protocol: the
-  // ctor's own callable carries the signature (with `self` at position 0
-  // per MIR contract -- omitted here because C++ makes `this` implicit); the
-  // base-init phase carries the args to forward to the base ctor; each
-  // member-init maps a field to its initializing expression. The body is the
-  // ctor callable's own body, threaded through a static `init(self)` helper
-  // so a body-local `self` reference resolves the same way it does in every
-  // other method render.
-  const auto& unit = scope_view.Unit();
-  const auto& ctor_code = s.constructor.code;
-  const auto render_typed_name = [&](mir::TypeId type, std::string_view name) {
-    return std::format("{} {}", RenderTypeAsCpp(unit, type), name);
-  };
-
-  std::vector<std::string> sig_args;
-  std::vector<std::string> forward_names;
-  sig_args.reserve(ctor_code.params.size());
-  forward_names.reserve(ctor_code.params.size());
-  // Skip params[0] (self, MIR contract); the C++ ctor's receiver is `this`.
-  for (std::size_t i = 1; i < ctor_code.params.size(); ++i) {
-    const auto& p = ctor_code.locals.Get(ctor_code.params[i]);
-    sig_args.push_back(render_typed_name(p.type, p.name));
-    forward_names.emplace_back(p.name);
-  }
-
-  std::vector<std::string> init_parts;
-  if (s.constructor.base_init.has_value()) {
-    const std::string base_class = RenderClassRefAsCpp(unit, *s.base);
-    std::vector<std::string> base_args_rendered;
-    base_args_rendered.reserve(s.constructor.base_init->args.size());
-    for (const mir::ExprId arg : s.constructor.base_init->args) {
-      base_args_rendered.push_back(
-          RenderExpr(scope_view, scope_view.Expr(arg)));
-    }
-    init_parts.push_back(
-        std::format(
-            "{}({})", base_class, JoinCommaSeparated(base_args_rendered)));
-  }
-  for (const mir::FieldInit& mi : s.constructor.member_inits) {
-    const auto& f = s.fields.Get(mi.target);
-    init_parts.push_back(
-        std::format(
-            "{}({})", f.name,
-            RenderExpr(scope_view, scope_view.Expr(mi.value))));
-  }
-
-  const std::string cpp_name = ToCppName(s.name);
-  const std::string sig =
-      init_parts.empty()
-          ? std::format("{}({})", cpp_name, JoinCommaSeparated(sig_args))
-          : std::format(
-                "{}({}) : {}", cpp_name, JoinCommaSeparated(sig_args),
-                JoinCommaSeparated(init_parts));
-
-  // The C++ ctor is an allocation shell that forwards to the base and the
-  // field members, then hands off to a static `init(self, ...)` -- the same
-  // static-over-self shape every method render uses, so a body-local self
-  // reference resolves as `self` here just like in any other body. The
-  // constructor formals ride alongside `self` so the body reaches them the same
-  // way it reaches any parameter.
-  std::vector<std::string> init_params;
-  init_params.reserve(sig_args.size() + 1);
-  init_params.push_back(std::format("{}* self", cpp_name));
-  for (const std::string& arg : sig_args) {
-    init_params.push_back(arg);
-  }
-  std::vector<std::string> init_call_args;
-  init_call_args.reserve(forward_names.size() + 1);
-  init_call_args.emplace_back("this");
-  for (const std::string& name : forward_names) {
-    init_call_args.push_back(name);
-  }
-  return std::format(
-      "{0}{1} {{ init({2}); }}\n"
-      "{0}static auto init({3}) -> void {{\n"
-      "{4}"
-      "{0}}}\n",
-      Indent(indent), sig, JoinCommaSeparated(init_call_args),
-      JoinCommaSeparated(init_params),
-      RenderBlockStatements(scope_view, indent + 1));
-}
-
-auto VisibilityKeyword(mir::CallableVisibility visibility) -> std::string_view {
-  switch (visibility) {
-    case mir::CallableVisibility::kPublic:
-      return "public";
-    case mir::CallableVisibility::kInternal:
-      return "private";
-  }
-  throw InternalError("VisibilityKeyword: unknown CallableVisibility");
-}
-
-// A compiler-generated struct emits as a plain struct of value-init fields. It
-// is nested in its host class purely as a C++ emission placement -- so a
-// field's enum type resolves against that class's type aliases -- not as a
-// claim that the class owns it (the declaring body may be a closure). Storage
-// only: no base, no constructor, no methods.
-auto RenderStruct(
-    const ScopeView& view, const mir::StructDecl& decl, std::size_t indent)
-    -> std::string {
-  std::string out = Indent(indent) + "struct " + decl.name + " {\n";
-  out += RenderFieldList(view, decl.fields, indent + 1);
-  out += Indent(indent) + "};\n";
-  return out;
-}
-
-// A class-level static constant, declared as a static member whose initializer
-// is the translated value expression. A runtime scope's generated-behavior
-// record is one such constant; the constructor forwards its address to the
-// base.
-auto RenderStaticConstant(
-    const ScopeView& parent_view, const mir::Class& s,
-    const mir::StaticConstantDecl& c, std::size_t indent) -> std::string {
-  const ScopeView view =
-      parent_view.WithClass(s, s.constructor.code).WithBlock(c.body);
-  return std::format(
-      "\n{0}static constexpr {1} {2} = {3};\n", Indent(indent),
-      RenderTypeAsCpp(parent_view.Unit(), c.type), c.name,
-      RenderExpr(view, view.Expr(c.value)));
-}
-
-// The class-level design-init body (LRM 8.9 / 10.5): renders as a static
-// class method whose body assigns each static property its source-declared
-// initial value, plus an `inline static const` sentinel whose initializer
-// invokes it. C++ evaluates `inline static` variables at program-startup
-// time, before `main` and before any process, which realizes the LRM
-// "before any initial or always" ordering without a runtime hook. When the
-// class declared no source initializers the body is empty and nothing is
-// emitted -- the properties' value-init on their inline declarations
-// already covers the type-default case.
-auto RenderClassStaticInit(
-    const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent)
-    -> std::string {
-  if (s.static_init.Body().root_stmts.empty()) return "";
-  const ScopeView view = ScopeView::ForRoot(unit, s, s.static_init);
-  std::string out;
-  out += std::format(
-      "{}static auto __static_init__() -> void {{\n", Indent(indent));
-  out += RenderBlockStatements(view, indent + 1);
-  out += std::format("{}}}\n", Indent(indent));
-  out += std::format(
-      "{}inline static const int __static_init_trigger__ = "
-      "(__static_init__(), 0);\n",
-      Indent(indent));
-  return out;
-}
-
-auto RenderScopeAsClass(
-    const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
-    const ScopeView* parent_struct_view) -> std::string;
-
-// Renders a class and every intra-unit base it depends on into `out`, in
-// an order that guarantees each base is a complete C++ type before its
-// derived (C++ requires base completeness at derivation). The interning
-// walk sets the registry order, which may reach a derived class first, so
-// this walker climbs the base chain first and marks visited classes in
-// `emitted`. Skips runtime-tree-node classes; those emit through the
-// scope-tree walk.
-void RenderClassInDependencyOrder(
-    const mir::CompilationUnit& unit, mir::ClassId id,
-    std::vector<bool>& emitted, std::string& out) {
-  if (emitted[id.value]) return;
-  if (!unit.classes.IsDefined(id)) return;
-  const mir::Class& cls = unit.GetClass(id);
-  if (cls.is_scope_tree_node) return;
-  if (cls.base.has_value()) {
-    if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&*cls.base)) {
-      RenderClassInDependencyOrder(unit, intra->class_id, emitted, out);
-    }
-  }
-  if (emitted[id.value]) return;
-  emitted[id.value] = true;
-  out += RenderScopeAsClass(unit, cls, 0, nullptr);
-  out += "\n";
-}
-
-auto RenderScopeAsClass(
-    const mir::CompilationUnit& unit, const mir::Class& s, std::size_t indent,
-    const ScopeView* parent_struct_view) -> std::string {
-  // `this_anchor` is bound to `s.constructor` so it doubles as the view for
-  // rendering the constructor body. Children's bodies use it as their enclosing
-  // class (one hop above the child).
-  const ScopeView this_anchor =
-      (parent_struct_view == nullptr)
-          ? ScopeView::ForRoot(unit, s, s.constructor.code)
-          : parent_struct_view->WithClass(s, s.constructor.code);
-
-  std::string out;
-  out += Indent(indent) + "class " + ToCppName(s.name);
-  if (s.is_final) {
-    out += " final";
-  }
-  // Concrete base class first (LRM 8.13), then each interface contract
-  // (LRM 8.26). C++ handles the multi-base combination natively: an
-  // interface class carries no instance storage, so the multiple-inheritance
-  // does not introduce diamond storage; the target-language virtual-call
-  // machinery routes each vtable slot to the one implementation the class
-  // provides.
-  bool base_emitted = false;
-  const auto append_base = [&](const std::string& rendered) {
-    out += base_emitted ? ", public " : " : public ";
-    out += rendered;
-    base_emitted = true;
-  };
-  if (s.base.has_value()) {
-    append_base(RenderClassRefAsCpp(unit, *s.base));
-  }
-  for (const mir::ClassRef& iface : s.implements) {
-    append_base(RenderClassRefAsCpp(unit, iface));
-  }
-  out += " {\n";
-  out += Indent(indent) + " public:\n";
-
-  for (const mir::ClassId child_id : s.contained) {
-    out += RenderScopeAsClass(
-        unit, unit.GetClass(child_id), indent + 1, &this_anchor);
-  }
-  if (!s.contained.empty()) {
-    out += "\n";
-  }
-
-  for (const mir::StructId sid : s.structs) {
-    out += RenderStruct(this_anchor, unit.GetStruct(sid), indent + 1);
-  }
-  if (!s.structs.empty()) {
-    out += "\n";
-  }
-
-  // An interface class carries only pure virtual method contracts and no
-  // instance storage (LRM 8.26), so it has no constructor to emit; C++
-  // makes the class implicitly abstract by virtue of the pure virtual
-  // methods and forbids `new` on it.
-  if (!s.is_interface_class) {
-    out += RenderConstructor(this_anchor, s, indent + 1);
-  }
-
-  // Members follow the constructor and methods. They are public so cross-unit
-  // references can reach them directly.
-  if (!s.fields.empty()) {
-    out += "\n";
-  }
-  out += RenderFieldList(this_anchor, s.fields, indent + 1);
-
-  // Type-associated storage (LRM 8.9): one cell per class, value-initialized
-  // by C++ at program-startup time so the type-default case needs no
-  // explicit statement. A source-declared initializer is separately emitted
-  // through the `static_init` body below.
-  if (!s.static_properties.empty()) {
-    out += "\n";
-  }
-  for (const mir::StaticPropertyDecl& sp : s.static_properties) {
-    out += RenderClassStaticProperty(unit, sp, indent + 1);
-  }
-
-  // Each callable declares its access -- a class instance method is the
-  // object's public callable surface, a scope's processes and lifecycle hooks
-  // are internal -- and the access specifier follows that stated visibility,
-  // coalescing a run of callables that share one. The constructor is not in
-  // this arena; it was emitted above with C++ mem-init-list syntax. A pure
-  // virtual prototype (LRM 8.21) is a class member and renders inline with its
-  // `= 0` marker.
-  std::optional<mir::CallableVisibility> open_section;
-  for (std::size_t i = 0; i < s.callables.size(); ++i) {
-    const mir::CallableId cid{static_cast<std::uint32_t>(i)};
-    const auto& callable = s.callables.Get(cid);
-    if (open_section != callable.visibility) {
-      open_section = callable.visibility;
-      out += std::format(
-          "\n{} {}:\n", Indent(indent), VisibilityKeyword(callable.visibility));
-    }
-    out += "\n";
-    out +=
-        RenderClassCallable(parent_struct_view, unit, s, callable, indent + 1);
-  }
-
-  // The class's runtime-callback adapters. Each renders as a static member
-  // whose address decays to a plain function pointer for the runtime
-  // callback table; the class never exposes them on its public surface.
-  if (!s.abi_adapters.empty()) {
-    if (open_section != mir::CallableVisibility::kInternal) {
-      open_section = mir::CallableVisibility::kInternal;
-      out += std::format(
-          "\n{} {}:\n", Indent(indent),
-          VisibilityKeyword(mir::CallableVisibility::kInternal));
-    }
-    for (std::size_t i = 0; i < s.abi_adapters.size(); ++i) {
-      const auto& a =
-          s.abi_adapters.Get(mir::AbiAdapterId{static_cast<std::uint32_t>(i)});
-      out += "\n";
-      out += RenderAbiAdapter(parent_struct_view, unit, s, a, indent + 1);
-    }
-  }
-
-  // The class's static constants (a tree node's generated-behavior record among
-  // them), each emitted as a static member.
-  for (const mir::StaticConstantDecl& c : s.static_constants) {
-    out += RenderStaticConstant(this_anchor, s, c, indent + 1);
-  }
-
-  // The class's design-init body (LRM 8.9 / 10.5). Renders only when the
-  // source declared at least one static property initializer; otherwise the
-  // value-init on each `inline static` declaration above already realizes
-  // the type-default case.
-  const std::string static_init_text =
-      RenderClassStaticInit(unit, s, indent + 1);
-  if (!static_init_text.empty()) {
-    out += "\n";
-    out += static_init_text;
-  }
-
-  out += std::format("{}}};\n", Indent(indent));
-  return out;
-}
-
-// The free-function signature of a callable the unit's namespace or the DPI-C
-// name space owns: its storage class, the symbol it is reached by, its named
-// parameters, and its result type. A plain callable is `inline`, because its
-// definition sits in the header every caller includes; a foreign one takes C
-// linkage, since its symbol is program-global (LRM 35.4). Every use of this --
-// an import's declaration, an export entry point's definition, a package
-// function's definition -- reads the one signature the callable carries, so no
-// two of them can disagree.
-auto RenderFreeCallableSignature(
-    const mir::CompilationUnit& unit, const mir::CallableDecl& callable)
-    -> std::string {
-  const mir::CallableCode& code = callable.code;
-  std::string params;
-  for (std::size_t i = 0; i < code.params.size(); ++i) {
-    if (i != 0) params += ", ";
-    params += RenderCallableParam(unit, code.locals.Get(code.params[i]));
-  }
-  return std::format(
-      "{} auto {}({}) -> {}",
-      callable.foreign.has_value() ? R"(extern "C")" : "inline",
-      callable.LinkedName(), params, RenderTypeAsCpp(unit, code.result_type));
-}
 
 auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
     -> std::vector<std::string> {
@@ -573,54 +51,6 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
   return names;
 }
 
-// A callable the unit owns directly, rendered as a free function definition:
-// there is no receiver and no enclosing class, so the body renders against a
-// classless scope view and its types resolve against the namespace's own
-// declarations. For a DPI-C export entry point that means its context recovery,
-// marshaling, exported-subroutine call, and writeback all render mechanically,
-// the inner call reaching its class through its own target.
-auto RenderFreeCallable(
-    const mir::CompilationUnit& unit, const mir::CallableDecl& callable)
-    -> std::string {
-  std::string out;
-  out += std::format("{} {{\n", RenderFreeCallableSignature(unit, callable));
-  out += RenderBlockStatements(ScopeView::ForNamespace(unit, callable.code), 1);
-  out += "}\n";
-  return out;
-}
-
-// The three places a callable the unit owns directly can land in the emitted
-// file, in the order the file needs them.
-struct UnitCallableText {
-  std::string declarations;
-  std::string in_namespace;
-  std::string at_file_scope;
-};
-
-// Where each callable the unit owns directly lands, decided once here for all
-// three destinations. Two facts the declaration already states place it: C
-// linkage puts the symbol in the program-global DPI-C name space rather than in
-// the unit's namespace (LRM 35.4, 35.7), and the presence of a body separates a
-// definition this program emits from a declaration the user's linked C defines.
-// So a plain callable is a namespace member (LRM 26.3 for a package), a bodied
-// foreign one is an export's entry point at file scope, and a bodyless foreign
-// one is an import's prototype -- which leads, because the classes and bodies
-// below it call through it.
-auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitCallableText {
-  UnitCallableText text;
-  for (const auto& callable : unit.callables) {
-    if (!callable.code.body.has_value()) {
-      text.declarations += RenderFreeCallableSignature(unit, callable) + ";\n";
-      continue;
-    }
-    std::string& target =
-        callable.foreign.has_value() ? text.at_file_scope : text.in_namespace;
-    target += "\n";
-    target += RenderFreeCallable(unit, callable);
-  }
-  return text;
-}
-
 // Whether the unit defines a symbol in the program-global DPI-C name space --
 // an export's entry point (LRM 35.7). A unit whose only consumer is foreign C
 // has no SV referrer to pull its header into the include graph, so the program
@@ -647,145 +77,77 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   return out;
 }
 
-auto RenderScopeHeaderFile(
-    const mir::CompilationUnit& unit, const mir::Class& s) -> std::string {
-  const UnitCallableText callables = RenderUnitCallables(unit);
-  std::string out;
-  out += "#pragma once\n";
-  out += RenderUnitIncludes(unit);
-  out += "\n";
-  out += callables.declarations;
-
-  // A SystemVerilog class is a free-standing registry object with no
-  // structural parent, so it is not reached by the scope tree's `contained`
-  // walk. Emit every non-tree-node class before the scope tree that may
-  // reference it through a handle or `new`. (The scope objects -- the module
-  // and its generate scopes -- are runtime tree nodes emitted by the tree
-  // walk below.) The dependency-order walker inside handles base-before-
-  // derived ordering.
-  std::vector<bool> emitted(unit.classes.size(), false);
-  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    RenderClassInDependencyOrder(
-        unit, mir::ClassId{static_cast<std::uint32_t>(i)}, emitted, out);
-  }
-
-  out += RenderScopeAsClass(unit, s, 0, nullptr);
-  // A rooted unit has no namespace block of its own, so nothing lands in that
-  // part -- only a DPI-C export entry point its module contributes.
-  out += callables.at_file_scope;
-  return out;
-}
-
-// A unit whose root is a namespace rather than a class (a package): its C++
-// peer is a namespace holding the unit's type declarations, class
-// declarations (LRM 8 classes declared at package scope), and its
-// receiver-less callables. It owns no runtime object, so there is no scope-
-// tree construction.
-auto RenderNamespaceUnitHeaderFile(const mir::CompilationUnit& unit)
+// A package variable is one program-global observable cell (LRM 26.2). C++17
+// `inline` gives it a single definition across every translation unit that
+// includes the header, matching the header-only, link-by-name model the
+// namespace callables use. A unit rooted in a design element declares none: its
+// storage is per-instance.
+auto RenderUnitStaticVariables(const mir::CompilationUnit& unit)
     -> std::string {
-  const UnitCallableText callables = RenderUnitCallables(unit);
   std::string out;
-  out += "#pragma once\n";
-  out += RenderUnitIncludes(unit);
-  out += "\n";
-  // Outside the namespace block: a DPI-C name is program-global and belongs to
-  // no scope (LRM 35.4), so the prototype a namespace callable's foreign call
-  // resolves against is declared at file scope, exactly as a rooted unit's is.
-  out += callables.declarations;
-  out += std::format("namespace {} {{\n\n", ToCppName(unit.name));
-  // A package variable is one program-global observable cell (LRM 26.2). C++17
-  // `inline` gives it a single definition across every translation unit that
-  // includes the header, matching the header-only, link-by-name model the
-  // namespace callables use. It is declared before the callables because the
-  // synthesized `Initialize` callable, itself one of them, references it.
   for (std::size_t i = 0; i < unit.static_variables.size(); ++i) {
     const auto& var = unit.static_variables.Get(
         mir::StaticVariableId{static_cast<std::uint32_t>(i)});
     out += std::format(
         "inline {} {}{{}};\n", RenderTypeAsCpp(unit, var.type), var.name);
   }
-  if (!unit.static_variables.empty()) {
-    out += "\n";
-  }
-
-  // A package class is a free-standing registry object with no structural
-  // parent; a referring unit reaches it by name through the include, so it
-  // must be emitted here. The dependency-order walker handles base-before-
-  // derived ordering.
-  std::vector<bool> emitted(unit.classes.size(), false);
-  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    RenderClassInDependencyOrder(
-        unit, mir::ClassId{static_cast<std::uint32_t>(i)}, emitted, out);
-  }
-
-  out += callables.in_namespace;
-  out += std::format("\n}}  // namespace {}\n", ToCppName(unit.name));
-  out += callables.at_file_scope;
   return out;
 }
 
+// A unit's C++ peer is a namespace holding everything the unit declares. That
+// is the unit boundary made literal: inside it every class the unit owns is
+// reached by the one name it carries, and outside it every reference qualifies
+// by the unit -- the same two forms whether the unit is rooted in a design
+// element or is a rootless package.
+auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
+  const UnitCallableText callables = RenderUnitCallables(unit);
+  const ClassText classes = RenderUnitClasses(unit);
+  std::string out;
+  out += "#pragma once\n";
+  out += RenderUnitIncludes(unit);
+  out += "\n";
+  out += std::format("namespace {} {{\n", ToCppName(unit.name));
+  AppendSection(out, callables.declarations);
+  AppendSection(out, RenderUnitStaticVariables(unit));
+  AppendSection(out, classes.declaration);
+  AppendSection(out, classes.definitions);
+  AppendSection(out, callables.definitions);
+  out += std::format("\n}}  // namespace {}\n", ToCppName(unit.name));
+  return out;
+}
+
+// The program entry. A design's whole contribution to it is the class its
+// `$root` is an instance of and the label that root carries, so that is all
+// this writes; every invariant host-boundary concern is behind the runtime
+// entry it hands off to, and a new one is added there rather than here. The
+// includes are the design's own: each unit whose header the entry must pull in
+// for its definitions to land, which is the root's and any unit defining a
+// symbol only foreign C refers to.
 auto RenderHostMain(
     std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root) -> std::string {
   const auto& root_class = root.GetClass(*root.root);
-  const std::string root_cpp_name = ToCppName(root_class.name);
-  const std::string segment_cpp =
-      RenderTypeAsCpp(root, root.builtins.hierarchy_segment);
-
-  // Every invariant host-boundary concern -- argv parsing, engine
-  // construction, bind, scheduler drive, exception mapping -- lives in
-  // `RunDesignHost`. The emitter contributes only the C++ call that
-  // allocates `$root`: the concrete root class, its constructor arguments
-  // (parent, hierarchy segment). Services are reached through the
-  // thread-local `current_runtime()` the owning Runtime has already
-  // published on this thread; nothing runtime-related crosses the
-  // constructor boundary. This shim is composed from MIR-known parts (the
-  // root class name, the hierarchy-segment type) rather than rendered
-  // from a single MIR/LIR root-construct artifact -- allocation is
-  // realized per backend (a JIT backend allocates a generic runtime
-  // object; the C++ backend allocates its concrete class), so this shim
-  // carries the C++ form. `main` is a one-line hand-off; a new host-
-  // boundary concept is added to `RunDesignHost` in runtime C++, never
-  // to this shim.
   std::string out;
-  out += "#include <memory>\n";
-  out += "\n";
-  out += "#include \"lyra/runtime/scope.hpp\"\n";
-  out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
+  out += std::format("#include \"{}\"\n", support::kHostEntryHeader);
   for (const auto& unit : units) {
     if (DefinesForeignSymbol(unit)) {
       out += std::format("#include \"{}.hpp\"\n", ToCppName(unit.name));
     }
   }
-  out += std::format("#include \"{}.hpp\"\n", root_cpp_name);
-  out += "\n";
-  out += "namespace {\n";
-  out += "\n";
-  out += "auto BuildRoot() -> std::unique_ptr<lyra::runtime::Scope> {\n";
-  out += std::format(
-      "  return std::make_unique<{0}>(nullptr, {1}{{\"{2}\", {{}}}});\n",
-      root_cpp_name, segment_cpp, root_class.name);
-  out += "}\n";
-  out += "\n";
-  out += "}  // namespace\n";
+  out += std::format("#include \"{}.hpp\"\n", ToCppName(root.name));
   out += "\n";
   out += "auto main(int argc, char** argv) -> int {\n";
-  out += "  return lyra::runtime::RunDesignHost(argc, argv, &BuildRoot);\n";
+  out += std::format(
+      "  return lyra::runtime::RunDesign<{}::{}>(argc, argv, \"{}\");\n",
+      ToCppName(root.name), ToCppName(root_class.name), root_class.name);
   out += "}\n";
   return out;
 }
 
-}  // namespace
-
 auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact {
-  // A rooted unit names its top class as the root and emits as that class; a
-  // rootless unit has no root class and emits as a namespace of its type
-  // declarations and free functions.
   return {
       .relpath = std::format("{}.hpp", ToCppName(unit.name)),
-      .content = unit.root.has_value()
-                     ? RenderScopeHeaderFile(unit, unit.GetClass(*unit.root))
-                     : RenderNamespaceUnitHeaderFile(unit)};
+      .content = RenderUnitHeaderFile(unit)};
 }
 
 auto EmitCppHostMain(
@@ -793,6 +155,8 @@ auto EmitCppHostMain(
     const mir::CompilationUnit& root) -> CppArtifact {
   return {.relpath = "main.cpp", .content = RenderHostMain(units, root)};
 }
+
+}  // namespace
 
 auto EmitCpp(
     std::span<const mir::CompilationUnit> units,

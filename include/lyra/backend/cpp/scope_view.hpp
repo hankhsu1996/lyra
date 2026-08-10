@@ -4,7 +4,6 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -18,53 +17,43 @@ namespace lyra::backend::cpp {
 // The rendering fold's walk position. The MIR-to-C++ emit is a fold, not a
 // construction pass: it accumulates nothing and owns no output, so this
 // carries only what reading a node needs -- the unit (for type and arena
-// lookups), the enclosing class chain (for object-graph navigation), and the
-// current callable code. A local reference resolves directly against the code's
-// `locals` arena (a captured binding is a field access over the closure
-// receiver, `locals[0]`), the read-only twin of how the construction-side
-// `CallableBindings` declared them. Immutable and copied on
-// descent (`WithBlock` / `WithClass` / `WithClosure`); it grows no member per
-// concept, so it is not the forbidden growing `*Context`.
+// lookups), the class the current code belongs to, and the current callable
+// code. A local reference resolves directly against the code's `locals` arena
+// (a captured binding is a field access over the closure receiver,
+// `locals[0]`), the read-only twin of how the construction side declared them.
+// Immutable and copied on descent; it grows no member per concept, so it is not
+// the forbidden growing `*Context`.
 //
-// The enclosing class is absent for a callable the unit's namespace owns rather
-// than a class (a receiver-less package callable): it has no object graph to
-// navigate, so the object-navigation accessors do not apply. Type-name
-// resolution does not go through the class at all -- a nominal type name
-// resolves against the unit -- so it works with or without one.
+// The class is absent for a callable the unit's namespace owns rather than a
+// class (a receiver-less package callable): it has no object graph to navigate,
+// so the object-navigation accessors do not apply. Type-name resolution does
+// not go through the class at all -- a nominal type name resolves against the
+// unit -- so it works with or without one.
 class ScopeView {
  public:
   static auto ForRoot(
       const mir::CompilationUnit& unit, const mir::Class& cls,
       const mir::CallableCode& code) -> ScopeView {
-    return ScopeView{unit, &cls, code, code.Body(), nullptr};
+    return ScopeView{unit, &cls, code, code.Body()};
   }
 
-  // A callable the unit's namespace owns directly, with no enclosing class.
+  // A callable the unit's namespace owns directly, belonging to no class.
   static auto ForNamespace(
       const mir::CompilationUnit& unit, const mir::CallableCode& code)
       -> ScopeView {
-    return ScopeView{unit, nullptr, code, code.Body(), nullptr};
+    return ScopeView{unit, nullptr, code, code.Body()};
   }
 
   [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
-    return ScopeView{*unit_, class_, *code_, child, class_parent_};
-  }
-
-  // Descend into a child class's callable. The child's body and locals replace
-  // the current ones; this view becomes the child's enclosing-class link.
-  [[nodiscard]] auto WithClass(
-      const mir::Class& child_class, const mir::CallableCode& child_code) const
-      -> ScopeView {
-    return ScopeView{*unit_, &child_class, child_code, child_code.Body(), this};
+    return ScopeView{*unit_, class_, *code_, child};
   }
 
   // Enter a closure's own code while staying in the same class context: a
-  // closure runs against the same object, so the enclosing-class chain is
-  // unchanged; only the local / capture arenas and the body block swap.
+  // closure runs against the same object, so the class is unchanged; only the
+  // local / capture arenas and the body block swap.
   [[nodiscard]] auto WithClosure(const mir::CallableCode& closure_code) const
       -> ScopeView {
-    return ScopeView{
-        *unit_, class_, closure_code, closure_code.Body(), class_parent_};
+    return ScopeView{*unit_, class_, closure_code, closure_code.Body()};
   }
 
   ScopeView(const ScopeView&) = delete;
@@ -80,8 +69,7 @@ class ScopeView {
   [[nodiscard]] auto Class() const -> const mir::Class& {
     if (class_ == nullptr) {
       throw InternalError(
-          "ScopeView::Class: a namespace-owned callable has no enclosing "
-          "class");
+          "ScopeView::Class: a namespace-owned callable belongs to no class");
     }
     return *class_;
   }
@@ -101,18 +89,6 @@ class ScopeView {
     return code_->locals.Get(ref.var);
   }
 
-  [[nodiscard]] auto EnclosingClassAtHops(mir::EnclosingHops hops) const
-      -> const mir::Class& {
-    if (hops.value == 0) {
-      return Class();
-    }
-    if (class_parent_ == nullptr) {
-      throw InternalError("ScopeView::EnclosingClassAtHops: hops out of range");
-    }
-    return class_parent_->EnclosingClassAtHops(
-        mir::EnclosingHops{.value = hops.value - 1});
-  }
-
   // The class a member access reaches, resolved from the receiver's object
   // type: an object type names a local object declaration by identity, and the
   // unit's registry maps that identity to the declaration.
@@ -130,20 +106,14 @@ class ScopeView {
  private:
   ScopeView(
       const mir::CompilationUnit& unit, const mir::Class* cls,
-      const mir::CallableCode& code, const mir::Block& block,
-      const ScopeView* class_parent)
-      : unit_(&unit),
-        class_(cls),
-        code_(&code),
-        block_(&block),
-        class_parent_(class_parent) {
+      const mir::CallableCode& code, const mir::Block& block)
+      : unit_(&unit), class_(cls), code_(&code), block_(&block) {
   }
 
   const mir::CompilationUnit* unit_;
   const mir::Class* class_;
   const mir::CallableCode* code_;
   const mir::Block* block_;
-  const ScopeView* class_parent_;
 };
 
 }  // namespace lyra::backend::cpp

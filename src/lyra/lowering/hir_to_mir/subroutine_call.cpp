@@ -15,7 +15,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -183,22 +183,19 @@ auto EmitSubroutineCall(
       continue;
     }
 
-    // A `ref` / const-ref formal aliases the actual's cell -- pass the cell
-    // (or a `ScopedMutation` for selector / range chains on an observable
-    // cell) so the body's `Ref<T>` binds the underlying storage.
+    // A ref / const-ref formal aliases what the actual designates (LRM
+    // 13.5.2). A bare actual is lent as it stands, so a reference over a
+    // capability wrapper aliases the wrapper and keeps the wrapper's own
+    // access -- the update event a write fires included. A projected actual
+    // designates part of a value, which is not a place a reference can alias,
+    // so what is lent is the storage the chain descends into.
     if (dir == hir::ParamDirection::kRef ||
         dir == hir::ParamDirection::kConstRef) {
       auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       mir::ExprId actual_id = block.exprs.Add(*std::move(arg_or));
-      const mir::ExprId root_id = FindLhsRootId(unit, block, actual_id);
-      const bool root_is_cell = mir::IsObservableCellType(
-          unit.types.Get(block.exprs.Get(root_id).type));
-      if (root_is_cell && root_id != actual_id) {
-        const mir::ExprId services_id =
-            block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-        actual_id =
-            RewriteLhsRootWithMutate(unit, block, actual_id, services_id);
+      if (FindLhsRootId(unit, block, actual_id) != actual_id) {
+        actual_id = StoragePlaceOf(unit, block, actual_id);
       }
       call_args.push_back(BuildReferenceArg(
           unit, block, actual_id, block.exprs.Get(actual_id).type));
@@ -253,14 +250,11 @@ auto LowerWritingBackCall(
   body.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = completion_value});
 
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   for (const CompletionWriteback& wb : emitted->writebacks) {
     const mir::ExprId value_id = ProjectCompletionComponent(
         body, completion, payload_type, wb.component_index, wb.type);
-    const mir::Expr assign_expr = BuildObservableAssignExpr(
-        unit, body, services_id, wb.place, value_id, std::nullopt, wb.type,
-        unit.builtins.void_type);
+    const mir::Expr assign_expr =
+        BuildStoreExpr(unit, body, wb.place, value_id, std::nullopt, wb.type);
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
   }
 

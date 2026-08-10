@@ -191,10 +191,11 @@ class PackedArray {
   auto ResetToDefault() -> void;
 
   // The all-high-impedance value at `prototype`'s declared type: every bit `z`
-  // for a 4-state shape (the undriven value of a `wire` / `tri` net, LRM
-  // 6.6.1), and the all-zero canonical default for a 2-state shape, which has
-  // no high-impedance state. The prototype's contents are unused; only its
-  // declared type (width, signedness, state domain) is read.
+  // for a 4-state shape, which is what a `wire` / `tri` driver contributes
+  // where it is not driving (LRM 6.6.1), and the all-zero canonical default for
+  // a 2-state shape, which has no high-impedance state. The prototype's
+  // contents are unused; only its declared type (width, signedness, state
+  // domain) is read.
   [[nodiscard]] static auto HighImpedanceLike(const PackedArray& prototype)
       -> PackedArray;
 
@@ -685,5 +686,6 @@ static_assert(ShapedSliceable<PackedArray>);
 static_assert(ShapedSliceableRef<PackedArray>);
 static_assert(Ownable<PackedArray>);
 static_assert(Defaultable<PackedArray>);
+static_assert(NetResolvable<PackedArray>);
 
 }  // namespace lyra::value

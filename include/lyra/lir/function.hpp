@@ -248,8 +248,8 @@ struct Place {
 
 // Reads the value held at `place`. The result's type is the place's type -- the
 // type the projection chain arrives at. A place whose storage is a runtime cell
-// object rather than a value is not readable this way; its contents are reached
-// through the library calls that operate on the cell's address.
+// object names the cell; the value the cell holds is the place one dereference
+// further, and reading that is what goes through the cell's own access.
 struct LoadInstr {
   Place place;
 };

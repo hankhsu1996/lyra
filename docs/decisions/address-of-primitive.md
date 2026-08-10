@@ -123,7 +123,7 @@ structural fact explicit.
 
 - `architecture/mir.md` invariant 10 (a backend never re-derives a fact MIR did not state) and the
   closed-primitive-set property (the set grows only for a genuinely new generic-language concept).
-- `decisions/value-type-concepts.md` (the parallel lift of `Var<T>::Get` / `Set` / `Mutate` from
-  implicit render to explicit MIR `CallExpr` -- same family of fix on a different axis).
+- `decisions/storage-access-as-place-formation.md` (reaching a capability wrapper's storage stated
+  in MIR rather than left to render -- same family of fix on a different axis).
 - `decisions/callable-receiver.md` (the "C++ plumbing, not MIR-modeled" precedent for virtual
   overrides, sharpened above).

@@ -562,7 +562,7 @@ class AssociativeArray {
     return user_default_.has_value() ? *user_default_ : shield_.Default();
   }
 
-  // The LRM 7.12 entry stream (decision: array-manipulation-entry-stream): a
+  // The LRM 7.12 entry stream: a
   // lazy view pairing each value with its key, in LRM 7.8 key order (the map's
   // iteration order). The key is the entry index, so an index locator yields
   // keys and `item.index` reads the key. The map already stores (key, value)

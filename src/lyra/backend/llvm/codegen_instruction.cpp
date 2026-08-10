@@ -15,6 +15,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/integral_constant.hpp"
+#include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_query.hpp"
 
@@ -37,11 +38,22 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr) -> llvm::Value* {
             return LowerAggregateUpdate(update);
           },
           [&](const lir::LoadInstr& load) -> llvm::Value* {
+            if (const std::optional<CellPlace> cell = CellPlaceOf(load.place)) {
+              return builder_.CreateCall(
+                  module_->Runtime().CellGet(cell->domain),
+                  {ResolvePlaceAddress(cell->cell)});
+            }
             return builder_.CreateLoad(
                 module_->Types().Map(result_type),
                 ResolvePlaceAddress(load.place));
           },
           [&](const lir::StoreInstr& store) -> llvm::Value* {
+            if (const std::optional<CellPlace> cell =
+                    CellPlaceOf(store.place)) {
+              return builder_.CreateCall(
+                  module_->Runtime().CellSet(cell->domain),
+                  {ResolvePlaceAddress(cell->cell), LowerOperand(store.value)});
+            }
             return builder_.CreateStore(
                 LowerOperand(store.value), ResolvePlaceAddress(store.place));
           },
@@ -629,12 +641,8 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().AddOwnedChild();
     case support::BuiltinFn::kRegisterSignal:
       return module_->Runtime().RegisterSignal();
-    case support::BuiltinFn::kGet:
-      return module_->Runtime().CellGet(CellDomain(call.args.at(0)));
     case support::BuiltinFn::kInitialize:
       return module_->Runtime().CellInitialize(CellDomain(call.args.at(0)));
-    case support::BuiltinFn::kSet:
-      return module_->Runtime().CellSet(CellDomain(call.args.at(0)));
     default:
       return ValueBuiltinCallee(target, call, result_type);
   }
@@ -677,6 +685,35 @@ auto CodeGenFunction::ValueBuiltinCallee(
   }
   return module_->Runtime().ValueBuiltin(
       domain, target.fn, module_->Types().Map(result_type), params);
+}
+
+auto CodeGenFunction::CellPlaceOf(const lir::Place& place) const
+    -> std::optional<CodeGenFunction::CellPlace> {
+  // The last step names the storage behind whatever the chain had reached. When
+  // that is a cell, the storage is the cell's contents, which have no address
+  // of their own -- the cell decides what reading and writing them mean, so the
+  // prefix names the cell and the access goes through it.
+  if (place.chain.empty() ||
+      !std::holds_alternative<lir::DerefProjection>(place.chain.back())) {
+    return std::nullopt;
+  }
+  lir::Place cell{
+      .base = place.base,
+      .chain = {place.chain.begin(), std::prev(place.chain.end())}};
+  // The chain up to that final step names what the dereference opens. With no
+  // step left it is the base itself, whose type is the base's own: a place over
+  // a value base becomes one only once its opening dereference is applied, so
+  // the prefix is not yet a place to ask about.
+  const lir::TypeId opened = cell.chain.empty()
+                                 ? OperandType(cell.base)
+                                 : lir::PlaceType(module_->Unit(), *fn_, cell);
+  const auto* observable =
+      std::get_if<lir::ObservableType>(&module_->Unit().types.Get(opened).data);
+  if (observable == nullptr) {
+    return std::nullopt;
+  }
+  return CellPlace{
+      .domain = DomainOf(observable->value), .cell = std::move(cell)};
 }
 
 auto CodeGenFunction::CellDomain(const lir::Operand& cell) const

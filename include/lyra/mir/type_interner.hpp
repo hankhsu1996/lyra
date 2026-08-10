@@ -96,7 +96,7 @@ class TypeInterner {
 
   // The observable-cell type for a variable of `value_type`: a SystemVerilog
   // value-storage data object (LRM 6.5) is an observable cell, so its writes
-  // fire subscribers and its reads / writes go through the cell protocol; any
+  // fire subscribers and its value is reached through the cell; any
   // other type -- a handle, a container, an object, a named event (which
   // carries its own subscribe mechanism), a runtime facade, a machine primitive
   // -- is its own storage and passes through unwrapped. This is the

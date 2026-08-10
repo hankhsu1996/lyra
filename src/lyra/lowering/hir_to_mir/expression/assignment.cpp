@@ -17,7 +17,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -148,13 +148,12 @@ auto CloneLhsSelectorChainOntoRef(
 
 // Axis B (timing), deferred half: build the closure the NBA region invokes.
 // `effect_fn` is the target's write effect (axis A); this envelope is the only
-// part that knows about deferral. The closure is receiver-less: it captures a
-// reference to the target cell -- the navigation to the cell is evaluated now,
-// in the active region, and frozen into that reference -- plus the operand
-// snapshots (the active-region values, LRM 10.4.2), and takes its execution
-// context as a `runtime` parameter the NBA region supplies on invocation.
-// `effect_fn` then builds the write against those body-side nodes -- the same
-// call it would build for a blocking write, only in the closure body.
+// part that knows about deferral. The closure is receiver-less and takes no
+// arguments: it captures a reference to the target cell -- the navigation to
+// the cell is evaluated now, in the active region, and frozen into that
+// reference -- plus the operand snapshots (the active-region values, LRM
+// 10.4.2). `effect_fn` then builds the write against those body-side nodes --
+// the same node it would build for a blocking write, only in the closure body.
 template <typename EffectFn>
 auto BuildDeferredAssignClosure(
     UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId target_in_outer,
@@ -165,11 +164,6 @@ auto BuildDeferredAssignClosure(
 
   ClosureBuilder closure(unit, frame);
   mir::Block& body = closure.Body();
-
-  const mir::LocalId runtime_binding =
-      closure.AddParamAnonymous("runtime", unit.builtins.effects);
-  const mir::ExprId runtime_param = body.exprs.Add(
-      mir::MakeLocalRefExpr(runtime_binding, unit.builtins.effects));
 
   const mir::ExprId root_in_outer =
       FindLhsRootId(unit, outer_block, target_in_outer);
@@ -191,16 +185,15 @@ auto BuildDeferredAssignClosure(
   }
 
   const mir::ExprId effect_id = body.exprs.Add(effect_fn(
-      body, body_target, std::span<const mir::ExprId>(body_operands),
-      runtime_param));
+      body, body_target, std::span<const mir::ExprId>(body_operands)));
   body.AppendStmt(mir::ExprStmt{.expr = effect_id});
   return closure.BuildVoid();
 }
 
 // Axis B (timing): apply a target's write effect now (blocking) or deferred to
-// the NBA region (nonblocking). `effect_fn(block, target, operands, runtime)`
-// builds the write into `block`; this is the only place the blocking/deferred
-// choice lives, so every target shares one timing envelope (LRM 10.4).
+// the NBA region (nonblocking). `effect_fn(block, target, operands)` builds the
+// write into `block`; this is the only place the blocking/deferred choice
+// lives, so every target shares one timing envelope (LRM 10.4).
 template <typename EffectFn>
 auto ApplyAssignEffect(
     ProcessLowerer& process, WalkFrame frame, hir::AssignKind kind,
@@ -208,17 +201,8 @@ auto ApplyAssignEffect(
     std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  // Only an observable-cell write notifies subscribers, so only it reaches a
-  // runtime handle; a plain-local write carries none.
-  const bool target_is_observable_cell =
-      LhsRootIsObservableCell(process.Owner().Unit(), block, target_in_outer);
   if (kind == hir::AssignKind::kBlocking) {
-    const std::optional<mir::ExprId> runtime_id =
-        target_is_observable_cell
-            ? std::optional{block.exprs.Add(
-                  BuildCurrentRuntimeCallExpr(process.Owner()))}
-            : std::nullopt;
-    return effect_fn(block, target_in_outer, operands_in_outer, runtime_id);
+    return effect_fn(block, target_in_outer, operands_in_outer);
   }
   if (!IsExprRootedAtStructuralDataObject(block, target_in_outer)) {
     return diag::Fail(
@@ -238,9 +222,8 @@ auto ApplyAssignEffect(
       .type = process.Owner().Unit().builtins.void_type};
 }
 
-// Axis A for an observable / local target: a whole-cell `Set`, a selector-chain
-// `Mutate`, or a plain local assign -- `BuildObservableAssignExpr` picks by the
-// target's shape. Timing-agnostic: the same effect serves blocking and NBA.
+// Axis A: the store itself, against the storage the target designates.
+// Timing-agnostic: the same effect serves blocking and NBA.
 auto LowerObservableAssign(
     ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -257,15 +240,14 @@ auto LowerObservableAssign(
   const std::optional<mir::BinaryOp> compound_op =
       a.compound_op.has_value() ? std::optional{LowerBinaryOp(*a.compound_op)}
                                 : std::nullopt;
-  const mir::TypeId void_type = process.Owner().Unit().builtins.void_type;
   const std::array<mir::ExprId, 1> operands{rhs_id};
   return ApplyAssignEffect(
       process, frame, a.kind, span, lhs_id, operands,
-      [&](mir::Block& blk, mir::ExprId target, std::span<const mir::ExprId> ops,
-          std::optional<mir::ExprId> runtime_id) -> mir::Expr {
-        return BuildObservableAssignExpr(
-            process.Owner().Unit(), blk, runtime_id, target, ops[0],
-            compound_op, result_type, void_type);
+      [&](mir::Block& blk, mir::ExprId target,
+          std::span<const mir::ExprId> ops) -> mir::Expr {
+        return BuildStoreExpr(
+            process.Owner().Unit(), blk, target, ops[0], compound_op,
+            result_type);
       });
 }
 
@@ -300,11 +282,10 @@ auto BuildNbaSubmitClosureExpr(
   const std::array<mir::ExprId, 1> operands{rhs_id_in_outer};
   return BuildDeferredAssignClosure(
       unit_lowerer, frame, lhs_in_outer, operands,
-      [&](mir::Block& blk, mir::ExprId target, std::span<const mir::ExprId> ops,
-          std::optional<mir::ExprId> runtime_id) -> mir::Expr {
-        return BuildObservableAssignExpr(
-            unit_lowerer.Unit(), blk, runtime_id, target, ops[0], std::nullopt,
-            rhs_type, unit_lowerer.Unit().builtins.void_type);
+      [&](mir::Block& blk, mir::ExprId target,
+          std::span<const mir::ExprId> ops) -> mir::Expr {
+        return BuildStoreExpr(
+            unit_lowerer.Unit(), blk, target, ops[0], std::nullopt, rhs_type);
       });
 }
 

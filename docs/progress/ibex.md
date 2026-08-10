@@ -24,18 +24,26 @@ first blocker does not hide every other module's.
 The whole Ibex RTL already parses, type-checks, and elaborates through the frontend with no errors
 -- every gap below is in feature lowering or the missing execution path, not in the frontend.
 
+## Status
+
+`ibex_simple_system_tb` simulates end-to-end. The whole design lowers with no diagnostics, emits C++
+a host compiler accepts, links, loads `hello_test` through `$readmemh`, executes it, and terminates
+on the testbench's own software request -- with the program's expected output and a full instruction
+trace. Sources, includes, and defines are still passed on the command line rather than read from
+`lyra.toml`, which is the one accepted-option gap left between this and the closing condition above.
+
+The run reports `unique` check failures (LRM 12.5.3) from several modules. They are warnings, not
+failures, and the design still executes correctly; whether each is a real violation the design also
+shows on other simulators, or a Lyra evaluation difference, is unexamined.
+
 ## Two walls
 
-1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. No construct in the
-   design is rejected: the whole `ibex_simple_system_tb` lowers and emits C++ with no diagnostics.
-   The frontier is one stage later, at the emitted program's own correctness -- each form left open
-   below emits C++ that a host compiler refuses, so the design does not link.
-2. **Execution backend** -- the C++ path is wired and runs end to end: `lyra run` emits, builds, and
-   executes a supported design. The blanket "no way to run anything" wall is down, so a
-   fully-lowered Ibex can in principle run. What remains here is not the ability to run at all but
-   the reach to run Ibex specifically: project mode (`lyra.toml` lookup) is still not wired, so
-   sources, includes, and defines must be passed explicitly on the command line. The LLVM / JIT path
-   is a separate backend tracked in `architecture-reset.md`; it is not required for the C++ run.
+1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. This wall is down. What
+   the list below now tracks is any further form a deeper pass turns up, not a standing blocker.
+2. **Execution backend** -- also down for the C++ path, which carries the run above. What remains is
+   convenience rather than reach: project mode (`lyra.toml` lookup) is still not wired, so sources,
+   includes, and defines must be passed explicitly on the command line. The LLVM / JIT path is a
+   separate backend tracked in `architecture-reset.md`; it is not required for the C++ run.
 
 ## Feature gaps
 
@@ -152,12 +160,18 @@ full support.
       folding it into the subscription nor materializing a cell for it is right, since a value that
       cannot change is not something a process can wait on. Hits `ibex_controller`, `ibex_if_stage`,
       `ibex_cs_registers`, `ibex_tracer`.
-- [ ] **DPI-C export from inside a generate scope** -- an `export "DPI-C"` declared within a
-      generate block (the icache scramble-key helpers in `ibex_if_stage`); the emitted C entry names
-      the generate scope's type without the qualification that reaches it.
-- [ ] **A net whose value is an unpacked array** -- an unpacked-array port declared with no data
-      type is an implicit net array (LRM 6.9), which net resolution does not admit. The system bus
-      (`shared/rtl/bus.sv`) declares its per-host request, address, and write-enable ports this way.
+- [x] **DPI-C export from inside a generate scope** -- an `export "DPI-C"` declared within a
+      generate block (the icache scramble-key helpers in `ibex_if_stage`). The entry point is a
+      program-global C symbol and so sits outside every scope (LRM 35.7), which is where the
+      generate scope's own name has to reach it. A class of a compilation unit is now named by one
+      identifier valid anywhere the unit is, rather than by a position a reference has to
+      reconstruct.
+- [x] **A net whose value is an unpacked array** -- an unpacked-array port declared with no data
+      type is an implicit net array, and LRM 6.7.1 admits it: a net's data type may be a fixed-size
+      unpacked array whose elements are themselves valid for a net, making it one net that resolves
+      per bit. Resolution is now stated over any value a net may hold rather than over one value
+      type. The system bus (`shared/rtl/bus.sv`) declares its per-host request, address, and
+      write-enable ports this way.
 - [ ] Further structural-expression forms surfaced as later passes get deeper (recorded here as
       discovery continues).
 
