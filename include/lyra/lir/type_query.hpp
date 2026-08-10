@@ -11,8 +11,16 @@ namespace lyra::lir {
 using TypeArena = base::Arena<Type, TypeId>;
 
 // The type a reference-like type refers to; absent when the type refers to
-// nothing, which is what makes a dereference of it invalid.
+// nothing. This is the narrow relation of indirection -- storage that lives
+// elsewhere -- which is what an address-of yields and a pointer cast retypes.
 auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
+
+// The type of the storage a dereference of `type` reaches. That is a
+// reference's referent, and also what a capability wrapper represents -- a
+// wrapper is not an indirection to storage elsewhere, it is storage whose
+// contents are the value. Absent when the type stands for no storage, which is
+// what makes a dereference of it invalid.
+auto DerefTarget(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
 
 // A type whose storage object has no first-class value in LIR: operations on it
 // consume its address. A storage cell (an observable variable, a net resolution

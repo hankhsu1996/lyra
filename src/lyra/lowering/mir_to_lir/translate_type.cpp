@@ -33,6 +33,14 @@ auto TranslateSignedness(mir::Signedness s) -> lir::Signedness {
                                        : lir::Signedness::kUnsigned;
 }
 
+auto TranslateNetResolution(mir::NetResolution r) -> lir::NetResolution {
+  switch (r) {
+    case mir::NetResolution::kTriState:
+      return lir::NetResolution::kTriState;
+  }
+  throw InternalError("TranslateNetResolution: unknown NetResolution");
+}
+
 auto TranslatePackedArrayForm(mir::PackedArrayForm f) -> lir::PackedArrayForm {
   switch (f) {
     case mir::PackedArrayForm::kExplicit:
@@ -302,12 +310,14 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
                 lir::TaggedUnionType{.elements = std::move(elements)}};
           },
           [&](const mir::ResolvedType& r) -> lir::TypeData {
-            return lir::TypeData{
-                lir::ResolvedType{.value = TranslateType(r.value)}};
+            return lir::TypeData{lir::ResolvedType{
+                .value = TranslateType(r.value),
+                .resolution = TranslateNetResolution(r.resolution)}};
           },
           [&](const mir::DriverType& d) -> lir::TypeData {
-            return lir::TypeData{
-                lir::DriverType{.value = TranslateType(d.value)}};
+            return lir::TypeData{lir::DriverType{
+                .value = TranslateType(d.value),
+                .resolution = TranslateNetResolution(d.resolution)}};
           },
           [&](const mir::ObservableType& ob) -> lir::TypeData {
             return lir::TypeData{

@@ -119,20 +119,16 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 20.8.1. ceil(log2) of the operand read as unsigned; $clog2(0) is 0.
   // A constant argument is folded downstream, never in lowering.
   kClog2,
-  // Observable storage cell operations. `Set` / `Mutate` thread the runtime
-  // handle as the second argument. `Initialize` installs the cell's declared
-  // representation once at construction (no runtime handle -- no subscribers
-  // yet); every later `Set` then requires the right-hand side to already be
-  // at that representation.
-  kGet,
+  // Installs a capability wrapper's declared representation once at
+  // construction. It acts on the wrapper rather than on the storage the wrapper
+  // represents, which is why it is a call at all; reaching that storage is a
+  // dereference of the wrapper's place, not an operation. No runtime handle: it
+  // runs before any process, so nothing is subscribed yet. Every later store
+  // requires its value to already be at the installed representation.
   kInitialize,
-  kSet,
-  kMutate,
-  // Net driver operations (LRM 6.5). `AttachDriver` is a `ResolvedNet` method
-  // returning a driver handle; `UpdateDriver` is a `Driver` method that
-  // threads the runtime handle and the new contribution value.
+  // Attaching a driver to a net (LRM 6.5): a `ResolvedNet` method returning the
+  // driver handle the drive capability is reached through.
   kAttachDriver,
-  kUpdateDriver,
   // The ambient `RuntimeEffects` accessor. Zero-argument free function in
   // `lyra::runtime`. Every body kind -- module process, class method, package
   // function, class static method -- reaches the runtime through this,
@@ -420,8 +416,14 @@ enum class BuiltinFn : std::uint16_t {
   // Builds an unpacked-queue concatenation value (LRM 10.10). The first two
   // arguments are a default element of the queue's element type and its LRM
   // 7.10.5 bound; the remaining arguments are the concatenation parts, each
-  // spliced or appended by its own type. A free function over the element type.
+  // contributing itself unless it is marked as spread.
   kMakeQueueConcat,
+  // Marks an operand as contributing its own elements in order rather than
+  // itself -- spread, the same concept a variadic call site spells with `...`
+  // or `*`. An array-valued operand is legal in either role, so which one it
+  // plays is a fact of the program and not of the operand's type. The result
+  // is the operand at its own type; only its role differs.
+  kSpread,
   // Operator realizations on `PackedArray`. HIR-to-MIR lifts the
   // method-style SV operators (LRM 11.4) into `CallExpr` against these
   // entries, so the backend renders every operator mechanically: native
@@ -475,10 +477,17 @@ enum class BuiltinFn : std::uint16_t {
          id == BuiltinFn::kFromBool || id == BuiltinFn::kFromString;
 }
 
-// True iff the function modifies its receiver argument's storage in place.
-// Used to route observable cells through `Mutate` so the receiver is the
-// commit snapshot, not a Get'd value.
+// True iff the function modifies its receiver argument's storage in place, so
+// the receiver names a place rather than a value -- which is what makes a
+// receiver reaching through a capability wrapper reach its write access.
 [[nodiscard]] auto IsMutatingBuiltinFn(BuiltinFn id) -> bool;
+
+// True iff the function hands its first argument back unchanged, so a call to
+// it stands for whatever that argument stands for -- a value where the argument
+// is a value, and the same place where the argument is a place. A consumer
+// following where storage lives passes through such a call rather than stopping
+// at it.
+[[nodiscard]] auto IsPassThroughBuiltinFn(BuiltinFn id) -> bool;
 
 // True iff the call's `args[0]` is the container being indexed or sliced
 // (rather than a value receiver). Used by LHS-chain walkers to reach the

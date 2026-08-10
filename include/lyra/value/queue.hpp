@@ -465,8 +465,8 @@ class Queue {
   }
 
  private:
-  // The LRM 7.12 entry stream (decision: array-manipulation-entry-stream): a
-  // lazy view pairing each element with its ordinal index, front-to-back.
+  // The LRM 7.12 entry stream: a lazy view pairing each element with its
+  // ordinal index, front-to-back.
   [[nodiscard]] auto Entries() const {
     return std::views::enumerate(data_) |
            std::views::transform([](auto&& pair) {
@@ -505,33 +505,26 @@ class Queue {
   std::optional<std::uint64_t> max_bound_ = std::nullopt;
 };
 
-// LRM 10.10 unpacked array concatenation builder. The backend wraps each part
-// as a single element (`QElem`) or an array to splice in element order
-// (`QSpread`); `MakeQueueConcat` folds the parts onto a queue seeded with the
-// element shape and bound of its result type, so even the empty `{}` carries
-// the declared representation -- the concatenation value matches its type with
-// no destination-side shape preservation.
-template <typename T>
-struct ConcatElemArg {
-  T value;
-};
+// LRM 10.10 unpacked array concatenation builder. A part contributes either
+// itself, as one element, or its own elements in order -- the second marked by
+// `QSpread`, since an array-valued part is legal in both roles and only the
+// program says which one it is. `MakeQueueConcat` folds the parts onto a queue
+// seeded with the element shape and bound of its result type, so even the empty
+// `{}` carries the declared representation -- the concatenation value matches
+// its type with no destination-side shape preservation.
 template <typename C>
 struct ConcatSpreadArg {
   const C* array;
 };
 
-template <typename T>
-auto QElem(const T& value) -> ConcatElemArg<T> {
-  return ConcatElemArg<T>{value};
-}
 template <typename C>
 auto QSpread(const C& array) -> ConcatSpreadArg<C> {
   return ConcatSpreadArg<C>{&array};
 }
 
 template <typename T>
-auto AppendConcatPart(Queue<T>& out, const ConcatElemArg<T>& part) -> void {
-  out.PushBack(part.value);
+auto AppendConcatPart(Queue<T>& out, const T& part) -> void {
+  out.PushBack(part);
 }
 template <typename T, typename C>
 auto AppendConcatPart(Queue<T>& out, const ConcatSpreadArg<C>& part) -> void {

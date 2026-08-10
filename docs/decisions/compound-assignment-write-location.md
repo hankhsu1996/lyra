@@ -95,7 +95,7 @@ write-side locations.
   high-level `AssignExpr` for array elements, a desugared read-op-write for string / union), and
   forces the "evaluate once" obligation to be re-implemented at every no-lvalue target -- the place
   it was missed. The uniform high-level node plus a backend-realized "once" is the shape the LLVM-IR
-  cross-check wants (`backend_contract.md` invariant 5): one node, one mechanical lowering, for
+  cross-check wants (`backend_contract.md` invariant 6): one node, one mechanical lowering, for
   every target.
 
 - **Keep string character / union member as non-op=-able and special-case their compound forever.**

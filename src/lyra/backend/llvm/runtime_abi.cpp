@@ -227,7 +227,7 @@ auto RuntimeAbi::CellInitialize(ValueDomain domain) -> llvm::FunctionCallee {
 auto RuntimeAbi::CellSet(ValueDomain domain) -> llvm::FunctionCallee {
   return Get(
       std::format("lyra_rt_cell_{}_set", ValueDomainName(domain)),
-      types_->Void(), {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+      types_->Void(), {types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::ActivationFrameAlloc(ValueDomain domain)

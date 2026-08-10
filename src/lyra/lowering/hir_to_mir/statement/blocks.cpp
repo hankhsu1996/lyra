@@ -8,14 +8,12 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
@@ -52,8 +50,9 @@ void OpenActivationScope(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
 
   // The escaping scope's locals are promoted into a compiler-generated struct
-  // whose identity lives in the unit's struct registry; its emission nesting is
-  // recorded separately on the enclosing class below.
+  // whose identity lives in the unit's struct registry. The name is unique
+  // within the unit, which is the scope a struct identity has to be
+  // distinguishable in.
   const std::string struct_name = std::string(process.CallableName()) +
                                   "__scope" +
                                   std::to_string(unit.structs.size());
@@ -68,15 +67,6 @@ void OpenActivationScope(
             .name = decl.name, .type = unit_lowerer.TranslateType(decl.type)}));
   }
   const mir::StructId struct_id = unit.AddStruct(std::move(struct_decl));
-  // The struct is nested in the class whose body opens this scope -- its
-  // emission host. Record the nesting on the class explicitly, parallel to the
-  // child-class `contained` list, so a backend emits it by iteration, never by
-  // walking the body tree.
-  if (frame.current_class == nullptr) {
-    throw InternalError(
-        "OpenActivationScope: promoted scope opened outside any class");
-  }
-  frame.current_class->structs.push_back(struct_id);
   const mir::TypeId struct_type =
       unit.types.Intern(mir::StructType{.struct_id = struct_id});
 

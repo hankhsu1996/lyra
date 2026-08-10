@@ -266,7 +266,6 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       .fields = shape.fields,
       .constructor = {},
       .contained = shape.contained,
-      .structs = {},
       .callables = {},
       .abi_adapters = {},
       .static_constants = {},
@@ -416,8 +415,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
               .name = method.name,
               .code = std::move(proto_code),
               .foreign = std::nullopt,
-              .virtual_dispatch = method_dispatch,
-              .visibility = mir::CallableVisibility::kPublic});
+              .virtual_dispatch = method_dispatch});
       continue;
     }
     ScopeChainNode method_link{};
@@ -435,8 +433,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
             .name = method.name,
             .code = *std::move(method_code_or),
             .foreign = std::nullopt,
-            .virtual_dispatch = method_dispatch,
-            .visibility = mir::CallableVisibility::kPublic});
+            .virtual_dispatch = method_dispatch});
     for (const auto& pending : method_lowerer.TakePendingStaticInitializers()) {
       auto integ = IntegratePendingStaticInitializer(
           method_lowerer, method.body, frame, pending);

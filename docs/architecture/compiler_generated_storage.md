@@ -106,14 +106,14 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
    source-semantic. Only a scope something retains is materialized as shared-owned storage, retained
    whole through a `Shared<>` handle. An escaped automatic local is never individually boxed.
 
-9. **A scope struct's identity and its emission nesting are separate stored relations.** Identity is
-   the `StructId` in the unit's struct registry. Emission nesting is an explicit list on the nesting
-   class, parallel to its child-class containment list: lowering records a scope struct on the class
-   whose body opens it. A backend that nests emits each struct by iterating that list -- a
+9. **A scope struct is identified, and reached, by one name in its unit.** Identity is the
+   `StructId` in the unit's struct registry, and the name that identity carries distinguishes it
+   within the unit -- the scope a struct has to be distinguishable in, since a reference to one
+   never crosses a unit boundary. A backend emits the unit's structs by iterating that registry: a
    mechanical per-node render, never a walk over the body tree or a payload-driven guess at a
-   construction's shape (`backend_contract.md` forbids exactly that). The relation is not on the
-   generic `CallableCode` -- a plain function carries no generated-storage list; it is on the class,
-   the emission unit.
+   construction's shape (`backend_contract.md` forbids exactly that). Where a backend places the
+   struct is the backend's own affair and is stated nowhere in the IR, which is what keeps that name
+   sufficient from every reference site (`object_model.md` invariant 10).
 
 10. **Compiler-generated retained scopes and SystemVerilog class handles are distinct reference
     regimes.** A retained scope uses deterministic shared ownership (`PointerType{kShared}`, an
@@ -158,9 +158,9 @@ Each follows from an invariant above.
 - A field's emission-order position or physical offset used as its identity, or a canonical-ordering
   pass that rewrites the invoke body, or field_order used to reorder initializer evaluation.
   (Invariant 6, 7.)
-- A backend deriving a struct's emission nesting by walking the body tree or guessing a
-  construction's shape from a node's payload, or the emission-nesting list stored on `CallableCode`
-  rather than the nesting class. (Invariant 9.)
+- A backend deriving which structs to emit by walking the body tree, or guessing a construction's
+  shape from a node's payload. Equally, an emission-placement relation stored in the IR for a
+  backend to read -- a nesting list on the class or on `CallableCode`. (Invariant 9.)
 - A scope reached through the managed reference, or a class handle reached through the shared
   reference. (Invariant 10.)
 - "`ClosureType` is a lambda" written as a MIR invariant. The lambda is one backend's realization;

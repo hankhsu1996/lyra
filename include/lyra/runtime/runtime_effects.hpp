@@ -35,7 +35,7 @@ class RuntimeEffects {
   auto Files() -> FileTable&;
   auto PlusArgs() -> PlusArgsSource&;
 
-  void SubmitNba(std::function<void(RuntimeEffects&)> closure);
+  void SubmitNba(std::function<void()> closure);
   void SubmitPostponed(std::function<void()> closure);
   // LRM 12.4.2.1: schedule a violation report to mature in the Observed region
   // of the current time slot. The report is pending on behalf of the process

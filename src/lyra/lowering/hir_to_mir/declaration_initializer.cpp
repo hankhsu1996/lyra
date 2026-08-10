@@ -4,7 +4,7 @@
 #include <utility>
 
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -22,21 +22,21 @@ auto IntegratePendingStaticInitializer(
 
   const mir::ExprId target = init_block.exprs.Add(
       process.BuildStaticStorageAccess(init_frame, pending.placement));
-  const bool target_is_observable_cell = mir::IsObservableCellType(
+  const bool target_is_observable_cell = mir::IsCapabilityWrapperType(
       unit.types.Get(init_block.exprs.Get(target).type));
 
   // An observable cell installs its declared representation and default
   // contents once at construction (LRM 10.5); a later user initializer stores
-  // through Set, which verifies the value against the installed
-  // representation. The default-only case is fully expressed by Initialize
-  // and needs no Set.
+  // through the cell, which verifies the value against the installed
+  // representation. The default-only case is fully expressed by that
+  // installation and needs no store.
   if (target_is_observable_cell) {
     const mir::ExprId prototype = init_block.exprs.Add(BuildDefaultValueFromHir(
         process.Owner(), init_frame, pending.hir_type));
     init_block.AppendStmt(
         mir::ExprStmt{
             .expr = init_block.exprs.Add(
-                mir::MakeObservableInitializeCallExpr(
+                mir::MakeCapabilityInitializeCallExpr(
                     target, prototype, unit.builtins.void_type))});
     if (!pending.init_expr.has_value()) {
       return {};
@@ -54,11 +54,8 @@ auto IntegratePendingStaticInitializer(
         process.Owner(), init_frame, pending.hir_type));
   }
 
-  const mir::ExprId runtime_id = init_block.exprs.Add(
-      mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
-  const mir::Expr assign_expr = BuildObservableAssignExpr(
-      unit, init_block, runtime_id, target, init_value, std::nullopt,
-      pending.storage_type, unit.builtins.void_type);
+  const mir::Expr assign_expr = BuildStoreExpr(
+      unit, init_block, target, init_value, std::nullopt, pending.storage_type);
   init_block.AppendStmt(
       mir::ExprStmt{.expr = init_block.exprs.Add(assign_expr)});
   return {};

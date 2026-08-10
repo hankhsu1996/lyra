@@ -7,21 +7,12 @@
 
 namespace lyra::backend::cpp {
 
-auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact;
-
-// The host `main` constructs the design-root unit, whose constructor builds the
-// top-level units as its owned children; the engine then walks that tree. The
-// design has one root, not a list of tops, so the host takes the single root
-// unit. It also includes the header of any unit that contributes a DPI-C export
-// wrapper reached only from foreign C (LRM 35.7) -- a package with no SV
-// referrer to pull it in -- so its wrapper still lands in the translation unit;
-// hence the full `units` list, not only the root.
-auto EmitCppHostMain(
-    std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root) -> CppArtifact;
-
-// Emit a translation unit per source unit in `units`, plus the design-root
-// unit `root` and the host `main` that constructs it.
+// Emit a translation unit per source unit in `units`, plus the design-root unit
+// `root` and the host `main` that constructs it. The design has one root, not a
+// list of tops, so the root is named on its own; the full `units` list is still
+// needed because the host must include the header of any unit contributing a
+// DPI-C export wrapper reached only from foreign C (LRM 35.7), which no SV
+// referrer would pull in.
 auto EmitCpp(
     std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root) -> CppArtifactSet;

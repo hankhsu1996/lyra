@@ -96,16 +96,16 @@ void lyra_rt_register_signal(void* self, const void* name, void* cell);
 // entry names the cell's value domain; the runtime never inspects a type tag.
 auto lyra_rt_cell_packed_get(void* cell) -> const void*;
 void lyra_rt_cell_packed_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_packed_set(void* cell, void* runtime, const void* value);
+void lyra_rt_cell_packed_set(void* cell, const void* value);
 auto lyra_rt_cell_string_get(void* cell) -> const void*;
 void lyra_rt_cell_string_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_string_set(void* cell, void* runtime, const void* value);
+void lyra_rt_cell_string_set(void* cell, const void* value);
 auto lyra_rt_cell_real_get(void* cell) -> const void*;
 void lyra_rt_cell_real_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_real_set(void* cell, void* runtime, const void* value);
+void lyra_rt_cell_real_set(void* cell, const void* value);
 auto lyra_rt_cell_shortreal_get(void* cell) -> const void*;
 void lyra_rt_cell_shortreal_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_shortreal_set(void* cell, void* runtime, const void* value);
+void lyra_rt_cell_shortreal_set(void* cell, const void* value);
 
 // A procedural local whose value crosses a suspension (LRM 9.4). The cell lives
 // in the running activation's frame, so the handle a generated frame holds
@@ -329,7 +329,7 @@ auto lyra_rt_tuple_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_cell_tuple_get(void* cell) -> const void*;
 void lyra_rt_cell_tuple_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_tuple_set(void* cell, void* runtime, const void* value);
+void lyra_rt_cell_tuple_set(void* cell, const void* value);
 auto lyra_rt_activation_frame_alloc_tuple() -> void*;
 void lyra_rt_activation_frame_store_tuple(void* cell, const void* value);
 auto lyra_rt_activation_frame_load_tuple(const void* cell) -> void*;
@@ -360,7 +360,7 @@ auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_cell_dynarray_get(void* cell) -> const void*;
 void lyra_rt_cell_dynarray_initialize(void* cell, const void* prototype);
-void lyra_rt_cell_dynarray_set(void* cell, void* runtime, const void* value);
+void lyra_rt_cell_dynarray_set(void* cell, const void* value);
 auto lyra_rt_activation_frame_alloc_dynarray() -> void*;
 void lyra_rt_activation_frame_store_dynarray(void* cell, const void* value);
 auto lyra_rt_activation_frame_load_dynarray(const void* cell) -> void*;

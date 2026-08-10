@@ -123,14 +123,15 @@ auto AppendReceiverRange(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
     std::vector<mir::ExprId>& args) -> void {
   // The declared range is a fact of the receiver's value type. On the write
-  // path the base is a place -- an observable cell or a reference -- so unwrap
-  // those single-level indirections to reach the underlying value type.
+  // path the base is a place -- reached through a capability wrapper, or
+  // through a pointer -- so unwrap those indirections to reach the underlying
+  // value type. Which wrappers exist is not restated here; asking the type
+  // system is what keeps a newly admitted wrapper from silently losing the
+  // range.
   for (;;) {
     const auto& ty = unit_lowerer.Unit().types.Get(base_type);
-    if (const auto* obs = std::get_if<mir::ObservableType>(&ty.data)) {
-      base_type = obs->value;
-    } else if (const auto* ref = std::get_if<mir::RefType>(&ty.data)) {
-      base_type = ref->pointee;
+    if (mir::IsCapabilityWrapperType(ty)) {
+      base_type = mir::CapabilityWrapperValueType(ty);
     } else if (const auto* ptr = std::get_if<mir::PointerType>(&ty.data)) {
       base_type = ptr->pointee;
     } else {
@@ -373,14 +374,13 @@ auto BuildTagGuard(
   // passes the base through at the value's type.
   const mir::TypeId base_type = block.exprs.Get(base_id).type;
   const bool base_is_cell =
-      mir::IsObservableCellType(unit.types.Get(base_type));
+      mir::IsCapabilityWrapperType(unit.types.Get(base_type));
   const mir::TypeId value_type =
-      base_is_cell ? mir::ObservableInnerValueType(unit.types.Get(base_type))
+      base_is_cell ? mir::CapabilityWrapperValueType(unit.types.Get(base_type))
                    : base_type;
   const mir::ExprId tag_subject =
-      base_is_cell
-          ? block.exprs.Add(mir::MakeObservableGetCallExpr(base_id, value_type))
-          : base_id;
+      base_is_cell ? block.exprs.Add(mir::MakeDerefExpr(base_id, value_type))
+                   : base_id;
   const mir::ExprId test =
       BuildPackedTagTest(unit_lowerer, block, tag_subject, projection, index);
   const mir::ExprId message_id = block.exprs.Add(

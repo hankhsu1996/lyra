@@ -116,9 +116,6 @@ class FunctionLowerer {
   auto LowerReferenceBind(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
-  auto LowerReferenceAccess(
-      const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
-      mir::TypeId type) -> diag::Result<lir::Operand>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
   // Extracts the designated part's current value; called at most once, and only
@@ -153,12 +150,8 @@ class FunctionLowerer {
   auto LowerMutatingCall(
       const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn)
       -> diag::Result<lir::Operand>;
-  // Reads / writes the whole value of a product-write chain's root. The root is
-  // an ordinary place, or the mutate proxy of an observable cell -- reached by
-  // its whole-cell get / set so a component write never bypasses the cell's
-  // update semantics.
-  auto ReadWholeValue(const mir::Block& block, mir::ExprId id)
-      -> diag::Result<lir::Operand>;
+  // Writes the whole value of a product-write chain's root, so a component
+  // write goes back through the root's own store rather than reaching past it.
   auto WriteWholeValue(
       const mir::Block& block, mir::ExprId id, lir::Operand value)
       -> diag::Result<lir::Operand>;

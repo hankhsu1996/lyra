@@ -60,6 +60,9 @@ the detail lives in the entry itself.
 
 - [lowering-organization](lowering-organization.md) -- how lowering passes organize their internal
   objects (facts, registries, builders, walk frame).
+- [storage-access-as-place-formation](storage-access-as-place-formation.md) -- a dereference of a
+  capability wrapper's place names the storage it represents; access is never a call, and each
+  backend supplies the protocol from the place's type.
 - [declarations-before-bodies](declarations-before-bodies.md) -- every structural declaration's
   identity and shape is CU-global and queryable before any executable lowering begins.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
@@ -140,7 +143,8 @@ the detail lives in the entry itself.
 - [elaboration-lifecycle-phases](elaboration-lifecycle-phases.md) -- a generated constructor only
   allocates; elaboration is a staged build / resolve / initialize / activate protocol.
 - [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
-  driver slots and capability-handle drivers, validated at a Seal barrier; single-driver is N=1.
+  driver contributions and capability-handle drivers, validated at a Seal barrier; single-driver is
+  N=1.
 - [front-end-semantic-boundary](front-end-semantic-boundary.md) -- slang owns semantic resolution
   and sensitivity extraction; Lyra translates resolved facts to executable route and endpoint
   capability; sensitivity uses the correct per-consumer slang surface and never reclassifies from

@@ -186,17 +186,14 @@ enough to warrant its own focused review.
       (see R18). The mutable escape hatch is the one shape that is unambiguously wrong from any
       vantage.
 
-- [x] R12 -- A signal read / write is an explicit access call in MIR, not a render-time decision.
-      The observable-storage wrapper is a first-class MIR type (sibling to the owning-pointer and
-      vector wrappers): a signal field's type is the wrapper and `RenderTypeAsCpp` maps it straight
-      to `lyra::runtime::Var<T>`. The access half is now explicit too -- HIR-to-MIR emits an
-      observable `Get` call for a value read and a `Set` / `Mutate` call for a write, so the backend
-      renders each like any other call and never asks "is this observable" at access time. The
-      value/storage duality -- a signal is read as a value but its cell is the target of a write or
-      a reference binding -- is carried by which call wraps the cell, not by a render-time branch.
-      The backend's `IsObservableScalarType` predicate is gone. See
-      `docs/decisions/value-type-concepts.md`. The uniform wrapping this entry set up is what makes
-      R2's residual small -- only two over-broad frontend event-source gates remain.
+- [x] R12 -- Whether storage is observable is a fact of its type, not a render-time decision. The
+      observable-storage wrapper is a first-class MIR type (sibling to the owning-pointer and vector
+      wrappers), so a signal field's type is the wrapper and the backend maps that type straight to
+      its runtime cell without ever asking "is this observable" at an access. The value/storage
+      duality -- a signal is read as a value, while its cell is what a reference binds to -- is
+      carried by the type and by whether an access reaches through the cell, never by a render-time
+      branch. The uniform wrapping this entry set up is what makes R2's residual small -- only two
+      over-broad frontend event-source gates remain.
 
 - [x] R13 -- HIR-to-MIR per-LRM-family subsystem split. Per-kind handlers are now grouped by
       semantic family in
@@ -534,25 +531,16 @@ enough to warrant its own focused review.
       `TimeFormat` operand. This makes "pure value ops live at `lyra::value`, engine state is
       reached through `services`" consistent everywhere, closing the last exception R37 left open.
 
-- [x] R39 -- The implicit `Ref<T>` access is lifted into explicit MIR calls, reusing the observable
-      cell protocol rather than inventing a parallel one. R12 lifted observable-cell reads / writes
-      / mutations into explicit `BuiltinFnCallee` (`kGet` / `kSet` / `kMutate`) calls at HIR-to-MIR
-      so the backend renders them mechanically. A `ref` / `const ref` formal (LRM 13.5.2) and a
-      by-reference capture (LRM 6.21) carry a `RefType` whose access -- by
-      `reference-as-data-type.md` F3 -- is the same cell protocol (read, update-event `Set`,
-      partial-write `Mutate`). The lift therefore routes through the same three callees: the callee
-      names the access; the receiver's `RefType` (vs `ObservableType`) selects `Ref<T>` vs `Var<T>`
-      at render, exactly as `builtin-call-identity.md` D3 prescribes -- no `RefType`-specific
-      callee. The root cause was a single typing asymmetry: a reference-to-a-ref-binding was typed
-      with the unwrapped value, so the auto-`kGet` wrap and the `Set` / `Mutate` write-routing
-      (which already admit every cell-type, including `RefType`) skipped it, forcing the render path
-      to re-derive ref-ness from the slot type and inject `.Get()` / a spliced engine handle -- a
-      `mir.md` invariant 10 violation. Typing the reference with its `RefType` slot makes the
-      existing lift catch it; whole writes, compound / partial writes, and increment / decrement
-      through a ref are now all well-defined (the render previously bailed on the latter two). The
-      runtime `Ref<T>` gained `Mutate`, and `ScopedMutation` now commits through a `Ref<T>` so
-      observable and reference partial writes share one handle. See
-      `decisions/value-type-concepts.md` and `decisions/reference-as-data-type.md`.
+- [x] R39 -- An access through a `ref` reuses the observable cell's model rather than a parallel
+      one. A `ref` / `const ref` formal (LRM 13.5.2) and a by-reference capture (LRM 6.21) carry a
+      reference type, and reaching what that reference stands for is the same access as reaching
+      what an observable cell stands for -- only the type differs, and the type is what each backend
+      maps to its own realization. The root cause was one typing asymmetry: a reference to a
+      reference binding was typed with the unwrapped value, so the general access path skipped it
+      and the render had to re-derive ref-ness from the slot type. Typing the reference with its own
+      type makes the general path catch it; whole writes, compound and partial writes, and increment
+      / decrement through a ref are now all well-defined, where the render previously bailed on the
+      last two.
 
 - [x] R40 -- Retire the construct- / control-stmt shapes that the backend completes from outside
       MIR. `ForkStmt`, `ConstructOwnedObjectStmt`, and `ConstructExternalUnitStmt` each name a
@@ -651,6 +639,17 @@ enough to warrant its own focused review.
       this is a refactor of MIR's existing qualifier shape to match the feature's needs, not an
       independent migration.
 
+- [x] R51 -- Reaching a capability wrapper's storage is place formation, not a call. A bare wrapper
+      place denotes the wrapper and a dereference of it denotes the storage it represents, so an
+      observable read is a read, a whole or partial write is a store, and a by-reference lending
+      lends that storage -- while rebinding a reference stays a store into the bare place,
+      structurally distinct from writing through it where before only the choice of lowering path
+      told them apart. The mutation proxy a partial write interposed is gone, and with it the
+      execution backend's pattern-match that recovered the destination it stood for. Each backend
+      now supplies the access protocol from the place's type through one dispatch. The store no
+      longer carries a runtime handle, which removes the handle from the deferred-assignment
+      closure, from the package initializer, and from the cell store the execution ABI exposes.
+
 - [ ] R47 -- The object model is designed: a module instance, a generate scope, and a SystemVerilog
       class are one generic nominal object type, differing only in which base they extend, which
       reference reaches their instances, and which lifecycle they participate in -- not a
@@ -733,9 +732,9 @@ enough to warrant its own focused review.
         field-storage substrate (field declaration, field id, field access, field init) is extracted
         for the object, the frame, and the closure together, and the field-access vocabulary is
         renamed from member to field -- done here because only now are all three field-bearing
-        categories concrete, so the abstraction is validated rather than imagined. A scope struct's
-        emission nesting is an explicit list on the nesting class (`mir::Class.structs`), iterated
-        mechanically by a nesting backend.
+        categories concrete, so the abstraction is validated rather than imagined. A scope struct is
+        reached by the one name its identity carries in the unit, and a backend emits the unit's
+        structs by iterating its registry.
 
   - [ ] R52d -- Generalize the HIR-to-MIR capture / lifetime policy -- gated on a new escaping
         construct, not doable now. The three capture forms (snapshot value, live-place alias

@@ -24,6 +24,22 @@ auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
       types.Get(type).data);
 }
 
+auto DerefTarget(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
+  return std::visit(
+      Overloaded{
+          [](const ObservableType& o) -> std::optional<TypeId> {
+            return o.value;
+          },
+          [](const ResolvedType& r) -> std::optional<TypeId> {
+            return r.value;
+          },
+          [](const DriverType& d) -> std::optional<TypeId> { return d.value; },
+          [&](const auto&) -> std::optional<TypeId> {
+            return Pointee(types, type);
+          }},
+      types.Get(type).data);
+}
+
 auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool {
   return std::visit(
       Overloaded{

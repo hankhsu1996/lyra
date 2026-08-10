@@ -29,18 +29,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Parent";
     case support::BuiltinFn::kCurrentRuntime:
       return "current_runtime";
-    case support::BuiltinFn::kGet:
-      return "Get";
     case support::BuiltinFn::kInitialize:
       return "Initialize";
-    case support::BuiltinFn::kSet:
-      return "Set";
-    case support::BuiltinFn::kMutate:
-      return "Mutate";
     case support::BuiltinFn::kAttachDriver:
       return "AttachDriver";
-    case support::BuiltinFn::kUpdateDriver:
-      return "Update";
     case support::BuiltinFn::kSubmitNba:
       return "SubmitNba";
     case support::BuiltinFn::kSubmitPostponed:
@@ -315,6 +307,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "ConformBound";
     case support::BuiltinFn::kMakeQueueConcat:
       return "MakeQueueConcat";
+    case support::BuiltinFn::kSpread:
+      return "QSpread";
     case support::BuiltinFn::kPow:
       return "Pow";
     case support::BuiltinFn::kShiftLeft:
@@ -402,6 +396,8 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kWriteCanonicalLogicVec:
     case support::BuiltinFn::kFromSvLogic:
     case support::BuiltinFn::kRequire:
+    case support::BuiltinFn::kMakeQueueConcat:
+    case support::BuiltinFn::kSpread:
       return "lyra::value";
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kRegisterInitial:
@@ -518,9 +514,15 @@ auto RenderDirectBuiltinCall(
       view.Unit().types.Get(receiver.type).Kind() == mir::TypeKind::kPointer
           ? "->"
           : ".";
+  // A mutating built-in writes through its receiver, so the receiver names a
+  // place -- the same distinction an assignment target draws, and the reason a
+  // receiver reaching through a capability wrapper reaches its write protocol
+  // rather than its read.
+  const std::string receiver_text = mir::IsMutatingCallee(call.callee)
+                                        ? RenderLhsExpr(view, receiver)
+                                        : RenderExpr(view, receiver);
   return {
-      .expr = std::format(
-          "({}){}{}", RenderExpr(view, receiver), sep, BuiltinFnCppName(id)),
+      .expr = std::format("({}){}{}", receiver_text, sep, BuiltinFnCppName(id)),
       .leading_arg_count = 1};
 }
 
@@ -698,54 +700,38 @@ auto RenderCalleePart(
 
 }  // namespace
 
-// LRM 10.10 unpacked-queue concatenation. The first two arguments seed the
-// builder with a default element of the queue's element type and its LRM 7.10.5
-// bound (a negative bound means unbounded); the remaining arguments are the
-// parts, each spliced (an unpacked container of the element type) or appended
-// as one element by its own type. The element type names the `<T>` template
-// argument.
-auto RenderMakeQueueConcatCall(
-    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
-    -> std::string {
-  const auto& queue_ty =
-      std::get<mir::QueueType>(view.Unit().types.Get(result_type).data);
-  std::string out = std::format(
-      "lyra::value::MakeQueueConcat<{}>({}, {}",
-      RenderTypeAsCpp(view.Unit(), queue_ty.element_type),
-      RenderExpr(view, view.Expr(call.arguments[0])),
-      RenderExpr(view, view.Expr(call.arguments[1])));
-  for (std::size_t i = 2; i < call.arguments.size(); ++i) {
-    const auto& part = view.Expr(call.arguments[i]);
-    const auto& part_ty = view.Unit().types.Get(part.type);
-    const bool spread =
-        std::holds_alternative<mir::QueueType>(part_ty.data) ||
-        std::holds_alternative<mir::DynamicArrayType>(part_ty.data) ||
-        std::holds_alternative<mir::UnpackedArrayType>(part_ty.data);
-    const std::string rendered = RenderExpr(view, part);
-    out += spread ? std::format(", lyra::value::QSpread({})", rendered)
-                  : std::format(", lyra::value::QElem({})", rendered);
-  }
-  out += ")";
-  return out;
-}
+namespace {
 
-auto RenderCallExpr(
-    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
-    -> std::string {
-  if (const auto* direct = std::get_if<mir::Direct>(&call.callee)) {
-    if (const auto* id = std::get_if<support::BuiltinFn>(&direct->target);
-        id != nullptr && *id == support::BuiltinFn::kMakeQueueConcat) {
-      return RenderMakeQueueConcatCall(view, call, result_type);
-    }
-  }
+auto RenderCall(
+    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type,
+    std::optional<std::size_t> place_argument) -> std::string {
   const CalleeRender callee = RenderCalleePart(view, call, result_type);
   std::string args;
   for (std::size_t i = callee.leading_arg_count; i < call.arguments.size();
        ++i) {
     if (i != callee.leading_arg_count) args += ", ";
-    args += RenderExpr(view, view.Expr(call.arguments[i]));
+    const mir::Expr& arg = view.Expr(call.arguments[i]);
+    args +=
+        place_argument == i ? RenderLhsExpr(view, arg) : RenderExpr(view, arg);
   }
   return std::format("{}({})", callee.expr, args);
+}
+
+}  // namespace
+
+auto RenderCallExpr(
+    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
+    -> std::string {
+  return RenderCall(view, call, result_type, std::nullopt);
+}
+
+auto RenderLhsCallExpr(
+    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
+    -> std::string {
+  const std::optional<std::size_t> place_argument =
+      mir::IsPassThroughCallee(call.callee) ? std::optional<std::size_t>{0}
+                                            : std::nullopt;
+  return RenderCall(view, call, result_type, place_argument);
 }
 
 }  // namespace lyra::backend::cpp

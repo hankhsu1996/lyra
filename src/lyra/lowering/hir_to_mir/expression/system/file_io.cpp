@@ -320,12 +320,9 @@ auto LowerFileIOSystemSubroutineCallStmt(
     assign_target_id = wrapper.exprs.Add(*std::move(lhs_or));
   }
 
-  const mir::ExprId runtime_id =
-      wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   return BuildCopyOutBlock(
-      process.Owner().Unit(), runtime_id, frame, std::move(wrapper),
-      std::move(label), result_type, std::move(call_expr), assign_target_id,
-      slots);
+      process.Owner().Unit(), frame, std::move(wrapper), std::move(label),
+      result_type, std::move(call_expr), assign_target_id, slots);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

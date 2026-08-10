@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -9,15 +8,6 @@
 #include "lyra/mir/foreign_linkage.hpp"
 
 namespace lyra::mir {
-
-// Whether a callable is part of the object's externally callable surface or an
-// internal mechanism. A class instance method (LRM 8.6) is callable through a
-// handle, so it is public; a scope's processes, lifecycle hooks, and helper
-// subroutines are reached only by the owning runtime or by the scope's own
-// bodies, so they are internal. A backend reads which access a callable has
-// from here rather than inferring it from the object's base or the callable's
-// role.
-enum class CallableVisibility : std::uint8_t { kPublic, kInternal };
 
 // A named callable a class or a unit namespace owns. Every SystemVerilog
 // function and task, every process body, every synthesized lifecycle body, and
@@ -43,12 +33,18 @@ enum class CallableVisibility : std::uint8_t { kPublic, kInternal };
 //
 // A pure virtual prototype is therefore the combination of no body and a
 // dispatch role, and needs no third fact to say so.
+//
+// Access is not stated here. A scope draws no access boundary at all --
+// anything lexically inside a module reaches its subroutines, and a
+// hierarchical name reaches them from outside it (LRM 23.8) -- and a class's
+// own `local` / `protected` (LRM 8.9) is a source-declared, three-valued fact
+// over members of every kind, which is a different thing than a callable-only
+// flag.
 struct CallableDecl {
   std::string name;
   CallableCode code;
   std::optional<ForeignLinkage> foreign;
   std::optional<VirtualDispatchRole> virtual_dispatch;
-  CallableVisibility visibility;
 
   // The name the emitted symbol is reached by. A foreign callable's linkage
   // name is program-global and independent of the SV name it was declared under

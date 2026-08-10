@@ -109,6 +109,16 @@ class CodeGenFunction {
   [[nodiscard]] auto DomainOf(lir::TypeId type) const -> ValueDomain;
   // The domain of the cell an operand addresses, for a cell operation.
   [[nodiscard]] auto CellDomain(const lir::Operand& cell) const -> ValueDomain;
+  // Place access: the cell a place names the contents of, and the domain that
+  // picks its library entries; nothing when the place names ordinary
+  // addressable storage. This is the one entry that decides how a load and a
+  // store through a cell are realized.
+  struct CellPlace {
+    ValueDomain domain{};
+    lir::Place cell;
+  };
+  [[nodiscard]] auto CellPlaceOf(const lir::Place& place) const
+      -> std::optional<CellPlace>;
 
   CodeGenModule* module_;
   const lir::Function* fn_;

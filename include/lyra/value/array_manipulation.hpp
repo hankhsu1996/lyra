@@ -204,8 +204,9 @@ template <typename R, typename F>
 
 // LRM 7.12.3 reduction: fold the closure-projected values with `comb`, seeded
 // by the first projected value so an empty receiver yields `proto` (LRM is
-// silent on empty input; the producer supplies the result-shaped zero -- see
-// the decision doc). The result type follows the closure's return type, so a
+// silent on empty input, so the producer supplies the result-shaped zero rather
+// than this inventing one). The result type follows the closure's return type,
+// so a
 // width-widening `with`-expression widens the result.
 template <typename R, typename Key, typename Comb, typename Acc>
 [[nodiscard]] auto ArrayFold(R entries, Acc proto, Key key, Comb comb) -> Acc {

@@ -18,7 +18,6 @@
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -142,18 +141,12 @@ struct Class {
   // The class's construction protocol: the constructor body together with the
   // base and per-field initialization not expressible in that body.
   ConstructorDecl constructor;
-  // The classes this one structurally owns -- the children it builds and, for a
-  // backend that nests, emits inside itself. Each names a registry identity, in
-  // construction order. Ownership of the declarations is the unit's registry;
-  // this is the containment relation over those identities.
+  // The classes this one structurally owns -- the children it builds. Each
+  // names a registry identity, in construction order. Ownership of the
+  // declarations is the unit's registry; this is the containment relation over
+  // those identities. Where a backend places a class is the backend's own
+  // affair and is not stated here.
   std::vector<ClassId> contained;
-  // The compiler-generated structs this class nests -- a promoted automatic
-  // scope synthesized while lowering one of this class's bodies (its own, or a
-  // closure emitted inline within it). Each names a `StructId` in the unit's
-  // struct registry; this is the emission-nesting relation over those
-  // identities, parallel to `contained`. A backend that nests emits each struct
-  // inside this class by iterating this list -- no walk over the body tree.
-  std::vector<StructId> structs;
   // Every callable this class owns, in one arena: instance methods (LRM 8.6),
   // process and lifecycle bodies, and the receiver-less static callables (a
   // DPI-C import, LRM 35.4; a static method, LRM 8.10). An instance method
