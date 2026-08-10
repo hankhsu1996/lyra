@@ -35,10 +35,10 @@ relations the lexical-tree model conflated are kept separate:
   identity (a unit scope, a module scope, a package scope). The registry is not a flat global name
   table: "which declaration does `A` name here" is a lexical-scope question, answered against the
   enclosing scope, not a registry question.
-- **Structural containment and backend emission nesting.** Which object builds or owns which (the
-  runtime object tree) and how a backend nests its emitted code are separate relations over registry
-  identities; neither is the identity. The current nested C++ class emission is preserved by
-  deriving it from the structural relation, not by storing an emission parent on the declaration.
+- **Structural containment and backend emission placement.** Which object builds or owns which (the
+  runtime object tree) is a relation over registry identities, and it is not the identity. Where a
+  backend puts the emitted code is not a relation the registry carries at all: no emission parent is
+  stored on a declaration, so a declaration's name means one thing everywhere its unit is reachable.
 
 Incomplete (forward) declarations are first-class: a registry record exists before its body, in a
 declared-but-undefined state, so mutually-referential and forward-declared types (LRM 8.27) resolve

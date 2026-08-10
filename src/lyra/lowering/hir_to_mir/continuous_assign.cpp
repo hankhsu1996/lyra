@@ -10,11 +10,9 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/endpoint.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -31,119 +29,27 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The MIR value type behind a resolved-net LHS. Only a bare direct or routed
-// reference may name a net target: a select or other computed LHS is a
-// variable path even if its root sits on a net (whose runtime protocol still
-// forbids a direct write).
-struct ResolvedNetLhs {
-  mir::TypeId value_type;
-};
-
-// Answers "is this LHS a resolved-net cell" at the type level, without
-// lowering the LHS. Reads the target's own field type for a direct member, or
-// the pointee of the pre-declared endpoint slot for a routed reference. In
-// both cases, net-versus-variable is a property of the target's MIR type
-// (LRM 6.5).
-auto ClassifyLhsAsResolvedNet(
-    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    hir::ExprId lhs_id) -> std::optional<ResolvedNetLhs> {
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const auto* prim =
-      std::get_if<hir::PrimaryExpr>(&lowerer.HirScope().exprs.Get(lhs_id).data);
-  if (prim == nullptr) return std::nullopt;
-  if (const auto* ref = std::get_if<hir::DirectMemberRef>(&prim->data)) {
-    const BoundEndpoint endpoint =
-        BindEndpoint(lowerer, frame, hir::ReferenceRoute{*ref});
-    const auto* resolved = std::get_if<mir::ResolvedType>(
-        &unit.types.Get(endpoint.cell_type).data);
-    if (resolved == nullptr) return std::nullopt;
-    return ResolvedNetLhs{.value_type = resolved->value};
-  }
-  if (const auto* rr = std::get_if<hir::RoutedRef>(&prim->data)) {
-    const BoundEndpoint endpoint =
-        BindEndpoint(lowerer, frame, hir::ReferenceRoute{*rr});
-    const auto* resolved = std::get_if<mir::ResolvedType>(
-        &unit.types.Get(endpoint.cell_type).data);
-    if (resolved == nullptr) return std::nullopt;
-    return ResolvedNetLhs{.value_type = resolved->value};
-  }
-  return std::nullopt;
-}
-
-// The runtime handle a body update writes into for a resolved-net target.
-// A field on the enclosing class holds the handle; the field is attached
-// at Resolve and seeded at Initialize.
+// The driver a continuous assign drives its target net through. A field on the
+// enclosing class holds the handle; it is attached at Resolve, and every store
+// the assignment makes -- the Initialize seed and each body re-evaluation --
+// reaches the net through it.
 struct AttachedDriver {
-  mir::FieldId driver_field;
-  mir::TypeId driver_type;
+  mir::FieldId field;
+  mir::TypeId type;
 };
 
-// Installs a driver on a net cell reached through a route: a driver-handle
-// member bound at Resolve (`self->driver = net_access.AttachDriver()`) and
-// seeded at Initialize (`self->driver.Update(runtime, source)`). The
-// caller supplies `net_access` -- the resolve-phase lvalue of the net cell,
-// itself the LHS lowered in `resolve_frame` -- so a same-scope target reads
-// as `self->net`, and an enclosing or cross-unit target as a dereference of
-// its resolve-filled endpoint slot. The driver handle field is added to the
-// enclosing class under `driver_name` (LRM 6.5).
-auto AttachDriver(
-    const StructuralScopeLowerer& lowerer, mir::ExprId net_access,
-    mir::TypeId value_type, const std::string& driver_name, hir::ExprId source,
-    const WalkFrame& resolve_frame, const WalkFrame& init_frame)
-    -> diag::Result<AttachedDriver> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  mir::Class& mir_class = *resolve_frame.current_class;
-  const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
-  mir::Block& resolve_block = *resolve_frame.current_block;
-  mir::Block& init_block = *init_frame.current_block;
-
-  const mir::TypeId driver_type =
-      unit.types.Intern(mir::DriverType{.value = value_type});
-  const mir::FieldId driver_field = mir_class.fields.Add(
-      mir::FieldDecl{.name = driver_name, .type = driver_type});
-
-  const mir::ExprId attach = resolve_block.exprs.Add(
-      mir::MakeNetAttachDriverCallExpr(net_access, driver_type));
-  const mir::ExprId resolve_self =
-      resolve_block.exprs.Add(MakeSelfRefExpr(resolve_frame, self_ptr_type));
-  const mir::ExprId driver_lhs = resolve_block.exprs.Add(
+// The class field access reaching an attached driver from `frame`'s body.
+auto DriverAccess(
+    const WalkFrame& frame, mir::Block& block, const AttachedDriver& driver)
+    -> mir::ExprId {
+  const mir::ExprId self = block.exprs.Add(
+      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  return block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          resolve_self,
+          self,
           mir::FieldTarget{
-              .owner = resolve_frame.current_class_id, .slot = driver_field},
-          driver_type));
-  const mir::ExprId attach_assign = resolve_block.exprs.Add(
-      mir::Expr{
-          .data = mir::AssignExpr{.target = driver_lhs, .value = attach},
-          .type = driver_type});
-  resolve_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = attach_assign}});
-
-  auto source_or = lowerer.LowerExpr(hir_scope.exprs.Get(source), init_frame);
-  if (!source_or) return std::unexpected(std::move(source_or.error()));
-  const mir::ExprId seed_value = init_block.exprs.Add(*std::move(source_or));
-  const auto init_self = [&] {
-    return init_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type));
-  };
-  const mir::ExprId seed_services = init_block.exprs.Add(
-      mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
-  const mir::ExprId seed_driver = init_block.exprs.Add(
-      mir::MakeFieldAccessExpr(
-          init_self(),
-          mir::FieldTarget{
-              .owner = init_frame.current_class_id, .slot = driver_field},
-          driver_type));
-  const mir::ExprId seed_update = init_block.exprs.Add(
-      mir::MakeNetDriverUpdateCallExpr(
-          seed_driver, seed_services, seed_value, unit.builtins.void_type));
-  init_block.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = seed_update}});
-
-  return AttachedDriver{
-      .driver_field = driver_field, .driver_type = driver_type};
+              .owner = frame.current_class_id, .slot = driver.field},
+          driver.type));
 }
 
 }  // namespace
@@ -152,13 +58,19 @@ auto AttachDriver(
 // runtime mental model: re-evaluate the assignment whenever any RHS read
 // changes. HIR keeps continuous assignment as a distinct scope-level node so
 // source diagnostics retain provenance; at HIR -> MIR we materialise the
-// runtime shape as a coroutine body `forever { <write>; wait on reads; }`,
+// runtime shape as a coroutine body `forever { <store>; wait on reads; }`,
 // which the caller registers as a startup activation. The body executes once
 // at t=0 (the natural fall-through of the eternal loop) before the first
 // wait, matching LRM 9.2.2.2's "evaluate at time 0" requirement for inferred
-// sensitivity. The write is chosen by LHS type: a resolved-net cell is
-// driven through a driver handle attached at Resolve; every other observable
-// cell is written directly.
+// sensitivity.
+//
+// Where the store lands follows the target's own type. A net accepts no store,
+// only a drive (LRM 6.5): its assignment acquires a driver at Resolve and every
+// store re-roots onto that driver's contribution, so several assignments to one
+// net install independent drivers the net resolves. An assignment that names
+// only part of a net drives only that part, because the rest of its driver's
+// contribution stays at the resolution identity and keeps deferring to whoever
+// drives it. Every other target is written where it is named.
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
@@ -167,28 +79,86 @@ auto LowerContinuousAssign(
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
+  const hir::Expr& hir_lhs = hir_scope.exprs.Get(src.lhs);
+  const hir::Expr& hir_rhs = hir_scope.exprs.Get(src.rhs);
 
-  // A resolved-net target acquires its own driver handle in Resolve, installed
-  // as a field on the enclosing class; the body updates that handle every
-  // iteration. Several assignments to one net each install an independent
-  // driver and the net resolves them. A non-net LHS falls through to the
-  // direct observable write, with no Resolve-phase acquisition.
-  std::optional<AttachedDriver> attached;
-  if (const auto net =
-          ClassifyLhsAsResolvedNet(lowerer, resolve_frame, src.lhs)) {
-    auto net_access_or =
-        lowerer.LowerLhsExpr(hir_scope.exprs.Get(src.lhs), resolve_frame);
-    if (!net_access_or) {
-      return std::unexpected(std::move(net_access_or.error()));
+  // The store's destination in one frame: the target as the source named it,
+  // re-rooted onto the driver when the target is a net. `driver` is absent
+  // until the Resolve pass below decides the target is one.
+  std::optional<AttachedDriver> driver;
+  const auto lower_destination =
+      [&](const WalkFrame& frame) -> diag::Result<mir::ExprId> {
+    mir::Block& block = *frame.current_block;
+    auto named_or = lowerer.LowerLhsExpr(hir_lhs, frame);
+    if (!named_or) return std::unexpected(std::move(named_or.error()));
+    const mir::ExprId named = block.exprs.Add(*std::move(named_or));
+    if (!driver.has_value()) return named;
+    return ReplaceLhsRoot(
+        unit, block, named, DriverAccess(frame, block, *driver));
+  };
+
+  // A net target acquires its driver in Resolve, installed as a field on the
+  // enclosing class. The target's root decides this: the source may have named
+  // the whole net or a part of it, and a part of a net is still a net.
+  {
+    mir::Block& resolve_block = *resolve_frame.current_block;
+    auto named_or = lowerer.LowerLhsExpr(hir_lhs, resolve_frame);
+    if (!named_or) return std::unexpected(std::move(named_or.error()));
+    const mir::ExprId named = resolve_block.exprs.Add(*std::move(named_or));
+    const mir::ExprId cell = FindLhsRootId(unit, resolve_block, named);
+    if (const auto* net = std::get_if<mir::ResolvedType>(
+            &unit.types.Get(resolve_block.exprs.Get(cell).type).data)) {
+      const mir::TypeId driver_type = unit.types.Intern(
+          mir::DriverType{.value = net->value, .resolution = net->resolution});
+      mir::Class& mir_class = *resolve_frame.current_class;
+      driver = AttachedDriver{
+          .field = mir_class.fields.Add(
+              mir::FieldDecl{
+                  .name = std::format("{}__driver", name),
+                  .type = driver_type}),
+          .type = driver_type};
+      const mir::ExprId attach = resolve_block.exprs.Add(
+          mir::MakeNetAttachDriverCallExpr(cell, driver_type));
+      const mir::ExprId handle =
+          DriverAccess(resolve_frame, resolve_block, *driver);
+      resolve_block.AppendStmt(
+          mir::ExprStmt{
+              .expr = resolve_block.exprs.Add(
+                  mir::Expr{
+                      .data =
+                          mir::AssignExpr{.target = handle, .value = attach},
+                      .type = driver_type})});
     }
-    const mir::ExprId net_access =
-        resolve_frame.current_block->exprs.Add(*std::move(net_access_or));
-    const std::string driver_name = std::format("{}__driver", name);
-    auto attached_or = AttachDriver(
-        lowerer, net_access, net->value_type, driver_name, src.rhs,
-        resolve_frame, init_frame);
-    if (!attached_or) return std::unexpected(std::move(attached_or.error()));
-    attached = *attached_or;
+  }
+
+  const auto emit_store = [&](const WalkFrame& frame) -> diag::Result<void> {
+    mir::Block& block = *frame.current_block;
+    auto value_or = lowerer.LowerExpr(hir_rhs, frame);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    const mir::ExprId value = block.exprs.Add(*std::move(value_or));
+    const mir::TypeId value_type = block.exprs.Get(value).type;
+    auto destination_or = lower_destination(frame);
+    if (!destination_or) {
+      return std::unexpected(std::move(destination_or.error()));
+    }
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.exprs.Add(BuildStoreExpr(
+                unit, block, *destination_or, value, std::nullopt,
+                value_type))});
+    return {};
+  };
+
+  // A driver that has attached but not yet driven contributes the resolution
+  // identity, so a net would read as undriven to anything that reads it before
+  // the body first runs -- including another unit's Initialize, which the
+  // parent-first order can place after this one. Seeding the contribution in
+  // Initialize is what closes that window. A variable target needs no seed: it
+  // holds its declared initial value until the body's own first pass.
+  if (driver.has_value()) {
+    if (auto seeded = emit_store(init_frame); !seeded) {
+      return std::unexpected(std::move(seeded.error()));
+    }
   }
 
   mir::CallableCode code = mir::CallableCode::Defined();
@@ -201,45 +171,9 @@ auto LowerContinuousAssign(
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
 
-  auto rhs_or = lowerer.LowerExpr(hir_scope.exprs.Get(src.rhs), body_frame);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::TypeId assign_type = (*rhs_or).type;
-  const mir::ExprId rhs_id = body_block.exprs.Add(*std::move(rhs_or));
-
-  // Build `self.Services()` in the body: an observable LHS writes through
-  // it, and a net driver updates through it. The body's `self` is the
-  // receiver binding seeded above, reached through the same capture
-  // machinery a process body's self read uses.
-  const mir::ExprId body_runtime_id = body_block.exprs.Add(
-      mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
-
-  mir::ExprId effect_id{};
-  if (attached.has_value()) {
-    // Body writes the driver handle; the net re-resolves and publishes on a
-    // real change (LRM 6.5).
-    const mir::ExprId driver_self =
-        body_block.exprs.Add(MakeSelfRefExpr(body_frame, self_ptr_type));
-    const mir::ExprId driver_access = body_block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            driver_self,
-            mir::FieldTarget{
-                .owner = body_frame.current_class_id,
-                .slot = attached->driver_field},
-            attached->driver_type));
-    effect_id = body_block.exprs.Add(
-        mir::MakeNetDriverUpdateCallExpr(
-            driver_access, body_runtime_id, rhs_id, unit.builtins.void_type));
-  } else {
-    auto lhs_or =
-        lowerer.LowerLhsExpr(hir_scope.exprs.Get(src.lhs), body_frame);
-    if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-    const mir::ExprId lhs_id = body_block.exprs.Add(*std::move(lhs_or));
-    const mir::Expr assign_expr = BuildObservableAssignExpr(
-        unit, body_block, body_runtime_id, lhs_id, rhs_id, std::nullopt,
-        assign_type, unit.builtins.void_type);
-    effect_id = body_block.exprs.Add(assign_expr);
+  if (auto stored = emit_store(body_frame); !stored) {
+    return std::unexpected(std::move(stored.error()));
   }
-  body_block.AppendStmt(mir::ExprStmt{.expr = effect_id});
 
   body_block.AppendStmt(MakeValueChangeWaitStmt(
       body_block, body_frame, lowerer, src.sensitivity_list));
@@ -259,8 +193,7 @@ auto LowerContinuousAssign(
       .name = std::move(name),
       .code = std::move(code),
       .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt,
-      .visibility = mir::CallableVisibility::kInternal};
+      .virtual_dispatch = std::nullopt};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -6,15 +6,14 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
-#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -62,7 +61,6 @@ auto LowerValuePlusargs(
   auto& unit = unit_lowerer.Unit();
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::TypeId bit_t = unit.builtins.bit1;
-  const mir::TypeId void_t = unit.builtins.void_type;
 
   const auto& hir_target = hir_exprs.Get(*call.arguments[1]);
   const mir::TypeId target_type = unit_lowerer.TranslateType(hir_target.type);
@@ -127,11 +125,8 @@ auto LowerValuePlusargs(
   const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
   const mir::ExprId temp_read_then =
       then_body.exprs.Add(mir::MakeLocalRefExpr(temp_var, target_type));
-  const mir::ExprId runtime_id_then =
-      then_body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::Expr assign_expr = BuildObservableAssignExpr(
-      unit, then_body, runtime_id_then, lvalue_id, temp_read_then, std::nullopt,
-      target_type, void_t);
+  const mir::Expr assign_expr = BuildStoreExpr(
+      unit, then_body, lvalue_id, temp_read_then, std::nullopt, target_type);
   const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
   then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 

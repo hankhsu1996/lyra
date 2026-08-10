@@ -342,9 +342,9 @@ void lyra_rt_cell_packed_initialize(void* cell, const void* prototype) {
       Read<PackedArray>(prototype));
 }
 
-void lyra_rt_cell_packed_set(void* cell, void* runtime, const void* value) {
+void lyra_rt_cell_packed_set(void* cell, const void* value) {
   static_cast<Var<PackedArray>*>(cell)->Set(
-      *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(value));
+      lyra::runtime::current_runtime(), Read<PackedArray>(value));
 }
 
 auto lyra_rt_cell_string_get(void* cell) -> const void* {
@@ -355,9 +355,9 @@ void lyra_rt_cell_string_initialize(void* cell, const void* prototype) {
   static_cast<Var<String>*>(cell)->Initialize(Read<String>(prototype));
 }
 
-void lyra_rt_cell_string_set(void* cell, void* runtime, const void* value) {
+void lyra_rt_cell_string_set(void* cell, const void* value) {
   static_cast<Var<String>*>(cell)->Set(
-      *static_cast<RuntimeEffects*>(runtime), Read<String>(value));
+      lyra::runtime::current_runtime(), Read<String>(value));
 }
 
 auto lyra_rt_cell_real_get(void* cell) -> const void* {
@@ -368,9 +368,9 @@ void lyra_rt_cell_real_initialize(void* cell, const void* prototype) {
   static_cast<Var<Real>*>(cell)->Initialize(Read<Real>(prototype));
 }
 
-void lyra_rt_cell_real_set(void* cell, void* runtime, const void* value) {
+void lyra_rt_cell_real_set(void* cell, const void* value) {
   static_cast<Var<Real>*>(cell)->Set(
-      *static_cast<RuntimeEffects*>(runtime), Read<Real>(value));
+      lyra::runtime::current_runtime(), Read<Real>(value));
 }
 
 auto lyra_rt_cell_shortreal_get(void* cell) -> const void* {
@@ -381,9 +381,9 @@ void lyra_rt_cell_shortreal_initialize(void* cell, const void* prototype) {
   static_cast<Var<ShortReal>*>(cell)->Initialize(Read<ShortReal>(prototype));
 }
 
-void lyra_rt_cell_shortreal_set(void* cell, void* runtime, const void* value) {
+void lyra_rt_cell_shortreal_set(void* cell, const void* value) {
   static_cast<Var<ShortReal>*>(cell)->Set(
-      *static_cast<RuntimeEffects*>(runtime), Read<ShortReal>(value));
+      lyra::runtime::current_runtime(), Read<ShortReal>(value));
 }
 
 // A procedural local whose value crosses a suspension. The cell is allocated in
@@ -1094,9 +1094,9 @@ void lyra_rt_cell_tuple_initialize(void* cell, const void* prototype) {
       Read<RuntimeTuple>(prototype));
 }
 
-void lyra_rt_cell_tuple_set(void* cell, void* runtime, const void* value) {
+void lyra_rt_cell_tuple_set(void* cell, const void* value) {
   static_cast<Var<RuntimeTuple>*>(cell)->Set(
-      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeTuple>(value));
+      lyra::runtime::current_runtime(), Read<RuntimeTuple>(value));
 }
 
 auto lyra_rt_activation_frame_alloc_tuple() -> void* {
@@ -1214,9 +1214,9 @@ void lyra_rt_cell_dynarray_initialize(void* cell, const void* prototype) {
       Read<RuntimeDynamicArray>(prototype));
 }
 
-void lyra_rt_cell_dynarray_set(void* cell, void* runtime, const void* value) {
+void lyra_rt_cell_dynarray_set(void* cell, const void* value) {
   static_cast<Var<RuntimeDynamicArray>*>(cell)->Set(
-      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(value));
+      lyra::runtime::current_runtime(), Read<RuntimeDynamicArray>(value));
 }
 
 auto lyra_rt_activation_frame_alloc_dynarray() -> void* {

@@ -149,7 +149,10 @@ what retires the per-target evaluate-once reimplementation the earlier decision 
 
 Whatever the path's depth, the writeback is a single store through the owner's own write protocol --
 for an observable owner, the cell's write, firing subscribers once
-([value-type-concepts](value-type-concepts.md)). It is a semantic store, so it conforms the value to
+([value-type-concepts](value-type-concepts.md)). The owner is the dereferenced cell place, and the
+protocol that realizes the store comes from that place's type at the consuming backend, so the
+designator carries no proxy, no wrapper method, and no runtime handle: nothing about the write
+reaches the node beyond its owner and its path. It is a semantic store, so it conforms the value to
 the destination's declared type ([value-store-discipline](value-store-discipline.md)). Reactivity
 stays whole-cell; field-granular reactivity is out of scope
 ([unpacked-struct-representation](unpacked-struct-representation.md)).

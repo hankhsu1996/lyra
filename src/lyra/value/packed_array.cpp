@@ -389,8 +389,8 @@ auto PackedArray::ResetToDefault() -> void {
 auto PackedArray::HighImpedanceLike(const PackedArray& prototype)
     -> PackedArray {
   if (!prototype.type_.is_four_state) {
-    // A 2-state shape has no high-impedance state; the undriven value is the
-    // all-zero canonical default (z collapses to 0 outside the 4-state domain).
+    // A 2-state shape has no high-impedance state, so the all-zero canonical
+    // default is all there is (z collapses to 0 outside the 4-state domain).
     return PackedArray(prototype.type_);
   }
   // z is the value plane all-0 with the unknown plane all-1 (x is value 1,

@@ -68,9 +68,9 @@ auto LowerHirClassPropertyAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
-// LHS-context selector lowerings: like the read-context handlers but the
-// base lowers through `LowerLhsExpr`, leaving the chain cell-rooted with no
-// `ObservableMethod{kGet}` wrap.
+// LHS-context selector lowerings: like the read-context handlers but the base
+// lowers in write context too, leaving the chain rooted at the cell itself
+// rather than at the storage it stands for.
 template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,

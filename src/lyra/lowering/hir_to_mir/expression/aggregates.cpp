@@ -66,8 +66,12 @@ auto LowerHirConcatExpr(
   // An unpacked-queue concatenation is a runtime builder call: it carries a
   // default value of its declared element type (an empty `{}` part list cannot
   // supply one) and its LRM 7.10.5 bound, built here as ordinary arguments
-  // ahead of the parts. A packed or string concatenation joins its operands
-  // directly and stays a value-build primitive.
+  // ahead of the parts. A part whose value is itself an array contributes its
+  // elements in order (LRM 10.10), which is spread, and is marked so here --
+  // the same array value would be one element if the queue's element type were
+  // an array, so the role is the program's fact, not the operand type's. A
+  // packed or string concatenation joins its operands directly and stays a
+  // value-build primitive.
   const auto& result_ty = lowerer.Owner().Unit().types.Get(result_type);
   if (const auto* q = std::get_if<mir::QueueType>(&result_ty.data)) {
     const mir::TypeId element_type = q->element_type;
@@ -84,7 +88,21 @@ auto LowerHirConcatExpr(
         mir::Expr{
             .data = mir::MachineIntLiteral{.value = bound},
             .type = machine_int}));
-    args.insert(args.end(), operand_ids.begin(), operand_ids.end());
+    for (const mir::ExprId part : operand_ids) {
+      const mir::TypeId part_type = block.exprs.Get(part).type;
+      if (!IsArrayContainerType(lowerer.Owner().Unit().types.Get(part_type))) {
+        args.push_back(part);
+        continue;
+      }
+      args.push_back(block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{.target = support::BuiltinFn::kSpread},
+                      .arguments = {part}},
+              .type = part_type}));
+    }
     return mir::Expr{
         .data =
             mir::CallExpr{

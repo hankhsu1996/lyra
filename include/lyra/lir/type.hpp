@@ -181,16 +181,22 @@ struct TaggedUnionType {
   std::vector<TypeId> elements;
 };
 
+// How a net folds its drivers' contributions into its value (LRM 6.6), carried
+// down from the net's declared net type.
+enum class NetResolution : std::uint8_t { kTriState };
+
 // The sealed endpoint of a cross-instance reference -- a resolution node
 // wrapping the referenced value type.
 struct ResolvedType {
   TypeId value;
+  NetResolution resolution;
 };
 
-// The write capability for a net: a handle to one of a resolution node's driver
-// slots.
+// The drive capability for a net: a handle to one of a net's contributions,
+// folding under the same resolution its net does.
 struct DriverType {
   TypeId value;
+  NetResolution resolution;
 };
 
 struct ObservableType {

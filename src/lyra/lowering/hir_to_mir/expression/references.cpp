@@ -138,9 +138,9 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 }
 
 // A direct or routed reference reaches its endpoint's observable cell as an
-// lvalue; the dispatcher wraps it with the read (`kGet`) or write path. Both
-// route kinds funnel through the one endpoint binding, so read and write share
-// exactly the reach that observation does.
+// lvalue; the dispatcher dereferences it to reach the storage the cell stands
+// for. Both route kinds funnel through the one endpoint binding, so read and
+// write share exactly the reach that observation does.
 auto LowerReferenceRouteExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::ReferenceRoute& route) -> mir::Expr {
@@ -151,8 +151,8 @@ auto LowerReferenceRouteExpr(
 // A package variable (LRM 26.2) is reached by name, never through a
 // `self`-based route: the same by-name form serves a referrer in another unit
 // and the package's own callable reading its own variable. The result is the
-// variable's observable-cell type, so the dispatcher wraps the read in `kGet`
-// and a write in `kSet`, exactly as an intra-unit signal's cell. A referrer in
+// variable's observable-cell type, so the dispatcher reaches its value one
+// dereference further, exactly as an intra-unit signal's cell. A referrer in
 // another unit records the dependency so the backend emits the include and link
 // edge; a package's own reference to its own variable records nothing.
 auto LowerExternalUnitValueRefExpr(
@@ -206,7 +206,7 @@ auto LowerProceduralVarRefExpr(
   // An ordinary automatic local: resolve its carrier in this body -- a direct
   // local in the declaring body, a captured field in a closure -- and read it.
   // The reference's value-versus-cell shape follows the materialized binding's
-  // type, which the dispatcher unwraps with `kGet` when it is a cell.
+  // type, which the dispatcher dereferences when it is a cell.
   const BodyBindingRef ref =
       frame.bindings->EnsureCarrier(BindingOriginId::Procedural(l.var));
   return frame.bindings->MakeReadExpr(ref, *frame.current_block);

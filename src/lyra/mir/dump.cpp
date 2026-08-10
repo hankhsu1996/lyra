@@ -57,8 +57,7 @@ class MirDumper {
     // walk's Contained recursion instead.
     for (std::size_t i = 0; i < unit.classes.size(); ++i) {
       const ClassId id{static_cast<std::uint32_t>(i)};
-      if ((unit.root.has_value() && id == *unit.root) ||
-          !unit.classes.IsDefined(id)) {
+      if (unit.root.has_value() && id == *unit.root) {
         continue;
       }
       const Class& cls = unit.GetClass(id);
@@ -84,9 +83,6 @@ class MirDumper {
       Indent();
       for (std::size_t i = 0; i < unit.structs.size(); ++i) {
         const StructId sid{static_cast<std::uint32_t>(i)};
-        if (!unit.structs.IsDefined(sid)) {
-          continue;
-        }
         DumpStruct(sid, unit.GetStruct(sid));
       }
       Dedent();
@@ -96,9 +92,6 @@ class MirDumper {
       Indent();
       for (std::size_t i = 0; i < unit.closures.size(); ++i) {
         const ClosureId cid{static_cast<std::uint32_t>(i)};
-        if (!unit.closures.IsDefined(cid)) {
-          continue;
-        }
         DumpClosure(cid, unit.GetClosure(cid));
       }
       Dedent();
@@ -202,6 +195,15 @@ class MirDumper {
                   e.method_name);
             }},
         s);
+  }
+
+  static auto FormatNetResolution(NetResolution resolution)
+      -> std::string_view {
+    switch (resolution) {
+      case NetResolution::kTriState:
+        return "tri_state";
+    }
+    throw InternalError("FormatNetResolution: unknown NetResolution");
   }
 
   static auto FormatType(const Type& t) -> std::string {
@@ -414,10 +416,14 @@ class MirDumper {
               return std::format("Observable(value=Type[{}])", o.value.value);
             },
             [](const ResolvedType& r) -> std::string {
-              return std::format("Resolved(value=Type[{}])", r.value.value);
+              return std::format(
+                  "Resolved(value=Type[{}], resolution={})", r.value.value,
+                  FormatNetResolution(r.resolution));
             },
             [](const DriverType& d) -> std::string {
-              return std::format("Driver(value=Type[{}])", d.value.value);
+              return std::format(
+                  "Driver(value=Type[{}], resolution={})", d.value.value,
+                  FormatNetResolution(d.resolution));
             },
         },
         t.data);
@@ -1028,11 +1034,6 @@ class MirDumper {
             d.code.body.has_value() ? "" : " declaration",
             d.code.result_type.value));
     Indent();
-    Line(
-        std::format(
-            "Visibility: {}", d.visibility == CallableVisibility::kPublic
-                                  ? "public"
-                                  : "internal"));
     if (d.virtual_dispatch.has_value()) {
       Line(
           std::format(

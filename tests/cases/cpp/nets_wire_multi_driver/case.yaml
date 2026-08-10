@@ -13,3 +13,6 @@ expect:
       - "conflict=xxxx1111"
       - "with_z=00111100"
       - "ported=xxxxxxxx"
+      - "halves=10010011"
+      - "overlap=10xx01zz"
+      - "elements=10"

@@ -88,6 +88,23 @@ concept WildcardComparable = LyraValue<T> && requires(const T& a, const T& b) {
   { a.WildcardEquals(b) } -> std::same_as<PackedArray>;
 };
 
+// LRM 6.7.1: a value a net may hold. The clause admits a 4-state integral type
+// or a fixed-size unpacked array / struct / union whose every element is itself
+// such a type, so a net is composed entirely of 4-state bits and combines per
+// bit. The recursion is what this concept states: an aggregate is
+// net-resolvable exactly when its elements are, and it answers both net
+// questions by delegating to them. `ResolveTriState` folds one driver's
+// contribution into another (LRM 6.6.1 Table 6-2); `HighImpedanceLike` yields
+// the all-`z` value at the prototype's shape, which is the fold's identity and
+// therefore the value of a position no driver drives. A dynamically sized
+// container is excluded by "fixed-size", and `String` / `Real` by "4-state
+// bits".
+template <typename T>
+concept NetResolvable = LyraValue<T> && requires(const T& a, const T& b) {
+  { a.ResolveTriState(b) } -> std::same_as<T>;
+  { T::HighImpedanceLike(a) } -> std::same_as<T>;
+};
+
 // LRM 11.4.4 relational `<` / `<=` / `>` / `>=` (Integral, real /
 // shortreal, `String`).
 template <typename T>

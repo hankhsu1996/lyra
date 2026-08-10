@@ -263,8 +263,7 @@ auto LowerCallTarget(
                       // Every other builtin bottoms out on a value domain's
                       // library entry; a net's drivers act on a resolution node
                       // instead, which no such entry answers.
-                      if (fn == support::BuiltinFn::kAttachDriver ||
-                          fn == support::BuiltinFn::kUpdateDriver) {
+                      if (fn == support::BuiltinFn::kAttachDriver) {
                         return Unsupported(
                             "mir_to_lir: driving a net is not yet lowerable to "
                             "LIR");
@@ -918,6 +917,31 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
                         .member = lir::MemberId{FieldSlot(field)}}}}};
           },
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
+            const mir::TypeId operand_type =
+                block.exprs.Get(deref.pointer).type;
+            const mir::Type& operand_ty = unit_->Mir().types.Get(operand_type);
+            // A driver's contribution folds into a net's resolution, which no
+            // value-domain library entry answers.
+            if (std::holds_alternative<mir::DriverType>(operand_ty.data)) {
+              return Unsupported(
+                  "mir_to_lir: driving a net is not yet lowerable to LIR");
+            }
+            // A wrapper that is itself storage -- an observable cell, a net's
+            // resolved value -- is storage the chain has already reached, so
+            // naming what it represents extends that chain by one step.
+            // Everything else here refers to storage elsewhere: a pointer, a
+            // handle, and a reference are values, and a value opens a chain
+            // rather than continuing one.
+            if (std::holds_alternative<mir::ObservableType>(operand_ty.data) ||
+                std::holds_alternative<mir::ResolvedType>(operand_ty.data)) {
+              auto wrapper = LowerPlace(block, deref.pointer);
+              if (!wrapper) {
+                return std::unexpected(std::move(wrapper.error()));
+              }
+              lir::Place place = *std::move(wrapper);
+              place.chain.emplace_back(lir::DerefProjection{});
+              return place;
+            }
             auto pointer = LowerExpr(block, deref.pointer);
             if (!pointer) {
               return std::unexpected(std::move(pointer.error()));
@@ -978,43 +1002,6 @@ auto FunctionLowerer::LowerReferenceBind(
   }
   return Emit(
       unit_->TranslateType(type), lir::AddrOfInstr{.place = *std::move(place)});
-}
-
-auto FunctionLowerer::LowerReferenceAccess(
-    const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
-    mir::TypeId type) -> diag::Result<lir::Operand> {
-  auto reference = LowerExpr(block, call.arguments[0]);
-  if (!reference) {
-    return std::unexpected(std::move(reference.error()));
-  }
-  lir::Place referent{
-      .base = *std::move(reference),
-      .chain = {lir::Projection{lir::DerefProjection{}}}};
-  if (fn == support::BuiltinFn::kGet) {
-    return Load(std::move(referent), unit_->TranslateType(type));
-  }
-  if (fn == support::BuiltinFn::kSet) {
-    // A cell write threads the ambient runtime handle ahead of the value it
-    // stores, because writing a cell has to raise its update event. Only a
-    // reference over plain storage reaches here -- binding one over a cell is
-    // refused above -- so the store needs no runtime and the handle goes
-    // unread. The operand count is the builtin's own, not something to
-    // rediscover: a call that does not match it is a producer that built the
-    // wrong shape.
-    if (call.arguments.size() != 3) {
-      throw InternalError(
-          "mir_to_lir: a cell write takes its receiver, the runtime handle, "
-          "and the value it stores");
-    }
-    auto value = LowerExpr(block, call.arguments[2]);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
-    }
-    Store(std::move(referent), *value);
-    return *std::move(value);
-  }
-  return Unsupported(
-      "mir_to_lir: this operation on a reference is not yet lowerable to LIR");
 }
 
 // Calling a closure is a direct call: the callee's type names one closure,
@@ -1092,15 +1079,6 @@ auto FunctionLowerer::LowerCall(
   if (BindsReference(unit_->Mir().types, call, type)) {
     return LowerReferenceBind(block, call, type);
   }
-  if (const auto fn = DirectBuiltinFn(call);
-      fn.has_value() && !call.arguments.empty() &&
-      std::holds_alternative<mir::RefType>(
-          unit_->Mir()
-              .types.Get(block.exprs.Get(call.arguments[0]).type)
-              .data)) {
-    return LowerReferenceAccess(block, call, *fn, type);
-  }
-
   std::vector<lir::Operand> args;
   args.reserve(call.arguments.size());
   for (const mir::ExprId arg : call.arguments) {
@@ -1220,79 +1198,9 @@ auto FunctionLowerer::LowerAssign(
   return written;
 }
 
-namespace {
-
-struct MutateCell {
-  mir::ExprId cell;
-  mir::ExprId runtime;
-};
-
-// Detects the observable-cell mutate proxy a partial write to an observable
-// cell roots in -- a dereference of a `kMutate` call -- and returns its cell
-// and runtime argument expressions. An ordinary place root yields nothing.
-auto MutateCellOf(const mir::Block& block, mir::ExprId id)
-    -> std::optional<MutateCell> {
-  const auto* deref = std::get_if<mir::DerefExpr>(&block.exprs.Get(id).data);
-  if (deref == nullptr) {
-    return std::nullopt;
-  }
-  const auto* call =
-      std::get_if<mir::CallExpr>(&block.exprs.Get(deref->pointer).data);
-  if (call == nullptr) {
-    return std::nullopt;
-  }
-  const auto* direct = std::get_if<mir::Direct>(&call->callee);
-  if (direct == nullptr) {
-    return std::nullopt;
-  }
-  const auto* fn = std::get_if<support::BuiltinFn>(&direct->target);
-  if (fn == nullptr || *fn != support::BuiltinFn::kMutate) {
-    return std::nullopt;
-  }
-  return MutateCell{.cell = call->arguments[0], .runtime = call->arguments[1]};
-}
-
-}  // namespace
-
-auto FunctionLowerer::ReadWholeValue(const mir::Block& block, mir::ExprId id)
-    -> diag::Result<lir::Operand> {
-  if (const std::optional<MutateCell> mutate = MutateCellOf(block, id)) {
-    auto cell = LowerArgument(block, mutate->cell);
-    if (!cell) {
-      return std::unexpected(std::move(cell.error()));
-    }
-    return Emit(
-        unit_->TranslateType(block.exprs.Get(id).type),
-        lir::CallInstr{
-            .target =
-                lir::BuiltinTarget{
-                    .fn = support::BuiltinFn::kGet, .qualifier = std::nullopt},
-            .args = {*std::move(cell)}});
-  }
-  return LowerExpr(block, id);
-}
-
 auto FunctionLowerer::WriteWholeValue(
     const mir::Block& block, mir::ExprId id, lir::Operand value)
     -> diag::Result<lir::Operand> {
-  if (const std::optional<MutateCell> mutate = MutateCellOf(block, id)) {
-    auto cell = LowerArgument(block, mutate->cell);
-    if (!cell) {
-      return std::unexpected(std::move(cell.error()));
-    }
-    auto runtime = LowerExpr(block, mutate->runtime);
-    if (!runtime) {
-      return std::unexpected(std::move(runtime.error()));
-    }
-    Emit(
-        unit_->VoidType(),
-        lir::CallInstr{
-            .target =
-                lir::BuiltinTarget{
-                    .fn = support::BuiltinFn::kSet, .qualifier = std::nullopt},
-            .args = {*std::move(cell), *std::move(runtime), value}});
-    return value;
-  }
   if (const std::optional<lir::Operand> handle =
           ActivationValueHandleForTarget(block, id)) {
     StoreActivationValue(*handle, value);
@@ -1320,7 +1228,7 @@ auto FunctionLowerer::LowerProjectionUpdate(
   const lir::TypeId designated_type = unit_->TranslateType(target_expr.type);
   const std::vector<mir::Selector>& path = projection.path;
 
-  auto owner_value = ReadWholeValue(block, projection.owner);
+  auto owner_value = LowerExpr(block, projection.owner);
   if (!owner_value) {
     return std::unexpected(std::move(owner_value.error()));
   }
@@ -1471,7 +1379,7 @@ auto FunctionLowerer::LowerMutatingCall(
   const lir::TypeId container_type =
       unit_->TranslateType(block.exprs.Get(receiver).type);
 
-  auto value = ReadWholeValue(block, receiver);
+  auto value = LowerExpr(block, receiver);
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }

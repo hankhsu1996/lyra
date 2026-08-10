@@ -14,6 +14,22 @@ module Top;
     return x * 2;
   endfunction
 
+  // An export declared inside a generate block belongs to that block's scope
+  // object rather than to the module, so its entry point recovers that scope as
+  // the receiver. The import that calls back is declared in the same block, so
+  // the scope the call chain establishes is the one the export needs
+  // (LRM 35.5.3). The entry point is a program-global C symbol either way
+  // (LRM 35.7), so where the subroutine it dispatches into was declared changes
+  // nothing the foreign caller sees.
+  if (1) begin : gen_helper
+    import "DPI-C" context function int gen_round_trip(input int x);
+    export "DPI-C" function sv_triple;
+    function int sv_triple(input int x);
+      return x * 3;
+    endfunction
+    initial $display("g=%0d", gen_round_trip(7));
+  end
+
   int r;
   initial begin
     r = round_trip(21);

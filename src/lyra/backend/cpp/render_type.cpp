@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <format>
 #include <string>
+#include <string_view>
 #include <variant>
 
 #include "lyra/backend/cpp/formatting.hpp"
@@ -33,6 +34,17 @@ auto RenderPackedType(const mir::PackedArrayType& pa) -> std::string {
   return std::format(
       "lyra::value::PackedType{{{}, {}, {}}}", dim_list, signed_lit,
       four_state_lit);
+}
+
+// The runtime resolver realizing one net resolution (LRM 6.6). The policy is a
+// type parameter of the runtime's net and driver, so each resolution names its
+// own; the tri-state fold is the one `wire` and `tri` share.
+auto NetResolverCppName(mir::NetResolution resolution) -> std::string_view {
+  switch (resolution) {
+    case mir::NetResolution::kTriState:
+      return "lyra::runtime::WireResolver";
+  }
+  throw InternalError("NetResolverCppName: unknown NetResolution");
 }
 
 auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
@@ -125,7 +137,11 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return unit.GetStruct(s.struct_id).name;
           },
           [](const mir::ExternalUnitObjectType& e) -> std::string {
-            return ToCppName(e.unit_name);
+            // A unit's emitted peer is a namespace, and the object a unit
+            // rooted in a design element builds is the class of the same name
+            // inside it.
+            const std::string unit = ToCppName(e.unit_name);
+            return std::format("{}::{}", unit, unit);
           },
           [](const mir::ExternalClassType& e) -> std::string {
             return e.qualified_name;
@@ -264,13 +280,14 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           },
           [&](const mir::ResolvedType& r) -> std::string {
             return std::format(
-                "lyra::runtime::ResolvedNet<{}, lyra::runtime::WireResolver>",
-                RenderTypeAsCpp(unit, r.value));
+                "lyra::runtime::ResolvedNet<{}, {}>",
+                RenderTypeAsCpp(unit, r.value),
+                NetResolverCppName(r.resolution));
           },
           [&](const mir::DriverType& d) -> std::string {
             return std::format(
-                "lyra::runtime::Driver<{}, lyra::runtime::WireResolver>",
-                RenderTypeAsCpp(unit, d.value));
+                "lyra::runtime::Driver<{}, {}>", RenderTypeAsCpp(unit, d.value),
+                NetResolverCppName(d.resolution));
           },
           [](const auto&) -> std::string {
             throw InternalError(

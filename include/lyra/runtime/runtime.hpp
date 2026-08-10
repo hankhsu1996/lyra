@@ -104,7 +104,7 @@ class Runtime final : public RuntimeEffects {
     RegistrationList active;
     RegistrationList inactive;
     RegistrationList next_delta;
-    std::vector<std::function<void(RuntimeEffects&)>> nba;
+    std::vector<std::function<void()>> nba;
     std::vector<std::function<void()>> postponed;
     // Pending violation reports in the order the checks that raised them
     // fired. They mature together at Observed region entry, and once matured

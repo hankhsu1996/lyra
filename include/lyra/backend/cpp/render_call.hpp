@@ -16,4 +16,11 @@ auto RenderCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> std::string;
 
+// Renders a `CallExpr` in write position, where the call names a place: a
+// callee that hands an argument back unchanged yields the place that argument
+// names, so that argument renders as a place rather than as a value.
+auto RenderLhsCallExpr(
+    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
+    -> std::string;
+
 }  // namespace lyra::backend::cpp

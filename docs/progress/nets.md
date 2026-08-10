@@ -19,8 +19,8 @@ This workstream reasons from these and does not restate them:
   independently attached driver contributions under the net type's resolver; net vs variable; what
   is forbidden.
 - `../decisions/net-driver-resolution.md` -- the settled model: a resolution node with node-owned
-  driver slots and capability-handle drivers; attach during Resolve; the materialized Seal barrier;
-  seed in Initialize; inline resolution reusing publish-on-change.
+  driver contributions and capability-handle drivers; attach during Resolve; the materialized Seal
+  barrier; seed in Initialize; inline resolution reusing publish-on-change.
 - `../architecture/elaboration_lifecycle.md` -- the phase protocol the attach / seal / seed steps
   ride on.
 
@@ -46,15 +46,35 @@ This workstream reasons from these and does not restate them:
       reactive edge -- the source is read, the sink is driven (a net sink attaches a driver, a
       variable sink writes) -- reusing N1's identity resolver; the new work is reaching the
       cross-unit net through the binding route. A net is a readable, well-typed observable from
-      construction: it installs its empty-driver value (an undriven `wire` / `tri` reads `z` at its
-      width), so a read before any driver attaches is valid rather than an uninitialized cell. This
-      is the net facet of the port work in `hierarchy.md` (E5) and clears the first full-testbench
-      wall in `ibex.md`.
+      construction: it fixes its declared type there and reads as the fold over no contributions at
+      all (an undriven `wire` / `tri` reads `z` at its width), so a read before any driver attaches
+      is valid rather than an uninitialized cell. This is the net facet of the port work in
+      `hierarchy.md` (E5) and clears the first full-testbench wall in `ibex.md`.
 - [x] N3 -- Multi-driver `wire` / `tri` resolution (LRM 6.6.1, Table 6-2): two or more drivers on
       one net -- local continuous assignments, sources arriving across ports, or both -- resolve
       under the tri-state truth table, where agreement passes through, conflict yields `x`, and
       all-high-impedance yields `z`. This is the N>=2 case of the resolver; the N=0 undriven value
       and the N=1 single driver are the identity cases N1 and N2 already establish.
+- [x] N3a -- A net's data type may be a fixed-size unpacked array, unpacked struct, or union whose
+      every element is itself valid for a net (LRM 6.7.1), which makes such a value one net
+      resolving per bit rather than a collection of separate nets. An unpacked-array port declared
+      with no data type is that net implicitly. Resolution is stated over any value a net may hold
+      instead of over one value type, so the undriven value, the fold, and change detection reach an
+      aggregate by recursing into its elements, and the set is closed: the frontend admits exactly
+      the four shapes the clause allows and rejects the rest, so all four resolve. The one
+      combination without an answer is two drivers on different members of an unpacked union, which
+      LRM 7.3 leaves without a defined storage overlay.
+- [x] N3b -- A continuous assignment naming only part of a net drives only that part: its driver
+      contributes high-impedance everywhere it does not drive, so disjoint partial drivers compose
+      and overlapping ones conflict exactly as whole-net drivers do. This is the whole-net rule read
+      at bit granularity, so it needs no second mechanism -- a net is still never written, only
+      driven, whichever part of it an assignment names.
+- [x] N3c -- Which fold a net uses is a property of the net's own type, stated once where the net
+      type is translated and carried down through every layer rather than assumed anywhere below.
+      Two nets of one data type resolve differently when their net types differ, so nothing
+      downstream can recover it from the value type. `wire` and `tri` name the same tri-state fold,
+      which is why the assumption held while they were the only net types; each type below adds its
+      fold beside it instead of replacing one.
 - [ ] N4 -- A single-driver net type (`uwire`) reports a diagnostic when more than one driver
       attaches, naming each driver's source. The constraint is on the number of attached drivers,
       not on any current value.

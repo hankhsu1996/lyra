@@ -169,8 +169,7 @@ auto SynthesizeEnumNameCallable(
           .name = std::format("__enum_name_{}", enum_ty.value),
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .visibility = mir::CallableVisibility::kInternal});
+          .virtual_dispatch = std::nullopt});
 }
 
 // LRM 6.19.5.3/4 `next` / `prev`: a static function `(value, step) -> enum`
@@ -257,8 +256,7 @@ auto SynthesizeEnumStepCallable(
           .name = std::format("__enum_step_{}", enum_ty.value),
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .visibility = mir::CallableVisibility::kInternal});
+          .virtual_dispatch = std::nullopt});
 }
 
 // The per-enum `name` callable, synthesized on first use and cached so every

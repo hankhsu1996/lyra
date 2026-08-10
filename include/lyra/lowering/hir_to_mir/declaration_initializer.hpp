@@ -12,8 +12,8 @@ namespace lyra::lowering::hir_to_mir {
 // initializer expression is lowered in the caller-chosen frame's context --
 // its arena, its bindings, its `self` -- so the lowered output never carries
 // arena affinity from the body-lowering pass that deferred it. The result
-// lands as an assignment to the storage placement, wrapped in the
-// observable cell protocol when the storage is observable-typed.
+// lands as an assignment to the storage the placement designates, which for an
+// observable-typed placement is the storage its cell stands for.
 auto IntegratePendingStaticInitializer(
     ProcessLowerer& process, const hir::ProceduralBody& body,
     const WalkFrame& init_frame, const PendingStaticInitializer& pending)

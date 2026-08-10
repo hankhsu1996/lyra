@@ -148,6 +148,10 @@ The old backend predicate `IsObservableScalarType(mir::Type)` is removed.
 
 ### Lowering observable reads and writes
 
+Superseded by [storage-access-as-place-formation](storage-access-as-place-formation.md): reaching
+the storage a wrapper represents is place formation, not a call. The rest of this entry stands; the
+lowering shapes below record what this decision chose and no longer describe the target.
+
 An observable structural variable's read and write are SV-level implicit operations on the variable;
 the C++ realisation of these operations is a method call on the `Var<T>` wrapper (`Get` / `Set` /
 `Mutate`). Per `mir.md` invariant 10, the fact that the operation is a method call must be explicit

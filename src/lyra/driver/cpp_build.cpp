@@ -52,7 +52,9 @@ auto SubstituteTokens(
       out.append(tpl.substr(i));
       break;
     }
-    const auto key = tpl.substr(i, end - i + 1);  // includes both '@'s
+    // The key carries its own delimiters, so a binding is written and matched
+    // in the one spelling the template uses.
+    const auto key = tpl.substr(i, end - i + 1);
     bool replaced = false;
     for (const auto& [k, v] : bindings) {
       if (key == k) {

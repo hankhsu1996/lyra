@@ -64,15 +64,15 @@ the design has attached, which is exactly what a global Seal barrier provides.
 
 ## The decision
 
-1. **A net is a resolution node**: a resolved observable value, a set of driver slots owned by the
-   node, and a resolver fixed by the net type. The node is a distinct capability type sibling to the
-   plain observable cell -- readable and observable, never directly written.
+1. **A net is a resolution node**: a resolved observable value, a set of driver contributions owned
+   by the node, and a resolver fixed by the net type. The node is a distinct capability type sibling
+   to the plain observable cell -- readable and observable, never directly written.
 
-2. **A driver is a capability handle, not a slot pointer.** The node owns the slot storage and
-   lifetime; a driver names exactly one slot by a stable identity. The handle is owned by the
-   driver's source (for a port edge, the parent instance's connection state); the slot is owned by
-   the target net. Updating a contribution goes only through the handle's update operation;
-   generated code never touches a raw slot.
+2. **A driver is a capability handle, not a pointer into the net's storage.** The node owns the
+   contribution storage and lifetime; a driver names exactly one contribution by a stable identity.
+   The handle is owned by the driver's source (for a port edge, the parent instance's connection
+   state); the contribution is owned by the target net. Updating a contribution goes only through
+   the handle's update operation; generated code never addresses the storage.
 
 3. **All drivers attach during Resolve.** Build records driver descriptors as declarative facts; the
    attach itself -- local or cross-unit -- happens in Resolve. A local driver attaches to a node in
@@ -85,16 +85,18 @@ the design has attached, which is exactly what a global Seal barrier provides.
    is still a driver), reporting each driver's provenance. Seal is the future home of forwarding
    collapse and net-collapse canonicalization.
 
-5. **Drivers begin at high-impedance, are seeded in Initialize, and arm in Activate.** Each slot
-   starts at the undriven value at attach; each continuous-assignment driver evaluates once in
-   Initialize and updates its contribution, so the net's first resolved value is correct before any
-   observer arms; the update processes arm in Activate. This makes N=0, N=1, and N>1 one mechanism.
+5. **Drivers begin at high-impedance, are seeded in Initialize, and arm in Activate.** Each
+   contribution starts at what a driver contributes where it is not driving, which is the fold's
+   identity, so attaching is not itself an act of driving; each continuous-assignment driver
+   evaluates once in Initialize and updates its contribution, so the net's first resolved value is
+   correct before any observer arms; the update processes arm in Activate. This makes N=0, N=1, and
+   N>1 one mechanism.
 
 6. **Resolution is inline and atomic; publication and scheduling are unchanged.** A contribution
-   update mutates its slot, re-resolves the node, and publishes only if the resolved value changed
-   -- reusing the observable cell's existing publish-on-change. Waking dependent processes stays
-   with the scheduler. Future per-driver delay is scheduling of the contribution update, never a
-   second scheduled resolution step.
+   update mutates that contribution, re-resolves the node, and publishes only if the resolved value
+   changed -- reusing the observable cell's existing publish-on-change. Waking dependent processes
+   stays with the scheduler. Future per-driver delay is scheduling of the contribution update, never
+   a second scheduled resolution step.
 
 7. **A net and a variable stay distinct types.** They share the observable read / subscription
    protocol, the cross-unit route, the scheduler, and source-expression evaluation; they differ in
@@ -135,9 +137,9 @@ writability and multi-driver resolution are orthogonal; a variable is never mult
 net is never procedurally written. They share a lower protocol (observable read, route, scheduler)
 without being one semantic object.
 
-**Let a driver hold a raw pointer to its contribution slot.** Rejected. The node's slot storage must
-be reorganizable (a compaction table, a small-vector); a borrowed pointer would bind the design to
-one storage layout. A driver names its slot by stable identity instead.
+**Let a driver hold a raw pointer to its contribution.** Rejected. The node's contribution storage
+must be reorganizable (a compaction table, a small-vector); a borrowed pointer would bind the design
+to one storage layout. A driver names its contribution by stable identity instead.
 
 **Fold the single-driver check into the end of Resolve without a Seal phase.** Rejected. One scope's
 Resolve finishing does not mean the whole elaborated design's driver topology is complete; the count

@@ -159,13 +159,14 @@ auto AsUniquePointee(const CompilationUnit& unit, TypeId type)
 
 }  // namespace
 
-auto IsObservableCellType(const Type& ty) -> bool {
+auto IsCapabilityWrapperType(const Type& ty) -> bool {
   return std::holds_alternative<ObservableType>(ty.data) ||
          std::holds_alternative<RefType>(ty.data) ||
-         std::holds_alternative<ResolvedType>(ty.data);
+         std::holds_alternative<ResolvedType>(ty.data) ||
+         std::holds_alternative<DriverType>(ty.data);
 }
 
-auto ObservableInnerValueType(const Type& ty) -> TypeId {
+auto CapabilityWrapperValueType(const Type& ty) -> TypeId {
   if (const auto* ob = std::get_if<ObservableType>(&ty.data)) {
     return ob->value;
   }
@@ -175,8 +176,11 @@ auto ObservableInnerValueType(const Type& ty) -> TypeId {
   if (const auto* rn = std::get_if<ResolvedType>(&ty.data)) {
     return rn->value;
   }
+  if (const auto* dr = std::get_if<DriverType>(&ty.data)) {
+    return dr->value;
+  }
   throw InternalError(
-      "ObservableInnerValueType: type is not an observable cell wrapper");
+      "CapabilityWrapperValueType: type is not a capability wrapper");
 }
 
 auto GetChildScope(const CompilationUnit& unit, TypeId type)

@@ -17,7 +17,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -314,11 +314,9 @@ auto LowerScanSystemSubroutineCall(
     const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
     const mir::ExprId temp_read_id = then_body.exprs.Add(
         mir::MakeLocalRefExpr(temp_ids[k], target_types[k]));
-    const mir::ExprId runtime_id_then =
-        then_body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-    const mir::Expr assign_expr = BuildObservableAssignExpr(
-        unit, then_body, runtime_id_then, lvalue_id, temp_read_id, std::nullopt,
-        target_types[k], void_t);
+    const mir::Expr assign_expr = BuildStoreExpr(
+        unit, then_body, lvalue_id, temp_read_id, std::nullopt,
+        target_types[k]);
     const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 

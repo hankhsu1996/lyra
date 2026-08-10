@@ -34,11 +34,11 @@ context surface, a generated ABI header, and link-input orchestration.
 Two frontiers are open, the two backends.
 
 On the C++ backend the boundary runs in both directions and the surfaces below are closed: import
-(D1-D3, D13) including open arrays (D8), export (D4, D4a-D4c) including instance-bound and
-receiver-less dispatch, DPI tasks in both directions including one that consumes simulation time
-(D5, D6, D6b, D6d), the `svdpi` context surface (D7), and the generated ABI header with link-input
-orchestration (D9). What remains is the disable protocol across the boundary (D6c) and the element
-types Annex H.7.3 puts in C-compatible representation.
+(D1-D3, D13) including open arrays (D8), export (D4, D4a-D4d) including instance-bound,
+generate-scope, and receiver-less dispatch, DPI tasks in both directions including one that consumes
+simulation time (D5, D6, D6b, D6d), the `svdpi` context surface (D7), and the generated ABI header
+with link-input orchestration (D9). What remains is the disable protocol across the boundary (D6c)
+and the element types Annex H.7.3 puts in C-compatible representation.
 
 On the execution backend scalar import (D10) is in: a foreign call lowers to an external-linkage
 symbol and the by-value carriers marshal. The rest of the import surface (D11) is blocked, and not
@@ -109,6 +109,11 @@ from an external main.
       scope with `svSetScope` (LRM 35.5.3). This is the `mhpmcounter_num` / `mhpmcounter_get` shape
       in the Ibex bring-up; the pure-SV Ibex run never calls them, so this closes the construct, not
       the Ibex external-driver usage.
+- [x] D4d -- An export declared inside a generate block (LRM 27.6): the subroutine belongs to that
+      block's scope object rather than to the module, and the entry point recovers that scope as its
+      receiver the same way D4a recovers an instance. The entry point is a program-global C symbol
+      outside every scope (LRM 35.7), so what this needed was for a generate scope to be nameable
+      from there at all. This is the icache scramble-key shape in the Ibex bring-up.
 - [x] D4c -- `$unit`-scoped receiver-less export (LRM 35.7): a subroutine at compilation-unit scope
       (LRM 3.12.1) exports exactly as a package function does. The `$unit` scope is an anonymous
       namespace unit, so its export rides the same receiver-less wrapper as D4a's package export

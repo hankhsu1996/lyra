@@ -83,7 +83,7 @@ auto RuntimeEffects::PlusArgs() -> PlusArgsSource& {
   return AsRuntime(*this).plusargs_;
 }
 
-void RuntimeEffects::SubmitNba(std::function<void(RuntimeEffects&)> closure) {
+void RuntimeEffects::SubmitNba(std::function<void()> closure) {
   Runtime& rt = AsRuntime(*this);
   if (rt.phase_ == SchedulerPhase::kCommitNba) {
     throw SimulationError(

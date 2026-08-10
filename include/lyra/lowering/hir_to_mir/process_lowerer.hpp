@@ -31,8 +31,8 @@ namespace lyra::lowering::hir_to_mir {
 
 struct AutomaticVarBinding {
   // The slot's declared MIR type. A `ref` / `const ref` formal's slot is a
-  // `RefType`, so a reference to it lifts to the cell protocol (`kGet` / `kSet`
-  // / `kMutate`) instead of reading the unwrapped value. The binding's
+  // `RefType`, so a reference to it reaches the place that reference stands for
+  // rather than reading the slot as a value. The binding's
   // cross-body identity is its HIR procedural-var id, materialized through the
   // callable's binding context, not stored here.
   mir::TypeId type;
@@ -137,15 +137,16 @@ class ProcessLowerer {
 
   // Central expression dispatcher. One switch over `hir::Expr::data` routing
   // each kind to its per-family handler; handlers recurse through this
-  // method, so sub-expressions reach `frame` through it. An observable-cell
-  // leaf is auto-wrapped in an `ObservableMethod{kGet}` call so the result
-  // is a value-typed expression.
+  // method, so sub-expressions reach `frame` through it. A capability-wrapper
+  // leaf is dereferenced, so the result is a value-typed expression naming the
+  // storage the wrapper stands for.
   auto LowerExpr(const hir::Expr& expr, WalkFrame frame)
       -> diag::Result<mir::Expr>;
 
   // LHS-context expression dispatcher: same dispatch as `LowerExpr` but
-  // without the `ObservableMethod{kGet}` auto-wrap, so an observable-cell
-  // leaf flows out as the bare cell expression.
+  // without that dereference, so a capability-wrapper leaf flows out as the
+  // bare wrapper -- which is what a destination re-roots from and what a
+  // reference binds to.
   auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
       -> diag::Result<mir::Expr>;
 
@@ -334,8 +335,8 @@ class ProcessLowerer {
   // from the procedural-scope materialization table), and ends with a
   // FieldAccess to the storage field. The expr's type is the storage
   // field's type read from the owner class's published shape, so an
-  // observable-wrapped static returns a wrapper Expr the caller routes
-  // through the cell protocol or uses as a write target.
+  // observable-wrapped static returns the wrapper itself, which the caller
+  // dereferences to reach the storage or binds a reference to.
   [[nodiscard]] auto BuildStaticStorageAccess(
       const WalkFrame& frame, StaticStoragePlacement placement) const
       -> mir::Expr;

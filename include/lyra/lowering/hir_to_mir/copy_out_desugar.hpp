@@ -51,10 +51,10 @@ auto BuildOutputArgSlot(
 // a coroutine is awaited, and the statement discards its void completion (LRM
 // 13.4); an `lhs = f(...)` shape is a function and never suspends.
 auto BuildCopyOutBlock(
-    const mir::CompilationUnit& unit, mir::ExprId runtime_id,
-    WalkFrame parent_frame, mir::Block wrapper,
-    std::optional<std::string> label, mir::TypeId result_type,
-    mir::Expr call_expr, std::optional<mir::ExprId> assign_target_id,
+    const mir::CompilationUnit& unit, WalkFrame parent_frame,
+    mir::Block wrapper, std::optional<std::string> label,
+    mir::TypeId result_type, mir::Expr call_expr,
+    std::optional<mir::ExprId> assign_target_id,
     const std::vector<OutputArgSlot>& slots) -> mir::Stmt;
 
 }  // namespace lyra::lowering::hir_to_mir

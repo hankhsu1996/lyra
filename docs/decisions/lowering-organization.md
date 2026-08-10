@@ -281,13 +281,13 @@ costs: the `Context` name as a hospitality desk; the `mutable` escape hatch "the
 is needed (the backend's `owned_temp_counter_` is exactly that breach)"; and a parallel accumulator
 class beside the Context. The second and third costs presuppose that rendering accumulates state.
 Four cuts landed after this decision and removed every accumulation and every render-time decision
-from the backend: R11 (temp counter to a local), R12 (observable `Get` / `Set` / `Mutate` to
-explicit MIR calls), R16 (receiver to an explicit `self` member access in MIR), R17 (selector and
-field access to explicit MIR calls). With no accumulation left, there is no `mutable` breach and no
-accumulator class -- a render class would own only facts, with neither a registry nor a structured
-root to justify it. Only the first cost (the name's invitation to grow) survives, and it is answered
-by keeping the threaded lookup immutable and member-bounded rather than by wrapping the fold in a
-class.
+from the backend: R11 (temp counter to a local), R12 (observability became a fact of the
+destination's type rather than a render-time question), R16 (receiver to an explicit `self` member
+access in MIR), R17 (selector and field access to explicit MIR calls). With no accumulation left,
+there is no `mutable` breach and no accumulator class -- a render class would own only facts, with
+neither a registry nor a structured root to justify it. Only the first cost (the name's invitation
+to grow) survives, and it is answered by keeping the threaded lookup immutable and member-bounded
+rather than by wrapping the fold in a class.
 
 The corrected dividing line is whether a pass accumulates task-lifetime shared state, not whether it
 is called lowering or rendering. A **construction pass** -- one that accumulates registries and
