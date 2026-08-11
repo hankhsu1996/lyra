@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -28,8 +29,11 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr) -> llvm::Value* {
           [&](const lir::CallInstr& call) -> llvm::Value* {
             return LowerCall(call, result_type);
           },
-          [&](const lir::AggregateInstr& agg) -> llvm::Value* {
-            return LowerAggregate(agg, result_type);
+          [&](const lir::ProductInstr& product) -> llvm::Value* {
+            return LowerProduct(product, result_type);
+          },
+          [&](const lir::ArrayInstr& array) -> llvm::Value* {
+            return LowerArray(array, result_type);
           },
           [&](const lir::AggregateExtractInstr& extract) -> llvm::Value* {
             return LowerAggregateExtract(extract);
@@ -290,66 +294,37 @@ auto CodeGenFunction::ForeignCallee(
                          module_->Types().Map(result_type), params, false));
 }
 
-// An array literal is a value built in place, not a runtime call: its elements
-// are stored into contiguous storage and named by a {pointer, length} span. A
-// dynamic array is a type-erased value, so its literal boxes each element into
-// the erased representation first; a fixed unpacked array carries its elements'
-// own handles directly.
-auto CodeGenFunction::LowerAggregate(
-    const lir::AggregateInstr& agg, lir::TypeId result_type) -> llvm::Value* {
-  const auto& result_data = module_->Unit().types.Get(result_type).data;
-  if (const auto* tuple = std::get_if<lir::TupleType>(&result_data)) {
-    return LowerTupleAggregate(agg, *tuple);
-  }
-  lir::TypeId element_type{};
-  bool box_elements = false;
-  if (const auto* dynamic_array =
-          std::get_if<lir::DynamicArrayType>(&result_data)) {
-    element_type = dynamic_array->element_type;
-    box_elements = true;
-  } else if (
-      const auto* array = std::get_if<lir::UnpackedArrayType>(&result_data)) {
-    element_type = array->element_type;
-  } else {
-    throw InternalError(
-        "llvm codegen: aggregate result is not an unpacked array, dynamic "
-        "array, or tuple");
-  }
-  auto* storage_ty = llvm::ArrayType::get(
-      box_elements ? module_->Types().Ptr()
-                   : module_->Types().Map(element_type),
-      agg.elements.size());
-  llvm::Value* storage = builder_.CreateAlloca(storage_ty);
-  for (std::uint32_t i = 0; i < agg.elements.size(); ++i) {
-    llvm::Value* element = LowerOperand(agg.elements[i]);
-    if (box_elements) {
-      element = builder_.CreateCall(
-          module_->Runtime().ValueBox(DomainOf(element_type)), {element});
-    }
-    llvm::Value* slot =
-        builder_.CreateConstInBoundsGEP2_64(storage_ty, storage, 0, i);
-    builder_.CreateStore(element, slot);
-  }
+auto CodeGenFunction::SpanOver(llvm::Value* storage, std::size_t count)
+    -> llvm::Value* {
   llvm::Value* span = llvm::UndefValue::get(module_->Types().Span());
   span = builder_.CreateInsertValue(span, storage, {0});
-  span = builder_.CreateInsertValue(
+  return builder_.CreateInsertValue(
       span,
       llvm::ConstantInt::get(
-          llvm::Type::getInt64Ty(module_->Context()), agg.elements.size()),
+          llvm::Type::getInt64Ty(module_->Context()),
+          static_cast<std::uint64_t>(count)),
       {1});
-  return span;
 }
 
-// Realizes the construction of a dynamic-array runtime value: it selects the
-// runtime-ABI constructor from the operand shape, boxes the element prototype
-// into the erased representation, and emits the call. This is representation
-// lowering, not source semantics -- the container's value semantics, its
-// out-of-range behavior, and its element-write model belong to the runtime
-// object and the MIR-to-LIR lowering, never here. The four shapes are the
-// runtime constructors' operand lists: `[proto]` empty, `[size, proto]` sized,
-// `[size, proto, src]` sized-from-source, `[proto, literal]` assignment pattern
-// -- the literal's span is the one operand whose own type is the array type,
-// which separates it from the sized form's leading size.
+// Contiguous storage holding the elements, named by a {pointer, length} span.
+// The elements are stored as they are; a container the span feeds owns whatever
+// representation its own contents take, so nothing here depends on which one
+// consumes it.
+auto CodeGenFunction::LowerArray(
+    const lir::ArrayInstr& array, lir::TypeId result_type) -> llvm::Value* {
+  const auto& machine_array = std::get<lir::MachineArrayType>(
+      module_->Unit().types.Get(result_type).data);
+  auto* storage_ty = llvm::ArrayType::get(
+      module_->Types().Map(machine_array.element), array.elements.size());
+  llvm::Value* storage = builder_.CreateAlloca(storage_ty);
+  for (std::uint32_t i = 0; i < array.elements.size(); ++i) {
+    llvm::Value* slot =
+        builder_.CreateConstInBoundsGEP2_64(storage_ty, storage, 0, i);
+    builder_.CreateStore(LowerOperand(array.elements[i]), slot);
+  }
+  return SpanOver(storage, array.elements.size());
+}
+
 auto CodeGenFunction::LowerErasedDynamicArrayConstruct(
     const lir::CallInstr& call, const lir::DynamicArrayType& type)
     -> llvm::Value* {
@@ -368,10 +343,14 @@ auto CodeGenFunction::LowerErasedDynamicArrayConstruct(
         module_->Runtime().MakeDynamicArrayNewCopy(),
         {LowerOperand(args[0]), box(args[1]), LowerOperand(args[2])});
   }
-  const lir::TypeId result = std::get<lir::ConstructTarget>(call.target).result;
-  if (OperandType(args[1]) == result) {
+  // The second argument is either the literal's storage or an element count,
+  // which its own type says: storage is a machine array, a count is not.
+  if (std::holds_alternative<lir::MachineArrayType>(
+          module_->Unit().types.Get(OperandType(args[1])).data)) {
+    // The elements cross as they are; the array erases them itself, and which
+    // domain they are in rides the entry name.
     return builder_.CreateCall(
-        module_->Runtime().MakeDynamicArrayFromLiteral(),
+        module_->Runtime().MakeDynamicArrayFromLiteral(element_domain),
         {box(args[0]), LowerOperand(args[1])});
   }
   return builder_.CreateCall(
@@ -379,34 +358,30 @@ auto CodeGenFunction::LowerErasedDynamicArrayConstruct(
       {LowerOperand(args[0]), box(args[1])});
 }
 
-// A product value is assembled by boxing each component into a product
-// component -- the component's domain names the box entry -- then collecting
-// the boxed components into the product. The component domains come from the
-// result product type, so the generated side never inspects the components'
-// runtime representation.
-auto CodeGenFunction::LowerTupleAggregate(
-    const lir::AggregateInstr& agg, const lir::TupleType& tuple)
-    -> llvm::Value* {
+// A product value is assembled by boxing each component into the erased
+// representation its own domain names, then collecting the boxed components.
+// The domains come from the result product type, so the generated side never
+// inspects a component's runtime representation.
+auto CodeGenFunction::LowerProduct(
+    const lir::ProductInstr& product, lir::TypeId result_type) -> llvm::Value* {
+  const auto& tuple =
+      std::get<lir::TupleType>(module_->Unit().types.Get(result_type).data);
   llvm::Type* handle_ty = module_->Types().Ptr();
-  auto* storage_ty = llvm::ArrayType::get(handle_ty, agg.elements.size());
+  auto* storage_ty = llvm::ArrayType::get(handle_ty, product.components.size());
   llvm::Value* storage = builder_.CreateAlloca(storage_ty);
-  for (std::uint32_t i = 0; i < agg.elements.size(); ++i) {
+  for (std::uint32_t i = 0; i < product.components.size(); ++i) {
     const ValueDomain domain =
         ValueDomainOf(module_->Unit(), tuple.elements[i]);
     llvm::Value* boxed = builder_.CreateCall(
-        module_->Runtime().ValueBox(domain), {LowerOperand(agg.elements[i])});
+        module_->Runtime().ValueBox(domain),
+        {LowerOperand(product.components[i])});
     llvm::Value* slot =
         builder_.CreateConstInBoundsGEP2_64(storage_ty, storage, 0, i);
     builder_.CreateStore(boxed, slot);
   }
-  llvm::Value* span = llvm::UndefValue::get(module_->Types().Span());
-  span = builder_.CreateInsertValue(span, storage, {0});
-  span = builder_.CreateInsertValue(
-      span,
-      llvm::ConstantInt::get(
-          llvm::Type::getInt64Ty(module_->Context()), agg.elements.size()),
-      {1});
-  return builder_.CreateCall(module_->Runtime().TupleMake(), {span});
+  return builder_.CreateCall(
+      module_->Runtime().TupleMake(),
+      {SpanOver(storage, product.components.size())});
 }
 
 auto CodeGenFunction::LowerAggregateExtract(

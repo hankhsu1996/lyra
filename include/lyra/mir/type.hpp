@@ -25,6 +25,8 @@ enum class TypeKind {
   kMachineCString,
   kMachineInt,
   kMachineFloat,
+  kMachineArray,
+  kMachineFunction,
   kEvent,
   kReal,
   kShortReal,
@@ -229,6 +231,36 @@ struct MachineFloatType {
 
   auto operator==(const MachineFloatType&) const -> bool = default;
 };
+
+// A fixed-size contiguous aggregate of plain machine data (the generic-language
+// `[T; N]`, C++ `std::array<T, N>`). It completes the machine family on the
+// aggregate axis: the machine scalars above are plain data rather than
+// simulation values, and this is the plain-data aggregate of them, distinct
+// from `UnpackedArrayType`, which is a simulation value reached through a value
+// wrapper. Its element is itself plain machine data -- a machine scalar, a
+// pointer, or a runtime-library record -- so a table the runtime reads as raw
+// storage is stated here rather than being assembled by each backend.
+struct MachineArrayType {
+  TypeId element;
+  std::uint32_t size;
+
+  auto operator==(const MachineArrayType&) const -> bool = default;
+};
+
+// A pointer to code (the generic-language `fn(A, B) -> R`, C++ `R (*)(A, B)`).
+// It completes the machine family on the callable axis: the machine scalars are
+// plain data, the machine array is the plain-data aggregate of them, and this
+// is the plain code address. Distinct from a callable declaration, which is a
+// named body this unit owns and calls by name; this is the type an address has
+// when code is a value -- held in a table, handed to a runtime that calls back
+// through it.
+struct MachineFunctionType {
+  std::vector<TypeId> params;
+  TypeId result;
+
+  auto operator==(const MachineFunctionType&) const -> bool = default;
+};
+
 struct EventType {
   auto operator==(const EventType&) const -> bool = default;
 };
@@ -348,7 +380,13 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kUnitDefinition,
   kScopeMetadata,
   kAbiStringRef,
-  kScopeEntry,
+  // The DPI-C exports a scope publishes (LRM 35.4): one
+  // `lyra::runtime::ScopeExport` per export, naming it and pointing at the
+  // entry that adapts a call to this scope's own subroutine, gathered in a
+  // `lyra::runtime::ScopeExportTable` the scope's program holds. The entry's
+  // own type is a machine function, not one of these.
+  kScopeExport,
+  kScopeExportTable,
   // The canonical buffer a packed vector crosses the DPI-C boundary in (LRM
   // 35.5.6, Annex H.10.1.2): `lyra::value::DpiBitBuffer` holds `svBitVecVal`
   // chunks, `lyra::value::DpiLogicBuffer` holds `svLogicVecVal` chunks. The
@@ -610,12 +648,13 @@ struct DriverType {
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-    MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
-    RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ExternalClassType, RuntimeEffectsType, FilesType, DiagnosticType,
-    RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
-    VectorType, TupleType, UnionType, TaggedUnionType, EmptyType,
-    ObservableType, ResolvedType, DriverType, StructType, ClosureType>;
+    MachineIntType, MachineFloatType, MachineArrayType, MachineFunctionType,
+    EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
+    ObjectType, ExternalUnitObjectType, ExternalClassType, RuntimeEffectsType,
+    FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
+    PointerType, ManagedRefType, VectorType, TupleType, UnionType,
+    TaggedUnionType, EmptyType, ObservableType, ResolvedType, DriverType,
+    StructType, ClosureType>;
 
 struct Type {
   TypeData data;

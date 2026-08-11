@@ -360,10 +360,11 @@ auto RuntimeAbi::MakeDynamicArrayNewCopy() -> llvm::FunctionCallee {
       {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
-auto RuntimeAbi::MakeDynamicArrayFromLiteral() -> llvm::FunctionCallee {
+auto RuntimeAbi::MakeDynamicArrayFromLiteral(ValueDomain domain)
+    -> llvm::FunctionCallee {
   return Get(
-      "lyra_rt_dynarray_from_literal", types_->Ptr(),
-      {types_->Ptr(), types_->Span()});
+      std::format("lyra_rt_dynarray_from_literal_{}", ValueDomainName(domain)),
+      types_->Ptr(), {types_->Ptr(), types_->Span()});
 }
 
 auto RuntimeAbi::MakeFormatSpec(std::size_t field_count)

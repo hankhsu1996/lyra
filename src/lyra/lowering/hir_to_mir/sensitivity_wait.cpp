@@ -96,10 +96,8 @@ auto MakeValueChangeWaitStmt(
     triggers.push_back(
         BuildTriggerExpr(target_block, frame, unit, lowerer, entry));
   }
-  const mir::TypeId triggers_type = unit.types.Intern(
-      mir::UnpackedArrayType{
-          .element_type = unit.builtins.trigger,
-          .dim = mir::UnpackedRange::ZeroBased(triggers.size())});
+  const mir::TypeId triggers_type =
+      unit.types.MachineArrayOf(unit.builtins.trigger, triggers.size());
   const mir::ExprId triggers_id = target_block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(triggers)},

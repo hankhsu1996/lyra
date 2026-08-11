@@ -89,11 +89,11 @@ ForeignLinkage    = the linkage name the symbol is reached by. Source language a
 
 `ForeignLinkage` is an independent axis on a callable declaration, not part of the bodyless
 implementation form: a bodyless callable carrying it is an import, a bodied one is the entry point
-an export publishes, and nothing tags which. Because the prototype lives on the callable rather than
-beside it, both directions publish it the same way and every consumer -- an emitted declaration, an
-emitted definition, a generated ABI header, an entry point's own parameter bindings -- reads one
-signature. There is no second signature representation that only one direction uses, so no two of
-them can disagree.
+an export publishes, and nothing tags which. The prototype is a fact of the program-global **name**,
+not of any one declaration of it -- two scopes may export one name, and a program-level consumer
+such as the generated ABI header reads the name without holding any declaration -- so the signature
+is stated on the linkage. A declaration's own formals are that same signature realized as bindings a
+body can name, derived from one projection, so the two cannot state different prototypes.
 
 The boundary type of a formal is a fixed function of its SV type and direction, computed once at
 lowering and interned there. The ABI **classification** that computes it -- the carrier and the
@@ -127,12 +127,12 @@ reference, and pointer types) and maps through the per-backend type-mapping disp
 ABI type. Its lifetime is a call-lowering artifact: it is produced by a marshal-in primitive and
 consumed by the foreign call or a marshal-out primitive, never held as a user variable.
 
-Invariant -- the carrier is ABI-temporary. The carrier type is produced only by marshal lowering;
-its only legal occurrences are the result type of a marshal-to-carrier call and the operand or
-result type of a foreign call. It is never a variable's type, never appears in a user expression or
-type check, is never stored to an SV variable, and never escapes the single lowered-call window
-(marshal-in, foreign call, marshal-out, one statement). It is a runtime plumbing type, never a
-member of the SV value-type set.
+Invariant -- the carrier is ABI-temporary. The carrier type occurs only where the boundary itself
+is: a foreign signature's formals and result, the boundary object an argument crosses in, and the
+marshal calls that convert between it and an SV value. It is never a user variable's type, never
+appears in a user expression or type check, is never stored to an SV variable, and on the calling
+side never escapes the single lowered-call window (marshal-in, foreign call, marshal-out, one
+statement). It is a runtime plumbing type, never a member of the SV value-type set.
 
 Reason: the two backends have different runtime ABIs (native value methods vs opaque-handle
 `extern "C"` calls). A conversion expressed as a MIR call renders mechanically on both; a
@@ -140,22 +140,39 @@ backend-realized conversion would be written twice and drift. The carrier being 
 a value type, keeps it out of the SV value model and adds no new MIR expression primitive -- it is a
 type in an existing category, and the conversion is an ordinary call.
 
-### 4. A DPI export is an internal callable plus foreign-wrapper metadata; context is a thread-local ambient handle
+### 4. A DPI export is an internal callable plus a foreign entry point; context is a thread-local ambient handle
 
-An exported subroutine is an ordinary internal SV callable. The export additionally contributes a
-second callable the unit's namespace owns -- the C entry point foreign code calls -- carrying the
-foreign linkage above: it marshals the ABI arguments, obtains the runtime context, calls the
-exported subroutine, and marshals the result back. Its body is ordinary MIR a backend renders
-mechanically; only the external linkage of the entry point is the backend's shell. The entry point
-is a program-global symbol in the DPI name space and never a class member (LRM 35.4, 35.7), so the
-unit owns it even when the subroutine it dispatches into is a module method.
+An exported subroutine is an ordinary internal SV callable. The export additionally contributes an
+entry point carrying the foreign linkage above: it marshals the ABI arguments, calls the exported
+subroutine, and marshals the result back. Its body is ordinary MIR a backend renders mechanically;
+only the external linkage is the backend's shell.
 
-The wrapper obtains its context (design object, engine, and, for a module-scoped export, the calling
-instance) from a **thread-local ambient context** installed for the duration of a run, not from the
-foreign caller. Every backend funnels its run through one shared entry (`RunSimulation` over the
-engine), which is the single install point. A module-scoped export resolves its instance from the
+The C name is a program-global symbol in the DPI name space and never a class member (LRM 35.4,
+35.7), while the subroutine behind it may be compiled once per specialization of the scope declaring
+it -- so the two are separated. A scope **publishes** an entry, taking the scope it runs against
+ahead of the C formals; the symbol resolves that entry against the scope in effect and calls it, and
+belongs to the design root, the one place a name several scopes may export has an owner (LRM 35.4).
+A package subroutine has no receiver and a package has one form, so the two collapse: the package's
+own namespace defines the symbol directly.
+
+The entry obtains its context (design object, engine, and, for an export declared in a scope, the
+calling instance) from a **thread-local ambient context** installed for the duration of a run, not
+from the foreign caller. Every backend funnels its run through one shared entry (`RunSimulation`
+over the engine), which is the single install point. Such an export resolves its instance from the
 scope the foreign side established (LRM 35.5.3 `svSetScope`); every export is a context function
-(LRM 35.7).
+(LRM 35.7). The declaring scope is any structural scope -- a module, or a generate scope, whose type
+the unit declares within another -- so the entry point names it by the same one spelling every other
+reference to that type uses.
+
+That resolution is **checked, not asserted**. Which scope the foreign side established is not a fact
+the compiler can know: LRM 35.5.3 obliges the caller to reach an export only from its own scope and
+obliges `svSetScope` to name a scope that declares it, and neither obligation is enforceable on this
+side. The lookup is where that is settled -- a scope that publishes no entry under the name is
+reported, not proceeded past. What the lookup returns is generated code of the scope it was found
+on, so narrowing that scope to the entry's own instance type needs no second check: the pairing is
+what the table states. Every other typed recovery in the compiler rests on a compile-time proof -- a
+resolved reference, an explicit receiver parameter, a scope the runtime itself allocated -- and this
+one rests on a runtime lookup that has to succeed before any receiver exists.
 
 Invariant: the DPI export context is valid only while a Lyra simulation engine is actively running
 on the current thread. Nested foreign entries (an import called from inside an export) push and pop
@@ -163,7 +180,7 @@ a thread-local stack. A foreign callback that runs on a different thread must in
 context on that thread; this is a stated constraint, not a supported path today.
 
 Reason: the runtime is otherwise entirely explicit-pointer-threaded with no ambient anchor, so a
-wrapper that receives only plain C arguments has nothing to recover the context from. A thread-local
+symbol that receives only plain C arguments has nothing to recover the context from. A thread-local
 handle is the precise scope (it does not outlive the run, and it does not assume a single global
 engine), which keeps a future parallel or multi-engine test from aliasing one global.
 
@@ -202,12 +219,16 @@ usage inflate the scope.
   after it -- and a package, which has no class at all, could then declare no import.
 - **A temporary DPI-only callable-target variant, unified later.** Leaves a DPI-specific identity in
   the IR to be refactored away; the unification is done once, consistent with the reset.
-- **The export's C entry point as its own species beside the callable arena.** It is exactly what a
-  unit-level namespace callable already is -- receiver-less, bodied, owned by the unit -- plus a
-  linkage name, so a parallel container gives it a second declaration shape, a second render path,
-  and a second thing every consumer must walk. Worse, it leaves the export with no prototype record
-  while the import has one, so the two directions of one boundary are modeled differently and a
-  generated header must derive the same LRM 35.5.6 mapping twice.
+- **The program-global export symbol as its own species beside the callable arena.** It is exactly
+  what a unit-level namespace callable already is -- receiver-less, bodied, owned by the unit that
+  defines it -- plus a linkage name, so a parallel container would give it a second declaration
+  shape, a second render path, and a second thing every consumer must walk. Worse, it would leave
+  the export with no prototype record while the import has one, so the two directions of one
+  boundary are modeled differently and a generated header derives the same LRM 35.5.6 mapping twice.
+  The per-specialization entry a scope publishes is a different object and is not what this rejects:
+  the runtime holds it by address in the scope's table, which is what a scope's lifecycle entries
+  already are, so it joins that species instead of inventing one, and it carries the linkage too --
+  so neither direction is left without a prototype.
 - **The C prototype as a record beside the callable rather than the callable's signature.** A
   bodyless callable looks like it has no signature to put it on, so the prototype gets its own home
   and only the bodyless direction reads it -- which forces a second signature-rendering path for

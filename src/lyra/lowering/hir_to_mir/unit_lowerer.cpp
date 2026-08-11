@@ -295,13 +295,27 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
         subroutine_callables[export_decl.subroutine.value];
     const mir::TypeId result_type =
         unit_.callables.Get(callable_id).code.result_type;
-    unit_.callables.Add(SynthesizeForeignExportEntry(
+    // A package subroutine has no receiver and a package has one form, so its
+    // entry is reached by a plain linked name: the unit's own namespace defines
+    // the program-global symbol directly.
+    ForeignExportEntry entry = SynthesizeForeignExportEntry(
         *this, WalkFrame{},
         mir::ExternalUnitCallableTarget{
             .unit_name = unit_.name,
             .callable_name =
                 scope.structural_subroutines.Get(export_decl.subroutine).name},
-        result_type, export_decl));
+        result_type, export_decl);
+    unit_.foreign_surface.push_back(
+        mir::ForeignSymbol{
+            .linkage = entry.linkage,
+            .signature = entry.signature,
+            .definition = mir::ForeignDefinition::kUnitSymbol});
+    unit_.callables.Add(
+        mir::CallableDecl{
+            .name = entry.linkage.foreign_name,
+            .code = std::move(entry.code),
+            .foreign = std::move(entry.linkage),
+            .virtual_dispatch = std::nullopt});
   }
 
   if (auto vars = PopulatePackageStaticVariables(*this, scope); !vars) {

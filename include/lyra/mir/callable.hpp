@@ -65,6 +65,13 @@ struct CallableDecl {
 struct AbiAdapter {
   std::string name;
   CallableCode code;
+  // Set when the runtime holds this entry under a foreign name rather than
+  // only through the scope's lifecycle: a DPI-C export (LRM 35.4), whose
+  // subroutine is compiled once per specialization of the declaring scope
+  // while the name is one program-global symbol. The linkage names that
+  // symbol; the entry is what the scope publishes under it, and its signature
+  // is the symbol's prototype behind the scope receiver.
+  std::optional<ForeignLinkage> foreign;
 };
 
 }  // namespace lyra::mir

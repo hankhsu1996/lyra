@@ -370,7 +370,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // no region, and neither does a body with no object to reach the target
   // through.
   const std::optional<StaticStoragePlacement> task_cancel_source =
-      body_is_coroutine && has_receiver
+      owner_->Unit().types.IsCoroutine(result_type) && has_receiver
           ? storage_plan_->ScopeMaterialization(src.body.root_scope)
                 .cancellation_source
           : std::nullopt;

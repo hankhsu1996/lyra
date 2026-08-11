@@ -295,6 +295,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "RunExportedTaskToCompletion";
     case support::BuiltinFn::kCurrentExportScope:
       return "CurrentExportScope";
+    case support::BuiltinFn::kFindExportEntry:
+      return "FindExportEntry";
     case support::BuiltinFn::kFromSvLogic:
       return "FromSvLogic";
     case support::BuiltinFn::kFromInt:
@@ -427,6 +429,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kRunForeignTaskOnFiber:
     case support::BuiltinFn::kRunExportedTaskToCompletion:
     case support::BuiltinFn::kCurrentExportScope:
+    case support::BuiltinFn::kFindExportEntry:
       return "lyra::runtime";
     default:
       return "";

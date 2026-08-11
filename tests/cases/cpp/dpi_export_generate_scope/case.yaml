@@ -1,4 +1,4 @@
-id: cpp.dpi_context_task_interleave
+id: cpp.dpi_export_generate_scope
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -10,5 +10,5 @@ expect:
   exit: 0
   stdout:
     exact: |
-      nap5=1
-      nap10=1
+      g0=100
+      g1=101

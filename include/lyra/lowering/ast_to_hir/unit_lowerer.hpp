@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -74,6 +75,15 @@ using ForeignImportBindings = std::unordered_map<
 using ForeignImportScopes =
     std::unordered_map<const slang::ast::SubroutineSymbol*, ScopeFrameId>;
 
+// The program-global C name each exported subroutine is reached by (LRM 35.5).
+// An `export "DPI-C"` is a directive rather than a member symbol, so a scope
+// walk never encounters one and the subroutine it names carries no mark of its
+// own; the frontend resolves each directive against the scope declaring it, and
+// this is that resolution keyed by the subroutine it resolved to. It spans the
+// design because directives resolve once, after every scope has elaborated.
+using ForeignExportNames =
+    std::unordered_map<const slang::ast::SubroutineSymbol*, std::string_view>;
+
 // A downward reference's leading component names an owned child this scope
 // declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
 // generate block (`g[1].x`, LRM 27). The child's slang symbol maps to the
@@ -90,16 +100,19 @@ using OwnedChildBindings =
 // Shared lowering-pass facts threaded into every UnitLowerer. SourceMapper
 // translates slang source locations; SensitivityAnalyzer is shared across
 // every unit's analysis (caches reads); disable_assertions is the policy
-// that elides assertion constructs instead of rejecting them. Subset of
+// that elides assertion constructs instead of rejecting them; the foreign
+// export names are resolved design-wide before any unit is walked. Subset of
 // `LowerCompilationFacts` that excludes the slang Compilation handle (which
 // only the driver-level CompilationLowerer needs to walk top instances).
 class LoweringFacts {
  public:
   LoweringFacts(
       const frontend::SlangSourceMapper& source_mapper,
-      SensitivityAnalyzer& sensitivity_analyzer, bool disable_assertions)
+      SensitivityAnalyzer& sensitivity_analyzer,
+      const ForeignExportNames& foreign_export_names, bool disable_assertions)
       : source_mapper_(&source_mapper),
         sensitivity_analyzer_(&sensitivity_analyzer),
+        foreign_export_names_(&foreign_export_names),
         disable_assertions_(disable_assertions) {
   }
 
@@ -112,6 +125,17 @@ class LoweringFacts {
     return *sensitivity_analyzer_;
   }
 
+  // The C name `sub` is exported under (LRM 35.5), or nullopt when no `export
+  // "DPI-C"` names it.
+  [[nodiscard]] auto ForeignExportName(const slang::ast::SubroutineSymbol& sub)
+      const -> std::optional<std::string_view> {
+    const auto it = foreign_export_names_->find(&sub);
+    if (it == foreign_export_names_->end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
   [[nodiscard]] auto DisableAssertions() const -> bool {
     return disable_assertions_;
   }
@@ -119,6 +143,7 @@ class LoweringFacts {
  private:
   const frontend::SlangSourceMapper* source_mapper_;
   SensitivityAnalyzer* sensitivity_analyzer_;
+  const ForeignExportNames* foreign_export_names_;
   bool disable_assertions_;
 };
 
@@ -288,6 +313,10 @@ class UnitLowerer {
   }
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
     return facts_.Sensitivity();
+  }
+  [[nodiscard]] auto ForeignExportName(const slang::ast::SubroutineSymbol& sub)
+      const -> std::optional<std::string_view> {
+    return facts_.ForeignExportName(sub);
   }
   [[nodiscard]] auto DisableAssertions() const -> bool {
     return facts_.DisableAssertions();

@@ -68,6 +68,13 @@ class Scope {
     return {program_->metadata.def_name.data, program_->metadata.def_name.size};
   }
 
+  // The generated behavior this scope was built with. Read where a caller needs
+  // a behavior the scope publishes rather than one the runtime drives -- the
+  // DPI-C export entries, which the foreign side reaches by name.
+  [[nodiscard]] auto Program() const -> const ScopeProgram& {
+    return *program_;
+  }
+
   // Records, during construction, the address of a signal this scope owns
   // under its source name. A unit answers by-name signal queries from these
   // registrations; it never inspects who asks. `name` points at an emitted

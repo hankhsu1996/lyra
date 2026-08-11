@@ -14,8 +14,8 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -273,11 +273,10 @@ auto LowerDisableStmt(
   // disabling body's own object; a body that reaches none -- a package callable
   // (LRM 26.3), a static class method (LRM 8.10) -- cannot name a target.
   const std::optional<StaticStoragePlacement> placement =
-      process.BodyHasReceiver()
-          ? process.StoragePlan()
-                .ScopeMaterialization(d.target)
-                .cancellation_source
-          : std::nullopt;
+      process.BodyHasReceiver() ? process.StoragePlan()
+                                      .ScopeMaterialization(d.target)
+                                      .cancellation_source
+                                : std::nullopt;
   if (!placement.has_value()) {
     return diag::Fail(
         diag::SourceSpan{}, diag::DiagCode::kUnsupportedStatementForm,

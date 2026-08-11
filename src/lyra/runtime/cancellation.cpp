@@ -1,7 +1,7 @@
 #include "lyra/runtime/cancellation.hpp"
 
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 
 namespace lyra::runtime {
 

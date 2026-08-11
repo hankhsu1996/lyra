@@ -914,10 +914,6 @@ enough to warrant its own focused review.
     closure's captures as its body's leading parameters would make both kinds one shape --
     construct, then invoke -- and would remove the reason the execution backend cannot lower a
     coroutine closure at all.
-  - The DPI-C foreign-export wrapper injects a prologue statement
-    `Self self = static_cast<Self>(lyra::runtime::ResolveExportInstance("..."));` around the
-    wrapper's body; the receiver recovery is not a MIR statement in the wrapper's body block, so a
-    second backend must re-derive that it needs one and where.
   - The instance-method render injects `Self self = this;` before the body -- another prologue the
     MIR body does not state, so every method-form callable's `self` binding is a render-side
     convention rather than a stated MIR fact.

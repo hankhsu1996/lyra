@@ -132,10 +132,8 @@ void EmitExternalUnitDimLevel(
     // The child's structural identity, fixed before its constructor runs.
     // Indices reflect the position this leaf occupies in its enclosing
     // dim chain (empty for a scalar instance).
-    const mir::TypeId indices_type = unit_lowerer.Unit().types.Intern(
-        mir::UnpackedArrayType{
-            .element_type = builtins.int_type,
-            .dim = mir::UnpackedRange::ZeroBased(indices.size())});
+    const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
+        builtins.int_type, indices.size());
     const mir::ExprId indices_id = block.exprs.Add(
         mir::Expr{
             .data = mir::ArrayLiteralExpr{.elements = indices},
@@ -317,10 +315,8 @@ auto BuildIndicesLiteral(
         mir::MakeIntLiteral(
             builtins.int_type, static_cast<std::int64_t>(idx))));
   }
-  const mir::TypeId indices_type = unit_lowerer.Unit().types.Intern(
-      mir::UnpackedArrayType{
-          .element_type = builtins.int_type,
-          .dim = mir::UnpackedRange::ZeroBased(indices.size())});
+  const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
+      builtins.int_type, indices.size());
   return block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(ids)},
@@ -900,10 +896,8 @@ void AppendOwnedChildConstruction(
   if (array_index.has_value()) {
     index_elems.push_back(*array_index);
   }
-  const mir::TypeId indices_type = unit_lowerer.Unit().types.Intern(
-      mir::UnpackedArrayType{
-          .element_type = builtins.int_type,
-          .dim = mir::UnpackedRange::ZeroBased(index_elems.size())});
+  const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
+      builtins.int_type, index_elems.size());
   const mir::ExprId indices_id = arm_block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(index_elems)},
@@ -1366,6 +1360,91 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   return class_id_;
 }
 
+// Builds runtime-library records into one static constant's expression arena.
+// Each record is an ordinary constructed value whose type names the runtime
+// type it builds, so a definition is stated in MIR rather than assembled by
+// each backend from the class's parts.
+class RuntimeRecordBuilder {
+ public:
+  RuntimeRecordBuilder(
+      mir::CompilationUnit& unit, base::Arena<mir::Expr, mir::ExprId>& exprs)
+      : unit_(&unit), exprs_(&exprs) {
+  }
+
+  [[nodiscard]] auto Type(mir::RuntimeLibraryKind kind) const -> mir::TypeId {
+    return unit_->types.Intern(mir::RuntimeLibraryType{.kind = kind});
+  }
+
+  auto Add(mir::Expr expr) -> mir::ExprId {
+    return exprs_->Add(std::move(expr));
+  }
+
+  [[nodiscard]] auto TypeOf(mir::ExprId expr) const -> mir::TypeId {
+    return exprs_->Get(expr).type;
+  }
+
+  auto Construct(mir::RuntimeLibraryKind kind, std::vector<mir::ExprId> args)
+      -> mir::ExprId {
+    return Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::Construct{}, .arguments = std::move(args)},
+            .type = Type(kind)});
+  }
+
+  auto MachineInt(std::int64_t value) -> mir::ExprId {
+    return Add(
+        mir::Expr{
+            .data = mir::MachineIntLiteral{.value = value},
+            .type = unit_->builtins.machine_int64});
+  }
+
+  // The address of `adapter`, typed as the function it is. A backend that must
+  // name that type -- to erase it, or to restore it -- reads it off the node
+  // rather than off a convention the two sides would have to keep in step.
+  auto FunctionRef(const mir::Class& cls, mir::AbiAdapterId adapter)
+      -> mir::ExprId {
+    const mir::CallableCode& code = cls.abi_adapters.Get(adapter).code;
+    std::vector<mir::TypeId> params;
+    params.reserve(code.params.size());
+    for (const mir::LocalId param : code.params) {
+      params.push_back(code.locals.Get(param).type);
+    }
+    return Add(
+        mir::Expr{
+            .data = mir::FunctionRef{.adapter = adapter},
+            .type = unit_->types.Intern(
+                mir::MachineFunctionType{
+                    .params = std::move(params), .result = code.result_type})});
+  }
+
+  // The adapter's address named as the erased entry type, so entries of
+  // different prototypes share one table. It is restored to the prototype it
+  // was generated with at the one place that calls it.
+  auto ErasedFunctionRef(const mir::Class& cls, mir::AbiAdapterId adapter)
+      -> mir::ExprId {
+    return Add(
+        mir::Expr{
+            .data = mir::FunctionCastExpr{.operand = FunctionRef(cls, adapter)},
+            .type = unit_->types.ErasedFunction()});
+  }
+
+  auto StringRef(const std::string& text) -> mir::ExprId {
+    const mir::ExprId literal =
+        Add(mir::Expr{
+            .data = mir::StringLiteral{.value = text},
+            .type = unit_->builtins.string});
+    return Construct(
+        mir::RuntimeLibraryKind::kAbiStringRef,
+        {literal, MachineInt(static_cast<std::int64_t>(text.size()))});
+  }
+
+ private:
+  mir::CompilationUnit* unit_;
+  base::Arena<mir::Expr, mir::ExprId>* exprs_;
+};
+
 // Builds a runtime scope's generated-behavior record as an ordinary constructed
 // value and installs it on `cls`: a per-phase ABI adapter that downcasts the
 // generic scope receiver to `cls` and forwards to the phase body (empty when
@@ -1413,7 +1492,10 @@ auto InstallGeneratedDefinition(
       code.Body().AppendStmt(mir::ExprStmt{.expr = call});
     }
     return cls.abi_adapters.Add(
-        mir::AbiAdapter{.name = std::move(name), .code = std::move(code)});
+        mir::AbiAdapter{
+            .name = std::move(name),
+            .code = std::move(code),
+            .foreign = std::nullopt});
   };
   const mir::AbiAdapterId resolve_abi =
       make_adapter("ResolveStateAbi", resolve_body);
@@ -1422,60 +1504,80 @@ auto InstallGeneratedDefinition(
   const mir::AbiAdapterId create_abi =
       make_adapter("CreateProcessesAbi", create_body);
 
+  // The exports this scope publishes, as their own constant: the table the
+  // runtime holds is a pointer into contiguous storage, so the records must
+  // outlive the definition that points at them rather than sit in its
+  // initializer. A scope declaring none contributes an empty array, which the
+  // same construction covers.
+  mir::StaticConstantDecl exports_decl;
+  exports_decl.name = "kExports";
+  RuntimeRecordBuilder exports(unit, exports_decl.body.exprs);
+  std::vector<mir::ExprId> export_records;
+  for (std::size_t i = 0; i < cls.abi_adapters.size(); ++i) {
+    const mir::AbiAdapterId adapter_id{static_cast<std::uint32_t>(i)};
+    const mir::AbiAdapter& adapter = cls.abi_adapters.Get(adapter_id);
+    if (!adapter.foreign.has_value()) {
+      continue;
+    }
+    export_records.push_back(exports.Construct(
+        mir::RuntimeLibraryKind::kScopeExport,
+        {exports.StringRef(adapter.foreign->foreign_name),
+         exports.ErasedFunctionRef(cls, adapter_id)}));
+  }
+  const auto export_count = static_cast<std::uint32_t>(export_records.size());
+  const mir::TypeId exports_type = unit.types.Intern(
+      mir::MachineArrayType{
+          .element = exports.Type(mir::RuntimeLibraryKind::kScopeExport),
+          .size = export_count});
+  exports_decl.value = exports.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(export_records)},
+          .type = exports_type});
+  exports_decl.type = exports_type;
+  const mir::StaticConstantId exports_id =
+      cls.static_constants.Add(std::move(exports_decl));
+
   mir::StaticConstantDecl def;
   def.name = "kDefinition";
-  auto& ex = def.body.exprs;
-  const auto intern = [&](mir::RuntimeLibraryKind kind) {
-    return unit.types.Intern(mir::RuntimeLibraryType{.kind = kind});
-  };
-  const auto construct = [&](mir::RuntimeLibraryKind kind,
-                             std::vector<mir::ExprId> args) {
-    return ex.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Construct{}, .arguments = std::move(args)},
-            .type = intern(kind)});
-  };
-  const auto machine_int = [&](std::int64_t value) {
-    return ex.Add(
-        mir::Expr{
-            .data = mir::MachineIntLiteral{.value = value},
-            .type = unit.builtins.machine_int64});
-  };
-  const auto func_ref = [&](mir::AbiAdapterId a) {
-    return ex.Add(
-        mir::Expr{
-            .data = mir::FunctionRef{.adapter = a},
-            .type = intern(mir::RuntimeLibraryKind::kScopeEntry)});
-  };
+  RuntimeRecordBuilder definition(unit, def.body.exprs);
+  const mir::ExprId exports_ref = definition.Add(
+      mir::Expr{
+          .data = mir::StaticConstantRef{.constant = exports_id},
+          .type = exports_type});
+  const mir::ExprId exports_data = definition.Add(
+      mir::Expr{
+          .data = mir::MachineArrayDataExpr{.array = exports_ref},
+          .type = unit.types.Intern(
+              mir::PointerType{
+                  .pointee =
+                      definition.Type(mir::RuntimeLibraryKind::kScopeExport),
+                  .ownership = mir::PointerOwnership::kBorrowed,
+                  .mutability = mir::Mutability::kReadOnly})});
+  const mir::ExprId export_table = definition.Construct(
+      mir::RuntimeLibraryKind::kScopeExportTable,
+      {exports_data, definition.MachineInt(export_count)});
 
   const std::string def_name = is_unit ? cls.name : std::string{};
-  const mir::ExprId name_lit = ex.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = def_name},
-          .type = unit.builtins.string});
-  const mir::ExprId def_name_ref = construct(
-      mir::RuntimeLibraryKind::kAbiStringRef,
-      {name_lit, machine_int(static_cast<std::int64_t>(def_name.size()))});
-  const mir::ExprId metadata = construct(
+  const mir::ExprId metadata = definition.Construct(
       mir::RuntimeLibraryKind::kScopeMetadata,
-      {def_name_ref, machine_int(cls.time_resolution.unit_power),
-       machine_int(cls.time_resolution.precision_power)});
-  const mir::ExprId program = construct(
+      {definition.StringRef(def_name),
+       definition.MachineInt(cls.time_resolution.unit_power),
+       definition.MachineInt(cls.time_resolution.precision_power)});
+  const mir::ExprId program = definition.Construct(
       mir::RuntimeLibraryKind::kScopeProgram,
-      {metadata, func_ref(resolve_abi), func_ref(init_abi),
-       func_ref(create_abi)});
+      {metadata, definition.FunctionRef(cls, resolve_abi),
+       definition.FunctionRef(cls, init_abi),
+       definition.FunctionRef(cls, create_abi), export_table});
   if (is_unit) {
     const mir::AbiAdapterId construct_abi =
         make_adapter("ConstructAbi", std::nullopt);
-    def.value = construct(
+    def.value = definition.Construct(
         mir::RuntimeLibraryKind::kUnitDefinition,
-        {program, func_ref(construct_abi)});
+        {program, definition.FunctionRef(cls, construct_abi)});
   } else {
     def.value = program;
   }
-  def.type = ex.Get(def.value).type;
+  def.type = definition.TypeOf(def.value);
   const mir::TypeId const_type = def.type;
   const mir::StaticConstantId def_id = cls.static_constants.Add(std::move(def));
 
@@ -1957,10 +2059,25 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         subroutine_callables[export_decl.subroutine.value];
     const mir::TypeId method_result_type =
         mir_class.callables.Get(method_id).code.result_type;
-    unit_lowerer.Unit().callables.Add(SynthesizeForeignExportEntry(
+    // The subroutine is compiled once per specialization of this scope while
+    // the DPI-C name is one program-global symbol, so the scope publishes the
+    // entry and the symbol resolves against whichever scope the foreign call
+    // chain established. The entry takes the scope receiver, so it is the same
+    // species as a lifecycle entry, not a callable the unit's namespace owns.
+    ForeignExportEntry entry = SynthesizeForeignExportEntry(
         unit_lowerer, ctor_frame,
         mir::CallableTarget{.owner = class_id_, .slot = method_id},
-        method_result_type, export_decl));
+        method_result_type, export_decl);
+    unit_lowerer.Unit().foreign_surface.push_back(
+        mir::ForeignSymbol{
+            .linkage = entry.linkage,
+            .signature = entry.signature,
+            .definition = mir::ForeignDefinition::kPerScopeEntry});
+    mir_class.abi_adapters.Add(
+        mir::AbiAdapter{
+            .name = std::format("{}__export", export_decl.foreign_name),
+            .code = std::move(entry.code),
+            .foreign = std::move(entry.linkage)});
   }
 
   for (std::size_t i = 0; i < hir_scope.processes.size(); ++i) {

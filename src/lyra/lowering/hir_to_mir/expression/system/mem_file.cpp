@@ -77,10 +77,8 @@ auto DescribeMemory(
               bounds.push_back(int_literal(dim.left));
               bounds.push_back(int_literal(dim.right));
             }
-            const mir::TypeId bounds_type = unit.Unit().types.Intern(
-                mir::UnpackedArrayType{
-                    .element_type = int_type,
-                    .dim = mir::UnpackedRange::ZeroBased(bounds.size())});
+            const mir::TypeId bounds_type =
+                unit.Unit().types.MachineArrayOf(int_type, bounds.size());
             return MemAddressing{
                 .element = cursor,
                 .operands = {wrapper.exprs.Add(

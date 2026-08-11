@@ -1,15 +1,20 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -90,6 +95,19 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 throw InternalError(
                     "RenderTypeAsCpp: unsupported MachineFloatType width");
             }
+          },
+          [&](const mir::MachineArrayType& m) -> std::string {
+            return std::format(
+                "std::array<{}, {}>", RenderTypeAsCpp(unit, m.element), m.size);
+          },
+          [&](const mir::MachineFunctionType& m) -> std::string {
+            std::string params;
+            for (std::size_t i = 0; i < m.params.size(); ++i) {
+              if (i != 0) params += ", ";
+              params += RenderTypeAsCpp(unit, m.params[i]);
+            }
+            return std::format(
+                "{} (*)({})", RenderTypeAsCpp(unit, m.result), params);
           },
           [](const mir::ChandleType&) -> std::string {
             return std::string{"lyra::value::Chandle"};
@@ -183,14 +201,16 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::runtime::Trigger"};
               case mir::RuntimeLibraryKind::kScopeProgram:
                 return std::string{"lyra::runtime::ScopeProgram"};
+              case mir::RuntimeLibraryKind::kScopeExport:
+                return std::string{"lyra::runtime::ScopeExport"};
+              case mir::RuntimeLibraryKind::kScopeExportTable:
+                return std::string{"lyra::runtime::ScopeExportTable"};
               case mir::RuntimeLibraryKind::kUnitDefinition:
                 return std::string{"lyra::runtime::UnitDefinition"};
               case mir::RuntimeLibraryKind::kScopeMetadata:
                 return std::string{"lyra::runtime::ScopeMetadata"};
               case mir::RuntimeLibraryKind::kAbiStringRef:
                 return std::string{"lyra::runtime::AbiStringRef"};
-              case mir::RuntimeLibraryKind::kScopeEntry:
-                return std::string{"lyra::runtime::ScopeEntry"};
               case mir::RuntimeLibraryKind::kDpiBitBuffer:
                 return std::string{"lyra::value::DpiBitBuffer"};
               case mir::RuntimeLibraryKind::kDpiLogicBuffer:

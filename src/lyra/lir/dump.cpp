@@ -93,8 +93,12 @@ class LirDumper {
                   "call {}({})", FormatCallTarget(call.target),
                   FormatOperands(call.args));
             },
-            [&](const AggregateInstr& agg) -> std::string {
-              return std::format("aggregate({})", FormatOperands(agg.elements));
+            [&](const ProductInstr& product) -> std::string {
+              return std::format(
+                  "product({})", FormatOperands(product.components));
+            },
+            [&](const ArrayInstr& array) -> std::string {
+              return std::format("array({})", FormatOperands(array.elements));
             },
             [&](const AggregateExtractInstr& extract) -> std::string {
               return std::format(

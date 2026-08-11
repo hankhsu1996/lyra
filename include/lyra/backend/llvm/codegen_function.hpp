@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <unordered_map>
 #include <vector>
 
@@ -38,10 +39,11 @@ class CodeGenFunction {
       -> llvm::Value*;
   auto ResolveCallee(const lir::CallInstr& call, lir::TypeId result_type)
       -> llvm::FunctionCallee;
-  auto LowerAggregate(const lir::AggregateInstr& agg, lir::TypeId result_type)
+  // A {pointer, length} view over storage this function just filled.
+  auto SpanOver(llvm::Value* storage, std::size_t count) -> llvm::Value*;
+  auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
       -> llvm::Value*;
-  auto LowerTupleAggregate(
-      const lir::AggregateInstr& agg, const lir::TupleType& tuple)
+  auto LowerProduct(const lir::ProductInstr& product, lir::TypeId result_type)
       -> llvm::Value*;
   auto LowerErasedDynamicArrayConstruct(
       const lir::CallInstr& call, const lir::DynamicArrayType& type)

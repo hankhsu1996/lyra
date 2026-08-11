@@ -115,6 +115,15 @@ struct MachineFloatType {
   std::uint32_t bit_width;
 };
 
+// A fixed-size contiguous aggregate of plain machine data (C++ `std::array<T,
+// N>`), distinct from `UnpackedArrayType`, which is a simulation value reached
+// through a value wrapper. Its interior is not independently addressable; the
+// storage is reached as a whole or through a pointer to its first element.
+struct MachineArrayType {
+  TypeId element;
+  std::uint32_t size;
+};
+
 struct EventType {};
 struct RealType {};
 struct ShortRealType {};
@@ -207,8 +216,8 @@ struct ObservableType {
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-    MachineIntType, MachineFloatType, EventType, RealType, ShortRealType,
-    RealTimeType, ChandleType, VoidType, EmptyType, ObjectType,
+    MachineIntType, MachineFloatType, MachineArrayType, EventType, RealType,
+    ShortRealType, RealTimeType, ChandleType, VoidType, EmptyType, ObjectType,
     ExternalUnitObjectType, ExternalClassType, RuntimeEffectsType, FilesType,
     DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
     ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,

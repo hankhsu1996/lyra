@@ -252,7 +252,6 @@ struct StructuralScope {
   // later. That is what the declare-then-define gap buys: the id exists up
   // front and the body pass fills the contents when it reaches the scope.
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
-  std::vector<TypeAliasDecl> type_aliases;
 
   [[nodiscard]] auto NextGenerateId() const -> GenerateId {
     return GenerateId{static_cast<std::uint32_t>(generates.size())};

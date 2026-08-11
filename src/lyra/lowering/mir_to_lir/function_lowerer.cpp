@@ -215,6 +215,9 @@ void CollectPlacedLocals(
                 mark(PlacedLocal(block, e.arguments[0]));
               }
             },
+            [&](const mir::MachineArrayDataExpr& e) {
+              mark(PlacedLocal(block, e.array));
+            },
             [](const auto&) {}},
         expr.data);
   }
@@ -1572,7 +1575,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             }
             return Emit(
                 unit_->TranslateType(type),
-                lir::AggregateInstr{.elements = std::move(elements)});
+                lir::ArrayInstr{.elements = std::move(elements)});
           },
           [&](const mir::TupleExpr& tuple) -> diag::Result<lir::Operand> {
             std::vector<lir::Operand> components;
@@ -1586,7 +1589,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             }
             return Emit(
                 unit_->TranslateType(type),
-                lir::AggregateInstr{.elements = std::move(components)});
+                lir::ProductInstr{.components = std::move(components)});
           },
           [&](const mir::TupleGetExpr& get) -> diag::Result<lir::Operand> {
             auto tuple = LowerExpr(block, get.tuple);
@@ -1623,7 +1626,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             }
             return Emit(
                 unit_->TranslateType(type),
-                lir::AggregateInstr{.elements = std::move(captures)});
+                lir::ProductInstr{.components = std::move(captures)});
           },
           [&](const mir::PointerCastExpr& c) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, c.operand);
@@ -1668,6 +1671,19 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           },
           [&](const mir::AddressOfExpr& addr) -> diag::Result<lir::Operand> {
             auto place = LowerPlace(block, addr.operand);
+            if (!place) {
+              return std::unexpected(std::move(place.error()));
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::AddrOfInstr{.place = *std::move(place)});
+          },
+          // A contiguous aggregate begins at its own address, so the pointer to
+          // the first element is the array's address retyped by the result --
+          // no interior step, which the place vocabulary does not have.
+          [&](const mir::MachineArrayDataExpr& d)
+              -> diag::Result<lir::Operand> {
+            auto place = LowerPlace(block, d.array);
             if (!place) {
               return std::unexpected(std::move(place.error()));
             }
