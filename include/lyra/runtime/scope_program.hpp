@@ -59,6 +59,49 @@ struct ScopeMetadata {
   }
 };
 
+// A DPI-C export entry as the table holds it: a code address with its prototype
+// erased, so entries of every prototype share one table. It stays a function
+// pointer rather than becoming a data pointer, because converting between the
+// two is not something the language guarantees.
+//
+// An erased entry is only ever called after being restored to the exact type
+// its definition was generated with. Both the definition and the restoring call
+// site are generated from one foreign-linkage description, so the two cannot
+// disagree -- which is what makes the erasure safe rather than conventional.
+using ErasedScopeExportEntry = void (*)();
+
+// One DPI-C export this scope publishes (LRM 35.4): the program-global name the
+// foreign side calls, and the entry adapting that call to this scope's own
+// subroutine. One name reaches whichever scope the foreign call chain
+// established (LRM 35.5.3) -- including a different specialization of the scope
+// that declared it, whose subroutine is separately compiled code.
+struct ScopeExport {
+  AbiStringRef name;
+  ErasedScopeExportEntry entry = nullptr;
+
+  constexpr ScopeExport() = default;
+  constexpr ScopeExport(AbiStringRef name, ErasedScopeExportEntry entry)
+      : name(name), entry(entry) {
+  }
+};
+
+// The exports a scope publishes, crossing the generated-runtime boundary as
+// plain data. Empty for a scope that declares none, which is nearly all of
+// them.
+struct ScopeExportTable {
+  const ScopeExport* data = nullptr;
+  std::uint32_t size = 0;
+
+  constexpr ScopeExportTable() = default;
+  constexpr ScopeExportTable(const ScopeExport* data, std::uint32_t size)
+      : data(data), size(size) {
+  }
+
+  [[nodiscard]] constexpr auto Entries() const -> std::span<const ScopeExport> {
+    return {data, size};
+  }
+};
+
 // One scope's generated behavior plus its constant metadata. Every scope -- a
 // unit instance or a generate scope -- has one. The lifecycle entries run this
 // scope's own work only; the runtime owns child traversal and phase ordering.
@@ -67,15 +110,18 @@ struct ScopeProgram {
   ScopeEntry resolve_state = &ScopeNoOp;
   ScopeEntry initialize_state = &ScopeNoOp;
   ScopeEntry create_processes = &ScopeNoOp;
+  ScopeExportTable exports;
 
   constexpr ScopeProgram() = default;
   constexpr ScopeProgram(
       ScopeMetadata metadata, ScopeEntry resolve_state,
-      ScopeEntry initialize_state, ScopeEntry create_processes)
+      ScopeEntry initialize_state, ScopeEntry create_processes,
+      ScopeExportTable exports)
       : metadata(metadata),
         resolve_state(resolve_state),
         initialize_state(initialize_state),
-        create_processes(create_processes) {
+        create_processes(create_processes),
+        exports(exports) {
   }
 };
 
@@ -106,6 +152,10 @@ enum class MemberStorageKind : std::uint8_t {
   kBorrowedHandle,
   kObservableCell,
   kInlineValue,
+  // A scope's cancellation source (LRM 9.6.2). Every scope owns one, so every
+  // backend realizes the storage; whether a backend can also raise and consume
+  // the control effect a `disable` sends through it is a separate question.
+  kCancellationSource,
 };
 
 struct MemberStorageDescriptor {

@@ -17,6 +17,10 @@ namespace lyra::base {
 // declaration names another's identity before either body is built. `Id` is a
 // struct carrying a single `std::uint32_t value`, its position in the pool; an
 // identity, once minted, is stable for the pool's life.
+//
+// The declare-then-define gap is a cost, not a feature -- it is why no one-step
+// add exists here. When an identity need not precede its value, `base::Arena`
+// is the pool to use.
 template <typename T, typename Id>
 class Registry {
  public:

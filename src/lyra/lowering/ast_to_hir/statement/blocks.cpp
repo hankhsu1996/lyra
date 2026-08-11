@@ -18,6 +18,66 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// The lexical declaration scope a block-like construct opens (LRM 9.3.4). A
+// `begin` / `fork` that declares nothing and carries no name introduces no
+// scope -- slang records none for it -- and its statements belong to the
+// enclosing scope; so does anything lowered outside a structural scope, whose
+// scope record would have no consumer. Whether a scope exists is settled once
+// here, so a lowering opens one, lowers into it, and seals it the same way
+// either way.
+class ProceduralScope {
+ public:
+  ProceduralScope(
+      const WalkFrame& enclosing,
+      const slang::ast::StatementBlockSymbol* symbol)
+      : symbol_(
+            enclosing.current_structural_scope != nullptr ? symbol : nullptr),
+        enclosing_(enclosing),
+        frame_(
+            symbol_ != nullptr ? enclosing.WithProceduralScopeAccumulators(
+                                     &declarations_, &children_)
+                               : enclosing) {
+  }
+
+  ProceduralScope(const ProceduralScope&) = delete;
+  auto operator=(const ProceduralScope&) -> ProceduralScope& = delete;
+  ProceduralScope(ProceduralScope&&) = delete;
+  auto operator=(ProceduralScope&&) -> ProceduralScope& = delete;
+  ~ProceduralScope() = default;
+
+  // The frame the construct's statements lower under.
+  [[nodiscard]] auto Frame() const -> const WalkFrame& {
+    return frame_;
+  }
+
+  // Fills in the identity the declaration pass minted and links the scope under
+  // the enclosing one, yielding the scope the construct names, or nullopt when
+  // it opened none.
+  auto Seal(ProcessLowerer& proc, std::optional<std::string> label)
+      -> std::optional<hir::ProceduralScopeId> {
+    if (symbol_ == nullptr) {
+      return std::nullopt;
+    }
+    auto& scopes = enclosing_.current_structural_scope->procedural_scopes;
+    const hir::ProceduralScopeId id =
+        proc.Owner().LookupProceduralScope(*symbol_);
+    scopes.Define(
+        id, hir::ProceduralScopeDecl{
+                .label = std::move(label),
+                .direct_declarations = std::move(declarations_),
+                .direct_child_scopes = std::move(children_)});
+    enclosing_.current_scope_children->push_back(id);
+    return id;
+  }
+
+ private:
+  const slang::ast::StatementBlockSymbol* symbol_;
+  std::vector<hir::ProceduralVarId> declarations_;
+  std::vector<hir::ProceduralScopeId> children_;
+  WalkFrame enclosing_;
+  WalkFrame frame_;
+};
+
 // LRM 9.3.2 parallel block. Each parallel statement becomes one branch. A
 // function body cannot suspend, so the frontend rejects `join` / `join_any`
 // there; `join_none` spawns without awaiting and needs no coroutine host.
@@ -58,14 +118,11 @@ auto LowerForkStmt(
   // LRM 9.3.2: a fork's block_item_declarations are not parallel statements --
   // they are locals of the fork scope, initialized in the parent at block entry
   // before any branch spawns. The grammar places them before the statements, so
-  // they form a prefix; each remaining statement is a branch. The fork
-  // introduces its own lexical declaration scope owning those locals; locals
-  // lower in the parent execution context but attach to the fork scope, and
-  // only the branches enter the fork-branch execution scope.
-  std::vector<hir::ProceduralVarId> fork_declarations;
-  std::vector<hir::ProceduralScopeId> fork_children;
-  const WalkFrame fork_scope_frame =
-      frame.WithProceduralScopeAccumulators(&fork_declarations, &fork_children);
+  // they form a prefix; each remaining statement is a branch. Locals lower in
+  // the parent execution context but attach to the fork scope, and only the
+  // branches enter the fork-branch execution scope.
+  ProceduralScope scope(frame, block.blockSymbol);
+  const WalkFrame& fork_scope_frame = scope.Frame();
 
   std::vector<hir::StmtId> locals;
   std::vector<const slang::ast::Statement*> branch_stmts;
@@ -92,19 +149,7 @@ auto LowerForkStmt(
         *std::move(child_stmt)));
   }
 
-  if (frame.current_structural_scope == nullptr) {
-    throw InternalError(
-        "LowerForkStmt: fork has no enclosing structural scope to register "
-        "its lexical scope against");
-  }
-  const hir::ProceduralScopeId scope_id =
-      frame.current_structural_scope->procedural_scopes.Add(
-          hir::ProceduralScopeDecl{
-              .label = std::move(label),
-              .direct_declarations = std::move(fork_declarations),
-              .direct_child_scopes = std::move(fork_children)});
-
-  frame.current_scope_children->push_back(scope_id);
+  scope.Seal(proc, std::move(label));
 
   return hir::Stmt{
       .label = std::nullopt,
@@ -112,8 +157,7 @@ auto LowerForkStmt(
           hir::ForkStmt{
               .mode = mode,
               .locals = std::move(locals),
-              .branches = std::move(branches),
-              .scope = scope_id},
+              .branches = std::move(branches)},
       .span = span};
 }
 
@@ -124,41 +168,22 @@ auto LowerStatementListStmt(
     const slang::ast::StatementList& list, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   // A bare slang `StatementList` (multiple statements without a source-level
-  // `begin ... end`) lowers to an unnamed begin/end scope -- semantically
-  // equivalent for declaration ownership, with no SV identifier and no
-  // hierarchical addressability.
-  std::vector<hir::ProceduralVarId> nested_declarations;
-  std::vector<hir::ProceduralScopeId> nested_children;
-  const WalkFrame body_frame = frame.WithProceduralScopeAccumulators(
-      &nested_declarations, &nested_children);
-
+  // `begin ... end`) introduces no declaration scope: whatever it declares
+  // belongs to the construct that encloses it, which is where slang places it
+  // too. It groups statements and nothing else.
   std::vector<hir::StmtId> kids;
   kids.reserve(list.list.size());
   for (const auto* child : list.list) {
-    auto child_stmt = proc.LowerStmt(*child, body_frame);
+    auto child_stmt = proc.LowerStmt(*child, frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
     kids.push_back(
-        body_frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
-  }
-
-  // A class method / constructor body sits inside no structural scope (LRM 8):
-  // its lexical scopes are not hierarchically addressable and no consumer reads
-  // the scope record, so the block registers none -- matching the guard the
-  // body's root scope already gets. In a structural scope the record is
-  // registered and the block names it.
-  std::optional<hir::ProceduralScopeId> scope_id;
-  if (frame.current_structural_scope != nullptr) {
-    scope_id = frame.current_structural_scope->procedural_scopes.Add(
-        hir::ProceduralScopeDecl{
-            .label = std::nullopt,
-            .direct_declarations = std::move(nested_declarations),
-            .direct_child_scopes = std::move(nested_children)});
-    frame.current_scope_children->push_back(*scope_id);
+        frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
   }
 
   return hir::Stmt{
       .label = std::nullopt,
-      .data = hir::BlockStmt{.statements = std::move(kids), .scope = scope_id},
+      .data =
+          hir::BlockStmt{.statements = std::move(kids), .scope = std::nullopt},
       .span = span};
 }
 
@@ -169,24 +194,16 @@ auto LowerBlockStmt(
   if (block.blockKind != slang::ast::StatementBlockKind::Sequential) {
     return LowerForkStmt(proc, frame, block, span);
   }
-  // Every `begin ... end` introduces a lexical declaration scope (LRM
-  // 9.3.4); the label (LRM 9.3.5) is optional. The scope's own declarations
-  // and nested child scopes are collected here through a fresh accumulator
-  // pair, then sealed into a `ProceduralScopeDecl` and appended to the
-  // enclosing structural scope's arena when the body walk returns -- the
-  // arena is append-only, so the scope must be assembled before its first
-  // `Add`. A named block's hierarchical-reference head identity (LRM 23.9) is
-  // registered in the compilation-unit declaration pass, before any body
-  // lowers; the body pass grows no structural identity.
+  // A `begin ... end` that declares something or carries a label (LRM 9.3.4 /
+  // 9.3.5) introduces a lexical declaration scope; one that does neither is
+  // transparent.
   std::optional<std::string> label;
   if (block.blockSymbol != nullptr && !block.blockSymbol->name.empty()) {
     label = std::string{block.blockSymbol->name};
   }
 
-  std::vector<hir::ProceduralVarId> nested_declarations;
-  std::vector<hir::ProceduralScopeId> nested_children;
-  const WalkFrame body_frame = frame.WithProceduralScopeAccumulators(
-      &nested_declarations, &nested_children);
+  ProceduralScope scope(frame, block.blockSymbol);
+  const WalkFrame& body_frame = scope.Frame();
 
   std::vector<hir::StmtId> kids;
   if (block.body.kind == slang::ast::StatementKind::List) {
@@ -205,24 +222,12 @@ auto LowerBlockStmt(
         body_frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
   }
 
-  // A class method / constructor body sits inside no structural scope (LRM 8):
-  // its begin/end lexical scopes are not hierarchically addressable and no
-  // consumer reads the scope record, so the block registers none -- matching
-  // the guard the body's root scope already gets. In a structural scope the
-  // record is registered and the block names it.
-  std::optional<hir::ProceduralScopeId> scope_id;
-  if (frame.current_structural_scope != nullptr) {
-    scope_id = frame.current_structural_scope->procedural_scopes.Add(
-        hir::ProceduralScopeDecl{
-            .label = label,
-            .direct_declarations = std::move(nested_declarations),
-            .direct_child_scopes = std::move(nested_children)});
-    frame.current_scope_children->push_back(*scope_id);
-  }
-
   return hir::Stmt{
       .label = std::nullopt,
-      .data = hir::BlockStmt{.statements = std::move(kids), .scope = scope_id},
+      .data =
+          hir::BlockStmt{
+              .statements = std::move(kids),
+              .scope = scope.Seal(proc, std::move(label))},
       .span = span};
 }
 

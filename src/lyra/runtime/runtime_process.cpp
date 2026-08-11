@@ -236,6 +236,16 @@ auto RuntimeProcess::ResumeWith(
   if (execution_state_ == ProcessExecutionState::kRunning) {
     throw InternalError("RuntimeProcess::ResumeWith: reentrant resume");
   }
+  // An activity spawned inside a target that was disabled before this activity
+  // ever ran has no statement to leave from: it is terminated where it stands,
+  // without running any of its body (LRM 9.6.2 -- everything enabled within the
+  // target is terminated). Its frame has not begun, so releasing it here is the
+  // whole termination.
+  if (execution_state_ == ProcessExecutionState::kCreated &&
+      OutermostInvalidatedTarget() != nullptr) {
+    SettleTerminated(ProcessTerminationCause::kKilled, woken);
+    return true;
+  }
   execution_state_ = ProcessExecutionState::kRunning;
   {
     // Install the process and its owning scope as the ambient execution
@@ -285,14 +295,26 @@ auto RuntimeProcess::ResumeWith(
     SettleTerminated(termination_cause_, woken);
     return true;
   }
-  // A task's exception has propagated up the enable chain into this top-level
-  // frame regardless of which frame threw. Take the fault out before releasing
-  // the frame so a faulted process reaches its terminal state and frees its
-  // frame on the same path a successful one does, then re-raise it.
-  std::exception_ptr fault = coroutine_.Handle().promise().TakeFault();
-  SettleTerminated(ProcessTerminationCause::kCompleted, woken);
-  if (fault) {
-    std::rethrow_exception(fault);
+  // An exception raised anywhere in the enable chain has propagated into this
+  // top-level frame regardless of which frame raised it. Take it out before
+  // releasing the frame, so the process reaches its terminal state and frees
+  // its frame on the same path a successful one does, and only then decide what
+  // the outcome was.
+  std::exception_ptr propagated = coroutine_.Handle().promise().TakeFault();
+  const bool aborted = leaving_disabled_target_;
+  // An abort reaching a top frame is a forced termination, not a fault: an
+  // activity enabled within a disabled target has no landing of its own, so it
+  // ends here and reports KILLED (LRM 9.6.2, 9.7).
+  SettleTerminated(
+      aborted ? ProcessTerminationCause::kKilled
+              : ProcessTerminationCause::kCompleted,
+      woken);
+  // An abort settles here and travels no further. Letting it leave would skip
+  // this resumption's remaining work -- the activations this termination just
+  // woke, the enclosing `wait fork` condition -- with no diagnostic, so the
+  // simulation would hang rather than report.
+  if (!aborted && propagated) {
+    std::rethrow_exception(propagated);
   }
   return true;
 }

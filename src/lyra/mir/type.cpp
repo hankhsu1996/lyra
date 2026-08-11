@@ -68,6 +68,8 @@ auto Type::Kind() const -> TypeKind {
           [](const MachineCStringType&) { return TypeKind::kMachineCString; },
           [](const MachineIntType&) { return TypeKind::kMachineInt; },
           [](const MachineFloatType&) { return TypeKind::kMachineFloat; },
+          [](const MachineArrayType&) { return TypeKind::kMachineArray; },
+          [](const MachineFunctionType&) { return TypeKind::kMachineFunction; },
           [](const EventType&) { return TypeKind::kEvent; },
           [](const RealType&) { return TypeKind::kReal; },
           [](const ShortRealType&) { return TypeKind::kShortReal; },

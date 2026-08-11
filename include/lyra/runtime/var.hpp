@@ -12,7 +12,6 @@
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
@@ -281,10 +280,11 @@ class EventControlAwaitable : public PendingWait {
   void await_suspend(std::coroutine_handle<P> handle) {
     CoroutineHandle token = &handle.promise();
     SubscribeValueChange(token, triggers_);
-    token->process->BlockLeaf(token, this);
+    BlockOn(token);
   }
 
-  static void await_resume() noexcept {
+  void await_resume() const {
+    CheckAbortOnResume();
   }
 
   // An edge / value-change is not a level: a change during suspension is missed

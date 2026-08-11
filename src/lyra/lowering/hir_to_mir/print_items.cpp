@@ -431,10 +431,8 @@ auto BuildRuntimeFormatCallExpr(
                 mir::CallExpr{.callee = mir::Construct{}, .arguments = {value}},
             .type = unit.builtins.format_arg}));
   }
-  const mir::TypeId operands_type = unit.types.Intern(
-      mir::UnpackedArrayType{
-          .element_type = unit.builtins.format_arg,
-          .dim = mir::UnpackedRange::ZeroBased(operands.size())});
+  const mir::TypeId operands_type =
+      unit.types.MachineArrayOf(unit.builtins.format_arg, operands.size());
   const mir::ExprId operands_array = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(operands)},
@@ -491,10 +489,8 @@ auto BuildPrintItemsArray(
     elements.push_back(block.exprs.Add(
         BuildPrintItemExpr(unit, block, item, time_unit_power)));
   }
-  const mir::TypeId array_type = unit.types.Intern(
-      mir::UnpackedArrayType{
-          .element_type = unit.builtins.print_item,
-          .dim = mir::UnpackedRange::ZeroBased(items.size())});
+  const mir::TypeId array_type =
+      unit.types.MachineArrayOf(unit.builtins.print_item, items.size());
   return mir::Expr{
       .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
       .type = array_type};

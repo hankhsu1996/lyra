@@ -325,7 +325,20 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_dynarray_default", &lyra_rt_dynarray_default);
   add("lyra_rt_dynarray_new", &lyra_rt_dynarray_new);
   add("lyra_rt_dynarray_new_copy", &lyra_rt_dynarray_new_copy);
-  add("lyra_rt_dynarray_from_literal", &lyra_rt_dynarray_from_literal);
+  add("lyra_rt_dynarray_from_literal_packed",
+      &lyra_rt_dynarray_from_literal_packed);
+  add("lyra_rt_dynarray_from_literal_string",
+      &lyra_rt_dynarray_from_literal_string);
+  add("lyra_rt_dynarray_from_literal_real",
+      &lyra_rt_dynarray_from_literal_real);
+  add("lyra_rt_dynarray_from_literal_shortreal",
+      &lyra_rt_dynarray_from_literal_shortreal);
+  add("lyra_rt_dynarray_from_literal_chandle",
+      &lyra_rt_dynarray_from_literal_chandle);
+  add("lyra_rt_dynarray_from_literal_tuple",
+      &lyra_rt_dynarray_from_literal_tuple);
+  add("lyra_rt_dynarray_from_literal_dynarray",
+      &lyra_rt_dynarray_from_literal_dynarray);
   add("lyra_rt_dynarray_element", &lyra_rt_dynarray_element);
   add("lyra_rt_dynarray_with_element", &lyra_rt_dynarray_with_element);
   add("lyra_rt_dynarray_delete", &lyra_rt_dynarray_delete);
@@ -403,6 +416,13 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
         .kind = runtime::MemberStorageKind::kObservableCell,
         .domain = AbiDomain(
             backend::llvm_backend::ValueDomainOf(unit, observable->value))};
+  }
+  if (const auto* library = std::get_if<lir::RuntimeLibraryType>(&data);
+      library != nullptr &&
+      library->kind == lir::RuntimeLibraryKind::kCancellationSource) {
+    return runtime::MemberStorageDescriptor{
+        .kind = runtime::MemberStorageKind::kCancellationSource,
+        .domain = runtime::ValueDomain::kNone};
   }
   if (lir::Pointee(unit.types, type).has_value()) {
     return runtime::MemberStorageDescriptor{

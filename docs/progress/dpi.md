@@ -7,17 +7,20 @@ foreign-language-boundary workstream that `functions.md` lists as out of scope f
 Under the post-reset architecture a DPI import is not a separate call subsystem: it is the
 **external** implementation form of the one callable concept (`callable.md`) -- a signature plus a
 foreign linkage name and calling convention, with no body -- and an import call is an ordinary call.
-A DPI export is an ordinary internal SV subroutine for which a backend additionally materializes a
-foreign-linkage wrapper; the wrapper obtains its runtime context (design object, engine, and, for a
-module-scoped export, the calling instance) from a runtime-installed context, never from the foreign
-caller. Export is supported within the LRM import -> export call chain, under Lyra as the driver;
-the distinct execution model where an external C program drives a Lyra design as a linked library is
-a separate roadmap capability, out of scope here. The DPI type mapping between an SV type and its C
-ABI type (LRM 35.5.6) is a backend type-mapping concern, so the MIR representation is
-backend-agnostic: the same MIR is materialized by the C++ backend as an `extern "C"` entry linked by
-the emitted build recipe, and by the LLVM / JIT backend as an external-linkage symbol resolved by
-its execution session. Lyra never compiles the user's C; it provides the ABI surface (a generated
-header, resolved symbol names) and orchestrates linkage.
+A DPI export is an ordinary internal SV subroutine that additionally gets a foreign-linkage entry
+point; the entry obtains its runtime context (design object, engine, and, for an export declared in
+a structural scope, the calling instance) from a runtime-installed context, never from the foreign
+caller. An exported name is one program-global symbol while the subroutine behind it is compiled
+once per specialization of its declaring scope, so the symbol resolves against the scope the foreign
+call established rather than naming any one of them. Export is supported within the LRM import ->
+export call chain, under Lyra as the driver; the distinct execution model where an external C
+program drives a Lyra design as a linked library is a separate roadmap capability, out of scope
+here. The DPI type mapping between an SV type and its C ABI type (LRM 35.5.6) is a backend
+type-mapping concern, so the MIR representation is backend-agnostic: the same MIR is materialized by
+the C++ backend as an `extern "C"` entry linked by the emitted build recipe, and by the LLVM / JIT
+backend as an external-linkage symbol resolved by its execution session. Lyra never compiles the
+user's C; it provides the ABI surface (a generated header, resolved symbol names) and orchestrates
+linkage.
 
 The settled IR, value, and boundary model -- import as the external arm of the one callable,
 marshaling as a cross-ABI carrier conversion through runtime primitives, the export context, and the
@@ -93,8 +96,8 @@ here (see the design record); a design that declares an export only for such an 
 accepted, records its metadata, and can have its ABI header generated, but is not claimed callable
 from an external main.
 
-- [x] D4 -- The scalar export foreign-linkage wrapper and the import -> export call chain under Lyra
-      as the driver (LRM 35.5): a scalar, input-only export executes end to end. The wrapper
+- [x] D4 -- The scalar export foreign-linkage entry point and the import -> export call chain under
+      Lyra as the driver (LRM 35.5): a scalar, input-only export executes end to end. The entry
       marshals the C arguments, recovers the exported subroutine's receiver from the running design,
       calls the method, and marshals the result back. The subroutine keeps its ordinary body; the
       wrapper's marshaling is stated in MIR so a backend renders it mechanically, and only the
@@ -116,17 +119,17 @@ from an external main.
       from there at all. This is the icache scramble-key shape in the Ibex bring-up.
 - [x] D4c -- `$unit`-scoped receiver-less export (LRM 35.7): a subroutine at compilation-unit scope
       (LRM 3.12.1) exports exactly as a package function does. The `$unit` scope is an anonymous
-      namespace unit, so its export rides the same receiver-less wrapper as D4a's package export
-      with no added machinery.
+      namespace unit, so its export rides the same receiver-less entry as D4a's package export with
+      no added machinery.
 - [x] D4b -- 4-state and by-pointer packed export marshaling. An `output` / `inout` scalar crosses
       by pointer to its by-value carrier; a packed vector of any direction crosses by pointer as its
       canonical `svBitVecVal*` / `svLogicVecVal*` buffer, its planes reshaped without a per-bit
       transcode. The `output` / `inout` values ride the completion payload the exported subroutine
-      already returns (LRM 13.5), so the wrapper destructures the payload and marshals each
-      component out through its foreign pointer. A function result stays a by-value return, limited
-      to a small value (LRM 35.5.5): an atom such as `int` / `longint` / `real` / `string` /
-      `chandle`, or a scalar `bit` / `logic`; a packed-vector, `integer`, or `time` result is not a
-      small value and cannot be returned.
+      already returns (LRM 13.5), so the entry destructures the payload and marshals each component
+      out through its foreign pointer. A function result stays a by-value return, limited to a small
+      value (LRM 35.5.5): an atom such as `int` / `longint` / `real` / `string` / `chandle`, or a
+      scalar `bit` / `logic`; a packed-vector, `integer`, or `time` result is not a small value and
+      cannot be returned.
 
 ### DPI tasks
 
@@ -141,9 +144,9 @@ protocol on top of it.
       protocol -- a coroutine the caller awaits -- with the actuals marshaled in and the writeback
       arguments marshaled back; a task that consumes no time completes within the await.
 - [x] D6 -- DPI export task (LRM 35.8): foreign C calls an SV task through its foreign-linkage
-      wrapper. The wrapper drives the exported task's coroutine body to completion -- the foreign
-      caller is not a coroutine and cannot await it -- marshals its writebacks back across the
-      boundary, and returns the disable-acknowledgment int.
+      entry. The entry drives the exported task's coroutine body to completion -- the foreign caller
+      is not a coroutine and cannot await it -- marshals its writebacks back across the boundary,
+      and returns the disable-acknowledgment int.
 - [x] D6b -- Time-consuming foreign task (LRM 35.5.2): a foreign task consumes simulation time by
       calling back an exported SV task that suspends on a delay, an event, or a wait. The foreign
       call stack is parked across the boundary while simulation time advances and then resumes, so
@@ -235,7 +238,7 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
 
 ## Design record
 
-The two questions that gated the design -- where marshaling lives and how an export wrapper recovers
+The two questions that gated the design -- where marshaling lives and how an export entry recovers
 its context -- are settled in `../decisions/dpi-foreign-boundary.md`, along with the callable model
 and the out-of-scope boundary. Work proceeds against that record.
 
@@ -251,5 +254,5 @@ and the out-of-scope boundary. Work proceeds against that record.
   artifacts, header and link), `runtime_distribution.md` (link and run model), `scheduling.md`
   (suspending tasks).
 - Rides on: `scheduling.md` and `processes.md` (suspending DPI tasks, D6b).
-- `functions.md` lists DPI as its out-of-scope sibling; the module-scoped export D4a is the
+- `functions.md` lists DPI as its out-of-scope sibling; the scope-declared export D4a is the
   `ibex.md` full-top frontier.

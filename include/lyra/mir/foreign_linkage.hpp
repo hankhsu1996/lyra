@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
 
@@ -19,6 +22,32 @@ namespace lyra::mir {
 // today; a second linkage adds them here.
 struct ForeignLinkage {
   std::string foreign_name;
+};
+
+// Where the definition of a foreign name lives. A name the design only declares
+// is defined by the foreign side; one the design supplies is defined either as
+// a linked symbol of the unit's own namespace, or -- when the subroutine behind
+// it is compiled once per specialization of its declaring scope -- once for the
+// whole program, dispatching to the entry each such scope publishes.
+enum class ForeignDefinition : std::uint8_t {
+  kForeignSide,
+  kUnitSymbol,
+  kPerScopeEntry,
+};
+
+// One foreign name this unit takes part in (LRM 35). A unit knows its own
+// foreign surface as it is built, so it states it here rather than leaving a
+// program-level consumer to search the unit's classes for linkage.
+//
+// `signature` is the machine function type the program-global symbol publishes.
+// A symbol the unit itself defines carries that prototype on its own callable
+// and needs nothing here; one defined over per-scope entries does not, because
+// the entries belong to the scopes rather than to any unit, so the surface is
+// where the prototype is stated for it.
+struct ForeignSymbol {
+  ForeignLinkage linkage;
+  TypeId signature;
+  ForeignDefinition definition = ForeignDefinition::kForeignSide;
 };
 
 }  // namespace lyra::mir

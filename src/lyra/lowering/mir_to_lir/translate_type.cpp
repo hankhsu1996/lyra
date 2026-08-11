@@ -116,7 +116,8 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
     case mir::RuntimeLibraryKind::kUnitDefinition:
     case mir::RuntimeLibraryKind::kScopeMetadata:
     case mir::RuntimeLibraryKind::kAbiStringRef:
-    case mir::RuntimeLibraryKind::kScopeEntry:
+    case mir::RuntimeLibraryKind::kScopeExport:
+    case mir::RuntimeLibraryKind::kScopeExportTable:
       throw InternalError(
           "TranslateRuntimeLibraryKind: a unit-definition record type is a "
           "compile-time constant consumed by the backend directly and does not "
@@ -128,6 +129,13 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
           "foreign-task fiber awaitable are C++-backend marshaling artifacts; "
           "the execution backend does not consume the DPI context or task "
           "surface");
+    case mir::RuntimeLibraryKind::kCancellationSource:
+      return lir::RuntimeLibraryKind::kCancellationSource;
+    case mir::RuntimeLibraryKind::kCancellationGuard:
+    case mir::RuntimeLibraryKind::kAbort:
+      throw InternalError(
+          "TranslateRuntimeLibraryKind: a cancellation type is realized in the "
+          "C++ backend, not through MIR-to-LIR");
   }
   throw InternalError(
       "TranslateRuntimeLibraryKind: unknown RuntimeLibraryKind");
@@ -212,6 +220,18 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [](const mir::MachineFloatType& mf) -> lir::TypeData {
             return lir::TypeData{
                 lir::MachineFloatType{.bit_width = mf.bit_width}};
+          },
+          [&](const mir::MachineArrayType& ma) -> lir::TypeData {
+            return lir::TypeData{lir::MachineArrayType{
+                .element = TranslateType(ma.element), .size = ma.size}};
+          },
+          [&](const mir::MachineFunctionType&) -> lir::TypeData {
+            // A code address is named only in a unit's definition constant,
+            // which the backend consumes directly rather than through
+            // MIR-to-LIR.
+            throw InternalError(
+                "TranslateTypeData: a machine function type does not flow "
+                "through MIR-to-LIR");
           },
           [](const mir::EventType&) -> lir::TypeData {
             return lir::TypeData{lir::EventType{}};

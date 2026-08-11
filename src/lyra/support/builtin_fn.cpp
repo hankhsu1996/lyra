@@ -320,6 +320,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "wait_fork";
     case BuiltinFn::kDisableFork:
       return "disable_fork";
+    case BuiltinFn::kDisable:
+      return "disable";
+    case BuiltinFn::kAbortConsumeOrRethrow:
+      return "abort_consume_or_rethrow";
     case BuiltinFn::kRegisterInitial:
       return "register_initial";
     case BuiltinFn::kRegisterFinal:
@@ -398,6 +402,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "run_exported_task_to_completion";
     case BuiltinFn::kCurrentExportScope:
       return "current_export_scope";
+    case BuiltinFn::kFindExportEntry:
+      return "find_export_entry";
     case BuiltinFn::kFromSvLogic:
       return "from_sv_logic";
     case BuiltinFn::kFromInt:

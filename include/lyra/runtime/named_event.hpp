@@ -6,7 +6,6 @@
 #include "lyra/runtime/event.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
@@ -28,10 +27,11 @@ class EventAwaitable : public PendingWait {
   void await_suspend(std::coroutine_handle<P> handle) {
     CoroutineHandle token = &handle.promise();
     event_->AddWaiter(token);
-    token->process->BlockLeaf(token, this);
+    BlockOn(token);
   }
 
-  static void await_resume() noexcept {
+  void await_resume() const {
+    CheckAbortOnResume();
   }
 
   // A named-event trigger is instantaneous (LRM 15.5): a trigger during

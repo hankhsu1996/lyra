@@ -259,6 +259,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "WaitFork";
     case support::BuiltinFn::kDisableFork:
       return "DisableFork";
+    case support::BuiltinFn::kDisable:
+      return "Disable";
+    case support::BuiltinFn::kAbortConsumeOrRethrow:
+      return "AbortConsumeOrRethrow";
     case support::BuiltinFn::kToInt64:
       return "ToInt64";
     case support::BuiltinFn::kRound:
@@ -291,6 +295,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "RunExportedTaskToCompletion";
     case support::BuiltinFn::kCurrentExportScope:
       return "CurrentExportScope";
+    case support::BuiltinFn::kFindExportEntry:
+      return "FindExportEntry";
     case support::BuiltinFn::kFromSvLogic:
       return "FromSvLogic";
     case support::BuiltinFn::kFromInt:
@@ -414,6 +420,8 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kSpawnAll:
     case support::BuiltinFn::kWaitFork:
     case support::BuiltinFn::kDisableFork:
+    case support::BuiltinFn::kDisable:
+    case support::BuiltinFn::kAbortConsumeOrRethrow:
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
     case support::BuiltinFn::kReadMem:
@@ -421,6 +429,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kRunForeignTaskOnFiber:
     case support::BuiltinFn::kRunExportedTaskToCompletion:
     case support::BuiltinFn::kCurrentExportScope:
+    case support::BuiltinFn::kFindExportEntry:
       return "lyra::runtime";
     default:
       return "";

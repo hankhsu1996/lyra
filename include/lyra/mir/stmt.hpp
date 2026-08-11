@@ -54,6 +54,25 @@ struct BlockStmt {
   BlockId scope;
 };
 
+// A region whose body can be left by a control effect, and whose normal
+// continuation is the statement after it. An effect leaving the body binds to
+// `caught` and runs `handler`, which either consumes it -- so execution
+// continues past the region -- or re-raises it, so it reaches the region that
+// does consume it.
+//
+// This is how a program says "this scope can be left from anywhere within it,
+// including from a callable it invoked, and execution continues here" -- the
+// shape SystemVerilog's `disable` of a named block or task needs (LRM 9.6.2),
+// expressed as ordinary structured control flow rather than as a jump whose
+// origin the source has to name.
+struct TryStmt {
+  BlockId body;
+  // Binds the effect for the handler, the way a loop binds its induction
+  // variable: the handler reads it as an ordinary local.
+  LocalId caught;
+  ExprId handler;
+};
+
 struct IfStmt {
   ExprId condition;
   BlockId then_scope;
@@ -105,8 +124,8 @@ struct ReturnStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, IfStmt, ForStmt, WhileStmt,
-    DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt>;
+    EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, TryStmt, IfStmt, ForStmt,
+    WhileStmt, DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

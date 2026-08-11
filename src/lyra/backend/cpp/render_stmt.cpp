@@ -66,6 +66,23 @@ auto RenderBlockStmt(
   return result;
 }
 
+auto RenderTryStmt(
+    const ScopeView& view, const mir::TryStmt& s, std::size_t indent)
+    -> std::string {
+  const auto& body = view.Block().child_scopes.Get(s.body);
+  const auto& caught = view.Code().locals.Get(s.caught);
+  const auto& handler = view.Block().exprs.Get(s.handler);
+  std::string result = std::format("{}try {{\n", Indent(indent));
+  result += RenderNestedBlock(view, body, indent + 1);
+  result += std::format(
+      "{}}} catch ({}& {}) {{\n", Indent(indent),
+      RenderTypeAsCpp(view.Unit(), caught.type), caught.name);
+  result +=
+      std::format("{}{};\n", Indent(indent + 1), RenderExpr(view, handler));
+  result += std::format("{}}}\n", Indent(indent));
+  return result;
+}
+
 auto RenderIfStmt(
     const ScopeView& view, const mir::IfStmt& s, std::size_t indent)
     -> std::string {
@@ -170,6 +187,9 @@ auto RenderStmt(
           },
           [&](const mir::BlockStmt& s) -> std::string {
             return RenderBlockStmt(view, s, indent);
+          },
+          [&](const mir::TryStmt& s) -> std::string {
+            return RenderTryStmt(view, s, indent);
           },
           [&](const mir::IfStmt& s) -> std::string {
             return RenderIfStmt(view, s, indent);

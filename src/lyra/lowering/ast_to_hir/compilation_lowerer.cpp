@@ -50,12 +50,27 @@ auto CollectUnitBodies(const LowerCompilationFacts& facts)
   return std::move(collector.order);
 }
 
+// Indexes the frontend's resolution of every `export "DPI-C"` directive (LRM
+// 35.5) by the subroutine it names. The directive is resolved against the scope
+// declaring it, so the subroutine it resolves to is the one that scope's walk
+// reaches, and a scope elaborated under several specializations contributes the
+// subroutine of each.
+auto CollectForeignExportNames(const LowerCompilationFacts& facts)
+    -> ForeignExportNames {
+  ForeignExportNames names;
+  for (const auto& exported : facts.Compilation().getDPIExports()) {
+    names.emplace(exported.subroutine, exported.cIdentifier);
+  }
+  return names;
+}
+
 auto LowerUnit(
-    const LowerCompilationFacts& facts,
+    const LowerCompilationFacts& facts, const ForeignExportNames& export_names,
     const slang::ast::InstanceBodySymbol& body)
     -> diag::Result<hir::CompilationUnit> {
   const LoweringFacts unit_facts(
-      facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
+      facts.SourceMapper(), facts.Sensitivity(), export_names,
+      facts.DisableAssertions());
   UnitLowerer lowerer(unit_facts, body, SpecializationName(body));
   auto unit = lowerer.Run();
   if (unit) {
@@ -80,11 +95,12 @@ auto CollectPackages(const LowerCompilationFacts& facts)
 }
 
 auto LowerPackageUnit(
-    const LowerCompilationFacts& facts,
+    const LowerCompilationFacts& facts, const ForeignExportNames& export_names,
     const slang::ast::PackageSymbol& package)
     -> diag::Result<hir::CompilationUnit> {
   const LoweringFacts unit_facts(
-      facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
+      facts.SourceMapper(), facts.Sensitivity(), export_names,
+      facts.DisableAssertions());
   UnitLowerer lowerer(unit_facts, package, std::string{package.name});
   auto unit = lowerer.Run();
   if (unit) {
@@ -129,11 +145,12 @@ auto CollectCompilationUnits(const LowerCompilationFacts& facts)
 }
 
 auto LowerCompilationUnitUnit(
-    const LowerCompilationFacts& facts,
+    const LowerCompilationFacts& facts, const ForeignExportNames& export_names,
     const slang::ast::CompilationUnitSymbol& cu)
     -> diag::Result<hir::CompilationUnit> {
   const LoweringFacts unit_facts(
-      facts.SourceMapper(), facts.Sensitivity(), facts.DisableAssertions());
+      facts.SourceMapper(), facts.Sensitivity(), export_names,
+      facts.DisableAssertions());
   UnitLowerer lowerer(unit_facts, cu, CompilationUnitName(cu));
   auto unit = lowerer.Run();
   if (unit) {
@@ -153,23 +170,24 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
   const auto packages = CollectPackages(facts);
   const auto compilation_units = CollectCompilationUnits(facts);
   const auto bodies = CollectUnitBodies(facts);
+  const auto export_names = CollectForeignExportNames(facts);
   units.reserve(packages.size() + compilation_units.size() + bodies.size());
   for (const auto* package : packages) {
-    auto unit = LowerPackageUnit(facts, *package);
+    auto unit = LowerPackageUnit(facts, export_names, *package);
     if (!unit) {
       return std::unexpected(std::move(unit.error()));
     }
     units.push_back(*std::move(unit));
   }
   for (const auto* cu : compilation_units) {
-    auto unit = LowerCompilationUnitUnit(facts, *cu);
+    auto unit = LowerCompilationUnitUnit(facts, export_names, *cu);
     if (!unit) {
       return std::unexpected(std::move(unit.error()));
     }
     units.push_back(*std::move(unit));
   }
   for (const auto* body : bodies) {
-    auto unit = LowerUnit(facts, *body);
+    auto unit = LowerUnit(facts, export_names, *body);
     if (!unit) {
       return std::unexpected(std::move(unit.error()));
     }

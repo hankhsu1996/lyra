@@ -10,5 +10,5 @@ expect:
   exit: 0
   stdout:
     exact: |
-      g2=1
-      g1=1
+      nap5=1
+      nap10=1

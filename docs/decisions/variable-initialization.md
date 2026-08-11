@@ -2,6 +2,11 @@
 
 Date: 2026-06-16 Status: accepted
 
+How a constructor body reaches runtime services is superseded by
+[ambient-runtime-services](ambient-runtime-services.md): services are no longer threaded through the
+constructor or the host entry. The decision below -- initialization as a constructor block statement
+-- stands.
+
 ## Context
 
 A SystemVerilog variable declaration may carry an initializer at its declaration site:

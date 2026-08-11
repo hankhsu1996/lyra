@@ -316,10 +316,8 @@ auto BuildOpenArrayBounds(
         block.exprs.Add(mir::MakeIntLiteral(int_type, range.right)));
     cursor = layer->element_type;
   }
-  const mir::TypeId bounds_type = unit.types.Intern(
-      mir::UnpackedArrayType{
-          .element_type = int_type,
-          .dim = mir::UnpackedRange::ZeroBased(bounds.size())});
+  const mir::TypeId bounds_type =
+      unit.types.MachineArrayOf(int_type, bounds.size());
   return block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(bounds)},
@@ -890,7 +888,7 @@ template auto LowerForeignImportCall(
 auto SynthesizeForeignExportEntry(
     UnitLowerer& module, const WalkFrame& context_frame,
     mir::DirectTarget target, mir::TypeId result_type,
-    const hir::ForeignExportDecl& export_decl) -> mir::CallableDecl {
+    const hir::ForeignExportDecl& export_decl) -> ForeignExportEntry {
   mir::CompilationUnit& unit = module.Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
 
@@ -910,49 +908,70 @@ auto SynthesizeForeignExportEntry(
   // protocol -- while a function's result is its payload directly.
   const bool is_task = unit.types.IsCoroutine(result_type);
 
-  // The entry point publishes the same signature an import of the same shape
-  // would, and then defines it -- which is the whole difference between the two
+  // A subroutine of a scope is compiled once per specialization of that scope
+  // while its DPI-C name is one program-global symbol, so its entry is reached
+  // through the scope rather than being the symbol: the entry leads with the
+  // scope it runs against, and the symbol resolves it against the scope in
+  // effect. A package subroutine has no receiver and a package has one form, so
+  // its entry is the symbol and publishes the prototype directly.
+  const bool through_scope =
+      std::holds_alternative<mir::CallableTarget>(target);
+
+  // The entry publishes the same signature an import of the same shape would,
+  // and then defines it -- which is the whole difference between the two
   // directions of the boundary.
   mir::CallableCode code = MakeForeignSignature(
       unit, export_decl.params, export_decl.ret_abi, is_task);
+  const std::vector<mir::LocalId> params = code.params;
+
+  // The prototype the program-global symbol publishes, which is the entry's own
+  // formals and result. An entry reached through a scope leads with that scope,
+  // which the symbol supplies and the prototype never mentions.
+  std::vector<mir::TypeId> prototype_params;
+  prototype_params.reserve(params.size());
+  for (const mir::LocalId param : params) {
+    prototype_params.push_back(code.locals.Get(param).type);
+  }
+  const mir::TypeId signature = unit.types.Intern(
+      mir::MachineFunctionType{
+          .params = std::move(prototype_params), .result = code.result_type});
+
   code.body.emplace();
   CallableBindings bindings(unit, code);
   mir::Block& body = code.Body();
-  const std::vector<mir::LocalId> params = code.params;
+
+  std::optional<mir::LocalId> scope_param;
+  if (through_scope) {
+    scope_param = bindings.DeclareAnonymous(
+        mir::LocalDecl{.name = "scope", .type = unit.builtins.scope_ptr});
+    code.params.insert(code.params.begin(), *scope_param);
+  }
 
   const WalkFrame body_frame =
       context_frame.WithBlock(&body).WithBindings(&bindings);
 
-  // The entry point recovers its leading context argument from the running
-  // design (LRM 35.5.3), not from a foreign caller, so it is a body local
-  // initialized first -- keeping the whole body (recovery, marshaling, call,
-  // writeback) MIR a backend renders mechanically. The callable model gives the
-  // two export forms different leading arguments, so the body mirrors whichever
-  // the target expects and recovers its value: a
-  // module method (LRM 8.6) takes a `self` receiver, recovered as the current
-  // DPI scope pointer narrowed to the exported subroutine's instance type; a
+  // The leading argument the target expects, bound as a body local first so the
+  // whole body (recovery, marshaling, call, writeback) is MIR a backend renders
+  // mechanically. A subroutine of a scope (LRM 8.6) takes a `self` receiver,
+  // narrowed from the generic scope this entry was reached on -- valid because
+  // the lookup that found the entry found it on that very scope. A
   // receiver-less package function (LRM 26.3) takes the run's effects,
   // recovered as the current runtime like any other package call.
   mir::TypeId context_type{};
   mir::LocalId context_local{};
   mir::ExprId context_init{};
-  if (std::holds_alternative<mir::CallableTarget>(target)) {
+  if (through_scope) {
     context_type = context_frame.current_class->self_pointer_type;
     context_local = bindings.Declare(
         BindingOriginId::Receiver(),
         mir::LocalDecl{.name = "self", .type = context_type});
-    const mir::ExprId scope = body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kCurrentExportScope},
-                    .arguments = {}},
-            .type = unit.builtins.scope_ptr});
     context_init = body.exprs.Add(
         mir::Expr{
-            .data = mir::PointerCastExpr{.operand = scope},
+            .data =
+                mir::PointerCastExpr{
+                    .operand = body.exprs.Add(
+                        mir::MakeLocalRefExpr(
+                            *scope_param, unit.builtins.scope_ptr))},
             .type = context_type});
   } else {
     context_type = unit.builtins.effects;
@@ -1143,15 +1162,13 @@ auto SynthesizeForeignExportEntry(
     body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   }
 
-  // The entry point's identity is its linkage name: it is a program-global
-  // symbol in the DPI name space, not an SV declaration the source can call
-  // (LRM 35.4, 35.7), so it shares no name with the subroutine it dispatches
-  // into.
-  return mir::CallableDecl{
-      .name = export_decl.foreign_name,
+  // The entry's identity is its linkage name: it is a program-global symbol in
+  // the DPI name space, not an SV declaration the source can call (LRM 35.4,
+  // 35.7), so it shares no name with the subroutine it dispatches into.
+  return ForeignExportEntry{
       .code = std::move(code),
-      .foreign = mir::ForeignLinkage{.foreign_name = export_decl.foreign_name},
-      .virtual_dispatch = std::nullopt};
+      .linkage = mir::ForeignLinkage{.foreign_name = export_decl.foreign_name},
+      .signature = signature};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

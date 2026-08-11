@@ -17,7 +17,9 @@
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
@@ -55,18 +57,32 @@ auto LowerForeignImportCall(
     const hir::ForeignImportRef& ref, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
-// Builds the C entry point of a DPI-C export (LRM 35.5): a receiver-less
-// callable carrying foreign linkage, whose C-ABI parameters marshal to the
-// exported subroutine's SV arguments, which it calls through its leading
-// context argument, marshaling the result back. `target` is the call the body
-// makes -- a class method takes a recovered receiver, any other target is a
-// receiver-less package free function taking the run's effects -- so it also
-// fixes the leading argument. `context_frame` supplies the enclosing class for
-// a receiver (a bare frame otherwise); `result_type` is the exported
-// subroutine's result type the writeback destructures.
+// The C-ABI adaptation of one exported subroutine (LRM 35.5): the entry's own
+// signature and body, together with the program-global name the foreign side
+// reaches it by, and the machine prototype that name publishes. Kept as those
+// facts rather than a finished declaration because where the entry is published
+// follows the target it dispatches into -- a subroutine of a scope publishes it
+// as an entry the scope holds, a package's as a linked symbol of the package's
+// own namespace -- and the caller that knows the target is the one that knows
+// which.
+struct ForeignExportEntry {
+  mir::CallableCode code;
+  mir::ForeignLinkage linkage;
+  mir::TypeId signature;
+};
+
+// Builds that adaptation: C-ABI parameters marshal to the exported subroutine's
+// SV arguments, the subroutine is called through the entry's leading context
+// argument, and the result marshals back. `target` is the call the body makes
+// -- a subroutine of a scope takes a `self` receiver, which the entry takes as
+// its own first parameter; any other target is a receiver-less package free
+// function taking the run's effects -- so it also fixes that leading argument.
+// `context_frame` supplies the enclosing class for a receiver (a bare frame
+// otherwise); `result_type` is the exported subroutine's result type the
+// writeback destructures.
 auto SynthesizeForeignExportEntry(
     UnitLowerer& module, const WalkFrame& context_frame,
     mir::DirectTarget target, mir::TypeId result_type,
-    const hir::ForeignExportDecl& export_decl) -> mir::CallableDecl;
+    const hir::ForeignExportDecl& export_decl) -> ForeignExportEntry;
 
 }  // namespace lyra::lowering::hir_to_mir

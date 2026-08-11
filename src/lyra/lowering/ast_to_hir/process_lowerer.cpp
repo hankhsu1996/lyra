@@ -82,12 +82,14 @@ auto ProcessLowerer::Run(
   body.root_stmt = body.stmts.Add(*std::move(root_stmt));
 
   if (parent_frame.current_structural_scope != nullptr) {
-    body.root_scope =
-        parent_frame.current_structural_scope->procedural_scopes.Add(
-            hir::ProceduralScopeDecl{
-                .label = std::nullopt,
-                .direct_declarations = std::move(root_declarations),
-                .direct_child_scopes = std::move(root_children)});
+    auto& scopes = parent_frame.current_structural_scope->procedural_scopes;
+    body.root_scope = owner_->LookupProceduralScope(proc);
+    scopes.Define(
+        body.root_scope,
+        hir::ProceduralScopeDecl{
+            .label = std::nullopt,
+            .direct_declarations = std::move(root_declarations),
+            .direct_child_scopes = std::move(root_children)});
   }
 
   const auto& mapper = owner_->SourceMapper();

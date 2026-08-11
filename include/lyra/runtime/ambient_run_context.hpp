@@ -3,6 +3,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/dpi_scope_registry.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
+#include "lyra/runtime/scope_program.hpp"
 
 namespace lyra::runtime {
 
@@ -55,6 +56,14 @@ class AmbientRunContext {
 // receiver. Throws when no scope is current, which means an export was reached
 // without a context import or svSetScope (LRM 35.5.3 makes that an error).
 auto CurrentExportScope() -> Scope*;
+
+// The entry `scope` publishes for the exported subroutine of this name, with
+// its prototype erased. Throws when the scope publishes none: LRM 35.5.3 lets
+// an export be called directly only from an import declared in the same scope,
+// and lets svSetScope redirect only to a scope that declares it, and both are
+// obligations on the foreign side that nothing on this side can establish.
+auto FindExportEntry(Scope* scope, const char* subroutine)
+    -> ErasedScopeExportEntry;
 
 // Runs an exported SV task's body to completion and hands back its completion
 // payload. A foreign C caller of an exported task (LRM 35.8) is not a

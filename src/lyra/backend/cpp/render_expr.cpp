@@ -748,36 +748,16 @@ auto RenderConcatExpr(
       "RenderConcatExpr: result type must be PackedArrayType or string");
 }
 
-// LRM 10.9.1 array assignment pattern: renders as `std::array<T, N>{e1, ...}`.
-// `expr.type` is the parent container type (`UnpackedArrayType` /
-// `DynamicArrayType` / `QueueType`); the element type is read off it and
-// emitted as the `std::array` element parameter. The resulting
-// `std::array<T, N>` implicitly
-// converts to the container ctor's `std::span<const T>` parameter, so this
-// rendering is context-independent: the same string is correct standalone
-// and as a construction-call argument.
+// The brace form of the aggregate literal's own type, which is always the
+// plain-data array of its elements -- a simulation container is what some
+// enclosing construction builds from the literal, never what the literal is.
+// The type spells itself, so this names no target type of its own and the same
+// string is correct standalone and as a construction argument.
 auto RenderArrayLiteralExpr(
     const ScopeView& view, const mir::Expr& expr,
     const mir::ArrayLiteralExpr& a) -> std::string {
-  const auto& container_ty = view.Unit().types.Get(expr.type);
-  const mir::TypeId elem_type_id = std::visit(
-      [](const auto& ty) -> mir::TypeId {
-        using TyT = std::decay_t<decltype(ty)>;
-        if constexpr (
-            std::same_as<TyT, mir::UnpackedArrayType> ||
-            std::same_as<TyT, mir::DynamicArrayType> ||
-            std::same_as<TyT, mir::QueueType>) {
-          return ty.element_type;
-        } else {
-          throw InternalError(
-              "RenderArrayLiteralExpr: result type must be UnpackedArrayType, "
-              "DynamicArrayType, or QueueType");
-        }
-      },
-      container_ty.data);
-  std::string out = std::format(
-      "std::array<{}, {}>{{", RenderTypeAsCpp(view.Unit(), elem_type_id),
-      a.elements.size());
+  std::string out =
+      std::format("{}{{", RenderTypeAsCpp(view.Unit(), expr.type));
   for (std::size_t i = 0; i < a.elements.size(); ++i) {
     if (i != 0) out += ", ";
     out += RenderExpr(view, view.Expr(a.elements[i]));
@@ -920,6 +900,16 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::DerefExpr& d) -> std::string {
             return RenderDerefExpr(view, d);
+          },
+          [&](const mir::FunctionCastExpr& c) -> std::string {
+            return std::format(
+                "reinterpret_cast<{}>({})",
+                RenderTypeAsCpp(view.Unit(), expr.type),
+                RenderExpr(view, view.Expr(c.operand)));
+          },
+          [&](const mir::MachineArrayDataExpr& d) -> std::string {
+            return std::format(
+                "({}).data()", RenderExpr(view, view.Expr(d.array)));
           },
           [&](const mir::AddressOfExpr& a) -> std::string {
             return RenderAddressOfExpr(view, a);

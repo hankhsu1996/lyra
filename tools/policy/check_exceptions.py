@@ -4,9 +4,9 @@
 Rules:
   E001: No std::runtime_error or std::logic_error
   E002: No catch(...) except in driver
-  E003: No throw except InternalError (a compiler-invariant violation) or
-        SimulationError (a failure of the simulated design); rethrow 'throw;'
-        also banned outside driver
+  E003: No throw except InternalError (a compiler-invariant violation),
+        SimulationError (a failure of the simulated design), or the runtime's
+        control effect; rethrow 'throw;' also banned outside driver
   E004: No assert() or <cassert>/<assert.h> (use InternalError for invariants)
   E005: Bug report messages only in internal_error.hpp (prevents duplicates)
 
@@ -24,6 +24,12 @@ from pathlib import Path
 
 INCLUDE_PATHS = ("src/lyra", "include/lyra")
 CATCH_ALL_ALLOWLIST = ("src/lyra/driver",)
+# E003 governs the error channel. A control effect is not an error: leaving a
+# disabled scope (LRM 9.6.2) raises one, and the region owning that scope
+# consumes it. It travels by the same mechanism an exception does but reports
+# no failure, so it is admitted -- confined to the one runtime translation unit
+# that raises it, and named explicitly so no other type rides the allowance.
+CONTROL_EFFECT_ALLOWLIST = ("src/lyra/runtime/cancellation.cpp",)
 FULL_ALLOWLIST = frozenset({
     "include/lyra/base/internal_error.hpp",
     "src/lyra/base/internal_error.cpp",
@@ -46,6 +52,7 @@ RE_THROW_STMT = re.compile(r'\bthrow\s+([^;]+);', re.DOTALL)
 RE_RETHROW = re.compile(r'\bthrow\s*;')
 RE_INTERNAL_ERROR = re.compile(r'\b(support::)?InternalError\b')
 RE_SIMULATION_ERROR = re.compile(r'\bSimulationError\b')
+RE_CONTROL_EFFECT = re.compile(r'\b(runtime::)?[Aa]bort\b')
 RE_ASSERT_CALL = re.compile(r'\bassert\s*\(')
 RE_CASSERT_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*cassert\s*>', re.MULTILINE)
 RE_ASSERT_H_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*assert\.h\s*>', re.MULTILINE)
@@ -123,6 +130,8 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
     errors = []
     full_path = repo_root / filepath
     in_driver = any(filepath.startswith(a) for a in CATCH_ALL_ALLOWLIST)
+    raises_control_effect = any(
+        filepath.startswith(a) for a in CONTROL_EFFECT_ALLOWLIST)
 
     try:
         original = full_path.read_text(encoding="utf-8", errors="replace")
@@ -144,7 +153,8 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
             errors.append(
                 f"{filepath}:{line}: E002 catch(...) banned outside driver")
 
-    # E003: No throw except InternalError / SimulationError
+    # E003: No throw except InternalError, SimulationError, or the runtime's
+    # control effect
     for match in RE_THROW_STMT.finditer(content):
         thrown_expr = match.group(1).strip()
         if RE_INTERNAL_ERROR.search(thrown_expr):
@@ -153,6 +163,8 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
             continue
         if (filepath in TERMINATION_UNWIND_ALLOWLIST
                 and RE_TERMINATION_SENTINEL.match(thrown_expr)):
+            continue
+        if raises_control_effect and RE_CONTROL_EFFECT.search(thrown_expr):
             continue
         line = offset_to_line(original, match.start())
         snippet = thrown_expr.replace('\n', ' ')[:40]
@@ -241,7 +253,8 @@ def main() -> int:
         print("\nRules:")
         print("  E001: Use std::expected<T, Diagnostic> instead of std exceptions")
         print("  E002: catch(...) allowed only in src/lyra/driver/")
-        print("  E003: Only throw common::InternalError for compiler bugs")
+        print("  E003: Only throw common::InternalError for compiler bugs, or "
+              "the runtime's control effect")
         print("  E004: Use InternalError for invariants, not assert()")
         print("  E005: Bug report messages only in internal_error.hpp")
         return 1

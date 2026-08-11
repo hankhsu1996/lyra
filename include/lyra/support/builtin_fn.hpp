@@ -314,6 +314,14 @@ enum class BuiltinFn : std::uint16_t {
   // executing process's, read at runtime. The caller does not block, so its
   // `void` result is never awaited.
   kDisableFork,
+  // LRM 9.6.2 `disable <named block or task>`. `kDisable` is the statement
+  // itself: it invalidates the named target, wakes the executions blocked
+  // inside it, and leaves the disabling execution when that execution is inside
+  // the target too. Entering a target is `kConstruct` of a guard whose lifetime
+  // is the target's extent; leaving it is the region that names it, which
+  // consumes the effect through `kAbortConsumeOrRethrow`.
+  kDisable,
+  kAbortConsumeOrRethrow,
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
@@ -390,14 +398,13 @@ enum class BuiltinFn : std::uint16_t {
   // point enters the body through this runtime driver instead of the `co_await`
   // an SV enabler uses. A free function over the task's coroutine value.
   kRunExportedTaskToCompletion,
-  // The current DPI scope a module-scoped DPI-C export's C entry point runs in,
-  // recovered from the running design rather than passed by the foreign caller
-  // (LRM 35.5.3) as the exported method's receiver. A no-argument free function
-  // yielding the borrowed scope pointer a `PointerCastExpr` narrows to the
-  // exported subroutine's instance type. A receiver-less package export instead
-  // takes the run's effects, recovered through `kCurrentRuntime` like any other
-  // package call.
+  // The scope a subroutine exported to foreign code runs against, and the entry
+  // that scope publishes for a given foreign name (LRM 35.5.3). A
+  // program-global export symbol reaches its subroutine through these: the
+  // foreign call chain establishes the scope, and the scope names the entry.
+  // Free functions over the run.
   kCurrentExportScope,
+  kFindExportEntry,
   kFromInt,
   kConvertFrom,
   kFromPackedArray,

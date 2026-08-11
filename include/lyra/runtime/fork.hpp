@@ -78,10 +78,11 @@ class JoinAwaitable : public PendingWait {
   void await_suspend(std::coroutine_handle<P> parent) {
     CoroutineHandle token = &parent.promise();
     group_->ParkParent(token);
-    token->process->BlockLeaf(token, this);
+    BlockOn(token);
   }
 
-  void await_resume() const noexcept {
+  void await_resume() const {
+    CheckAbortOnResume();
   }
 
   // A join condition is monotonic (LRM 9.3.2): branch completions accumulate
@@ -177,10 +178,11 @@ class WaitForkAwaitable : public PendingWait {
   void await_suspend(std::coroutine_handle<P> waiter) {
     CoroutineHandle token = &waiter.promise();
     runtime_->CurrentProcess().ArmWaitFork(token);
-    token->process->BlockLeaf(token, this);
+    BlockOn(token);
   }
 
-  void await_resume() const noexcept {
+  void await_resume() const {
+    CheckAbortOnResume();
   }
 
   // `wait fork` waits on the executing process's own immediate children (LRM

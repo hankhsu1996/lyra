@@ -49,10 +49,11 @@ class DelayAwaitable : public PendingWait {
   void await_suspend(std::coroutine_handle<P> handle) {
     CoroutineHandle token = &handle.promise();
     Arm(token);
-    token->process->BlockLeaf(token, this);
+    BlockOn(token);
   }
 
-  static void await_resume() noexcept {
+  void await_resume() const {
+    CheckAbortOnResume();
   }
 
   // A delay's deadline is absolute (LRM 9.7): on resume, if it has transpired
