@@ -96,6 +96,9 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::DisableForkStmt&) {
             return LowerDisableForkStmt(*this, frame, stmt.label);
           },
+          [&](const hir::DisableStmt& d) {
+            return LowerDisableStmt(*this, frame, stmt.label, d);
+          },
       },
       stmt.data);
 }
@@ -269,6 +272,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // never derived from whether the body happens to use it, so no call site
   // re-derives the signature.
   const bool has_receiver = parent.current_class != nullptr && !src.is_static;
+  body_has_receiver_ = has_receiver;
   if (has_receiver) {
     params.push_back(bindings.Declare(
         BindingOriginId::Receiver(),
@@ -357,8 +361,36 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   const mir::TypeId result_type = SubroutineCallTypeOf(*owner_, src);
   result_type_ = result_type;
 
-  auto lowered = LowerStraightLineBodyInto(*this, body_frame);
-  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  // A task carries a name, so any task can be a `disable` target (LRM 9.6.2)
+  // and every task is therefore a region that consumes the effect naming it:
+  // each activation leaves through its own body end and completes normally
+  // there, so the enabling statement resumes and the completion payload is
+  // still produced (the LRM leaves a disabled task's output values
+  // unspecified). A function cannot be named and never suspends, so it needs
+  // no region, and neither does a body with no object to reach the target
+  // through.
+  const std::optional<StaticStoragePlacement> task_cancel_source =
+      owner_->Unit().types.IsCoroutine(result_type) && has_receiver
+          ? storage_plan_->ScopeMaterialization(src.body.root_scope)
+                .cancellation_source
+          : std::nullopt;
+  if (task_cancel_source.has_value()) {
+    mir::Block body_block;
+    const WalkFrame inner_frame = body_frame.WithBlock(&body_block);
+    // Entering the target is the body's own first act, so every activation of
+    // the task is inside it for as long as it runs -- which is what makes one
+    // `disable` reach them all (LRM 9.6.2).
+    EmitCancellationGuard(*this, inner_frame, *task_cancel_source);
+    auto lowered = LowerStraightLineBodyInto(*this, inner_frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    const mir::BlockId body_id =
+        code.body->child_scopes.Add(std::move(body_block));
+    code.body->AppendStmt(
+        MakeCancellableRegion(*this, body_frame, body_id, *task_cancel_source));
+  } else {
+    auto lowered = LowerStraightLineBodyInto(*this, body_frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+  }
 
   // Close the body with a trailing return of the fall-through payload, the same
   // completion a body falling off its end carries (LRM 13.3). The completion is

@@ -7,6 +7,7 @@
 namespace lyra::runtime {
 
 class RuntimeEffects;
+class RuntimeProcess;
 
 // Whether re-establishing a wait found its condition already satisfied.
 enum class PendingWaitOutcome : std::uint8_t {
@@ -53,6 +54,22 @@ class PendingWait {
   // passing is not one of them, so each construct answers for its own
   // suspension rather than the resume path guessing from the queue it came off.
   [[nodiscard]] virtual auto IsReportFlushPoint() const -> bool = 0;
+
+ protected:
+  // Blocks `leaf` on this wait, after the construct has armed its own wakeup.
+  // Every suspending construct suspends through here, which is what makes this
+  // the one place that knows which execution is waiting -- and therefore the
+  // one place able to ask, when the wait resumes, whether that execution was
+  // disabled while it waited.
+  void BlockOn(CoroutineHandle leaf);
+
+  // Raises the pending abort, if any, for the execution this wait blocked (LRM
+  // 9.6.2). Every construct calls it where its wait resumes, so no execution
+  // runs a statement of a target that was disabled while it waited.
+  void CheckAbortOnResume() const;
+
+ private:
+  RuntimeProcess* waiting_process_ = nullptr;
 };
 
 }  // namespace lyra::runtime

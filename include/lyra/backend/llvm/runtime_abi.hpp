@@ -193,7 +193,7 @@ class RuntimeAbi {
   auto MakeDynamicArrayDefault() -> llvm::FunctionCallee;
   auto MakeDynamicArrayNew() -> llvm::FunctionCallee;
   auto MakeDynamicArrayNewCopy() -> llvm::FunctionCallee;
-  auto MakeDynamicArrayFromLiteral() -> llvm::FunctionCallee;
+  auto MakeDynamicArrayFromLiteral(ValueDomain domain) -> llvm::FunctionCallee;
 
   // Builds the format specification of one conversion, and the print item that
   // pairs a value with it. A specification is written either as a bare

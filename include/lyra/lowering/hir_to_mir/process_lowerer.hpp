@@ -297,6 +297,13 @@ class ProcessLowerer {
     return *storage_plan_;
   }
 
+  // Whether the body being lowered reaches an object of its own. Per-instance
+  // storage is projected from that object, so a body without one -- a package
+  // callable (LRM 26.3) or a static class method (LRM 8.10) -- can reach none.
+  [[nodiscard]] auto BodyHasReceiver() const -> bool {
+    return body_has_receiver_;
+  }
+
   // Resolves a HIR static-lifetime body local to the placement the planner
   // produced during shape declaration. A compiler-bug invariant if called
   // for a var with no placement (an automatic local).
@@ -364,6 +371,9 @@ class ProcessLowerer {
   // Per-callable storage plan owned by the enclosing scope's lowerer;
   // borrowed here for the body lowering's lifetime.
   const CallableStoragePlan* storage_plan_;
+  // A process body always runs on the scope object that owns it; a subroutine
+  // body sets this from its own form when it lowers.
+  bool body_has_receiver_ = true;
   // Body-local environment bindings, indexed by HIR procedural var id;
   // nullopt for a static var (its placement lives on the storage plan).
   std::vector<std::optional<ProceduralVarBinding>> bindings_;

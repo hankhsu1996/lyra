@@ -92,13 +92,14 @@ closure is code plus a captured environment, and "async" is the result type (`as
    program does not define simply has no body -- a DPI import, whose definition the user's foreign
    code provides, and a pure virtual method, which a deriving class supplies. An absent body is
    distinct from a present empty one, which is a definition that does nothing, and the presence of
-   the body is what says which. Foreign linkage -- a fixed symbol name, source language, and calling
-   convention -- is an independent axis over that: bodyless plus foreign is an import, bodied plus
-   foreign is the entry point an export publishes, and pure-virtualness is bodyless plus a dispatch
-   role. The linkage contract is explicit structure, read identically by every backend; only the
-   mechanical value marshaling is backend realization. _Consequence: there is no species of callable
-   for "internal" versus "external" versus "prototype"; the whole variety falls out of independent
-   facts on one declaration, and nothing tags a combination the structure already states._
+   the body is what says which. Foreign linkage -- a fixed symbol name and the machine signature
+   that name publishes -- is an independent axis over that: bodyless plus foreign is an import,
+   bodied plus foreign is the entry point an export publishes, and pure-virtualness is bodyless plus
+   a dispatch role. The linkage contract is explicit structure, read identically by every backend;
+   only the mechanical value marshaling is backend realization. _Consequence: there is no species of
+   callable for "internal" versus "external" versus "prototype"; the whole variety falls out of
+   independent facts on one declaration, and nothing tags a combination the structure already
+   states._
 
 ## Boundary to Adjacent Layers
 

@@ -147,9 +147,17 @@ struct CallInstr {
   std::vector<Operand> args;
 };
 
-// Builds an aggregate value from its elements -- a data literal such as an
-// array or tuple.
-struct AggregateInstr {
+// Builds a product value from its components, in declaration order. Its result
+// is the product itself; the components keep their own types.
+struct ProductInstr {
+  std::vector<Operand> components;
+};
+
+// Collects `elements` into contiguous storage and names it by a
+// {pointer, length} span. The result is that storage, not a container built
+// from it: a container the span feeds is a separate construction, so this
+// instruction is the same operation whichever one consumes it.
+struct ArrayInstr {
   std::vector<Operand> elements;
 };
 
@@ -306,9 +314,9 @@ struct IntCastInstr {
 };
 
 using InstrData = std::variant<
-    CallInstr, AggregateInstr, AggregateExtractInstr, AggregateUpdateInstr,
-    LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr, UnaryInstr, BoolCastInstr,
-    PointerCastInstr, IntCastInstr>;
+    CallInstr, ProductInstr, ArrayInstr, AggregateExtractInstr,
+    AggregateUpdateInstr, LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr,
+    UnaryInstr, BoolCastInstr, PointerCastInstr, IntCastInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

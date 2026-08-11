@@ -1,0 +1,16 @@
+id: cpp.disable_block_fork_child
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    outlives_ran: 1
+    outlives_done: 0
+    unstarted_ran: 0
+    by_call_done: 0
+    c_after: 0
+    disabled_at: 1

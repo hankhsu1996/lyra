@@ -370,12 +370,15 @@ auto LowerSubroutineDeclImpl(
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
   body.root_stmt = body.stmts.Add(*std::move(body_stmt_or));
 
-  // Append the assembled root scope to the enclosing structural scope's
-  // procedural-scope arena when one is available (a class method body has
-  // no structural-scope context; its locals are placed directly on the
-  // class and the root-scope record has no consumer).
+  // The root scope is filled into the enclosing structural scope's procedural
+  // scopes when one is available (a class method body has no structural-scope
+  // context; its locals are placed directly on the class and the root-scope
+  // record has no consumer).
   if (frame.current_structural_scope != nullptr) {
-    body.root_scope = frame.current_structural_scope->procedural_scopes.Add(
+    auto& scopes = frame.current_structural_scope->procedural_scopes;
+    body.root_scope = unit_lowerer.LookupProceduralScope(sym);
+    scopes.Define(
+        body.root_scope,
         hir::ProceduralScopeDecl{
             .label = std::nullopt,
             .direct_declarations = std::move(root_declarations),

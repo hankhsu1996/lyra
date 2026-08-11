@@ -117,6 +117,9 @@ ask for support, not to report a bug.
 Avoid `assert()` and `<cassert>` (use `InternalError` instead). `catch(...)` is allowed only in
 `src/lyra/driver/`.
 
+This table governs the error channel. A control effect -- leaving a disabled scope (LRM 9.6.2) -- is
+not an error and is thrown by the runtime that defines it; nothing else may add a thrown type.
+
 ## Approach to Changes
 
 ### Adding Features

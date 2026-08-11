@@ -1,0 +1,16 @@
+id: errors.disable_outside_structural_scope
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "disable"
+    not_contains:
+      - "internal error"

@@ -68,7 +68,8 @@ class MirDumper {
     }
     Dedent();
     // A unit owns callables directly in its namespace: a package's own
-    // subroutines, and every DPI-C export's C entry point.
+    // subroutines, the program-global symbol of every DPI-C export it defines,
+    // and -- on the design root -- the factory that builds the root object.
     if (!unit.callables.empty()) {
       Line("Callables:");
       Indent();
@@ -77,6 +78,9 @@ class MirDumper {
             unit.callables.Get(CallableId{static_cast<std::uint32_t>(i)}), i);
       }
       Dedent();
+    }
+    if (unit.root_factory.has_value()) {
+      Line(std::format("RootFactory: Callable[{}]", unit.root_factory->value));
     }
     if (unit.structs.size() > 0) {
       Line("Structs:");
@@ -267,6 +271,20 @@ class MirDumper {
             [](const MachineFloatType& m) -> std::string {
               return std::format("MachineFloat(width={})", m.bit_width);
             },
+            [](const MachineArrayType& m) -> std::string {
+              return std::format(
+                  "MachineArray(elem=Type[{}], size={})", m.element.value,
+                  m.size);
+            },
+            [](const MachineFunctionType& m) -> std::string {
+              std::string params;
+              for (std::size_t i = 0; i < m.params.size(); ++i) {
+                if (i > 0) params += ", ";
+                params += std::format("Type[{}]", m.params[i].value);
+              }
+              return std::format(
+                  "MachineFunction(({}) -> Type[{}])", params, m.result.value);
+            },
             [](const EventType&) -> std::string { return "EventType"; },
             [](const RealType&) -> std::string { return "RealType"; },
             [](const ShortRealType&) -> std::string { return "ShortRealType"; },
@@ -296,6 +314,12 @@ class MirDumper {
                   return "RuntimeLibrary(PrintLiteralItem)";
                 case RuntimeLibraryKind::kPrintValueItem:
                   return "RuntimeLibrary(PrintValueItem)";
+                case RuntimeLibraryKind::kCancellationSource:
+                  return "RuntimeLibrary(CancellationSource)";
+                case RuntimeLibraryKind::kCancellationGuard:
+                  return "RuntimeLibrary(CancellationGuard)";
+                case RuntimeLibraryKind::kAbort:
+                  return "RuntimeLibrary(Abort)";
                 case RuntimeLibraryKind::kFormatSpec:
                   return "RuntimeLibrary(FormatSpec)";
                 case RuntimeLibraryKind::kFormatArg:
@@ -316,8 +340,10 @@ class MirDumper {
                   return "RuntimeLibrary(ScopeMetadata)";
                 case RuntimeLibraryKind::kAbiStringRef:
                   return "RuntimeLibrary(AbiStringRef)";
-                case RuntimeLibraryKind::kScopeEntry:
-                  return "RuntimeLibrary(ScopeEntry)";
+                case RuntimeLibraryKind::kScopeExport:
+                  return "RuntimeLibrary(ScopeExport)";
+                case RuntimeLibraryKind::kScopeExportTable:
+                  return "RuntimeLibrary(ScopeExportTable)";
                 case RuntimeLibraryKind::kDpiBitBuffer:
                   return "RuntimeLibrary(DpiBitBuffer)";
                 case RuntimeLibraryKind::kDpiLogicBuffer:
@@ -679,6 +705,14 @@ class MirDumper {
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
             [](const MachineIntLiteral& lit) -> std::string {
               return std::format("MachineIntLiteral({})", lit.value);
+            },
+            [](const FunctionCastExpr& c) -> std::string {
+              return std::format(
+                  "FunctionCastExpr operand=Expr[{}]", c.operand.value);
+            },
+            [](const MachineArrayDataExpr& d) -> std::string {
+              return std::format(
+                  "MachineArrayDataExpr array=Expr[{}]", d.array.value);
             },
             [](const AddressOfExpr& a) -> std::string {
               return std::format(
@@ -1187,6 +1221,7 @@ class MirDumper {
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(enclosing, s, id); },
+            [&](const TryStmt& s) { DumpTryStmt(enclosing, s, id); },
             [&](const IfStmt& s) { DumpIfStmt(enclosing, s, id); },
             [&](const ForStmt& s) { DumpForStmt(enclosing, s, id); },
             [&](const WhileStmt& s) { DumpWhileStmt(enclosing, s, id); },
@@ -1427,6 +1462,20 @@ class MirDumper {
             "Stmt[{}] BlockStmt scope=BlockId{{{}}}", id.value, s.scope.value));
     Indent();
     DumpBlock(enclosing.child_scopes.Get(s.scope));
+    Dedent();
+  }
+
+  void DumpTryStmt(const Block& enclosing, const TryStmt& s, StmtId id) {
+    Line(
+        std::format(
+            "Stmt[{}] TryStmt body=BlockId{{{}}} caught=Local[{}] "
+            "handler=Expr[{}]",
+            id.value, s.body.value, s.caught.value, s.handler.value));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", s.handler.value, FormatExpr(enclosing, s.handler)));
+    DumpBlock(enclosing.child_scopes.Get(s.body));
     Dedent();
   }
 

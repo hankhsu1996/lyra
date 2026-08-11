@@ -33,6 +33,15 @@ struct EnclosingClass {
 // (LRM 9.3.5 / 23.9) identified by its HIR id.
 using StorageOwner = std::variant<EnclosingClass, hir::ProceduralScopeId>;
 
+// Where a static-lifetime body local's persistent storage physically lives:
+// on its own lexical scope's class (a static declared in an unnamed
+// begin/end lives on that unnamed scope's class, not on any enclosing
+// named scope's).
+struct StaticStoragePlacement {
+  StorageOwner owner;
+  mir::FieldId field;
+};
+
 // One materialized procedural-storage scope: a named begin/end (LRM 23.9)
 // whose subtree owns hierarchy-addressable static storage. The runtime object
 // tree owns its lifetime; the parent also keeps a borrowed typed handle to it
@@ -49,15 +58,13 @@ struct MaterializedProceduralScope {
   mir::FieldId companion_field{};
   std::string label;
   StorageOwner runtime_parent;
-};
-
-// Where a static-lifetime body local's persistent storage physically lives:
-// on its own lexical scope's class (a static declared in an unnamed
-// begin/end lives on that unnamed scope's class, not on any enclosing
-// named scope's).
-struct StaticStoragePlacement {
-  StorageOwner owner;
-  mir::FieldId field;
+  // The scope's cancellation source (LRM 9.6.2 `disable`). Every scope owns
+  // one, so a `disable` naming any of them resolves without the shape phase
+  // first finding out which ones are named. It is static-lifetime storage --
+  // one per instance, shared by every activation of the scope -- so it is
+  // placed by the same rule as a static body local rather than by one of its
+  // own.
+  std::optional<StaticStoragePlacement> cancellation_source;
 };
 
 // Registry of materialized procedural-storage scopes for one structural
@@ -76,7 +83,7 @@ class ProceduralScopeMaterializationTable {
       throw InternalError(
           "ProceduralScopeMaterializationTable::Record: scope id out of range");
     }
-    by_scope_id_[scope.value] = entry;
+    by_scope_id_[scope.value] = std::move(entry);
   }
 
   [[nodiscard]] auto Get(hir::ProceduralScopeId scope) const

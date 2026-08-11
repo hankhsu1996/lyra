@@ -56,25 +56,25 @@ namespace lyra::lowering::hir_to_mir {
 
 // Wraps a list of element ExprIds destined for an array container constructor
 // (`UnpackedArrayType` or `DynamicArrayType`) in a construction call whose
-// arguments are `[element_default, ArrayLiteralExpr{elements}]`. This is the
-// construction shape every site that produces an array-container value must
-// use: the canonical-default element required by the wrapper's runtime ctor
-// is supplied here via `BuildDefaultValueExpr` on the element type, and the
-// elements ride in an `ArrayLiteralExpr` that the renderer emits as
-// `std::array<T, N>{...}`.
+// arguments are `[element_default, elements]`. This is the construction shape
+// every site that produces an array-container value must use: the
+// canonical-default element the wrapper's runtime ctor requires is supplied
+// here from the element type, and the elements ride as an aggregate literal of
+// the plain-data array of that element -- the container is what the
+// construction produces, never what the literal itself claims to be.
 [[nodiscard]] auto BuildArrayConstructionCall(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr;
 
 // Builds the construction call for a uniform array-container value: `count`
 // tilings of the repeat unit `unit`, seeded with `element_default` (the
-// wrapper's OOB / discard source). The unit rides in an `ArrayLiteralExpr` and
-// the count in a `MachineIntLiteral`, so the constructor arguments are
-// `[element_default, ArrayLiteralExpr{unit}, count]` (plus the LRM 7.10.5 bound
-// for a bounded queue). This is the shape every site that produces an
-// all-default or `'{count{...}}` array value must use, so the value's MIR and
-// emitted text stay O(unit) rather than O(unit * count). A distinct-element
-// list uses `BuildArrayConstructionCall` instead.
+// wrapper's OOB / discard source). The unit rides as an aggregate literal and
+// the count as a machine scalar, so the constructor arguments are
+// `[element_default, unit, count]` (plus the LRM 7.10.5 bound for a bounded
+// queue). This is the shape every site that produces an all-default or
+// `'{count{...}}` array value must use, so the value's MIR and emitted text
+// stay O(unit) rather than O(unit * count). A distinct-element list uses
+// `BuildArrayConstructionCall` instead.
 [[nodiscard]] auto BuildArrayRepeatCall(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
     mir::ExprId element_default, std::vector<mir::ExprId> unit,
@@ -82,14 +82,13 @@ namespace lyra::lowering::hir_to_mir {
 
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
 // Each (key, value) entry becomes a `TupleExpr`; the entries ride in an
-// `ArrayLiteralExpr` of those tuples (rendered `std::array<std::tuple<K, V>,
-// N>{...}`), and the constructor arguments are `[element_default, entries,
-// optional user_default]`. `user_default` is the LRM 7.9.11 persistent fallback
+// aggregate literal of the plain-data array of those tuples, and the
+// constructor arguments are `[element_default, entries, optional
+// user_default]`. `user_default` is the LRM 7.9.11 persistent fallback
 // a read of an absent key returns; when absent the constructor seeds only the
-// element type default. Interns the tuple and tuple-array MIR types, so the
-// module must be the mutable in-progress unit.
+// element type default.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
-    UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId assoc_type,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> user_default) -> mir::Expr;
 

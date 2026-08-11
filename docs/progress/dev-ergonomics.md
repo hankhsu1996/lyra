@@ -10,6 +10,12 @@ layer directly.
 - [x] D1 -- Run a SystemVerilog file end-to-end from one command, with a sibling command that builds
       without running.
 
+- [ ] Variable assertions on a multi-module source. A case whose source declares more than one
+      module can only assert on stdout, so a feature that spans modules is verified through a
+      formatted print rather than through the variables it actually produces. The probe the
+      assertion injects has to name the top among several declarations and read what it needs from
+      there.
+
 - [x] D4 -- Emitting the C++ backend produces a self-contained project that rebuilds and runs on
       another machine of the same platform without a Lyra checkout.
 

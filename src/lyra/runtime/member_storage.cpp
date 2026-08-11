@@ -18,6 +18,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
     case MemberStorageKind::kBorrowedHandle:
       object_.emplace<void*>(nullptr);
       return;
+    case MemberStorageKind::kCancellationSource:
+      object_.emplace<CancellationSource>();
+      return;
     case MemberStorageKind::kObservableCell:
       switch (descriptor.domain) {
         case ValueDomain::kPacked:

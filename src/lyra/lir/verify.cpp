@@ -95,8 +95,8 @@ void VerifyInstr(
                   "lir verify: integer cast result is not a machine integer");
             }
           },
-          [](const CallInstr&) {}, [](const AggregateInstr&) {},
-          [](const AggregateExtractInstr&) {},
+          [](const CallInstr&) {}, [](const ProductInstr&) {},
+          [](const ArrayInstr&) {}, [](const AggregateExtractInstr&) {},
           [](const AggregateUpdateInstr&) {}, [](const BinaryInstr&) {},
           [](const UnaryInstr&) {}, [](const BoolCastInstr&) {}},
       instr.data);

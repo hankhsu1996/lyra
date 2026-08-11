@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <variant>
@@ -330,6 +331,30 @@ struct DerefExpr {
 // not collapse, since the address of the handle's object is not the handle.
 struct AddressOfExpr {
   ExprId operand;
+};
+
+// A code address named as another function type: the erasure that puts an entry
+// of one prototype into a table whose entries share a single type, and the
+// restoration that calls it back at its own prototype. `Expr::type` is the
+// function type the address is named as here.
+//
+// The two halves are one contract: an erased entry is called only after being
+// restored to the exact type its definition was generated with, and both sides
+// are generated from one description, so they cannot disagree. Distinct from a
+// pointer cast, which retypes what an address points at rather than what
+// calling it means.
+struct FunctionCastExpr {
+  ExprId operand;
+};
+
+// The borrowed pointer to a machine array's first element
+// (`std::array::data()`, Rust `as_ptr()`). Distinct from taking the array's own
+// address: this names the contiguous element storage, which is the form a
+// plain-data runtime record holds a table in. `array` is a place of
+// `MachineArrayType` whose storage outlives the pointer; `Expr::type` is
+// `PointerType{ ownership = kBorrowed, pointee = element }`.
+struct MachineArrayDataExpr {
+  ExprId array;
 };
 
 // A consuming (transfer) read of the operand: the operand's contents flow
@@ -681,12 +706,12 @@ using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     MachineIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
-    MoveExpr, PointerCastExpr, IntCastExpr, FieldAccessExpr,
-    StructConstructExpr, ClosureExpr, ConcatExpr, ReplicationExpr,
-    ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr, UnionExpr,
-    UnionGetExpr, TaggedExpr, TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr,
-    ValueProjectionExpr, FunctionRef, StaticConstantRef, StaticPropertyRef,
-    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    MachineArrayDataExpr, MoveExpr, PointerCastExpr, FunctionCastExpr,
+    IntCastExpr, FieldAccessExpr, StructConstructExpr, ClosureExpr, ConcatExpr,
+    ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr,
+    UnionExpr, UnionGetExpr, TaggedExpr, TaggedGetExpr, TaggedGetRefExpr,
+    TaggedIsExpr, ValueProjectionExpr, FunctionRef, StaticConstantRef,
+    StaticPropertyRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 struct Expr {
   ExprData data;
@@ -781,3 +806,15 @@ struct Expr {
 }
 
 }  // namespace lyra::mir
+
+// A `CallableTarget` is a value identity, so it keys hashed containers directly
+// rather than being unwrapped to its parts at the use site.
+template <>
+struct std::hash<lyra::mir::CallableTarget> {
+  auto operator()(lyra::mir::CallableTarget target) const noexcept
+      -> std::size_t {
+    const std::size_t owner = std::hash<lyra::mir::ClassId>{}(target.owner);
+    const std::size_t slot = std::hash<lyra::mir::CallableId>{}(target.slot);
+    return owner ^ (slot << 1U);
+  }
+};

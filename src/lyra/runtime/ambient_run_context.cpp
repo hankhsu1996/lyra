@@ -1,5 +1,8 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 
+#include <format>
+#include <string_view>
+
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -51,6 +54,25 @@ auto CurrentExportScope() -> Scope* {
         "scope with svSetScope (LRM 35.5.3)");
   }
   return scope;
+}
+
+auto FindExportEntry(Scope* scope, const char* subroutine)
+    -> ErasedScopeExportEntry {
+  const std::string_view wanted{subroutine};
+  for (const ScopeExport& published : scope->Program().exports.Entries()) {
+    if (std::string_view{published.name.data, published.name.size} == wanted) {
+      return published.entry;
+    }
+  }
+  const char* entered =
+      AmbientRunContext::Current().ScopeRegistry().NameOf(scope);
+  throw SimulationError(
+      std::format(
+          "DPI export '{}' was entered under scope '{}', which declares no "
+          "such export: an export is callable directly only from an import of "
+          "its own scope, and svSetScope must name a scope that declares it "
+          "(LRM 35.5.3)",
+          subroutine, entered == nullptr ? "<unregistered>" : entered));
 }
 
 }  // namespace lyra::runtime

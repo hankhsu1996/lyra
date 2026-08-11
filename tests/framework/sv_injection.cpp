@@ -112,8 +112,8 @@ auto RewriteSourceWithProbes(
   if (modules.size() != 1) {
     return std::unexpected(
         std::format(
-            "expect.variables: source declares {} modules; "
-            "only single-module sources are supported in this phase",
+            "expect.variables: source declares {} modules; a multi-module "
+            "source is not yet supported, so assert on stdout instead",
             modules.size()));
   }
   const std::string_view actual_name = source.substr(

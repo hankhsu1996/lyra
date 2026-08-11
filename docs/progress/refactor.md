@@ -914,10 +914,6 @@ enough to warrant its own focused review.
     closure's captures as its body's leading parameters would make both kinds one shape --
     construct, then invoke -- and would remove the reason the execution backend cannot lower a
     coroutine closure at all.
-  - The DPI-C foreign-export wrapper injects a prologue statement
-    `Self self = static_cast<Self>(lyra::runtime::ResolveExportInstance("..."));` around the
-    wrapper's body; the receiver recovery is not a MIR statement in the wrapper's body block, so a
-    second backend must re-derive that it needs one and where.
   - The instance-method render injects `Self self = this;` before the body -- another prologue the
     MIR body does not state, so every method-form callable's `self` binding is a render-side
     convention rather than a stated MIR fact.
@@ -954,6 +950,28 @@ enough to warrant its own focused review.
         backends, able to cross a suspension.
   - [ ] The queue and associative-array interior writes connect to the same path once those value
         domains are realized on the execution backend.
+
+- [ ] R62 -- A procedural scope's runtime realization is gated on whether the source gave it a name.
+      A scope carrying an SV block identifier can become a runtime hierarchy node and own its own
+      storage; one without a name never can, and its static-lifetime storage is instead flattened
+      onto the nearest enclosing scope that does, under a mangled member name. So two procedural
+      scopes that are identical in every semantic respect -- same declarations, same nesting, same
+      lifetime -- are realized two different ways, and the planner carries a predicate to choose
+      between them. **Why this is suspect**: naming and hierarchical reachability are separate
+      concerns. An unnamed scope can be given a synthesized identity that source can never spell,
+      which costs nothing and collides with nothing; whether a path may reach a scope is then a
+      question about what the language exposes, answered independently of whether the compiler gave
+      the scope an identity. Conflating the two is what forces the predicate, and the predicate is
+      what makes an unnamed scope's storage land somewhere other than its own scope. **Target
+      shape**: every procedural scope has an identity and owns the storage its declarations name;
+      reachability by a hierarchical path is a separate property that decides only what is exposed
+      by name, never where storage lives or whether a scope exists. **Blocker**: none identified.
+      This reverses part of `../decisions/procedural-storage-scope.md` D3 / D4, whose recorded
+      rationale is that a runtime node no SV path can name would not match the SV-visible path
+      namespace; that rationale answers the exposure question and should be re-examined against
+      whether it also has to answer the existence and placement questions. Re-deciding it touches
+      how every body-local static is placed, so it warrants its own review rather than riding along
+      with a feature cut.
 
 ## Out of Scope
 

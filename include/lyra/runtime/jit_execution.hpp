@@ -348,8 +348,20 @@ auto lyra_rt_dynarray_default(const void* prototype) -> void*;
 auto lyra_rt_dynarray_new(const void* size, const void* prototype) -> void*;
 auto lyra_rt_dynarray_new_copy(
     const void* size, const void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_from_literal(const void* prototype, LyraSpan elements)
-    -> void*;
+auto lyra_rt_dynarray_from_literal_packed(
+    const void* prototype, LyraSpan elements) -> void*;
+auto lyra_rt_dynarray_from_literal_string(
+    const void* prototype, LyraSpan elements) -> void*;
+auto lyra_rt_dynarray_from_literal_real(
+    const void* prototype, LyraSpan elements) -> void*;
+auto lyra_rt_dynarray_from_literal_shortreal(
+    const void* prototype, LyraSpan elements) -> void*;
+auto lyra_rt_dynarray_from_literal_chandle(
+    const void* prototype, LyraSpan elements) -> void*;
+auto lyra_rt_dynarray_from_literal_tuple(
+    const void* prototype, LyraSpan elements) -> void*;
+auto lyra_rt_dynarray_from_literal_dynarray(
+    const void* prototype, LyraSpan elements) -> void*;
 auto lyra_rt_dynarray_element(const void* array, const void* index) -> void*;
 auto lyra_rt_dynarray_with_element(
     const void* array, const void* index, void* value) -> void*;

@@ -1,9 +1,11 @@
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Scope.h>
@@ -75,8 +77,35 @@ auto SpecializationName(const slang::ast::InstanceSymbol& inst) -> std::string {
   return SpecializationName(canonical != nullptr ? *canonical : inst.body);
 }
 
+// The generate blocks (LRM 27.6) between a declaration and the compilation unit
+// that owns it, outermost first. Each is a declaration scope of its own, so two
+// of them may declare the same class name; the path is what tells those
+// declarations apart in a name space that has no nesting of its own.
+auto DeclaringBlockPath(const slang::ast::Symbol& decl)
+    -> std::vector<std::string_view> {
+  std::vector<std::string_view> path;
+  for (const slang::ast::Scope* scope = decl.getParentScope(); scope != nullptr;
+       scope = scope->asSymbol().getParentScope()) {
+    const slang::ast::Symbol& sym = scope->asSymbol();
+    if (sym.kind == slang::ast::SymbolKind::GenerateBlock) {
+      path.push_back(sym.name);
+    }
+  }
+  std::ranges::reverse(path);
+  return path;
+}
+
 auto SpecializationName(const slang::ast::ClassType& cls) -> std::string {
-  std::string name{cls.name};
+  // A class carries one identifier through compilation, and a compilation unit
+  // holds every class it declares in one flat name space, so the identifier has
+  // to be unique there. The source name alone is not: SystemVerilog scopes the
+  // declaration, so sibling generate blocks may each declare the same one.
+  std::string name;
+  for (const std::string_view block : DeclaringBlockPath(cls)) {
+    name += block;
+    name += '_';
+  }
+  name += cls.name;
   if (cls.genericClass == nullptr) {
     return name;
   }

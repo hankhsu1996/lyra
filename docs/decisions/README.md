@@ -233,6 +233,12 @@ the detail lives in the entry itself.
   pending capability distinct from its registration (enrollment), supplied uniformly by each
   construct; suspension saves the prior disposition; a central wait-kind taxonomy,
   `Runnable(region)`, and mirroring the wait's state are rejected.
+- [disable-scope-invalidation](disable-scope-invalidation.md) -- `disable` (LRM 9.6.2) invalidates a
+  cancellation source's generation; every affected execution reconciles at one uniform validity gate
+  before its next statement, reusing the registration entitlement substrate. Membership in a target
+  is carried by the running process, so it spans a call, and is captured at a spawn. A local goto, a
+  per-thread extent frontier carried in a `DisableUnwind` exception, an explicit resume-reason, a
+  dedicated entitlement object, and membership rebuilt per callable from lexical scope are rejected.
 
 ### Diagnostics
 

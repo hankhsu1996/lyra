@@ -133,6 +133,40 @@ auto Own(T value) -> void* {
   return GeneratedCallScope::Current().Arena().New<T>(std::move(value));
 }
 
+// The erased value one literal element carries, in the domain `T` names.
+template <class T>
+auto ElementValue(void* handle) -> value::RuntimeValue {
+  return value::RuntimeValue{Read<T>(handle)};
+}
+
+// A chandle's handle is the pointer it carries, not a pointer to a runtime
+// object, so its element wraps the pointer directly rather than reading a value
+// object out of it -- the same divergence the box family has.
+template <>
+auto ElementValue<value::Chandle>(void* handle) -> value::RuntimeValue {
+  return value::RuntimeValue{value::Chandle{handle}};
+}
+
+// Collects a literal's element handles into a dynamic array, erasing each into
+// the value domain `T` names. A dynamic array holds its contents erased, so the
+// erasure is the container's own -- the caller hands over a literal's storage
+// without knowing what representation the container keeps inside. The domain
+// rides the entry name, as it does for the box family below, so no enumerator
+// ordinal crosses the generated boundary.
+template <class T>
+auto DynArrayFromLiteral(const void* prototype, LyraSpan elements) -> void* {
+  std::span<void* const> handles(
+      static_cast<void* const*>(elements.data), elements.count);
+  std::vector<value::RuntimeValue> collected;
+  collected.reserve(elements.count);
+  for (void* handle : handles) {
+    collected.push_back(ElementValue<T>(handle));
+  }
+  return Own(
+      value::RuntimeDynamicArray(
+          Read<value::RuntimeValue>(prototype), std::move(collected)));
+}
+
 }  // namespace
 
 }  // namespace lyra::runtime
@@ -1131,20 +1165,46 @@ auto lyra_rt_dynarray_new_copy(
       Read<RuntimeDynamicArray>(src)));
 }
 
-// The literal's elements arrive already boxed into `RuntimeValue`s (the domain
-// rode the boxing entry's name at the assembly site), so the array collects
-// them directly -- the same shape as `lyra_rt_tuple_make`.
-auto lyra_rt_dynarray_from_literal(const void* prototype, LyraSpan elements)
-    -> void* {
-  std::span<RuntimeValue*> handles(
-      static_cast<RuntimeValue**>(elements.data), elements.count);
-  std::vector<RuntimeValue> collected;
-  collected.reserve(elements.count);
-  for (RuntimeValue* handle : handles) {
-    collected.push_back(std::move(*handle));
-  }
-  return Own(
-      RuntimeDynamicArray(Read<RuntimeValue>(prototype), std::move(collected)));
+auto lyra_rt_dynarray_from_literal_packed(
+    const void* prototype, LyraSpan elements) -> void* {
+  return lyra::runtime::DynArrayFromLiteral<lyra::value::PackedArray>(
+      prototype, elements);
+}
+
+auto lyra_rt_dynarray_from_literal_string(
+    const void* prototype, LyraSpan elements) -> void* {
+  return lyra::runtime::DynArrayFromLiteral<lyra::value::String>(
+      prototype, elements);
+}
+
+auto lyra_rt_dynarray_from_literal_real(
+    const void* prototype, LyraSpan elements) -> void* {
+  return lyra::runtime::DynArrayFromLiteral<lyra::value::Real>(
+      prototype, elements);
+}
+
+auto lyra_rt_dynarray_from_literal_shortreal(
+    const void* prototype, LyraSpan elements) -> void* {
+  return lyra::runtime::DynArrayFromLiteral<lyra::value::ShortReal>(
+      prototype, elements);
+}
+
+auto lyra_rt_dynarray_from_literal_chandle(
+    const void* prototype, LyraSpan elements) -> void* {
+  return lyra::runtime::DynArrayFromLiteral<lyra::value::Chandle>(
+      prototype, elements);
+}
+
+auto lyra_rt_dynarray_from_literal_tuple(
+    const void* prototype, LyraSpan elements) -> void* {
+  return lyra::runtime::DynArrayFromLiteral<lyra::value::RuntimeTuple>(
+      prototype, elements);
+}
+
+auto lyra_rt_dynarray_from_literal_dynarray(
+    const void* prototype, LyraSpan elements) -> void* {
+  return lyra::runtime::DynArrayFromLiteral<lyra::value::RuntimeDynamicArray>(
+      prototype, elements);
 }
 
 // Reads element `index`, copying it out across the opaque-handle boundary as a

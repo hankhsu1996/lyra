@@ -18,6 +18,7 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
@@ -103,22 +104,33 @@ struct CompilationUnit {
   // Callables the unit's namespace owns directly rather than through one of its
   // classes -- a package's functions and tasks (LRM 26.3), and both directions
   // of the DPI-C boundary (LRM 35.5): the prototype of every import the unit
-  // takes part in, and the C entry point of every export it contributes. All
-  // are receiver-less. A DPI-C name is program-global, in a name space no
+  // takes part in, and the program-global symbol of every export it defines.
+  // All are receiver-less. A DPI-C name is program-global, in a name space no
   // compilation-unit scope contains (LRM 35.4, 35.7), so no class ever owns
-  // one, and a module-scoped export and a package-scoped one are owned here
-  // alike, each body recovering whatever context it needs. Which direction a
-  // foreign callable is reads off its body: an import is the declaration the
-  // user's C defines, an export entry point the definition the user's C calls.
-  // A class's own callables live on that class; these are the unit-level
-  // namespace's, one scope up.
+  // one. Which direction a foreign callable is reads off its body: an import is
+  // the declaration the user's C defines, an export symbol the definition the
+  // user's C calls. Where an export's subroutine belongs to a scope, the scope
+  // publishes an entry per specialization and the symbol dispatches over those
+  // entries, so the entry is not one of these and the symbol belongs to the
+  // unit that reads the whole design. A class's own callables live on that
+  // class; these are the unit-level namespace's, one scope up.
   base::Arena<CallableDecl, CallableId> callables;
+  // The nullary callable that builds this unit's root object and hands it out
+  // as the generic scope a runtime drives, present only on the design root. A
+  // process starts with nothing to call a constructor on, so the design states
+  // its one way in here rather than leaving a host to agree on a name for it.
+  std::optional<CallableId> root_factory;
   // Static variables the unit's namespace owns directly rather than through one
   // of its classes -- a package's variables (LRM 26.2), one program-global cell
   // each, shared and reached by name. A class's own static storage lives on
   // that class; these are the unit-level namespace's, one scope up. Their
   // initializers run in the unit's synthesized initializer at time zero.
   base::Arena<StaticVariableDecl, StaticVariableId> static_variables;
+  // The foreign names this unit takes part in (LRM 35), in declaration order.
+  // The program's foreign surface is the composition of these across units: a
+  // name is program-global and lives in its own name space, so no single unit
+  // owns it, and each states only its own part.
+  std::vector<ForeignSymbol> foreign_surface;
   // Every compiler-generated nominal struct of this unit -- a promoted
   // automatic scope's storage. Its `StructId` is the struct's type identity; a
   // backend derives the C++ emission host from the struct's lexical synthesis

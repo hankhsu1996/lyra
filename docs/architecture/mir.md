@@ -15,7 +15,9 @@ MIR's vocabulary is what those languages share:
 - A type system covering value types, object types, and composing wrappers (owning pointer, vector).
 - Object-oriented features: classes with members, member access through an explicit receiver
   expression.
-- Structured control flow: `if`, loop, sequence, return.
+- Structured control flow: `if`, loop, sequence, return, and a region whose body can be left from
+  anywhere within it -- including from a callable it invoked -- and whose continuation is the
+  statement after it.
 
 SystemVerilog is one source language that flows in through HIR; SV does not shape MIR's vocabulary.
 SV-specific concepts -- signals as observable storage cells, NBA scheduling regions, event-control
@@ -42,12 +44,14 @@ what the construct means.
 - Objects, members, and member access as first-class entities.
 - A member as a `(name, type)` pair. The type is the sole carrier of the member's storage shape and,
   for a member that owns a child, of its child-scope kind and cardinality.
-- Machine primitives -- a machine integer, a machine float, a borrowed C string, a raw pointer -- as
-  ordinary types of the language, the way `i64` and `*const c_char` are Rust's. They are plain
-  machine data, and are distinct from the simulation value types that a source language's `int`,
-  `real`, or `string` lower to, which are library values reached through a wrapper. Every value a
-  runtime entry returns as a plain scalar, and every value that crosses a foreign-call boundary, is
-  one of these.
+- Machine data -- a machine integer, a machine float, a borrowed C string, a raw pointer, the
+  fixed-size contiguous aggregate of them, and a plain code address -- as ordinary types of the
+  language, the way `i64`, `[T; N]`, `*const c_char`, and `fn(A) -> R` are Rust's. The family is
+  closed on three axes: scalar, aggregate, and callable. It is plain machine data, distinct from the
+  simulation value types that a source language's `int`, `real`, or `string` lower to, which are
+  library values reached through a wrapper. Every value a runtime entry returns as a plain scalar,
+  every table a runtime record reads as raw storage, and every value that crosses a foreign-call
+  boundary is one of these.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
   named); two composing wrappers, owning pointer and vector; and four nominal / structural
@@ -73,8 +77,8 @@ what the construct means.
   parameters and bound environment, never through implicit context. `callable.md` is the canonical
   contract.
 - The identity of each object and member within a compilation unit.
-- Lightweight structured control flow inside a callable body: `if`, loop, and sequence. No basic
-  blocks at this layer.
+- Lightweight structured control flow inside a callable body: `if`, loop, sequence, and the region
+  that consumes a control effect naming it. No basic blocks at this layer.
 - A primitive expression set: literals, references, unary / binary / conditional operators, calls,
   conversions, closures, member access through an explicit receiver expression, access primitives
   for element and range selection, value-build primitives for aggregate construction, and a
@@ -285,12 +289,12 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   not where it is going.)
 - One cast node standing for every reinterpretation, whose realization each backend selects from the
   (source, destination) type pair. A cast node names exactly one operation -- reduce a value to a
-  machine boolean, re-type a reference without moving bits, convert a machine integer's width or
-  signedness -- so a conversion no node covers fails to compile. Under a type-pair-dispatched node a
-  pair a backend never handled is instead a silent no-op, indistinguishable from a deliberate
-  reinterpretation. A conversion that reshapes a _value_ (integral resize, real <-> integral, packed
-  <-> string) is a library call, never a cast node. (A primitive means one thing; a backend does not
-  re-derive semantics MIR declined to state.)
+  machine boolean, re-type a reference without moving bits, name a code address as a different
+  function type, convert a machine integer's width or signedness -- so a conversion no node covers
+  fails to compile. Under a type-pair-dispatched node a pair a backend never handled is instead a
+  silent no-op, indistinguishable from a deliberate reinterpretation. A conversion that reshapes a
+  _value_ (integral resize, real <-> integral, packed <-> string) is a library call, never a cast
+  node. (A primitive means one thing; a backend does not re-derive semantics MIR declined to state.)
 - A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
   contents or any side signal, instead of reading it from an explicit node or reference. Reading
   which node consumes a value is reading structure and is allowed; scanning a body to decide what it

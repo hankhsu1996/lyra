@@ -79,10 +79,12 @@ auto BuildUnpackedArrayValue(
   auto& block = *frame.current_block;
   const mir::ExprId element_default = block.exprs.Add(
       BuildDefaultValueFromHir(unit_lowerer, frame, element_type));
+  const mir::TypeId list_type = unit_lowerer.Unit().types.MachineArrayOf(
+      unit_lowerer.TranslateType(element_type), element_ids.size());
   const mir::ExprId list_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
-          .type = array_type});
+          .type = list_type});
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -433,10 +435,12 @@ auto BuildArrayConstructionCall(
       ArrayContainerElementType(unit_lowerer.Unit(), array_type);
   const mir::ExprId element_default =
       block.exprs.Add(BuildDefaultValueExpr(unit_lowerer, frame, element_type));
+  const mir::TypeId list_type =
+      unit_lowerer.Unit().types.MachineArrayOf(element_type, elements.size());
   const mir::ExprId list_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
-          .type = array_type});
+          .type = list_type});
   std::vector<mir::ExprId> args = {element_default, list_id};
   AppendBoundedQueueMax(unit_lowerer, block, args, array_type);
   return mir::Expr{
@@ -451,10 +455,12 @@ auto BuildArrayRepeatCall(
     mir::ExprId element_default, std::vector<mir::ExprId> unit,
     std::uint64_t count) -> mir::Expr {
   auto& block = *frame.current_block;
+  const mir::TypeId unit_type = unit_lowerer.Unit().types.MachineArrayOf(
+      ArrayContainerElementType(unit_lowerer.Unit(), array_type), unit.size());
   const mir::ExprId unit_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(unit)},
-          .type = array_type});
+          .type = unit_type});
   const mir::ExprId count_id = block.exprs.Add(
       mir::Expr{
           .data =
@@ -470,7 +476,7 @@ auto BuildArrayRepeatCall(
 }
 
 auto BuildAssociativeConstructionCall(
-    UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId assoc_type,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> user_default) -> mir::Expr {
   auto& block = *frame.current_block;
@@ -494,10 +500,8 @@ auto BuildAssociativeConstructionCall(
             .data = mir::TupleExpr{.components = {key_id, value_id}},
             .type = tuple_type}));
   }
-  const mir::TypeId entries_type = unit_lowerer.Unit().types.Intern(
-      mir::UnpackedArrayType{
-          .element_type = tuple_type,
-          .dim = mir::UnpackedRange::ZeroBased(tuple_ids.size())});
+  const mir::TypeId entries_type =
+      unit_lowerer.Unit().types.MachineArrayOf(tuple_type, tuple_ids.size());
   const mir::ExprId entries_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(tuple_ids)},

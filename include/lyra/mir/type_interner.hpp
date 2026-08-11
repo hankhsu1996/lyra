@@ -42,7 +42,7 @@ struct SemanticTypeEqual {
 // reference it returns must not be held across a later `Intern`.
 class TypeInterner {
  public:
-  auto Intern(TypeData data) -> TypeId;
+  auto Intern(TypeData data) const -> TypeId;
 
   [[nodiscard]] auto Get(TypeId id) const -> const Type& {
     return storage_.Get(id);
@@ -63,7 +63,7 @@ class TypeInterner {
   // Typed constructors for the composite types lowering materializes
   // repeatedly. Each interns its constructor, so a repeated request returns the
   // one canonical id rather than a duplicate.
-  auto CoroutineOf(TypeId payload) -> TypeId {
+  auto CoroutineOf(TypeId payload) const -> TypeId {
     return Intern(CoroutineType{.payload = payload});
   }
 
@@ -84,9 +84,26 @@ class TypeInterner {
     return std::get<CoroutineType>(Get(id).data).payload;
   }
 
+  // The plain-data aggregate of `size` elements: the type of an aggregate
+  // literal, which is machine data whatever it is later constructed into.
+  auto MachineArrayOf(TypeId element, std::size_t size) const -> TypeId {
+    return Intern(
+        MachineArrayType{
+            .element = element, .size = static_cast<std::uint32_t>(size)});
+  }
+
+  // A code address with its prototype erased: no parameters and no result,
+  // which names an address and says nothing about calling it. This is the type
+  // a table of entries with differing prototypes holds, and the one every side
+  // of such a table spells, so erasing and restoring cannot drift apart.
+  auto ErasedFunction() const -> TypeId {
+    return Intern(
+        MachineFunctionType{.params = {}, .result = Intern(VoidType{})});
+  }
+
   auto PointerTo(
       TypeId pointee, PointerOwnership ownership,
-      Mutability mutability = Mutability::kMutable) -> TypeId {
+      Mutability mutability = Mutability::kMutable) const -> TypeId {
     return Intern(
         PointerType{
             .pointee = pointee,
@@ -103,11 +120,16 @@ class TypeInterner {
   // constructing counterpart of the pure observable-cell queries: it interns
   // the wrapper, so it lives on the interner rather than beside those
   // value-type predicates.
-  auto ObservableCellOf(TypeId value_type) -> TypeId;
+  auto ObservableCellOf(TypeId value_type) const -> TypeId;
 
  private:
-  base::Arena<Type, TypeId> storage_;
-  std::unordered_map<TypeData, TypeId, SemanticTypeHash, SemanticTypeEqual>
+  // Interning names a type; it does not change the program. A request for a
+  // type already interned is indistinguishable from the first request, so the
+  // canonical representatives and the key index are a memo the interner keeps
+  // behind an observationally pure surface.
+  mutable base::Arena<Type, TypeId> storage_;
+  mutable std::unordered_map<
+      TypeData, TypeId, SemanticTypeHash, SemanticTypeEqual>
       index_;
 };
 

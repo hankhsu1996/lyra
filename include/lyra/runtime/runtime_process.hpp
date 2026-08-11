@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/process_kind.hpp"
@@ -171,11 +172,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
 
   // Records that `leaf` is now blocked on `wait`: `leaf` becomes this process's
   // active leaf and takes the pending wait, set as one step so they never fall
-  // out of step. Each suspending construct calls this from its `await_suspend`
-  // after it enrolls. The active leaf is the one frame carrying the process's
-  // thread -- the top frame before the body runs, the innermost parked frame
-  // once a wait blocks it; process control (LRM 9.7) names the process and acts
-  // on this leaf.
+  // out of step. The active leaf is the one frame carrying the process's thread
+  // -- the top frame before the body runs, the innermost parked frame once a
+  // wait blocks it; process control (LRM 9.7) names the process and acts on
+  // this leaf.
   void BlockLeaf(CoroutineHandle leaf, PendingWait* wait) {
     current_leaf_ = leaf;
     leaf->pending_wait = wait;
@@ -184,6 +184,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     // the registration), because resume runs from another process's context
     // where the ambient vehicle is that caller's, not this leaf's.
     resume_target_ = current_foreign_execution_;
+    // Blocking inside a disable target is also waiting on that target (LRM
+    // 9.6.2), so the leaf enrols in each the same way it enrols in the event or
+    // delay it blocks on. Any one of them releases the wait, and releasing it
+    // revokes the rest.
+    for (const EnclosingTarget& enclosing : enclosing_targets_) {
+      leaf->Park(enclosing.source->CancelWaiters());
+    }
   }
   [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
     return current_leaf_;
@@ -226,6 +233,60 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     Scope* previous = dpi_scope_chain_.back();
     dpi_scope_chain_.back() = scope;
     return previous;
+  }
+
+  // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
+  // of it reaches this execution, and a check finds it among the targets this
+  // execution is inside.
+  void PushEnclosingTarget(CancellationSource* target) {
+    enclosing_targets_.push_back(
+        EnclosingTarget{
+            .source = target, .captured_generation = target->Generation()});
+  }
+
+  // Leave a target. Reached on every exit path including an abort unwinding
+  // through the frame, so it never raises: it runs during unwinding, where
+  // raising would end the program instead of reporting anything.
+  void PopEnclosingTarget(CancellationSource* target) noexcept {
+    if (!enclosing_targets_.empty() &&
+        enclosing_targets_.back().source == target) {
+      enclosing_targets_.pop_back();
+    }
+  }
+
+  // The outermost target this execution is inside that has been disabled since
+  // it entered (LRM 9.6.2), or null when none has. Outermost wins because
+  // leaving a target also leaves every target nested within it.
+  [[nodiscard]] auto OutermostInvalidatedTarget() const -> CancellationSource* {
+    for (const EnclosingTarget& enclosing : enclosing_targets_) {
+      if (enclosing.source->Generation() != enclosing.captured_generation) {
+        return enclosing.source;
+      }
+    }
+    return nullptr;
+  }
+
+  // Records that this execution has begun, or has finished, leaving a disabled
+  // target (LRM 9.6.2). A process that ends while it is still leaving one was
+  // forcibly terminated rather than faulted or run to its end, and the frame
+  // that settles it reads that from here instead of inspecting what is
+  // unwinding through it.
+  void NoteAbortRaised() {
+    leaving_disabled_target_ = true;
+  }
+  void NoteAbortConsumed() {
+    leaving_disabled_target_ = false;
+  }
+
+  // LRM 9.6.2 "all activities enabled within" a target: an activity spawned
+  // inside a target is enabled within it, so a spawned process starts out
+  // enclosed by exactly the targets its spawner was inside. Capturing them here
+  // -- at the spawn, from the spawner's live state -- is what makes the spawned
+  // activity a member from the instant it exists, before it has run any of its
+  // own code, and reaches targets that are not in its body's lexical scope at
+  // all (a fork inside a task called from the target).
+  void InheritEnclosingTargets(const RuntimeProcess& spawner) {
+    enclosing_targets_ = spawner.enclosing_targets_;
   }
 
   // LRM 9.7 `suspend`: revoke the active leaf's scheduler participation -- a
@@ -388,8 +449,26 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // Set when a deferred termination is requested (phase 1) and consumed at the
   // resume boundary (phase 2): pending while the body unwinds.
   bool termination_requested_ = false;
+  // Set while this execution is leaving a disabled target, so the frame that
+  // settles it reports KILLED rather than FINISHED (LRM 9.7). A process that
+  // runs to the end of its body leaves it false.
+  bool leaving_disabled_target_ = false;
   RuntimeProcess* parent_ = nullptr;
   std::vector<std::shared_ptr<RuntimeProcess>> children_;
+  // One disable target this execution is inside (LRM 9.6.2), with the target's
+  // generation captured when it was entered. The capture is what makes the
+  // membership answerable by any frame: comparing it against the target's
+  // current generation says whether the target died while this execution was
+  // inside it, without the frame knowing which target it is.
+  struct EnclosingTarget {
+    CancellationSource* source;
+    std::uint64_t captured_generation;
+  };
+  // The disable targets enclosing this execution, outermost first: those
+  // inherited from the spawner, then those entered by this execution's own
+  // frames. Entering a target pushes it and leaving pops it. This is the only
+  // record of the relation; a target holds no set of the executions inside it.
+  std::vector<EnclosingTarget> enclosing_targets_;
   // The `wait fork` condition holds at most one activation: the frame that
   // executed `wait fork`.
   RegistrationList parked_wait_fork_;

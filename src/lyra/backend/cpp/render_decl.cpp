@@ -308,13 +308,19 @@ auto RenderStruct(const mir::CompilationUnit& unit, const mir::StructDecl& decl)
 // record is one such constant; the constructor forwards its address to the
 // base. It stays in the class body because its initializer names the class's
 // own members, which are in scope there.
+//
+// `const` rather than `constexpr`: an initializer may name a code address under
+// an entry type that erases its prototype, which C++ does not admit in a
+// constant expression. The storage is still established before any process
+// runs, and a constant that points into another only ever takes its address,
+// which does not depend on that one's initializer having run.
 auto RenderStaticConstant(
     const mir::CompilationUnit& unit, const mir::Class& s,
     const mir::StaticConstantDecl& c) -> std::string {
   const ScopeView view =
       ScopeView::ForRoot(unit, s, s.constructor.code).WithBlock(c.body);
   return std::format(
-      "{0}static constexpr {1} {2} = {3};\n", Indent(1),
+      "{0}inline static const {1} {2} = {3};\n", Indent(1),
       RenderTypeAsCpp(unit, c.type), c.name,
       RenderExpr(view, view.Expr(c.value)));
 }

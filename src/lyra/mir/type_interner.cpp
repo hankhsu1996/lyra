@@ -84,6 +84,14 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.signedness)));
         } else if constexpr (std::is_same_v<T, MachineFloatType>) {
           HashField(seed, t.bit_width);
+        } else if constexpr (std::is_same_v<T, MachineArrayType>) {
+          HashId(seed, t.element);
+          HashField(seed, t.size);
+        } else if constexpr (std::is_same_v<T, MachineFunctionType>) {
+          for (TypeId param : t.params) {
+            HashId(seed, param);
+          }
+          HashId(seed, t.result);
         } else if constexpr (std::is_same_v<T, RuntimeLibraryType>) {
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.kind)));
         } else if constexpr (std::is_same_v<T, CoroutineType>) {
@@ -155,7 +163,7 @@ auto SemanticTypeEqual::operator()(const TypeData& a, const TypeData& b) const
       a);
 }
 
-auto TypeInterner::Intern(TypeData data) -> TypeId {
+auto TypeInterner::Intern(TypeData data) const -> TypeId {
   if (const auto it = index_.find(data); it != index_.end()) {
     return it->second;
   }
@@ -164,7 +172,7 @@ auto TypeInterner::Intern(TypeData data) -> TypeId {
   return id;
 }
 
-auto TypeInterner::ObservableCellOf(TypeId value_type) -> TypeId {
+auto TypeInterner::ObservableCellOf(TypeId value_type) const -> TypeId {
   // Exhaustive over TypeKind with no default: a MIR type added later fails to
   // compile here until it is classified, rather than silently defaulting to
   // non-observable -- which would leave a new value type's writes firing no
@@ -202,6 +210,8 @@ auto TypeInterner::ObservableCellOf(TypeId value_type) -> TypeId {
     case TypeKind::kMachineCString:
     case TypeKind::kMachineInt:
     case TypeKind::kMachineFloat:
+    case TypeKind::kMachineArray:
+    case TypeKind::kMachineFunction:
     case TypeKind::kEvent:
     case TypeKind::kChandle:
     case TypeKind::kVoid:
