@@ -9,14 +9,13 @@
 namespace lyra::driver::pch {
 
 // Caller-supplied configuration for precompiled-header cache operations.
-// All fields are explicit; helpers in this namespace do not read environment
-// variables themselves. The translation of CLI flags and environment hints
-// into an Options value lives at the CLI layer, so lower layers see a single
-// source of truth.
+// Every Lyra-specific decision arrives here explicitly, translated from the
+// command line at the CLI boundary, so no layer below re-derives one. The sole
+// environment read left underneath is the XDG cache location, which belongs to
+// the platform rather than to Lyra and is the same for every tool on the host.
 struct Options {
-  // When true, EnsureCached returns nullopt and the caller compiles without
-  // `-include-pch`. Threaded from the `--no-pch` CLI flag (which may itself
-  // be raised by the `LYRA_NO_PCH` environment hint at the CLI boundary).
+  // Skip the cache entirely and compile without `-include-pch`. Threaded from
+  // the `--no-pch` CLI flag.
   bool disabled = false;
 
   // Explicit override of where PCH artifacts live. When unset, helpers fall

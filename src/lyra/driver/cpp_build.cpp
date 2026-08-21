@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <span>
@@ -78,14 +79,36 @@ auto SubstituteTokens(
 // than reusing a PCH built against stale-on-disk content). Any failing
 // check falls back to plain compilation; correctness is unaffected.
 constexpr std::string_view kBuildScriptTemplate = R"sh(#!/bin/sh
-# Build this self-contained Lyra C++ project. Override the compiler with $CXX.
-# A precompiled header is built on first run and reused on subsequent rebuilds
-# to amortize parsing of the runtime headers (clang only).
-# Disable with LYRA_NO_PCH=1.
+# Build this self-contained Lyra C++ project.
+#
+#   usage: build.sh [--cxx <compiler>] [--no-pch]
+#
+# The compiler that produced this project is baked in below and is the default.
+# Nothing here reads the environment: what this script does is determined by the
+# file plus its arguments, so a rebuild is reproducible and a stray $CXX in some
+# shell cannot silently change which toolchain builds the design.
+#
+# Moving the project to a machine where that path means nothing? Pass --cxx. If
+# the compiler is not a conforming C++23 implementation the build fails inside
+# the runtime headers -- point --cxx at a wrapper script adding whatever it
+# needs (--gcc-install-dir=, -stdlib=libc++, --sysroot=).
+#
+# A precompiled header is built on first run and reused on later rebuilds to
+# amortize parsing of the runtime headers (clang only); --no-pch skips it.
 set -e
-CXX="${CXX:-clang++}"
+CXX="@CXX@"
+NO_PCH=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cxx)
+      if [ $# -lt 2 ]; then echo "build.sh: --cxx needs a value" >&2; exit 2; fi
+      CXX="$2"; shift 2 ;;
+    --no-pch) NO_PCH=1; shift ;;
+    *) echo "usage: build.sh [--cxx <compiler>] [--no-pch]" >&2; exit 2 ;;
+  esac
+done
 USE_PCH=0
-if [ -z "$LYRA_NO_PCH" ] || [ "$LYRA_NO_PCH" = "0" ]; then
+if [ "$NO_PCH" = "0" ]; then
   case "$CXX" in
     *clang*)
       if command -v sha1sum >/dev/null 2>&1; then USE_PCH=1; fi
@@ -139,15 +162,20 @@ auto RenderDpiRecipe(std::span<const DpiLinkInput> inputs) -> DpiRecipe {
   return recipe;
 }
 
-auto RenderBuildScript(std::span<const DpiLinkInput> dpi_inputs)
+auto RenderBuildScript(
+    const std::filesystem::path& cxx, std::span<const DpiLinkInput> dpi_inputs)
     -> std::string {
   const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs);
-  const std::array<std::pair<std::string_view, std::string_view>, 10> bindings =
+  // Named locals, because the bindings below hold `string_view`s and are read
+  // after this statement: a temporary would already have died.
+  const std::string cxx_exe = cxx.string();
+  const std::array<std::pair<std::string_view, std::string_view>, 11> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
           {"@CACHE@", kRuntimeCacheDir},
           {"@STD@", kCxxStandardFlag},
+          {"@CXX@", cxx_exe},
           {"@MAIN@", kMainSource},
           {"@LIBDIR@", kRuntimeLibDir},
           {"@LIB@", kRuntimeLibFile},
@@ -193,14 +221,14 @@ auto CopyDpiSources(
 auto EmitAndWriteSources(
     std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root, const std::filesystem::path& dir,
-    bool format) -> diag::Result<void> {
+    SourceFormatting formatting) -> diag::Result<void> {
   auto set = backend::cpp::EmitCpp(units, root);
   for (const auto& file : set.files) {
     if (auto r = WriteFile(dir / file.relpath, file.content); !r) {
       return r;
     }
   }
-  if (format) {
+  if (formatting == SourceFormatting::kOn) {
     FormatSources(set.files, dir);
   }
   return {};
@@ -241,12 +269,8 @@ auto PrepareDpiLinkInput(
 auto CompileProgram(
     const std::filesystem::path& main_cpp,
     const std::filesystem::path& include_root, const std::filesystem::path& lib,
-    const std::filesystem::path& program, const pch::Options& pch_opts,
+    const std::filesystem::path& program, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
-  auto cxx_or = support::ResolveCxxCompiler();
-  if (!cxx_or) {
-    return IoError(std::move(cxx_or.error()));
-  }
   // The generated ABI header sits beside the emitted program source, so that
   // directory is the include path a foreign source resolves it through.
   const std::filesystem::path header_dir = main_cpp.parent_path();
@@ -254,7 +278,7 @@ auto CompileProgram(
   link_inputs.reserve(dpi_inputs.size());
   for (const DpiLinkInput& input : dpi_inputs) {
     auto prepared =
-        PrepareDpiLinkInput(*cxx_or, input, header_dir, program.parent_path());
+        PrepareDpiLinkInput(host.cxx, input, header_dir, program.parent_path());
     if (!prepared) {
       return std::unexpected(std::move(prepared.error()));
     }
@@ -263,7 +287,7 @@ auto CompileProgram(
 
   std::vector<std::string> args = {
       std::string(kCxxStandardFlag), "-I", include_root.string()};
-  if (auto cached = pch::EnsureCached(*cxx_or, include_root, pch_opts)) {
+  if (auto cached = pch::EnsureCached(host.cxx, include_root, host.pch)) {
     args.emplace_back("-include-pch");
     args.push_back(cached->string());
   }
@@ -274,7 +298,7 @@ auto CompileProgram(
   args.push_back(lib.string());
   args.emplace_back("-o");
   args.push_back(program.string());
-  auto result_or = support::RunProcessCaptured(*cxx_or, args);
+  auto result_or = support::RunProcessCaptured(host.cxx, args);
   if (!result_or) {
     return IoError(std::move(result_or.error()));
   }
@@ -293,9 +317,9 @@ auto CompileProgram(
 auto AssembleProject(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root, const std::filesystem::path& dir,
-    bool format, std::span<const DpiLinkInput> dpi_inputs)
-    -> diag::Result<void> {
-  if (auto r = EmitAndWriteSources(units, root, dir, format); !r) {
+    SourceFormatting formatting, const HostBuild& host,
+    std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
+  if (auto r = EmitAndWriteSources(units, root, dir, formatting); !r) {
     return r;
   }
   if (auto r = WriteDpiSurface(runtime, units, root, dir); !r) {
@@ -306,7 +330,8 @@ auto AssembleProject(
   }
 
   const auto script_path = dir / "build.sh";
-  if (auto r = WriteFile(script_path, RenderBuildScript(dpi_inputs)); !r) {
+  if (auto r = WriteFile(script_path, RenderBuildScript(host.cxx, dpi_inputs));
+      !r) {
     return r;
   }
   std::error_code ec;
@@ -326,14 +351,13 @@ auto AssembleProject(
 }
 
 auto BuildProject(
-    const std::filesystem::path& dir, const pch::Options& pch_opts,
+    const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs)
     -> diag::Result<std::filesystem::path> {
   const auto program = dir / kProgramName;
   if (auto r = CompileProgram(
           dir / kMainSource, dir / kRuntimeIncludeDir,
-          dir / kRuntimeLibDir / kRuntimeLibFile, program, pch_opts,
-          dpi_inputs);
+          dir / kRuntimeLibDir / kRuntimeLibFile, program, host, dpi_inputs);
       !r) {
     return std::unexpected(std::move(r.error()));
   }
@@ -343,10 +367,10 @@ auto BuildProject(
 auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root, const std::filesystem::path& work_dir,
-    bool format, const pch::Options& pch_opts,
+    SourceFormatting formatting, const HostBuild& host,
     std::span<const std::string> child_args,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int> {
-  if (auto r = EmitAndWriteSources(units, root, work_dir, format); !r) {
+  if (auto r = EmitAndWriteSources(units, root, work_dir, formatting); !r) {
     return std::unexpected(std::move(r.error()));
   }
   if (auto r = WriteDpiSurface(runtime, units, root, work_dir); !r) {
@@ -355,7 +379,7 @@ auto RunInPlace(
   const auto program = work_dir / kProgramName;
   if (auto r = CompileProgram(
           work_dir / kMainSource, runtime.include_root, runtime.lib, program,
-          pch_opts, dpi_inputs);
+          host, dpi_inputs);
       !r) {
     return std::unexpected(std::move(r.error()));
   }
