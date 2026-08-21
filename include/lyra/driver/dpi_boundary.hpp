@@ -48,7 +48,7 @@ auto WriteDpiSurface(
 // arrive in something the execution session can load. `header_dir` holds the
 // generated ABI header the sources may include.
 auto BuildDpiSharedLibrary(
-    std::span<const DpiLinkInput> inputs,
+    std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
     const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::filesystem::path>;

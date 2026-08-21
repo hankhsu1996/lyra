@@ -84,25 +84,6 @@ auto FindOnPath(std::string_view name)
       std::format("'{}' not found on PATH", candidate.string()));
 }
 
-auto ResolveCxxCompiler() -> std::expected<std::filesystem::path, std::string> {
-  const char* env = std::getenv("CXX");
-  if (env != nullptr) {
-    const std::string_view sv(env);
-    if (!sv.empty()) {
-      return FindOnPath(sv);
-    }
-  }
-  for (const std::string_view candidate : {"clang++", "g++", "c++"}) {
-    auto found = FindOnPath(candidate);
-    if (found) {
-      return *found;
-    }
-  }
-  return std::unexpected(
-      "no C++ compiler found on PATH (tried clang++, g++, c++; set $CXX to "
-      "override)");
-}
-
 auto RunProcessCaptured(
     const std::filesystem::path& exe, std::span<const std::string> args)
     -> std::expected<ProcessResult, std::string> {
