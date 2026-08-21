@@ -74,15 +74,10 @@ auto WriteDpiSurface(
 }
 
 auto BuildDpiSharedLibrary(
-    std::span<const DpiLinkInput> inputs,
+    std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
     const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::filesystem::path> {
-  auto cxx = support::ResolveCxxCompiler();
-  if (!cxx) {
-    return diag::Fail(diag::DiagCode::kHostIoError, std::move(cxx.error()));
-  }
-
   const std::filesystem::path library = work_dir / "libdpi.so";
   std::vector<std::string> args = {
       "-shared", "-fPIC", "-I", header_dir.string()};
@@ -94,7 +89,7 @@ auto BuildDpiSharedLibrary(
   args.emplace_back("-o");
   args.push_back(library.string());
 
-  auto compiled = support::RunProcessCaptured(*cxx, args);
+  auto compiled = support::RunProcessCaptured(cxx, args);
   if (!compiled) {
     return diag::Fail(
         diag::DiagCode::kHostIoError, std::move(compiled.error()));

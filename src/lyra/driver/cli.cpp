@@ -1,4 +1,7 @@
+#include <algorithm>
 #include <argparse/argparse.hpp>
+#include <array>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <expected>
@@ -7,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -48,17 +52,23 @@ enum class CommandKind {
 // How `run` executes the design. The C++ backend emits a C++ project and builds
 // it; the LLVM backends share one emitted module and differ only in how they
 // run it (in-process ORC JIT, ahead-of-time native compile, or the `lli` tool).
-enum class Backend { kCpp, kJit, kAot, kLli };
+enum class Backend : std::uint8_t { kCpp, kJit, kAot, kLli };
+
+// Whether diagnostics carry ANSI colour. `kAuto` asks the terminal; the other
+// two are the user overriding that answer in either direction.
+enum class ColorPreference : std::uint8_t { kAuto, kAlways, kNever };
 
 struct ParsedArgs {
   CommandKind cmd = CommandKind::kEmitCpp;
   bool no_project = false;
-  bool no_color = false;
-  bool force_color = false;
+  ColorPreference color = ColorPreference::kAuto;
   bool format = false;
   bool no_pch = false;
   Backend backend = Backend::kCpp;
   std::string pch_cache_dir;
+  // The host C++ compiler the C++ backend builds emitted code with: a program
+  // name or path, never flags.
+  std::string cxx;
   lyra::frontend::CompilationInput input;
   std::string out_dir;
   // LRM 21.6 plusarg pass-through: `+`-prefixed positional entries collected
@@ -119,8 +129,11 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
 void BindCompilationFlags(
     const argparse::ArgumentParser& cmd, ParsedArgs& out) {
   out.no_project = cmd.get<bool>("--no-project");
-  out.no_color = cmd.get<bool>("--no-color");
-  out.force_color = cmd.get<bool>("--color");
+  if (cmd.get<bool>("--no-color")) {
+    out.color = ColorPreference::kNever;
+  } else if (cmd.get<bool>("--color")) {
+    out.color = ColorPreference::kAlways;
+  }
   out.input.top = cmd.get<std::string>("--top");
   if (auto incs =
           cmd.present<std::vector<std::string>>("--include-directory")) {
@@ -152,6 +165,70 @@ void BindCompilationFlags(
   }
 }
 
+// The spelling of each execution backend on the command line. `--backend`
+// restricts the value to exactly these, so a name outside the table means the
+// two lists have drifted apart rather than that a user typed something odd.
+auto ParseBackend(std::string_view name) -> Backend {
+  static constexpr std::array<std::pair<std::string_view, Backend>, 4> kNames =
+      {{{"cpp", Backend::kCpp},
+        {"jit", Backend::kJit},
+        {"aot", Backend::kAot},
+        {"lli", Backend::kLli}}};
+  const auto* const it =
+      std::ranges::find(kNames, name, &decltype(kNames)::value_type::first);
+  if (it == kNames.end()) {
+    throw lyra::InternalError(
+        std::format("--backend accepted an unmapped value '{}'", name));
+  }
+  return it->second;
+}
+
+// How the host builds emitted C++. `--cxx` names a program, never a flag list:
+// a compiler that needs configuration to be a conforming C++23 implementation
+// is named through a wrapper script or a driver config file that supplies it.
+// The precompiled header caches the parse of the runtime headers; `--no-pch`
+// skips it for one invocation and `--pch-cache-dir` moves it, which is how a
+// test shard keeps its cache inside its own scratch directory.
+//
+// Registration and binding sit together because nothing else keeps them in
+// step: a flag added to one and forgotten in the other fails silently.
+void AddHostBuildFlags(argparse::ArgumentParser& cmd) {
+  cmd.add_argument("--cxx")
+      .help(
+          "host C++ compiler for the C++ backend: a path, or a name found on "
+          "PATH (default: clang++)")
+      .default_value(std::string("clang++"));
+  cmd.add_argument("--no-pch")
+      .help("disable the precompiled-header cache for this invocation")
+      .default_value(false)
+      .implicit_value(true);
+  cmd.add_argument("--pch-cache-dir")
+      .help("override the PCH cache directory")
+      .default_value(std::string{});
+}
+
+void BindHostBuildFlags(const argparse::ArgumentParser& cmd, ParsedArgs& out) {
+  out.cxx = cmd.get<std::string>("--cxx");
+  out.no_pch = cmd.get<bool>("--no-pch");
+  out.pch_cache_dir = cmd.get<std::string>("--pch-cache-dir");
+}
+
+void AddOutDirFlag(argparse::ArgumentParser& cmd, const char* help) {
+  cmd.add_argument("-o", "--out-dir").help(help).default_value(std::string{});
+}
+
+// Binds `--out-dir`, which every command that has it also requires. The error
+// names the command's own usage, so the caller supplies its parser.
+auto BindRequiredOutDir(
+    const argparse::ArgumentParser& cmd, std::string_view command,
+    ParsedArgs& out) -> std::optional<std::string> {
+  out.out_dir = cmd.get<std::string>("--out-dir");
+  if (out.out_dir.empty()) {
+    return std::format("{} requires --out-dir\n{}", command, cmd.help().str());
+  }
+  return std::nullopt;
+}
+
 auto ParseArgs(int argc, char** argv)
     -> std::expected<ParsedArgs, std::string> {
   argparse::ArgumentParser program("lyra");
@@ -173,36 +250,20 @@ auto ParseArgs(int argc, char** argv)
   argparse::ArgumentParser emit_cmd("emit");
   argparse::ArgumentParser emit_cpp_cmd("cpp");
   AddCompilationFlags(emit_cpp_cmd);
-  emit_cpp_cmd.add_argument("-o", "--out-dir")
-      .help("write the self-contained C++ project to this directory")
-      .default_value(std::string{});
+  AddHostBuildFlags(emit_cpp_cmd);
+  AddOutDirFlag(
+      emit_cpp_cmd, "write the self-contained C++ project to this directory");
   emit_cmd.add_subparser(emit_cpp_cmd);
-
-  // The C++ compile path (used by `compile` and `run`) caches a precompiled
-  // header keyed on the runtime tree contents. `--no-pch` short-circuits the
-  // cache (equivalent to setting `LYRA_NO_PCH=1` in the environment), and
-  // `--pch-cache-dir` overrides where the cache lives (used by the test
-  // framework to land cache files inside its per-shard scratch dir).
-  const auto add_pch_flags = [](argparse::ArgumentParser& p) {
-    p.add_argument("--no-pch")
-        .help("disable the precompiled-header cache for this invocation")
-        .default_value(false)
-        .implicit_value(true);
-    p.add_argument("--pch-cache-dir")
-        .help("override the PCH cache directory")
-        .default_value(std::string{});
-  };
 
   argparse::ArgumentParser compile_cmd("compile");
   AddCompilationFlags(compile_cmd);
-  add_pch_flags(compile_cmd);
-  compile_cmd.add_argument("-o", "--out-dir")
-      .help("write the self-contained project and built program here")
-      .default_value(std::string{});
+  AddHostBuildFlags(compile_cmd);
+  AddOutDirFlag(
+      compile_cmd, "write the self-contained project and built program here");
 
   argparse::ArgumentParser run_cmd("run");
   AddCompilationFlags(run_cmd);
-  add_pch_flags(run_cmd);
+  AddHostBuildFlags(run_cmd);
   run_cmd.add_argument("--backend")
       .help("execution backend: cpp (default), jit, aot, or lli")
       .default_value(std::string("cpp"))
@@ -248,45 +309,28 @@ auto ParseArgs(int argc, char** argv)
               dump_cmd.help().str()));
     }
   } else if (program.is_subcommand_used("emit")) {
-    if (emit_cmd.is_subcommand_used("cpp")) {
-      out.cmd = CommandKind::kEmitCpp;
-      BindCompilationFlags(emit_cpp_cmd, out);
-      out.out_dir = emit_cpp_cmd.get<std::string>("--out-dir");
-      if (out.out_dir.empty()) {
-        return std::unexpected(
-            std::format(
-                "emit cpp requires --out-dir\n{}", emit_cpp_cmd.help().str()));
-      }
-    } else {
+    if (!emit_cmd.is_subcommand_used("cpp")) {
       return std::unexpected(
           std::format("emit requires 'cpp'\n{}", emit_cmd.help().str()));
+    }
+    out.cmd = CommandKind::kEmitCpp;
+    BindCompilationFlags(emit_cpp_cmd, out);
+    BindHostBuildFlags(emit_cpp_cmd, out);
+    if (auto e = BindRequiredOutDir(emit_cpp_cmd, "emit cpp", out)) {
+      return std::unexpected(*std::move(e));
     }
   } else if (program.is_subcommand_used("compile")) {
     out.cmd = CommandKind::kCompile;
     BindCompilationFlags(compile_cmd, out);
-    out.no_pch = compile_cmd.get<bool>("--no-pch");
-    out.pch_cache_dir = compile_cmd.get<std::string>("--pch-cache-dir");
-    out.out_dir = compile_cmd.get<std::string>("--out-dir");
-    if (out.out_dir.empty()) {
-      return std::unexpected(
-          std::format(
-              "compile requires --out-dir\n{}", compile_cmd.help().str()));
+    BindHostBuildFlags(compile_cmd, out);
+    if (auto e = BindRequiredOutDir(compile_cmd, "compile", out)) {
+      return std::unexpected(*std::move(e));
     }
   } else if (program.is_subcommand_used("run")) {
     out.cmd = CommandKind::kRun;
     BindCompilationFlags(run_cmd, out);
-    out.no_pch = run_cmd.get<bool>("--no-pch");
-    out.pch_cache_dir = run_cmd.get<std::string>("--pch-cache-dir");
-    const auto backend = run_cmd.get<std::string>("--backend");
-    if (backend == "jit") {
-      out.backend = Backend::kJit;
-    } else if (backend == "aot") {
-      out.backend = Backend::kAot;
-    } else if (backend == "lli") {
-      out.backend = Backend::kLli;
-    } else {
-      out.backend = Backend::kCpp;
-    }
+    BindHostBuildFlags(run_cmd, out);
+    out.backend = ParseBackend(run_cmd.get<std::string>("--backend"));
   } else if (program.is_subcommand_used("cache")) {
     if (cache_cmd.is_subcommand_used("clear")) {
       out.cmd = CommandKind::kCacheClear;
@@ -300,14 +344,311 @@ auto ParseArgs(int argc, char** argv)
   return out;
 }
 
-auto ResolveColorPreference(bool no_color_flag, bool force_color_flag) -> bool {
-  if (no_color_flag) {
-    return false;
+auto UseColor(ColorPreference pref) -> bool {
+  switch (pref) {
+    case ColorPreference::kNever:
+      return false;
+    case ColorPreference::kAlways:
+      return true;
+    case ColorPreference::kAuto:
+      return ::isatty(::fileno(stderr)) != 0;
   }
-  if (force_color_flag) {
-    return true;
+  return false;
+}
+
+// Turns a diagnostic into terminal output. Constructed once, after the
+// terminal has been inspected, and handed to every command so none of them
+// re-decides how rendering works.
+class Reporter {
+ public:
+  explicit Reporter(lyra::diag::RenderOptions opts) : opts_(opts) {
   }
-  return ::isatty(::fileno(stderr)) != 0;
+
+  void operator()(
+      lyra::diag::Diagnostic diag,
+      const lyra::diag::SourceManager* mgr = nullptr) const {
+    fmt::print(stderr, "{}", lyra::diag::RenderDiagnostic(diag, mgr, opts_));
+  }
+
+ private:
+  lyra::diag::RenderOptions opts_;
+};
+
+// PCH policy condensed into one explicit value. The `--no-pch` flag is
+// authoritative; the `LYRA_NO_PCH` environment hint is honored at this
+// boundary only and disappears from every layer below.
+auto MakePchOptions(const ParsedArgs& args) -> lyra::driver::pch::Options {
+  lyra::driver::pch::Options opts;
+  opts.disabled = args.no_pch;
+  if (const char* v = std::getenv("LYRA_NO_PCH");
+      v != nullptr && *v != '\0' && std::string_view(v) != "0") {
+    opts.disabled = true;
+  }
+  if (!args.pch_cache_dir.empty()) {
+    opts.cache_dir_override = std::filesystem::path(args.pch_cache_dir);
+  }
+  return opts;
+}
+
+// What a command receives: the request, what the compiler produced from it,
+// and the channel for anything that goes wrong. A command reads this and
+// returns the process exit code; nothing else about the invocation is visible
+// to it.
+// Members are non-owning pointers rather than references: this outlives
+// nothing, and a reference member would make the type unassignable for no gain.
+struct CommandContext {
+  const ParsedArgs* args;
+  const lyra::compiler::CompileArtifacts* artifacts;
+  const lyra::diag::SourceManager* mgr;
+  std::span<const lyra::driver::DpiLinkInput> dpi_inputs;
+  lyra::driver::SourceFormatting formatting;
+  const Reporter* report;
+  std::string_view program_path;
+};
+
+// Where the bundled runtime headers and archive live, relative to this
+// executable. Reports and returns nullopt when they cannot be found, so a
+// caller only has to leave.
+auto ResolveRuntime(const CommandContext& ctx)
+    -> std::optional<lyra::driver::RuntimeLocation> {
+  auto loc_or =
+      lyra::driver::ResolveRuntimeLocation(std::string(ctx.program_path));
+  if (!loc_or) {
+    (*ctx.report)(lyra::diag::Make(
+        lyra::diag::DiagCode::kHostIoError, std::move(loc_or.error())));
+    return std::nullopt;
+  }
+  return *std::move(loc_or);
+}
+
+// Resolved here rather than up front because `dump` must keep working on a
+// machine with no C++ compiler installed: a missing compiler is fatal only to
+// the commands that would invoke one.
+auto ResolveHostBuild(const CommandContext& ctx)
+    -> std::optional<lyra::driver::HostBuild> {
+  auto cxx_or = lyra::support::FindOnPath(ctx.args->cxx);
+  if (!cxx_or) {
+    (*ctx.report)(lyra::diag::Make(
+        lyra::diag::DiagCode::kHostIoError, std::move(cxx_or.error())));
+    return std::nullopt;
+  }
+  return lyra::driver::HostBuild{
+      .cxx = *std::move(cxx_or), .pch = MakePchOptions(*ctx.args)};
+}
+
+// How far the compiler has to lower for a command to have what it reads.
+// Exhaustive on purpose: a new command must state its own depth rather than
+// inherit one silently.
+auto LoweringDepth(const ParsedArgs& args) -> lyra::compiler::StopAfter {
+  switch (args.cmd) {
+    case CommandKind::kDumpHir:
+      return lyra::compiler::StopAfter::kHir;
+    case CommandKind::kDumpLir:
+    case CommandKind::kDumpLlvm:
+      return lyra::compiler::StopAfter::kLir;
+    case CommandKind::kRun:
+      return args.backend == Backend::kCpp ? lyra::compiler::StopAfter::kMir
+                                           : lyra::compiler::StopAfter::kLir;
+    case CommandKind::kDumpMir:
+    case CommandKind::kEmitCpp:
+    case CommandKind::kCompile:
+    case CommandKind::kCacheClear:
+      return lyra::compiler::StopAfter::kMir;
+  }
+  return lyra::compiler::StopAfter::kMir;
+}
+
+auto RunDumpHir(const CommandContext& ctx) -> int {
+  fmt::print("{}", lyra::hir::DumpHir(*ctx.artifacts->hir_units));
+  return 0;
+}
+
+auto RunDumpMir(const CommandContext& ctx) -> int {
+  for (const auto& unit : *ctx.artifacts->mir_units) {
+    fmt::print("{}", lyra::mir::DumpMir(unit));
+  }
+  fmt::print("{}", lyra::mir::DumpMir(*ctx.artifacts->root_unit));
+  return 0;
+}
+
+auto RunDumpLir(const CommandContext& ctx) -> int {
+  for (const auto& unit : *ctx.artifacts->lir_units) {
+    fmt::print("{}", lyra::lir::DumpLir(unit));
+  }
+  fmt::print("{}", lyra::lir::DumpLir(*ctx.artifacts->root_lir_unit));
+  return 0;
+}
+
+auto RunDumpLlvm(const CommandContext& ctx) -> int {
+  for (const auto& unit : *ctx.artifacts->lir_units) {
+    fmt::print("{}", lyra::backend::llvm_backend::EmitModule(unit).Print());
+  }
+  fmt::print(
+      "{}",
+      lyra::backend::llvm_backend::EmitModule(*ctx.artifacts->root_lir_unit)
+          .Print());
+  return 0;
+}
+
+// Writes the portable project `emit cpp` produces and `compile` then builds.
+// Both need the same runtime and host build, so both get them from here and
+// neither restates the assembly.
+auto AssemblePortableProject(const CommandContext& ctx)
+    -> std::optional<lyra::driver::HostBuild> {
+  auto runtime = ResolveRuntime(ctx);
+  if (!runtime) {
+    return std::nullopt;
+  }
+  auto host = ResolveHostBuild(ctx);
+  if (!host) {
+    return std::nullopt;
+  }
+  auto assembled = lyra::driver::AssembleProject(
+      *runtime, *ctx.artifacts->mir_units, *ctx.artifacts->root_unit,
+      ctx.args->out_dir, ctx.formatting, *host, ctx.dpi_inputs);
+  if (!assembled) {
+    (*ctx.report)(std::move(assembled.error()), ctx.mgr);
+    return std::nullopt;
+  }
+  return host;
+}
+
+auto RunEmitCpp(const CommandContext& ctx) -> int {
+  if (!AssemblePortableProject(ctx)) {
+    return 1;
+  }
+  fmt::print("emitted: {}\n", ctx.args->out_dir);
+  return 0;
+}
+
+auto RunCompile(const CommandContext& ctx) -> int {
+  auto host = AssemblePortableProject(ctx);
+  if (!host) {
+    return 1;
+  }
+  auto built =
+      lyra::driver::BuildProject(ctx.args->out_dir, *host, ctx.dpi_inputs);
+  if (!built) {
+    (*ctx.report)(std::move(built.error()), ctx.mgr);
+    return 1;
+  }
+  fmt::print("compiled: {}\n", built->string());
+  return 0;
+}
+
+auto RunCppBackend(const CommandContext& ctx) -> int {
+  auto runtime = ResolveRuntime(ctx);
+  if (!runtime) {
+    return 1;
+  }
+  auto work_dir = lyra::support::MakeTempDir();
+  if (!work_dir) {
+    (*ctx.report)(lyra::diag::Make(
+        lyra::diag::DiagCode::kHostIoError, std::move(work_dir.error())));
+    return 1;
+  }
+  auto host = ResolveHostBuild(ctx);
+  if (!host) {
+    return 1;
+  }
+  auto exit_code = lyra::driver::RunInPlace(
+      *runtime, *ctx.artifacts->mir_units, *ctx.artifacts->root_unit, *work_dir,
+      ctx.formatting, *host, ctx.args->plusargs, ctx.dpi_inputs);
+  if (!exit_code) {
+    (*ctx.report)(std::move(exit_code.error()), ctx.mgr);
+    return 1;
+  }
+  return *exit_code;
+}
+
+// A JIT image has no link step, so the design's DPI-C sources are compiled
+// into a library the execution session resolves the imports' foreign symbols
+// from. The temp directory holds that library and the ABI header the sources
+// compile against. A design with no foreign sources needs neither.
+auto BuildJitDpiLibrary(const CommandContext& ctx)
+    -> std::optional<std::optional<std::filesystem::path>> {
+  if (ctx.dpi_inputs.empty()) {
+    return std::optional<std::filesystem::path>{};
+  }
+  auto runtime = ResolveRuntime(ctx);
+  if (!runtime) {
+    return std::nullopt;
+  }
+  auto dir = lyra::support::MakeTempDir();
+  if (!dir) {
+    (*ctx.report)(lyra::diag::Make(
+        lyra::diag::DiagCode::kHostIoError, std::move(dir.error())));
+    return std::nullopt;
+  }
+  if (auto surface = lyra::driver::WriteDpiSurface(
+          *runtime, *ctx.artifacts->mir_units, *ctx.artifacts->root_unit, *dir);
+      !surface) {
+    (*ctx.report)(std::move(surface.error()), ctx.mgr);
+    return std::nullopt;
+  }
+  auto host = ResolveHostBuild(ctx);
+  if (!host) {
+    return std::nullopt;
+  }
+  auto built = lyra::driver::BuildDpiSharedLibrary(
+      ctx.dpi_inputs, host->cxx, *dir, *dir);
+  if (!built) {
+    (*ctx.report)(std::move(built.error()), ctx.mgr);
+    return std::nullopt;
+  }
+  return std::optional<std::filesystem::path>{*std::move(built)};
+}
+
+auto RunJitBackend(const CommandContext& ctx) -> int {
+  auto dpi_library = BuildJitDpiLibrary(ctx);
+  if (!dpi_library) {
+    return 1;
+  }
+  // The design-root unit's construct elaborates the whole design, building the
+  // top-level units as its owned children, so the JIT runs the design once from
+  // that one entry rather than per top.
+  return lyra::jit::Execute(
+      *ctx.artifacts->lir_units, *ctx.artifacts->unit_metadata,
+      *ctx.artifacts->root_lir_unit, *ctx.artifacts->root_metadata,
+      *dpi_library);
+}
+
+auto RunBackend(const CommandContext& ctx) -> int {
+  switch (ctx.args->backend) {
+    case Backend::kCpp:
+      return RunCppBackend(ctx);
+    case Backend::kJit:
+      return RunJitBackend(ctx);
+    case Backend::kAot:
+    case Backend::kLli:
+      (*ctx.report)(lyra::diag::Make(
+          lyra::diag::DiagCode::kHostBackendUnimplemented,
+          "this execution backend is not yet implemented"));
+      return 1;
+  }
+  return 1;
+}
+
+auto RunCommand(const CommandContext& ctx) -> int {
+  switch (ctx.args->cmd) {
+    case CommandKind::kDumpHir:
+      return RunDumpHir(ctx);
+    case CommandKind::kDumpMir:
+      return RunDumpMir(ctx);
+    case CommandKind::kDumpLir:
+      return RunDumpLir(ctx);
+    case CommandKind::kDumpLlvm:
+      return RunDumpLlvm(ctx);
+    case CommandKind::kEmitCpp:
+      return RunEmitCpp(ctx);
+    case CommandKind::kCompile:
+      return RunCompile(ctx);
+    case CommandKind::kRun:
+      return RunBackend(ctx);
+    case CommandKind::kCacheClear:
+      break;
+  }
+  throw lyra::InternalError("cache clear reached the compiling dispatch");
 }
 
 }  // namespace
@@ -319,17 +660,9 @@ auto main(int argc, char** argv) -> int {
         raw_args.empty() ? std::string{} : std::string(raw_args.front());
     auto parsed = ParseArgs(argc, argv);
     const bool use_color =
-        parsed.has_value()
-            ? ResolveColorPreference(parsed->no_color, parsed->force_color)
-            : ResolveColorPreference(false, false);
-    const lyra::diag::RenderOptions render_opts{
-        .use_color = use_color, .show_source_snippet = true};
-
-    auto report = [&](lyra::diag::Diagnostic diag,
-                      const lyra::diag::SourceManager* mgr = nullptr) {
-      fmt::print(
-          stderr, "{}", lyra::diag::RenderDiagnostic(diag, mgr, render_opts));
-    };
+        UseColor(parsed.has_value() ? parsed->color : ColorPreference::kAuto);
+    const Reporter report{lyra::diag::RenderOptions{
+        .use_color = use_color, .show_source_snippet = true}};
 
     if (!parsed) {
       report(
@@ -337,30 +670,13 @@ auto main(int argc, char** argv) -> int {
               lyra::diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
       return 1;
     }
-    auto& args = *parsed;
+    const auto& args = *parsed;
 
-    // PCH options condensed into a single explicit value passed down to the
-    // build helpers. The `--no-pch` flag is authoritative; the `LYRA_NO_PCH`
-    // environment hint is honored at this boundary only and disappears from
-    // every lower layer.
-    const auto pch_opts = [&] {
-      lyra::driver::pch::Options o;
-      o.disabled = args.no_pch;
-      if (const char* v = std::getenv("LYRA_NO_PCH");
-          v != nullptr && *v != '\0' && std::string_view(v) != "0") {
-        o.disabled = true;
-      }
-      if (!args.pch_cache_dir.empty()) {
-        o.cache_dir_override = std::filesystem::path(args.pch_cache_dir);
-      }
-      return o;
-    }();
-
-    // `cache clear` does not consult a project, take input files, or invoke
-    // the compiler pipeline. Dispatch it before the compilation-input checks
-    // below so it works whether or not a project is configured.
+    // `cache clear` consults no project, takes no input files, and never
+    // reaches the compiler. Dispatch it before the input checks below so it
+    // works whether or not a project is configured.
     if (args.cmd == CommandKind::kCacheClear) {
-      auto cleared_or = lyra::driver::pch::Clear(pch_opts);
+      auto cleared_or = lyra::driver::pch::Clear(MakePchOptions(args));
       if (!cleared_or) {
         report(std::move(cleared_or.error()));
         return 1;
@@ -386,9 +702,9 @@ auto main(int argc, char** argv) -> int {
       return 1;
     }
 
-    // Classify and check the DPI-C link inputs before compiling anything, so a
-    // mistyped path is reported against the command line rather than after a
-    // full frontend and lowering pass.
+    // Classified before compiling anything, so a mistyped path is reported
+    // against the command line rather than after a full frontend and lowering
+    // pass.
     auto dpi_inputs =
         lyra::driver::ValidateDpiLinkInputs(args.dpi_link_sources);
     if (!dpi_inputs) {
@@ -397,22 +713,8 @@ auto main(int argc, char** argv) -> int {
     }
 
     lyra::diag::DiagnosticSink sink;
-    const auto stop_after = [&] {
-      switch (args.cmd) {
-        case CommandKind::kDumpHir:
-          return lyra::compiler::StopAfter::kHir;
-        case CommandKind::kDumpLir:
-        case CommandKind::kDumpLlvm:
-          return lyra::compiler::StopAfter::kLir;
-        case CommandKind::kRun:
-          return args.backend == Backend::kCpp
-                     ? lyra::compiler::StopAfter::kMir
-                     : lyra::compiler::StopAfter::kLir;
-        default:
-          return lyra::compiler::StopAfter::kMir;
-      }
-    }();
-    auto result = lyra::compiler::Compile(args.input, sink, stop_after);
+    auto result =
+        lyra::compiler::Compile(args.input, sink, LoweringDepth(args));
 
     // `run` executes the simulation; its stdout/stderr are the simulation's
     // own, so compile-phase warnings must not bleed into them. Surface slang
@@ -429,183 +731,32 @@ auto main(int argc, char** argv) -> int {
       }
     }
 
+    const lyra::diag::SourceManager* mgr =
+        result.artifacts.parse ? &result.artifacts.parse->diag_sources
+                               : nullptr;
     if (sink.HasErrors()) {
-      const lyra::diag::SourceManager* mgr =
-          result.artifacts.parse ? &result.artifacts.parse->diag_sources
-                                 : nullptr;
       fmt::print(
-          stderr, "{}", lyra::diag::RenderDiagnostics(sink, mgr, render_opts));
+          stderr, "{}",
+          lyra::diag::RenderDiagnostics(
+              sink, mgr,
+              lyra::diag::RenderOptions{
+                  .use_color = use_color, .show_source_snippet = true}));
       return 1;
     }
     if (!result.slang_ok) {
       return 1;
     }
 
-    if (args.cmd == CommandKind::kDumpHir) {
-      fmt::print("{}", lyra::hir::DumpHir(*result.artifacts.hir_units));
-      return 0;
-    }
-
-    const lyra::diag::SourceManager* mgr =
-        result.artifacts.parse ? &result.artifacts.parse->diag_sources
-                               : nullptr;
-
-    auto resolve_runtime =
-        [&]() -> std::optional<lyra::driver::RuntimeLocation> {
-      auto loc_or = lyra::driver::ResolveRuntimeLocation(program_path);
-      if (!loc_or) {
-        report(
-            lyra::diag::Make(
-                lyra::diag::DiagCode::kHostIoError, std::move(loc_or.error())));
-        return std::nullopt;
-      }
-      return *loc_or;
-    };
-
-    switch (args.cmd) {
-      case CommandKind::kDumpMir:
-        for (const auto& unit : *result.artifacts.mir_units) {
-          fmt::print("{}", lyra::mir::DumpMir(unit));
-        }
-        fmt::print("{}", lyra::mir::DumpMir(*result.artifacts.root_unit));
-        return 0;
-      case CommandKind::kDumpLir:
-        for (const auto& unit : *result.artifacts.lir_units) {
-          fmt::print("{}", lyra::lir::DumpLir(unit));
-        }
-        fmt::print("{}", lyra::lir::DumpLir(*result.artifacts.root_lir_unit));
-        return 0;
-      case CommandKind::kDumpLlvm:
-        for (const auto& unit : *result.artifacts.lir_units) {
-          fmt::print(
-              "{}", lyra::backend::llvm_backend::EmitModule(unit).Print());
-        }
-        fmt::print(
-            "{}", lyra::backend::llvm_backend::EmitModule(
-                      *result.artifacts.root_lir_unit)
-                      .Print());
-        return 0;
-      case CommandKind::kEmitCpp: {
-        auto runtime = resolve_runtime();
-        if (!runtime) {
-          return 1;
-        }
-        const std::filesystem::path dir = args.out_dir;
-        const auto& units = *result.artifacts.mir_units;
-        const auto& root = *result.artifacts.root_unit;
-        auto assembled = lyra::driver::AssembleProject(
-            *runtime, units, root, dir, args.format, *dpi_inputs);
-        if (!assembled) {
-          report(std::move(assembled.error()), mgr);
-          return 1;
-        }
-        fmt::print("emitted: {}\n", dir.string());
-        return 0;
-      }
-      case CommandKind::kCompile: {
-        auto runtime = resolve_runtime();
-        if (!runtime) {
-          return 1;
-        }
-        const std::filesystem::path dir = args.out_dir;
-        const auto& units = *result.artifacts.mir_units;
-        const auto& root = *result.artifacts.root_unit;
-        auto assembled = lyra::driver::AssembleProject(
-            *runtime, units, root, dir, args.format, *dpi_inputs);
-        if (!assembled) {
-          report(std::move(assembled.error()), mgr);
-          return 1;
-        }
-        auto built = lyra::driver::BuildProject(dir, pch_opts, *dpi_inputs);
-        if (!built) {
-          report(std::move(built.error()), mgr);
-          return 1;
-        }
-        fmt::print("compiled: {}\n", built->string());
-        return 0;
-      }
-      case CommandKind::kRun:
-        switch (args.backend) {
-          case Backend::kJit: {
-            // A JIT image has no link step, so the design's DPI-C sources are
-            // compiled into a library the execution session resolves the
-            // imports' foreign symbols from. The temp dir holds that library
-            // and the ABI header the sources compile against.
-            std::optional<std::filesystem::path> dpi_library;
-            if (!dpi_inputs->empty()) {
-              auto runtime = resolve_runtime();
-              if (!runtime) {
-                return 1;
-              }
-              auto dpi_dir = lyra::support::MakeTempDir();
-              if (!dpi_dir) {
-                report(
-                    lyra::diag::Make(
-                        lyra::diag::DiagCode::kHostIoError,
-                        std::move(dpi_dir.error())));
-                return 1;
-              }
-              if (auto surface = lyra::driver::WriteDpiSurface(
-                      *runtime, *result.artifacts.mir_units,
-                      *result.artifacts.root_unit, *dpi_dir);
-                  !surface) {
-                report(std::move(surface.error()), mgr);
-                return 1;
-              }
-              auto built = lyra::driver::BuildDpiSharedLibrary(
-                  *dpi_inputs, *dpi_dir, *dpi_dir);
-              if (!built) {
-                report(std::move(built.error()), mgr);
-                return 1;
-              }
-              dpi_library = *std::move(built);
-            }
-            // The design-root unit's construct elaborates the whole design,
-            // building the top-level units as its owned children, so the JIT
-            // runs the design once from that one entry rather than per top.
-            return lyra::jit::Execute(
-                *result.artifacts.lir_units, *result.artifacts.unit_metadata,
-                *result.artifacts.root_lir_unit,
-                *result.artifacts.root_metadata, dpi_library);
-          }
-          case Backend::kAot:
-          case Backend::kLli:
-            report(
-                lyra::diag::Make(
-                    lyra::diag::DiagCode::kHostBackendUnimplemented,
-                    "this execution backend is not yet implemented"));
-            return 1;
-          case Backend::kCpp: {
-            auto runtime = resolve_runtime();
-            if (!runtime) {
-              return 1;
-            }
-            auto tmp_or = lyra::support::MakeTempDir();
-            if (!tmp_or) {
-              report(
-                  lyra::diag::Make(
-                      lyra::diag::DiagCode::kHostIoError,
-                      std::move(tmp_or.error())));
-              return 1;
-            }
-            const auto& units = *result.artifacts.mir_units;
-            const auto& root = *result.artifacts.root_unit;
-            auto exit_code = lyra::driver::RunInPlace(
-                *runtime, units, root, *tmp_or, args.format, pch_opts,
-                args.plusargs, *dpi_inputs);
-            if (!exit_code) {
-              report(std::move(exit_code.error()), mgr);
-              return 1;
-            }
-            return *exit_code;
-          }
-        }
-        break;
-      case CommandKind::kDumpHir:
-      case CommandKind::kCacheClear:
-        break;
-    }
-    return 0;
+    return RunCommand(
+        CommandContext{
+            .args = &args,
+            .artifacts = &result.artifacts,
+            .mgr = mgr,
+            .dpi_inputs = *dpi_inputs,
+            .formatting = args.format ? lyra::driver::SourceFormatting::kOn
+                                      : lyra::driver::SourceFormatting::kOff,
+            .report = &report,
+            .program_path = program_path});
   } catch (const lyra::InternalError& e) {
     fmt::print(stderr, "{}", lyra::diag::RenderInternalError(e.what()));
     return 2;

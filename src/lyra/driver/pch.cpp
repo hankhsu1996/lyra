@@ -88,11 +88,15 @@ auto ResolveCacheDir(const Options& opts)
   return std::unexpected("no writable PCH cache directory found");
 }
 
-// Identity of the compiler binary, condensed into a 64-bit hash. The
-// realpath catches `$CXX` pointing at a different installation; the mtime
-// catches an in-place upgrade of the same binary. Together they ensure two
-// clang versions never share a PCH file (the PCH binary format is
-// clang-version-sensitive).
+// Identity of the compiler, condensed into a 64-bit hash. The realpath
+// catches `--cxx` naming a different installation; the mtime catches an
+// in-place upgrade of the same file. Together they ensure two compilers never
+// share a PCH file, the format being clang-version- and stdlib-sensitive.
+//
+// A wrapper script counts as its own compiler here, which is exactly right:
+// editing the flags it passes changes its mtime and invalidates the cache, so
+// a PCH built against one standard library can never be reused against
+// another.
 auto HashCxxIdentity(const std::filesystem::path& cxx) -> std::uint64_t {
   std::error_code ec;
   const auto canonical = std::filesystem::canonical(cxx, ec);
