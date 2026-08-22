@@ -5,7 +5,7 @@ input:
   project: false
   top: Top
   files: [main.sv]
-  args:
+  program_args:
     - "+BOOL_ONLY"
     - "+INT=42"
     - "+HEX=FF"

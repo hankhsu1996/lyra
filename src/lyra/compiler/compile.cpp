@@ -1,8 +1,12 @@
 #include "lyra/compiler/compile.hpp"
 
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
+
+#include <slang/diagnostics/TextDiagnosticClient.h>
+#include <slang/driver/Driver.h>
 
 #include "lyra/compiler/design_root.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
@@ -17,19 +21,23 @@
 namespace lyra::compiler {
 
 auto Compile(
-    const frontend::CompilationInput& input, diag::DiagnosticSink& sink,
-    StopAfter stop_after) -> CompileResult {
+    slang::driver::Driver& driver, LoweringPolicy policy,
+    diag::DiagnosticSink& sink, StopAfter stop_after) -> CompileResult {
   CompileResult result;
 
-  auto parse = frontend::LoadFiles(input, sink);
+  auto parse = frontend::Elaborate(driver);
   if (!parse) {
+    result.slang_ok = false;
+    result.slang_diagnostics = driver.textDiagClient->getString();
     return result;
   }
   result.artifacts.parse = std::move(*parse);
 
-  // Stop early if slang reports parse/elaboration errors; running
-  // AST->HIR over a broken AST would emit confusing follow-on errors.
-  result.slang_ok = !frontend::HasSlangErrors(*result.artifacts.parse);
+  // Every slang diagnostic is issued here, once, so the engine's error count
+  // is the whole account of the front end. Running AST->HIR over an AST slang
+  // rejected would bury that account under follow-on errors, so stop instead.
+  result.slang_ok = frontend::ReportSlangDiagnostics(
+      driver, *result.artifacts.parse->compilation, result.slang_diagnostics);
   if (!result.slang_ok) {
     return result;
   }
@@ -41,7 +49,7 @@ auto Compile(
   const lowering::ast_to_hir::LowerCompilationFacts facts(
       *result.artifacts.parse->compilation,
       result.artifacts.parse->source_mapper, sensitivity_analyzer,
-      input.disable_assertions);
+      policy.disable_assertions);
   result.artifacts.top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(
       *result.artifacts.parse->compilation);
 

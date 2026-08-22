@@ -76,6 +76,8 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 
 **IMPORTANT: Describe the outcome, not the process.** The commit message reflects what changed, not how you got there.
 
+**Do NOT commit secrets** -- credentials, tokens, `.env` files.
+
 ## Branch Rules
 
 **Branch name format:** `<type>/<short-description>`
@@ -101,7 +103,9 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 3. Format (clang-format, prettier, buildifier - once each, write mode)
 4. Lint and policy (buildifier lint + four `check_*.py`)
 5. **Check git status again** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
-6. Stage files with `git add <files>` (do NOT use `git add -A`)
+6. Stage files with `git add <files>` (do NOT use `git add -A`). **Staging is the user's signal:**
+   a file already staged has been reviewed, so commit what is staged and never unstage or
+   `git restore --staged` on their behalf.
 7. Run `git commit` as a separate command (do NOT chain with add)
 
 **Note:** Never use `git commit --amend` if the previous commit has been pushed. If `git status` shows "Your branch is up to date with origin", the last commit is pushed - create a new commit instead.
