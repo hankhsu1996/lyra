@@ -1,13 +1,16 @@
 #include <algorithm>
-#include <argparse/argparse.hpp>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <iterator>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -16,6 +19,8 @@
 #include <vector>
 
 #include <fmt/core.h>
+#include <slang/driver/Driver.h>
+#include <slang/util/CommandLine.h>
 
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -38,7 +43,8 @@
 
 namespace {
 
-enum class CommandKind {
+enum class CommandKind : std::uint8_t {
+  kCheck,
   kDumpHir,
   kDumpMir,
   kDumpLir,
@@ -48,6 +54,58 @@ enum class CommandKind {
   kRun,
   kCacheClear,
 };
+
+// Every command in one place: how it is spelled, and the one fact a command
+// decides rather than inherits. A command is named by a verb and an object,
+// with an empty object for a verb that stands alone. The usage text, the parse,
+// and the output-directory check all read this table, so adding a command is
+// one row rather than four lists that drift apart.
+struct CommandSpec {
+  std::string_view verb;
+  std::string_view object;
+  CommandKind kind;
+  bool requires_out_dir;
+};
+
+// Entries sharing a verb stay adjacent: the usage line groups them by that
+// adjacency into `dump hir|mir|lir|llvm`.
+constexpr auto kCommands = std::to_array<CommandSpec>(
+    {{.verb = "check",
+      .object = "",
+      .kind = CommandKind::kCheck,
+      .requires_out_dir = false},
+     {.verb = "dump",
+      .object = "hir",
+      .kind = CommandKind::kDumpHir,
+      .requires_out_dir = false},
+     {.verb = "dump",
+      .object = "mir",
+      .kind = CommandKind::kDumpMir,
+      .requires_out_dir = false},
+     {.verb = "dump",
+      .object = "lir",
+      .kind = CommandKind::kDumpLir,
+      .requires_out_dir = false},
+     {.verb = "dump",
+      .object = "llvm",
+      .kind = CommandKind::kDumpLlvm,
+      .requires_out_dir = false},
+     {.verb = "emit",
+      .object = "cpp",
+      .kind = CommandKind::kEmitCpp,
+      .requires_out_dir = true},
+     {.verb = "compile",
+      .object = "",
+      .kind = CommandKind::kCompile,
+      .requires_out_dir = true},
+     {.verb = "run",
+      .object = "",
+      .kind = CommandKind::kRun,
+      .requires_out_dir = false},
+     {.verb = "cache",
+      .object = "clear",
+      .kind = CommandKind::kCacheClear,
+      .requires_out_dir = false}});
 
 // How `run` executes the design. The C++ backend emits a C++ project and builds
 // it; the LLVM backends share one emitted module and differ only in how they
@@ -60,115 +118,87 @@ enum class ColorPreference : std::uint8_t { kAuto, kAlways, kNever };
 
 struct ParsedArgs {
   CommandKind cmd = CommandKind::kEmitCpp;
-  bool no_project = false;
   ColorPreference color = ColorPreference::kAuto;
+  Backend backend = Backend::kCpp;
+  lyra::compiler::LoweringPolicy lowering;
+  bool no_project = false;
   bool format = false;
   bool no_pch = false;
-  Backend backend = Backend::kCpp;
   std::string pch_cache_dir;
   // The host C++ compiler the C++ backend builds emitted code with: a program
   // name or path, never flags.
   std::string cxx;
-  lyra::frontend::CompilationInput input;
   std::string out_dir;
-  // LRM 21.6 plusarg pass-through: `+`-prefixed positional entries collected
-  // from the trailing bucket at parse time. `run` forwards them verbatim to
-  // the built program's argv; other subcommands never consult them.
-  std::vector<std::string> plusargs;
+  // Forwarded verbatim as the built program's argv, which is where LRM 21.6
+  // plusargs land. Everything after a standalone `--`, so a simulation
+  // argument never has to be told apart from a compiler one by its spelling.
+  std::vector<std::string> child_args;
   // LRM 35 DPI-C link inputs: native source files (`.c` / `.cpp`) providing the
   // foreign symbols an `import "DPI-C"` calls. Compiled and linked into the
   // built program alongside the emitted C++.
   std::vector<std::string> dpi_link_sources;
 };
 
-void AddCompilationFlags(argparse::ArgumentParser& cmd) {
-  cmd.add_argument("--no-project")
-      .help("operate in direct file mode (no lyra.toml lookup)")
-      .default_value(false)
-      .implicit_value(true);
-  cmd.add_argument("--no-color")
-      .help("disable ANSI color in diagnostics")
-      .default_value(false)
-      .implicit_value(true);
-  cmd.add_argument("--color")
-      .help("force ANSI color in diagnostics (override TTY detection)")
-      .default_value(false)
-      .implicit_value(true);
-  cmd.add_argument("--top")
-      .help("top module name")
-      .default_value(std::string{});
-  cmd.add_argument("-I", "--include-directory")
-      .help("add include search directory")
-      .append();
-  cmd.add_argument("-D", "--define-macro")
-      .help("define preprocessor macro (NAME or NAME=VALUE)")
-      .append();
-  cmd.add_argument("-G")
-      .help("override module parameter (NAME=VALUE)")
-      .metavar("NAME=VALUE")
-      .append();
-  cmd.add_argument("--single-unit")
-      .help("compile all files as a single compilation unit")
-      .default_value(false)
-      .implicit_value(true);
-  cmd.add_argument("--disable-assertions")
-      .help(
-          "skip assertion constructs during lowering instead of rejecting them")
-      .default_value(false)
-      .implicit_value(true);
-  cmd.add_argument("--format")
-      .help("reformat the emitted C++ with clang-format (skipped if absent)")
-      .default_value(false)
-      .implicit_value(true);
-  cmd.add_argument("--dpi-link")
-      .help("native source (.c/.cpp) providing DPI-C foreign symbols to link")
-      .append();
-  cmd.add_argument("files").help("SystemVerilog source files").remaining();
+// What Lyra adds to the front end's command line. Every field is optional
+// because that is how the parser says "not given", which is a different fact
+// from the default Lyra then chooses.
+struct CliOptions {
+  std::optional<bool> no_project;
+  std::optional<bool> color;
+  std::optional<bool> no_color;
+  std::optional<bool> format;
+  std::optional<bool> disable_assertions;
+  std::optional<bool> no_pch;
+  std::optional<std::string> pch_cache_dir;
+  std::optional<std::string> cxx;
+  std::optional<std::string> out_dir;
+  std::optional<std::string> backend;
+  std::vector<std::string> dpi_link;
+};
+
+// Registers Lyra's own options beside the front end's on one command line, so
+// a build that already knows how to describe a design to slang describes it to
+// Lyra the same way, and one help text covers both.
+void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
+  cmd.add(
+      "--no-project", opts.no_project,
+      "operate in direct file mode (no lyra.toml lookup)");
+  cmd.add(
+      "--color", opts.color,
+      "force ANSI color in diagnostics, overriding TTY detection");
+  cmd.add("--no-color", opts.no_color, "disable ANSI color in diagnostics");
+  cmd.add(
+      "--format", opts.format,
+      "reformat the emitted C++ with clang-format (skipped if absent)");
+  cmd.add(
+      "--disable-assertions", opts.disable_assertions,
+      "skip assertion constructs during lowering instead of rejecting them");
+  cmd.add(
+      "--no-pch", opts.no_pch,
+      "disable the precompiled-header cache for this invocation");
+  cmd.add(
+      "--pch-cache-dir", opts.pch_cache_dir, "override the PCH cache directory",
+      "<dir>", slang::CommandLineFlags::FilePath);
+  cmd.add(
+      "--cxx", opts.cxx,
+      "host C++ compiler for the C++ backend: a path, or a name found on PATH",
+      "<program>");
+  cmd.add(
+      "-o,--out-dir", opts.out_dir, "write output to this directory", "<dir>",
+      slang::CommandLineFlags::FilePath);
+  cmd.add(
+      "--backend", opts.backend, "how `run` executes the design",
+      "cpp|jit|aot|lli");
+  cmd.add(
+      "--dpi-link", opts.dpi_link,
+      "native source (.c/.cpp) providing DPI-C foreign symbols to link",
+      "<file>", slang::CommandLineFlags::FilePath);
 }
 
-void BindCompilationFlags(
-    const argparse::ArgumentParser& cmd, ParsedArgs& out) {
-  out.no_project = cmd.get<bool>("--no-project");
-  if (cmd.get<bool>("--no-color")) {
-    out.color = ColorPreference::kNever;
-  } else if (cmd.get<bool>("--color")) {
-    out.color = ColorPreference::kAlways;
-  }
-  out.input.top = cmd.get<std::string>("--top");
-  if (auto incs =
-          cmd.present<std::vector<std::string>>("--include-directory")) {
-    out.input.incdirs = std::move(*incs);
-  }
-  if (auto dpi = cmd.present<std::vector<std::string>>("--dpi-link")) {
-    out.dpi_link_sources = std::move(*dpi);
-  }
-  if (auto defs = cmd.present<std::vector<std::string>>("--define-macro")) {
-    out.input.defines = std::move(*defs);
-  }
-  if (auto ovr = cmd.present<std::vector<std::string>>("-G")) {
-    out.input.param_overrides = std::move(*ovr);
-  }
-  out.input.single_unit = cmd.get<bool>("--single-unit");
-  out.input.disable_assertions = cmd.get<bool>("--disable-assertions");
-  out.format = cmd.get<bool>("--format");
-  if (auto files = cmd.present<std::vector<std::string>>("files")) {
-    // argparse collects `.sv` paths and `+`-prefixed plusargs in the same
-    // remaining-bucket; sort them here so downstream stages see the natural
-    // shape (source files vs runtime tokens).
-    for (auto& f : *files) {
-      if (!f.empty() && f.front() == '+') {
-        out.plusargs.push_back(std::move(f));
-      } else {
-        out.input.files.push_back(std::move(f));
-      }
-    }
-  }
-}
-
-// The spelling of each execution backend on the command line. `--backend`
-// restricts the value to exactly these, so a name outside the table means the
-// two lists have drifted apart rather than that a user typed something odd.
-auto ParseBackend(std::string_view name) -> Backend {
+// The spelling of each execution backend on the command line. Returns nullopt
+// for a name outside the table, which is a user typing a value the command
+// line cannot restrict rather than a drift between two internal lists.
+auto ParseBackend(std::string_view name) -> std::optional<Backend> {
   static constexpr std::array<std::pair<std::string_view, Backend>, 4> kNames =
       {{{"cpp", Backend::kCpp},
         {"jit", Backend::kJit},
@@ -177,169 +207,142 @@ auto ParseBackend(std::string_view name) -> Backend {
   const auto* const it =
       std::ranges::find(kNames, name, &decltype(kNames)::value_type::first);
   if (it == kNames.end()) {
-    throw lyra::InternalError(
-        std::format("--backend accepted an unmapped value '{}'", name));
+    return std::nullopt;
   }
   return it->second;
 }
 
-// How the host builds emitted C++. `--cxx` names a program, never a flag list:
-// a compiler that needs configuration to be a conforming C++23 implementation
-// is named through a wrapper script or a driver config file that supplies it.
-// The precompiled header caches the parse of the runtime headers; `--no-pch`
-// skips it for one invocation and `--pch-cache-dir` moves it, which is how a
-// test shard keeps its cache inside its own scratch directory.
-//
-// Registration and binding sit together because nothing else keeps them in
-// step: a flag added to one and forgotten in the other fails silently.
-void AddHostBuildFlags(argparse::ArgumentParser& cmd) {
-  cmd.add_argument("--cxx")
-      .help(
-          "host C++ compiler for the C++ backend: a path, or a name found on "
-          "PATH (default: clang++)")
-      .default_value(std::string("clang++"));
-  cmd.add_argument("--no-pch")
-      .help("disable the precompiled-header cache for this invocation")
-      .default_value(false)
-      .implicit_value(true);
-  cmd.add_argument("--pch-cache-dir")
-      .help("override the PCH cache directory")
-      .default_value(std::string{});
-}
-
-void BindHostBuildFlags(const argparse::ArgumentParser& cmd, ParsedArgs& out) {
-  out.cxx = cmd.get<std::string>("--cxx");
-  out.no_pch = cmd.get<bool>("--no-pch");
-  out.pch_cache_dir = cmd.get<std::string>("--pch-cache-dir");
-}
-
-void AddOutDirFlag(argparse::ArgumentParser& cmd, const char* help) {
-  cmd.add_argument("-o", "--out-dir").help(help).default_value(std::string{});
-}
-
-// Binds `--out-dir`, which every command that has it also requires. The error
-// names the command's own usage, so the caller supplies its parser.
-auto BindRequiredOutDir(
-    const argparse::ArgumentParser& cmd, std::string_view command,
-    ParsedArgs& out) -> std::optional<std::string> {
-  out.out_dir = cmd.get<std::string>("--out-dir");
-  if (out.out_dir.empty()) {
-    return std::format("{} requires --out-dir\n{}", command, cmd.help().str());
+auto FindCommand(CommandKind cmd) -> const CommandSpec& {
+  const auto* const it = std::ranges::find(kCommands, cmd, &CommandSpec::kind);
+  if (it == kCommands.end()) {
+    throw lyra::InternalError("command kind is absent from the command table");
   }
-  return std::nullopt;
+  return *it;
 }
 
-auto ParseArgs(int argc, char** argv)
-    -> std::expected<ParsedArgs, std::string> {
-  argparse::ArgumentParser program("lyra");
+auto CommandSpelling(CommandKind cmd) -> std::string {
+  const auto& spec = FindCommand(cmd);
+  return spec.object.empty() ? std::string(spec.verb)
+                             : std::format("{} {}", spec.verb, spec.object);
+}
 
-  argparse::ArgumentParser dump_cmd("dump");
-  argparse::ArgumentParser dump_hir_cmd("hir");
-  argparse::ArgumentParser dump_mir_cmd("mir");
-  argparse::ArgumentParser dump_lir_cmd("lir");
-  argparse::ArgumentParser dump_llvm_cmd("llvm");
-  AddCompilationFlags(dump_hir_cmd);
-  AddCompilationFlags(dump_mir_cmd);
-  AddCompilationFlags(dump_lir_cmd);
-  AddCompilationFlags(dump_llvm_cmd);
-  dump_cmd.add_subparser(dump_hir_cmd);
-  dump_cmd.add_subparser(dump_mir_cmd);
-  dump_cmd.add_subparser(dump_lir_cmd);
-  dump_cmd.add_subparser(dump_llvm_cmd);
+// Which commands write their output somewhere the caller has to name.
+auto RequiresOutDir(CommandKind cmd) -> bool {
+  return FindCommand(cmd).requires_out_dir;
+}
 
-  argparse::ArgumentParser emit_cmd("emit");
-  argparse::ArgumentParser emit_cpp_cmd("cpp");
-  AddCompilationFlags(emit_cpp_cmd);
-  AddHostBuildFlags(emit_cpp_cmd);
-  AddOutDirFlag(
-      emit_cpp_cmd, "write the self-contained C++ project to this directory");
-  emit_cmd.add_subparser(emit_cpp_cmd);
+auto CommandList() -> std::string {
+  std::string commands;
+  std::string_view grouped_verb;
+  for (const auto& spec : kCommands) {
+    if (spec.verb == grouped_verb) {
+      commands += std::format("|{}", spec.object);
+      continue;
+    }
+    if (!commands.empty()) {
+      commands += ", ";
+    }
+    commands += CommandSpelling(spec.kind);
+    grouped_verb = spec.verb;
+  }
+  return commands;
+}
 
-  argparse::ArgumentParser compile_cmd("compile");
-  AddCompilationFlags(compile_cmd);
-  AddHostBuildFlags(compile_cmd);
-  AddOutDirFlag(
-      compile_cmd, "write the self-contained project and built program here");
+auto Usage() -> std::string {
+  return std::format(
+      "usage: lyra <command> [options] [files...] [-- <program args>]\n"
+      "commands: {}\n",
+      CommandList());
+}
 
-  argparse::ArgumentParser run_cmd("run");
-  AddCompilationFlags(run_cmd);
-  AddHostBuildFlags(run_cmd);
-  run_cmd.add_argument("--backend")
-      .help("execution backend: cpp (default), jit, aot, or lli")
-      .default_value(std::string("cpp"))
-      .choices("cpp", "jit", "aot", "lli");
+// The objects a verb accepts, spelled as prose for the message a caller reads
+// when they named the verb but not the object.
+auto ObjectChoices(std::string_view verb) -> std::string {
+  std::vector<std::string> quoted;
+  for (const auto& spec : kCommands) {
+    if (spec.verb == verb && !spec.object.empty()) {
+      quoted.push_back(std::format("'{}'", spec.object));
+    }
+  }
+  std::string out;
+  for (std::size_t i = 0; i < quoted.size(); ++i) {
+    if (i > 0) {
+      out += quoted.size() > 2 ? ", " : " ";
+      if (i + 1 == quoted.size()) {
+        out += "or ";
+      }
+    }
+    out += quoted[i];
+  }
+  return out;
+}
 
-  argparse::ArgumentParser cache_cmd("cache");
-  argparse::ArgumentParser cache_clear_cmd("clear");
-  cache_clear_cmd.add_description(
-      "remove the active precompiled-header cache directory's contents");
-  cache_cmd.add_subparser(cache_clear_cmd);
+// Reads the leading words that name the command. They are positional and
+// consumed here rather than registered as options, because a command chooses
+// which options even apply.
+auto ParseCommand(std::span<char* const> words)
+    -> std::expected<std::pair<CommandKind, std::size_t>, std::string> {
+  const auto word = [&](std::size_t i) -> std::string_view {
+    return i < words.size() ? std::string_view(words[i]) : std::string_view{};
+  };
+  const auto verb = word(0);
+  const auto object = word(1);
 
-  program.add_subparser(dump_cmd);
-  program.add_subparser(emit_cmd);
-  program.add_subparser(compile_cmd);
-  program.add_subparser(run_cmd);
-  program.add_subparser(cache_cmd);
-
-  try {
-    program.parse_args(argc, argv);
-  } catch (const std::exception& e) {
+  bool verb_exists = false;
+  for (const auto& spec : kCommands) {
+    if (spec.verb != verb) {
+      continue;
+    }
+    verb_exists = true;
+    if (spec.object.empty()) return std::pair{spec.kind, 1UZ};
+    if (spec.object == object) return std::pair{spec.kind, 2UZ};
+  }
+  if (verb_exists) {
     return std::unexpected(
-        std::format("{}\n{}", e.what(), program.help().str()));
+        std::format("{} requires {}", verb, ObjectChoices(verb)));
+  }
+  return std::unexpected(Usage());
+}
+
+// Turns what the parser recorded into the choices the rest of the run needs,
+// applying Lyra's defaults and rejecting a value no command can act on.
+auto ResolveCliOptions(
+    const CliOptions& opts, CommandKind cmd,
+    std::vector<std::string> child_args)
+    -> std::expected<ParsedArgs, std::string> {
+  ParsedArgs out;
+  out.cmd = cmd;
+  out.child_args = std::move(child_args);
+  out.no_project = opts.no_project.value_or(false);
+  out.format = opts.format.value_or(false);
+  out.no_pch = opts.no_pch.value_or(false);
+  out.lowering.disable_assertions = opts.disable_assertions.value_or(false);
+  out.pch_cache_dir = opts.pch_cache_dir.value_or("");
+  out.cxx = opts.cxx.value_or("clang++");
+  out.out_dir = opts.out_dir.value_or("");
+  out.dpi_link_sources = opts.dpi_link;
+
+  if (opts.no_color.value_or(false)) {
+    out.color = ColorPreference::kNever;
+  } else if (opts.color.value_or(false)) {
+    out.color = ColorPreference::kAlways;
   }
 
-  ParsedArgs out;
-  if (program.is_subcommand_used("dump")) {
-    if (dump_cmd.is_subcommand_used("hir")) {
-      out.cmd = CommandKind::kDumpHir;
-      BindCompilationFlags(dump_hir_cmd, out);
-    } else if (dump_cmd.is_subcommand_used("mir")) {
-      out.cmd = CommandKind::kDumpMir;
-      BindCompilationFlags(dump_mir_cmd, out);
-    } else if (dump_cmd.is_subcommand_used("lir")) {
-      out.cmd = CommandKind::kDumpLir;
-      BindCompilationFlags(dump_lir_cmd, out);
-    } else if (dump_cmd.is_subcommand_used("llvm")) {
-      out.cmd = CommandKind::kDumpLlvm;
-      BindCompilationFlags(dump_llvm_cmd, out);
-    } else {
+  if (opts.backend) {
+    auto backend = ParseBackend(*opts.backend);
+    if (!backend) {
       return std::unexpected(
           std::format(
-              "dump requires 'hir', 'mir', 'lir', or 'llvm'\n{}",
-              dump_cmd.help().str()));
+              "--backend: '{}' is not one of cpp, jit, aot, lli",
+              *opts.backend));
     }
-  } else if (program.is_subcommand_used("emit")) {
-    if (!emit_cmd.is_subcommand_used("cpp")) {
-      return std::unexpected(
-          std::format("emit requires 'cpp'\n{}", emit_cmd.help().str()));
-    }
-    out.cmd = CommandKind::kEmitCpp;
-    BindCompilationFlags(emit_cpp_cmd, out);
-    BindHostBuildFlags(emit_cpp_cmd, out);
-    if (auto e = BindRequiredOutDir(emit_cpp_cmd, "emit cpp", out)) {
-      return std::unexpected(*std::move(e));
-    }
-  } else if (program.is_subcommand_used("compile")) {
-    out.cmd = CommandKind::kCompile;
-    BindCompilationFlags(compile_cmd, out);
-    BindHostBuildFlags(compile_cmd, out);
-    if (auto e = BindRequiredOutDir(compile_cmd, "compile", out)) {
-      return std::unexpected(*std::move(e));
-    }
-  } else if (program.is_subcommand_used("run")) {
-    out.cmd = CommandKind::kRun;
-    BindCompilationFlags(run_cmd, out);
-    BindHostBuildFlags(run_cmd, out);
-    out.backend = ParseBackend(run_cmd.get<std::string>("--backend"));
-  } else if (program.is_subcommand_used("cache")) {
-    if (cache_cmd.is_subcommand_used("clear")) {
-      out.cmd = CommandKind::kCacheClear;
-    } else {
-      return std::unexpected(
-          std::format("cache requires 'clear'\n{}", cache_cmd.help().str()));
-    }
-  } else {
-    return std::unexpected(program.help().str());
+    out.backend = *backend;
+  }
+
+  if (RequiresOutDir(cmd) && out.out_dir.empty()) {
+    return std::unexpected(
+        std::format(
+            "{} requires --out-dir\n{}", CommandSpelling(cmd), Usage()));
   }
   return out;
 }
@@ -351,7 +354,7 @@ auto UseColor(ColorPreference pref) -> bool {
     case ColorPreference::kAlways:
       return true;
     case ColorPreference::kAuto:
-      return ::isatty(::fileno(stderr)) != 0;
+      return ::isatty(STDERR_FILENO) != 0;
   }
   return false;
 }
@@ -368,6 +371,12 @@ class Reporter {
       lyra::diag::Diagnostic diag,
       const lyra::diag::SourceManager* mgr = nullptr) const {
     fmt::print(stderr, "{}", lyra::diag::RenderDiagnostic(diag, mgr, opts_));
+  }
+
+  void operator()(
+      const lyra::diag::DiagnosticSink& sink,
+      const lyra::diag::SourceManager* mgr) const {
+    fmt::print(stderr, "{}", lyra::diag::RenderDiagnostics(sink, mgr, opts_));
   }
 
  private:
@@ -441,6 +450,8 @@ auto ResolveHostBuild(const CommandContext& ctx)
 // inherit one silently.
 auto LoweringDepth(const ParsedArgs& args) -> lyra::compiler::StopAfter {
   switch (args.cmd) {
+    case CommandKind::kCheck:
+      return lyra::compiler::StopAfter::kParse;
     case CommandKind::kDumpHir:
       return lyra::compiler::StopAfter::kHir;
     case CommandKind::kDumpLir:
@@ -553,7 +564,7 @@ auto RunCppBackend(const CommandContext& ctx) -> int {
   }
   auto exit_code = lyra::driver::RunInPlace(
       *runtime, *ctx.artifacts->mir_units, *ctx.artifacts->root_unit, *work_dir,
-      ctx.formatting, *host, ctx.args->plusargs, ctx.dpi_inputs);
+      ctx.formatting, *host, ctx.args->child_args, ctx.dpi_inputs);
   if (!exit_code) {
     (*ctx.report)(std::move(exit_code.error()), ctx.mgr);
     return 1;
@@ -631,6 +642,10 @@ auto RunBackend(const CommandContext& ctx) -> int {
 
 auto RunCommand(const CommandContext& ctx) -> int {
   switch (ctx.args->cmd) {
+    case CommandKind::kCheck:
+      // The front end has already run and everything it had to say has already
+      // been reported, so arriving here is the whole answer `check` gives.
+      return 0;
     case CommandKind::kDumpHir:
       return RunDumpHir(ctx);
     case CommandKind::kDumpMir:
@@ -651,6 +666,74 @@ auto RunCommand(const CommandContext& ctx) -> int {
   throw lyra::InternalError("cache clear reached the compiling dispatch");
 }
 
+// What Lyra parses and what it hands the simulation, told apart by a standalone
+// `--`. Splitting there keeps the front end from ever having to decide whether
+// a `+`-prefixed word is one of its options or one of the design's plusargs.
+struct SplitArgv {
+  std::vector<char*> lyra;
+  std::vector<std::string> child;
+};
+
+auto SplitAtSeparator(std::span<char* const> raw) -> SplitArgv {
+  const auto separator = std::ranges::find_if(
+      raw, [](const char* word) { return std::string_view(word) == "--"; });
+  SplitArgv out;
+  out.lyra.assign(raw.begin(), separator);
+  for (const auto* const word : std::ranges::subrange(
+           separator == raw.end() ? separator : std::next(separator),
+           raw.end())) {
+    out.child.emplace_back(word);
+  }
+  return out;
+}
+
+auto WantsHelp(std::span<char* const> words) -> bool {
+  return std::ranges::any_of(words, [](const char* raw) {
+    const auto word = std::string_view(raw);
+    return word == "-h" || word == "--help";
+  });
+}
+
+// The one merged option list: Lyra's own options and every front-end option
+// inherited alongside them. Asking the parser to render it is what keeps the
+// help honest about which options a build may actually pass.
+void PrintHelp(slang::driver::Driver& driver) {
+  // The usage line is rendered from the program name, so naming the program
+  // "lyra <command>" is what puts the command word where a reader expects it.
+  driver.cmdLine.setProgramName("lyra <command>");
+  fmt::print(
+      "{}", driver.cmdLine.getHelpText(
+                std::format(
+                    "lyra -- a SystemVerilog simulator\n\ncommands: {}\n\n"
+                    "Everything after a standalone `--` is the simulation's "
+                    "own argv, "
+                    "which is where\nplusargs go.",
+                    CommandList())));
+}
+
+// One pass over Lyra's side of the command line: the command words first --
+// they are positional -- then the options, through the parser both halves
+// share. `words` is consumed: the command words are removed from it.
+auto ParseCommandLine(
+    slang::driver::Driver& driver, const CliOptions& cli_options,
+    std::vector<char*>& words, std::vector<std::string> child_args)
+    -> std::expected<ParsedArgs, std::string> {
+  auto command = ParseCommand(
+      std::span<char* const>(words).subspan(words.empty() ? 0 : 1));
+  if (!command) {
+    return std::unexpected(command.error());
+  }
+  // What the parser sees is the program name followed by options and sources.
+  words.erase(
+      std::next(words.begin()),
+      std::next(
+          words.begin(), 1 + static_cast<std::ptrdiff_t>(command->second)));
+  if (!driver.parseCommandLine(static_cast<int>(words.size()), words.data())) {
+    return std::unexpected("");
+  }
+  return ResolveCliOptions(cli_options, command->first, std::move(child_args));
+}
+
 }  // namespace
 
 auto main(int argc, char** argv) -> int {
@@ -658,19 +741,38 @@ auto main(int argc, char** argv) -> int {
     const std::span<char* const> raw_args(argv, static_cast<std::size_t>(argc));
     const std::string program_path =
         raw_args.empty() ? std::string{} : std::string(raw_args.front());
-    auto parsed = ParseArgs(argc, argv);
+    auto argv_split = SplitAtSeparator(raw_args);
+
+    slang::driver::Driver driver;
+    driver.addStandardArgs();
+    CliOptions cli_options;
+    RegisterCliOptions(driver.cmdLine, cli_options);
+
+    if (WantsHelp(argv_split.lyra)) {
+      PrintHelp(driver);
+      return 0;
+    }
+
+    auto parsed = ParseCommandLine(
+        driver, cli_options, argv_split.lyra, std::move(argv_split.child));
+
     const bool use_color =
         UseColor(parsed.has_value() ? parsed->color : ColorPreference::kAuto);
     const Reporter report{lyra::diag::RenderOptions{
         .use_color = use_color, .show_source_snippet = true}};
 
     if (!parsed) {
-      report(
-          lyra::diag::Make(
-              lyra::diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
+      // An empty message means the parser already printed its own account of
+      // what was wrong with the command line.
+      if (!parsed.error().empty()) {
+        report(
+            lyra::diag::Make(
+                lyra::diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
+      }
       return 1;
     }
     const auto& args = *parsed;
+    driver.setTerminalColorsEnabled(use_color);
 
     // `cache clear` consults no project, takes no input files, and never
     // reaches the compiler. Dispatch it before the input checks below so it
@@ -695,7 +797,7 @@ auto main(int argc, char** argv) -> int {
               "run in direct file mode"));
       return 1;
     }
-    if (args.input.files.empty()) {
+    if (!driver.sourceLoader.hasFiles()) {
       report(
           lyra::diag::Make(
               lyra::diag::DiagCode::kHostNoInputFiles, "no input files"));
@@ -713,8 +815,8 @@ auto main(int argc, char** argv) -> int {
     }
 
     lyra::diag::DiagnosticSink sink;
-    auto result =
-        lyra::compiler::Compile(args.input, sink, LoweringDepth(args));
+    auto result = lyra::compiler::Compile(
+        driver, args.lowering, sink, LoweringDepth(args));
 
     // `run` executes the simulation; its stdout/stderr are the simulation's
     // own, so compile-phase warnings must not bleed into them. Surface slang
@@ -722,25 +824,15 @@ auto main(int argc, char** argv) -> int {
     // other commands always show them. Use `compile`/`dump` to see warnings.
     const bool suppress_compile_warnings =
         args.cmd == CommandKind::kRun && result.slang_ok && !sink.HasErrors();
-    if (result.artifacts.parse && !suppress_compile_warnings) {
-      std::string slang_text;
-      lyra::frontend::RenderSlangDiagnostics(
-          *result.artifacts.parse, use_color, slang_text);
-      if (!slang_text.empty()) {
-        fmt::print(stderr, "{}", slang_text);
-      }
+    if (!suppress_compile_warnings && !result.slang_diagnostics.empty()) {
+      fmt::print(stderr, "{}", result.slang_diagnostics);
     }
 
     const lyra::diag::SourceManager* mgr =
         result.artifacts.parse ? &result.artifacts.parse->diag_sources
                                : nullptr;
     if (sink.HasErrors()) {
-      fmt::print(
-          stderr, "{}",
-          lyra::diag::RenderDiagnostics(
-              sink, mgr,
-              lyra::diag::RenderOptions{
-                  .use_color = use_color, .show_source_snippet = true}));
+      report(sink, mgr);
       return 1;
     }
     if (!result.slang_ok) {

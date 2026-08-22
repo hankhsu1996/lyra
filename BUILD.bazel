@@ -355,7 +355,6 @@ cc_binary(
         ":mir",
         ":support",
         ":unit_metadata",
-        "@argparse",
         "@fmt",
     ],
 )

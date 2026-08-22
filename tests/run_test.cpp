@@ -18,6 +18,13 @@ using lyra::test::RunChildProcess;
 using lyra::test::TerminationKind;
 using namespace std::chrono_literals;
 
+// Some of these designs index past the end of a packed vector or a string on
+// purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
+// both backends have to agree on that. The front end promotes those selects to
+// errors by default, which is a lint stance rather than a simulation one.
+const std::vector<std::string> kAllowOutOfRangeSelects = {
+    "-Wno-error=index-oob", "-Wno-error=range-oob"};
+
 auto ResolveLyra() -> std::filesystem::path {
   std::string err;
   std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
@@ -646,15 +653,22 @@ TEST(LyraRun, JitAndCppAgreeOnPackedShape) {
   const auto src = *tmp_or / "test.sv";
   WritePackedShapeSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -685,15 +699,22 @@ TEST(LyraRun, JitAndCppAgreeOnIntegralLiteral) {
   const auto src = *tmp_or / "test.sv";
   WriteIntegralLiteralSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -722,15 +743,22 @@ TEST(LyraRun, JitAndCppAgreeOnSubroutineCall) {
   const auto src = *tmp_or / "test.sv";
   WriteSubroutineCallSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -806,15 +834,22 @@ TEST(LyraRun, JitAndCppAgreeOnProceduralCode) {
   const auto src = *tmp_or / "test.sv";
   WriteProceduralSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -840,15 +875,22 @@ TEST(LyraRun, JitAndCppAgreeOnTimingControl) {
   const auto src = *tmp_or / "test.sv";
   WriteTimingSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -917,15 +959,22 @@ TEST(LyraRun, JitAndCppAgreeOnValueChangeWait) {
   const auto src = *tmp_or / "test.sv";
   WriteValueChangeWaitSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -953,15 +1002,22 @@ TEST(LyraRun, JitAndCppAgreeOnCrossSuspensionLoop) {
   const auto src = *tmp_or / "test.sv";
   WriteCrossSuspensionLoopSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -991,15 +1047,22 @@ TEST(LyraRun, JitAndCppAgreeOnNestedSuspension) {
   const auto src = *tmp_or / "test.sv";
   WriteNestedSuspensionSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -1023,15 +1086,22 @@ TEST(LyraRun, JitAndCppAgreeOnRealFamily) {
   const auto src = *tmp_or / "test.sv";
   WriteRealFamilySource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -1054,15 +1124,22 @@ TEST(LyraRun, JitAndCppAgreeOnChandle) {
   const auto src = *tmp_or / "test.sv";
   WriteChandleSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -1086,15 +1163,22 @@ TEST(LyraRun, JitAndCppAgreeOnLogicalOperators) {
   const auto src = *tmp_or / "test.sv";
   WriteLogicalOperatorSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -1119,15 +1203,22 @@ TEST(LyraRun, JitAndCppAgreeOnStruct) {
   const auto src = *tmp_or / "test.sv";
   WriteStructSource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;
@@ -1157,15 +1248,22 @@ TEST(LyraRun, JitAndCppAgreeOnDynArray) {
   const auto src = *tmp_or / "test.sv";
   WriteDynArraySource(src);
 
-  const std::vector<std::string> jit_args = {
-      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> jit_args = {"run",          "--backend", "jit",
+                                       "--no-project", "--top",     "Test"};
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
       << jit.stdout_text << jit.stderr_text;
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
-  const std::vector<std::string> cpp_args = {
-      "run", "--no-project", "--top", "Test", src.string()};
+  std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
+  cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
       << cpp.stdout_text << cpp.stderr_text;

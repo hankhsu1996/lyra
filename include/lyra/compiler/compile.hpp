@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include <slang/driver/Driver.h>
+
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
@@ -68,16 +70,28 @@ struct CompileArtifacts {
   ~CompileArtifacts() = default;
 };
 
-// Lyra-owned errors flow through `sink`; slang parse/elaboration errors
-// are reported via `slang_ok`. Successful compile requires both
-// `!sink.HasErrors()` and `slang_ok`.
+// Choices about how to lower that the design does not make for itself.
+struct LoweringPolicy {
+  // Elide assertion constructs rather than refusing to lower them, so a design
+  // whose assertions Lyra cannot yet express still runs.
+  bool disable_assertions = false;
+};
+
+// Lyra-owned errors flow through `sink`; slang parse/elaboration errors are
+// reported via `slang_ok` and rendered into `slang_diagnostics`. Successful
+// compile requires both `!sink.HasErrors()` and `slang_ok`.
 struct CompileResult {
   CompileArtifacts artifacts;
   bool slang_ok = true;
+  std::string slang_diagnostics;
 };
 
+// The driver arrives configured -- its options parsed, its sources named --
+// and owns the text every resulting span points into, so it must outlive the
+// returned artifacts.
 auto Compile(
-    const frontend::CompilationInput& input, diag::DiagnosticSink& sink,
-    StopAfter stop_after = StopAfter::kMir) -> CompileResult;
+    slang::driver::Driver& driver, LoweringPolicy policy,
+    diag::DiagnosticSink& sink, StopAfter stop_after = StopAfter::kMir)
+    -> CompileResult;
 
 }  // namespace lyra::compiler
