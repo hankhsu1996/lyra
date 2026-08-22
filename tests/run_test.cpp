@@ -18,6 +18,13 @@ using lyra::test::RunChildProcess;
 using lyra::test::TerminationKind;
 using namespace std::chrono_literals;
 
+// Some of these designs index past the end of a packed vector or a string on
+// purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
+// both backends have to agree on that. The front end promotes those selects to
+// errors by default, which is a lint stance rather than a simulation one.
+const std::vector<std::string> kAllowOutOfRangeSelects = {
+    "-Wno-error=index-oob", "-Wno-error=range-oob"};
+
 auto ResolveLyra() -> std::filesystem::path {
   std::string err;
   std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
@@ -646,15 +653,11 @@ TEST(LyraRun, JitAndCppAgreeOnPackedShape) {
   const auto src = *tmp_or / "test.sv";
   WritePackedShapeSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -662,7 +665,9 @@ TEST(LyraRun, JitAndCppAgreeOnPackedShape) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -694,15 +699,11 @@ TEST(LyraRun, JitAndCppAgreeOnIntegralLiteral) {
   const auto src = *tmp_or / "test.sv";
   WriteIntegralLiteralSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -710,7 +711,9 @@ TEST(LyraRun, JitAndCppAgreeOnIntegralLiteral) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -740,15 +743,11 @@ TEST(LyraRun, JitAndCppAgreeOnSubroutineCall) {
   const auto src = *tmp_or / "test.sv";
   WriteSubroutineCallSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -756,7 +755,9 @@ TEST(LyraRun, JitAndCppAgreeOnSubroutineCall) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -833,15 +834,11 @@ TEST(LyraRun, JitAndCppAgreeOnProceduralCode) {
   const auto src = *tmp_or / "test.sv";
   WriteProceduralSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -849,7 +846,9 @@ TEST(LyraRun, JitAndCppAgreeOnProceduralCode) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -876,15 +875,11 @@ TEST(LyraRun, JitAndCppAgreeOnTimingControl) {
   const auto src = *tmp_or / "test.sv";
   WriteTimingSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -892,7 +887,9 @@ TEST(LyraRun, JitAndCppAgreeOnTimingControl) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -962,15 +959,11 @@ TEST(LyraRun, JitAndCppAgreeOnValueChangeWait) {
   const auto src = *tmp_or / "test.sv";
   WriteValueChangeWaitSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -978,7 +971,9 @@ TEST(LyraRun, JitAndCppAgreeOnValueChangeWait) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -1007,15 +1002,11 @@ TEST(LyraRun, JitAndCppAgreeOnCrossSuspensionLoop) {
   const auto src = *tmp_or / "test.sv";
   WriteCrossSuspensionLoopSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -1023,7 +1014,9 @@ TEST(LyraRun, JitAndCppAgreeOnCrossSuspensionLoop) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -1054,15 +1047,11 @@ TEST(LyraRun, JitAndCppAgreeOnNestedSuspension) {
   const auto src = *tmp_or / "test.sv";
   WriteNestedSuspensionSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -1070,7 +1059,9 @@ TEST(LyraRun, JitAndCppAgreeOnNestedSuspension) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -1095,15 +1086,11 @@ TEST(LyraRun, JitAndCppAgreeOnRealFamily) {
   const auto src = *tmp_or / "test.sv";
   WriteRealFamilySource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -1111,7 +1098,9 @@ TEST(LyraRun, JitAndCppAgreeOnRealFamily) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -1135,15 +1124,11 @@ TEST(LyraRun, JitAndCppAgreeOnChandle) {
   const auto src = *tmp_or / "test.sv";
   WriteChandleSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -1151,7 +1136,9 @@ TEST(LyraRun, JitAndCppAgreeOnChandle) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -1176,15 +1163,11 @@ TEST(LyraRun, JitAndCppAgreeOnLogicalOperators) {
   const auto src = *tmp_or / "test.sv";
   WriteLogicalOperatorSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -1192,7 +1175,9 @@ TEST(LyraRun, JitAndCppAgreeOnLogicalOperators) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -1218,15 +1203,11 @@ TEST(LyraRun, JitAndCppAgreeOnStruct) {
   const auto src = *tmp_or / "test.sv";
   WriteStructSource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -1234,7 +1215,9 @@ TEST(LyraRun, JitAndCppAgreeOnStruct) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
@@ -1265,15 +1248,11 @@ TEST(LyraRun, JitAndCppAgreeOnDynArray) {
   const auto src = *tmp_or / "test.sv";
   WriteDynArraySource(src);
 
-  // The design writes past the end of a packed vector and of a string on
-  // purpose: LRM 11.5.1 gives an out-of-range bit-select write no effect, and
-  // both backends have to agree on that. The front end promotes those selects
-  // to errors by default, which is a lint stance rather than a simulation one.
-  const std::vector<std::string> oob_ok = {
-      "-Wno-error=index-oob", "-Wno-error=range-oob"};
   std::vector<std::string> jit_args = {"run",          "--backend", "jit",
                                        "--no-project", "--top",     "Test"};
-  jit_args.insert(jit_args.end(), oob_ok.begin(), oob_ok.end());
+  jit_args.insert(
+      jit_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   jit_args.push_back(src.string());
   const auto jit = RunChildProcess(lyra, jit_args, 120s);
   ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
@@ -1281,7 +1260,9 @@ TEST(LyraRun, JitAndCppAgreeOnDynArray) {
   ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
 
   std::vector<std::string> cpp_args = {"run", "--no-project", "--top", "Test"};
-  cpp_args.insert(cpp_args.end(), oob_ok.begin(), oob_ok.end());
+  cpp_args.insert(
+      cpp_args.end(), kAllowOutOfRangeSelects.begin(),
+      kAllowOutOfRangeSelects.end());
   cpp_args.push_back(src.string());
   const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
   ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
