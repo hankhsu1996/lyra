@@ -19,48 +19,33 @@ Assumes the working tree is already clean and commits are made. If you need to f
 
 ## PR Format
 
-**Title:**
+**What makes a PR good is your judgment, not this file.** What follows is the house style plus the
+facts about GitHub and the shell that are not visible from here. Everything else -- which sections
+exist, how the argument is built, what deserves a table or a diagram -- is yours to decide for the
+change in front of you.
 
-- Start with verb, capitalized
-- Do NOT use colon format like "Fix: xxx"
+### House style
 
-**Body:**
+- Title starts with a verb, capitalized. No colon format ("Fix: xxx").
+- Body opens with `## Summary` as a paragraph, not bullets.
+- Backticks for signal, module, and symbol names.
 
-Always start with `## Summary` as a paragraph (not bullet points) describing what the PR does.
+### Facts you cannot see from here
 
-After Summary, add sections only if they add value. All sections are optional:
+- **A title over ~64 characters is truncated** in GitHub's PR list, which is where people scan. Cut
+  qualifiers, keep the subject. Paraphrase code identifiers rather than pasting symbol names.
+- **A paragraph must be one line in the source.** GitHub wraps it; a manual newline inside a
+  paragraph renders as a hard break. Hard breaks belong only in code blocks and bullet lists.
+- **Mermaid renders on GitHub.**
+- **Length is the constraint that bites.** Aim for what a reviewer reads before opening the Files
+  tab. Past roughly 50 lines, ask which section they would skip, and delete it.
 
-- `## Design` - For non-trivial design decisions, architectural reasoning
-- `## Testing` - Only if testing approach is non-obvious or worth highlighting
-- Other sections as appropriate for the PR
+### Leave out
 
-Simple fixes may need only Summary. Don't force sections that have nothing meaningful to say.
-
-**What makes a good PR description:**
-
-- **Design rationale**: Explain the approach and why. If minimal, explain why existing infrastructure was sufficient.
-- **What didn't change**: Often more informative than listing what did. Shows architectural understanding.
-- **Alternatives explored**: If complexity was considered and rejected, mention it briefly.
-- **Why it works**: If something works with little code, explain the underlying reason.
-
-**Formatting:**
-
-- Summary: paragraph, not bullet points
-- Other sections: bullet points, checkboxes, or prose as appropriate
-- Use h3 subsections within sections if content is substantial
-- **Paragraph wrapping:** keep each paragraph on a single line in the HEREDOC; GitHub markdown wraps automatically. Manually inserting newlines inside a paragraph produces broken-looking text in the rendered PR. Hard line breaks belong only inside code blocks and bullet lists.
-
-**Adapt to PR type:**
-
-- **Feature PRs**: Summary + Design with rationale
-- **Bug fix PRs**: Summary + root cause analysis
-- **Chore/docs PRs**: Summary only, keep brief
-
-**Avoid:**
-
-- Bullet points in Summary
-- Listing files changed (GitHub shows this)
-- Internal planning concepts ("Phase 1", "Step 2")
+- Files changed, and source the diff already shows -- GitHub renders both better, in colour.
+- Internal planning vocabulary ("Phase 1", "Step 2").
+- Time-sensitive state: TODOs, follow-up notes, other PRs' status, CI results. The description is a
+  permanent record of the change as if already merged, not a snapshot of where the work is.
 
 ## Instructions
 
@@ -71,7 +56,8 @@ Simple fixes may need only Summary. Don't force sections that have nothing meani
      - `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
 3. **Read the full diff** (`git diff origin/main..HEAD`) before writing the PR description. The `--stat` above is not sufficient - you must see the actual code changes.
 4. Push if needed: `git push -u origin <branch>`
-5. Create PR: `gh pr create --title "..." --body "..."`
+5. Create PR: write the body to a file and pass `gh pr create --title "..." --body-file <file>`.
+   Inline `--body` does not survive shell quoting once the text contains a table or a fenced block.
 6. Enable auto-merge: `gh pr merge --auto --squash`
 7. Return the PR URL to the user
 

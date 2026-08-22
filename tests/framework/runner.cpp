@@ -3,10 +3,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <ios>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -20,6 +23,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include "build.hpp"
+#include "lyra/value/format.hpp"
 #include "matcher.hpp"
 #include "process.hpp"
 #include "sv_injection.hpp"
@@ -168,6 +172,11 @@ auto ParseCase(
   if (in["args"]) {
     for (const auto& a : in["args"]) {
       c.input.extra_args.push_back(a.as<std::string>());
+    }
+  }
+  if (in["program_args"]) {
+    for (const auto& a : in["program_args"]) {
+      c.input.program_args.push_back(a.as<std::string>());
     }
   }
   if (in["link_sources"]) {
@@ -507,6 +516,12 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
   }
   for (const auto& f : resolved_input_files) {
     argv.push_back(f.string());
+  }
+  if (!c.input.program_args.empty()) {
+    argv.emplace_back("--");
+    for (const auto& a : c.input.program_args) {
+      argv.push_back(a);
+    }
   }
 
   // When expect.files is set the child inherits a per-case sandbox cwd so

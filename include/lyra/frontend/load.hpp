@@ -3,49 +3,35 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include <slang/ast/Compilation.h>
-#include <slang/text/SourceManager.h>
+#include <slang/driver/Driver.h>
 
-#include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
 
 namespace lyra::frontend {
 
-struct CompilationInput {
-  std::vector<std::string> files;
-  std::string top;
-  std::vector<std::string> incdirs;
-  std::vector<std::string> defines;
-  std::vector<std::string> param_overrides;
-  bool single_unit = false;
-  bool disable_assertions = false;
-};
-
+// What the rest of the compiler reads once the front end has run. The driver
+// that produced it owns the text every span here points into, so it has to
+// outlive this.
 struct ParseResult {
-  std::shared_ptr<slang::SourceManager> source_manager;
   std::unique_ptr<slang::ast::Compilation> compilation;
   diag::SourceManager diag_sources;
   SlangSourceMapper source_mapper;
 };
 
-// Build the parse input. Reports file-read failures to `sink`; returns
-// nullopt on host failure. Slang parser/elaboration diagnostics are not
-// rendered here -- callers invoke RenderSlangDiagnostics with their own
-// rendering policy.
-auto LoadFiles(const CompilationInput& input, diag::DiagnosticSink& sink)
-    -> std::optional<ParseResult>;
+// Applies the driver's options, reads everything it was pointed at, and
+// elaborates. Returns nullopt when a source could not be read or a syntax
+// error stopped the parse; slang's account of either is queued on the driver's
+// diagnostic engine for ReportSlangDiagnostics to render.
+auto Elaborate(slang::driver::Driver& driver) -> std::optional<ParseResult>;
 
-// Returns true when slang reports no errors. `parse` is non-const because
-// slang's getAllDiagnostics is non-const.
-auto RenderSlangDiagnostics(
-    ParseResult& parse, bool use_color, std::string& out_text) -> bool;
-
-// Returns true iff slang reported any error-severity parse/elaboration
-// diagnostic. `parse` is non-const because slang's getAllDiagnostics is
-// non-const. Use this to surface frontend status without rendering text.
-auto HasSlangErrors(ParseResult& parse) -> bool;
+// Renders everything slang has to say through the one engine the warning
+// options configured, so a suppression on the command line reaches the
+// diagnostics it names. Returns false when any of them carried error severity.
+auto ReportSlangDiagnostics(
+    slang::driver::Driver& driver, slang::ast::Compilation& compilation,
+    std::string& out_text) -> bool;
 
 }  // namespace lyra::frontend
