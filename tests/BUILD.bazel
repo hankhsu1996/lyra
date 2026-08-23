@@ -91,3 +91,34 @@ cc_test(
         "@googletest//:gtest",
     ],
 )
+
+cc_test(
+    name = "jit_tests",
+    srcs = ["cpp_test.cpp"],
+    args = [
+        "--suite",
+        "jit",
+    ],
+    data = [
+        "suites.yaml",
+        "//:lyra",
+    ] + glob(
+        [
+            "cases/**/*.yaml",
+            "cases/**/*.sv",
+            "cases/**/*.c",
+            "cases/**/*.cpp",
+        ],
+        allow_empty = True,
+    ),
+    shard_count = 8,
+    # The execution backend compiles nothing through the host C++ compiler, so
+    # unlike cpp_tests this target carries no `requires-host-cxx` tag and CI's
+    # `Test` job runs it.
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+        "@googletest//:gtest",
+    ],
+)

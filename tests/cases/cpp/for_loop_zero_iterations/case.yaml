@@ -1,5 +1,5 @@
 id: cpp.for_loop_zero_iterations
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

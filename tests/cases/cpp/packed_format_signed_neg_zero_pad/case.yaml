@@ -1,5 +1,5 @@
 id: cpp.packed_format_signed_neg_zero_pad
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

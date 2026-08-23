@@ -168,17 +168,6 @@ auto IsActivationValueType(const mir::Type& type) -> bool {
          kind == mir::TypeKind::kDynamicArray;
 }
 
-// Whether mutating a value of this type -- writing one element, or a
-// receiver-mutating method -- must be a functional whole-value update stored
-// back through the owner rather than an in-place store. True for a value
-// container reached by an opaque handle (a dynamic array today, a queue and an
-// associative array later): its whole value crosses as a handle a copy may
-// share, so an in-place mutation would corrupt the copy. This is what routes
-// such a write off the place-store path.
-auto RequiresFunctionalMutation(const mir::Type& type) -> bool {
-  return type.Kind() == mir::TypeKind::kDynamicArray;
-}
-
 // Marks every local the canonical lowering needs an address for: one that is
 // assigned after its initialization, or has its address taken. Such a local is
 // storage, so it must be a place local. A read never makes a local storage: a
@@ -1067,14 +1056,12 @@ auto FunctionLowerer::LowerClosureCall(
 auto FunctionLowerer::LowerCall(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
-  // A receiver-mutating method on a value container is not an in-place call:
-  // the container is an opaque handle, so it is a functional operation whose
-  // result is stored back through the receiver's owner.
+  // A receiver-mutating method on a value is not an in-place call: value
+  // semantics forbid changing what a copy of the receiver would share, so it is
+  // a functional operation whose result is stored back through the owner.
   if (const auto fn = DirectBuiltinFn(call);
       fn.has_value() && support::IsMutatingBuiltinFn(*fn) &&
-      !call.arguments.empty() &&
-      RequiresFunctionalMutation(
-          unit_->Mir().types.Get(block.exprs.Get(call.arguments[0]).type))) {
+      !call.arguments.empty()) {
     return LowerMutatingCall(block, call, *fn);
   }
 

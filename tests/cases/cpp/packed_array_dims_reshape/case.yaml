@@ -1,5 +1,5 @@
 id: cpp.packed_array_dims_reshape
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

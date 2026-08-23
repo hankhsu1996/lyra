@@ -94,16 +94,19 @@ void lyra_rt_register_signal(void* self, const void* name, void* cell);
 
 // Observable storage cell operations, reached through the cell's address. The
 // entry names the cell's value domain; the runtime never inspects a type tag.
-auto lyra_rt_cell_packed_get(void* cell) -> const void*;
+// A read yields a value of its own rather than a view of the cell's contents,
+// so it stays valid across a later write to that cell -- generated code holds
+// what it loaded, and nothing tells it when a store invalidates a view.
+auto lyra_rt_cell_packed_get(void* cell) -> void*;
 void lyra_rt_cell_packed_initialize(void* cell, const void* prototype);
 void lyra_rt_cell_packed_set(void* cell, const void* value);
-auto lyra_rt_cell_string_get(void* cell) -> const void*;
+auto lyra_rt_cell_string_get(void* cell) -> void*;
 void lyra_rt_cell_string_initialize(void* cell, const void* prototype);
 void lyra_rt_cell_string_set(void* cell, const void* value);
-auto lyra_rt_cell_real_get(void* cell) -> const void*;
+auto lyra_rt_cell_real_get(void* cell) -> void*;
 void lyra_rt_cell_real_initialize(void* cell, const void* prototype);
 void lyra_rt_cell_real_set(void* cell, const void* value);
-auto lyra_rt_cell_shortreal_get(void* cell) -> const void*;
+auto lyra_rt_cell_shortreal_get(void* cell) -> void*;
 void lyra_rt_cell_shortreal_initialize(void* cell, const void* prototype);
 void lyra_rt_cell_shortreal_set(void* cell, const void* value);
 
@@ -160,6 +163,7 @@ auto lyra_rt_packed_to_int64(const void* value) -> std::int64_t;
 auto lyra_rt_packed_is_unknown(const void* value) -> void*;
 auto lyra_rt_packed_count_bits(const void* value, const void* control_bits)
     -> void*;
+auto lyra_rt_packed_clog2(const void* value) -> void*;
 auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void*;
 auto lyra_rt_packed_shift_left(const void* value, const void* amount) -> void*;
 auto lyra_rt_packed_logical_shift_right(const void* value, const void* amount)
@@ -222,6 +226,18 @@ auto lyra_rt_string_atoi(const void* value) -> void*;
 auto lyra_rt_string_atohex(const void* value) -> void*;
 auto lyra_rt_string_atooct(const void* value) -> void*;
 auto lyra_rt_string_atobin(const void* value) -> void*;
+auto lyra_rt_string_atoreal(const void* value) -> void*;
+// LRM 6.16.14 -- 6.16.18 format the receiver from a number. The source language
+// spells them as mutations of the receiver; the execution backend cannot mutate
+// a string in place, so each returns the formatted string and the call site
+// stores it back.
+auto lyra_rt_string_putc(
+    const void* value, const void* index, const void* character) -> void*;
+auto lyra_rt_string_itoa(const void* value, const void* number) -> void*;
+auto lyra_rt_string_hextoa(const void* value, const void* number) -> void*;
+auto lyra_rt_string_octtoa(const void* value, const void* number) -> void*;
+auto lyra_rt_string_bintoa(const void* value, const void* number) -> void*;
+auto lyra_rt_string_realtoa(const void* value, const void* number) -> void*;
 
 auto lyra_rt_string_add(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_eq(const void* lhs, const void* rhs) -> void*;
@@ -329,7 +345,8 @@ auto lyra_rt_tuple_update(const void* tuple, std::int64_t index, void* value)
 auto lyra_rt_tuple_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_tuple_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs) -> void*;
-auto lyra_rt_cell_tuple_get(void* cell) -> const void*;
+auto lyra_rt_tuple_is_unknown(const void* value) -> void*;
+auto lyra_rt_cell_tuple_get(void* cell) -> void*;
 void lyra_rt_cell_tuple_initialize(void* cell, const void* prototype);
 void lyra_rt_cell_tuple_set(void* cell, const void* value);
 auto lyra_rt_activation_frame_alloc_tuple() -> void*;
@@ -372,7 +389,7 @@ auto lyra_rt_dynarray_size(const void* array) -> void*;
 auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void*;
-auto lyra_rt_cell_dynarray_get(void* cell) -> const void*;
+auto lyra_rt_cell_dynarray_get(void* cell) -> void*;
 void lyra_rt_cell_dynarray_initialize(void* cell, const void* prototype);
 void lyra_rt_cell_dynarray_set(void* cell, const void* value);
 auto lyra_rt_activation_frame_alloc_dynarray() -> void*;

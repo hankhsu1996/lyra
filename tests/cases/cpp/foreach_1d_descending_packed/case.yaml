@@ -1,5 +1,5 @@
 id: cpp.foreach_1d_descending_packed
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

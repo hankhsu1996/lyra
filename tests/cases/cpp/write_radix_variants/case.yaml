@@ -1,5 +1,5 @@
 id: cpp.write_radix_variants
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

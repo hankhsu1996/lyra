@@ -1,5 +1,5 @@
 id: cpp.continuous_assign_part_select_lhs
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

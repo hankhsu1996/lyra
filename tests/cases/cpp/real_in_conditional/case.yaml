@@ -1,5 +1,5 @@
 id: cpp.real_in_conditional
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

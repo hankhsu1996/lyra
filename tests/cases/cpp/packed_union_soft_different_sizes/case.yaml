@@ -1,5 +1,5 @@
 id: cpp.packed_union_soft_different_sizes
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

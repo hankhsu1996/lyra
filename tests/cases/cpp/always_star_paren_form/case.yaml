@@ -1,5 +1,5 @@
 id: cpp.always_star_paren_form
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

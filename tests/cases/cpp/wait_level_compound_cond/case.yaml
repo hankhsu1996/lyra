@@ -1,5 +1,5 @@
 id: cpp.wait_level_compound_cond
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

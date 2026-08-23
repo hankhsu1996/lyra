@@ -1,5 +1,5 @@
 id: cpp.package_compile_time_contents
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

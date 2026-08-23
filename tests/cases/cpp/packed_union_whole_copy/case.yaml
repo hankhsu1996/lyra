@@ -1,5 +1,5 @@
 id: cpp.packed_union_whole_copy
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

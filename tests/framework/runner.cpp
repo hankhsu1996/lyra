@@ -371,6 +371,9 @@ auto LoadSuite(const std::filesystem::path& suites_yaml, std::string_view name)
       }
     }
   }
+  if (node["backend"]) {
+    s.backend = node["backend"].as<std::string>();
+  }
   return s;
 }
 
@@ -402,6 +405,7 @@ auto FilterCases(const std::vector<TestCase>& cases, const Suite& suite)
       continue;
     }
     out.push_back(c);
+    out.back().input.backend = suite.backend;
   }
 
   for (const auto& id : suite.excluded_ids) {
@@ -493,13 +497,17 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
   std::vector<std::string>& argv = result.argv;
   argv.emplace_back("run");
   argv.emplace_back("--no-project");
-  // Land the precompiled-header cache inside bazel's per-shard scratch dir
-  // so PCH files share across the shard's many cases without leaking into
-  // the user's home cache or contending across parallel shards. The CLI
-  // layer reads this argument explicitly; the lyra binary has no implicit
-  // TEST_TMPDIR handling of its own.
-  if (const char* tmp = std::getenv("TEST_TMPDIR");
-      tmp != nullptr && *tmp != '\0') {
+  if (c.input.backend.has_value()) {
+    argv.emplace_back("--backend");
+    argv.push_back(*c.input.backend);
+  } else if (const char* tmp = std::getenv("TEST_TMPDIR");
+             tmp != nullptr && *tmp != '\0') {
+    // Land the precompiled-header cache inside bazel's per-shard scratch dir
+    // so PCH files share across the shard's many cases without leaking into
+    // the user's home cache or contending across parallel shards. The CLI
+    // layer reads this argument explicitly; the lyra binary has no implicit
+    // TEST_TMPDIR handling of its own. Only the default backend builds a
+    // prelude, so only it has one to cache.
     argv.emplace_back("--pch-cache-dir");
     argv.push_back(std::string(tmp) + "/lyra-pch");
   }
