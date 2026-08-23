@@ -240,6 +240,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "enum_prev";
     case BuiltinFn::kIsUnknown:
       return "is_unknown";
+    case BuiltinFn::kCountBits:
+      return "count_bits";
     case BuiltinFn::kClog2:
       return "clog2";
     case BuiltinFn::kInitialize:

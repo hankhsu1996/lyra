@@ -41,6 +41,7 @@ enum class ReturnConvention : std::uint8_t {
   kVoid,
   kInt32,
   kInteger,
+  kBit,
   kString,
   kTime64,
   kRealTime,
@@ -171,13 +172,41 @@ struct MemFileSystemSubroutineInfo {
   MemFileDirection direction;
 };
 
+// LRM 20.9 bit vector system functions. Every one of them counts the operand's
+// bits that carry one of a set of four-state values, then reports the count or
+// a property of it; the two axes below are the whole difference between them.
+//
+// `$countbits` names the set at the call site, one control bit per trailing
+// argument (LRM 20.9 spells each as a literal); the other four fix it, and take
+// the operand alone.
+enum class BitValueSet : std::uint8_t {
+  kControlArguments,
+  kOnes,
+  kUnknowns,
+};
+
+// What LRM 20.9 reports about the count: the count itself (`$countbits`,
+// `$countones`), or whether it is exactly one (`$onehot`), at most one
+// (`$onehot0`), or non-zero (`$isunknown`).
+enum class BitCountReading : std::uint8_t {
+  kCount,
+  kExactlyOne,
+  kAtMostOne,
+  kAny,
+};
+
+struct BitVectorSystemSubroutineInfo {
+  BitValueSet values;
+  BitCountReading reading;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
     ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
     TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
     PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
-    MemFileSystemSubroutineInfo>;
+    MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -914,6 +943,66 @@ inline constexpr std::array kSystemSubroutines = {
         .semantic =
             MemFileSystemSubroutineInfo{
                 .base = 2, .direction = MemFileDirection::kStore},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{60},
+        .name = "$countbits",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 255},
+        .semantic =
+            BitVectorSystemSubroutineInfo{
+                .values = BitValueSet::kControlArguments,
+                .reading = BitCountReading::kCount},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{61},
+        .name = "$countones",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic =
+            BitVectorSystemSubroutineInfo{
+                .values = BitValueSet::kOnes,
+                .reading = BitCountReading::kCount},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{62},
+        .name = "$onehot",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kBit,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic =
+            BitVectorSystemSubroutineInfo{
+                .values = BitValueSet::kOnes,
+                .reading = BitCountReading::kExactlyOne},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{63},
+        .name = "$onehot0",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kBit,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic =
+            BitVectorSystemSubroutineInfo{
+                .values = BitValueSet::kOnes,
+                .reading = BitCountReading::kAtMostOne},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{64},
+        .name = "$isunknown",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kBit,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic =
+            BitVectorSystemSubroutineInfo{
+                .values = BitValueSet::kUnknowns,
+                .reading = BitCountReading::kAny},
     },
 };
 

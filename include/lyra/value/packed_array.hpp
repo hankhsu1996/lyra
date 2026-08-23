@@ -310,6 +310,15 @@ class PackedArray {
   // with no backend lift.
   [[nodiscard]] auto Clog2() const -> PackedArray;
 
+  // LRM 20.9 `$countbits` -- how many of this value's bits carry one of the
+  // control-bit values. `control_bits` holds those values one per bit position;
+  // a bit value named more than once still counts once, so the result never
+  // exceeds the width. A 2-state receiver has no x or z bits to match. Returns
+  // a 32-bit `int` so the MIR call's result type matches the C++ return type
+  // with no backend lift.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray;
+
   // Operands are assumed to share the same shape (slang's promotion
   // contract). Comparison / logical results are 1-bit, 4-state when any
   // operand is 4-state (so they can carry an X under LRM 11.4

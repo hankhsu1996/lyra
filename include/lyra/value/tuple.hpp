@@ -117,6 +117,18 @@ class Tuple {
     }(std::index_sequence_for<Ts...>{});
   }
 
+  // LRM 20.9 `$countbits`: the bit stream this value contributes is its
+  // elements' streams laid end to end, so the count over it is the sum of the
+  // elements' own counts under the same control bits.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      PackedArray total = PackedArray::Int(0);
+      ((total = total + std::get<I>(data_).CountBits(control_bits)), ...);
+      return total;
+    }(std::index_sequence_for<Ts...>{});
+  }
+
   // LRM 20.9 `$isunknown`: any member carrying an X / Z bit propagates up.
   [[nodiscard]] auto HasUnknown() const -> bool {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {

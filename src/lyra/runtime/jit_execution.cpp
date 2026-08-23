@@ -573,6 +573,12 @@ auto lyra_rt_packed_is_unknown(const void* value) -> void* {
   return Own(Read<PackedArray>(value).IsUnknown());
 }
 
+auto lyra_rt_packed_count_bits(const void* value, const void* control_bits)
+    -> void* {
+  return Own(
+      Read<PackedArray>(value).CountBits(Read<PackedArray>(control_bits)));
+}
+
 auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void* {
   return Own(Read<PackedArray>(base).Pow(Read<PackedArray>(exponent)));
 }

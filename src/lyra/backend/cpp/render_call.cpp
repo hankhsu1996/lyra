@@ -93,6 +93,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Triggered";
     case support::BuiltinFn::kIsUnknown:
       return "IsUnknown";
+    case support::BuiltinFn::kCountBits:
+      return "CountBits";
     case support::BuiltinFn::kClog2:
       return "Clog2";
     case support::BuiltinFn::kLen:
