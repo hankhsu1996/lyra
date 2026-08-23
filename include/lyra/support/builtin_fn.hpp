@@ -116,6 +116,11 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 20.9 / 21.3.4.3. 2-state packed types return false; downstream
   // constant-folds those calls.
   kIsUnknown,
+  // LRM 20.9 bit counting. The argument carries the control bits, one per bit
+  // position; a receiver bit counts when it matches any of them, and a bit
+  // value named by several control bits still counts once. Returns the SV
+  // `int` shape.
+  kCountBits,
   // LRM 20.8.1. ceil(log2) of the operand read as unsigned; $clog2(0) is 0.
   // A constant argument is folded downstream, never in lowering.
   kClog2,

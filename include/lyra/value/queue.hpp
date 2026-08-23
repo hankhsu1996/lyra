@@ -207,6 +207,18 @@ class Queue {
     return total;
   }
 
+  // LRM 20.9 `$countbits`: the bit stream this value contributes is its
+  // elements' streams laid end to end, so the count over it is the sum of the
+  // elements' own counts under the same control bits.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const auto& e : data_) {
+      total = total + e.CountBits(control_bits);
+    }
+    return total;
+  }
+
   // LRM Table 6-7: a queue's default is the empty queue. When this container
   // is itself the discard sink of an outer container, the outer scrubs it to
   // canonical state before handing out a reference.

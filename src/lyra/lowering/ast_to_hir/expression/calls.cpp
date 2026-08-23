@@ -114,6 +114,8 @@ auto MakeReturnConventionType(
       return builtins.void_type;
     case support::ReturnConvention::kInt32:
       return builtins.int_type;
+    case support::ReturnConvention::kBit:
+      return builtins.scalar_bit;
     case support::ReturnConvention::kInteger:
       return builtins.integer;
     case support::ReturnConvention::kString:
@@ -411,28 +413,6 @@ auto LowerCallExpr(
             .span = span,
         };
       }
-    }
-
-    // LRM 20.9 `$isunknown`: 1 if any bit of the operand is X or Z. A
-    // type-agnostic value query -- every value type exposes the query -- so it
-    // lowers to the generic instance builtin call on its operand, not through a
-    // receiver-type-keyed method table.
-    if (info.subroutine != nullptr &&
-        info.subroutine->knownNameId ==
-            slang::parsing::KnownSystemName::IsUnknown) {
-      auto type_id = unit_lowerer.InternType(*call.type, span);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::CallExpr{
-                  .callee =
-                      hir::BuiltinMethodRef{
-                          .method = support::BuiltinFn::kIsUnknown},
-                  .arguments = std::move(arg_ids),
-              },
-          .span = span,
-      };
     }
 
     // LRM 20.8.1 `$clog2`: ceil(log2) of the operand read as unsigned. A

@@ -187,6 +187,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_from_int", &lyra_rt_packed_from_int);
   add("lyra_rt_packed_to_int64", &lyra_rt_packed_to_int64);
   add("lyra_rt_packed_is_unknown", &lyra_rt_packed_is_unknown);
+  add("lyra_rt_packed_count_bits", &lyra_rt_packed_count_bits);
   add("lyra_rt_packed_pow", &lyra_rt_packed_pow);
   add("lyra_rt_packed_shift_left", &lyra_rt_packed_shift_left);
   add("lyra_rt_packed_logical_shift_right",

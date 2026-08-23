@@ -533,6 +533,18 @@ class AssociativeArray {
     return total;
   }
 
+  // LRM 20.9 `$countbits`: the bit stream this value contributes is its
+  // elements' streams laid end to end, so the count over it is the sum of the
+  // elements' own counts under the same control bits.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const auto& [key, value] : data_) {
+      total = total + value.CountBits(control_bits);
+    }
+    return total;
+  }
+
  private:
   [[nodiscard]] auto IsInvalidKey(const K& key) const -> bool {
     // LRM 7.8.6: a key carrying x/z is invalid. Decided by the key's own x/z

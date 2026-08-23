@@ -238,6 +238,18 @@ class DynamicArray {
     return total;
   }
 
+  // LRM 20.9 `$countbits`: the bit stream this value contributes is its
+  // elements' streams laid end to end, so the count over it is the sum of the
+  // elements' own counts under the same control bits.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const auto& e : data_) {
+      total = total + e.CountBits(control_bits);
+    }
+    return total;
+  }
+
   // LRM 7.5.3: empties the array, resulting in a zero-sized array. Body is
   // identical to ResetToDefault (LRM Table 6-7 default for dynamic array is
   // the empty array), but the two surface names track distinct contracts:

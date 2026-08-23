@@ -158,6 +158,8 @@ auto lyra_rt_packed_from_int(std::int64_t value, const void* prototype)
     -> void*;
 auto lyra_rt_packed_to_int64(const void* value) -> std::int64_t;
 auto lyra_rt_packed_is_unknown(const void* value) -> void*;
+auto lyra_rt_packed_count_bits(const void* value, const void* control_bits)
+    -> void*;
 auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void*;
 auto lyra_rt_packed_shift_left(const void* value, const void* amount) -> void*;
 auto lyra_rt_packed_logical_shift_right(const void* value, const void* amount)
