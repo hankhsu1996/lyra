@@ -140,9 +140,17 @@ concept Lengthable = requires(const T& t) {
 // bit-stream sizable exactly when its elements are, so a container's method
 // well-forms only over a bit-stream element type; the concept pins the method's
 // shape, and element-type drift surfaces when the body instantiates.
+//
+// The same types answer the LRM 20.9 `$countbits` question, because it counts
+// over the same bit stream: how many of those bits carry one of the given
+// control-bit values. `control_bits` holds the control bits one per bit
+// position, and a bit value named by several of them counts once, so the count
+// never exceeds the width. Counting every value is the width, which is why the
+// two queries share a participation set.
 template <typename T>
-concept BitstreamSizable = requires(const T& t) {
+concept BitstreamSizable = requires(const T& t, const PackedArray& control) {
   { t.BitstreamWidth() } -> std::same_as<PackedArray>;
+  { t.CountBits(control) } -> std::same_as<PackedArray>;
 };
 
 // Indexable: single-element access by integer position. The container

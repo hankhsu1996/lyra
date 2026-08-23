@@ -124,6 +124,18 @@ class String {
     return PackedArray::Int(static_cast<std::int32_t>(8 * impl_.size()));
   }
 
+  // LRM 20.9 `$countbits`: a string's bit stream is its characters, each an
+  // LRM 6.16 byte, so the count over it is the sum of the characters' own.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const char c : impl_) {
+      total = total + PackedArray::Byte(static_cast<std::int8_t>(c))
+                          .CountBits(control_bits);
+    }
+    return total;
+  }
+
   [[nodiscard]] auto Len() const -> PackedArray {
     return PackedArray::Int(static_cast<std::int32_t>(impl_.size()));
   }

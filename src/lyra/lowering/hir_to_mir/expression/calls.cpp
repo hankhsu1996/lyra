@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/bit_vector.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
@@ -342,6 +343,11 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             return LowerPlusargsSystemSubroutineCall(
                 lowerer, frame, call, plusargs);
+          },
+          [&](const support::BitVectorSystemSubroutineInfo& bit_vector)
+              -> diag::Result<mir::Expr> {
+            return LowerBitVectorSystemSubroutineCall(
+                lowerer, frame, call, bit_vector, span);
           },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {

@@ -606,6 +606,79 @@ auto PackedArray::Clog2() const -> PackedArray {
 
 namespace {
 
+// The four-state bit values a count admits, one flag per value at that value's
+// own index. LRM 20.9 admits a value by naming it as a control bit, and naming
+// it twice admits it once, which is what a set of flags records.
+using AdmittedBitValues = std::uint8_t;
+
+auto FlagOf(FourStateBit value) -> AdmittedBitValues {
+  return static_cast<AdmittedBitValues>(1U << static_cast<unsigned>(value));
+}
+
+auto Admits(AdmittedBitValues admitted, FourStateBit value) -> bool {
+  return (admitted & FlagOf(value)) != 0U;
+}
+
+auto BitValueOfPlanes(bool value, bool unknown) -> FourStateBit {
+  if (!unknown) {
+    return value ? FourStateBit::kOne : FourStateBit::kZero;
+  }
+  return value ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
+}
+
+auto AdmittedBy(const PackedArray& control_bits) -> AdmittedBitValues {
+  AdmittedBitValues admitted = 0;
+  const auto value_words = control_bits.ValueWords();
+  const auto unknown_words = control_bits.UnknownWords();
+  for (std::uint64_t i = 0; i < control_bits.BitWidth(); ++i) {
+    const std::size_t word = i / 64U;
+    const std::uint64_t bit = std::uint64_t{1} << (i % 64U);
+    const bool unknown =
+        word < unknown_words.size() && (unknown_words[word] & bit) != 0U;
+    admitted = static_cast<AdmittedBitValues>(
+        admitted |
+        FlagOf(BitValueOfPlanes((value_words[word] & bit) != 0U, unknown)));
+  }
+  return admitted;
+}
+
+}  // namespace
+
+auto PackedArray::CountBits(const PackedArray& control_bits) const
+    -> PackedArray {
+  const AdmittedBitValues admitted = AdmittedBy(control_bits);
+  const auto value_words = ValueWords();
+  const auto unknown_words = UnknownWords();
+  std::int64_t count = 0;
+  for (std::size_t i = 0; i < value_words.size(); ++i) {
+    // The top word's bits above the declared width are storage, not value, so
+    // they are excluded before counting -- otherwise they would all read as
+    // zeros and inflate a `$countbits(v, '0)`.
+    const std::uint64_t valid = i + 1U == value_words.size()
+                                    ? MaskForWidth(type_.bit_width - (64U * i))
+                                    : ~std::uint64_t{0};
+    const std::uint64_t value = value_words[i] & valid;
+    const std::uint64_t unknown =
+        (i < unknown_words.size() ? unknown_words[i] : std::uint64_t{0}) &
+        valid;
+    if (Admits(admitted, FourStateBit::kZero)) {
+      count += std::popcount(~value & ~unknown & valid);
+    }
+    if (Admits(admitted, FourStateBit::kOne)) {
+      count += std::popcount(value & ~unknown);
+    }
+    if (Admits(admitted, FourStateBit::kHighImpedance)) {
+      count += std::popcount(~value & unknown);
+    }
+    if (Admits(admitted, FourStateBit::kUnknown)) {
+      count += std::popcount(value & unknown);
+    }
+  }
+  return Int(static_cast<std::int32_t>(count));
+}
+
+namespace {
+
 // Word-level shift-and-OR copy: writes `src_bit_width` bits from `src` into
 // `dst` starting at bit position `dst_lsb`. Caller guarantees `dst` is wide
 // enough. Avoids the per-bit loop pattern in AssignSlice; complexity is

@@ -198,7 +198,9 @@ Tracked in `processes.md`.
       `$left` / `$right` / `$low` / `$high` / `$increment` / `$size`, `$dimensions` /
       `$unpacked_dimensions`), as elaboration-time constants for fixed-size operands and runtime
       queries for dynamically sized ones. The value-computation functions (`$clog2`, `$signed` /
-      `$unsigned`, `$isunknown` / `$countones` / `$onehot`) are supported.
+      `$unsigned`) are supported, as is the LRM 20.9 bit vector family (`$countbits`, `$countones`,
+      `$onehot`, `$onehot0`, `$isunknown`) -- except a `$countbits` control bit the running
+      simulation computes, which LRM 20.9 spells as a literal.
 
 ### system tasks
 

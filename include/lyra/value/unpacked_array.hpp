@@ -312,6 +312,18 @@ class UnpackedArray {
     return total;
   }
 
+  // LRM 20.9 `$countbits`: the bit stream this value contributes is its
+  // elements' streams laid end to end, so the count over it is the sum of the
+  // elements' own counts under the same control bits.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray {
+    PackedArray total = PackedArray::Int(0);
+    for (const auto& e : data_) {
+      total = total + e.CountBits(control_bits);
+    }
+    return total;
+  }
+
   // LRM 7.12.2 ordering: an in-place positional permutation at constant size (a
   // fixed array never grows or shrinks). `reverse` takes no closure; `sort` /
   // `rsort` order by the closure-projected key with the ordinal position as
