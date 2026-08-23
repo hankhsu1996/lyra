@@ -1,5 +1,5 @@
 id: cpp.do_while_in_while_body
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

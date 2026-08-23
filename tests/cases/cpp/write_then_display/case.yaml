@@ -1,5 +1,5 @@
 id: cpp.write_then_display
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

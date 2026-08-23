@@ -1,5 +1,5 @@
 id: cpp.function_static_sibling_same_name
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

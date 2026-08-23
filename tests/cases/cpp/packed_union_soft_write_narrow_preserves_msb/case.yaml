@@ -1,5 +1,5 @@
 id: cpp.packed_union_soft_write_narrow_preserves_msb
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

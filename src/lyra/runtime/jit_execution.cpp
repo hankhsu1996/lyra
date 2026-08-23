@@ -367,8 +367,8 @@ void lyra_rt_register_signal(void* self, const void* name, void* cell) {
       static_cast<const char*>(name), cell);
 }
 
-auto lyra_rt_cell_packed_get(void* cell) -> const void* {
-  return &static_cast<Var<PackedArray>*>(cell)->Get();
+auto lyra_rt_cell_packed_get(void* cell) -> void* {
+  return Own(static_cast<Var<PackedArray>*>(cell)->Get());
 }
 
 void lyra_rt_cell_packed_initialize(void* cell, const void* prototype) {
@@ -381,8 +381,8 @@ void lyra_rt_cell_packed_set(void* cell, const void* value) {
       lyra::runtime::current_runtime(), Read<PackedArray>(value));
 }
 
-auto lyra_rt_cell_string_get(void* cell) -> const void* {
-  return &static_cast<Var<String>*>(cell)->Get();
+auto lyra_rt_cell_string_get(void* cell) -> void* {
+  return Own(static_cast<Var<String>*>(cell)->Get());
 }
 
 void lyra_rt_cell_string_initialize(void* cell, const void* prototype) {
@@ -394,8 +394,8 @@ void lyra_rt_cell_string_set(void* cell, const void* value) {
       lyra::runtime::current_runtime(), Read<String>(value));
 }
 
-auto lyra_rt_cell_real_get(void* cell) -> const void* {
-  return &static_cast<Var<Real>*>(cell)->Get();
+auto lyra_rt_cell_real_get(void* cell) -> void* {
+  return Own(static_cast<Var<Real>*>(cell)->Get());
 }
 
 void lyra_rt_cell_real_initialize(void* cell, const void* prototype) {
@@ -407,8 +407,8 @@ void lyra_rt_cell_real_set(void* cell, const void* value) {
       lyra::runtime::current_runtime(), Read<Real>(value));
 }
 
-auto lyra_rt_cell_shortreal_get(void* cell) -> const void* {
-  return &static_cast<Var<ShortReal>*>(cell)->Get();
+auto lyra_rt_cell_shortreal_get(void* cell) -> void* {
+  return Own(static_cast<Var<ShortReal>*>(cell)->Get());
 }
 
 void lyra_rt_cell_shortreal_initialize(void* cell, const void* prototype) {
@@ -577,6 +577,10 @@ auto lyra_rt_packed_count_bits(const void* value, const void* control_bits)
     -> void* {
   return Own(
       Read<PackedArray>(value).CountBits(Read<PackedArray>(control_bits)));
+}
+
+auto lyra_rt_packed_clog2(const void* value) -> void* {
+  return Own(Read<PackedArray>(value).Clog2());
 }
 
 auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void* {
@@ -757,6 +761,49 @@ auto lyra_rt_string_atooct(const void* value) -> void* {
 
 auto lyra_rt_string_atobin(const void* value) -> void* {
   return Own(Read<String>(value).Atobin());
+}
+
+auto lyra_rt_string_atoreal(const void* value) -> void* {
+  return Own(Read<String>(value).Atoreal());
+}
+
+// The formatting family mutates its receiver in the source language, so each
+// entry copies the receiver, applies the mutation to the copy, and returns it.
+auto lyra_rt_string_putc(
+    const void* value, const void* index, const void* character) -> void* {
+  String result = Read<String>(value);
+  result.Putc(Read<PackedArray>(index), Read<PackedArray>(character));
+  return Own(std::move(result));
+}
+
+auto lyra_rt_string_itoa(const void* value, const void* number) -> void* {
+  String result = Read<String>(value);
+  result.Itoa(Read<PackedArray>(number));
+  return Own(std::move(result));
+}
+
+auto lyra_rt_string_hextoa(const void* value, const void* number) -> void* {
+  String result = Read<String>(value);
+  result.Hextoa(Read<PackedArray>(number));
+  return Own(std::move(result));
+}
+
+auto lyra_rt_string_octtoa(const void* value, const void* number) -> void* {
+  String result = Read<String>(value);
+  result.Octtoa(Read<PackedArray>(number));
+  return Own(std::move(result));
+}
+
+auto lyra_rt_string_bintoa(const void* value, const void* number) -> void* {
+  String result = Read<String>(value);
+  result.Bintoa(Read<PackedArray>(number));
+  return Own(std::move(result));
+}
+
+auto lyra_rt_string_realtoa(const void* value, const void* number) -> void* {
+  String result = Read<String>(value);
+  result.Realtoa(Read<Real>(number));
+  return Own(std::move(result));
 }
 
 auto lyra_rt_string_add(const void* lhs, const void* rhs) -> void* {
@@ -1125,8 +1172,12 @@ auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs) -> void* {
   return Own(Read<RuntimeTuple>(lhs).CaseEqual(Read<RuntimeTuple>(rhs)));
 }
 
-auto lyra_rt_cell_tuple_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeTuple>*>(cell)->Get();
+auto lyra_rt_tuple_is_unknown(const void* value) -> void* {
+  return Own(Read<RuntimeTuple>(value).IsUnknown());
+}
+
+auto lyra_rt_cell_tuple_get(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeTuple>*>(cell)->Get());
 }
 
 void lyra_rt_cell_tuple_initialize(void* cell, const void* prototype) {
@@ -1271,8 +1322,8 @@ auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void* {
       Read<RuntimeDynamicArray>(lhs).CaseEqual(Read<RuntimeDynamicArray>(rhs)));
 }
 
-auto lyra_rt_cell_dynarray_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeDynamicArray>*>(cell)->Get();
+auto lyra_rt_cell_dynarray_get(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeDynamicArray>*>(cell)->Get());
 }
 
 void lyra_rt_cell_dynarray_initialize(void* cell, const void* prototype) {

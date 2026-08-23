@@ -1,5 +1,5 @@
 id: cpp.inc_dec_observable_var
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

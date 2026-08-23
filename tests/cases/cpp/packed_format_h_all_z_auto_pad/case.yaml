@@ -1,5 +1,5 @@
 id: cpp.packed_format_h_all_z_auto_pad
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

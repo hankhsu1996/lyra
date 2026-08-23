@@ -1,5 +1,5 @@
 id: cpp.packed_logic_signed_extend_logic
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

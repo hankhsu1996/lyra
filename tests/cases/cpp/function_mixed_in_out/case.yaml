@@ -1,5 +1,5 @@
 id: cpp.function_mixed_in_out
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false
