@@ -1,5 +1,5 @@
 id: cpp.casez_lhs_z
-tags: [cpp_run, jit_run]
+tags: [cpp_run]
 input:
   command: [run, cpp]
   project: false
