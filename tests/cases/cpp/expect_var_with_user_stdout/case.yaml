@@ -1,5 +1,5 @@
 id: cpp.expect_var_with_user_stdout
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

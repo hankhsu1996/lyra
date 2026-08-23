@@ -1,5 +1,5 @@
 id: cpp.localparam_in_initializer
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

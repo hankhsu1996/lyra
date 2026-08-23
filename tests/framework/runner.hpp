@@ -27,6 +27,9 @@ struct CaseInput {
   // Native sources (.c / .cpp) providing DPI-C foreign symbols, passed to the
   // run via `--dpi-link` and linked into the built program (LRM 35).
   std::vector<std::string> link_sources;
+  // Which backend runs the simulation, taken from the suite that selected this
+  // case. Unset runs the default.
+  std::optional<std::string> backend;
 };
 
 struct ExpectedVariable {
@@ -56,10 +59,15 @@ struct TestCase {
   CaseExpect expect;
 };
 
+// A named selection of cases plus the backend they run on. The backend is the
+// suite's because it is a property of the run, not of the source: the same case
+// is written once and every backend that claims it -- by the tag the suite
+// includes -- must produce what the case says.
 struct Suite {
   std::string name;
   std::vector<std::string> include_tags;
   std::unordered_set<std::string> excluded_ids;
+  std::optional<std::string> backend;
 };
 
 struct RunResult {

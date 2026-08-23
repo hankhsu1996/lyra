@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -17,6 +18,7 @@ using lyra::test::FilterCases;
 using lyra::test::LoadCases;
 using lyra::test::LoadSuite;
 using lyra::test::RunCase;
+using lyra::test::Suite;
 using lyra::test::TestCase;
 
 namespace {
@@ -74,25 +76,29 @@ auto main(int argc, char** argv) -> int {
     }
   }
 
-  static const std::vector<TestCase> kCases = [&] {
-    auto loaded = LoadCases(kEnv.cases_root);
-    auto suite = LoadSuite(kEnv.suites_yaml, suite_name);
-    return FilterCases(loaded, suite);
-  }();
+  const Suite suite = LoadSuite(kEnv.suites_yaml, suite_name);
+  static const std::vector<TestCase> kCases =
+      FilterCases(LoadCases(kEnv.cases_root), suite);
 
   if (kCases.empty()) {
     fmt::print(
         stderr,
-        "cpp_tests: zero cases registered for suite '{}'. "
+        "zero cases registered for suite '{}'. "
         "Refusing to report PASS on empty coverage.\n",
         suite_name);
     return 1;
   }
 
+  // The reported group names the backend that ran the case, so a failure in a
+  // log says which realization produced it.
+  std::string group = suite.backend.value_or("cpp");
+  group[0] =
+      static_cast<char>(std::toupper(static_cast<unsigned char>(group[0])));
+
   // NOLINTBEGIN(cppcoreguidelines-owning-memory)
   for (const auto& c : kCases) {
     testing::RegisterTest(
-        "Cpp", c.id.c_str(), nullptr, nullptr, __FILE__, __LINE__,
+        group.c_str(), c.id.c_str(), nullptr, nullptr, __FILE__, __LINE__,
         [&c]() -> testing::Test* { return new CppTest(c, &kEnv); });
   }
   // NOLINTEND(cppcoreguidelines-owning-memory)

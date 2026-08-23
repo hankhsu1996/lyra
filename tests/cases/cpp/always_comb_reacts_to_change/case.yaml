@@ -1,5 +1,5 @@
 id: cpp.always_comb_reacts_to_change
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

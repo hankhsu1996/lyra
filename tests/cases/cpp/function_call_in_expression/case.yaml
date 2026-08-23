@@ -1,5 +1,5 @@
 id: cpp.function_call_in_expression
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

@@ -1,5 +1,5 @@
 id: cpp.repeat_count_evaluated_once
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

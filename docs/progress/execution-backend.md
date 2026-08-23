@@ -14,8 +14,9 @@ Contracts: `../architecture/backend_contract.md`, `../architecture/lir.md`,
 Wherever both backends accept a source they answer the same, and what this backend has not realized
 refuses to lower and says which construct it was. The difference between the two is a diagnostic,
 never a different answer -- a construct that lowers and then answers wrongly is a defect, not a gap.
-That property rests on the coverage item under "Other backend surfaces": agreement is checked by a
-handful of hand-written cases rather than by the corpus, so a new divergence would be found by hand.
+A corpus case says which backends run it, and a case this backend claims is held to the expectations
+it already states -- the same ones the C++ backend meets, since a case is written once. A construct
+the backend has not reached is simply not claimed, so what it does run is measured, never assumed.
 
 ## Runtime-value lifetime
 
@@ -148,6 +149,29 @@ each meets the same lifetime question above; none is lowerable on the execution 
       `nets.md`.
 - [ ] By-pointer DPI-C marshaling (the by-value scalar surface runs; see `dpi.md`).
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
-- [ ] End-to-end coverage is a handful of backend-agreement tests (execution backend vs C++ backend,
-      compared per source), not the full test corpus, which targets the C++ backend. There is no
-      mechanism to run a corpus case against the execution backend.
+- [ ] **A case statement answers differently depending on the host toolchain.** Every case-label
+      comparison evaluates false, so only the `default` arm runs, on a build of the runtime made
+      with a different host compiler than the one this was developed against -- the same generated
+      module, since the module is this backend's own output and does not depend on what compiled
+      Lyra. The case expression is held in an activation-frame temp and reads back as its default,
+      which is where to start. It is the reason the case family is not claimed by the corpus.
+
+- [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
+      container this backend realizes exposes no per-element walk for a formatter to use. It is the
+      collection domains' item above seen from the formatting side.
+- [ ] **Below LIR, an unrealized construct reports itself as a compiler bug rather than as a
+      diagnostic.** The contract above says the difference between the two backends is a diagnostic,
+      and the lowering into LIR honors it: a construct with no LIR shape answers `unsupported`. What
+      lies below has no such channel -- codegen runs through the LLVM builder returning `void`, and
+      a library entry the runtime does not define surfaces only when the module fails to link -- so
+      both arrive as an internal error telling the reader to file a bug. Naming the missing piece is
+      honest and the failure is loud, but it is the wrong message for a gap nobody has filled yet.
+      Closing this means admitting a module against what the runtime realizes before codegen runs,
+      or threading `diag::Result` through codegen; a hand-kept list in the lowering is not it, since
+      the lowering is the wrong layer to know which library entries exist.
+- [x] **End-to-end coverage is the corpus, not a handful of cases.** A run case carries a tag per
+      backend that runs it, and every backend that claims it is held to the case's own expectations.
+      The claimed set is this backend's coverage and is the thing that grows: landing a construct
+      here means tagging the cases it unlocks in the same change, the way a checkbox above is
+      flipped with the code that closes it. A tag claims the case everywhere, not on the machine it
+      was derived on -- a case that passes on one host toolchain and not another is not claimed.

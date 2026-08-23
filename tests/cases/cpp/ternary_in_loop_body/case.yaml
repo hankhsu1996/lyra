@@ -1,5 +1,5 @@
 id: cpp.ternary_in_loop_body
-tags: [cpp_run]
+tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
   project: false

@@ -188,6 +188,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_to_int64", &lyra_rt_packed_to_int64);
   add("lyra_rt_packed_is_unknown", &lyra_rt_packed_is_unknown);
   add("lyra_rt_packed_count_bits", &lyra_rt_packed_count_bits);
+  add("lyra_rt_packed_clog2", &lyra_rt_packed_clog2);
   add("lyra_rt_packed_pow", &lyra_rt_packed_pow);
   add("lyra_rt_packed_shift_left", &lyra_rt_packed_shift_left);
   add("lyra_rt_packed_logical_shift_right",
@@ -229,6 +230,13 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_string_atohex", &lyra_rt_string_atohex);
   add("lyra_rt_string_atooct", &lyra_rt_string_atooct);
   add("lyra_rt_string_atobin", &lyra_rt_string_atobin);
+  add("lyra_rt_string_atoreal", &lyra_rt_string_atoreal);
+  add("lyra_rt_string_putc", &lyra_rt_string_putc);
+  add("lyra_rt_string_itoa", &lyra_rt_string_itoa);
+  add("lyra_rt_string_hextoa", &lyra_rt_string_hextoa);
+  add("lyra_rt_string_octtoa", &lyra_rt_string_octtoa);
+  add("lyra_rt_string_bintoa", &lyra_rt_string_bintoa);
+  add("lyra_rt_string_realtoa", &lyra_rt_string_realtoa);
   add("lyra_rt_string_add", &lyra_rt_string_add);
   add("lyra_rt_string_eq", &lyra_rt_string_eq);
   add("lyra_rt_string_ne", &lyra_rt_string_ne);
@@ -314,6 +322,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_tuple_eq", &lyra_rt_tuple_eq);
   add("lyra_rt_tuple_ne", &lyra_rt_tuple_ne);
   add("lyra_rt_tuple_case_equal", &lyra_rt_tuple_case_equal);
+  add("lyra_rt_tuple_is_unknown", &lyra_rt_tuple_is_unknown);
   add("lyra_rt_cell_tuple_get", &lyra_rt_cell_tuple_get);
   add("lyra_rt_cell_tuple_initialize", &lyra_rt_cell_tuple_initialize);
   add("lyra_rt_cell_tuple_set", &lyra_rt_cell_tuple_set);
@@ -463,14 +472,26 @@ void FillDefinition(
     const compiler::ElaboratedUnitMetadata& metadata,
     runtime::UnitDefinition& definition) {
   const lir::Class& root_class = unit.classes.Get(unit.root);
+  // An entry the scope has no work for was never emitted, and the session
+  // reports exactly that: the name has no definition. Any other failure means
+  // the entry does exist and could not be brought up -- typically a runtime
+  // symbol its body calls that nothing defines -- which would leave the scope
+  // silently missing a body it was compiled to have.
   auto lookup =
       [&](std::string_view entry) -> std::optional<llvm::orc::ExecutorAddr> {
-    auto symbol = jit.lookup(root_class.name + "." + std::string(entry));
-    if (!symbol) {
-      llvm::consumeError(symbol.takeError());
+    const std::string symbol = root_class.name + "." + std::string(entry);
+    auto found = jit.lookup(symbol);
+    if (found) {
+      return *found;
+    }
+    llvm::Error reason = found.takeError();
+    if (reason.isA<llvm::orc::SymbolsNotFound>()) {
+      llvm::consumeError(std::move(reason));
       return std::nullopt;
     }
-    return *symbol;
+    throw InternalError(
+        "jit executor: the scope entry '" + symbol +
+        "' did not resolve: " + llvm::toString(std::move(reason)));
   };
   definition.root.metadata.def_name = runtime::AbiStringRef(
       metadata.def_name.data(),
