@@ -258,9 +258,14 @@ auto CallStatementSuspends(
 // result lands in an output variable. Nullopt for every family that lowers as
 // an ordinary expression. Exhaustive over the semantic families, so a new one
 // forces a decision about whether it has a statement form.
+// The label is borrowed rather than taken: this may decline, and a caller that
+// had handed its label over would carry on with an emptied one and silently
+// drop the name a `disable` resolves against (LRM 9.6.2). Only the paths that
+// commit to a statement copy it.
 auto LowerSystemSubroutineCallStmtForm(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CallExpr& call, const hir::SystemSubroutineRef& ref,
+    ProcessLowerer& process, WalkFrame frame,
+    const std::optional<std::string>& label, const hir::CallExpr& call,
+    const hir::SystemSubroutineRef& ref,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> std::optional<diag::Result<mir::Stmt>> {
   const auto& desc = support::LookupSystemSubroutine(ref.id);
@@ -272,7 +277,7 @@ auto LowerSystemSubroutineCallStmtForm(
               return std::nullopt;
             }
             return LowerFileIOSystemSubroutineCallStmt(
-                process, frame, std::move(label), call, file_io, assign_target,
+                process, frame, label, call, file_io, assign_target,
                 result_type);
           },
           [&](const support::SFormatSystemSubroutineInfo& sformat)
@@ -284,7 +289,7 @@ auto LowerSystemSubroutineCallStmtForm(
             // ordinary expression there.
             if (assign_target.has_value()) return std::nullopt;
             return LowerSFormatSystemSubroutineCallStmt(
-                process, frame, std::move(label), call, sformat);
+                process, frame, label, call, sformat);
           },
           [](const support::PrintSystemSubroutineInfo&)
               -> std::optional<diag::Result<mir::Stmt>> {
@@ -328,7 +333,7 @@ auto LowerSystemSubroutineCallStmtForm(
             // it never feeds an assignment target. The lowering branches on
             // load vs dump.
             return LowerMemFileSystemSubroutineCallStmt(
-                process, frame, std::move(label), call, mem_file);
+                process, frame, label, call, mem_file);
           },
       },
       desc.semantic);
@@ -367,7 +372,7 @@ auto LowerExprStmt(
     if (const auto* sys_ref =
             std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
       if (auto stmt = LowerSystemSubroutineCallStmtForm(
-              process, frame, std::move(label), *call, *sys_ref, std::nullopt,
+              process, frame, label, *call, *sys_ref, std::nullopt,
               process.Owner().TranslateType(inner.type))) {
         return *std::move(stmt);
       }
@@ -411,8 +416,8 @@ auto LowerExprStmt(
               conv_target_type.has_value() ? *conv_target_type
                                            : call_carrier->type);
           if (auto stmt = LowerSystemSubroutineCallStmtForm(
-                  process, frame, std::move(label), *call, *sys_ref,
-                  assign->lhs, result_type)) {
+                  process, frame, label, *call, *sys_ref, assign->lhs,
+                  result_type)) {
             return *std::move(stmt);
           }
         }
