@@ -814,6 +814,10 @@ auto lyra_rt_string_eq(const void* lhs, const void* rhs) -> void* {
   return Own(Read<String>(lhs) == Read<String>(rhs));
 }
 
+auto lyra_rt_string_case_equal(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<String>(lhs) == Read<String>(rhs));
+}
+
 auto lyra_rt_string_ne(const void* lhs, const void* rhs) -> void* {
   return Own(Read<String>(lhs) != Read<String>(rhs));
 }

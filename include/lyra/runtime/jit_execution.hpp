@@ -242,6 +242,7 @@ auto lyra_rt_string_realtoa(const void* value, const void* number) -> void*;
 auto lyra_rt_string_add(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_string_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_lt(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_le(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_gt(const void* lhs, const void* rhs) -> void*;
