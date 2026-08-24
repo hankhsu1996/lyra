@@ -149,13 +149,6 @@ each meets the same lifetime question above; none is lowerable on the execution 
       `nets.md`.
 - [ ] By-pointer DPI-C marshaling (the by-value scalar surface runs; see `dpi.md`).
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
-- [ ] **A case statement answers differently depending on the host toolchain.** Every case-label
-      comparison evaluates false, so only the `default` arm runs, on a build of the runtime made
-      with a different host compiler than the one this was developed against -- the same generated
-      module, since the module is this backend's own output and does not depend on what compiled
-      Lyra. The case expression is held in an activation-frame temp and reads back as its default,
-      which is where to start. It is the reason the case family is not claimed by the corpus.
-
 - [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
       container this backend realizes exposes no per-element walk for a formatter to use. It is the
       collection domains' item above seen from the formatting side.
