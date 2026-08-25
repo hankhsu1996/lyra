@@ -1,0 +1,17 @@
+id: errors.assertion_control_unsupported
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "assertion control"
+      - "--disable-assertions"
+    not_contains:
+      - "internal error"

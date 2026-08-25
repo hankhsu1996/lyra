@@ -1,14 +1,19 @@
 #include <expected>
 #include <optional>
 #include <utility>
+#include <variant>
 
+#include <slang/ast/Expression.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/SystemSubroutine.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/parsing/KnownSystemName.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -75,6 +80,36 @@ auto LowerVariableDeclStmt(
       .span = span};
 }
 
+// LRM 20.12 assertion control tasks. Each is a void system task, so a call is
+// only ever a statement -- matching here covers every position the LRM gives
+// them.
+auto IsAssertionControlTask(const slang::ast::Expression& expr) -> bool {
+  if (expr.kind != slang::ast::ExpressionKind::Call) {
+    return false;
+  }
+  const auto* info = std::get_if<slang::ast::CallExpression::SystemCallInfo>(
+      &expr.as<slang::ast::CallExpression>().subroutine);
+  if (info == nullptr || info->subroutine == nullptr) {
+    return false;
+  }
+  using slang::parsing::KnownSystemName;
+  switch (info->subroutine->knownNameId) {
+    case KnownSystemName::AssertControl:
+    case KnownSystemName::AssertOn:
+    case KnownSystemName::AssertOff:
+    case KnownSystemName::AssertKill:
+    case KnownSystemName::AssertPassOn:
+    case KnownSystemName::AssertPassOff:
+    case KnownSystemName::AssertFailOn:
+    case KnownSystemName::AssertFailOff:
+    case KnownSystemName::AssertNonvacuousOn:
+    case KnownSystemName::AssertVacuousOff:
+      return true;
+    default:
+      return false;
+  }
+}
+
 auto LowerExpressionStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ExpressionStatement& es, diag::SourceSpan span)
@@ -84,6 +119,19 @@ auto LowerExpressionStmt(
   // wrapping statement lowers to empty. Pointer identity keeps this check
   // free of any per-kind knowledge of the consumed construct.
   if (proc.ConsumedBodyExprs().contains(&es.expr)) return LowerEmptyStmt(span);
+  // Everything an assertion control task turns on, off, or kills is an
+  // assertion of the design, so once those are elided the call has nothing
+  // left to act on: it is a no-op by construction, not an approximation of
+  // one. Without the policy it is a rejected construct, not silently ignored.
+  if (IsAssertionControlTask(es.expr)) {
+    if (proc.Owner().DisableAssertions()) {
+      return LowerEmptyStmt(span);
+    }
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "assertion control tasks are not supported; pass "
+        "--disable-assertions to skip them");
+  }
   auto expr = proc.LowerExpr(es.expr, frame);
   if (!expr) return std::unexpected(std::move(expr.error()));
   const hir::ExprId id = frame.Exprs().Add(*std::move(expr));
