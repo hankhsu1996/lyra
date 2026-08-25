@@ -149,6 +149,10 @@ auto Compile(
   return result;
 }
 
+auto CompileArtifacts::Elaboration() const -> slang::ast::Compilation& {
+  return *StageProduct(parse, "elaboration").compilation;
+}
+
 auto CompileArtifacts::HirUnits() const
     -> const std::vector<hir::CompilationUnit>& {
   return StageProduct(hir_units, "HIR");

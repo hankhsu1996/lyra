@@ -24,6 +24,12 @@ Done when:
       plus the legacy signed `$random`. Each draws from the RNG core and observes its thread /
       object stability.
 
+- [ ] The probabilistic distribution functions (LRM 18.13.2): `$dist_uniform`, `$dist_normal`,
+      `$dist_exponential`, `$dist_poisson`, `$dist_chi_square`, `$dist_t` and `$dist_erlang`. Each
+      takes its seed as an `inout` argument rather than drawing from the thread's RNG, so the
+      stability model above does not reach them; what they need instead is the LRM's own generator
+      algorithm, because a design that seeds one expects the sequence the standard prescribes.
+
 - [ ] `shuffle()` (LRM 7.12.2) on every unpacked container (dynamic array, queue, fixed unpacked).
       The array-manipulation method family is otherwise complete (see `aggregate.md`); `shuffle` is
       the one member held back here because it permutes its receiver using the RNG rather than being
