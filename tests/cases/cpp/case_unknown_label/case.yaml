@@ -1,0 +1,14 @@
+id: cpp.case_unknown_label
+tags: [cpp_run, jit_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    x_self: 1
+    z_self: 1
+    x_vs_known: 99
+    known_vs_x: 99
