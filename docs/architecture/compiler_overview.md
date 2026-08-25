@@ -16,17 +16,19 @@ compile-time and runtime.
 - The contract that separates compile-time artifacts (class-level) from runtime artifacts
   (object-level).
 - The positioning of the C++ backend: a transitional realization of the MIR consumer. The
-  architectural target is HIR -> MIR -> LIR -> LLVM IR; the C++ backend exists today because LIR and
-  the LLVM IR backend are not yet built. The C++ backend's output serves two roles -- an executable
-  artifact, and the human-readable surface against which MIR's shape is validated from SystemVerilog
-  source through MIR's semantic model. This transitional status does **not** loosen the
-  mechanical-translation discipline: the C++ backend's render must remain mechanical at the LLVM-IR
-  level (no decision logic in render, every entry a fixed function of one MIR node), so the same MIR
-  feeds an eventual LLVM IR backend without rework. `backend_contract.md` owns this discipline; this
-  doc owns its position in the pipeline. Debug inspection of HIR and MIR is separate: dumpers
-  produce textual traversals for reading and golden testing, while `backend::cpp` is the real
-  emitter. Dumpers and backends are both pure over their input IR and must not introduce or
-  reinterpret semantics.
+  architectural target is HIR -> MIR -> LIR -> LLVM IR, and that path runs; what keeps the C++
+  backend in place is breadth, since it is the only backend that accepts the whole language today.
+  It retires when the execution backend's claimed set covers the corpus. The C++ backend's output
+  serves two roles -- an executable artifact, and the human-readable surface against which MIR's
+  shape is validated from SystemVerilog source through MIR's semantic model. This transitional
+  status does **not** loosen the mechanical-translation discipline: the C++ backend's render must
+  remain mechanical at the LLVM-IR level (no decision logic in render, every entry a fixed function
+  of one MIR node), so the same MIR feeds an eventual LLVM IR backend without rework.
+  `backend_contract.md` owns this discipline; this doc owns its position in the pipeline. Debug
+  inspection of HIR and MIR is separate: a dumper produces a textual traversal for a reader, while
+  `backend::cpp` is the real emitter. A dumper's wording is free to change and no test asserts on it
+  (`testing_strategy.md`). Dumpers and backends are both pure over their input IR and must not
+  introduce or reinterpret semantics.
 
 ## Does Not Own
 

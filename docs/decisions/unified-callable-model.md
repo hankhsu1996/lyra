@@ -1,6 +1,6 @@
 # Unified callable model
 
-Date: 2026-06-24 Status: accepted as the target model; not yet implemented.
+Date: 2026-06-24 Status: accepted, and realized -- MIR carries one `CallableDecl` with no kind tag.
 
 ## Context
 

@@ -79,6 +79,26 @@ region queue, so commit order is the region's, not a function of which signal a 
 A time slot runs regions in LRM 4.4 order: Preponed, Active, Inactive, NBA, Observed, Reactive,
 ReInactive, ReNBA, Postponed.
 
+```mermaid
+flowchart TB
+  P[Preponed] --> AG
+  subgraph AG [active group -- iterates as a unit]
+    direction LR
+    ACT[Active] --> INA[Inactive] --> NBA
+    NBA -.->|committed writes woke a process| ACT
+  end
+  AG --> OBS[Observed] --> RG
+  subgraph RG [reactive group -- same rule, program blocks]
+    direction LR
+    RE[Reactive] --> REI[ReInactive] --> RNB[ReNBA]
+    RNB -.-> RE
+  end
+  RG --> POST[Postponed]
+```
+
+The dashed edges are the whole point: a process woken by an NBA commit belongs to the slot whose NBA
+woke it, so the group re-runs rather than deferring that process to the next time slot.
+
 The **active group** (Active, Inactive, NBA) iterates as a unit. Active drains, then Inactive
 promotes; Inactive drains, then NBA commits; if NBA's committed writes wake any sensitivity-bound
 processes, Active runs again. The cycle repeats until all three queues are empty. Without this

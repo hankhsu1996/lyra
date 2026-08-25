@@ -1389,6 +1389,24 @@ TEST(LyraCompile, ProducesPortableBuildableProject) {
   EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << run.stdout_text;
+
+  // The recipe also takes a compiler the project was not produced with, which
+  // is the rest of what portable means: the headers satisfy a second
+  // implementation, and the program still links the runtime library the first
+  // one compiled. Skipped where no second implementation is installed.
+  auto other_or = lyra::support::FindOnPath("g++");
+  if (!other_or) return;
+  std::filesystem::remove(program);
+  const std::vector<std::string> rebuild_other = {
+      "-c", "cd '" + out_dir.string() + "' && sh build.sh --cxx '" +
+                other_or->string() + "'"};
+  const auto other_built = RunChildProcess(*sh_or, rebuild_other, 120s);
+  ASSERT_EQ(other_built.exit_code, 0) << other_built.stderr_text;
+
+  const auto other_run = RunChildProcess(program, {}, 30s);
+  EXPECT_EQ(other_run.exit_code, 0) << other_run.stderr_text;
+  EXPECT_NE(other_run.stdout_text.find("ran 42"), std::string::npos)
+      << "stdout: " << other_run.stdout_text;
 }
 
 // Re-emitting one directory at the other optimization must rebuild. The recipe

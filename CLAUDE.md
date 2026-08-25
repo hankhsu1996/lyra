@@ -82,18 +82,26 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 ## Testing
 
-Every test is an end-to-end case under `tests/cases/` driven by SystemVerilog input, grouped into
-suites by `tests/suites.yaml`; Lyra takes no unit tests against internal utilities.
-`expect.variables` asserts a variable's final value and accepts `0x` hex and SV-sized literals. To
-iterate on one failing case, filter by its gtest name -- the case `id` with dots, prefixed `Cpp.`:
+Nearly every test is an end-to-end case under `tests/cases/` driven by SystemVerilog input: one
+`case.yaml` per case, grouped into suites by `tests/suites.yaml`. `expect.variables` asserts a
+variable's final value and accepts `0x` hex and SV-sized literals.
+
+A case carries a tag per backend that runs it, and each backend that claims a case is held to the
+expectations the case already states -- so a construct a backend has not reached is simply left
+unclaimed, and coverage is measured rather than assumed. The suites read those tags: `cpp_tests`
+runs everything tagged for the C++ backend, `jit_tests` everything tagged for the execution backend.
+
+To iterate on one failing case, filter by its gtest name -- the case `id` with dots, prefixed by the
+backend that ran it:
 
 ```bash
 bazel test //tests:cpp_tests --test_filter='Cpp.errors.nets_multi_driver'
 ```
 
-**A case that depends on X or Z belongs in `four_state.yaml`, never `default.yaml`.** The
-`jit_two_state` suite excludes `four_state.yaml` by pattern, so a four-state case in the default
-file passes locally and fails there.
+CI's test job passes `--test_tag_filters=-requires-host-cxx`, which excludes `cpp_tests`,
+`run_tests`, and `pch_audit_test` -- everything that spawns the host C++ compiler. The C++ backend
+is therefore verified before a commit and not again on merge, so a full local `bazel test //...` is
+the only gate it gets.
 
 ## Code style
 

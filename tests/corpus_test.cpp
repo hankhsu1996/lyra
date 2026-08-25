@@ -37,23 +37,23 @@ auto HostCompiler() -> std::string {
 #endif
 }
 
-struct CppEnv {
+struct CorpusEnv {
   std::filesystem::path lyra_exe;
   std::filesystem::path cases_root;
   std::filesystem::path suites_yaml;
 };
 
-auto ResolveEnv(Runfiles& rf) -> CppEnv {
-  CppEnv env;
+auto ResolveEnv(Runfiles& rf) -> CorpusEnv {
+  CorpusEnv env;
   env.lyra_exe = rf.Rlocation("_main/lyra");
   env.cases_root = rf.Rlocation("_main/tests/cases");
   env.suites_yaml = rf.Rlocation("_main/tests/suites.yaml");
   return env;
 }
 
-class CppTest : public testing::Test {
+class CorpusTest : public testing::Test {
  public:
-  CppTest(const TestCase& c, const CppEnv* env) : case_(&c), env_(env) {
+  CorpusTest(const TestCase& c, const CorpusEnv* env) : case_(&c), env_(env) {
   }
 
  protected:
@@ -66,7 +66,7 @@ class CppTest : public testing::Test {
 
  private:
   const TestCase* case_;
-  const CppEnv* env_;
+  const CorpusEnv* env_;
 };
 
 }  // namespace
@@ -80,14 +80,18 @@ auto main(int argc, char** argv) -> int {
     fmt::print(stderr, "failed to create runfiles: {}\n", err);
     return 1;
   }
-  static const CppEnv kEnv = ResolveEnv(*runfiles);
+  static const CorpusEnv kEnv = ResolveEnv(*runfiles);
 
   const std::span<char* const> args{argv, static_cast<std::size_t>(argc)};
-  std::string suite_name = "architecture_reset";
+  std::string suite_name;
   for (std::size_t i = 1; i + 1 < args.size(); ++i) {
     if (std::string_view(args[i]) == "--suite") {
       suite_name = args[i + 1];
     }
+  }
+  if (suite_name.empty()) {
+    fmt::print(stderr, "no suite selected: pass --suite <name>\n");
+    return 1;
   }
 
   const Suite suite = LoadSuite(kEnv.suites_yaml, suite_name);
@@ -117,7 +121,7 @@ auto main(int argc, char** argv) -> int {
   for (const auto& c : kCases) {
     testing::RegisterTest(
         group.c_str(), c.id.c_str(), nullptr, nullptr, __FILE__, __LINE__,
-        [&c]() -> testing::Test* { return new CppTest(c, &kEnv); });
+        [&c]() -> testing::Test* { return new CorpusTest(c, &kEnv); });
   }
   // NOLINTEND(cppcoreguidelines-owning-memory)
 

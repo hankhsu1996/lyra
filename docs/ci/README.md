@@ -2,9 +2,17 @@
 
 ## Strategy
 
-Build and test the whole graph -- `bazel build //...` and `bazel test //...` -- rather than naming
-targets. A new target is then covered the moment it exists, and no list has to be kept in step with
-the `BUILD` files.
+Build and test by asking for the whole graph -- `bazel build //...`, `bazel test //...` -- rather
+than naming targets, so a new target is covered the moment it exists and no list has to be kept in
+step with the `BUILD` files.
+
+One filter cuts across that. The test job passes `--test_tag_filters=-requires-host-cxx`, and three
+targets carry the tag: `cpp_tests`, `run_tests`, and `pch_audit_test`. Each spawns the host C++
+compiler once per case, which is the dominant cost in all three. What that filter excludes is the
+whole of the C++ backend's corpus, so what CI gates today is the execution backend's claimed set
+plus the unit tests; the C++ backend is verified locally, before a commit, and not again on merge.
+This is a real hole rather than a rule about scope, and the ratio makes it worse over time: the C++
+backend claims roughly twice the corpus the execution backend does.
 
 ## Gating workflows
 
@@ -12,13 +20,14 @@ Each runs on push to `main` and on pull requests.
 
 | Workflow               | What it enforces                                               |
 | ---------------------- | -------------------------------------------------------------- |
-| `bazel-build.yml`      | `bazel build //...` then `bazel test //...`                    |
+| `bazel-build.yml`      | `bazel build //...`, then the tests minus `requires-host-cxx`  |
 | `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy |
 | `bazel-lint.yml`       | `buildifier` formatting and lint warnings                      |
 | `md-format.yml`        | Prettier over every markdown file                              |
 | `ascii-policy.yml`     | ASCII-only, on the diff against `origin/main`                  |
 | `exception-policy.yml` | The thrown-type policy, on the same diff                       |
 | `architecture.yml`     | Layer boundaries between the IRs and the backends              |
+| `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)    |
 
 `cpp-tidy.yml` runs nightly and on demand rather than per merge: clang-tidy re-analyzes every
 translation unit from scratch, which does not fit a merge-time budget. It reports rather than gates,

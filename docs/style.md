@@ -37,6 +37,34 @@ earns its space with its reason; abstract principles without consequences do not
 In both cases the rules under Core Principles still apply: no narrative framing, no "currently /
 historically / not yet / migration", no platitudes that are trivially true of any reasonable system.
 
+### When status genuinely has to be stated
+
+Principle 5 bans "not yet" from an architecture doc, and a contract for something unbuilt still has
+to say so somewhere or it reads as a description of the code. The resolution is placement, not
+vocabulary: **the admission goes in one paragraph directly under the title, scoping the whole
+document, or it does not appear at all.** `architecture/incremental_build.md` is the worked example
+-- it opens by saying the compiler does not realize the contract yet and that the rules bind every
+layer regardless, then never mentions status again.
+
+What rots is the other shape: one status clause buried in a bullet, in a section about something
+else. Nothing forces a reader past it, so it survives every refactor that falsifies it. A doc that
+needs more than its opening paragraph to describe what is unbuilt is describing progress, and
+progress has its own directory.
+
+The same placement rule covers mechanism. An architecture doc names file layouts, type spellings,
+and command names only under Notes / Examples, prefixed as the current implementation -- never in an
+invariant or a forbidden shape, which must survive the next rename.
+
+### What is machine-checked
+
+`tools/policy/check_docs.py` settles the claims a machine can settle: a repo-rooted path cited in
+any doc exists, a relative link resolves, an index lists every document in its directory, and no
+cadence vocabulary (`in this cut`, `a later cut`) appears in a timeless doc. It deliberately checks
+nothing about whether a contract is the right contract or a stated capability is real -- that needs
+a reader, and it is what a reader's attention is for. Two known gaps: a bare filename (`test.yml`)
+is not repo-rooted, so no rule confirms it exists, and the other words principle 5 bans
+("currently", "transitional") carry legitimate uses that a regex cannot separate from the rot.
+
 ### Type-Contract Template
 
 A type-contract doc contains, in order:

@@ -17,6 +17,8 @@ the doc.
 - `ci/` -- CI workflow inventory.
 - `design-process.md` -- how to arrive at a design and how to falsify one.
 - `style.md` -- writing contract for docs in this directory.
+- `code-comments.md` -- when a comment earns its place in the source, and when it does not.
+- `profiling.md` -- how to measure the compiler and an emitted program honestly.
 
 ## Reading Order
 

@@ -87,8 +87,8 @@ what the construct means.
   does not grow to model a particular backend's storage realization or runtime library shape.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
-- A textual dumper that serializes MIR for inspection, validation, and golden testing. The dumper is
-  not a backend; its output is not executable.
+- A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
+  not executable, and nothing asserts on its wording.
 
 ## Does Not Own
 
@@ -117,10 +117,9 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
    consequence: generate is not a meta-language at MIR; it is ordinary constructor code._
 4. MIR ids are the single source of identity at this layer. Earlier-layer ids are not carried
    through. _Programming-language consequence: a layer's names are owned by the layer._
-5. MIR admits a pure textual dumper that is lossless with respect to MIR identity and structure. The
-   dumper is the golden-test surface at this layer; it is not a compilation path. _Programming-
-   language consequence: the program is readable as text at the layer where it is meaningful as
-   software._
+5. MIR admits a pure textual dumper that is lossless with respect to MIR identity and structure. It
+   is a reading surface, not a compilation path and not an assertion surface. _Programming-language
+   consequence: the program is readable as text at the layer where it is meaningful as software._
 6. MIR does not reconstruct topology or identity from side tables. A member is owned by exactly one
    object; a callable by exactly one owner. _Programming-language consequence: ownership is
    structural, not name-based._

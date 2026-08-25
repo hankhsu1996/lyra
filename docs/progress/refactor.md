@@ -950,8 +950,8 @@ enough to warrant its own focused review.
       `../architecture/lowering_organization.md` names under Pool Selection. Target: the files are a
       pool like any other, minting the identity and answering totally, and a source span carries an
       optional file identity so a span with none says so. No prerequisite blocks it, but the span
-      type is read across most of the compiler and pinned by the diagnostic golden tests, so the
-      optionality change is broad enough to warrant its own focused review.
+      type is read across most of the compiler and pinned by every case that asserts a diagnostic's
+      text, so the optionality change is broad enough to warrant its own focused review.
 
 - [ ] R63 -- A function's basic blocks are a bare sequence indexed by a typed identity, so the
       identity's bounds are unchecked. The reason was real: a block used to be filled in place after

@@ -55,6 +55,21 @@ upward reference, input/output initial-value visibility) is a symptom of that co
 
 ## The five phases
 
+```mermaid
+flowchart LR
+  subgraph elab [elaboration -- LRM 3.12]
+    B[Build<br/>shells, generate,<br/>connection facts] --> R[Resolve<br/>run each route,<br/>candidate endpoints]
+    R --> S[Seal<br/>validate, collapse chains,<br/>commit atomically]
+  end
+  subgraph sim [simulation time zero -- LRM 4]
+    I[Initialize<br/>variable initializers] --> A[Activate<br/>arm processes,<br/>enter scheduler]
+  end
+  S --> I
+```
+
+Seal is the barrier between the two halves: nothing to its right observes anything that has not
+committed, and nothing to its left executes a SystemVerilog body.
+
 ### Build
 
 Construct the instance shell and the structural object graph. This phase runs the unit's

@@ -33,8 +33,7 @@ type-level.
   closures of the same signature but different captures are different `ClosureType`s.
 - The **`StructType`** category as used for a promoted scope: a named generic aggregate,
   `StructType{StructId}`, whose declaration carries fields and no invoke, reached through
-  `Shared<>`. In this cut a `StructType` is compiler-generated only; it is not yet a source-level
-  user-declarable aggregate feature.
+  `Shared<>`. Every `StructType` is compiler-generated; no source-level aggregate declares one.
 - The three **capture forms** -- snapshot, live-place alias, retained scope -- and the rule that the
   form is carried by the captured field's type, not by a separate capture-mode axis.
 - The separate relations over a captured field: its **capture key** (which binding), its **field
@@ -76,7 +75,7 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
    target realization are not. The shared vocabulary is narrow, so `object_model.md`'s
    single-object-IR rule stands and no universal `Record` type appears.
 
-3. **A closure's invoke reads captures through a read-only receiver.** The receiver in this cut is a
+3. **A closure's invoke reads captures through a read-only receiver.** The receiver is a
    `Borrowed<ClosureType>` (the invoke body's `locals[0]`); a captured read is field access over it.
    A write to captured state is a write through a captured `RefType` or through a captured
    `Shared<StructType>` field, never a write to the capture slot itself.
