@@ -1,10 +1,7 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
-#include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <format>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -185,8 +182,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::runtime::CancellationSource"};
               case mir::RuntimeLibraryKind::kCancellationGuard:
                 return std::string{"lyra::runtime::CancellationGuard"};
-              case mir::RuntimeLibraryKind::kAbort:
-                return std::string{"lyra::runtime::Abort"};
+              case mir::RuntimeLibraryKind::kControlEffect:
+                return std::string{"lyra::runtime::ControlEffect"};
               case mir::RuntimeLibraryKind::kFormatSpec:
                 return std::string{"lyra::value::FormatSpec"};
               case mir::RuntimeLibraryKind::kFormatArg:

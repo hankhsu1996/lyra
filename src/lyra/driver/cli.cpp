@@ -470,33 +470,33 @@ auto LoweringDepth(const ParsedArgs& args) -> lyra::compiler::StopAfter {
 }
 
 auto RunDumpHir(const CommandContext& ctx) -> int {
-  fmt::print("{}", lyra::hir::DumpHir(*ctx.artifacts->hir_units));
+  fmt::print("{}", lyra::hir::DumpHir(ctx.artifacts->HirUnits()));
   return 0;
 }
 
 auto RunDumpMir(const CommandContext& ctx) -> int {
-  for (const auto& unit : *ctx.artifacts->mir_units) {
+  for (const auto& unit : ctx.artifacts->MirUnits()) {
     fmt::print("{}", lyra::mir::DumpMir(unit));
   }
-  fmt::print("{}", lyra::mir::DumpMir(*ctx.artifacts->root_unit));
+  fmt::print("{}", lyra::mir::DumpMir(ctx.artifacts->RootUnit()));
   return 0;
 }
 
 auto RunDumpLir(const CommandContext& ctx) -> int {
-  for (const auto& unit : *ctx.artifacts->lir_units) {
+  for (const auto& unit : ctx.artifacts->LirUnits()) {
     fmt::print("{}", lyra::lir::DumpLir(unit));
   }
-  fmt::print("{}", lyra::lir::DumpLir(*ctx.artifacts->root_lir_unit));
+  fmt::print("{}", lyra::lir::DumpLir(ctx.artifacts->RootLirUnit()));
   return 0;
 }
 
 auto RunDumpLlvm(const CommandContext& ctx) -> int {
-  for (const auto& unit : *ctx.artifacts->lir_units) {
+  for (const auto& unit : ctx.artifacts->LirUnits()) {
     fmt::print("{}", lyra::backend::llvm_backend::EmitModule(unit).Print());
   }
   fmt::print(
       "{}",
-      lyra::backend::llvm_backend::EmitModule(*ctx.artifacts->root_lir_unit)
+      lyra::backend::llvm_backend::EmitModule(ctx.artifacts->RootLirUnit())
           .Print());
   return 0;
 }
@@ -515,7 +515,7 @@ auto AssemblePortableProject(const CommandContext& ctx)
     return std::nullopt;
   }
   auto assembled = lyra::driver::AssembleProject(
-      *runtime, *ctx.artifacts->mir_units, *ctx.artifacts->root_unit,
+      *runtime, ctx.artifacts->MirUnits(), ctx.artifacts->RootUnit(),
       ctx.args->out_dir, ctx.formatting, *host, ctx.dpi_inputs);
   if (!assembled) {
     (*ctx.report)(std::move(assembled.error()), ctx.mgr);
@@ -563,7 +563,7 @@ auto RunCppBackend(const CommandContext& ctx) -> int {
     return 1;
   }
   auto exit_code = lyra::driver::RunInPlace(
-      *runtime, *ctx.artifacts->mir_units, *ctx.artifacts->root_unit, *work_dir,
+      *runtime, ctx.artifacts->MirUnits(), ctx.artifacts->RootUnit(), *work_dir,
       ctx.formatting, *host, ctx.args->child_args, ctx.dpi_inputs);
   if (!exit_code) {
     (*ctx.report)(std::move(exit_code.error()), ctx.mgr);
@@ -592,7 +592,7 @@ auto BuildJitDpiLibrary(const CommandContext& ctx)
     return std::nullopt;
   }
   if (auto surface = lyra::driver::WriteDpiSurface(
-          *runtime, *ctx.artifacts->mir_units, *ctx.artifacts->root_unit, *dir);
+          *runtime, ctx.artifacts->MirUnits(), ctx.artifacts->RootUnit(), *dir);
       !surface) {
     (*ctx.report)(std::move(surface.error()), ctx.mgr);
     return std::nullopt;
@@ -619,8 +619,8 @@ auto RunJitBackend(const CommandContext& ctx) -> int {
   // top-level units as its owned children, so the JIT runs the design once from
   // that one entry rather than per top.
   return lyra::jit::Execute(
-      *ctx.artifacts->lir_units, *ctx.artifacts->unit_metadata,
-      *ctx.artifacts->root_lir_unit, *ctx.artifacts->root_metadata,
+      ctx.artifacts->LirUnits(), ctx.artifacts->UnitMetadata(),
+      ctx.artifacts->RootLirUnit(), ctx.artifacts->RootMetadata(),
       *dpi_library);
 }
 

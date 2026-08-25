@@ -318,8 +318,8 @@ class MirDumper {
                   return "RuntimeLibrary(CancellationSource)";
                 case RuntimeLibraryKind::kCancellationGuard:
                   return "RuntimeLibrary(CancellationGuard)";
-                case RuntimeLibraryKind::kAbort:
-                  return "RuntimeLibrary(Abort)";
+                case RuntimeLibraryKind::kControlEffect:
+                  return "RuntimeLibrary(ControlEffect)";
                 case RuntimeLibraryKind::kFormatSpec:
                   return "RuntimeLibrary(FormatSpec)";
                 case RuntimeLibraryKind::kFormatArg:

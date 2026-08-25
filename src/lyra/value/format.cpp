@@ -24,6 +24,9 @@ auto TimeUnitText(std::int8_t power) -> std::string {
   constexpr std::array<std::string_view, 6> kUnits = {"s",  "ms", "us",
                                                       "ns", "ps", "fs"};
   constexpr std::array<std::string_view, 3> kMantissa = {"1", "10", "100"};
+  // A time power is a small signed number (LRM 3.14): -9 is ns, so widening it
+  // with sign extension is the meaning, not the byte read this check looks for.
+  // NOLINTNEXTLINE(bugprone-signed-char-misuse)
   const int p = static_cast<int>(power);
   const int index = (-p + 2) / 3;
   const int mantissa_exp = p + (3 * index);

@@ -341,7 +341,7 @@ void DefineExportSymbols(
 
 }  // namespace
 
-auto LinkDesign(
+auto SynthesizeDesignRoot(
     std::span<const mir::CompilationUnit> units,
     std::span<const std::string> top_names, StopAfter stop_after,
     const diag::SourceManager& source_manager)

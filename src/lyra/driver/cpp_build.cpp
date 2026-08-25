@@ -186,21 +186,36 @@ auto RenderBuildScript(
   return SubstituteTokens(kBuildScriptTemplate, bindings);
 }
 
-// Best-effort: reformat the emitted C++ files in place with clang-format if it
-// is on PATH. A missing formatter or a non-zero exit is ignored -- the emitted
-// code is valid C++ either way, so formatting never gates emission.
-void FormatSources(
+// Reformats the emitted C++ files in place with clang-format. Reached only
+// when the caller asked for formatting, which makes clang-format a tool this
+// command needs rather than a nicety, so a missing one is reported the same way
+// a missing host compiler is. A non-zero exit says clang-format could not read
+// or write files Lyra has just written, which is about the emission and not
+// about style, so it is not swallowed either.
+auto FormatSources(
     std::span<const backend::cpp::CppArtifact> files,
-    const std::filesystem::path& dir) {
+    const std::filesystem::path& dir) -> diag::Result<void> {
   auto clang_format = support::FindOnPath("clang-format");
   if (!clang_format) {
-    return;
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, std::move(clang_format.error()));
   }
   std::vector<std::string> args = {"-i", "-style=Google"};
   for (const auto& file : files) {
     args.push_back((dir / file.relpath).string());
   }
-  (void)support::RunProcessCaptured(*clang_format, args);
+  auto run = support::RunProcessCaptured(*clang_format, args);
+  if (!run) {
+    return diag::Fail(diag::DiagCode::kHostIoError, std::move(run.error()));
+  }
+  if (run->exit_code != 0) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError,
+        std::format(
+            "clang-format failed on the emitted sources: {}",
+            run->stderr_text));
+  }
+  return {};
 }
 
 // Copies the user's DPI-C sources into the project (LRM 35) so the directory
@@ -229,7 +244,9 @@ auto EmitAndWriteSources(
     }
   }
   if (formatting == SourceFormatting::kOn) {
-    FormatSources(set.files, dir);
+    if (auto r = FormatSources(set.files, dir); !r) {
+      return r;
+    }
   }
   return {};
 }

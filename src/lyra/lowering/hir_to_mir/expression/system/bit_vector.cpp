@@ -4,14 +4,17 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <utility>
 #include <variant>
+#include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
@@ -57,15 +60,12 @@ auto PlanesAt(const hir::IntegralConstant& constant, std::uint32_t index)
 // bit carries the control bit it stands for.
 template <ExprLowerer Lowerer>
 auto AdmittedByControlArguments(
-    const Lowerer& lowerer, const hir::CallExpr& call, diag::SourceSpan span)
-    -> diag::Result<AdmittedBitValues> {
+    const Lowerer& lowerer, std::span<const hir::ExprId> controls,
+    diag::SourceSpan span) -> diag::Result<AdmittedBitValues> {
   const auto& hir_exprs = lowerer.HirExprs();
   AdmittedBitValues admitted = 0;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    if (!call.arguments[i].has_value()) {
-      throw InternalError("$countbits: a control argument cannot be elided");
-    }
-    const hir::Expr& arg = hir_exprs.Get(*call.arguments[i]);
+  for (const hir::ExprId control : controls) {
+    const hir::Expr& arg = hir_exprs.Get(control);
     const auto* primary = std::get_if<hir::PrimaryExpr>(&arg.data);
     const auto* literal =
         primary == nullptr ? nullptr
@@ -133,12 +133,10 @@ auto ReadingComparison(support::BitCountReading reading)
 // value type answers the unknown question on its own, so that reading takes the
 // direct entry instead of counting and then comparing.
 template <ExprLowerer Lowerer>
-auto LowerUnknownTest(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call)
+auto LowerUnknownTest(Lowerer& lowerer, WalkFrame frame, hir::ExprId value)
     -> diag::Result<mir::Expr> {
   auto& body = *frame.current_block;
-  auto operand_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(*call.arguments[0]), frame);
+  auto operand_or = lowerer.LowerExpr(lowerer.HirExprs().Get(value), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
@@ -157,14 +155,19 @@ auto LowerBitVectorSystemSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const support::BitVectorSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
+  // Every one of these reads its value first; $countbits (LRM 20.9) follows it
+  // with control bits and the rest take nothing more. None of them elides.
+  const std::vector<hir::ExprId> operands = RequiredOperands(call);
+
   if (info.values == support::BitValueSet::kUnknowns &&
       info.reading == support::BitCountReading::kAny) {
-    return LowerUnknownTest(lowerer, frame, call);
+    return LowerUnknownTest(lowerer, frame, operands[0]);
   }
 
   AdmittedBitValues admitted = FlagOfPlanes(true, false);
   if (info.values == support::BitValueSet::kControlArguments) {
-    auto named = AdmittedByControlArguments(lowerer, call, span);
+    auto named = AdmittedByControlArguments(
+        lowerer, std::span{operands}.subspan(1), span);
     if (!named) {
       return std::unexpected(std::move(named.error()));
     }
@@ -174,7 +177,7 @@ auto LowerBitVectorSystemSubroutineCall(
   auto& unit = lowerer.Owner().Unit();
   auto& body = *frame.current_block;
   auto operand_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(*call.arguments[0]), frame);
+      lowerer.LowerExpr(lowerer.HirExprs().Get(operands[0]), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }

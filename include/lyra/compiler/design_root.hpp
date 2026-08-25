@@ -22,15 +22,19 @@ struct DesignRootArtifacts {
   std::optional<ElaboratedUnitMetadata> metadata;
 };
 
-// Links the compiled units into the design: synthesizes the design-root unit
-// whose constructor elaborates the design (it builds the top-level units as its
-// owned children) and whose Initialize phase brings up the packages' variables
-// (LRM 26.2 / 10.5). This is the one whole-design step -- it reads across the
-// units to resolve the package-initialization plan and to name the tops -- so
-// it is held apart from the per-unit lowering, which reads a single unit. The
-// units are consumed only through their interfaces (name, root presence,
-// exported callables and variables), never their bodies.
-auto LinkDesign(
+// Writes the design-root unit: a compilation unit the compiler synthesizes
+// rather than finds in the source, whose constructor elaborates the design (it
+// builds the top-level units as its owned children) and whose Initialize phase
+// brings up the packages' variables (LRM 26.2 / 10.5). Being a unit, it goes on
+// down the same MIR -> LIR -> backend vertical as the rest.
+//
+// This is the one whole-design step -- it reads across the units to resolve the
+// package-initialization plan and to name the tops -- so it is held apart from
+// the per-unit lowering, which reads a single unit. What it takes from them is
+// what a hand-written top would take from a header: their interfaces (name,
+// root presence, exported callables and variables), never their bodies. Symbol
+// resolution proper still happens where it does for any program, at link time.
+auto SynthesizeDesignRoot(
     std::span<const mir::CompilationUnit> units,
     std::span<const std::string> top_names, StopAfter stop_after,
     const diag::SourceManager& source_manager)

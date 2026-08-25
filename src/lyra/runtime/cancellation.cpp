@@ -28,30 +28,43 @@ CancellationGuard::~CancellationGuard() {
   process_->PopEnclosingTarget(source_);
 }
 
-void RaiseAbortIfDisabled(RuntimeProcess& process) {
+void RaiseControlEffectIfDisabled(RuntimeProcess& process) {
   CancellationSource* target = process.OutermostInvalidatedTarget();
   if (target == nullptr) {
     return;
   }
-  // The process records that it is leaving a disabled target before the effect
-  // is raised, so a frame that ends up settling this execution reads why it
-  // ended without having to inspect what is unwinding through it.
-  process.NoteAbortRaised();
-  throw Abort{.target = target, .leaving = &process};
+  throw ControlEffect{.target = target};
 }
 
-void AbortConsumeOrRethrow(const Abort& abort, CancellationSource& target) {
-  if (abort.target != &target) {
-    throw abort;
+void ClaimControlEffect(
+    const ControlEffect& effect, CancellationSource& target) {
+  // Returning is what claiming the effect means: the execution resumes past the
+  // target it just left, and whatever outcome it later settles is its own, not
+  // this one.
+  if (effect.target != &target) {
+    throw ControlEffect{effect};
   }
-  // The execution stops leaving: it resumes past the target it just left, and
-  // whatever outcome it later settles is its own, not this termination.
-  abort.leaving->NoteAbortConsumed();
+}
+
+void RaiseUnclaimableEffect() {
+  throw ControlEffect{.target = nullptr};
+}
+
+auto ClassifyUnwind() -> Unwound {
+  // The raise is caught here in the same breath, so nothing leaves this
+  // function still unwinding.
+  try {
+    throw;
+  } catch (const ControlEffect&) {
+    return Unwound{.control_effect = true, .raised = std::current_exception()};
+  } catch (...) {
+    return Unwound{.control_effect = false, .raised = std::current_exception()};
+  }
 }
 
 void Disable(CancellationSource& target, RuntimeEffects& effects) {
   target.Invalidate(effects);
-  RaiseAbortIfDisabled(effects.CurrentProcess());
+  RaiseControlEffectIfDisabled(effects.CurrentProcess());
 }
 
 }  // namespace lyra::runtime
