@@ -54,12 +54,25 @@ infrastructure surface, built.
 
 ### assertions
 
-- [ ] assertions/default -- immediate assertions (LRM 16.4). Currently rejected at lowering
-      (`--disable-assertions`).
+None of the family is lowered yet. Because an assertion observes the design and never drives it, a
+run with every one of them removed behaves identically, so `--disable-assertions` elides the whole
+family rather than rejecting it -- statements, declarations, checkers, and the LRM 20.12 control
+tasks alike. Sampled value functions are the one member it cannot cover: outside an assertion they
+produce a value that ordinary logic consumes, so there is nothing to elide them to.
+
+- [ ] assertions/default -- immediate assertions (LRM 16.4).
 - [ ] assertions/deferred -- deferred assertion actions (`assert #0`, LRM 16.4), with encounter-time
       vs execution-time capture semantics.
 - [ ] assertions/cover -- cover statements (LRM 16.7). Cover-hit observability is a tool feature,
       not a language one (the archive `jit_only` framing assumed an obsolete JIT-vs-AOT split).
+- [ ] assertions/concurrent -- sequences, properties, and their named declarations (LRM 16.5-16.13),
+      including `disable iff` and the clocking a property is evaluated against.
+- [ ] assertions/sampled -- sampled value functions (`$past`, `$stable`, `$rose`, `$fell`,
+      `$changed`, `$sampled`, LRM 16.9.3). Inside an assertion they disappear with it; used as
+      ordinary logic they need the preponed sampling region.
+- [ ] assertions/control -- assertion control tasks (LRM 20.12), which need the assertion state they
+      act on before they mean anything.
+- [ ] assertions/checkers -- checker declarations and instances (LRM 17).
 
 ### compilation_units
 
