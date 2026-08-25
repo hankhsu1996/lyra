@@ -11,8 +11,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
@@ -154,14 +156,13 @@ auto EmitSubroutineCall(
 
   std::vector<CompletionWriteback> writebacks;
 
-  for (std::size_t i = 0; i < call.arguments.size(); ++i) {
+  // The arity was matched against the completion layout above, and a user
+  // call fills every position it declares.
+  const std::vector<hir::ExprId> operands = RequiredOperands(call);
+  for (std::size_t i = 0; i < operands.size(); ++i) {
     const CompletionLayout::Formal& formal = plan.completion.formals[i];
     const hir::ParamDirection dir = formal.direction;
-    if (!call.arguments[i].has_value()) {
-      throw InternalError(
-          "EmitSubroutineCall: positional argument unexpectedly elided");
-    }
-    const hir::Expr& hir_arg = hir_exprs.Get(*call.arguments[i]);
+    const hir::Expr& hir_arg = hir_exprs.Get(operands[i]);
     const mir::TypeId formal_type = formal.type;
 
     // An `output` passes no argument; an `inout` passes its incoming value.

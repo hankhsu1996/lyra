@@ -506,7 +506,7 @@ auto BuildRouteAnchor(
       return RouteReceiver{
           .expr = head_access,
           .shape = &unit_lowerer.GetClassShape(*anchor.target),
-          .class_id = *anchor.target};
+          .class_id = anchor.target};
     }
     return RouteReceiver{
         .expr = head_access, .shape = nullptr, .class_id = std::nullopt};

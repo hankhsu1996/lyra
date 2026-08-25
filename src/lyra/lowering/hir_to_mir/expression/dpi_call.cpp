@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -11,9 +12,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
@@ -488,13 +491,13 @@ auto LowerForeignImportInputsOnly(
   auto& block = *frame.current_block;
   const auto& hir_exprs = lowerer.HirExprs();
 
+  // A DPI-C import declares every formal (LRM 35.5), so the call carries an
+  // actual for each: nothing here is elidable.
+  const std::vector<hir::ExprId> operands = RequiredOperands(c);
   std::vector<mir::ExprId> carrier_args;
-  carrier_args.reserve(c.arguments.size());
-  for (std::size_t i = 0; i < c.arguments.size(); ++i) {
-    if (!c.arguments[i].has_value()) {
-      throw InternalError("DPI-C import call argument unexpectedly elided");
-    }
-    auto sv_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
+  carrier_args.reserve(operands.size());
+  for (std::size_t i = 0; i < operands.size(); ++i) {
+    auto sv_or = lowerer.LowerExpr(hir_exprs.Get(operands[i]), frame);
     if (!sv_or) return std::unexpected(std::move(sv_or.error()));
     const mir::ExprId sv_id = block.exprs.Add(*std::move(sv_or));
     carrier_args.push_back(
@@ -544,13 +547,11 @@ auto PopulateForeignImportBoundary(
   };
   std::vector<Writeback> writebacks;
 
+  const std::vector<hir::ExprId> operands = RequiredOperands(c);
   std::vector<mir::ExprId> call_args;
-  call_args.reserve(c.arguments.size());
-  for (std::size_t i = 0; i < c.arguments.size(); ++i) {
-    if (!c.arguments[i].has_value()) {
-      throw InternalError("DPI-C import call argument unexpectedly elided");
-    }
-    const hir::ExprId actual = *c.arguments[i];
+  call_args.reserve(operands.size());
+  for (std::size_t i = 0; i < operands.size(); ++i) {
+    const hir::ExprId actual = operands[i];
     const hir::DpiParamAbi& param = import.params[i];
     const support::DpiCarrier& carrier = param.carrier;
 

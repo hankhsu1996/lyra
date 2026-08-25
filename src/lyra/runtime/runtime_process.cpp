@@ -279,42 +279,28 @@ auto RuntimeProcess::ResumeWith(
     execution_state_ = ProcessExecutionState::kWaiting;
     return false;
   }
-  // Phase 2 of a deferred termination: the body requested its own termination
-  // (LRM 9.6 / 9.7) and has now unwound to this safe boundary. Under a pending
-  // request the unwind must be the termination sentinel: consume it here, and
-  // let any other fault raised while unwinding propagate rather than be
-  // swallowed. Then publish the recorded cause atomically -- terminal state,
-  // frame release, waiter drain.
-  if (termination_requested_) {
-    if (std::exception_ptr fault = coroutine_.Handle().promise().TakeFault()) {
-      try {
-        std::rethrow_exception(fault);
-      } catch (const ProcessTerminationUnwind&) {
-      }
-    }
-    SettleTerminated(termination_cause_, woken);
-    return true;
-  }
-  // An exception raised anywhere in the enable chain has propagated into this
-  // top-level frame regardless of which frame raised it. Take it out before
-  // releasing the frame, so the process reaches its terminal state and frees
-  // its frame on the same path a successful one does, and only then decide what
-  // the outcome was.
-  std::exception_ptr propagated = coroutine_.Handle().promise().TakeFault();
-  const bool aborted = leaving_disabled_target_;
-  // An abort reaching a top frame is a forced termination, not a fault: an
-  // activity enabled within a disabled target has no landing of its own, so it
-  // ends here and reports KILLED (LRM 9.6.2, 9.7).
+  // The body has settled and its completion slot says how. This frame is the
+  // activation's landing, so a control effect that reached it was claimed by no
+  // region and ends the process here, reported KILLED (LRM 9.6.2, 9.7);
+  // anything else ran out its body, which LRM 9.7 reports FINISHED whether or
+  // not a fault ended it.
+  //
+  // The outcome is read before the frame is released, so a process reaches its
+  // terminal state and frees its frame on the same path a successful one does.
+  // A fault is re-raised only afterwards: letting it leave first would skip the
+  // rest of this resumption -- the activations this termination just woke, the
+  // enclosing `wait fork` condition -- with no diagnostic, so the simulation
+  // would hang rather than report. A control effect is never re-raised at all;
+  // it has arrived where it was going.
+  auto& promise = coroutine_.Handle().promise();
+  const bool cancelled = promise.WasCancelled();
+  std::exception_ptr fault = promise.TakeFault();
   SettleTerminated(
-      aborted ? ProcessTerminationCause::kKilled
-              : ProcessTerminationCause::kCompleted,
+      cancelled ? ProcessTerminationCause::kKilled
+                : ProcessTerminationCause::kCompleted,
       woken);
-  // An abort settles here and travels no further. Letting it leave would skip
-  // this resumption's remaining work -- the activations this termination just
-  // woke, the enclosing `wait fork` condition -- with no diagnostic, so the
-  // simulation would hang rather than report.
-  if (!aborted && propagated) {
-    std::rethrow_exception(propagated);
+  if (fault) {
+    std::rethrow_exception(fault);
   }
   return true;
 }

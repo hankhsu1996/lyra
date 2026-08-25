@@ -1,5 +1,7 @@
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 
+#include <optional>
+
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
@@ -300,15 +302,18 @@ auto BareCompoundUserRhs(const slang::ast::Expression& slang_expanded_rhs)
 
   // `BinaryExpression::fromComponents` adds at most one promotion
   // Conversion per operand. Peel exactly one conditionally; one side is
-  // the synthetic LValueReference, the other is the user's rhs.
+  // the synthetic LValueReference, the other is the user's rhs. The peel
+  // trades in pointers because on the no-Conversion path it returns its own
+  // argument: taking a reference would let a caller pass a temporary and hand
+  // back a dangling one, where a pointer makes the caller name a live node.
   const auto peel_one =
-      [](const slang::ast::Expression& e) -> const slang::ast::Expression& {
-    return e.kind == slang::ast::ExpressionKind::Conversion
-               ? e.as<slang::ast::ConversionExpression>().operand()
+      [](const slang::ast::Expression* e) -> const slang::ast::Expression* {
+    return e->kind == slang::ast::ExpressionKind::Conversion
+               ? &e->as<slang::ast::ConversionExpression>().operand()
                : e;
   };
-  const auto& left = peel_one(bin.left());
-  const auto& right = peel_one(bin.right());
+  const auto& left = *peel_one(&bin.left());
+  const auto& right = *peel_one(&bin.right());
 
   const bool left_is_ref =
       left.kind == slang::ast::ExpressionKind::LValueReference;

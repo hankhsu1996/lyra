@@ -14,7 +14,9 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -52,10 +54,9 @@ auto BuildFileIoCall(
 }
 
 auto LowerOperand(
-    ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
-    std::size_t index) -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  return process.LowerExpr(hir_proc.exprs.Get(*call.arguments[index]), frame);
+    ProcessLowerer& process, const WalkFrame& frame, hir::ExprId operand)
+    -> diag::Result<mir::Expr> {
+  return process.LowerExpr(process.HirBody().exprs.Get(operand), frame);
 }
 
 auto LowerFixedOperandCall(
@@ -63,15 +64,17 @@ auto LowerFixedOperandCall(
     support::BuiltinFn builtin_fn, std::size_t operand_count,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  std::vector<mir::ExprId> operands;
-  operands.reserve(operand_count);
-  for (std::size_t i = 0; i < operand_count; ++i) {
-    auto operand_or = LowerOperand(process, frame, call, i);
+  const std::vector<hir::ExprId> operands =
+      RequiredOperands(call, operand_count);
+  std::vector<mir::ExprId> lowered;
+  lowered.reserve(operands.size());
+  for (const hir::ExprId operand : operands) {
+    auto operand_or = LowerOperand(process, frame, operand);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-    operands.push_back(block.exprs.Add(*std::move(operand_or)));
+    lowered.push_back(block.exprs.Add(*std::move(operand_or)));
   }
   return BuildFileIoCall(
-      process, frame, builtin_fn, std::move(operands), result_type);
+      process, frame, builtin_fn, std::move(lowered), result_type);
 }
 
 // LRM 21.3.1: the one-argument MCD form and the two-argument FD form select
@@ -80,11 +83,12 @@ auto LowerFileOpenCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  auto name_or = LowerOperand(process, frame, call, 0);
+  const std::vector<hir::ExprId> head = RequiredLeadingOperands(call, 1);
+  auto name_or = LowerOperand(process, frame, head[0]);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
   std::vector<mir::ExprId> operands{block.exprs.Add(*std::move(name_or))};
-  if (call.arguments.size() == 2) {
-    auto mode_or = LowerOperand(process, frame, call, 1);
+  if (const std::optional<hir::ExprId> mode = OptionalOperand(call, 1)) {
+    auto mode_or = LowerOperand(process, frame, *mode);
     if (!mode_or) return std::unexpected(std::move(mode_or.error()));
     operands.push_back(block.exprs.Add(*std::move(mode_or)));
   }
@@ -99,8 +103,8 @@ auto LowerFileFlushCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
   std::vector<mir::ExprId> operands;
-  if (!call.arguments.empty()) {
-    auto fd_or = LowerOperand(process, frame, call, 0);
+  if (const std::optional<hir::ExprId> fd = OptionalOperand(call, 0)) {
+    auto fd_or = LowerOperand(process, frame, *fd);
     if (!fd_or) return std::unexpected(std::move(fd_or.error()));
     operands.push_back(frame.current_block->exprs.Add(*std::move(fd_or)));
   }
@@ -194,12 +198,13 @@ auto LowerFileIOSystemSubroutineCallStmt(
   switch (info.builtin_fn) {
     case support::BuiltinFn::kFileGets: {
       // $fgets(str_lvalue, fd) -- arg[0] is the output string lvalue.
+      const std::vector<hir::ExprId> operands = RequiredOperands(call, 2);
       auto slot_or = BuildOutputArgSlot(
-          process, wrapper_frame, *call.arguments[0], "_lyra_fgets_dest");
+          process, wrapper_frame, operands[0], "_lyra_fgets_dest");
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
-      auto fd_or = process.LowerExpr(
-          hir_proc.exprs.Get(*call.arguments[1]), wrapper_frame);
+      auto fd_or =
+          process.LowerExpr(hir_proc.exprs.Get(operands[1]), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.exprs.Add(*std::move(fd_or));
       const mir::ExprId temp_ref = wrapper.exprs.Add(
@@ -215,7 +220,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
       // so both round-trip through a copy-out temp; the runtime call is a
       // generic CallExpr whose operands are the temp, the descriptor, and --
       // for the memory form -- the declared bounds plus start / count.
-      const auto& dest_hir = hir_proc.exprs.Get(*call.arguments[0]);
+      const std::vector<hir::ExprId> head = RequiredLeadingOperands(call, 2);
+      const auto& dest_hir = hir_proc.exprs.Get(head[0]);
       const auto& dest_hir_ty = unit_lowerer.Hir().types.Get(dest_hir.type);
       const auto& builtins = process.Owner().Unit().builtins;
       const auto* unpacked =
@@ -246,13 +252,13 @@ auto LowerFileIOSystemSubroutineCallStmt(
         }
       }
 
-      auto fd_or = process.LowerExpr(
-          hir_proc.exprs.Get(*call.arguments[1]), wrapper_frame);
+      auto fd_or =
+          process.LowerExpr(hir_proc.exprs.Get(head[1]), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.exprs.Add(*std::move(fd_or));
 
       auto slot_or = BuildOutputArgSlot(
-          process, wrapper_frame, *call.arguments[0], "_lyra_fread_dest");
+          process, wrapper_frame, head[0], "_lyra_fread_dest");
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
       const mir::ExprId temp_ref = wrapper.exprs.Add(
@@ -267,9 +273,9 @@ auto LowerFileIOSystemSubroutineCallStmt(
         // start: the SV index, or the lowest declared index when omitted
         // (LRM 21.3.4.4 default). Synthesizing it keeps count the only
         // trailing-optional operand.
-        if (call.arguments.size() > 2 && call.arguments[2].has_value()) {
-          auto start_or = process.LowerExpr(
-              hir_proc.exprs.Get(*call.arguments[2]), wrapper_frame);
+        if (const std::optional<hir::ExprId> start = OptionalOperand(call, 2)) {
+          auto start_or =
+              process.LowerExpr(hir_proc.exprs.Get(*start), wrapper_frame);
           if (!start_or) return std::unexpected(std::move(start_or.error()));
           operands.push_back(wrapper.exprs.Add(*std::move(start_or)));
         } else {
@@ -278,9 +284,9 @@ auto LowerFileIOSystemSubroutineCallStmt(
                   builtins.int_type,
                   std::min(unpacked->dim.left, unpacked->dim.right))));
         }
-        if (call.arguments.size() > 3 && call.arguments[3].has_value()) {
-          auto count_or = process.LowerExpr(
-              hir_proc.exprs.Get(*call.arguments[3]), wrapper_frame);
+        if (const std::optional<hir::ExprId> count = OptionalOperand(call, 3)) {
+          auto count_or =
+              process.LowerExpr(hir_proc.exprs.Get(*count), wrapper_frame);
           if (!count_or) return std::unexpected(std::move(count_or.error()));
           operands.push_back(wrapper.exprs.Add(*std::move(count_or)));
         }
@@ -292,12 +298,13 @@ auto LowerFileIOSystemSubroutineCallStmt(
     }
     case support::BuiltinFn::kFileError: {
       // $ferror(fd, str_lvalue) -- arg[1] is the output string lvalue.
-      auto fd_or = process.LowerExpr(
-          hir_proc.exprs.Get(*call.arguments[0]), wrapper_frame);
+      const std::vector<hir::ExprId> operands = RequiredOperands(call, 2);
+      auto fd_or =
+          process.LowerExpr(hir_proc.exprs.Get(operands[0]), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.exprs.Add(*std::move(fd_or));
       auto slot_or = BuildOutputArgSlot(
-          process, wrapper_frame, *call.arguments[1], "_lyra_ferror_dest");
+          process, wrapper_frame, operands[1], "_lyra_ferror_dest");
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
       const mir::ExprId temp_ref = wrapper.exprs.Add(

@@ -12,7 +12,9 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -126,14 +128,13 @@ auto LowerScanSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::ScanSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
-  if (call.arguments.size() < 3) {
+  // $fscanf(fd, format, target...) / $sscanf(str, format, target...) --
+  // LRM 21.3.4.2. Source and format, then one target per conversion.
+  const std::vector<hir::ExprId> operands = RequiredOperands(call);
+  if (operands.size() < 3) {
     throw InternalError(
         "LowerScanSystemSubroutineCall: fewer than 3 arguments reached "
         "lowering");
-  }
-  if (!call.arguments[0].has_value() || !call.arguments[1].has_value()) {
-    throw InternalError(
-        "LowerScanSystemSubroutineCall: source / format arg elided");
   }
 
   const auto& hir_proc = process.HirBody();
@@ -147,12 +148,9 @@ auto LowerScanSystemSubroutineCall(
   const bool is_file = info.source == support::ScanSourceKind::kFile;
 
   std::vector<mir::TypeId> target_types;
-  target_types.reserve(call.arguments.size() - 2);
-  for (std::size_t i = 2; i < call.arguments.size(); ++i) {
-    if (!call.arguments[i].has_value()) {
-      throw InternalError("LowerScanSystemSubroutineCall: output arg elided");
-    }
-    const auto& hir_arg = hir_proc.exprs.Get(*call.arguments[i]);
+  target_types.reserve(operands.size() - 2);
+  for (std::size_t i = 2; i < operands.size(); ++i) {
+    const auto& hir_arg = hir_proc.exprs.Get(operands[i]);
     const mir::TypeId mir_type = unit_lowerer.TranslateType(hir_arg.type);
     auto valid_or = ValidateTargetType(unit, mir_type, info.source, span);
     if (!valid_or) return std::unexpected(std::move(valid_or.error()));
@@ -168,7 +166,7 @@ auto LowerScanSystemSubroutineCall(
   const WalkFrame& closure_frame = closure.Frame();
 
   auto raw_source_or =
-      process.LowerExpr(hir_proc.exprs.Get(*call.arguments[0]), closure_frame);
+      process.LowerExpr(hir_proc.exprs.Get(operands[0]), closure_frame);
   if (!raw_source_or) {
     return std::unexpected(std::move(raw_source_or.error()));
   }
@@ -208,7 +206,7 @@ auto LowerScanSystemSubroutineCall(
   }
 
   auto format_or =
-      process.LowerExpr(hir_proc.exprs.Get(*call.arguments[1]), closure_frame);
+      process.LowerExpr(hir_proc.exprs.Get(operands[1]), closure_frame);
   if (!format_or) return std::unexpected(std::move(format_or.error()));
   const mir::TypeId format_type = format_or->type;
   mir::ExprId format_id = body.exprs.Add(*std::move(format_or));
@@ -308,8 +306,8 @@ auto LowerScanSystemSubroutineCall(
 
     mir::Block then_body;
     const WalkFrame then_frame = closure_frame.WithBlock(&then_body);
-    auto lvalue_or = process.LowerLhsExpr(
-        hir_proc.exprs.Get(*call.arguments[k + 2]), then_frame);
+    auto lvalue_or =
+        process.LowerLhsExpr(hir_proc.exprs.Get(operands[k + 2]), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
     const mir::ExprId temp_read_id = then_body.exprs.Add(

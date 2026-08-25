@@ -1,13 +1,16 @@
 #include "lyra/compiler/compile.hpp"
 
+#include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/driver/Driver.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/design_root.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
@@ -19,6 +22,25 @@
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
+
+namespace {
+
+// One place for the message, so a missing stage always reads the same whichever
+// accessor found it.
+template <typename T>
+auto StageProduct(const std::optional<T>& product, std::string_view stage)
+    -> const T& {
+  if (!product.has_value()) {
+    throw InternalError(
+        std::format(
+            "CompileArtifacts: no {} to read; the pipeline stopped before that "
+            "stage",
+            stage));
+  }
+  return *product;
+}
+
+}  // namespace
 
 auto Compile(
     slang::driver::Driver& driver, LoweringPolicy policy,
@@ -93,15 +115,15 @@ auto Compile(
     }
   }
 
-  // Step 3: link the units into the design. The one whole-design step -- it
-  // reads across the units to synthesize the design root and resolve the
-  // package initialization plan -- so it stands apart from the per-unit
-  // lowering above.
+  // Step 3: write the design-root unit. The one whole-design step -- it reads
+  // across the units to synthesize the root and resolve the package
+  // initialization plan -- so it stands apart from the per-unit lowering
+  // above.
   std::optional<mir::CompilationUnit> root_unit;
   std::optional<lir::CompilationUnit> root_lir_unit;
   std::optional<ElaboratedUnitMetadata> root_metadata;
   if (want_mir) {
-    auto design_root = LinkDesign(
+    auto design_root = SynthesizeDesignRoot(
         mir_units, result.artifacts.top_unit_names, stop_after,
         result.artifacts.parse->diag_sources);
     if (!design_root) {
@@ -125,6 +147,38 @@ auto Compile(
     result.artifacts.root_metadata = std::move(root_metadata);
   }
   return result;
+}
+
+auto CompileArtifacts::HirUnits() const
+    -> const std::vector<hir::CompilationUnit>& {
+  return StageProduct(hir_units, "HIR");
+}
+
+auto CompileArtifacts::MirUnits() const
+    -> const std::vector<mir::CompilationUnit>& {
+  return StageProduct(mir_units, "MIR");
+}
+
+auto CompileArtifacts::RootUnit() const -> const mir::CompilationUnit& {
+  return StageProduct(root_unit, "design-root MIR");
+}
+
+auto CompileArtifacts::LirUnits() const
+    -> const std::vector<lir::CompilationUnit>& {
+  return StageProduct(lir_units, "LIR");
+}
+
+auto CompileArtifacts::RootLirUnit() const -> const lir::CompilationUnit& {
+  return StageProduct(root_lir_unit, "design-root LIR");
+}
+
+auto CompileArtifacts::UnitMetadata() const
+    -> const std::vector<ElaboratedUnitMetadata>& {
+  return StageProduct(unit_metadata, "unit metadata");
+}
+
+auto CompileArtifacts::RootMetadata() const -> const ElaboratedUnitMetadata& {
+  return StageProduct(root_metadata, "design-root metadata");
 }
 
 }  // namespace lyra::compiler

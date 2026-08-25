@@ -7,10 +7,11 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
@@ -39,11 +40,9 @@ auto BuildStdoutFdLiteral(mir::Block& block, mir::TypeId int_type)
 auto LowerDescriptor(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
-  if (!call.arguments[0].has_value()) {
-    throw InternalError("$f-print descriptor argument unexpectedly elided");
-  }
-  return process.LowerExpr(
-      process.HirBody().exprs.Get(*call.arguments[0]), frame);
+  // $fdisplay / $fwrite / $fstrobe take the descriptor first (LRM 21.3).
+  const std::vector<hir::ExprId> operands = RequiredLeadingOperands(call, 1);
+  return process.LowerExpr(process.HirBody().exprs.Get(operands[0]), frame);
 }
 
 auto WriteCalleeFor(bool append_newline) -> support::BuiltinFn {

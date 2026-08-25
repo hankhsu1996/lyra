@@ -132,7 +132,7 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
     case mir::RuntimeLibraryKind::kCancellationSource:
       return lir::RuntimeLibraryKind::kCancellationSource;
     case mir::RuntimeLibraryKind::kCancellationGuard:
-    case mir::RuntimeLibraryKind::kAbort:
+    case mir::RuntimeLibraryKind::kControlEffect:
       throw InternalError(
           "TranslateRuntimeLibraryKind: a cancellation type is realized in the "
           "C++ backend, not through MIR-to-LIR");

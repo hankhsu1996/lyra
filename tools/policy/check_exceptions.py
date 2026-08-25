@@ -28,7 +28,14 @@ CATCH_ALL_ALLOWLIST = ("src/lyra/driver",)
 # disabled scope (LRM 9.6.2) raises one, and the region owning that scope
 # consumes it. It travels by the same mechanism an exception does but reports
 # no failure, so it is admitted -- confined to the one runtime translation unit
-# that raises it, and named explicitly so no other type rides the allowance.
+# that raises it, and named explicitly so no other type rides the allowance --
+# which means every throw of it spells the type out, re-raise included.
+#
+# That file also tells the effect apart from a fault for the rest of the
+# runtime, which needs the two constructs E002 and the rethrow rule otherwise
+# ban: re-raising into a handler is the only way to read the type of an
+# exception already in flight, and the catch-all beside it is what carries a
+# fault back out. Both are confined to the same file for the same reason.
 CONTROL_EFFECT_ALLOWLIST = ("src/lyra/runtime/cancellation.cpp",)
 FULL_ALLOWLIST = frozenset({
     "include/lyra/base/internal_error.hpp",
@@ -52,7 +59,7 @@ RE_THROW_STMT = re.compile(r'\bthrow\s+([^;]+);', re.DOTALL)
 RE_RETHROW = re.compile(r'\bthrow\s*;')
 RE_INTERNAL_ERROR = re.compile(r'\b(support::)?InternalError\b')
 RE_SIMULATION_ERROR = re.compile(r'\bSimulationError\b')
-RE_CONTROL_EFFECT = re.compile(r'\b(runtime::)?[Aa]bort\b')
+RE_CONTROL_EFFECT = re.compile(r'\b(runtime::)?ControlEffect\b')
 RE_ASSERT_CALL = re.compile(r'\bassert\s*\(')
 RE_CASSERT_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*cassert\s*>', re.MULTILINE)
 RE_ASSERT_H_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*assert\.h\s*>', re.MULTILINE)
@@ -61,14 +68,6 @@ RE_BUG_REPORT_STRING = re.compile(r'"[^"\n]*(?:Please report|This is a bug|githu
 
 # Files allowed to contain bug report messages
 BUG_REPORT_ALLOWLIST = frozenset({"include/lyra/base/internal_error.hpp"})
-
-# The one sanctioned control-flow throw: the process-termination sentinel, which
-# unwinds a running coroutine to its safe boundary (no non-throw C++ mechanism
-# exists for that). It is confined to a single throw site so it stays auditable;
-# only that file may throw it, and only this exact expression.
-TERMINATION_UNWIND_ALLOWLIST = frozenset(
-    {"include/lyra/runtime/runtime_process.hpp"})
-RE_TERMINATION_SENTINEL = re.compile(r'^ProcessTerminationUnwind\s*\{\s*\}$')
 
 
 def get_repo_root() -> Path:
@@ -147,7 +146,7 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
             f"{filepath}:{line}: E001 std::{match.group(1)} is banned")
 
     # E002: No catch(...) except in driver
-    if not in_driver:
+    if not in_driver and not raises_control_effect:
         for match in RE_CATCH_ALL.finditer(content):
             line = offset_to_line(original, match.start())
             errors.append(
@@ -161,9 +160,6 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
             continue
         if RE_SIMULATION_ERROR.search(thrown_expr):
             continue
-        if (filepath in TERMINATION_UNWIND_ALLOWLIST
-                and RE_TERMINATION_SENTINEL.match(thrown_expr)):
-            continue
         if raises_control_effect and RE_CONTROL_EFFECT.search(thrown_expr):
             continue
         line = offset_to_line(original, match.start())
@@ -175,7 +171,7 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
             "use InternalError or SimulationError")
 
     # E003: Rethrow 'throw;' also banned outside driver
-    if not in_driver:
+    if not in_driver and not raises_control_effect:
         for match in RE_RETHROW.finditer(content):
             line = offset_to_line(original, match.start())
             errors.append(

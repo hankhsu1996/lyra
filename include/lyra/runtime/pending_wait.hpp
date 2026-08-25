@@ -63,9 +63,9 @@ class PendingWait {
   // disabled while it waited.
   void BlockOn(CoroutineHandle leaf);
 
-  // Raises the pending abort, if any, for the execution this wait blocked (LRM
-  // 9.6.2). Every construct calls it where its wait resumes, so no execution
-  // runs a statement of a target that was disabled while it waited.
+  // Raises the pending control effect, if any, for the execution this wait
+  // blocked (LRM 9.6.2). Every construct calls it where its wait resumes, so no
+  // execution runs a statement of a target that was disabled while it waited.
   void CheckAbortOnResume() const;
 
  private:

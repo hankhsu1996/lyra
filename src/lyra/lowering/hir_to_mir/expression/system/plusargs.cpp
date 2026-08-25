@@ -2,10 +2,13 @@
 
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -27,13 +30,13 @@ namespace {
 
 template <ExprLowerer Lowerer>
 auto LowerTestPlusargs(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call)
+    Lowerer& lowerer, WalkFrame frame, std::span<const hir::ExprId> operands)
     -> diag::Result<mir::Expr> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& unit = lowerer.Owner().Unit();
   auto& body = *frame.current_block;
 
-  auto user_or = lowerer.LowerExpr(hir_exprs.Get(*call.arguments[0]), frame);
+  auto user_or = lowerer.LowerExpr(hir_exprs.Get(operands[0]), frame);
   if (!user_or) return std::unexpected(std::move(user_or.error()));
   const mir::ExprId raw_user_id = body.exprs.Add(*std::move(user_or));
   // A packed literal / integral variable is a legal user_string here
@@ -54,7 +57,7 @@ auto LowerTestPlusargs(
 
 template <ExprLowerer Lowerer>
 auto LowerValuePlusargs(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call)
+    Lowerer& lowerer, WalkFrame frame, std::span<const hir::ExprId> operands)
     -> diag::Result<mir::Expr> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& unit_lowerer = lowerer.Owner();
@@ -62,7 +65,7 @@ auto LowerValuePlusargs(
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::TypeId bit_t = unit.builtins.bit1;
 
-  const auto& hir_target = hir_exprs.Get(*call.arguments[1]);
+  const auto& hir_target = hir_exprs.Get(operands[1]);
   const mir::TypeId target_type = unit_lowerer.TranslateType(hir_target.type);
 
   // A match writes the parsed remainder into the caller's lvalue and returns
@@ -72,8 +75,7 @@ auto LowerValuePlusargs(
   mir::Block& body = closure.Body();
   const WalkFrame& closure_frame = closure.Frame();
 
-  auto user_or =
-      lowerer.LowerExpr(hir_exprs.Get(*call.arguments[0]), closure_frame);
+  auto user_or = lowerer.LowerExpr(hir_exprs.Get(operands[0]), closure_frame);
   if (!user_or) return std::unexpected(std::move(user_or.error()));
   const mir::ExprId raw_user_id = body.exprs.Add(*std::move(user_or));
   // A packed literal / integral variable is a legal user_string here
@@ -119,8 +121,7 @@ auto LowerValuePlusargs(
 
   mir::Block then_body;
   const WalkFrame then_frame = closure_frame.WithBlock(&then_body);
-  auto lvalue_or =
-      lowerer.LowerLhsExpr(hir_exprs.Get(*call.arguments[1]), then_frame);
+  auto lvalue_or = lowerer.LowerLhsExpr(hir_exprs.Get(operands[1]), then_frame);
   if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
   const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
   const mir::ExprId temp_read_then =
@@ -149,21 +150,12 @@ auto LowerPlusargsSystemSubroutineCall(
     -> diag::Result<mir::Expr> {
   switch (info.kind) {
     case support::PlusargsKind::kTest: {
-      if (call.arguments.size() != 1 || !call.arguments[0].has_value()) {
-        throw InternalError(
-            "LowerPlusargsSystemSubroutineCall: $test$plusargs expects exactly "
-            "one non-elided argument");
-      }
-      return LowerTestPlusargs(lowerer, frame, call);
+      // $test$plusargs(user_string) -- LRM 21.6.
+      return LowerTestPlusargs(lowerer, frame, RequiredOperands(call, 1));
     }
     case support::PlusargsKind::kValue: {
-      if (call.arguments.size() != 2 || !call.arguments[0].has_value() ||
-          !call.arguments[1].has_value()) {
-        throw InternalError(
-            "LowerPlusargsSystemSubroutineCall: $value$plusargs expects two "
-            "non-elided arguments");
-      }
-      return LowerValuePlusargs(lowerer, frame, call);
+      // $value$plusargs(user_string, variable) -- LRM 21.6.
+      return LowerValuePlusargs(lowerer, frame, RequiredOperands(call, 2));
     }
   }
   throw InternalError(

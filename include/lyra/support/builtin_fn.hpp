@@ -324,9 +324,9 @@ enum class BuiltinFn : std::uint16_t {
   // inside it, and leaves the disabling execution when that execution is inside
   // the target too. Entering a target is `kConstruct` of a guard whose lifetime
   // is the target's extent; leaving it is the region that names it, which
-  // consumes the effect through `kAbortConsumeOrRethrow`.
+  // consumes the effect through `kClaimControlEffect`.
   kDisable,
-  kAbortConsumeOrRethrow,
+  kClaimControlEffect,
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
