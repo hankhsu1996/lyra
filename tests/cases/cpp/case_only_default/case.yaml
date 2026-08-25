@@ -1,4 +1,4 @@
-id: cpp.case_nested
+id: cpp.case_only_default
 tags: [cpp_run, jit_run]
 input:
   command: [run, cpp]
@@ -8,4 +8,6 @@ input:
 expect:
   exit: 0
   variables:
-    result: 12
+    plain: 42
+    wild_default: 7
+    untouched: 99

@@ -23,6 +23,20 @@ using lyra::test::TestCase;
 
 namespace {
 
+// The host compiler this corpus was built with. A case can pass under one and
+// fail under another -- the runtime is ordinary C++ and its ABI to the
+// generated module is hand-declared -- so a log that does not say which one ran
+// leaves the reader guessing at the difference between two machines.
+auto HostCompiler() -> std::string {
+#if defined(__clang_version__)
+  return std::string("clang ") + __clang_version__;
+#elif defined(__VERSION__)
+  return std::string("gcc ") + __VERSION__;
+#else
+  return "unknown compiler";
+#endif
+}
+
 struct CppEnv {
   std::filesystem::path lyra_exe;
   std::filesystem::path cases_root;
@@ -94,6 +108,10 @@ auto main(int argc, char** argv) -> int {
   std::string group = suite.backend.value_or("cpp");
   group[0] =
       static_cast<char>(std::toupper(static_cast<unsigned char>(group[0])));
+
+  fmt::print(
+      "suite '{}' on the {} backend, built with {}\n", suite_name,
+      suite.backend.value_or("cpp"), HostCompiler());
 
   // NOLINTBEGIN(cppcoreguidelines-owning-memory)
   for (const auto& c : kCases) {

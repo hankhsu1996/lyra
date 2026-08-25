@@ -239,6 +239,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_string_realtoa", &lyra_rt_string_realtoa);
   add("lyra_rt_string_add", &lyra_rt_string_add);
   add("lyra_rt_string_eq", &lyra_rt_string_eq);
+  add("lyra_rt_string_case_equal", &lyra_rt_string_case_equal);
   add("lyra_rt_string_ne", &lyra_rt_string_ne);
   add("lyra_rt_string_lt", &lyra_rt_string_lt);
   add("lyra_rt_string_le", &lyra_rt_string_le);
