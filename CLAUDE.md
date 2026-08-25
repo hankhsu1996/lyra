@@ -78,8 +78,22 @@ binding contract.
 - A compilation unit is the top-level semantic boundary (module, package, interface).
 - Compile time produces class-level artifacts; runtime constructs objects and installs relations.
 
-Headers in `include/lyra/`, implementations in `src/lyra/`. Tests are YAML cases under
-`tests/cases/`, with suites defined in `tests/suites.yaml`.
+Headers in `include/lyra/`, implementations in `src/lyra/`.
+
+## Testing
+
+Every test is an end-to-end case under `tests/cases/` driven by SystemVerilog input, grouped into
+suites by `tests/suites.yaml`; Lyra takes no unit tests against internal utilities.
+`expect.variables` asserts a variable's final value and accepts `0x` hex and SV-sized literals. To
+iterate on one failing case, filter by its gtest name -- the case `id` with dots, prefixed `Cpp.`:
+
+```bash
+bazel test //tests:cpp_tests --test_filter='Cpp.errors.nets_multi_driver'
+```
+
+**A case that depends on X or Z belongs in `four_state.yaml`, never `default.yaml`.** The
+`jit_two_state` suite excludes `four_state.yaml` by pattern, so a four-state case in the default
+file passes locally and fails there.
 
 ## Code style
 
@@ -87,6 +101,20 @@ C++23, Google style, clang-tidy warning-free. `CamelCase` classes and functions,
 members, `kCamelCase` enums. Use IEEE 1800 LRM terminology for SystemVerilog concepts, and prefer
 the modern idiom -- `std::format`, `std::span` / `std::string_view`, `std::array`, `std::optional` /
 `std::expected`, structured bindings. Comments follow `docs/code-comments.md`.
+
+- **A semantic id, index, or offset is a strong wrapper type**, never a raw integer outside a C ABI
+  boundary -- including as a return value a caller then uses as an id.
+- **A closed set of alternatives is a `std::variant` of per-kind structs**, not a tag enum beside
+  always-present spare fields, so an invalid combination cannot be spelled. No arm is added without
+  a complete lowering path in the same change.
+- **One namespace per directory**; a sub-namespace with no corresponding folder is not one.
+- **ASCII only in source and docs**, enforced by `tools/policy/check_ascii.py`. In markdown,
+  backtick underscored SV keywords (`always_comb` and friends) or Prettier mangles them and the
+  format job fails.
+- **No `/*param=*/value` at call sites**, and no inline comment on a struct field or variable
+  declaration -- put it on the line above, where the formatter cannot wrap it badly.
+- **`TODO(<owner>)`** carries whose it is.
+- The zero-warning rule governs Lyra's own source. Emitted C++ is not built under it.
 
 ## Error handling
 

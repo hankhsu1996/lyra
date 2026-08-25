@@ -21,9 +21,8 @@ enum class SourceFormatting : std::uint8_t { kOff, kOn };
 // How this host turns emitted C++ into a program: which compiler to invoke,
 // what to do about the precompiled header, and how hard to optimize. Resolved
 // once at the CLI boundary and passed unchanged down every path, so the recipe
-// an emitted project carries and the compile Lyra performs cannot disagree --
-// which matters most for optimization, since the two would otherwise produce
-// programs that differ by an order of magnitude in speed.
+// an emitted project carries and the compile Lyra performs cannot disagree
+// about any of the three.
 struct HostBuild {
   std::filesystem::path cxx;
   pch::Options pch;

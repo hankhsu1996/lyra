@@ -33,7 +33,7 @@ jobs:
   benchmark:
     name: Run Benchmarks
     needs: changes
-    if: false  # disabled during architecture reset
+    if: false  # waits on the execution backend running a design end to end
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

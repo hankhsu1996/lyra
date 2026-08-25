@@ -5,16 +5,16 @@ Date: 2026-07-08 Status: accepted
 ## Context
 
 DPI-C (LRM 35) is the SystemVerilog / C foreign-language boundary: `import "DPI-C"` (SV calls a
-foreign C function) and `export "DPI-C"` (foreign C calls an SV subroutine). It needs a home in the
-post-reset architecture, where the pipeline is HIR -> MIR -> LIR -> LLVM and two backends consume
-MIR: the C++ backend (transitional) and the LLVM/JIT backend.
+foreign C function) and `export "DPI-C"` (foreign C calls an SV subroutine). It needs a home in an
+architecture whose pipeline is HIR -> MIR -> LIR -> LLVM and whose two backends consume MIR: the C++
+backend (transitional) and the LLVM/JIT backend.
 
-A pre-reset DPI implementation informed this entry. It was built for an LLVM backend and modeled DPI
-as its own parallel IR subsystem: a dedicated MIR call family (`DpiCall`, `DpiImportRef`) separate
-from ordinary calls, and marshaling logic that lived in the LLVM backend. That shape is a good
-source for the ABI type classification, the export-context mechanism, and the header/link design,
-but its MIR node shape is a forbidden shape after the reset: `mir.md` bans a node kind invented to
-express a runtime-library wrapper, and `callable.md` already defines the right home.
+An earlier DPI implementation informed this entry. It modeled DPI as its own parallel IR subsystem:
+a dedicated MIR call family (`DpiCall`, `DpiImportRef`) separate from ordinary calls, and marshaling
+logic that lived in the backend. That shape is a good source for the ABI type classification, the
+export-context mechanism, and the header/link design, but its MIR node shape is forbidden: `mir.md`
+bans a node kind invented to express a runtime-library wrapper, and `callable.md` already defines
+the right home.
 
 This entry fixes how DPI fits the callable model, the value model, and the two-backend boundary
 before implementation begins.
@@ -201,9 +201,9 @@ usage inflate the scope.
 
 ## Rejected alternatives
 
-- **A separate DPI call family (`DpiCall` / `DpiImportRef`), as the pre-reset tree had.** A
-  DPI-specific bypass around the callable and call vocabulary; a forbidden shape after the reset
-  (`mir.md`). The external-callable arm carries the same information without a parallel subsystem.
+- **A separate DPI call family (`DpiCall` / `DpiImportRef`).** A DPI-specific bypass around the
+  callable and call vocabulary, which `mir.md` forbids. The external-callable arm carries the same
+  information without a parallel subsystem.
 - **Backend-realized marshaling driven by the ABI signature.** Forces DPI-ABI-driven conversion
   logic into value emission, which `backend_contract.md` forbids, and duplicates the logic across
   the two backends' different runtime ABIs.
@@ -217,7 +217,7 @@ usage inflate the scope.
   arena orders its entries, so an import's presence shifts the identity of every callable declared
   after it -- and a package, which has no class at all, could then declare no import.
 - **A temporary DPI-only callable-target variant, unified later.** Leaves a DPI-specific identity in
-  the IR to be refactored away; the unification is done once, consistent with the reset.
+  the IR to be refactored away; the unification is done once instead.
 - **The program-global export symbol as its own species beside the callable arena.** It is exactly
   what a unit-level namespace callable already is -- receiver-less, bodied, owned by the unit that
   defines it -- plus a linkage name, so a parallel container would give it a second declaration

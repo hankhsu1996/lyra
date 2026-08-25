@@ -14,7 +14,7 @@ jobs:
   # Compares emitted IR, object, executable, and target CPU selection.
   diagnose:
     name: Compiler artifact differential
-    if: false  # disabled during architecture reset
+    if: false  # waits on the LLVM path it diagnoses
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

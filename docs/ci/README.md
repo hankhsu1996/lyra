@@ -1,54 +1,69 @@
-# CI Design Notes (Architecture Reset Context)
+# CI Design Notes
 
-## Bazel CI Strategy
+## Strategy
 
-- Build: `bazel build //...`
-- Test: `bazel test //...`
-- Avoid hardcoding targets; rely on the Bazel graph so new targets are picked up automatically.
+Build and test the whole graph -- `bazel build //...` and `bazel test //...` -- rather than naming
+targets. A new target is then covered the moment it exists, and no list has to be kept in step with
+the `BUILD` files.
 
-## Active Workflows
+## Gating workflows
 
-- `bazel-build.yml` -- builds and tests `//...`. The historical `aot-full` job is preserved with
-  `if: false` for future re-enablement.
-- `cpp-format.yml` -- runs `clang-format-20 --dry-run --Werror` over `src include tests`.
-- `bazel-lint.yml` -- runs `buildifier -mode=check -r .` plus a warning pass.
-- `md-format.yml` -- runs `prettier --check "**/*.md"`.
-- `ascii-policy.yml` -- runs `tools/policy/check_ascii.py` on the diff vs `origin/main`.
-- `exception-policy.yml` -- runs `tools/policy/check_exceptions.py` on the diff vs `origin/main`.
-- `architecture-boundaries.yml` -- runs `tools/policy/check_architecture_boundaries.py` (rules
-  described in that script).
-- `cpp-tidy.yml` -- placeholder (steps commented out until a new pipeline lands).
+Each runs on push to `main` and on pull requests.
 
-## Disabled Workflows
+| Workflow               | What it enforces                                               |
+| ---------------------- | -------------------------------------------------------------- |
+| `bazel-build.yml`      | `bazel build //...` then `bazel test //...`                    |
+| `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy |
+| `bazel-lint.yml`       | `buildifier` formatting and lint warnings                      |
+| `md-format.yml`        | Prettier over every markdown file                              |
+| `ascii-policy.yml`     | ASCII-only, on the diff against `origin/main`                  |
+| `exception-policy.yml` | The thrown-type policy, on the same diff                       |
+| `architecture.yml`     | Layer boundaries between the IRs and the backends              |
 
-These workflows depend on runtime artifacts and CLI shapes that the architecture reset removed
-(`-C`, `run`, `compile`, `dump llvm`, `liblyra_runtime_static.a`). Triggers are intact but the main
-job carries `if: false`:
+`cpp-tidy.yml` runs nightly and on demand rather than per merge: clang-tidy re-analyzes every
+translation unit from scratch, which does not fit a merge-time budget. It reports rather than gates,
+so its findings are a backlog to pay down.
 
-- `bazel-build.yml` -> `aot-full` job
-- `smoke-test.yml` -> `smoke` job
-- `benchmark.yml` -> `benchmark` job
-- `benchmark-nightly.yml` -> `benchmark` job
-- `sigill-diagnosis.yml` -> `diagnose` job
+## Jobs waiting on the execution backend
 
-Re-enable a job by removing its `if: false` line once the runtime layer it depends on is rebuilt.
+Five jobs carry `if: false`. Their triggers and setup steps are intact so each returns by deleting
+that one line.
 
-## Historical Test Matrix (Disabled)
+| Workflow                | Job         | Waiting on                                           |
+| ----------------------- | ----------- | ---------------------------------------------------- |
+| `bazel-build.yml`       | `aot-full`  | A test target that does not exist yet                |
+| `smoke-test.yml`        | `smoke`     | A design running end to end on the execution backend |
+| `benchmark.yml`         | `benchmark` | The same, plus a stable number to compare against    |
+| `benchmark-nightly.yml` | `benchmark` | The same                                             |
+| `sigill-diagnosis.yml`  | `diagnose`  | The LLVM path it diagnoses                           |
 
-The previous `bazel-build.yml` test job ran a 3-target matrix on every push/PR plus a push-only
-AOT-full job:
+What they need is not a CLI surface -- `run`, `compile`, and `dump llvm` all exist, and the runtime
+ships as a static library -- but a design that survives the whole execution-backend path. Until it
+does, these jobs would measure a failure rather than a result.
 
-- JIT: `//tests:jit_dev_tests`
-- JIT-2S: `//tests:jit_two_state_tests`
-- AOT Smoke: `//tests:aot_smoke_tests`
-- AOT Full (push only): `//tests:aot_dev_tests`
+## Remote execution
 
-All four targets were deleted by the reset. The current single `bazel test //...` step subsumes them
-via the Bazel graph; per-target enumeration is intentionally not reintroduced.
+`bazel-build.yml` and the benchmark and smoke flows build their remote flags from the
+`BUILDBUDDY_API_KEY` repository secret:
 
-## LLVM Toolchain Setup (CI)
+```bash
+RBE_FLAGS=""
+if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+  RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+fi
+bazel build //... $RBE_FLAGS
+```
 
-The installation snippet used by AOT/JIT-bearing jobs:
+With the secret unset -- a fork, or a dispatch without secret access -- the same commands run
+locally. Nothing requires an account.
+
+Remote execution resolves the toolchain registered for the remote platform, which is that image's
+system GCC rather than the clang a local build picks up. A change can therefore compile in one place
+and fail in the other, usually through the standard library; `CLAUDE.md` states the boundary.
+
+## LLVM toolchain
+
+The jobs that need a specific clang install it themselves:
 
 ```yaml
 - name: Install LLVM 20
@@ -67,36 +82,4 @@ The installation snippet used by AOT/JIT-bearing jobs:
     sudo update-alternatives --set lli /usr/bin/lli-20
 ```
 
-The `cpp-format.yml` workflow uses a smaller variant that only installs `clang-format-20`.
-
-## RBE / BuildBuddy
-
-Build and test steps in `bazel-build.yml` (and benchmark/smoke flows) construct RBE flags from the
-`BUILDBUDDY_API_KEY` repository secret:
-
-```bash
-RBE_FLAGS=""
-if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-  RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
-fi
-bazel build //... $RBE_FLAGS
-```
-
-When the secret is unset (forks, dispatch from PRs without secret access) the commands fall back to
-local execution.
-
-## PR vs Push Strategy
-
-- PR: lighter test coverage (currently `bazel test //...`).
-- Push to `main`: previously also ran the AOT-full suite; that path is disabled until the runtime
-  layer is rebuilt.
-
-The split exists so AOT toolchain costs only land on push. While the runtime is offline the strategy
-is simplified to a single `bazel test //...` invocation.
-
-## Benchmark / Smoke / Sigill Workflows
-
-These depend on `lyra -C <path> run|compile`, `dump llvm`, and the runtime static library. All three
-are removed on the reset branch, so the workflows are kept disabled via `if: false`. Their LLVM
-install steps and Verilator setup remain in place so the recipes can be restored verbatim once the
-runtime returns.
+`cpp-style.yml` installs only `clang-format-20`, since that is all it runs.

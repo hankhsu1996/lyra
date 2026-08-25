@@ -102,7 +102,7 @@ jobs:
   aot-full:
     name: AOT Full
     needs: build
-    if: false  # disabled during architecture reset
+    if: false  # no aot test target yet
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
