@@ -203,36 +203,187 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   return scope;
 }
 
+// Total over slang's symbol kinds with no `default`: a member that carries
+// behavior must not vanish into a catch-all -- the failure mode that let a
+// checker's entire body disappear without a word. Listing every kind forces a
+// deliberate classification of each -- lowered here, deliberately nothing, or
+// reported -- and a kind added by a future slang release fails to compile
+// until it is classified.
 auto StructuralScopeLowerer::PopulateMember(
     const slang::ast::Symbol& member, WalkFrame frame) -> diag::Result<void> {
+  using slang::ast::SymbolKind;
   switch (member.kind) {
-    case slang::ast::SymbolKind::Variable:
+    case SymbolKind::Variable:
       return PopulateVariableMember(
           member.as<slang::ast::VariableSymbol>(), frame);
-    case slang::ast::SymbolKind::Net:
+    case SymbolKind::Net:
       return PopulateNetMember(member.as<slang::ast::NetSymbol>(), frame);
-    case slang::ast::SymbolKind::Subroutine: {
+    case SymbolKind::Subroutine: {
       const auto& sub = member.as<slang::ast::SubroutineSymbol>();
       if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
         return PopulateForeignImportMember(sub);
       }
       return PopulateSubroutineMember(sub, frame);
     }
-    case slang::ast::SymbolKind::ProceduralBlock:
+    case SymbolKind::ProceduralBlock:
       return PopulateProceduralBlockMember(
           member.as<slang::ast::ProceduralBlockSymbol>(), frame);
-    case slang::ast::SymbolKind::ContinuousAssign:
+    case SymbolKind::ContinuousAssign:
       return PopulateContinuousAssignMember(
           member.as<slang::ast::ContinuousAssignSymbol>(), frame);
-    case slang::ast::SymbolKind::GenerateBlockArray:
+    case SymbolKind::GenerateBlockArray:
       return PopulateGenerateArrayMember(
           member.as<slang::ast::GenerateBlockArraySymbol>(), frame);
-    case slang::ast::SymbolKind::GenerateBlock:
+    case SymbolKind::GenerateBlock:
       return PopulateGenerateBlockMember(
           member.as<slang::ast::GenerateBlockSymbol>(), frame);
-    default:
+
+    case SymbolKind::Instance:
+    case SymbolKind::InstanceArray:
+      throw InternalError(
+          "StructuralScopeLowerer::PopulateMember: an instance reached the "
+          "general member walk, which runs after instance declarations are "
+          "already bound");
+
+    // LRM 16 assertion declarations and LRM 17 checkers observe the design
+    // and never drive it, so a design with them removed behaves identically
+    // and the policy may drop them whole. Without it they are reported, so
+    // no design is quietly reduced to one that checks nothing.
+    case SymbolKind::Sequence:
+    case SymbolKind::Property:
+    case SymbolKind::AssertionPort:
+    case SymbolKind::LocalAssertionVar:
+    case SymbolKind::Checker:
+    case SymbolKind::CheckerInstance:
+    case SymbolKind::CheckerInstanceBody:
+      if (owner_->DisableAssertions()) {
+        return {};
+      }
+      return diag::Fail(
+          owner_->SourceMapper().PointSpanOf(member.location),
+          diag::DiagCode::kUnsupportedStructuralMember,
+          "assertion and checker declarations are not supported; pass "
+          "--disable-assertions to skip them");
+
+    // Behavior the design depends on: skipping one would hand the backend a
+    // different design than the source describes.
+    case SymbolKind::PrimitiveInstance:
+    case SymbolKind::NetAlias:
+    case SymbolKind::RandSeqProduction:
+    case SymbolKind::AnonymousProgram:
+    case SymbolKind::UninstantiatedDef:
+      return diag::Fail(
+          owner_->SourceMapper().PointSpanOf(member.location),
+          diag::DiagCode::kUnsupportedStructuralMember,
+          "this declaration form is not supported yet");
+
+    // Naming a type creates no structure. Whatever declares an object of it
+    // interns the type at its own declaration.
+    case SymbolKind::PredefinedIntegerType:
+    case SymbolKind::ScalarType:
+    case SymbolKind::FloatingType:
+    case SymbolKind::EnumType:
+    case SymbolKind::EnumValue:
+    case SymbolKind::PackedArrayType:
+    case SymbolKind::FixedSizeUnpackedArrayType:
+    case SymbolKind::DynamicArrayType:
+    case SymbolKind::DPIOpenArrayType:
+    case SymbolKind::AssociativeArrayType:
+    case SymbolKind::QueueType:
+    case SymbolKind::PackedStructType:
+    case SymbolKind::UnpackedStructType:
+    case SymbolKind::PackedUnionType:
+    case SymbolKind::UnpackedUnionType:
+    case SymbolKind::ClassType:
+    case SymbolKind::CovergroupType:
+    case SymbolKind::VoidType:
+    case SymbolKind::NullType:
+    case SymbolKind::CHandleType:
+    case SymbolKind::StringType:
+    case SymbolKind::EventType:
+    case SymbolKind::UnboundedType:
+    case SymbolKind::TypeRefType:
+    case SymbolKind::UntypedType:
+    case SymbolKind::SequenceType:
+    case SymbolKind::PropertyType:
+    case SymbolKind::VirtualInterfaceType:
+    case SymbolKind::TypeAlias:
+    case SymbolKind::ErrorType:
+    case SymbolKind::ForwardingTypedef:
+    case SymbolKind::NetType:
+    case SymbolKind::TypeParameter:
+    case SymbolKind::GenericClassDef:
+      return {};
+
+    // Resolved before lowering begins: what a parameter, a genvar or an
+    // import contributes is already folded into the members that read it.
+    case SymbolKind::Parameter:
+    case SymbolKind::Specparam:
+    case SymbolKind::DefParam:
+    case SymbolKind::Genvar:
+    case SymbolKind::ExplicitImport:
+    case SymbolKind::WildcardImport:
+    case SymbolKind::Attribute:
+    case SymbolKind::ConfigBlock:
+    case SymbolKind::ElabSystemTask:
+      return {};
+
+    // The scope's own boundary and its enclosing containers, reached as
+    // members but describing where this scope sits rather than what it does.
+    case SymbolKind::Port:
+    case SymbolKind::MultiPort:
+    case SymbolKind::InterfacePort:
+    case SymbolKind::Modport:
+    case SymbolKind::ModportPort:
+    case SymbolKind::ModportClocking:
+    case SymbolKind::InstanceBody:
+    case SymbolKind::Package:
+    case SymbolKind::CompilationUnit:
+    case SymbolKind::Root:
+    case SymbolKind::Definition:
+      return {};
+
+    // Owned by a different scope -- a subroutine's arguments, a class's
+    // fields, a covergroup's bins -- and lowered with that scope if at all.
+    case SymbolKind::Unknown:
+    case SymbolKind::DeferredMember:
+    case SymbolKind::TransparentMember:
+    case SymbolKind::EmptyMember:
+    case SymbolKind::StatementBlock:
+    case SymbolKind::FormalArgument:
+    case SymbolKind::Field:
+    case SymbolKind::ClassProperty:
+    case SymbolKind::MethodPrototype:
+    case SymbolKind::Iterator:
+    case SymbolKind::PatternVar:
+    case SymbolKind::ConstraintBlock:
+    case SymbolKind::CovergroupBody:
+    case SymbolKind::Coverpoint:
+    case SymbolKind::CoverCross:
+    case SymbolKind::CoverCrossBody:
+    case SymbolKind::CoverageBin:
+      return {};
+
+    // These annotate or define; no behavior arises at the point of
+    // declaration.
+    case SymbolKind::Primitive:
+    case SymbolKind::PrimitivePort:
+    case SymbolKind::SpecifyBlock:
+    case SymbolKind::TimingPath:
+    case SymbolKind::PulseStyle:
+    case SymbolKind::SystemTimingCheck:
+      return {};
+
+    // Declarations whose effect happens where they are used, not where they
+    // are written, so the use site is what has to support them.
+    case SymbolKind::ClockingBlock:
+    case SymbolKind::ClockVar:
+    case SymbolKind::LetDecl:
       return {};
   }
+  throw InternalError(
+      "StructuralScopeLowerer::PopulateMember: unknown slang "
+      "SymbolKind");
 }
 
 auto StructuralScopeLowerer::PopulateVariableMember(

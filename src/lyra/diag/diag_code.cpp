@@ -27,6 +27,11 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_non_static_variable_lifetime"}},
     std::pair{
+        DiagCode::kUnsupportedStructuralMember,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .name = "unsupported_structural_member"}},
+    std::pair{
         DiagCode::kUnsupportedStatementForm,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
