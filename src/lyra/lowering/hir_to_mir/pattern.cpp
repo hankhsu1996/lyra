@@ -1,13 +1,14 @@
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 
 #include <array>
-#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -45,18 +46,18 @@ namespace {
 // is checked against the tag (LRM 11.9), which the tag test below guards.
 auto SubjectComponent(
     UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
-    hir::TypeId subject_type, std::size_t index) -> mir::ExprId {
+    hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
   const auto unpacked_component =
       [&](const std::vector<hir::UnpackedAggregateField>& fields,
           mir::ExprData access) -> mir::ExprId {
-    if (index >= fields.size()) {
+    if (index.value >= fields.size()) {
       throw InternalError("SubjectComponent: component index out of range");
     }
     return block.exprs.Add(
         mir::Expr{
             .data = std::move(access),
-            .type = owner.TranslateType(fields[index].type)});
+            .type = owner.TranslateType(fields[index.value].type)});
   };
   if (const auto* s = std::get_if<hir::UnpackedStructType>(&ty.data)) {
     return unpacked_component(
@@ -70,12 +71,12 @@ auto SubjectComponent(
         mir::TaggedGetExpr{.union_value = subject, .tag_index = index});
   }
   const PackedProjection projection = ProjectPackedAggregate(owner, ty.data);
-  if (index >= projection.members.size()) {
+  if (index.value >= projection.members.size()) {
     throw InternalError("SubjectComponent: component index out of range");
   }
   return block.exprs.Add(BuildPackedMemberRead(
       owner, block, subject, projection, index,
-      owner.TranslateType(projection.members[index].type)));
+      owner.TranslateType(projection.members[index.value].type)));
 }
 
 // The 1-bit test that `subject`, whose type is `subject_type`, currently holds
@@ -85,7 +86,7 @@ auto SubjectComponent(
 // representation it is standing on.
 auto BuildTagTest(
     UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
-    hir::TypeId subject_type, std::size_t index) -> mir::Expr {
+    hir::TypeId subject_type, base::ComponentIndex index) -> mir::Expr {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
   if (std::holds_alternative<hir::UnpackedUnionType>(ty.data)) {
     return mir::Expr{
@@ -162,7 +163,8 @@ void EmitPatternBindings(
                   lowerer, decl_frame, assign_frame,
                   SubjectComponent(
                       owner, assign_block, subject, pattern.subject_type,
-                      field_index),
+                      base::ComponentIndex{
+                          static_cast<std::uint32_t>(field_index)}),
                   sub_pat_id);
             }
           },
@@ -232,7 +234,8 @@ auto BuildPatternPredicate(
                   lowerer, frame,
                   SubjectComponent(
                       owner, enc_block, subject, pattern.subject_type,
-                      field_index),
+                      base::ComponentIndex{
+                          static_cast<std::uint32_t>(field_index)}),
                   sub_pat_id);
               if (!sub_or) return std::unexpected(std::move(sub_or.error()));
               if (sub_or->has_value()) tests.push_back(**sub_or);

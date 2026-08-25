@@ -16,7 +16,6 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
-#include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/lifetime_extension.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -64,33 +63,21 @@ ProcessLowerer::ProcessLowerer(
 auto ProcessLowerer::Run(
     const slang::ast::ProceduralBlockSymbol& proc, WalkFrame parent_frame)
     -> diag::Result<hir::Process> {
-  hir::ProceduralBody body;
+  hir::ProceduralBody body = owner_->MakeProceduralBody(proc);
 
-  // Open the root lexical scope accumulators. Every body-tree var declared
-  // below feeds into these vectors and becomes the root scope's direct
-  // declarations; nested named blocks / forks / foreach scopes push their
-  // ids into the root scope's children list.
-  std::vector<hir::ProceduralVarId> root_declarations;
-  std::vector<hir::ProceduralScopeId> root_children;
+  // A process is anonymous in SV (LRM 9.2), so its root scope takes a
+  // synthesized segment.
+  OpenProceduralScope root{
+      owner_->LookupProceduralScope(proc),
+      hir::ProceduralScopeKind::kProcessRoot, std::nullopt};
   const WalkFrame frame =
-      parent_frame.WithProceduralBody(&body, &body.exprs, &body.patterns)
-          .WithProceduralScopeAccumulators(&root_declarations, &root_children);
+      parent_frame.WithProceduralBody(&body).WithOpenScope(&root);
 
   AnalyzeLifetimeExtended(proc.getBody());
   auto root_stmt = LowerStmt(proc.getBody(), frame);
   if (!root_stmt) return std::unexpected(std::move(root_stmt.error()));
   body.root_stmt = body.stmts.Add(*std::move(root_stmt));
-
-  if (parent_frame.current_structural_scope != nullptr) {
-    auto& scopes = parent_frame.current_structural_scope->procedural_scopes;
-    body.root_scope = owner_->LookupProceduralScope(proc);
-    scopes.Define(
-        body.root_scope,
-        hir::ProceduralScopeDecl{
-            .label = std::nullopt,
-            .direct_declarations = std::move(root_declarations),
-            .direct_child_scopes = std::move(root_children)});
-  }
+  body.root_scope = parent_frame.SealScope(std::move(root));
 
   const auto& mapper = owner_->SourceMapper();
   const auto span = mapper.PointSpanOf(proc.location);
@@ -116,25 +103,44 @@ auto ProcessLowerer::Run(
   return out;
 }
 
-auto ProcessLowerer::AddProceduralVar(
+auto ProcessLowerer::DeclareProceduralVar(
     const WalkFrame& frame, hir::ProceduralBody& body,
-    const slang::ast::VariableSymbol& var, hir::TypeId type)
-    -> hir::ProceduralVarId {
-  const hir::ProceduralVarId id = body.procedural_vars.Add(
+    const slang::ast::VariableSymbol& var) -> hir::ProceduralVarId {
+  const auto declared = owner_->LookupProceduralStatic(var);
+  const hir::ProceduralVarId id =
+      declared.has_value() ? declared->var : body.procedural_vars.Declare();
+  const auto [_, inserted] = procedural_var_bindings_.emplace(&var, id);
+  if (!inserted) {
+    throw InternalError(
+        "ProcessLowerer::DeclareProceduralVar: procedural variable symbol "
+        "already mapped");
+  }
+  frame.OpenScope().declarations.push_back(id);
+  return id;
+}
+
+void ProcessLowerer::DefineProceduralVar(
+    hir::ProceduralBody& body, hir::ProceduralVarId id,
+    const slang::ast::VariableSymbol& var, hir::TypeId type,
+    std::optional<hir::ExprId> init) {
+  body.procedural_vars.Define(
+      id,
       hir::ProceduralVarDecl{
           .name = std::string{var.name},
           .type = type,
           .lifetime = var.lifetime == slang::ast::VariableLifetime::Automatic
                           ? hir::VariableLifetime::kAutomatic
                           : hir::VariableLifetime::kStatic,
-          .lifetime_extended = lifetime_extended_.contains(&var)});
-  const auto [_, inserted] = procedural_var_bindings_.emplace(&var, id);
-  if (!inserted) {
-    throw InternalError(
-        "ProcessLowerer::AddProceduralVar: procedural variable symbol "
-        "already mapped");
-  }
-  frame.current_scope_declarations->push_back(id);
+          .lifetime_extended = lifetime_extended_.contains(&var),
+          .init = init});
+}
+
+auto ProcessLowerer::AddProceduralVar(
+    const WalkFrame& frame, hir::ProceduralBody& body,
+    const slang::ast::VariableSymbol& var, hir::TypeId type,
+    std::optional<hir::ExprId> init) -> hir::ProceduralVarId {
+  const hir::ProceduralVarId id = DeclareProceduralVar(frame, body, var);
+  DefineProceduralVar(body, id, var, type, init);
   return id;
 }
 

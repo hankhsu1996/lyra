@@ -43,7 +43,7 @@ using ClassRef = std::variant<IntraUnitClassRef, ExternalClassRef>;
 // in dispatch), aliasing "slot identity" to "introducer's (class, method)"
 // is a chosen simplification, not a natural fact. When a slot gains
 // independent metadata -- a pure/abstract requirement, a final marker,
-// interface conformance -- a distinct `SlotId` becomes the right shape.
+// interface conformance -- it needs an identity of its own.
 struct IntroducesVirtualSlot {
   auto operator==(const IntroducesVirtualSlot&) const -> bool = default;
 };

@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -56,7 +57,26 @@ auto LowerForkStmt(
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block fork_block;
-  const WalkFrame fork_frame = frame.WithBlock(&fork_block);
+  // A fork the source named is part of the hierarchical name of everything
+  // lexically inside it (LRM 23.9 lists a fork-join block among the constructs
+  // that define a scope), so entering it adopts its name node -- for the block
+  // items, which run in this execution context, and for every branch, which
+  // runs in its own.
+  const DeclaredScope& fork_scope = process.Scopes().Get(f.scope);
+  const WalkFrame fork_frame =
+      frame.WithBlock(&fork_block)
+          .WithScopeNameBorrowedHandle(fork_scope.NameBorrowedHandle());
+
+  // A fork the source named is a target a `disable` can name (LRM 9.6.2), and
+  // what it must end is every process executing the block -- the thread that
+  // runs the block items and awaits the join, and each branch, which takes the
+  // target's membership at the spawn. Entering the target here is the fork's
+  // own first act, before any branch spawns, so all of them are inside it.
+  const std::optional<mir::FieldId> cancel_target =
+      process.BodyHasReceiver() ? fork_scope.cancellation_source : std::nullopt;
+  if (cancel_target.has_value()) {
+    EmitCancellationGuard(process, fork_frame, *cancel_target);
+  }
 
   // A branch snapshots the fork's own block-item declarations by value and
   // aliases any deeper-enclosing variable it reads (LRM 6.21 / 9.3.2). The
@@ -127,6 +147,15 @@ auto LowerForkStmt(
 
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(fork_block));
+  // The region that consumes the effect sits where the fork sits, not inside
+  // it: an execution the `disable` reached has already left the fork by the
+  // time the handler runs, and it resumes after it (LRM 9.6.2).
+  if (cancel_target.has_value()) {
+    return mir::Stmt{
+        .label = std::move(label),
+        .data =
+            BuildCancellableRegion(process, frame, scope_id, *cancel_target)};
+  }
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }

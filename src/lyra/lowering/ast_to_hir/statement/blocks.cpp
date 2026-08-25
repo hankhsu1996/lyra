@@ -12,31 +12,44 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_scope.hpp"
-#include "lyra/hir/structural_scope.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// The lexical declaration scope a block-like construct opens (LRM 9.3.4). A
-// `begin` / `fork` that declares nothing and carries no name introduces no
-// scope -- slang records none for it -- and its statements belong to the
-// enclosing scope; so does anything lowered outside a structural scope, whose
-// scope record would have no consumer. Whether a scope exists is settled once
-// here, so a lowering opens one, lowers into it, and seals it the same way
-// either way.
+// The identifier the source gave a `begin` / `fork`, absent when it gave none.
+// A block slang recorded no symbol for and one whose symbol carries no name are
+// the same case: LRM 9.3.5 makes the `block_identifier` what a name outside can
+// reach, and neither has one. A statement label (LRM 9.3.5) arrives here too,
+// since slang records it as the block symbol's name.
+auto SourceBlockName(const slang::ast::StatementBlockSymbol* symbol)
+    -> std::optional<std::string> {
+  if (symbol == nullptr || symbol->name.empty()) {
+    return std::nullopt;
+  }
+  return std::string{symbol->name};
+}
+
+// The lexical declaration scope a `begin` / `fork` opens (LRM 9.3.4 / 9.3.2).
+// Every one of them opens exactly one, whether or not the source named it and
+// whether or not it declares anything -- those are properties of the scope, not
+// conditions on its existence.
+//
+// Whether the source named it is asked once, and that one answer decides both
+// halves: the name the scope carries, and where its identity comes from. A
+// named block is one a peer can name before this walk reaches it, so the
+// compilation unit's declaration pass has already minted its identity; an
+// unnamed one can be named by nothing, so it mints its own here. Asking the two
+// separately is what lets them drift into looking up an identity nobody
+// declared.
 class ProceduralScope {
  public:
   ProceduralScope(
-      const WalkFrame& enclosing,
-      const slang::ast::StatementBlockSymbol* symbol)
-      : symbol_(
-            enclosing.current_structural_scope != nullptr ? symbol : nullptr),
-        enclosing_(enclosing),
-        frame_(
-            symbol_ != nullptr ? enclosing.WithProceduralScopeAccumulators(
-                                     &declarations_, &children_)
-                               : enclosing) {
+      ProcessLowerer& proc, const WalkFrame& enclosing,
+      const slang::ast::StatementBlockSymbol* symbol,
+      hir::ProceduralScopeKind kind)
+      : ProceduralScope(
+            proc, enclosing, symbol, kind, SourceBlockName(symbol)) {
   }
 
   ProceduralScope(const ProceduralScope&) = delete;
@@ -50,31 +63,28 @@ class ProceduralScope {
     return frame_;
   }
 
-  // Fills in the identity the declaration pass minted and links the scope under
-  // the enclosing one, yielding the scope the construct names, or nullopt when
-  // it opened none.
-  auto Seal(ProcessLowerer& proc, std::optional<std::string> label)
-      -> std::optional<hir::ProceduralScopeId> {
-    if (symbol_ == nullptr) {
-      return std::nullopt;
-    }
-    auto& scopes = enclosing_.current_structural_scope->procedural_scopes;
-    const hir::ProceduralScopeId id =
-        proc.Owner().LookupProceduralScope(*symbol_);
-    scopes.Define(
-        id, hir::ProceduralScopeDecl{
-                .label = std::move(label),
-                .direct_declarations = std::move(declarations_),
-                .direct_child_scopes = std::move(children_)});
-    enclosing_.current_scope_children->push_back(id);
-    return id;
+  // Fills the finished contents into the scope's identity and hangs it under
+  // the enclosing one, yielding the scope the construct opened.
+  auto Seal() -> hir::ProceduralScopeId {
+    return enclosing_.SealScope(std::move(open_));
   }
 
  private:
-  const slang::ast::StatementBlockSymbol* symbol_;
-  std::vector<hir::ProceduralVarId> declarations_;
-  std::vector<hir::ProceduralScopeId> children_;
+  ProceduralScope(
+      ProcessLowerer& proc, const WalkFrame& enclosing,
+      const slang::ast::StatementBlockSymbol* symbol,
+      hir::ProceduralScopeKind kind, std::optional<std::string> source_name)
+      : enclosing_(enclosing),
+        open_(
+            source_name.has_value()
+                ? proc.Owner().LookupProceduralScope(*symbol)
+                : enclosing.ProceduralScopes().Declare(),
+            kind, std::move(source_name)),
+        frame_(enclosing.WithOpenScope(&open_)) {
+  }
+
   WalkFrame enclosing_;
+  OpenProceduralScope open_;
   WalkFrame frame_;
 };
 
@@ -85,13 +95,6 @@ auto LowerForkStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::BlockStatement& block, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  // A fork block may carry a name (LRM 9.3.4) or a statement label (LRM 9.3.5);
-  // both name the fork's lexical scope.
-  std::optional<std::string> label;
-  if (block.blockSymbol != nullptr && !block.blockSymbol->name.empty()) {
-    label = std::string{block.blockSymbol->name};
-  }
-
   hir::JoinMode mode = hir::JoinMode::kAll;
   switch (block.blockKind) {
     case slang::ast::StatementBlockKind::JoinAll:
@@ -118,10 +121,12 @@ auto LowerForkStmt(
   // LRM 9.3.2: a fork's block_item_declarations are not parallel statements --
   // they are locals of the fork scope, initialized in the parent at block entry
   // before any branch spawns. The grammar places them before the statements, so
-  // they form a prefix; each remaining statement is a branch. Locals lower in
-  // the parent execution context but attach to the fork scope, and only the
-  // branches enter the fork-branch execution scope.
-  ProceduralScope scope(frame, block.blockSymbol);
+  // they form a prefix; each remaining statement is a branch. The fork's own
+  // lexical declaration scope owns those locals; they lower in the parent
+  // execution context but attach to the fork scope, and only the branches enter
+  // the fork-branch execution scope.
+  ProceduralScope scope(
+      proc, frame, block.blockSymbol, hir::ProceduralScopeKind::kFork);
   const WalkFrame& fork_scope_frame = scope.Frame();
 
   std::vector<hir::StmtId> locals;
@@ -149,15 +154,14 @@ auto LowerForkStmt(
         *std::move(child_stmt)));
   }
 
-  scope.Seal(proc, std::move(label));
-
   return hir::Stmt{
       .label = std::nullopt,
       .data =
           hir::ForkStmt{
               .mode = mode,
               .locals = std::move(locals),
-              .branches = std::move(branches)},
+              .branches = std::move(branches),
+              .scope = scope.Seal()},
       .span = span};
 }
 
@@ -167,14 +171,17 @@ auto LowerStatementListStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::StatementList& list, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  // A bare slang `StatementList` (multiple statements without a source-level
-  // `begin ... end`) introduces no declaration scope: whatever it declares
-  // belongs to the construct that encloses it, which is where slang places it
-  // too. It groups statements and nothing else.
+  // Statements the source wrote without a `begin ... end` around them, which
+  // LRM 13.4 gives the same sequential meaning as a begin-end group. They
+  // become one, with a scope of its own that nothing declares into -- slang
+  // records the enclosing construct as the declaring scope, and that is where
+  // the walk still is.
+  ProceduralScope scope(proc, frame, nullptr, hir::ProceduralScopeKind::kBlock);
+
   std::vector<hir::StmtId> kids;
   kids.reserve(list.list.size());
   for (const auto* child : list.list) {
-    auto child_stmt = proc.LowerStmt(*child, frame);
+    auto child_stmt = proc.LowerStmt(*child, scope.Frame());
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
     kids.push_back(
         frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
@@ -183,7 +190,7 @@ auto LowerStatementListStmt(
   return hir::Stmt{
       .label = std::nullopt,
       .data =
-          hir::BlockStmt{.statements = std::move(kids), .scope = std::nullopt},
+          hir::BlockStmt{.statements = std::move(kids), .scope = scope.Seal()},
       .span = span};
 }
 
@@ -194,15 +201,8 @@ auto LowerBlockStmt(
   if (block.blockKind != slang::ast::StatementBlockKind::Sequential) {
     return LowerForkStmt(proc, frame, block, span);
   }
-  // A `begin ... end` that declares something or carries a label (LRM 9.3.4 /
-  // 9.3.5) introduces a lexical declaration scope; one that does neither is
-  // transparent.
-  std::optional<std::string> label;
-  if (block.blockSymbol != nullptr && !block.blockSymbol->name.empty()) {
-    label = std::string{block.blockSymbol->name};
-  }
-
-  ProceduralScope scope(frame, block.blockSymbol);
+  ProceduralScope scope(
+      proc, frame, block.blockSymbol, hir::ProceduralScopeKind::kBlock);
   const WalkFrame& body_frame = scope.Frame();
 
   std::vector<hir::StmtId> kids;
@@ -225,9 +225,7 @@ auto LowerBlockStmt(
   return hir::Stmt{
       .label = std::nullopt,
       .data =
-          hir::BlockStmt{
-              .statements = std::move(kids),
-              .scope = scope.Seal(proc, std::move(label))},
+          hir::BlockStmt{.statements = std::move(kids), .scope = scope.Seal()},
       .span = span};
 }
 

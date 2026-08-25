@@ -1,11 +1,10 @@
 #include "lyra/compiler/design_root.hpp"
 
 #include <algorithm>
-#include <cstdint>
+#include <cstddef>
 #include <expected>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -19,7 +18,6 @@
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/mir_to_lir/lower.hpp"
-#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
@@ -37,24 +35,12 @@ auto BuildDesignRootHir(std::span<const std::string> top_names)
     -> hir::CompilationUnit {
   hir::CompilationUnit root{std::string{kDesignRootUnitName}};
   for (const auto& name : top_names) {
-    root.root_scope.instance_members.Add(
+    root.root_scope.instance_members.Define(
+        root.root_scope.instance_members.Declare(),
         hir::InstanceMemberDecl{
             .instance_name = name, .target_unit = name, .array_dims = {}});
   }
   return root;
-}
-
-// Whether the unit owns a callable of this name -- used to tell a package that
-// has a value initializer (and so a synthesized initialize callable) from one
-// whose variables all take their default.
-auto HasCallableNamed(const mir::CompilationUnit& unit, std::string_view name)
-    -> bool {
-  for (std::uint32_t i = 0; i < unit.callables.size(); ++i) {
-    if (unit.callables.Get(mir::CallableId{i}).name == name) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // Post-order DFS emitting `name` after the packages its initializer reads (LRM
@@ -70,7 +56,7 @@ void OrderPackageInit(
     const std::string& name,
     const std::unordered_map<std::string, std::vector<std::string>>&
         package_deps,
-    const std::unordered_set<std::string>& init_set,
+    const std::unordered_set<std::string>& present,
     std::unordered_set<std::string>& placed,
     std::vector<std::string>& ordered) {
   if (!placed.insert(name).second) {
@@ -78,8 +64,8 @@ void OrderPackageInit(
   }
   if (const auto it = package_deps.find(name); it != package_deps.end()) {
     for (const std::string& dep : it->second) {
-      if (init_set.contains(dep)) {
-        OrderPackageInit(dep, package_deps, init_set, placed, ordered);
+      if (present.contains(dep)) {
+        OrderPackageInit(dep, package_deps, present, placed, ordered);
       }
     }
   }
@@ -87,39 +73,31 @@ void OrderPackageInit(
 }
 
 // Resolves the whole-design package initialization plan from the compiled
-// units. A package unit is the one with no root class (`root == nullopt`); the
-// install pass covers every package that declares a variable, and the
-// value-initialize pass every package that has a value initializer, ordered so
-// a package a given initializer reads directly comes first where that is
-// possible. Both passes are name-sorted first so the result is deterministic
-// for a given design.
+// units. A package unit is the one with no root class (`root == nullopt`).
+// Both phases cover every package of the design -- one that declares nothing
+// runs an empty body -- and the value-initialize phase is ordered so a package
+// a given initializer reads directly comes first where that is possible. The
+// names are sorted first so the result is deterministic for a given design.
 auto BuildPackageInitializationPlan(std::span<const mir::CompilationUnit> units)
     -> lowering::hir_to_mir::PackageInitializationPlan {
-  std::vector<std::string> packages_with_value_init;
   std::unordered_map<std::string, std::vector<std::string>> package_init_deps;
   lowering::hir_to_mir::PackageInitializationPlan plan;
   for (const auto& unit : units) {
     if (unit.root.has_value()) {
       continue;
     }
-    if (!unit.static_variables.empty()) {
-      plan.install_order.push_back(unit.name);
-    }
-    if (HasCallableNamed(
-            unit, lowering::hir_to_mir::kPackageInitializeCallableName)) {
-      packages_with_value_init.push_back(unit.name);
-      package_init_deps.emplace(
-          unit.name, unit.direct_initializer_package_reads);
-    }
+    plan.install_order.push_back(unit.name);
+    package_init_deps.emplace(unit.name, unit.direct_initializer_package_reads);
   }
   std::ranges::sort(plan.install_order);
-  std::ranges::sort(packages_with_value_init);
-  const std::unordered_set<std::string> init_set(
-      packages_with_value_init.begin(), packages_with_value_init.end());
+  // A read may name a package this design does not compile, whose callables no
+  // call could reach, so ordering follows only the packages present here.
+  const std::unordered_set<std::string> present(
+      plan.install_order.begin(), plan.install_order.end());
   std::unordered_set<std::string> placed;
-  for (const std::string& name : packages_with_value_init) {
+  for (const std::string& name : plan.install_order) {
     OrderPackageInit(
-        name, package_init_deps, init_set, placed, plan.value_initialize_order);
+        name, package_init_deps, present, placed, plan.value_initialize_order);
   }
   return plan;
 }

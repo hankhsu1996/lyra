@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
@@ -141,6 +142,13 @@ struct BaseCall {
 // with its static property in source order; expressions live in
 // `static_init.exprs`. A static property without a source initializer takes
 // its type's Table 7-1 default and does not appear here.
+//
+// `procedural_scopes` owns the lexical declaration scopes (LRM 9.3.4) of
+// every body this class declares -- each method's root scope and the
+// begin/end, fork, and foreach scopes nested inside it. A class owns its
+// methods' declaration scopes the same way a structural scope owns its
+// processes', so a body reaches its scope tree the same way wherever it was
+// declared.
 struct ClassDecl {
   std::string name;
   bool is_interface_class = false;
@@ -154,6 +162,7 @@ struct ClassDecl {
   std::vector<FieldInit> field_inits;
   ProceduralBody static_init;
   std::vector<StaticPropertyInit> static_property_inits;
+  base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
 };
 
 }  // namespace lyra::hir

@@ -36,9 +36,12 @@ Make the machinery generic; keep the nodes typed.
 
 1. **A universal `Arena<T>`.** One generic flat, id-indexed, append-only pool replaces every
    hand-rolled `vector<T>` + `Get` + `Add`. It is layer-agnostic and node-agnostic: it carries no
-   knowledge of what it stores, only that the pool is indexed by a typed id. A pool that
-   deduplicates on insert (type interning) is not this shape -- it is an interning table (an arena
-   plus a key-to-id cache) and keeps its own type.
+   knowledge of what it stores, only that the pool is indexed by a typed id it mints on append.
+   Minting is the defining property, so a container that does not mint is not this shape however
+   similar it looks, and keeps its own type: a pool that deduplicates on insert is an interning
+   table (an arena plus a key-to-id cache); a table of what a pass computed for each entity of some
+   other pool is a translation, built whole against that pool's count and offering no append,
+   because the identity it is keyed by is not its to hand out.
 
 2. **Context-free expression lowering, shared across pass classes.** Because an expression's meaning
    is independent of the enclosing scope, the handler that lowers an expression family is written

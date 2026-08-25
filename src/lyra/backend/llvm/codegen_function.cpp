@@ -59,8 +59,7 @@ void CodeGenFunction::Run() {
   // A place local is frame storage: its slot is allocated once, in the entry
   // block, so every path that reaches it names the same address.
   builder_.SetInsertPoint(entry);
-  for (std::uint32_t i = 0; i < fn_->values.size(); ++i) {
-    const lir::ValueId id{i};
+  for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
     if (local.kind == lir::LocalKind::kPlace) {
       values_.emplace(
@@ -73,10 +72,11 @@ void CodeGenFunction::Run() {
 
   for (std::uint32_t i = 0; i < fn_->blocks.size(); ++i) {
     builder_.SetInsertPoint(blocks_[i]);
-    for (const lir::Instr& instr : fn_->blocks[i].instrs) {
+    const lir::BasicBlock& block = fn_->blocks[i];
+    for (const lir::Instr& instr : block.instrs) {
       values_.emplace(instr.result, LowerInstr(instr));
     }
-    LowerTerminator(fn_->blocks[i].terminator);
+    LowerTerminator(block.terminator);
   }
 }
 

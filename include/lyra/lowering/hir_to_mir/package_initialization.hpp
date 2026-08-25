@@ -13,9 +13,8 @@ namespace lyra::lowering::hir_to_mir {
 //
 // Phase 1 (`Install`): install every package cell's declared type and language
 // default. It fires nothing and takes no runtime handle. The design root calls
-// it for every package with variables before any value initializer runs
-// anywhere, so a cross-package read always reaches installed storage -- at
-// worst a default.
+// it for every package before any value initializer runs anywhere, so a
+// cross-package read always reaches installed storage -- at worst a default.
 //
 // Phase 2 (`Initialize`): run each LRM 10.5 value initializer through its cell,
 // firing subscribers; it takes the runtime handle. The design root calls it
@@ -28,13 +27,13 @@ inline constexpr std::string_view kPackageInitializeCallableName =
     "InitializePackageVariables";
 
 // The design root's plan for initializing package variables (LRM 26.2 / 10.5),
-// resolved once by the whole-design assembly from each package unit's by-name
-// exports. `install_order` is every package with variables; the phase-1 install
-// is order-independent, so any stable order serves. `value_initialize_order` is
-// every package with a value initializer, in the best-effort order the assembly
-// chose (a dependency before its dependent where a direct read makes it known,
-// a stable order otherwise). The design root realizes both into calls; it never
-// re-derives the plan.
+// resolved once by the whole-design assembly. Both lists name every package of
+// the design: a package that declares nothing runs an empty body, so nothing
+// asks first whether a package has work. `install_order` is any stable order,
+// the phase-1 install being order-independent; `value_initialize_order` is the
+// best-effort order the assembly chose (a dependency before its dependent where
+// a direct read makes it known, a stable order otherwise). The design root
+// realizes both into calls; it never re-derives the plan.
 struct PackageInitializationPlan {
   std::vector<std::string> install_order;
   std::vector<std::string> value_initialize_order;

@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -84,26 +86,52 @@ using ForeignImportScopes =
 using ForeignExportNames =
     std::unordered_map<const slang::ast::SubroutineSymbol*, std::string_view>;
 
-// A downward reference's leading component names an owned child this scope
-// declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
+// A component of a hierarchical path names an owned child of some scope this
+// unit declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
 // generate block (`g[1].x`, LRM 27). The child's slang symbol maps to the
-// head the reference navigates from, so the reference resolves regardless of
+// declaring scope's identity for it, so the reference resolves regardless of
 // whether it precedes the child in source.
 struct OwnedChildBinding {
   ScopeFrameId home_frame{};
-  hir::DownwardHead head;
+  hir::OwnedChildRef child;
 };
 
 using OwnedChildBindings =
     std::unordered_map<const slang::ast::Symbol*, OwnedChildBinding>;
 
-// Shared lowering-pass facts threaded into every UnitLowerer. SourceMapper
-// translates slang source locations; SensitivityAnalyzer is shared across
-// every unit's analysis (caches reads); disable_assertions is the policy
-// that elides assertion constructs instead of rejecting them; the foreign
-// export names are resolved design-wide before any unit is walked. Subset of
-// `LowerCompilationFacts` that excludes the slang Compilation handle (which
-// only the driver-level CompilationLowerer needs to walk top instances).
+// A static-lifetime body local that a hierarchical path can name (LRM 23.9).
+// The declaration pass mints it, so a reference from a peer body resolves it
+// whichever body lowers first; `home_frame` is the structural scope whose
+// object tree carries the storage. Where inside that scope the storage sits --
+// which named blocks stand between -- is settled when the scope's classes are
+// built, so the reference names only the declaration.
+struct ProceduralStaticBinding {
+  ScopeFrameId home_frame{};
+  hir::ProceduralBodyRef body;
+  hir::ProceduralVarId var{};
+};
+
+using ProceduralStaticBindings =
+    std::unordered_map<const slang::ast::Symbol*, ProceduralStaticBinding>;
+
+// The declarations of one structural scope that a peer may name before the
+// scope is built, minted here and handed to the scope when it is.
+struct ScopeDeclarations {
+  base::Registry<hir::SubroutineDecl, hir::StructuralSubroutineId>
+      structural_subroutines;
+  base::Registry<hir::Process, hir::ProcessId> processes;
+  base::Registry<hir::Generate, hir::GenerateId> generates;
+  base::Registry<hir::InstanceMemberDecl, hir::InstanceMemberId>
+      instance_members;
+};
+
+// What every unit's lowering reads and none of them changes: where a
+// construct was written, the shared sensitivity analysis (one cache across the
+// design), whether assertions are elided rather than rejected, and the foreign
+// export names, which are resolved design-wide before any unit is walked.
+// The slang compilation itself is deliberately absent: walking top instances is
+// the driver's job, and a unit lowering that could reach it would be able to
+// read another unit.
 class LoweringFacts {
  public:
   LoweringFacts(
@@ -318,6 +346,17 @@ class UnitLowerer {
       const -> std::optional<std::string_view> {
     return facts_.ForeignExportName(sub);
   }
+  // Whether the design being built contains this procedural block. A concurrent
+  // assertion is a process whose whole body is the assertion, so disabling
+  // assertions removes it rather than emptying it -- an always block with no
+  // body and no timing control would be a zero-delay infinite loop. What a
+  // design contains is one answer, so every pass that enumerates processes
+  // reads it here rather than restating the condition.
+  [[nodiscard]] auto Contains(
+      const slang::ast::ProceduralBlockSymbol& proc) const -> bool {
+    return !DisableAssertions() || !proc.isFromAssertion;
+  }
+
   [[nodiscard]] auto DisableAssertions() const -> bool {
     return facts_.DisableAssertions();
   }
@@ -362,9 +401,32 @@ class UnitLowerer {
 
   void MapOwnedChildBinding(
       const slang::ast::Symbol& child, ScopeFrameId home_frame,
-      hir::DownwardHead head);
+      hir::OwnedChildRef child_ref);
   [[nodiscard]] auto LookupOwnedChildBinding(const slang::ast::Symbol& child)
       const -> std::optional<OwnedChildBinding>;
+
+  void MapProcessBinding(
+      const slang::ast::ProceduralBlockSymbol& proc, hir::ProcessId id);
+  [[nodiscard]] auto LookupProcessBinding(
+      const slang::ast::ProceduralBlockSymbol& proc) const
+      -> std::optional<hir::ProcessId>;
+
+  [[nodiscard]] auto LookupProceduralStatic(const slang::ast::Symbol& var) const
+      -> std::optional<ProceduralStaticBinding>;
+
+  // Opens the body of a process or subroutine with the static-lifetime locals
+  // the compilation unit's declaration pass minted for it already in place. A
+  // peer body that lowered earlier may already name one of those ids in a
+  // hierarchical reference, so this body cannot assign its own: the minted ids
+  // have to occupy the leading arena slots. Producing the body already holding
+  // them, rather than filling one afterwards, is what leaves no window in
+  // which anything else could take those slots.
+  [[nodiscard]] auto MakeProceduralBody(const slang::ast::Symbol& body_symbol)
+      -> hir::ProceduralBody;
+
+  // Hands a structural scope the declarations minted for it, once.
+  [[nodiscard]] auto TakeScopeDeclarations(const slang::ast::Scope& scope)
+      -> ScopeDeclarations;
 
   // Routed reference dedup. `slot_owner_frame` is the frame whose `routed_refs`
   // arena holds the slot -- the scope whose MIR class receives the endpoint
@@ -375,18 +437,20 @@ class UnitLowerer {
   // owner.
   auto MapOrGetRoutedRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
-      hir::TypeId type) -> hir::RoutedRefId;
+      hir::RoutedPathRecipe recipe) -> hir::RoutedRefId;
   auto TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
       -> std::vector<hir::RoutedRefDecl>;
 
-  // The compilation-unit structural declaration pass (LRM 27, 23.6): before any
-  // executable body lowers, walk the whole unit's scope tree, assign each
-  // addressable scope its frame, and register every owned-child head (instance,
-  // generate block, generate array). A body or sensitivity read resolves an
-  // owned child regardless of which sibling scope lowered first. Registers no
+  // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
+  // executable body lowers, walk the whole unit's scope tree and mint every
+  // declaration a peer body may reference -- owned children (instance,
+  // generate block, generate array), subroutines, and the static-lifetime body
+  // locals a named block puts on the hierarchical path -- assigning each scope
+  // its frame along the way. A body or sensitivity read then resolves any of
+  // them regardless of which sibling scope or body lowered first. Registers no
   // executable HIR.
-  void DeclareStructuralIdentities(const slang::ast::Scope& scope);
+  auto DeclareStructuralIdentities(const slang::ast::Scope& scope)
+      -> diag::Result<void>;
 
   // The frame assigned to `scope` by the declaration pass. Every scope a
   // structural lowerer is built for was assigned one, so absence is a
@@ -394,7 +458,7 @@ class UnitLowerer {
   [[nodiscard]] auto LookupScopeFrame(const slang::ast::Scope& scope) const
       -> ScopeFrameId;
 
-  // Records the identity a structural scope minted for one of its procedural
+  // Records the identity a declaration scope minted for one of its procedural
   // scopes, keyed by the symbol slang records the scope as.
   void DeclareProceduralScope(
       const slang::ast::Symbol& symbol, hir::ProceduralScopeId scope) {
@@ -402,9 +466,10 @@ class UnitLowerer {
   }
 
   // The identity minted for `symbol`'s procedural scope. Every procedural scope
-  // of a structural scope is minted before any of its bodies lower, so absence
-  // is a compiler-bug invariant; a caller holding a symbol that may belong to
-  // another structural scope tests `OwningScopeFrame` first.
+  // the source wrote is minted before any of its declaration scope's bodies
+  // lower, so absence is a compiler-bug invariant -- which makes this a lookup
+  // for a symbol the declaration scope being lowered is known to own, never a
+  // test of whether it owns one.
   [[nodiscard]] auto LookupProceduralScope(
       const slang::ast::Symbol& symbol) const -> hir::ProceduralScopeId {
     const auto it = procedural_scopes_.find(&symbol);
@@ -448,14 +513,13 @@ class UnitLowerer {
   // still lands here, in its declaring unit.
   auto InternOwnClassDeclarations() -> diag::Result<void>;
 
-  // Builds a HIR Expr referring to a leaf reached by navigating `path` down
-  // from `head`. `target` is the leaf value symbol, which is also the key two
-  // references to one target dedup on; `slot_owner_frame` is the frame whose
-  // routed-reference arena holds the slot.
+  // Builds a HIR Expr referring to the leaf `recipe` navigates to. `target` is
+  // the leaf value symbol, which is also the key two references to one target
+  // dedup on; `slot_owner_frame` is the frame whose routed-reference arena
+  // holds the slot.
   auto MakeRoutedMemberRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
-      hir::TypeId type, diag::SourceSpan span) -> hir::Expr;
+      hir::RoutedPathRecipe recipe, diag::SourceSpan span) -> hir::Expr;
 
   // Where a named value lives, as this unit reaches it. One answer serves
   // every consumer of a reference -- reading it, writing it, and waiting on it
@@ -491,6 +555,18 @@ class UnitLowerer {
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
       -> std::optional<hir::ReferenceRoute>;
 
+  // Reserves an identity for each static-lifetime local one procedural block
+  // subtree of `body` declares, and recurses into the blocks nested in it.
+  // Every scope is walked the same way and contributes however many statics it
+  // holds, none excluded: whether a hierarchical path can reach a given one is
+  // the frontend's question, already answered before any reference gets here,
+  // so nothing is held back on the chance that nothing will name it. Only the
+  // identity is minted -- what is declared, including the initializer, is an
+  // expression of the body and is filled when that body lowers.
+  void DeclareProceduralStatics(
+      const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
+      hir::ProceduralBodyRef body, ScopeFrameId frame);
+
   LoweringFacts facts_;
   const slang::ast::Scope* scope_;
 
@@ -516,6 +592,17 @@ class UnitLowerer {
   ForeignImportBindings foreign_import_bindings_;
   ForeignImportScopes foreign_import_scopes_;
   OwnedChildBindings owned_child_bindings_;
+  std::unordered_map<const slang::ast::ProceduralBlockSymbol*, hir::ProcessId>
+      process_bindings_;
+  ProceduralStaticBindings procedural_static_bindings_;
+  // The local pool of each body that declares a static, keyed by the body's
+  // frontend symbol; the body receives it when it is built.
+  std::unordered_map<
+      const slang::ast::Symbol*,
+      base::Registry<hir::ProceduralVarDecl, hir::ProceduralVarId>>
+      procedural_static_vars_;
+  std::unordered_map<const slang::ast::Scope*, ScopeDeclarations>
+      scope_declarations_;
   std::unordered_map<const slang::ast::PatternVarSymbol*, hir::PatternId>
       pattern_var_bindings_;
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
@@ -532,5 +619,25 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::Symbol*, hir::ProceduralScopeId>
       procedural_scopes_;
 };
+
+// Mints the identity of every procedural scope the bodies of `slang_scope`
+// declare, into the registry of the declaration scope that owns them -- a
+// structural scope or a class. A procedural scope is what slang records as
+// one: a process body, a subroutine body, and each block that introduces
+// declarations or carries a name (LRM 9.3.4 / 9.3.5); a construct that
+// introduces neither is transparent and is no scope at all, so nothing is
+// minted for it. Instance and generate members are not crossed, being their
+// own declaration scopes with their own registries.
+//
+// Identity precedes bodies because a `disable` names a block or task by static
+// declaration identity (LRM 9.6.2) and so can name one whose body lowers later
+// or lives in another body entirely. Only what a name can reach from elsewhere
+// is minted here, so nothing is minted that no body goes on to fill: the walk
+// that lowers a body mints and fills every other scope it opens, and the
+// lexical nesting -- which slang's member list does not follow -- is recorded
+// there, where it is known.
+void DeclareProceduralScopes(
+    const slang::ast::Scope& slang_scope, UnitLowerer& owner,
+    base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>& scopes);
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -182,9 +182,8 @@ void CollectPlacedLocals(
       placed[local->value] = true;
     }
   };
-  for (std::size_t i = 0; i < block.exprs.size(); ++i) {
-    const mir::Expr& expr =
-        block.exprs.Get(mir::ExprId{static_cast<std::uint32_t>(i)});
+  for (const mir::ExprId id : block.exprs.Ids()) {
+    const mir::Expr& expr = block.exprs.Get(id);
     std::visit(
         Overloaded{
             [&](const mir::AssignExpr& e) {
@@ -210,11 +209,8 @@ void CollectPlacedLocals(
             [](const auto&) {}},
         expr.data);
   }
-  for (std::size_t i = 0; i < block.child_scopes.size(); ++i) {
-    CollectPlacedLocals(
-        types,
-        block.child_scopes.Get(mir::BlockId{static_cast<std::uint32_t>(i)}),
-        placed);
+  for (const mir::BlockId id : block.child_scopes.Ids()) {
+    CollectPlacedLocals(types, block.child_scopes.Get(id), placed);
   }
 }
 
@@ -345,8 +341,8 @@ void FunctionLowerer::BindCaptureParams(
     const mir::ClosureDecl& closure, mir::LocalId receiver) {
   std::vector<lir::Operand> captures;
   captures.reserve(closure.fields.size());
-  for (std::uint32_t i = 0; i < closure.fields.size(); ++i) {
-    const mir::FieldDecl& field = closure.fields.Get(mir::FieldId{i});
+  for (const mir::FieldId id : closure.fields.Ids()) {
+    const mir::FieldDecl& field = closure.fields.Get(id);
     const lir::ValueId value = fn_.values.Add(
         lir::Local{
             .name = field.name,
@@ -377,11 +373,10 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // -- can cross one, which is why marking locals is sufficient. A
   // non-suspending body keeps selective placement.
   if (is_coroutine) {
-    for (std::size_t i = 0; i < code_->locals.size(); ++i) {
-      const mir::LocalId local{static_cast<std::uint32_t>(i)};
+    for (const mir::LocalId local : code_->locals.Ids()) {
       if (IsActivationValueType(
               unit_->Mir().types.Get(code_->locals.Get(local).type))) {
-        activation_value_local_[i] = true;
+        activation_value_local_[local.value] = true;
       }
     }
   }
@@ -422,11 +417,10 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // it is reused across iterations rather than re-created per declaration; its
   // first store, installing the representation, is the declaration's
   // initializer reached during the body walk.
-  for (std::size_t i = 0; i < code_->locals.size(); ++i) {
-    if (activation_value_local_[i] && !locals_[i].has_value()) {
-      const lir::TypeId type = unit_->TranslateType(
-          code_->locals.Get(mir::LocalId{static_cast<std::uint32_t>(i)}).type);
-      locals_[i] = LocalBinding{
+  for (const mir::LocalId id : code_->locals.Ids()) {
+    if (activation_value_local_[id.value] && !locals_[id.value].has_value()) {
+      const lir::TypeId type = unit_->TranslateType(code_->locals.Get(id).type);
+      locals_[id.value] = LocalBinding{
           ActivationValueBinding{.handle = AllocateActivationValue(type)}};
     }
   }
@@ -443,23 +437,27 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   const bool falls_through_to_return =
       is_coroutine ||
       fn_.result_type == unit_->TranslateType(unit_->Mir().builtins.void_type);
-  for (std::size_t i = 0; i < fn_.blocks.size(); ++i) {
-    if (terminated_[i]) {
-      continue;
+  fn_.blocks.reserve(blocks_.size());
+  for (OpenBlock& block : blocks_) {
+    if (!block.terminator.has_value()) {
+      block.terminator = lir::Terminator{
+          .data =
+              falls_through_to_return
+                  ? lir::TerminatorData{lir::ReturnTerm{.value = std::nullopt}}
+                  : lir::TerminatorData{lir::UnreachableTerm{}}};
     }
-    fn_.blocks[i].terminator = lir::Terminator{
-        .data =
-            falls_through_to_return
-                ? lir::TerminatorData{lir::ReturnTerm{.value = std::nullopt}}
-                : lir::TerminatorData{lir::UnreachableTerm{}}};
+    fn_.blocks.push_back(
+        lir::BasicBlock{
+            .instrs = std::move(block.instrs),
+            .terminator = *std::move(block.terminator)});
   }
   return std::move(fn_);
 }
 
 auto FunctionLowerer::NewBlock() -> lir::BlockId {
-  fn_.blocks.emplace_back();
-  terminated_.push_back(false);
-  return lir::BlockId{static_cast<std::uint32_t>(fn_.blocks.size() - 1)};
+  const lir::BlockId id{static_cast<std::uint32_t>(blocks_.size())};
+  blocks_.emplace_back();
+  return id;
 }
 
 void FunctionLowerer::SetCurrent(lir::BlockId id) {
@@ -467,22 +465,23 @@ void FunctionLowerer::SetCurrent(lir::BlockId id) {
 }
 
 void FunctionLowerer::Terminate(lir::TerminatorData data) {
-  if (terminated_[current_.value]) {
+  std::optional<lir::Terminator>& terminator =
+      blocks_[current_.value].terminator;
+  if (terminator.has_value()) {
     throw InternalError("mir_to_lir: block terminated twice");
   }
-  fn_.blocks[current_.value].terminator = lir::Terminator{.data = data};
-  terminated_[current_.value] = true;
+  terminator = lir::Terminator{.data = data};
 }
 
 auto FunctionLowerer::Terminated() const -> bool {
-  return terminated_[current_.value];
+  return blocks_[current_.value].terminator.has_value();
 }
 
 auto FunctionLowerer::Emit(lir::TypeId type, lir::InstrData data)
     -> lir::Operand {
   const lir::ValueId result = fn_.values.Add(
       lir::Local{.name = {}, .type = type, .kind = lir::LocalKind::kTemp});
-  fn_.blocks[current_.value].instrs.push_back(
+  blocks_[current_.value].instrs.push_back(
       lir::Instr{.result = result, .data = std::move(data)});
   return lir::Use{.value = result};
 }
@@ -1278,12 +1277,10 @@ auto FunctionLowerer::LowerProjectionUpdate(
     return std::visit(
         Overloaded{
             [&](const mir::ComponentSelector& c) -> lir::AggregateSelector {
-              return lir::TupleElement{
-                  .index = static_cast<std::uint32_t>(c.index)};
+              return lir::TupleElement{.index = c.index};
             },
             [&](const mir::UnionMemberSelector& m) -> lir::AggregateSelector {
-              return lir::UnionMember{
-                  .index = static_cast<std::uint32_t>(m.index)};
+              return lir::UnionMember{.index = m.index};
             },
             [&](const mir::ElementSelector&) -> lir::AggregateSelector {
               return lir::ContainerElement{.operands = keys[depth]};
@@ -1578,6 +1575,36 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::ProductInstr{.components = std::move(components)});
           },
+          [&](const mir::VectorExpr& vec) -> diag::Result<lir::Operand> {
+            std::vector<lir::Operand> elements;
+            elements.reserve(vec.elements.size());
+            for (const mir::ExprId element : vec.elements) {
+              auto lowered = LowerExpr(block, element);
+              if (!lowered) {
+                return std::unexpected(std::move(lowered.error()));
+              }
+              elements.push_back(*std::move(lowered));
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::ArrayInstr{.elements = std::move(elements)});
+          },
+          [&](const mir::VectorGetExpr& get) -> diag::Result<lir::Operand> {
+            auto vector = LowerExpr(block, get.vector);
+            if (!vector) {
+              return std::unexpected(std::move(vector.error()));
+            }
+            auto index = LowerExpr(block, get.index);
+            if (!index) {
+              return std::unexpected(std::move(index.error()));
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::AggregateExtractInstr{
+                    .aggregate = *std::move(vector),
+                    .selector = lir::ContainerElement{
+                        .operands = {*std::move(index)}}});
+          },
           [&](const mir::TupleGetExpr& get) -> diag::Result<lir::Operand> {
             auto tuple = LowerExpr(block, get.tuple);
             if (!tuple) {
@@ -1587,8 +1614,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::AggregateExtractInstr{
                     .aggregate = *std::move(tuple),
-                    .selector = lir::TupleElement{
-                        .index = static_cast<std::uint32_t>(get.index)}});
+                    .selector = lir::TupleElement{.index = get.index}});
           },
           [&](const mir::ClosureExpr& cl) -> diag::Result<lir::Operand> {
             // Constructing a closure builds its capture record, and nothing

@@ -5,6 +5,21 @@
 Define what each lowering step may and may not do. Lowering is one-way, and each step has a narrow
 set of allowed transformations.
 
+A lowering exists so that a class of knowledge stops being needed downstream. AST-to-HIR retires
+frontend identity; HIR-to-MIR retires SystemVerilog; MIR-to-LIR retires structured code; LIR-to-LLVM
+retires the compiler's own vocabulary. Each step retires its class by **writing it down in the next
+layer's vocabulary** -- everything the input layer knew that still matters is restated in the
+target's own terms. Knowledge a step neither restates nor retires is knowledge every downstream
+consumer must guess at, and each consumer guesses from whatever side data is nearest to hand. Those
+guesses are tables, and a table has holes: the construct nobody thought of reaches a consumer that
+cannot name it.
+
+Restating is therefore local and total. Local: an input node's output is determined by that node and
+its own subtree, never by a property of the tree around it. Total: every input node produces output,
+including one that declares nothing. A step that must first walk its whole input to compute a
+property, and only then knows what to emit, is not restating -- it is deciding, and the decision
+belongs to whichever layer already held what the property was computed from.
+
 ## Owns
 
 - The rule that lowering is one-way: a later stage does not write into an earlier stage.
@@ -44,6 +59,10 @@ set of allowed transformations.
    emission (an `if` whose arms produce different syntactic shapes), the MIR is wrong, and the
    LIR/LLVM path would face the same obstruction. The C++ backend's render is therefore the
    cross-check on MIR shape today (`backend_contract.md`).
+8. A lowering translates node by node, with no preliminary pass over its input. Each input node's
+   output follows from that node and its own subtree; every input node produces output, whether or
+   not it declares anything. A step that needs to know a property of the whole input before it can
+   emit any of it has taken on a decision that belongs upstream.
 
 ## Boundary to Adjacent Layers
 
@@ -61,6 +80,21 @@ set of allowed transformations.
 - A lowering pass that depends on runtime identity or per-instance data at compile time.
 - A lowering pass that invents a new identity kind not defined by either the input or output layer's
   contract.
+- A lowering that computes a property over its entire input before it can translate any part of it.
+  The property is a decision, and it belongs to the layer that already held what it is computed
+  from.
+- A predicate inside a lowering that gives one source construct two different output shapes. Every
+  downstream consumer then carries both shapes, and the one a consumer forgets is a defect that the
+  other shape hides.
+- An entity whose output placement is decided by a property of what its descendants contain rather
+  than by what it declares itself. Placement that flows outward obliges a later stage to record
+  where each thing went, and every consumer to consult that record.
+- An output node emitted only when its input node is non-empty. Zero is a count, not a different
+  shape; a construct that declares nothing produces the same output as one that declares many, with
+  an empty list.
+- An output node that omits a fact the input node stated, leaving a consumer to recover it from the
+  node's type, its name, or its position. The consumer's recovery is a table over the cases someone
+  enumerated, and the case nobody enumerated is a hole.
 
 ## Notes / Examples
 

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/component_index.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
@@ -168,11 +169,11 @@ struct ArrayInstr {
 // union holds one member at a time, so an update makes the selected member the
 // live one rather than replacing one of several that coexist.
 struct TupleElement {
-  std::uint32_t index;
+  base::ComponentIndex index;
 };
 
 struct UnionMember {
-  std::uint32_t index;
+  base::ComponentIndex index;
 };
 
 // One coordinate into a homogeneous or keyed value, and one fixed-width range
@@ -366,6 +367,11 @@ struct Terminator {
   TerminatorData data;
 };
 
+// A maximal straight-line run of instructions entered only at its first and
+// left only at its last. The terminator is what makes it one: control leaves
+// through it and nowhere else, so a block is never partly formed here -- a run
+// of instructions with no decided exit is a thing under construction, which the
+// pass building it holds in its own shape.
 struct BasicBlock {
   std::vector<Instr> instrs;
   Terminator terminator;

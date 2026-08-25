@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 
+#include <cstddef>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -82,7 +83,7 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
             return LowerReturnStmt(*this, frame, stmt.label, r);
           },
           [&](const hir::TimedStmt& t) {
-            return LowerTimedStmt(*this, frame, stmt.label, stmt.span, t);
+            return LowerTimedStmt(*this, frame, stmt.label, t, stmt.span);
           },
           [&](const hir::EventTriggerStmt& et) {
             return LowerEventTriggerStmt(*this, frame, stmt.label, et);
@@ -101,65 +102,6 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           },
       },
       stmt.data);
-}
-
-auto ProcessLowerer::BuildStaticStorageAccess(
-    const WalkFrame& frame, StaticStoragePlacement placement) const
-    -> mir::Expr {
-  mir::Block& block = *frame.current_block;
-  const mir::CompilationUnit& unit = owner_->Unit();
-
-  // Intra-unit access is a typed segment: descend from the body's `self`
-  // through each intervening materialized scope's borrowed companion member,
-  // then project the static cell. A static whose physical owner is the
-  // enclosing class has an empty chain and is reached directly on `self`.
-  const std::vector<mir::FieldId> chain =
-      storage_plan_->CompanionChainTo(placement.owner);
-  mir::ExprId receiver = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-  for (const mir::FieldId step : chain) {
-    const mir::TypeId receiver_type = block.exprs.Get(receiver).type;
-    const auto* ptr =
-        std::get_if<mir::PointerType>(&unit.types.Get(receiver_type).data);
-    if (ptr == nullptr) {
-      throw InternalError(
-          "ProcessLowerer::BuildStaticStorageAccess: companion chain step "
-          "receiver is not a pointer type");
-    }
-    const auto* obj =
-        std::get_if<mir::ObjectType>(&unit.types.Get(ptr->pointee).data);
-    if (obj == nullptr) {
-      throw InternalError(
-          "ProcessLowerer::BuildStaticStorageAccess: companion chain step "
-          "receiver's pointee is not an intra-unit object type");
-    }
-    // The enclosing class is still being built when this lowering runs, so
-    // member types come from the published shape, not the not-yet-committed
-    // mir class.
-    const mir::TypeId step_type =
-        owner_->GetClassShape(obj->class_id).fields.Get(step).type;
-    receiver = block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            receiver, mir::FieldTarget{.owner = obj->class_id, .slot = step},
-            step_type));
-  }
-  // The enclosing class is the one bound on the frame; a procedural scope
-  // owner consults the materialization table.
-  const mir::ClassId owner_class_id = std::visit(
-      Overloaded{
-          [&](EnclosingClass) -> mir::ClassId {
-            return frame.current_class_id;
-          },
-          [&](hir::ProceduralScopeId sid) -> mir::ClassId {
-            return storage_plan_->ScopeMaterialization(sid).class_id;
-          }},
-      placement.owner);
-  const mir::TypeId field_type =
-      owner_->GetClassShape(owner_class_id).fields.Get(placement.field).type;
-  return mir::MakeFieldAccessExpr(
-      receiver,
-      mir::FieldTarget{.owner = owner_class_id, .slot = placement.field},
-      field_type);
 }
 
 namespace {
@@ -185,7 +127,10 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
           .name = "self", .type = parent.current_class->self_pointer_type});
   code.params = {self_id};
   const WalkFrame body_frame =
-      parent.WithBlock(&code.Body()).WithBindings(&bindings);
+      parent.WithBlock(&code.Body())
+          .WithBindings(&bindings)
+          .WithScopeNameBorrowedHandle(
+              process.RootScope().NameBorrowedHandle());
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   // A process completes by falling off its end, which is a real body statement
@@ -215,11 +160,14 @@ auto LowerForeverProcess(
   mir::Block body_block;
   {
     const WalkFrame body_frame =
-        parent.WithBlock(&body_block).WithBindings(&bindings);
+        parent.WithBlock(&body_block)
+            .WithBindings(&bindings)
+            .WithScopeNameBorrowedHandle(
+                process.RootScope().NameBorrowedHandle());
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     if (implicit_sensitivity != nullptr) {
-      body_block.AppendStmt(MakeValueChangeWaitStmt(
+      body_block.AppendStmt(BuildValueChangeWaitStmt(
           body_block, body_frame, process.EnclosingScopeLowerer(),
           *implicit_sensitivity));
     }
@@ -284,8 +232,13 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
         mir::LocalDecl{
             .name = "runtime", .type = owner_->Unit().builtins.effects}));
   }
+  // A task or function is a scope the source named (LRM 23.9), so the body
+  // starts in that scope's own name node and `%m` inside it reports the task,
+  // not the instance around it.
   const WalkFrame body_frame =
-      parent.WithBlock(&code.Body()).WithBindings(&bindings);
+      parent.WithBlock(&code.Body())
+          .WithBindings(&bindings)
+          .WithScopeNameBorrowedHandle(RootScope().NameBorrowedHandle());
 
   // Formals normalize into the signature's data flow (LRM 13.5). An `input` and
   // a `ref` / `const ref` are parameters (the latter carries a `Ref<T>`); an
@@ -369,24 +322,23 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // unspecified). A function cannot be named and never suspends, so it needs
   // no region, and neither does a body with no object to reach the target
   // through.
-  const std::optional<StaticStoragePlacement> task_cancel_source =
+  const std::optional<mir::FieldId> cancel_target =
       owner_->Unit().types.IsCoroutine(result_type) && has_receiver
-          ? storage_plan_->ScopeMaterialization(src.body.root_scope)
-                .cancellation_source
+          ? RootScope().cancellation_source
           : std::nullopt;
-  if (task_cancel_source.has_value()) {
+  if (cancel_target.has_value()) {
     mir::Block body_block;
     const WalkFrame inner_frame = body_frame.WithBlock(&body_block);
     // Entering the target is the body's own first act, so every activation of
     // the task is inside it for as long as it runs -- which is what makes one
     // `disable` reach them all (LRM 9.6.2).
-    EmitCancellationGuard(*this, inner_frame, *task_cancel_source);
+    EmitCancellationGuard(*this, inner_frame, *cancel_target);
     auto lowered = LowerStraightLineBodyInto(*this, inner_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     const mir::BlockId body_id =
         code.body->child_scopes.Add(std::move(body_block));
     code.body->AppendStmt(
-        MakeCancellableRegion(*this, body_frame, body_id, *task_cancel_source));
+        BuildCancellableRegion(*this, body_frame, body_id, *cancel_target));
   } else {
     auto lowered = LowerStraightLineBodyInto(*this, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));

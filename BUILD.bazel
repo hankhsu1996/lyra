@@ -2,15 +2,13 @@ load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
+load("//tools/bazel:copts.bzl", "LYRA_COPTS")
 
-# Promote a small set of always-real warnings to errors on Lyra's own sources.
-# Scoped per-target so external dependencies keep their own warning policy.
-# -Wswitch catches a no-default switch that omits an enumerator; -Wreturn-type
-# catches falling off the end of a non-void function.
-LYRA_COPTS = [
-    "-Werror=switch",
-    "-Werror=return-type",
-]
+# Compile every declared header once on its own, so a header that only builds
+# because some source happened to include its dependency first fails here
+# rather than silently in an editor. Scoped to this package for the same reason
+# the warning flags are: a dependency's headers answer to its own policy.
+package(features = ["parse_headers"])
 
 filegroup(
     name = "runtime_headers",
@@ -28,7 +26,10 @@ refresh_compile_commands(
     exclude_external_sources = True,
     exclude_headers = "external",
     targets = {
-        "//...": "",
+        # Bazel's header-parsing actions compile a header with no source file
+        # in the command, which the refresher cannot read; turning the feature
+        # off for this run leaves the ordinary compile actions it does read.
+        "//...": "--features=-parse_headers",
     },
 )
 

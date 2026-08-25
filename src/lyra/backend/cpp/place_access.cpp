@@ -22,7 +22,7 @@ constexpr std::string_view kAmbientRuntime = "lyra::runtime::current_runtime()";
 // only whether that access exists at all. Each entry below is therefore one
 // shared form plus the wrappers the access is not defined on.
 void RequireCapabilityWrapper(const mir::Type& ty, std::string_view where) {
-  if (!mir::IsCapabilityWrapperType(ty)) {
+  if (!ty.IsCapabilityWrapper()) {
     throw InternalError(
         std::format(
             "{}: type is not a capability wrapper, so it represents no storage "

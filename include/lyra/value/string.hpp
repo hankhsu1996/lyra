@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/packed_array.hpp"

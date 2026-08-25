@@ -6,12 +6,12 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/field_id.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/primary.hpp"
@@ -73,10 +73,10 @@ struct AssignExpr {
 
 // LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Behave as blocking assignments;
 // postfix yields the operand's prior value, prefix yields the new value. The
-// `target` is an ExprId whose form must be addressable -- the same allowed
-// forms as `AssignExpr.lhs` minus `ConcatExpr` (slang rejects `++{a,b}` at
-// AST construction). Lvalue-ness is positional, validated by
-// `ValidateAssignableSlangExpr` at AST -> HIR time.
+// target names storage, in the same forms an assignment's left side may take
+// except a concatenation, which slang rejects here at AST construction.
+// Whether a form names storage is decided by the position it appears in, and
+// settled while lowering from the AST -- HIR holds only forms that passed.
 struct IncDecExpr {
   IncDecOp op;
   ExprId target;
@@ -138,7 +138,7 @@ struct RangeSelectExpr {
 // is carried on the access.
 struct MemberAccessExpr {
   ExprId base_value;
-  FieldId field_index;
+  base::ComponentIndex field_index;
 };
 
 // Class property access (LRM 8.4 / 8.13): `target` names the declaring
@@ -220,7 +220,7 @@ struct ClassNewExpr {
 // (names are dropped, position is the tag). `payload` is absent when the
 // member is `void`.
 struct TaggedUnionExpr {
-  std::size_t member_index;
+  base::ComponentIndex member_index;
   std::optional<ExprId> payload;
 };
 

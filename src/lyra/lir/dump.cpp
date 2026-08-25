@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -24,8 +25,8 @@ class LirDumper {
   auto Dump() -> std::string {
     Line("LirUnit");
     Indent();
-    for (std::size_t i = 0; i < unit_->classes.size(); ++i) {
-      DumpClass(ClassId{static_cast<std::uint32_t>(i)});
+    for (const ClassId id : unit_->classes.Ids()) {
+      DumpClass(id);
     }
     for (const Function& fn : unit_->functions) {
       DumpFunction(fn);
@@ -246,10 +247,10 @@ class LirDumper {
     return std::visit(
         Overloaded{
             [](const TupleElement& e) -> std::string {
-              return std::format("component {}", e.index);
+              return std::format("component {}", e.index.value);
             },
             [](const UnionMember& m) -> std::string {
-              return std::format("member {}", m.index);
+              return std::format("member {}", m.index.value);
             },
             [&](const ContainerElement& e) -> std::string {
               return std::format("element({})", FormatOperands(e.operands));

@@ -23,7 +23,7 @@ struct BorrowedHandle {
   void* target = nullptr;
 };
 
-// One member's runtime-owned storage, realized from the descriptor its unit
+// One member's runtime-owned storage, realized from the descriptor its class
 // definition carries. The instance owns this object and a member place resolves
 // to its address; what the address means follows the member's storage kind. A
 // borrowed handle is a box holding a pointer the instance does not own, so

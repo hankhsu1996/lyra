@@ -143,6 +143,10 @@ each meets the same lifetime question above; none is lowerable on the execution 
 
 ## Other backend surfaces
 
+- [ ] An array of owned children. A scalar child scope -- a module instance, a generate block, a
+      procedural block scope -- is constructed, reached, and reports its hierarchical name; an array
+      of them is not, because the sequence of handles a member of that shape holds has no runtime
+      realization here yet. A design whose only arrays are of children otherwise runs.
 - [ ] Driving a net. A net's value is the resolution of its drivers, so a driver attaches to a
       resolution node and updates a contribution rather than writing a cell; neither reaches the
       runtime from generated code yet, so a net-bearing design does not run here. Rolled up in

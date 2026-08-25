@@ -1,10 +1,16 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//tools/bazel:copts.bzl", "LYRA_COPTS")
+
+# The test framework's own headers answer to the same self-containment rule as
+# the headers under test.
+package(features = ["parse_headers"])
 
 cc_library(
     name = "framework",
     srcs = glob(["framework/*.cpp"]),
     hdrs = glob(["framework/*.hpp"]),
+    copts = LYRA_COPTS,
     visibility = ["//tests:__subpackages__"],
     deps = [
         "//:value",
@@ -16,6 +22,7 @@ cc_library(
 cc_test(
     name = "diag_render_tests",
     srcs = ["diag/render_test.cpp"],
+    copts = LYRA_COPTS,
     deps = [
         "//:diag",
         "@googletest//:gtest_main",
@@ -25,6 +32,7 @@ cc_test(
 cc_test(
     name = "runtime_gc_ref_test",
     srcs = ["runtime/gc_ref_test.cpp"],
+    copts = LYRA_COPTS,
     deps = [
         "//:runtime",
         "@googletest//:gtest_main",
@@ -33,7 +41,12 @@ cc_test(
 
 cc_test(
     name = "run_tests",
+    # Every case builds emitted C++ with the host compiler, which costs far more
+    # than running the simulation does. Declaring that cost is what keeps a
+    # loaded machine from reporting a timeout as a test failure.
+    size = "large",
     srcs = ["run_test.cpp"],
+    copts = LYRA_COPTS,
     data = ["//:lyra"],
     # `compile`/`run` drive the host C++ compiler, so this is excluded from CI's
     # `Test` job (which filters out `requires-host-cxx`). Run locally with
@@ -50,6 +63,7 @@ cc_test(
 cc_test(
     name = "pch_audit_test",
     srcs = ["pch_audit_test.cpp"],
+    copts = LYRA_COPTS,
     data = ["//:lyra"],
     # Spawns the host C++ compiler with `-H` to enumerate every header opened
     # while building the prelude PCH. Filtered out of CI's `Test` job for the
@@ -66,7 +80,12 @@ cc_test(
 
 cc_test(
     name = "cpp_tests",
+    # Each case builds emitted C++ with the host compiler, so a shard's cost is
+    # dominated by compilation rather than by simulation. Declaring that cost is
+    # what keeps a loaded machine from reporting a timeout as a test failure.
+    size = "large",
     srcs = ["cpp_test.cpp"],
+    copts = LYRA_COPTS,
     data = [
         "suites.yaml",
         "//:lyra",

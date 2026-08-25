@@ -18,7 +18,7 @@ namespace lyra::lowering::hir_to_mir {
 
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    diag::SourceSpan span, const hir::TimedStmt& t) -> diag::Result<mir::Stmt>;
+    const hir::TimedStmt& t, diag::SourceSpan span) -> diag::Result<mir::Stmt>;
 
 auto LowerEventTriggerStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

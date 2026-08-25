@@ -155,7 +155,7 @@ protocol on top of it.
 - [ ] D6c -- The disable protocol (LRM 35.9): a `disable` reaching a process suspended inside a
       foreign task returns control across the C boundary the runtime does not own, cooperatively via
       the disable-acknowledgment return rather than a stack unwind.
-- [x] D6d -- Side-effect attribution inside an exported subroutine body. `%m` (LRM 21.2.1.1) renders
+- [x] D6d -- Side-effect attribution inside an exported subroutine body. `%m` (LRM 21.2.1.5) renders
       the exported subroutine's own instantiated position, and a severity task (LRM 20.10) tags its
       report with the call site, so both already read where the exported body is rather than where
       its caller is. A deferred `unique` / `priority` violation report is owned by the executing

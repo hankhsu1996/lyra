@@ -1,14 +1,13 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/mir/callable.hpp"
@@ -332,17 +331,17 @@ struct CompilationUnit {
 // Positions are the tag, so a component is reached by index and never by
 // type -- two members may share one type.
 [[nodiscard]] inline auto TaggedComponentType(
-    const CompilationUnit& unit, TypeId tagged_union, std::size_t tag_index)
-    -> TypeId {
+    const CompilationUnit& unit, TypeId tagged_union,
+    base::ComponentIndex tag_index) -> TypeId {
   const auto* tu =
       std::get_if<TaggedUnionType>(&unit.types.Get(tagged_union).data);
   if (tu == nullptr) {
     throw InternalError("TaggedComponentType: type is not a tagged union");
   }
-  if (tag_index >= tu->elements.size()) {
+  if (tag_index.value >= tu->elements.size()) {
     throw InternalError("TaggedComponentType: tag index out of range");
   }
-  return tu->elements[tag_index];
+  return tu->elements[tag_index.value];
 }
 
 // 1-bit unsigned 2-state literal. The value a boolean fold yields when it has

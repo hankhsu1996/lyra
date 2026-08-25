@@ -191,19 +191,17 @@ enum class BuiltinFn : std::uint16_t {
   // reads the current state, threaded into `Format` as the `%t` operand. The
   // setter takes the four `%t` display arguments (units power, precision,
   // suffix, minimum field width) as SV values; the reset form takes none and
-  // restores the LRM Table 20-3 defaults. Distinct methods rather than one with
-  // arity-driven branching, mirroring the print `Write` / `Writeln` and
-  // diagnostic `EmitX` splits.
+  // restores the LRM Table 20-3 defaults. One entry per form, so which form a
+  // call means is settled here rather than by counting its arguments.
   kTimeFormat,
   kSetTimeFormat,
   kResetTimeFormat,
   // LRM 21.3.4.3 scan primitives. The two parse entries are pure value-layer
   // parsers that differ only in whether a null character separates input
-  // fields (LRM 21.3.4.3(a) grants that to `$sscanf` alone); distinct entries
-  // rather than one taking a mode operand, mirroring the print `Write` /
-  // `Writeln` and diagnostic `EmitX` splits. `PeekBuffered` / `AdvanceFd` are
-  // the file-side bytes-and-position operations a `$fscanf` lowering composes
-  // with the file parse.
+  // fields (LRM 21.3.4.3(a) grants that to `$sscanf` alone); one entry per
+  // policy rather than one entry taking a mode operand, so which policy a call
+  // means is settled here. The remaining two are the file-side bytes-and-
+  // position operations a `$fscanf` lowering composes with the file parse.
   kScanString,
   kScanFile,
   kPeekBuffered,
@@ -471,11 +469,11 @@ enum class BuiltinFn : std::uint16_t {
   // owns the enclosing class's layout); distinct from the by-name `kGetSignal`
   // / `kGetChild` cross-unit navigation.
   kParent,
-  // LRM 21.2.1.1 `%m` source: yields the receiver scope's hierarchical name
-  // as an SV `string`. Walks `Parent()` from the receiver up to the implicit
-  // root and joins each scope's own name with `.`; `%m` lowering reads it as
-  // an ordinary value-string print item rather than as a context-dependent
-  // format kind.
+  // LRM 21.2.1.5 `%m` source: yields the receiver scope's hierarchical name as
+  // an SV `string`. Walks `Parent()` from the receiver up to the implicit root
+  // and joins the name of each scope a path can reach with `.`. `%m` lowering
+  // reads the result as an ordinary value-string print item rather than as a
+  // context-dependent format kind.
   kHierarchicalPath,
 };
 

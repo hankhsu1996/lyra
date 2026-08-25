@@ -149,16 +149,18 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       instance-name precedence applies at slang's resolution step), so the runtime walks to the
       canonical scope by name.
 - [x] D2e -- A hierarchical reference whose head is a named procedural block (a named `begin`/`end`,
-      LRM 9.3.5 / 23.9). A named block whose subtree owns hierarchy-addressable persistent storage
-      is a first-class structural declaration of the compilation unit: it materializes as a child
-      runtime scope on its nearest enclosing addressable scope, its static-lifetime locals live on
-      that scope's class, and the descendant case (`outer.inner.y` where `outer` owns no static of
-      its own) materializes `outer` because navigation through it is needed. Intra-unit access
-      (`outer.x` from a peer process) resolves through the typed-segment route -- the same
-      `OwnedChildBinding` infrastructure that routes instance and generate-block heads. Cross-unit
-      access (`Top.c.outer.x` from another module) resolves through the runtime by-name walk that
-      `GetChild` / `GetSignal` already provide. A named `fork`/`join` block as head is not yet
-      supported; the front-end still rejects it at construction.
+      LRM 9.3.5 / 23.9). A named block is a first-class structural declaration of the compilation
+      unit: it becomes a child runtime scope of its nearest enclosing addressable scope when
+      something under it is reachable by name, its static-lifetime locals live on that scope's
+      class, and `%m` inside it reports the block whether or not it does (LRM 21.2.1.5). A task or
+      function is a scope on the same footing (LRM 23.9), so a named block inside one is named below
+      it and `%m` inside one reports the subroutine. Intra-unit access (`outer.x` from a peer
+      process) resolves as a typed route: the reference names the static itself, and which named
+      blocks stand between it and its scope follows from the declaration, so a block label reused in
+      two scopes cannot cross-bind. Cross-unit access (`Top.c.outer.x` from another module) resolves
+      through the runtime by-name walk that `GetChild` / `GetSignal` already provide. A named
+      `fork`/`join` block as head is not yet supported; the front-end still rejects it at
+      construction.
 - [x] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
       Landed for downward paths through scalar instances.
 - [x] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced
@@ -253,13 +255,10 @@ Unlocks the `ports/*` archive group.
 - Connection shorthands (`.*`, `.name` implicit) resolve to the same connection set as explicit
   named connections in the frontend; whether any need distinct handling is open. Positional and
   explicit named connections are both supported.
-- An array of owned children carries no member on its parent's class: each element is handed to the
-  runtime tree at construction and is reached again by its hierarchy segment. A scalar child keeps a
-  typed handle, so a route through it stays typed, while a route through an array element crosses to
-  by-name reach even though the element's class belongs to the same artifact. The architecture
-  states multiplicity as a wrapper over the child member's type, which would keep the whole route
-  typed; closing the gap means deciding how the parent holds the elements alongside the runtime
-  tree's ownership of them.
+
+- A `disable` naming a block inside a class method is rejected by the frontend. A class object is
+  reached by member select rather than by scope name (LRM 23.7), so the target is never named from
+  outside the method, but LRM 9.6.2 still admits the same-method form.
 
 ## Out of Scope
 

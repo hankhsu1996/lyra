@@ -4,8 +4,9 @@
 giving the owned child stable identity for the lifetime of the owner.
 
 **Contrast.** Not a value held inline; an owned child object has stable identity and is not stored
-by value (a moved or copied object would break references into it). Not a non-owning reference
-resolved across the object graph (see `architecture/reference_resolution.md`).
+by value (a moved or copied object would break references into it). Not a
+[borrowed handle](borrowed-handle.md), which names the same object without owning it. Not a
+non-owning reference resolved across the object graph (see `architecture/reference_resolution.md`).
 
 **Usage notes.** An owned child member's type is an owning pointer to an
 [object type](object-type.md). A vector of owning pointers gives an

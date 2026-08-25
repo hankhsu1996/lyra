@@ -1,12 +1,13 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -52,12 +53,13 @@ auto ElementAccessCallee() -> mir::Direct {
   return mir::Direct{.target = support::BuiltinFn::kElement};
 }
 
-auto ProjectedMemberAt(const PackedProjection& projection, std::size_t index)
+auto ProjectedMemberAt(
+    const PackedProjection& projection, base::ComponentIndex index)
     -> const ProjectedMember& {
-  if (index >= projection.members.size()) {
+  if (index.value >= projection.members.size()) {
     throw InternalError("ProjectedMemberAt: member index out of range");
   }
-  return projection.members[index];
+  return projection.members[index.value];
 }
 
 // Read-side wrap that materialises a borrowed packed view into an owning value
@@ -130,8 +132,8 @@ auto AppendReceiverRange(
   // range.
   for (;;) {
     const auto& ty = unit_lowerer.Unit().types.Get(base_type);
-    if (mir::IsCapabilityWrapperType(ty)) {
-      base_type = mir::CapabilityWrapperValueType(ty);
+    if (ty.IsCapabilityWrapper()) {
+      base_type = ty.WrappedValueType();
     } else if (const auto* ptr = std::get_if<mir::PointerType>(&ty.data)) {
       base_type = ptr->pointee;
     } else {
@@ -366,18 +368,16 @@ auto ProjectFieldSlice(
 // evaluation would have.
 auto BuildTagGuard(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
-    const PackedProjection& projection, std::size_t index,
+    const PackedProjection& projection, base::ComponentIndex index,
     std::string_view message) -> mir::Expr {
   auto& unit = unit_lowerer.Unit();
   // A write-side base still designates the storage, while the tag is a fact of
   // the value that storage holds, so the test reads the value while the guard
   // passes the base through at the value's type.
   const mir::TypeId base_type = block.exprs.Get(base_id).type;
-  const bool base_is_cell =
-      mir::IsCapabilityWrapperType(unit.types.Get(base_type));
+  const bool base_is_cell = unit.types.Get(base_type).IsCapabilityWrapper();
   const mir::TypeId value_type =
-      base_is_cell ? mir::CapabilityWrapperValueType(unit.types.Get(base_type))
-                   : base_type;
+      base_is_cell ? unit.types.Get(base_type).WrappedValueType() : base_type;
   const mir::ExprId tag_subject =
       base_is_cell ? block.exprs.Add(mir::MakeDerefExpr(base_id, value_type))
                    : base_id;
@@ -397,7 +397,7 @@ auto BuildTagGuard(
 // distinguishes the members, and the tag guard's result when a tag does.
 auto GuardedSubject(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
-    const PackedProjection& projection, std::size_t index,
+    const PackedProjection& projection, base::ComponentIndex index,
     std::string_view message) -> mir::ExprId {
   if (projection.tag_bits == 0) return base_id;
   return block.exprs.Add(
@@ -440,8 +440,8 @@ auto LowerRangeSelectInner(
 // representation when the assignment lands.
 auto LowerMemberAccessInner(
     UnitLowerer& unit_lowerer, mir::Block& block,
-    const PackedProjection& projection, std::size_t index, mir::ExprId base_id,
-    mir::TypeId result_type) -> mir::Expr {
+    const PackedProjection& projection, base::ComponentIndex index,
+    mir::ExprId base_id, mir::TypeId result_type) -> mir::Expr {
   const mir::TypeId source_type = block.exprs.Get(base_id).type;
   const mir::TypeId slice_type =
       PartSelectNaturalType(unit_lowerer.Unit(), source_type, result_type);
@@ -475,7 +475,7 @@ auto BuildPackedRunRead(
 
 auto BuildPackedMemberRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
-    const PackedProjection& projection, std::size_t index,
+    const PackedProjection& projection, base::ComponentIndex index,
     mir::TypeId result_type) -> mir::Expr {
   return LowerMemberAccessInner(
       unit_lowerer, block, projection, index, base, result_type);
@@ -483,7 +483,8 @@ auto BuildPackedMemberRead(
 
 auto BuildPackedTagTest(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
-    const PackedProjection& projection, std::size_t index) -> mir::ExprId {
+    const PackedProjection& projection, base::ComponentIndex index)
+    -> mir::ExprId {
   if (projection.tag_bits == 0) {
     throw InternalError(
         "BuildPackedTagTest: value carries no tag to test against");
@@ -500,7 +501,7 @@ auto BuildPackedTagTest(
       projection.tag_bits, tag_type));
   const mir::ExprId named = block.exprs.Add(
       mir::MakeIntLiteral(
-          unit.builtins.int_type, static_cast<std::int64_t>(index)));
+          unit.builtins.int_type, static_cast<std::int64_t>(index.value)));
   return block.exprs.Add(BuildMirBinaryExpr(
       unit, block, mir::BinaryOp::kCaseEquality, tag,
       ConvertToType(unit, block, named, tag_type), unit.builtins.bit1));
@@ -582,8 +583,7 @@ auto LowerHirMemberAccessExpr(
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
     return mir::Expr{
-        .data =
-            mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index.value},
+        .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
         .type = result_type};
   }
   if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
@@ -599,13 +599,12 @@ auto LowerHirMemberAccessExpr(
       return mir::Expr{
           .data =
               mir::TaggedGetExpr{
-                  .union_value = base_id, .tag_index = sel.field_index.value},
+                  .union_value = base_id, .tag_index = sel.field_index},
           .type = result_type};
     }
     return mir::Expr{
         .data =
-            mir::UnionGetExpr{
-                .union_value = base_id, .index = sel.field_index.value},
+            mir::UnionGetExpr{.union_value = base_id, .index = sel.field_index},
         .type = result_type};
   }
   const PackedProjection projection = ProjectPackedAggregate(
@@ -614,8 +613,7 @@ auto LowerHirMemberAccessExpr(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return LowerMemberAccessInner(
-      unit_lowerer, block, projection, sel.field_index.value, base_id,
-      result_type);
+      unit_lowerer, block, projection, sel.field_index, base_id, result_type);
 }
 
 // LRM 8.4: a class property read reaches the object through the handle.
@@ -699,7 +697,7 @@ auto LowerHirMemberAccessExprLhs(
     return ProjectOnto(
         block, *std::move(base_or),
         mir::ComponentSelector{
-            .index = sel.field_index.value, .projected_type = result_type},
+            .index = sel.field_index, .projected_type = result_type},
         result_type);
   }
   // LRM 7.3: an unpacked union member write descends into the union value. An
@@ -718,13 +716,13 @@ auto LowerHirMemberAccessExprLhs(
       return mir::Expr{
           .data =
               mir::TaggedGetRefExpr{
-                  .union_value = base_id, .tag_index = sel.field_index.value},
+                  .union_value = base_id, .tag_index = sel.field_index},
           .type = result_type};
     }
     return ProjectOnto(
         block, *std::move(base_or),
         mir::UnionMemberSelector{
-            .index = sel.field_index.value, .projected_type = result_type},
+            .index = sel.field_index, .projected_type = result_type},
         result_type);
   }
   const PackedProjection projection = ProjectPackedAggregate(
@@ -732,7 +730,7 @@ auto LowerHirMemberAccessExprLhs(
   auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const ProjectedMember& member =
-      ProjectedMemberAt(projection, sel.field_index.value);
+      ProjectedMemberAt(projection, sel.field_index);
   mir::Expr base = *std::move(base_or);
   // A tagged member's write designates a part of the guard's result, so the
   // guard becomes the designation's owner and the member stays one ordinary
@@ -740,7 +738,7 @@ auto LowerHirMemberAccessExprLhs(
   if (projection.tag_bits != 0) {
     const mir::ExprId base_id = block.exprs.Add(std::move(base));
     base = BuildTagGuard(
-        unit_lowerer, block, base_id, projection, sel.field_index.value,
+        unit_lowerer, block, base_id, projection, sel.field_index,
         "write to a tagged union member inconsistent with the current tag "
         "(LRM 11.9)");
   }

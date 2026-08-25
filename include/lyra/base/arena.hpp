@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/id_range.hpp"
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::base {
@@ -56,6 +57,13 @@ class Arena {
 
   [[nodiscard]] auto size() const -> std::size_t {
     return items_.size();
+  }
+
+  // The identities this arena has handed out, for a consumer that walks what it
+  // holds. Reading them from here is what keeps a walk from rebuilding an id
+  // out of its own loop counter.
+  [[nodiscard]] auto Ids() const -> IdRange<Id> {
+    return IdRange<Id>{static_cast<std::uint32_t>(items_.size())};
   }
 
   [[nodiscard]] auto empty() const -> bool {

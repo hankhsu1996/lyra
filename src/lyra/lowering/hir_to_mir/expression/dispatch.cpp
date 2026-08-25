@@ -20,7 +20,6 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -185,8 +184,7 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       },
       expr.data);
   if (!raw_or) return raw_or;
-  if (mir::IsCapabilityWrapperType(
-          lowerer.Owner().Unit().types.Get(raw_or->type))) {
+  if (lowerer.Owner().Unit().types.Get(raw_or->type).IsCapabilityWrapper()) {
     const mir::ExprId cell_id =
         frame.current_block->exprs.Add(*std::move(raw_or));
     return mir::MakeDerefExpr(cell_id, result_type);

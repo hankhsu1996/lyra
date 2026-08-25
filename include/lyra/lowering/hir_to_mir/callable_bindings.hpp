@@ -3,9 +3,11 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include <string>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/symbol_table.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
@@ -141,7 +143,7 @@ class CallableBindings {
   [[nodiscard]] auto NameOf(BodyBindingRef ref) const -> const std::string&;
 
   struct CaptureEntry {
-    BindingOriginId key;
+    BindingOriginId origin;
     mir::ExprId source{};
   };
 
@@ -153,7 +155,7 @@ class CallableBindings {
   CapturePolicy policy_;
   mir::LocalId self_local_{};
   mir::TypeId self_ptr_type_{};
-  std::vector<CaptureEntry> captures_;
+  base::SymbolTable<mir::FieldId, CaptureEntry> captures_;
   std::map<BindingOriginId, BodyBindingRef> available_;
 };
 

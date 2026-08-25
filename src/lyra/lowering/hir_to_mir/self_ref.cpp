@@ -7,7 +7,6 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -49,18 +48,17 @@ auto BuildEnclosingScopeReceiver(
   return block.exprs.Add(
       mir::Expr{
           .data = mir::PointerCastExpr{.operand = nav},
-          .type = frame.EnclosingClassAtHops(hops).self_pointer_type});
+          .type = frame.EnclosingClassAtHops(hops).cls->self_pointer_type});
 }
 
 auto BuildStructuralFieldAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr {
-  const mir::TypeId field_type =
-      frame.EnclosingClassAtHops(hops).fields.Get(var).type;
+  const EnclosingClass owner = frame.EnclosingClassAtHops(hops);
+  const mir::TypeId field_type = owner.cls->fields.Get(var).type;
   const mir::ExprId receiver = BuildEnclosingScopeReceiver(frame, unit, hops);
-  const mir::ClassId owner = frame.EnclosingClassIdAtHops(hops);
   return mir::MakeFieldAccessExpr(
-      receiver, mir::FieldTarget{.owner = owner, .slot = var}, field_type);
+      receiver, mir::FieldTarget{.owner = owner.id, .slot = var}, field_type);
 }
 
 auto BuildReferenceArg(

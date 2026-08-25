@@ -90,7 +90,7 @@ The accurate framing, which documentation must not overstate into a final value 
 ## Separate from the generated-behavior descriptor
 
 Value lifetime and ABI realization is one axis; the ownership of the generated-behavior record
-(`ScopeProgram` / `UnitDefinition`) and its backend-contract shape is a different one
+(`ScopeProgram` / `ScopeDefinition`) and its backend-contract shape is a different one
 ([generated-behavior-boundary](generated-behavior-boundary.md)). How a unit's dispatch record is
 constructed -- and that a backend must not fabricate it in render -- is decided there, not here. The
 two are not to be reasoned about together.

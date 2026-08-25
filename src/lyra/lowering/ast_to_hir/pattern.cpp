@@ -1,8 +1,10 @@
 #include "lyra/lowering/ast_to_hir/pattern.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -10,6 +12,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/Type.h>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/pattern.hpp"
@@ -78,7 +81,10 @@ auto LowerPattern(
       return hir::Pattern{
           .data =
               hir::TaggedPattern{
-                  .member_index = field.fieldIndex, .value_pattern = payload},
+                  .member_index =
+                      base::ComponentIndex{
+                          static_cast<std::uint32_t>(field.fieldIndex)},
+                  .value_pattern = payload},
           .subject_type = subject,
           .span = span};
     }

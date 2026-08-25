@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <expected>
 #include <optional>
 #include <string>
@@ -95,16 +96,17 @@ auto BuildIntegerLevel(
                 hir::BinaryExpr{
                     .op = hir::BinaryOp::kSub, .lhs = size_id, .rhs = one_id},
             .span = span});
-    const hir::ProceduralVarId last_var = body.procedural_vars.Add(
-        hir::ProceduralVarDecl{
-            .name = std::string{kLastIndexName},
-            .type = int_type,
-            .lifetime = hir::VariableLifetime::kAutomatic});
-    frame.current_scope_declarations->push_back(last_var);
+    const hir::ProceduralVarId last_var = body.procedural_vars.Declare();
+    body.procedural_vars.Define(
+        last_var, hir::ProceduralVarDecl{
+                      .name = std::string{kLastIndexName},
+                      .type = int_type,
+                      .lifetime = hir::VariableLifetime::kAutomatic,
+                      .init = last_value_id});
     setup.push_back(body.stmts.Add(
         hir::Stmt{
             .label = std::nullopt,
-            .data = hir::VarDeclStmt{.var = last_var, .init = last_value_id},
+            .data = hir::VarDeclStmt{.var = last_var},
             .span = span}));
     first_id = frame.Exprs().Add(hir::MakeIntLiteral(0, int_type, span));
     last_id = frame.Exprs().Add(
@@ -169,14 +171,14 @@ auto BuildAssociativeLevel(
   setup.push_back(body.stmts.Add(
       hir::Stmt{
           .label = std::nullopt,
-          .data = hir::VarDeclStmt{.var = key_var, .init = std::nullopt},
+          .data = hir::VarDeclStmt{.var = key_var},
           .span = span}));
-  const hir::ProceduralVarId more_var = body.procedural_vars.Add(
-      hir::ProceduralVarDecl{
-          .name = std::string{kMoreFlagName},
-          .type = int_type,
-          .lifetime = hir::VariableLifetime::kAutomatic});
-  frame.current_scope_declarations->push_back(more_var);
+  const hir::ProceduralVarId more_var = body.procedural_vars.Declare();
+  body.procedural_vars.Define(
+      more_var, hir::ProceduralVarDecl{
+                    .name = std::string{kMoreFlagName},
+                    .type = int_type,
+                    .lifetime = hir::VariableLifetime::kAutomatic});
 
   auto walk_call = [&](support::BuiltinFn method) -> hir::ExprId {
     const hir::ExprId key_ref = frame.Exprs().Add(
@@ -302,21 +304,25 @@ auto BuildForeachNest(
             .span = span});
   }
 
+  // The inner levels are this level's loop body, which is a block like any
+  // other -- opened before they lower, so a scope any of them introduces nests
+  // inside it, and so an inner level's loop variable is scoped to the body it
+  // iterates rather than to the whole nest.
+  OpenProceduralScope inner_scope{
+      frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kBlock,
+      std::nullopt};
   auto inner_or = BuildForeachNest(
-      proc, fs, frame, levels, level + 1, inner_array, inner_array_type,
-      int_type, span, foreach_label, label_used);
+      proc, fs, frame.WithOpenScope(&inner_scope), levels, level + 1,
+      inner_array, inner_array_type, int_type, span, foreach_label, label_used);
   if (!inner_or) return std::unexpected(std::move(inner_or.error()));
-  const hir::StmtId inner_body =
-      inner_or->size() == 1
-          ? inner_or->front()
-          : body.stmts.Add(
-                hir::Stmt{
-                    .label = std::nullopt,
-                    .data =
-                        hir::BlockStmt{
-                            .statements = std::move(*inner_or),
-                            .scope = std::nullopt},
-                    .span = span});
+  const hir::StmtId inner_body = body.stmts.Add(
+      hir::Stmt{
+          .label = std::nullopt,
+          .data =
+              hir::BlockStmt{
+                  .statements = std::move(*inner_or),
+                  .scope = frame.SealScope(std::move(inner_scope))},
+          .span = span});
 
   stmts.push_back(body.stmts.Add(
       hir::Stmt{
@@ -363,18 +369,21 @@ auto ProcessLowerer::LowerForeachStmt(
 
   // All dimensions skipped (`foreach (a[])`): the array reference is still
   // evaluated for side effects and the body runs once. No loop, so a break in
-  // the body is a plain innermost exit. The synthesized block carries no SV
-  // scope.
+  // the body is a plain innermost exit.
   if (levels.empty()) {
-    auto array_or = proc.LowerExpr(fs.arrayRef, frame);
+    OpenProceduralScope scope{
+        frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kBlock,
+        std::nullopt};
+    const WalkFrame inner = frame.WithOpenScope(&scope);
+    auto array_or = proc.LowerExpr(fs.arrayRef, inner);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
     const auto array_eval_stmt = body.stmts.Add(
         hir::Stmt{
             .label = std::nullopt,
             .data =
-                hir::ExprStmt{.expr = frame.Exprs().Add(*std::move(array_or))},
+                hir::ExprStmt{.expr = inner.Exprs().Add(*std::move(array_or))},
             .span = span});
-    auto body_or = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
+    auto body_or = proc.LowerStmt(fs.body, inner.WithoutBreakLabel());
     if (!body_or) return std::unexpected(std::move(body_or.error()));
     const auto body_stmt_id = body.stmts.Add(*std::move(body_or));
     return hir::Stmt{
@@ -382,37 +391,48 @@ auto ProcessLowerer::LowerForeachStmt(
         .data =
             hir::BlockStmt{
                 .statements = {array_eval_stmt, body_stmt_id},
-                .scope = std::nullopt},
+                .scope = frame.SealScope(std::move(scope))},
         .span = span};
   }
 
   // The loop variables (LRM 12.7.3) belong to the block slang wraps the foreach
   // in, which is lowered as the enclosing scope, so the vars minted below
   // attach to it through the frame already in hand.
+  //
   // Thread `arrayRef` into the nest only when some dimension reads it at run
   // time; a purely fixed foreach lowers to plain range loops that never touch
   // the array.
+  // The nest expands into a block, opened before it is built so every variable
+  // the expansion mints is declared in the block whose statements declare it.
+  // This is not the LRM 12.7.3 implicit begin-end -- that block is the scope
+  // this lowering was entered under, and the nest sits inside it.
+  OpenProceduralScope nest_scope{
+      frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kBlock,
+      std::nullopt};
+  const WalkFrame nest_frame = frame.WithOpenScope(&nest_scope);
+
   std::optional<hir::ExprId> array;
   const slang::ast::Type* array_type = nullptr;
   if (needs_array) {
-    auto array_or = proc.LowerExpr(fs.arrayRef, frame);
+    auto array_or = proc.LowerExpr(fs.arrayRef, nest_frame);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
-    array = frame.Exprs().Add(*std::move(array_or));
+    array = nest_frame.Exprs().Add(*std::move(array_or));
     array_type = fs.arrayRef.type;
   }
 
   const hir::LoopLabelId foreach_label = body.AddLoopLabel();
   bool label_used = false;
   auto top = BuildForeachNest(
-      proc, fs, frame, levels, 0, array, array_type, int_type, span,
+      proc, fs, nest_frame, levels, 0, array, array_type, int_type, span,
       foreach_label, &label_used);
   if (!top) return std::unexpected(std::move(top.error()));
 
-  // LRM 12.7.3 implicit begin-end around the foreach.
   return hir::Stmt{
       .label = std::nullopt,
       .data =
-          hir::BlockStmt{.statements = std::move(*top), .scope = std::nullopt},
+          hir::BlockStmt{
+              .statements = std::move(*top),
+              .scope = frame.SealScope(std::move(nest_scope))},
       .span = span};
 }
 

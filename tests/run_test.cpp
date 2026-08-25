@@ -58,6 +58,32 @@ auto WriteHierarchicalSource(const std::filesystem::path& path) -> void {
 // module and process variables, arithmetic, comparison, a conditional
 // expression, a loop with early exits, a subroutine that writes its own
 // parameter, and a `$display` that formats values rather than a bare literal.
+// Nested lexical scopes that declare static-lifetime locals, beside a generate
+// block that declares its own. Each reports the hierarchical name of the scope
+// its `$display` was written in (LRM 21.2.1.5).
+auto WriteScopeHierarchySource(const std::filesystem::path& path) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n"
+      << "  genvar i;\n"
+      << "  generate\n"
+      << "    if (1) begin : g\n"
+      << "      int gv;\n"
+      << "      initial begin\n"
+      << "        gv = 11;\n"
+      << "        $display(\"gen=%0d at %m\", gv);\n"
+      << "      end\n"
+      << "    end\n"
+      << "  endgenerate\n"
+      << "  initial begin\n"
+      << "    begin\n"
+      << "      static int hidden = 7;\n"
+      << "      hidden = hidden + 1;\n"
+      << "      $display(\"hidden=%0d at %m\", hidden);\n"
+      << "    end\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
 auto WriteProceduralSource(const std::filesystem::path& path) -> void {
   std::ofstream out(path);
   out << "module Test;\n"
@@ -859,6 +885,43 @@ TEST(LyraRun, JitAndCppAgreeOnProceduralCode) {
   EXPECT_NE(jit.stdout_text.find("name=lyra eq=1"), std::string::npos)
       << "stdout: " << jit.stdout_text;
   EXPECT_NE(jit.stdout_text.find("scaled=40"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
+}
+
+// Every lexical scope a body opens is a node of the runtime object tree, so the
+// execution backend has to build one per scope and answer a hierarchical name
+// from it. The source nests blocks that declare static locals -- one named, one
+// not -- and a generate block beside them, then reports `%m` from each depth:
+// the name a block the source did not name contributes is nothing (LRM 23.6),
+// so the two backends agree only if both build the same tree and both leave the
+// unnamed level out of the path.
+TEST(LyraRun, JitAndCppAgreeOnScopeHierarchy) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeTempCaseDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteScopeHierarchySource(src);
+
+  const std::vector<std::string> jit_args = {
+      "run", "--backend", "jit", "--no-project", "--top", "Test", src.string()};
+  const auto jit = RunChildProcess(lyra, jit_args, 120s);
+  ASSERT_EQ(jit.termination, TerminationKind::kExitedNormally)
+      << jit.stdout_text << jit.stderr_text;
+  ASSERT_EQ(jit.exit_code, 0) << jit.stderr_text;
+
+  const std::vector<std::string> cpp_args = {
+      "run", "--no-project", "--top", "Test", src.string()};
+  const auto cpp = RunChildProcess(lyra, cpp_args, 120s);
+  ASSERT_EQ(cpp.termination, TerminationKind::kExitedNormally)
+      << cpp.stdout_text << cpp.stderr_text;
+  ASSERT_EQ(cpp.exit_code, 0) << cpp.stderr_text;
+
+  EXPECT_EQ(jit.stdout_text, cpp.stdout_text);
+  EXPECT_NE(jit.stdout_text.find("hidden=8 at Test"), std::string::npos)
+      << "stdout: " << jit.stdout_text;
+  EXPECT_NE(jit.stdout_text.find("gen=11 at Test.g"), std::string::npos)
       << "stdout: " << jit.stdout_text;
 }
 

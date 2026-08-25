@@ -53,10 +53,13 @@ class EmittedModule {
 // environment.
 auto EmitModule(const lir::CompilationUnit& unit) -> EmittedModule;
 
-// The linkage symbol under which a unit publishes its runtime definition. A
-// unit's construct references a child unit's definition by this name; the host
-// resolves it to the built definition object. One source of truth so the
-// producing reference and the resolving host never drift.
-auto UnitDefinitionSymbolName(std::string_view unit_name) -> std::string;
+// The linkage symbol under which a scope class publishes its runtime
+// definition. A construct references the definition of the class it builds by
+// this name and the host resolves it to the built definition object, whether
+// the class belongs to this unit or to another -- the runtime record has one
+// shape, so naming it has one rule. A unit publishes its root class under the
+// unit's own name, which is what a cross-unit reference knows. One source of
+// truth so the producing reference and the resolving host never drift.
+auto ScopeDefinitionSymbolName(std::string_view class_name) -> std::string;
 
 }  // namespace lyra::backend::llvm_backend

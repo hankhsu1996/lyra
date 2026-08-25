@@ -55,8 +55,8 @@ struct CallableDecl {
 };
 
 // A named class-owned callable whose identity is a plain function pointer the
-// runtime library holds and calls back through -- the shape a
-// `void (*)(RuntimeScopeBase*)` lifecycle hook requires. Structurally a
+// runtime library holds and calls back through -- the shape a lifecycle hook
+// taking the scope it runs on requires. Structurally a
 // distinct callable species from `CallableDecl`: its receiver is an explicit
 // parameter (never bound implicitly), it participates in no dispatch table, and
 // it is reached only as a code address, never through a `CallExpr`. A backend

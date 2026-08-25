@@ -1,6 +1,4 @@
 #include <algorithm>
-#include <cstddef>
-#include <cstdint>
 #include <format>
 #include <span>
 #include <string>
@@ -85,9 +83,8 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
 auto RenderUnitStaticVariables(const mir::CompilationUnit& unit)
     -> std::string {
   std::string out;
-  for (std::size_t i = 0; i < unit.static_variables.size(); ++i) {
-    const auto& var = unit.static_variables.Get(
-        mir::StaticVariableId{static_cast<std::uint32_t>(i)});
+  for (const mir::StaticVariableId id : unit.static_variables.Ids()) {
+    const auto& var = unit.static_variables.Get(id);
     out += std::format(
         "inline {} {}{{}};\n", RenderTypeAsCpp(unit, var.type), var.name);
   }

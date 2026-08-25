@@ -197,10 +197,9 @@ FormatArg::FormatArg(const AssociativeArray<K, V>& value)
     const FormatSpec& spec, FormatArg arg, const FormatContext& ctx = {})
     -> std::string;
 
-// Specializations for the closed leaf set. Each is declared here so callers
-// of `MakeFormatArg<T>` can build the format_fn at instantiation time; the
-// bodies live in `format.cpp` (singular leaf types) or in the corresponding
-// container header (aggregate templates).
+// Specializations for the closed leaf set. Each is declared here so a caller
+// building a format_fn for `T` has the declaration at instantiation time,
+// wherever the definition is.
 template <>
 struct Formatter<PackedArray> {
   static auto Format(
@@ -297,7 +296,7 @@ using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
 // here and each one takes the next operand in turn, which is the whole
 // difference from the walk above: there the directives are already parsed and
 // each operand already carries its spec. `scope_path` is the hierarchical name
-// a `%m` directive renders (LRM 21.2.1.1) and `timeunit_power` scales a `%t`
+// a `%m` directive renders (LRM 21.2.1.5) and `timeunit_power` scales a `%t`
 // against the calling scope's time unit (LRM 21.2.1.3) -- both are facts of the
 // call site, which cannot be read off the format string. Supplying too few
 // operands leaves the unsatisfied directives empty and too many ignores the

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <unordered_map>
 
 #include "lyra/base/arena.hpp"
@@ -50,6 +51,10 @@ class TypeInterner {
 
   [[nodiscard]] auto size() const -> std::size_t {
     return storage_.size();
+  }
+
+  [[nodiscard]] auto Ids() const {
+    return storage_.Ids();
   }
 
   [[nodiscard]] auto begin() const {

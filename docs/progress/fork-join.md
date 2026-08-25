@@ -101,8 +101,17 @@ long, follows from where the storage lives and how long the enclosing activation
 ### Naming
 
 - [x] FJ5 -- A fork block may be named (`fork : name ... join : name`) or labelled, creating a
-      hierarchy scope (LRM 9.3.4, 9.3.5). This is the handle that process-control statements and
-      hierarchical references address.
+      hierarchy scope (LRM 9.3.4, 9.3.5, and LRM 23.9, which lists a fork-join block among the
+      constructs that define one). This is the handle that process-control statements and
+      hierarchical references address: a static declared in a named fork is reached by a
+      hierarchical path from outside, and the fork contributes its segment to `%m` from anywhere
+      lexically inside it, including a branch. A fork the source did not name reaches neither, which
+      is the same rule an unnamed begin-end follows.
+- [x] FJ5a -- A `disable` naming a fork block ends every process executing it (LRM 9.6.2): each
+      branch terminates and the execution that ran the `disable` resumes after the fork, whether it
+      ran the statement from inside a branch or from a concurrent process. A branch that already
+      completed is unaffected. The fork enters its own target before any branch spawns, so
+      membership reaches every branch by the rule that already governs a named begin-end block.
 
 ### Process control over spawned threads
 
@@ -134,8 +143,8 @@ long, follows from where the storage lives and how long the enclosing activation
 
 ## Out of Scope
 
-- `disable` of a named block or task (LRM 9.6.2) as a general control-flow construct. It interacts
-  with fork (disabling a named fork block) but is a broader process-control feature, tracked
+- `disable` of a named block or task (LRM 9.6.2) as a general control-flow construct. Disabling a
+  named fork block is covered above; the rest is a broader process-control feature, tracked
   separately.
 - `wait_order` (LRM 15.6).
 - `std::process` and dynamic process handles (LRM 9.7): process introspection and `status` / `kill`

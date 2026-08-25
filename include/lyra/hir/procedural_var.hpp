@@ -2,8 +2,10 @@
 
 #include <compare>
 #include <cstdint>
+#include <optional>
 #include <string>
 
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
@@ -35,6 +37,10 @@ struct ProceduralVarDecl {
   // pre-pass over the body before the decl is interned, so it is known at
   // creation rather than discovered (and back-patched) at a later reference.
   bool lifetime_extended = false;
+  // The declaration assignment the source wrote (`int x = 3`). It belongs to
+  // the declaration, not to any statement: the lifetime above decides when it
+  // runs against storage of that lifetime, never whose it is.
+  std::optional<ExprId> init = std::nullopt;
 };
 
 }  // namespace lyra::hir

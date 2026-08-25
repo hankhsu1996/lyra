@@ -3,6 +3,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <type_traits>
 
 #include "lyra/value/concepts.hpp"

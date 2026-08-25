@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <expected>
+#include <optional>
 #include <span>
 #include <utility>
 #include <variant>

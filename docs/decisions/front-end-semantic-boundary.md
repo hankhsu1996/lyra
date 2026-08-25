@@ -147,8 +147,8 @@ one translation; they must not each re-derive it.
   compilation-unit declaration pass before any body lowers. A named block's head identity is its SV
   label, registered directly from the elaborated scope members, so a forward cross-scope reference
   to it routes independently of declaration order like every other head kind. Its intra-unit access
-  is a typed layout-visible segment: the enclosing climb reaches the materialized scope's companion,
-  which HIR-to-MIR recovers from the label.
+  is a typed layout-visible segment: the enclosing climb reaches the borrowed handle on the
+  materialized scope, which HIR-to-MIR recovers from the label.
 - The endpoint-capability half of the boundary is realized. Value read, value write, and change
   observation of one target reach it through one bound endpoint: a reference that crosses a scope
   boundary seals to a per-instance endpoint in the resolve phase, and the hot path dereferences it

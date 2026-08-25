@@ -1,9 +1,6 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 
-#include <cstddef>
-#include <cstdint>
 #include <expected>
-#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -17,12 +14,14 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
+#include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
+#include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -40,12 +39,15 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Walks the HIR override chain starting at `method` and returns its
-// participation in the class's dispatch table (LRM 8.20). Reads HIR only --
-// HIR is complete before any class shape lowers, so this is order-independent
-// with respect to sibling classes. The walk terminates at either an
-// introducer (`overrides == nullopt && is_virtual`) or a non-participating
-// method (both facts absent). Depth is bounded by inheritance depth; the
-// frontend guarantees the chain is acyclic (LRM 8.13).
+// participation in the class's dispatch table (LRM 8.20). The walk terminates
+// at either an introducer (`overrides == nullopt && is_virtual`) or a
+// non-participating method (both facts absent). Depth is bounded by
+// inheritance depth; the frontend guarantees the chain is acyclic (LRM 8.13).
+//
+// An intra-unit override names the slot by the identity the declaring class
+// handed it, which is why a class is declared only after the classes it
+// extends: the answer is read off the base's own declaration rather than
+// worked out again from the shape of the source.
 auto CanonicalizeVirtualDispatch(
     UnitLowerer& unit_lowerer, const hir::SubroutineDecl& method)
     -> std::optional<mir::VirtualDispatchRole> {
@@ -73,7 +75,8 @@ auto CanonicalizeVirtualDispatch(
     }
     const mir::ClassId base_mir_class =
         unit_lowerer.TranslateClass(local_ref.owner);
-    const mir::CallableId base_mir_slot{local_ref.method.value};
+    const mir::CallableId base_mir_slot =
+        unit_lowerer.TranslateMethod(local_ref.owner, local_ref.method);
     return std::visit(
         Overloaded{
             [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualDispatchRole {
@@ -92,33 +95,6 @@ auto CanonicalizeVirtualDispatch(
   return std::nullopt;
 }
 
-// Appends a mangled static-lifetime field per static procedural var to
-// `fields`, returning the placements a callable body reads to route each
-// static write to its persistent slot. Static locals of a class body
-// (LRM 13.3.1) live on the enclosing class since a class carries no
-// procedural-scope hierarchy of its own.
-auto PlanStaticStorage(
-    const UnitLowerer& unit_lowerer, std::string_view callable_name,
-    const hir::ProceduralBody& body,
-    base::Arena<mir::FieldDecl, mir::FieldId>& fields)
-    -> std::vector<std::optional<StaticStoragePlacement>> {
-  std::vector<std::optional<StaticStoragePlacement>> placements(
-      body.procedural_vars.size());
-  for (std::size_t j = 0; j < body.procedural_vars.size(); ++j) {
-    const hir::ProceduralVarId var_id{static_cast<std::uint32_t>(j)};
-    const auto& v = body.procedural_vars.Get(var_id);
-    if (v.lifetime != hir::VariableLifetime::kStatic) continue;
-    const std::string mangled =
-        std::format("{}__{}_{}", callable_name, v.name, j);
-    const mir::TypeId type = unit_lowerer.TranslateType(v.type);
-    const mir::FieldId mid =
-        fields.Add(mir::FieldDecl{.name = mangled, .type = type});
-    placements[j] = StaticStoragePlacement{
-        .owner = StorageOwner{EnclosingClass{}}, .field = mid};
-  }
-  return placements;
-}
-
 // Lowers the class's design-init body (LRM 8.9 / 10.5): a receiver-less,
 // formal-less callable code the runtime invokes once at program startup,
 // before any initial or always procedure runs. Each source-written static
@@ -127,8 +103,8 @@ auto PlanStaticStorage(
 // initializer takes its type's Table 7-1 default and gets no statement here.
 auto LowerStaticInit(
     UnitLowerer& unit_lowerer, const hir::ClassDecl& hir_class,
-    mir::Class& mir_class, mir::ClassId class_id)
-    -> diag::Result<mir::CallableCode> {
+    const ClassShape& shape, mir::Class& mir_class, mir::ClassId class_id,
+    const DeclaredScopes& scopes) -> diag::Result<mir::CallableCode> {
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit_lowerer.Unit(), code);
   code.params = {};
@@ -139,10 +115,9 @@ auto LowerStaticInit(
                               .WithClass(&mir_class, class_id, link)
                               .WithBlock(&block)
                               .WithBindings(&bindings);
-  const CallableStoragePlan plan;
   ProcessLowerer lowerer(
       unit_lowerer, nullptr, mir_class.time_resolution, hir_class.static_init,
-      "<static_init>", frame, plan);
+      "<static_init>", frame, scopes, {});
 
   for (const hir::StaticPropertyInit& init : hir_class.static_property_inits) {
     const hir::Expr& hir_value = hir_class.static_init.exprs.Get(init.value);
@@ -151,7 +126,7 @@ auto LowerStaticInit(
     const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
 
     const mir::StaticPropertyId mir_prop_id =
-        UnitLowerer::TranslateStaticProperty(init.target);
+        shape.static_property_translation.Get(init.target);
     const mir::TypeId prop_type =
         mir_class.static_properties.Get(mir_prop_id).type;
     const mir::ExprId target = block.exprs.Add(
@@ -185,7 +160,7 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
     implements.push_back(unit_lowerer.TranslateClassRef(iface));
   }
 
-  mir::ClassShape shape{
+  ClassShape shape{
       .name = hir_class.name,
       .base = base_ref,
       .implements = std::move(implements),
@@ -195,55 +170,70 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
       .fields = {},
       .static_properties = {},
       .callable_signatures = {},
+      .field_translation = {},
+      .static_property_translation = {},
       .contained = {},
-      .is_scope_tree_node = false,
       .is_final = false,
       .is_interface_class = hir_class.is_interface_class};
 
-  // Property fields come first in declaration order (LRM 8.4), so an SV
-  // reference to a property by its declaration index reaches the same shape
-  // slot regardless of what static-lifetime storage the class also owns.
-  // The returned mir field id at position `i` equals `TranslateField` of
-  // the hir field id `i`, so no side vector is kept -- every consumer
-  // resolves a hir field id through the same layer-boundary translation.
+  // A property (LRM 8.4) becomes one field of the class, and the class's field
+  // arena also takes the static-lifetime storage its bodies declare (LRM
+  // 13.3.1), so where a property lands is a fact only this loop knows. It is
+  // recorded as the loop goes; nothing downstream recomputes it.
+  shape.field_translation =
+      base::Translation<hir::FieldId, mir::FieldId>{hir_class.fields.size()};
   for (const auto& field : hir_class.fields) {
     const mir::TypeId field_type = unit_lowerer.TranslateType(field.type);
-    shape.fields.Add(mir::FieldDecl{.name = field.name, .type = field_type});
+    shape.field_translation.Append(shape.fields.Add(
+        mir::FieldDecl{.name = field.name, .type = field_type}));
   }
 
   // Static properties (LRM 8.9) enter the shape's type-associated arena in
-  // declaration order. `TranslateStaticProperty` is positional today, so the
-  // MIR arena index equals the HIR one.
+  // declaration order, recorded the same way and for the same reason.
+  shape.static_property_translation =
+      base::Translation<hir::StaticPropertyId, mir::StaticPropertyId>{
+          hir_class.static_properties.size()};
   for (const auto& sp : hir_class.static_properties) {
     const mir::TypeId sp_type = unit_lowerer.TranslateType(sp.type);
-    shape.static_properties.Add(
-        mir::StaticPropertyDecl{.name = sp.name, .type = sp_type});
+    shape.static_property_translation.Append(shape.static_properties.Add(
+        mir::StaticPropertyDecl{.name = sp.name, .type = sp_type}));
   }
 
-  // Each SV method's static-lifetime locals get their per-instance slot on
-  // this same shape, appended after the properties, so a static write from a
-  // body routes to the exact same field slot the shape declares.
-  method_plans_.reserve(hir_class.methods.size());
-  for (const auto& method : hir_class.methods) {
-    method_plans_.emplace_back(
-        class_scopes_,
-        PlanStaticStorage(
-            unit_lowerer, method.name, method.body, shape.fields));
-  }
-  ctor_plan_.emplace(
-      class_scopes_,
-      PlanStaticStorage(
-          unit_lowerer, "<ctor>", hir_class.constructor.body, shape.fields));
+  const auto bind_statics = [&](const hir::SubroutineDecl& decl,
+                                std::string_view callable_name) {
+    return BindBodyStatics(
+        unit_lowerer, hir_class.procedural_scopes, shape.fields,
+        ObservedStorage::kNo, decl.body, SignatureBoundVars(decl),
+        callable_name);
+  };
 
-  // Callable signatures publish each method's canonical dispatch role. Peer
-  // body lowering that names one of this class's methods reads this to pick
-  // between direct and virtual invocation, with no cross-class MIR read.
-  for (const auto& method : hir_class.methods) {
-    shape.callable_signatures.Add(
-        mir::CallableSignature{
+  // Everything a peer may need about a method before its body exists is
+  // settled here, in one pass over the methods. Its callable identity comes
+  // from the shape's own pool, so a call resolves whatever order the two
+  // bodies reach (LRM 13.7), and the signature published alongside it is the
+  // method's canonical dispatch role, which a peer reads to pick between
+  // direct and virtual invocation with no cross-class MIR read. Its
+  // static-lifetime locals take their per-instance slots on this same shape,
+  // appended after the properties, so a static write from a body routes to the
+  // exact field slot the shape declares.
+  std::vector<DeclaredCallable> declared_methods;
+  declared_methods.reserve(hir_class.methods.size());
+  std::vector<CallableSignature> signatures;
+  signatures.reserve(hir_class.methods.size());
+  for (const hir::MethodId id : hir_class.methods.Ids()) {
+    const hir::SubroutineDecl& method = hir_class.methods.Get(id);
+    signatures.push_back(
+        CallableSignature{
             .virtual_dispatch =
                 CanonicalizeVirtualDispatch(unit_lowerer, method)});
+    declared_methods.push_back(
+        DeclaredCallable{
+            .callable = unit_lowerer.TranslateMethod(hir_class_id_, id),
+            .statics = bind_statics(method, method.name)});
   }
+  shape.callable_signatures = {hir_class.methods.size(), std::move(signatures)};
+  declared_methods_ = {hir_class.methods.size(), std::move(declared_methods)};
+  ctor_static_bindings_ = bind_statics(hir_class.constructor, "<ctor>");
 
   unit_lowerer.DefineClassShape(class_id_, std::move(shape));
   return {};
@@ -252,30 +242,16 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
 auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
-  const mir::ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
+  const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
+  // No lexical scope of a method body owns anything at run time: a class object
+  // is reached by member select rather than by scope name (LRM 23.7), so no
+  // hierarchical path names a block inside a method. Every body still reads its
+  // answer, the same way a body in the design hierarchy does.
+  const DeclaredScopes scopes =
+      ScopesOwningNothing(hir_class.procedural_scopes.size());
 
-  mir::Class mir_class{
-      .name = shape.name,
-      .base = shape.base,
-      .implements = shape.implements,
-      .is_scope_tree_node = shape.is_scope_tree_node,
-      .is_final = shape.is_final,
-      .is_interface_class = shape.is_interface_class,
-      .self_pointer_type = shape.self_pointer_type,
-      .time_resolution = shape.time_resolution,
-      .fields = shape.fields,
-      .constructor = {},
-      .contained = shape.contained,
-      .callables = {},
-      .abi_adapters = {},
-      .static_constants = {},
-      .static_properties = shape.static_properties,
-      .static_init = {}};
+  mir::Class mir_class = shape.OpenClass();
 
-  // The constructor's callable code is built in a local first, then added to
-  // the class's callable arena last so its id sits after every
-  // declaration-ordered SV method -- each SV method keeps its natural
-  // declaration index.
   mir::CallableCode ctor_code = mir::CallableCode::Defined();
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
   const mir::LocalId self_id = ctor_bindings.Declare(
@@ -291,7 +267,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   const hir::SubroutineDecl& ctor = hir_class.constructor;
   ProcessLowerer ctor_lowerer(
       unit_lowerer, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
-      frame, *ctor_plan_);
+      frame, scopes, ctor_static_bindings_);
 
   // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
   // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
@@ -341,10 +317,9 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   for (const hir::FieldInit& init : hir_class.field_inits) {
     initializer_of.emplace(init.target, init.value);
   }
-  for (std::size_t i = 0; i < hir_class.fields.size(); ++i) {
-    const hir::FieldId hir_field_id{static_cast<std::uint32_t>(i)};
+  for (const hir::FieldId hir_field_id : hir_class.fields.Ids()) {
     const hir::ClassField& field = hir_class.fields.Get(hir_field_id);
-    const mir::FieldId mir_field_id = UnitLowerer::TranslateField(hir_field_id);
+    const mir::FieldId mir_field_id = shape.field_translation.Get(hir_field_id);
     const mir::TypeId field_type = mir_class.fields.Get(mir_field_id).type;
     mir::ExprId value_id{};
     if (const auto it = initializer_of.find(hir_field_id);
@@ -371,23 +346,21 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
 
   // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
   // resolves the body's `self` to the managed handle, and the method's
-  // declaration-order position becomes its slot in the callable arena, so a
-  // call site naming the index reaches the same method. SV classes do not have
-  // a separate
-  // Initialize lifecycle phase, so a method's pending static initializers
-  // integrate into this class's constructor block (matching the per-instance
-  // storage shape used for class-method statics).
+  // callable identity is the one the shape handed out, so a call site that
+  // resolved before this body lowered reaches this method. SV classes have no
+  // separate Initialize lifecycle phase, so a method's pending static
+  // initializers integrate into this class's constructor block, matching the
+  // per-instance storage shape used for class-method statics.
   //
   // A pure virtual prototype (LRM 8.21) has no source-defined body to walk;
   // its MIR record still carries the signature -- receiver, named parameters,
   // and result type -- so the backend can emit the class's declaration, but
   // no body is produced, and the absence of one is what states the shape.
-  for (std::size_t i = 0; i < hir_class.methods.size(); ++i) {
-    const hir::MethodId method_id{static_cast<std::uint32_t>(i)};
+  for (const hir::MethodId method_id : hir_class.methods.Ids()) {
     const auto& method = hir_class.methods.Get(method_id);
+    const DeclaredCallable& declared = declared_methods_.Get(method_id);
     const auto method_dispatch =
-        shape.callable_signatures.Get(mir::CallableId{method_id.value})
-            .virtual_dispatch;
+        shape.callable_signatures.Get(declared.callable).virtual_dispatch;
     if (method.is_prototype) {
       mir::CallableCode proto_code;
       CallableBindings proto_bindings(unit_lowerer.Unit(), proto_code);
@@ -410,12 +383,12 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       proto_code.result_type = SubroutineCallTypeOf(unit_lowerer, method);
       // `proto_code.body` stays absent: this declaration does not define the
       // method, and the deriving class supplies it.
-      mir_class.callables.Add(
-          mir::CallableDecl{
-              .name = method.name,
-              .code = std::move(proto_code),
-              .foreign = std::nullopt,
-              .virtual_dispatch = method_dispatch});
+      mir_class.callables.Define(
+          declared.callable, mir::CallableDecl{
+                                 .name = method.name,
+                                 .code = std::move(proto_code),
+                                 .foreign = std::nullopt,
+                                 .virtual_dispatch = method_dispatch});
       continue;
     }
     ScopeChainNode method_link{};
@@ -423,20 +396,20 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
         WalkFrame{}.WithClass(&mir_class, class_id_, method_link);
     ProcessLowerer method_lowerer(
         unit_lowerer, nullptr, mir_class.time_resolution, method.body,
-        method.name, method_owner_frame, method_plans_[i]);
+        method.name, method_owner_frame, scopes, declared.statics);
     auto method_code_or = method_lowerer.Run(method);
     if (!method_code_or) {
       return std::unexpected(std::move(method_code_or.error()));
     }
-    mir_class.callables.Add(
-        mir::CallableDecl{
-            .name = method.name,
-            .code = *std::move(method_code_or),
-            .foreign = std::nullopt,
-            .virtual_dispatch = method_dispatch});
-    for (const auto& pending : method_lowerer.TakePendingStaticInitializers()) {
-      auto integ = IntegratePendingStaticInitializer(
-          method_lowerer, method.body, frame, pending);
+    mir_class.callables.Define(
+        declared.callable, mir::CallableDecl{
+                               .name = method.name,
+                               .code = *std::move(method_code_or),
+                               .foreign = std::nullopt,
+                               .virtual_dispatch = method_dispatch});
+    for (const StaticVarBinding& binding : declared.statics) {
+      auto integ = IntegrateStaticInitializer(
+          method_lowerer, method.body, frame, binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
@@ -446,9 +419,9 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   // and the base-call arg evaluation already emitted into the ctor block.
   auto body_or = ctor_lowerer.LowerConstructorBodyInto(frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
-  for (const auto& pending : ctor_lowerer.TakePendingStaticInitializers()) {
-    auto integ = IntegratePendingStaticInitializer(
-        ctor_lowerer, ctor.body, frame, pending);
+  for (const StaticVarBinding& binding : ctor_static_bindings_) {
+    auto integ =
+        IntegrateStaticInitializer(ctor_lowerer, ctor.body, frame, binding);
     if (!integ) return std::unexpected(std::move(integ.error()));
   }
 
@@ -459,8 +432,8 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       .base_init = std::move(base_init),
       .member_inits = {}};
 
-  auto static_init_or =
-      LowerStaticInit(unit_lowerer, hir_class, mir_class, class_id_);
+  auto static_init_or = LowerStaticInit(
+      unit_lowerer, hir_class, shape, mir_class, class_id_, scopes);
   if (!static_init_or)
     return std::unexpected(std::move(static_init_or.error()));
   mir_class.static_init = *std::move(static_init_or);

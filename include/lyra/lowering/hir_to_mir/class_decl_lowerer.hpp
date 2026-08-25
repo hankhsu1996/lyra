@@ -1,11 +1,10 @@
 #pragma once
 
-#include <optional>
-#include <vector>
-
+#include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
-#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
+#include "lyra/lowering/hir_to_mir/declared_callable.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -35,41 +34,37 @@ namespace lyra::lowering::hir_to_mir {
 class ClassDeclLowerer {
  public:
   ClassDeclLowerer(
-      UnitLowerer& unit_lowerer, mir::ClassId class_id, mir::TypeId object_type,
+      UnitLowerer& unit_lowerer, hir::ClassId hir_class_id,
+      mir::ClassId class_id, mir::TypeId object_type,
       const hir::ClassDecl& hir_class)
       : owner_(&unit_lowerer),
+        hir_class_id_(hir_class_id),
         class_id_(class_id),
         object_type_(object_type),
         hir_class_(&hir_class) {
   }
 
-  // Publishes this class's `ClassShape` to the module's shape store so peer
-  // body lowering can read every fact it might need -- the base reference,
-  // the field arena, each method's dispatch role -- without waiting for any
-  // sibling class's body to lower.
+  // Settles this class's structural declaration so peer body lowering can read
+  // every fact it might need -- the base reference, the field arena, each
+  // method's dispatch role -- without waiting for any sibling class's body to
+  // lower.
   auto DeclareShape() -> diag::Result<void>;
 
   // Composes the class from the already-published shape plus every body,
   // and commits it to the compilation unit. Any cross-class query the
-  // bodies make resolves against the shape store, never against another
-  // class's still-in-progress state.
+  // bodies make resolves against the unit's declarations, never against
+  // another class's still-in-progress state.
   auto PopulateBodies() -> diag::Result<void>;
 
  private:
   UnitLowerer* owner_;
+  hir::ClassId hir_class_id_;
   mir::ClassId class_id_;
   mir::TypeId object_type_;
   const hir::ClassDecl* hir_class_;
 
-  // Storage layout the shape stage settles and the body stage reuses: the
-  // per-callable static-storage plans whose placements name the exact field
-  // ids the published shape declares. Property field ids are not stored --
-  // they are the same identity as the HIR field ids the class carries, so
-  // any consumer reaches a mir field id from a hir field id through
-  // `UnitLowerer::TranslateField`.
-  ProceduralScopeMaterializationTable class_scopes_;
-  std::vector<CallableStoragePlan> method_plans_;
-  std::optional<CallableStoragePlan> ctor_plan_;
+  base::Translation<hir::MethodId, DeclaredCallable> declared_methods_;
+  StaticVarBindings ctor_static_bindings_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

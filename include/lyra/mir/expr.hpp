@@ -8,6 +8,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -117,9 +118,9 @@ struct IncDecExpr {
 // the role `MyEnum::` plays in `MyEnum::first()` or `PackedArray::` in
 // `PackedArray::FromInt(...)`. Distinct from the symbol's declaration owner
 // (which the target's metadata knows): a qualifier is a property of this
-// call, not of the symbol. Today the only arm is `TypeQualifier`; SV
-// packages (LRM 26) bring `Namespace{NamespaceId}` and a `Path` composition
-// for namespace-and-then-type calls.
+// call, not of the symbol. A qualifier is a path in general -- a package name
+// (LRM 26), or a package and then a type -- of which only the type form is
+// lowered, which is why one arm carries it.
 struct TypeQualifier {
   TypeId type;
 };
@@ -487,6 +488,16 @@ struct TupleExpr {
   std::vector<ExprId> components;
 };
 
+// A homogeneous sequence value built from its element expressions in order.
+// `Expr::type` is the `VectorType`, off which the element type is read at
+// render time. The generic sequence literal -- the homogeneous counterpart to
+// `TupleExpr`, and the only way a sequence value comes into being, so a
+// sequence is always fully composed at the point it is built rather than
+// grown afterwards.
+struct VectorExpr {
+  std::vector<ExprId> elements;
+};
+
 // The suspension protocol applied to an awaitable: entering it yields control
 // until the awaitable completes, then resumes with its completion value
 // (LRM 9.4 timing controls, 13.5 task enable). `Expr::type` is that value's
@@ -516,7 +527,19 @@ struct AwaitExpr {
 // as `std::get<index>`.
 struct TupleGetExpr {
   ExprId tuple;
-  std::size_t index;
+  base::ComponentIndex index;
+};
+
+// Projects one element out of a sequence value by position. The inverse of
+// `VectorExpr`. The position is an operand rather than part of the node
+// because a sequence is homogeneous: which element is named cannot change the
+// element's type, so nothing about the projection has to be known at compile
+// time. Like every value-aggregate sub-access this extracts the element from
+// the sequence value; a sequence of storage is reached through the indirection
+// its elements already carry, not by addressing into the sequence itself.
+struct VectorGetExpr {
+  ExprId vector;
+  ExprId index;
 };
 
 // Builds a union value whose active member is component `index`, carrying
@@ -526,7 +549,7 @@ struct TupleGetExpr {
 // default-initialized union builds `UnionExpr{0, <member 0 default>}`.
 // `Expr::type` is the `UnionType`.
 struct UnionExpr {
-  std::size_t index;
+  base::ComponentIndex index;
   ExprId value;
 };
 
@@ -539,7 +562,7 @@ struct UnionExpr {
 // active as part of the whole-value update.
 struct UnionGetExpr {
   ExprId union_value;
-  std::size_t index;
+  base::ComponentIndex index;
 };
 
 // Builds a tagged-union value whose active tag is `tag_index`, carrying
@@ -551,7 +574,7 @@ struct UnionGetExpr {
 // has to decide what an absent one would mean. `Expr::type` is the
 // `TaggedUnionType`.
 struct TaggedExpr {
-  std::size_t tag_index;
+  base::ComponentIndex tag_index;
   ExprId payload;
 };
 
@@ -563,7 +586,7 @@ struct TaggedExpr {
 // payload) and so never lands here.
 struct TaggedGetExpr {
   ExprId union_value;
-  std::size_t tag_index;
+  base::ComponentIndex tag_index;
 };
 
 // The writable location of tagged-union component `tag_index` (`u.Member` as an
@@ -574,7 +597,7 @@ struct TaggedGetExpr {
 // rather than a member write.
 struct TaggedGetRefExpr {
   ExprId union_value;
-  std::size_t tag_index;
+  base::ComponentIndex tag_index;
 };
 
 // Non-throwing tag check: `1` iff the tagged-union value's active tag equals
@@ -584,7 +607,7 @@ struct TaggedGetRefExpr {
 // mismatch error path reserved for the direct dot-access surface.
 struct TaggedIsExpr {
   ExprId union_value;
-  std::size_t tag_index;
+  base::ComponentIndex tag_index;
 };
 
 // Used where a runtime callback surface takes a bare function value with no
@@ -654,14 +677,14 @@ struct ExternalStaticPropertyRef {
 // projection rules. The value a step descends into is the previous step's part,
 // or the owner's value at the first step.
 struct ComponentSelector {
-  std::size_t index;
+  base::ComponentIndex index;
   TypeId projected_type;
 };
 
 // Selecting a union member makes it the active one; the update carries that
 // activation (LRM 7.3).
 struct UnionMemberSelector {
-  std::size_t index;
+  base::ComponentIndex index;
   TypeId projected_type;
 };
 
@@ -708,10 +731,11 @@ using ExprData = std::variant<
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
     MachineArrayDataExpr, MoveExpr, PointerCastExpr, FunctionCastExpr,
     IntCastExpr, FieldAccessExpr, StructConstructExpr, ClosureExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr, TupleExpr, AwaitExpr, TupleGetExpr,
-    UnionExpr, UnionGetExpr, TaggedExpr, TaggedGetExpr, TaggedGetRefExpr,
-    TaggedIsExpr, ValueProjectionExpr, FunctionRef, StaticConstantRef,
-    StaticPropertyRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    ReplicationExpr, ArrayLiteralExpr, TupleExpr, VectorExpr, AwaitExpr,
+    TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr, TaggedExpr,
+    TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr, ValueProjectionExpr,
+    FunctionRef, StaticConstantRef, StaticPropertyRef, ExternalUnitVariableRef,
+    ExternalStaticPropertyRef>;
 
 struct Expr {
   ExprData data;

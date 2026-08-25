@@ -3,8 +3,8 @@
 #include <optional>
 #include <string_view>
 #include <unordered_map>
-#include <vector>
 
+#include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function_id.hpp"
@@ -63,19 +63,24 @@ class UnitLowerer {
       -> lir::FunctionId;
 
  private:
-  // The function identities of one class, in the order the unit lowers them:
-  // the constructor, then each callable that has a body. A callable with no
-  // body is not a function of this unit and holds none.
-  struct ClassFunctions {
+  // The LIR identities taken on behalf of one MIR class: the class itself, its
+  // constructor's function, and one per callable that has a body. A callable
+  // with no body is no function of this unit and holds none. `lir::Class` holds
+  // the class's content, under these same identities.
+  struct ClassIdentities {
+    lir::ClassId lir_class{};
     lir::FunctionId constructor{};
-    std::vector<std::optional<lir::FunctionId>> methods;
+    base::Translation<mir::CallableId, std::optional<lir::FunctionId>> methods;
   };
 
-  // Assigns every function identity the unit will hold, before any body is
-  // lowered, because a body may call a function whose own body is lowered later
-  // -- including itself. Assignment walks in the same order the lowering
-  // appends, so an append always lands on the identity planned for it.
-  void PlanFunctions();
+  // Everything one class can be named by before it is built: its own LIR
+  // identity and one function identity per body it will contribute. The
+  // identities come from the LIR pools, which hold the reservation itself; what
+  // this answers is which LIR identity stands for which MIR entity, since
+  // neither pool's numbering determines the other's. Reads nothing but this
+  // class, so classes take theirs in any order and none waits on another.
+  [[nodiscard]] auto TakeClassIdentities(const mir::Class& cls)
+      -> ClassIdentities;
 
   auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
   // Records `what` (a human phrase like "a closure") as the unit's first
@@ -84,14 +89,14 @@ class UnitLowerer {
   auto RecordUnsupportedType(std::string_view what) -> lir::TypeData;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
-  static auto LowerBase(const mir::ClassRef& base) -> lir::Base;
+  auto LowerBase(const mir::ClassRef& base) const -> lir::Base;
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;
   std::unordered_map<mir::TypeId, lir::TypeId> type_memo_;
   std::unordered_map<lir::TypeId, lir::TypeId> pointer_memo_;
-  std::vector<ClassFunctions> class_functions_;
-  std::vector<lir::FunctionId> closure_functions_;
+  base::Translation<mir::ClassId, ClassIdentities> class_identities_;
+  base::Translation<mir::ClosureId, lir::FunctionId> closure_identities_;
   std::optional<lir::TypeId> machine_bool_type_;
   std::optional<lir::TypeId> void_type_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as

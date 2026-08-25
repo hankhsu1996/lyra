@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstddef>
 #include <optional>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -42,7 +42,7 @@ auto CompletionPayloadType(
 // Reads one payload component out of a completion value bound to `completion`.
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
-    std::size_t index, mir::TypeId component_type) -> mir::ExprId;
+    base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId;
 
 // One formal as a completion is derived from it: how the call transfers it and
 // what type it carries. Both HIR spellings of a callee's formals -- a
@@ -63,7 +63,7 @@ struct CompletionLayout {
   struct Formal {
     hir::ParamDirection direction = hir::ParamDirection::kInput;
     mir::TypeId type{};
-    std::optional<std::size_t> component;
+    std::optional<base::ComponentIndex> component;
   };
   std::vector<Formal> formals;
   std::vector<mir::TypeId> components;

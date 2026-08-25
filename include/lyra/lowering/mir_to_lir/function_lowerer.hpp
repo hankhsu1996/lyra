@@ -203,8 +203,18 @@ class FunctionLowerer {
   const mir::ClosureDecl* closure_;
   std::string name_;
   lir::Function fn_;
+  // A block while it is being built, which is before its exit is decided. The
+  // lowering reaches a block's instructions well before it knows how control
+  // leaves it -- and for a block control never reaches, only the end of the
+  // body settles it -- so what it accumulates is not yet a basic block and does
+  // not claim to be one.
+  struct OpenBlock {
+    std::vector<lir::Instr> instrs;
+    std::optional<lir::Terminator> terminator;
+  };
+
+  std::vector<OpenBlock> blocks_;
   lir::BlockId current_{};
-  std::vector<bool> terminated_;
   std::vector<LoopTargets> loops_;
   // Which locals the body writes through or addresses, which are
   // activation-frame values (a value-typed local in a suspending body), and

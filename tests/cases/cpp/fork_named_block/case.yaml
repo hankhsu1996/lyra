@@ -9,5 +9,9 @@ expect:
   exit: 0
   stdout:
     exact: |
-      [15] labelled fork branch
+      [1] worker branch in Test.outer.worker
+      [15] labelled fork branch in Test.outer.labelled
+      [16] anonymous fork branch in Test.outer
+      [18] branch before the disable
       [20] counter = 42
+      [20] resumed after the disabled fork

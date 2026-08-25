@@ -228,7 +228,7 @@ auto BuildElementCountExpr(
       .span = span};
 }
 
-auto MakeQueryBinary(
+auto BuildQueryBinary(
     WalkFrame frame, hir::BinaryOp op, hir::Expr lhs, hir::Expr rhs,
     diag::SourceSpan span) -> hir::Expr {
   const hir::TypeId type = lhs.type;
@@ -271,7 +271,7 @@ auto LowerOrderedDynamicDimensionQuery(
       if (!one_or) {
         return std::unexpected(std::move(one_or.error()));
       }
-      return MakeQueryBinary(
+      return BuildQueryBinary(
           frame, hir::BinaryOp::kSub, *std::move(count_or), *std::move(one_or),
           span);
     }

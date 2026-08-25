@@ -29,7 +29,9 @@ class Scope {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
-  Scope(Scope* parent, HierarchySegment segment, const ScopeProgram* program);
+  Scope(
+      Scope* parent, HierarchySegment segment,
+      const ScopeDefinition* definition);
   virtual ~Scope() = default;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
@@ -52,31 +54,24 @@ class Scope {
   // `GetChild` and the upward visible-child climb use to match a child.
   [[nodiscard]] auto Name() const -> std::string_view;
 
-  // Joins each ancestor's display segment with `.`, ordered from the
-  // outermost named ancestor inward (LRM 21.2.1.1; `%m` resolves to this
-  // string). The walk stops at the implicit `$root` so multi-top output
-  // reads `Top.mid.x` rather than `$root.Top.mid.x`. Walked on demand:
-  // the object tree is sealed by Activate.
+  // Joins each ancestor's display segment with `.`, ordered from the outermost
+  // inward (LRM 21.2.1.5; `%m` resolves to this string). A scope the source
+  // never named contributes nothing, which is what keeps it off every
+  // hierarchical path (LRM 23.6) without taking it out of the tree. The walk
+  // stops at the implicit `$root` so multi-top output reads `Top.mid.x` rather
+  // than `$root.Top.mid.x`. Walked on demand: the object tree is sealed by
+  // Activate.
   [[nodiscard]] auto HierarchicalPath() const -> lyra::value::String;
 
-  // The scope's module definition name -- carried by every module instance,
-  // empty for a generate block or `$root`. Used by dump output and debug
-  // surfaces; the upward by-name climb consults `Name()` only, since slang
-  // canonicalizes every head identity to a resolved symbol's name before the
-  // lowering encodes the anchor.
-  [[nodiscard]] auto DefName() const -> std::string_view {
-    return {program_->metadata.def_name.data, program_->metadata.def_name.size};
-  }
-
-  // The generated behavior this scope was built with. Read where a caller needs
-  // a behavior the scope publishes rather than one the runtime drives -- the
-  // DPI-C export entries, which the foreign side reaches by name.
+  // The generated behavior this scope was built with. The runtime drives the
+  // lifecycle entries itself, so this is how a caller reaches a behavior the
+  // scope publishes for someone outside the lifecycle to call.
   [[nodiscard]] auto Program() const -> const ScopeProgram& {
-    return *program_;
+    return definition_->program;
   }
 
   // Records, during construction, the address of a signal this scope owns
-  // under its source name. A unit answers by-name signal queries from these
+  // under its source name. A scope answers by-name signal queries from these
   // registrations; it never inspects who asks. `name` points at an emitted
   // string literal.
   void RegisterSignal(std::string_view name, void* address);
@@ -131,7 +126,7 @@ class Scope {
   // unspecified sentinel. The engine takes the minimum across the tree to fix
   // the design-global precision (LRM 3.14.3).
   [[nodiscard]] auto TimePrecisionPower() const -> std::int8_t {
-    return program_->metadata.time_precision_power;
+    return definition_->program.metadata.time_precision_power;
   }
 
   // The scope's time unit as a power of ten (LRM Table 20-2), read from its
@@ -140,7 +135,7 @@ class Scope {
   // `svGetTimeUnit` query and to scale `svGetTime` to the scope (LRM 35.5.3,
   // Annex H).
   [[nodiscard]] auto TimeUnitPower() const -> std::int8_t {
-    return program_->metadata.time_unit_power;
+    return definition_->program.metadata.time_unit_power;
   }
 
   // Per-scope lifecycle entries. Each runs this scope's generated body
@@ -179,8 +174,8 @@ class Scope {
 
   Scope* parent_ = nullptr;
   HierarchySegment segment_;
-  // Borrowed. The scope's generated behavior, set at construction.
-  const ScopeProgram* program_ = nullptr;
+  // Borrowed. The class this scope was built from, set at construction.
+  const ScopeDefinition* definition_ = nullptr;
   // Physical containment: every runtime child scope this object owns
   // appears here once, in attach order. Includes anonymous scopes
   // (unnamed begin/ends). `GetChild` scans this and recurses into
@@ -192,36 +187,18 @@ class Scope {
   std::vector<SignalEntry> signals_;
 };
 
-// A module / interface / program instance: an owned child built from another
-// compilation unit, reached across the unit boundary. It carries the unit
-// definition; its scope program and metadata come from that definition.
-class Instance : public Scope {
+// A scope whose member storage the runtime owns, rather than a backend's native
+// object layout. The definition describes the storage schema, the scope owns
+// one storage object per member, and a member place resolves to that object's
+// address. This is the runtime-owned counterpart of native member fields: a
+// member is a logical place, and this is its realization when the backend does
+// not lay one out physically.
+class GeneratedScope : public Scope {
  public:
-  Instance(
-      Scope* parent, HierarchySegment segment, const UnitDefinition* definition)
-      : Scope(parent, std::move(segment), &definition->root),
-        definition_(definition) {
-  }
-
-  [[nodiscard]] auto Definition() const -> const UnitDefinition* {
-    return definition_;
-  }
-
- private:
-  const UnitDefinition* definition_;
-};
-
-// A design-unit instance whose member storage the runtime owns, rather than a
-// backend's native object layout. The definition describes the storage schema,
-// the instance owns one storage object per member, and a member place resolves
-// to that object's address. This is the runtime-owned counterpart of the C++
-// backend's native member fields: a member is a logical place, and this is its
-// realization when the backend does not lay one out physically.
-class GeneratedInstance : public Instance {
- public:
-  GeneratedInstance(
-      Scope* parent, HierarchySegment segment, const UnitDefinition* definition)
-      : Instance(parent, std::move(segment), definition) {
+  GeneratedScope(
+      Scope* parent, HierarchySegment segment,
+      const ScopeDefinition* definition)
+      : Scope(parent, std::move(segment), definition) {
     members_.reserve(definition->members.size);
     for (const MemberStorageDescriptor& descriptor :
          definition->members.Descriptors()) {
@@ -235,23 +212,6 @@ class GeneratedInstance : public Instance {
 
  private:
   std::vector<std::unique_ptr<MemberStorage>> members_;
-};
-
-// A module-local generate naming scope (`if` / `for` / `case` generate block):
-// an intra-unit owned child that crosses no compilation-unit boundary. It
-// carries its own scope program and no unit metadata.
-class GenScope : public Scope {
- public:
-  using Scope::Scope;
-};
-
-// A named procedural block (`begin : outer static int x; ... end`, LRM
-// 9.3.5 / 23.9) holding static-lifetime locals reachable by hierarchical
-// path (`Top.outer.x`): an intra-unit owned child like `GenScope`, separate
-// C++ type so the source kind survives backend dispatch and diagnostics.
-class ProceduralStorageScope : public Scope {
- public:
-  using Scope::Scope;
 };
 
 }  // namespace lyra::runtime

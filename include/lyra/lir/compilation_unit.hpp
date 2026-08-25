@@ -2,10 +2,10 @@
 
 #include <optional>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
@@ -60,8 +60,8 @@ struct Class {
 // caller does.
 struct CompilationUnit {
   base::Arena<Type, TypeId> types;
-  base::Arena<Class, ClassId> classes;
-  base::Arena<Function, FunctionId> functions;
+  base::Registry<Class, ClassId> classes;
+  base::Registry<Function, FunctionId> functions;
   ClassId root{};
 };
 

@@ -89,8 +89,11 @@ self-contained, target-neutral executable model IR. An invariant that cannot be 
 identity is the suspect, not the analysis.
 
 1. LIR is a CFG-shaped IR. Every callable body is a graph of basic blocks with explicit successors.
-   _Machine-execution consequence: control flow is the graph the codegen consumes; structured
-   constructs do not survive at this layer._
+   A block ends in exactly one terminator, which is what makes it a basic block rather than a run of
+   instructions; there is no terminator meaning "not yet decided", so a pass that builds blocks
+   holds the undecided state in its own shape and never in LIR. _Machine-execution consequence:
+   control flow is the graph the codegen consumes; structured constructs do not survive at this
+   layer._
 2. Each LIR value is either a place or a transient value, and which one is explicit. Which one a
    local is follows a canonical lowering rule, not the source language's notion of a variable: a
    local is a place -- named storage -- exactly when the canonical lowering needs an address for it

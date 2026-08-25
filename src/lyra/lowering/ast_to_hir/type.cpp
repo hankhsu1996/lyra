@@ -547,14 +547,18 @@ auto FindOverriddenPureInImplementsChain(
   return nullptr;
 }
 
-auto SynthesizeDefaultConstructor(hir::TypeId void_type, diag::SourceSpan span)
+auto SynthesizeDefaultConstructor(
+    hir::TypeId void_type, diag::SourceSpan span, const WalkFrame& class_frame)
     -> hir::SubroutineDecl {
   hir::ProceduralBody body;
+  // A default constructor runs nothing of its own; the class's field
+  // initializers are composed into it afterwards.
   body.root_stmt = body.stmts.Add(
-      hir::Stmt{
-          .label = std::nullopt,
-          .data = hir::BlockStmt{.statements = {}, .scope = std::nullopt},
-          .span = span});
+      hir::Stmt{.label = std::nullopt, .data = hir::EmptyStmt{}, .span = span});
+  body.root_scope = class_frame.SealScope(
+      OpenProceduralScope{
+          class_frame.ProceduralScopes().Declare(),
+          hir::ProceduralScopeKind::kSubroutineRoot, std::string{"new"}});
   return hir::SubroutineDecl{
       .name = "new",
       .kind = hir::SubroutineKind::kFunction,
@@ -576,7 +580,7 @@ auto BuildInterfaceForwardingMethod(
     UnitLowerer& unit_lowerer, diag::SourceSpan span,
     const slang::ast::ClassType& iface_cls,
     const slang::ast::MethodPrototypeSymbol& proto,
-    const slang::ast::SubroutineSymbol& impl)
+    const slang::ast::SubroutineSymbol& impl, const WalkFrame& class_frame)
     -> diag::Result<hir::SubroutineDecl> {
   auto result_type_or = unit_lowerer.InternType(impl.getReturnType(), span);
   if (!result_type_or) {
@@ -585,6 +589,9 @@ auto BuildInterfaceForwardingMethod(
   const hir::TypeId result_type = *result_type_or;
 
   hir::ProceduralBody body;
+  OpenProceduralScope root{
+      class_frame.ProceduralScopes().Declare(),
+      hir::ProceduralScopeKind::kSubroutineRoot, std::string{proto.name}};
   std::vector<hir::SubroutineParam> params;
   std::vector<std::optional<hir::ExprId>> args;
   for (const auto* formal : impl.getArguments()) {
@@ -598,9 +605,11 @@ auto BuildInterfaceForwardingMethod(
     if (!param_type_or) {
       return std::unexpected(std::move(param_type_or.error()));
     }
-    const hir::ProceduralVarId var = body.procedural_vars.Add(
-        hir::ProceduralVarDecl{
-            .name = std::string{formal->name}, .type = *param_type_or});
+    const hir::ProceduralVarId var = body.procedural_vars.Declare();
+    body.procedural_vars.Define(
+        var, hir::ProceduralVarDecl{
+                 .name = std::string{formal->name}, .type = *param_type_or});
+    root.declarations.push_back(var);
     params.push_back(
         hir::SubroutineParam{
             .var = var, .direction = hir::ParamDirection::kInput});
@@ -613,8 +622,11 @@ auto BuildInterfaceForwardingMethod(
 
   std::optional<hir::ProceduralVarId> result_var;
   if (!impl.getReturnType().isVoid()) {
-    result_var = body.procedural_vars.Add(
+    result_var = body.procedural_vars.Declare();
+    body.procedural_vars.Define(
+        *result_var,
         hir::ProceduralVarDecl{.name = "forward_result", .type = result_type});
+    root.declarations.push_back(*result_var);
   }
 
   const auto& impl_class =
@@ -633,16 +645,14 @@ auto BuildInterfaceForwardingMethod(
                               *impl_ref, impl)},
                   .arguments = std::move(args)},
           .span = span});
-  const hir::StmtId ret = body.stmts.Add(
+  // Forwarding is the whole body: one return of the forwarded call, with the
+  // formals and the result cell in the method's root scope.
+  body.root_stmt = body.stmts.Add(
       hir::Stmt{
           .label = std::nullopt,
           .data = hir::ReturnStmt{.value = call},
           .span = span});
-  body.root_stmt = body.stmts.Add(
-      hir::Stmt{
-          .label = std::nullopt,
-          .data = hir::BlockStmt{.statements = {ret}, .scope = std::nullopt},
-          .span = span});
+  body.root_scope = class_frame.SealScope(std::move(root));
 
   auto iface_ref = unit_lowerer.ResolveClassRef(iface_cls, span);
   if (!iface_ref) return std::unexpected(std::move(iface_ref.error()));
@@ -676,7 +686,8 @@ auto BuildInterfaceForwardingMethod(
 // implicit override fills the remaining slots.
 auto SynthesizeInterfaceForwardingMethods(
     UnitLowerer& unit_lowerer, const slang::ast::ClassType& cls,
-    diag::SourceSpan span, hir::ClassDecl& decl) -> diag::Result<void> {
+    diag::SourceSpan span, hir::ClassDecl& decl, const WalkFrame& class_frame)
+    -> diag::Result<void> {
   // An interface class only aggregates contracts (LRM 8.26); it carries no
   // implementation to forward to, so it never bridges. Its `extends` parents
   // are pure prototypes, not satisfiers.
@@ -717,7 +728,7 @@ auto SynthesizeInterfaceForwardingMethods(
       if (!bridged.insert(&impl).second) continue;
 
       auto method_or = BuildInterfaceForwardingMethod(
-          unit_lowerer, span, iface_cls, proto, impl);
+          unit_lowerer, span, iface_cls, proto, impl, class_frame);
       if (!method_or) return std::unexpected(std::move(method_or.error()));
       decl.methods.Add(*std::move(method_or));
     }
@@ -843,6 +854,15 @@ auto UnitLowerer::InternLocalClass(
   decl.name = SpecializationName(cls);
   decl.is_interface_class = cls.isInterface;
 
+  // A class is the declaration scope that owns the lexical scopes of every
+  // body it declares, so that ownership is stated once here and each method,
+  // prototype, and property initializer below lowers under it. A class does
+  // not route structurally from whatever encloses its declaration, so the
+  // frame starts empty rather than descending from an outer one.
+  const WalkFrame class_frame =
+      WalkFrame{}.WithProceduralScopeOwner(&decl.procedural_scopes);
+  DeclareProceduralScopes(cls, *this, decl.procedural_scopes);
+
   // Concrete base class (LRM 8.13). Only a regular class may extend a
   // concrete base; an interface class carries no concrete base and reaches
   // its parent interface classes through `implements` instead. Slang
@@ -925,7 +945,7 @@ auto UnitLowerer::InternLocalClass(
       const slang::ast::Expression* base_call_ast =
           cls.getBaseConstructorCall();
       auto ctor_or =
-          LowerConstructorDecl(*this, method, WalkFrame{}, base_call_ast);
+          LowerConstructorDecl(*this, method, class_frame, base_call_ast);
       if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
       user_constructor = std::move(ctor_or->constructor);
       decl.base_call = std::move(ctor_or->base_call);
@@ -936,7 +956,7 @@ auto UnitLowerer::InternLocalClass(
           span, diag::DiagCode::kUnsupportedClassFeature,
           "class task methods are not yet supported");
     }
-    auto method_decl = LowerSubroutineDecl(*this, method, WalkFrame{});
+    auto method_decl = LowerSubroutineDecl(*this, method, class_frame);
     if (!method_decl) return std::unexpected(std::move(method_decl.error()));
     // Source-level facts on a class method: `static` (LRM 8.10) makes the
     // signature receiver-less; `virtual` (LRM 8.20) puts the method in the
@@ -1035,7 +1055,7 @@ auto UnitLowerer::InternLocalClass(
           span, diag::DiagCode::kUnsupportedClassFeature,
           "pure virtual class task prototypes are not yet supported");
     }
-    auto proto_decl = LowerMethodPrototypeDecl(*this, proto);
+    auto proto_decl = LowerMethodPrototypeDecl(*this, proto, class_frame);
     if (!proto_decl) return std::unexpected(std::move(proto_decl.error()));
     // A middle abstract class re-declaring an ancestor's pure virtual method
     // as another `pure virtual` produces a prototype whose overrides link
@@ -1073,8 +1093,8 @@ auto UnitLowerer::InternLocalClass(
   // Forward every interface pure virtual this class satisfies by inheritance
   // rather than a local definition (LRM 8.26.2); a locally-satisfied contract
   // is already wired by the method loop above.
-  if (auto forwards =
-          SynthesizeInterfaceForwardingMethods(*this, cls, span, decl);
+  if (auto forwards = SynthesizeInterfaceForwardingMethods(
+          *this, cls, span, decl, class_frame);
       !forwards) {
     return std::unexpected(std::move(forwards.error()));
   }
@@ -1082,7 +1102,8 @@ auto UnitLowerer::InternLocalClass(
   hir::SubroutineDecl constructor =
       user_constructor.has_value()
           ? *std::move(user_constructor)
-          : SynthesizeDefaultConstructor(unit_.builtins.void_type, span);
+          : SynthesizeDefaultConstructor(
+                unit_.builtins.void_type, span, class_frame);
 
   // A property initializer (LRM 8.7) runs during construction and may read
   // another property through the receiver, so it lowers on the procedural path
@@ -1091,8 +1112,8 @@ auto UnitLowerer::InternLocalClass(
   // the containing symbol so any structural name in the initializer routes from
   // the class's position.
   ProcessLowerer init_lowerer(*this, cls);
-  const WalkFrame init_frame = WalkFrame{}.WithProceduralBody(
-      &constructor.body, &constructor.body.exprs, &constructor.body.patterns);
+  const WalkFrame init_frame =
+      class_frame.WithProceduralBody(&constructor.body);
   // A static property initializer (LRM 8.9 / 10.5) runs once at design init,
   // not per instance, so its expression lands in the class's `static_init`
   // arena rather than the constructor body's. It cannot read a per-instance
@@ -1100,8 +1121,8 @@ auto UnitLowerer::InternLocalClass(
   // scope; a downstream initializer that names another static property of
   // the same class reads it as `Cls::other_prop` (a `StaticPropertyRef`),
   // never through the constructor's receiver.
-  const WalkFrame static_init_frame = WalkFrame{}.WithProceduralBody(
-      &decl.static_init, &decl.static_init.exprs, &decl.static_init.patterns);
+  const WalkFrame static_init_frame =
+      class_frame.WithProceduralBody(&decl.static_init);
   for (const auto& prop :
        cls.membersOfType<slang::ast::ClassPropertySymbol>()) {
     if (prop.getParentScope() != &cls) continue;

@@ -1,5 +1,6 @@
 #include "lyra/backend/llvm/runtime_abi.hpp"
 
+#include <cstddef>
 #include <format>
 #include <string>
 #include <string_view>
@@ -195,10 +196,14 @@ auto RuntimeAbi::MakeSegment() -> llvm::FunctionCallee {
       "lyra_rt_make_segment", types_->Ptr(), {types_->Ptr(), types_->Span()});
 }
 
-auto RuntimeAbi::MakeUnit() -> llvm::FunctionCallee {
+auto RuntimeAbi::MakeScope() -> llvm::FunctionCallee {
   return Get(
-      "lyra_rt_make_unit", types_->Ptr(),
+      "lyra_rt_make_scope", types_->Ptr(),
       {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::HierarchicalPath() -> llvm::FunctionCallee {
+  return Get("lyra_rt_hierarchical_path", types_->Ptr(), {types_->Ptr()});
 }
 
 auto RuntimeAbi::AddOwnedChild() -> llvm::FunctionCallee {

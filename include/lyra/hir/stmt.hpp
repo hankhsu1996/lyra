@@ -27,32 +27,32 @@ struct StmtId {
 
 struct EmptyStmt {};
 
-// VarDeclStmt has ordering semantics in HIR -- its position in the statement
-// stream marks the SystemVerilog point of declaration. The actual storage is
-// allocated on Process.procedural_vars; ProceduralVarId.value indexes into
-// that vector. The optional init expression holds the initial value written in
-// the declaration (e.g. `int x = 7`); it is evaluated at the point of the
-// statement.
+// The SystemVerilog point of declaration, which is what its position in the
+// statement stream marks. What is declared -- including the declaration
+// assignment -- is the declaration's own content; this statement names it.
 struct VarDeclStmt {
   ProceduralVarId var = {};
-  std::optional<ExprId> init;
 };
 
 struct ExprStmt {
   ExprId expr;
 };
 
+// A `begin ... end` (LRM 9.3.4): statements run in sequence in a lexical
+// declaration scope. It always has one. Whether the source named it, and
+// whether it declares anything, are properties recorded on the scope -- never
+// reasons for the scope to be absent -- so a block with no name and no
+// declaration is the same shape as one with both. The scope record holds the
+// block's segment name, its direct declarations, and the scopes nested inside
+// it; runtime addressability is a separate axis on that record.
+//
+// This is also the sequence a lowering composes when it expands one source
+// statement into several and the surrounding slot admits one (LRM 12.7.3 gives
+// `foreach` such a shape). Such a block declares nothing and carries no name,
+// which is what makes it transparent -- not a kind of its own.
 struct BlockStmt {
   std::vector<StmtId> statements;
-  // The lexical declaration scope this block introduces, when it comes from
-  // a source-level `begin ... end` (LRM 9.3.4). Present for SV-source
-  // blocks (named or unnamed); absent for compiler-synthesized statement
-  // groupings that emit as a block but introduce no SV scope (e.g., the
-  // inner wrappers a foreach lowering produces around its nested for-loops).
-  // The scope record holds the optional SV `block_identifier` and the direct
-  // declarations / child scopes the block owns; runtime addressability is a
-  // separate axis on the scope record.
-  std::optional<ProceduralScopeId> scope;
+  ProceduralScopeId scope;
 };
 
 // LRM 9.3.2 Table 9-1: which join keyword controls when the forking process
@@ -67,11 +67,14 @@ enum class JoinMode : std::uint8_t {
 // (VarDeclStmt) -- initialized at block entry, before any branch spawns, to
 // give each branch a by-value snapshot; they precede the parallel statements in
 // the fork's scope. Each branch in `branches` is a statement run as its own
-// concurrent process; `mode` sets when the parent resumes.
+// concurrent process; `mode` sets when the parent resumes. `scope` is the
+// lexical declaration scope the fork opens, which owns the locals above and
+// exists whether or not any were written.
 struct ForkStmt {
   JoinMode mode;
   std::vector<StmtId> locals;
   std::vector<StmtId> branches;
+  ProceduralScopeId scope;
 };
 
 enum class UniquePriorityCheck : std::uint8_t {

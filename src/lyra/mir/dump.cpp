@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -39,12 +41,8 @@ class MirDumper {
     Indent();
     Line("Types:");
     Indent();
-    for (std::size_t i = 0; i < unit.types.size(); ++i) {
-      Line(
-          std::format(
-              "[{}] {}", i,
-              FormatType(
-                  unit.types.Get(TypeId{static_cast<std::uint32_t>(i)}))));
+    for (const TypeId id : unit.types.Ids()) {
+      Line(std::format("[{}] {}", id.value, FormatType(unit.types.Get(id))));
     }
     Dedent();
     Line("Class:");
@@ -52,19 +50,15 @@ class MirDumper {
     if (unit.root.has_value()) {
       DumpClass(*unit.root, unit.GetClass(*unit.root));
     }
-    // A class reached by a handle is not a child of the runtime tree, so it is
-    // not dumped under the root; a runtime tree node is reached by the root
-    // walk's Contained recursion instead.
-    for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-      const ClassId id{static_cast<std::uint32_t>(i)};
-      if (unit.root.has_value() && id == *unit.root) {
+    // The walk above descended the root's contained classes, so what is left
+    // is every class no containment edge reaches -- one a handle reaches
+    // instead. Which those are is what the walk just found out, so it is asked
+    // rather than restated.
+    for (const ClassId id : unit.classes.Ids()) {
+      if (dumped_.contains(id.value)) {
         continue;
       }
-      const Class& cls = unit.GetClass(id);
-      if (cls.is_scope_tree_node) {
-        continue;
-      }
-      DumpClass(id, cls);
+      DumpClass(id, unit.GetClass(id));
     }
     Dedent();
     // A unit owns callables directly in its namespace: a package's own
@@ -73,9 +67,8 @@ class MirDumper {
     if (!unit.callables.empty()) {
       Line("Callables:");
       Indent();
-      for (std::size_t i = 0; i < unit.callables.size(); ++i) {
-        DumpCallable(
-            unit.callables.Get(CallableId{static_cast<std::uint32_t>(i)}), i);
+      for (const CallableId id : unit.callables.Ids()) {
+        DumpCallable(unit.callables.Get(id), id.value);
       }
       Dedent();
     }
@@ -85,8 +78,7 @@ class MirDumper {
     if (unit.structs.size() > 0) {
       Line("Structs:");
       Indent();
-      for (std::size_t i = 0; i < unit.structs.size(); ++i) {
-        const StructId sid{static_cast<std::uint32_t>(i)};
+      for (const StructId sid : unit.structs.Ids()) {
         DumpStruct(sid, unit.GetStruct(sid));
       }
       Dedent();
@@ -94,8 +86,7 @@ class MirDumper {
     if (unit.closures.size() > 0) {
       Line("Closures:");
       Indent();
-      for (std::size_t i = 0; i < unit.closures.size(); ++i) {
-        const ClosureId cid{static_cast<std::uint32_t>(i)};
+      for (const ClosureId cid : unit.closures.Ids()) {
         DumpClosure(cid, unit.GetClosure(cid));
       }
       Dedent();
@@ -334,8 +325,8 @@ class MirDumper {
                   return "RuntimeLibrary(Trigger)";
                 case RuntimeLibraryKind::kScopeProgram:
                   return "RuntimeLibrary(ScopeProgram)";
-                case RuntimeLibraryKind::kUnitDefinition:
-                  return "RuntimeLibrary(UnitDefinition)";
+                case RuntimeLibraryKind::kScopeDefinition:
+                  return "RuntimeLibrary(ScopeDefinition)";
                 case RuntimeLibraryKind::kScopeMetadata:
                   return "RuntimeLibrary(ScopeMetadata)";
                 case RuntimeLibraryKind::kAbiStringRef:
@@ -883,6 +874,16 @@ class MirDumper {
               }
               return std::format("TupleExpr components=[{}]", components);
             },
+            [](const VectorExpr& v) -> std::string {
+              std::string elements;
+              for (std::size_t i = 0; i < v.elements.size(); ++i) {
+                if (i != 0) {
+                  elements += ", ";
+                }
+                elements += std::format("Expr[{}]", v.elements[i].value);
+              }
+              return std::format("VectorExpr elements=[{}]", elements);
+            },
             [](const AwaitExpr& a) -> std::string {
               return std::format(
                   "AwaitExpr awaitable=Expr[{}]", a.awaitable.value);
@@ -890,16 +891,22 @@ class MirDumper {
             [](const TupleGetExpr& g) -> std::string {
               return std::format(
                   "TupleGetExpr tuple=Expr[{}] index={}", g.tuple.value,
-                  g.index);
+                  g.index.value);
+            },
+            [](const VectorGetExpr& g) -> std::string {
+              return std::format(
+                  "VectorGetExpr vector=Expr[{}] index=Expr[{}]",
+                  g.vector.value, g.index.value);
             },
             [](const UnionExpr& u) -> std::string {
               return std::format(
-                  "UnionExpr index={} value=Expr[{}]", u.index, u.value.value);
+                  "UnionExpr index={} value=Expr[{}]", u.index.value,
+                  u.value.value);
             },
             [](const UnionGetExpr& g) -> std::string {
               return std::format(
                   "UnionGetExpr union=Expr[{}] index={}", g.union_value.value,
-                  g.index);
+                  g.index.value);
             },
             [](const ValueProjectionExpr& p) -> std::string {
               const auto operands =
@@ -917,10 +924,10 @@ class MirDumper {
                 path += std::visit(
                     Overloaded{
                         [](const ComponentSelector& c) -> std::string {
-                          return std::format("component {}", c.index);
+                          return std::format("component {}", c.index.value);
                         },
                         [](const UnionMemberSelector& m) -> std::string {
-                          return std::format("member {}", m.index);
+                          return std::format("member {}", m.index.value);
                         },
                         [&](const ElementSelector& e) -> std::string {
                           return std::format(
@@ -937,23 +944,23 @@ class MirDumper {
             },
             [](const TaggedExpr& t) -> std::string {
               return std::format(
-                  "TaggedExpr tag={} payload=Expr[{}]", t.tag_index,
+                  "TaggedExpr tag={} payload=Expr[{}]", t.tag_index.value,
                   t.payload.value);
             },
             [](const TaggedGetExpr& g) -> std::string {
               return std::format(
                   "TaggedGetExpr union=Expr[{}] tag={}", g.union_value.value,
-                  g.tag_index);
+                  g.tag_index.value);
             },
             [](const TaggedGetRefExpr& g) -> std::string {
               return std::format(
                   "TaggedGetRefExpr union=Expr[{}] tag={}", g.union_value.value,
-                  g.tag_index);
+                  g.tag_index.value);
             },
             [](const TaggedIsExpr& g) -> std::string {
               return std::format(
                   "TaggedIsExpr union=Expr[{}] tag={}", g.union_value.value,
-                  g.tag_index);
+                  g.tag_index.value);
             },
         },
         e.data);
@@ -965,6 +972,7 @@ class MirDumper {
   }
 
   void DumpClass(ClassId id, const Class& s) {
+    dumped_.insert(id.value);
     scope_stack_.push_back(&s);
     const std::string kind = s.is_interface_class ? "InterfaceClass" : "Class";
     Line(std::format("{} \"{}\" (#{})", kind, s.name, id.value));
@@ -995,18 +1003,16 @@ class MirDumper {
 
     Line("Callables:");
     Indent();
-    for (std::size_t i = 0; i < s.callables.size(); ++i) {
-      DumpCallable(
-          s.callables.Get(CallableId{static_cast<std::uint32_t>(i)}), i);
+    for (const CallableId id : s.callables.Ids()) {
+      DumpCallable(s.callables.Get(id), id.value);
     }
     Dedent();
 
     if (!s.abi_adapters.empty()) {
       Line("AbiAdapters:");
       Indent();
-      for (std::size_t i = 0; i < s.abi_adapters.size(); ++i) {
-        DumpAbiAdapter(
-            s.abi_adapters.Get(AbiAdapterId{static_cast<std::uint32_t>(i)}), i);
+      for (const AbiAdapterId id : s.abi_adapters.Ids()) {
+        DumpAbiAdapter(s.abi_adapters.Get(id), id.value);
       }
       Dedent();
     }
@@ -1047,13 +1053,11 @@ class MirDumper {
   }
 
   void DumpFieldList(const base::Arena<FieldDecl, FieldId>& fields) {
-    for (std::size_t i = 0; i < fields.size(); ++i) {
-      const auto& v = fields.Get(FieldId{static_cast<std::uint32_t>(i)});
-      const std::string as =
-          v.source_name.empty() ? "" : std::format(" as \"{}\"", v.source_name);
+    for (const FieldId id : fields.Ids()) {
+      const auto& v = fields.Get(id);
       Line(
           std::format(
-              "[{}] \"{}\"{} : {}", i, v.name, as, FormatVarType(v.type)));
+              "[{}] \"{}\" : {}", id.value, v.name, FormatVarType(v.type)));
     }
   }
 
@@ -1147,11 +1151,11 @@ class MirDumper {
     if (!code.locals.empty()) {
       Line("Locals:");
       Indent();
-      for (std::size_t i = 0; i < code.locals.size(); ++i) {
-        const auto& v = code.locals.Get(LocalId{static_cast<std::uint32_t>(i)});
+      for (const LocalId id : code.locals.Ids()) {
+        const auto& v = code.locals.Get(id);
         Line(
             std::format(
-                "Local[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
+                "Local[{}] \"{}\" : Type[{}]", id.value, v.name, v.type.value));
       }
       Dedent();
     }
@@ -1163,9 +1167,8 @@ class MirDumper {
     if (!scope.exprs.empty()) {
       Line("Exprs:");
       Indent();
-      for (std::size_t i = 0; i < scope.exprs.size(); ++i) {
-        const ExprId id{static_cast<std::uint32_t>(i)};
-        Line(std::format("Expr[{}] {}", i, FormatExpr(scope, id)));
+      for (const ExprId id : scope.exprs.Ids()) {
+        Line(std::format("Expr[{}] {}", id.value, FormatExpr(scope, id)));
         const auto& expr = scope.exprs.Get(id);
         if (const auto* sc = std::get_if<StructConstructExpr>(&expr.data)) {
           Indent();
@@ -1513,6 +1516,9 @@ class MirDumper {
   std::string out_;
   int indent_ = 0;
   std::vector<const Class*> scope_stack_;
+  // The classes the walk has already printed, so a class reached by
+  // containment is not printed a second time at the top level.
+  std::set<std::size_t> dumped_;
   const CompilationUnit* unit_ = nullptr;
   const CallableCode* code_ = nullptr;
 };

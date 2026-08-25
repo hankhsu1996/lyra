@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -128,9 +129,9 @@ auto LowerDiagnosticSystemSubroutineCall(
   if (!is_fatal) return emit_call;
 
   // $fatal: emit happens as its own statement, then the implicit $finish call
-  // becomes this lowering's returned expression. The caller wraps the finish
-  // call in an AwaitStmt (the descriptor sets `suspends = true`) and the two
-  // statements land in the enclosing block in source order.
+  // becomes this lowering's returned expression. The finish call suspends, so
+  // the caller awaits it; the two statements land in the enclosing block in
+  // source order.
   const mir::ExprId emit_call_id = block.exprs.Add(std::move(emit_call));
   block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
 

@@ -2,9 +2,9 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -12,14 +12,18 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/id_allocator.hpp"
+#include "lyra/base/translation.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
@@ -38,6 +42,25 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// The other units whose variables `body` reads. A body is a tree of blocks --
+// a predicate that declares identifiers (LRM 12.6.3) puts the arms it guards in
+// one of its own -- so the answer is the union over the whole tree.
+auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
+    -> std::unordered_set<std::string> {
+  std::unordered_set<std::string> units;
+  for (const mir::ExprId id : body.exprs.Ids()) {
+    if (const auto* ref =
+            std::get_if<mir::ExternalUnitVariableRef>(&body.exprs.Get(id).data);
+        ref != nullptr && ref->unit_name != own_unit) {
+      units.insert(ref->unit_name);
+    }
+  }
+  for (const mir::BlockId id : body.child_scopes.Ids()) {
+    units.merge(UnitsReadBy(body.child_scopes.Get(id), own_unit));
+  }
+  return units;
+}
 
 // Lowers a package's variables (LRM 26.2) into unit-level static storage and
 // synthesizes the two receiver-less callables that bring them up at time zero:
@@ -83,8 +106,8 @@ auto PopulatePackageStaticVariables(
             .type = cell_type});
   };
 
-  for (std::size_t i = 0; i < scope.structural_data_objects.size(); ++i) {
-    const hir::StructuralDataObjectId hir_id{static_cast<std::uint32_t>(i)};
+  for (const hir::StructuralDataObjectId hir_id :
+       scope.structural_data_objects.Ids()) {
     const hir::StructuralDataObjectDecl& d =
         scope.structural_data_objects.Get(hir_id);
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
@@ -95,7 +118,7 @@ auto PopulatePackageStaticVariables(
     }
     const mir::TypeId value_type = unit_lowerer.TranslateType(d.type);
     const mir::TypeId cell_type = unit.types.ObservableCellOf(value_type);
-    if (!mir::IsCapabilityWrapperType(unit.types.Get(cell_type))) {
+    if (!unit.types.Get(cell_type).IsCapabilityWrapper()) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedExpressionForm,
           "a package variable of this type is not yet supported");
@@ -127,66 +150,75 @@ auto PopulatePackageStaticVariables(
     }
   }
 
-  // A package with variables always installs them.
-  if (!install_block.root_stmts.empty()) {
-    unit.callables.Add(
-        mir::CallableDecl{
-            .name = std::string{kPackageInstallCallableName},
-            .code = std::move(install_code),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt});
-  }
-  // Only a package with a value initializer needs the initialize callable. Its
-  // direct other-package variable reads are the by-name dependency the design
-  // root orders on: scan the initializer body for cross-package cell
-  // references.
-  if (!value_block.root_stmts.empty()) {
-    std::unordered_set<std::string> reads;
-    for (std::size_t i = 0; i < value_block.exprs.size(); ++i) {
-      const auto& data =
-          value_block.exprs.Get(mir::ExprId{static_cast<std::uint32_t>(i)})
-              .data;
-      if (const auto* ref = std::get_if<mir::ExternalUnitVariableRef>(&data);
-          ref != nullptr && ref->unit_name != unit.name) {
-        reads.insert(ref->unit_name);
-      }
-    }
-    unit.direct_initializer_package_reads.assign(reads.begin(), reads.end());
-    std::ranges::sort(unit.direct_initializer_package_reads);
-    unit.callables.Add(
-        mir::CallableDecl{
-            .name = std::string{kPackageInitializeCallableName},
-            .code = std::move(value_code),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt});
-  }
+  // Both phases exist for every package. A package that declares nothing gets
+  // an empty body for each, because zero declarations is a count and not a
+  // different shape -- the design root then calls both without first finding
+  // out whether this package supplied them.
+  //
+  // The initializer's direct other-package variable reads are the by-name
+  // dependency the design root orders on.
+  const std::unordered_set<std::string> reads =
+      UnitsReadBy(value_block, unit.name);
+  unit.direct_initializer_package_reads.assign(reads.begin(), reads.end());
+  std::ranges::sort(unit.direct_initializer_package_reads);
+
+  unit.callables.Add(
+      mir::CallableDecl{
+          .name = std::string{kPackageInstallCallableName},
+          .code = std::move(install_code),
+          .foreign = std::nullopt,
+          .virtual_dispatch = std::nullopt});
+  unit.callables.Add(
+      mir::CallableDecl{
+          .name = std::string{kPackageInitializeCallableName},
+          .code = std::move(value_code),
+          .foreign = std::nullopt,
+          .virtual_dispatch = std::nullopt});
   return {};
 }
 
 }  // namespace
 
+auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
+    -> ClassTranslation {
+  const mir::ClassId id = unit_.DeclareClass();
+  base::IdAllocator<mir::CallableId> callables;
+  std::vector<mir::CallableId> methods;
+  methods.reserve(decl.methods.size());
+  for (std::size_t m = 0; m < decl.methods.size(); ++m) {
+    methods.push_back(callables.Take());
+  }
+  return ClassTranslation{
+      .id = id,
+      .object_type = unit_.types.Intern(mir::ObjectType{.class_id = id}),
+      .methods = {decl.methods.size(), std::move(methods)}};
+}
+
 auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   unit_.name = hir_->name;
 
-  // Every class identity is minted before any type is translated, so a class
-  // handle type resolves to the managed-reference pointee that names it while
-  // the class bodies are still being built.
-  for (std::size_t i = 0; i < hir_->classes.size(); ++i) {
-    const hir::ClassId hir_id{static_cast<std::uint32_t>(i)};
-    const mir::ClassId mir_id = unit_.DeclareClass();
-    const mir::TypeId object_type =
-        unit_.types.Intern(mir::ObjectType{.class_id = mir_id});
-    MapClass(hir_id, mir_id, object_type);
+  // Every identity another declaration can name is taken before any
+  // declaration settles: a class handle type resolves to the pointee that names
+  // it, and an overriding method states its dispatch role against the slot its
+  // base was given. Nothing here reads a declaration, so no declaration has to
+  // settle before another.
+  std::vector<ClassTranslation> classes;
+  classes.reserve(hir_->classes.size());
+  for (const hir::ClassId hir_id : hir_->classes.Ids()) {
+    classes.push_back(TakeClassIdentities(hir_->classes.Get(hir_id)));
   }
+  class_translations_ = {hir_->classes.size(), std::move(classes)};
 
   // Every HIR type is MIR-representable: AST-to-HIR rejects the forms MIR has
   // no shape for, so this projection never fails.
-  for (std::size_t i = 0; i < hir_->types.size(); ++i) {
-    const hir::TypeId hir_id{static_cast<std::uint32_t>(i)};
-    const hir::Type& hir_type = hir_->types.Get(hir_id);
-    const mir::TypeId mir_id =
-        unit_.types.Intern(TranslateTypeData(hir_type.data));
-    MapType(hir_id, mir_id);
+  // A composite type's translation reads the translations of its components,
+  // which HIR minted before it, so the answers land one at a time and each one
+  // can see the ones before it.
+  type_translations_ =
+      base::Translation<hir::TypeId, mir::TypeId>{hir_->types.size()};
+  for (const hir::TypeId hir_id : hir_->types.Ids()) {
+    type_translations_.Append(
+        unit_.types.Intern(TranslateTypeData(hir_->types.Get(hir_id).data)));
   }
 
   // The prototype of every DPI-C import this unit takes part in (LRM 35.4),
@@ -197,24 +229,23 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     unit_.callables.Add(MakeForeignImportDecl(unit_, import));
   }
 
-  // Two-stage class lowering. Stage 1 publishes every class's shape so a
-  // peer body reads any cross-class fact from the shape store, not from a
-  // sibling lowerer's in-progress state. Stage 2 composes each class's
-  // executable form and commits it to the unit. Neither stage observes the
-  // other's iteration order.
+  // The remaining two stages. The first settles every class's declaration so a
+  // peer body reads any cross-class fact from the unit's declarations rather
+  // than from a sibling lowerer's in-progress state. The second composes each
+  // class's executable form and commits it to the unit. Neither stage observes
+  // any order: everything a declaration names of another was taken above.
   std::vector<ClassDeclLowerer> class_lowerers;
   class_lowerers.reserve(hir_->classes.size());
-  for (std::size_t i = 0; i < hir_->classes.size(); ++i) {
-    const hir::ClassId hir_id{static_cast<std::uint32_t>(i)};
+  for (const hir::ClassId hir_id : hir_->classes.Ids()) {
     class_lowerers.emplace_back(
-        *this, TranslateClass(hir_id), ClassObjectType(hir_id),
+        *this, hir_id, TranslateClass(hir_id), ClassObjectType(hir_id),
         hir_->classes.Get(hir_id));
   }
-  for (auto& class_lowerer : class_lowerers) {
+  for (ClassDeclLowerer& class_lowerer : class_lowerers) {
     auto r = class_lowerer.DeclareShape();
     if (!r) return std::unexpected(std::move(r.error()));
   }
-  for (auto& class_lowerer : class_lowerers) {
+  for (ClassDeclLowerer& class_lowerer : class_lowerers) {
     auto r = class_lowerer.PopulateBodies();
     if (!r) return std::unexpected(std::move(r.error()));
   }
@@ -238,7 +269,7 @@ auto UnitLowerer::LowerModuleUnit(PackageInitializationPlan package_init_plan)
   }
 
   // Two-sweep structural lowering: the first sweep mints every class identity
-  // and publishes its shape; the second lowers every body and commits the
+  // and settles its declaration; the second lowers every body and commits the
   // composed class to the unit. The design root's package initialization plan
   // rides on the root scope's lowering and is empty for a source module.
   StructuralScopeLowerer root(
@@ -263,23 +294,25 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
   // to a receiver-less callable, and each variable to unit-level static
   // storage, so a package produces no root class and never enters the
   // structural-scope body machinery. A package function reaches no static
-  // storage and no enclosing scope, so it lowers against an empty storage plan
-  // and no enclosing-scope lowerer. The frame has no owner class, so the
-  // produced body carries no `self`.
-  const CallableStoragePlan empty_storage_plan;
+  // storage and no enclosing scope, so it lowers against no enclosing-scope
+  // lowerer and is given nothing. The frame has no owner class, so the produced
+  // body carries no `self` -- and with no object to hang one under, none of its
+  // scopes owns a name node or a `disable` target either.
   const hir::StructuralScope& scope = hir_->root_scope;
+  const DeclaredScopes package_scope_nodes =
+      ScopesOwningNothing(scope.procedural_scopes.size());
 
   // The callable each package subroutine lowered to, recorded where it is
   // created so an export below names its own by identity.
-  std::vector<mir::CallableId> subroutine_callables;
-  subroutine_callables.reserve(scope.structural_subroutines.size());
+  base::Translation<hir::StructuralSubroutineId, mir::CallableId>
+      subroutine_callables{scope.structural_subroutines.size()};
   for (const hir::SubroutineDecl& src : scope.structural_subroutines) {
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.name, WalkFrame{},
-        empty_storage_plan);
+        package_scope_nodes, {});
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    subroutine_callables.push_back(unit_.callables.Add(
+    subroutine_callables.Append(unit_.callables.Add(
         mir::CallableDecl{
             .name = src.name,
             .code = *std::move(code_or),
@@ -292,7 +325,7 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
   // instance and calls the package's own free function by name.
   for (const hir::ForeignExportDecl& export_decl : scope.foreign_exports) {
     const mir::CallableId callable_id =
-        subroutine_callables[export_decl.subroutine.value];
+        subroutine_callables.Get(export_decl.subroutine);
     const mir::TypeId result_type =
         unit_.callables.Get(callable_id).code.result_type;
     // A package subroutine has no receiver and a package has one form, so its
@@ -368,9 +401,10 @@ auto UnitLowerer::MakeExternalFieldTarget(
 auto UnitLowerer::TranslateClassPropertyTarget(
     const hir::ClassPropertyTarget& target) -> mir::FieldRef {
   if (const auto* local = std::get_if<hir::LocalClassPropertyTarget>(&target)) {
+    const mir::ClassId owner = TranslateClass(local->owner);
     return mir::FieldRef{mir::FieldTarget{
-        .owner = TranslateClass(local->owner),
-        .slot = TranslateField(local->field)}};
+        .owner = owner,
+        .slot = GetClassShape(owner).field_translation.Get(local->field)}};
   }
   return mir::FieldRef{MakeExternalFieldTarget(
       std::get<hir::ExternalClassPropertyTarget>(target))};
