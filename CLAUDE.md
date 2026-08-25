@@ -27,6 +27,7 @@ buildifier -r .
 
 ```bash
 lyra check [files...]                 # Elaborate and report diagnostics; no lowering
+lyra dump ast [files...]              # Dump slang's elaborated AST as JSON
 lyra dump hir|mir|lir|llvm [files...] # Dump the named intermediate form
 lyra emit cpp -o <dir> [files...]     # Write a self-contained C++ project (sources + build.sh + runtime)
 lyra compile -o <dir> [files...]      # Emit that project and build it -> <dir>/program

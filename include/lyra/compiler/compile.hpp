@@ -67,6 +67,11 @@ struct CompileArtifacts {
   // nothing in this type carries that choice: asking for LIR after stopping at
   // MIR is a driver bug, and a bare dereference makes it undefined behaviour
   // instead of a report. Each accessor names the stage it wanted.
+  //
+  // Const, yet the compilation it hands back is not: what these artifacts own
+  // is the pointer, and slang takes its own compilation mutably to serialize
+  // or to look up the design root.
+  [[nodiscard]] auto Elaboration() const -> slang::ast::Compilation&;
   [[nodiscard]] auto HirUnits() const
       -> const std::vector<hir::CompilationUnit>&;
   [[nodiscard]] auto MirUnits() const
