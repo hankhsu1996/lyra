@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>
@@ -26,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
+#include "lyra/lowering/hir_to_mir/declared_instances.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
@@ -105,137 +105,101 @@ auto MakeBorrowedExternalUnitPointer(
       object_type, mir::PointerOwnership::kBorrowed);
 }
 
-// The type a borrowed handle on a `dim_count`-dimensional child takes: the bare
-// element type when the child is a single object, and one sequence wrapper per
-// dimension otherwise, outermost dimension outermost. The wrapper count is what
-// carries the child's cardinality, so a consumer indexes the handle rather than
-// consulting a separate description of its shape.
-auto WrapInSequences(
-    UnitLowerer& unit_lowerer, mir::TypeId element, std::size_t dim_count)
-    -> mir::TypeId {
-  mir::TypeId type = element;
-  for (std::size_t i = 0; i < dim_count; ++i) {
-    type = unit_lowerer.Unit().types.Intern(mir::VectorType{.element = type});
-  }
-  return type;
-}
-
-// Builds the value an external-unit instance member's borrowed handle takes,
-// with `dims` remaining at this level. At the innermost level the instance is
-// built (`make_unique<ExtUnit>`) and handed to the runtime tree to own
-// (`AddOwnedChild`); its Segment (label plus the accumulated indices) is its
-// by-name lookup key, and the borrowed pointer the tree hands back is the
-// value. An outer level enumerates its dimension and collects the level below
-// into a sequence. The whole member is therefore one composed value: the
-// instances come into being in the order the sequence lists them, and the
-// no-dimension case is the same expression with nothing wrapped around it.
-auto BuildExternalUnitLevel(
+// Builds one object an external-unit instance member declares, at `coords`, and
+// hands back the borrowed pointer the runtime tree returns. The object is built
+// and given to the tree to own; its Segment -- the label plus these coordinates
+// -- is the key a by-name descent matches it on. A scalar instance is the
+// coordinate-free case, built by the same expression.
+auto BuildOwnedInstance(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId parent_self,
     const std::string& runtime_label, mir::TypeId owning_pointer_type,
-    mir::TypeId borrowed_pointer_type, std::span<const std::uint32_t> dims,
-    std::vector<mir::ExprId>& indices) -> mir::ExprId {
+    mir::TypeId borrowed_pointer_type, std::span<const std::uint32_t> coords)
+    -> mir::ExprId {
   mir::Block& block = *frame.current_block;
   const auto& builtins = unit_lowerer.Unit().builtins;
 
-  if (dims.empty()) {
-    // The child's structural identity, fixed before its constructor runs.
-    // Indices reflect the position this leaf occupies in its enclosing
-    // dim chain (empty for a scalar instance).
-    const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
-        builtins.int_type, indices.size());
-    const mir::ExprId indices_id = block.exprs.Add(
-        mir::Expr{
-            .data = mir::ArrayLiteralExpr{.elements = indices},
-            .type = indices_type});
-    const mir::ExprId segment_id = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Construct{},
-                    .arguments =
-                        {block.exprs.Add(
-                             mir::MakeStringLiteral(
-                                 builtins.string, runtime_label)),
-                         indices_id}},
-            .type = builtins.hierarchy_segment});
-
-    const mir::ExprId ctor_call_id = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Construct{},
-                    .arguments = {parent_self, segment_id}},
-            .type = owning_pointer_type});
-
-    // The runtime tree owns the instance (AddOwnedChild consumes the freshly
-    // built owning pointer) and hands back a borrowed handle, which is what
-    // the parent keeps and what a layout-visible route step projects through.
-    const mir::ExprId add_id = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kAddOwnedChild},
-                    .arguments = {parent_self, ctor_call_id}},
-            .type = builtins.scope_ptr});
-    return block.exprs.Add(
-        mir::Expr{
-            .data = mir::PointerCastExpr{.operand = add_id},
-            .type = borrowed_pointer_type});
-  }
-
-  const std::span<const std::uint32_t> remaining_dims = dims.subspan(1);
-  std::vector<mir::ExprId> elements;
-  elements.reserve(dims.front());
-  for (std::uint32_t i = 0; i < dims.front(); ++i) {
+  std::vector<mir::ExprId> indices;
+  indices.reserve(coords.size());
+  for (const std::uint32_t coord : coords) {
     indices.push_back(block.exprs.Add(
-        mir::MakeIntLiteral(builtins.int_type, static_cast<std::int64_t>(i))));
-    elements.push_back(BuildExternalUnitLevel(
-        unit_lowerer, frame, parent_self, runtime_label, owning_pointer_type,
-        borrowed_pointer_type, remaining_dims, indices));
-    indices.pop_back();
+        mir::MakeIntLiteral(
+            builtins.int_type, static_cast<std::int64_t>(coord))));
   }
+  const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
+      builtins.int_type, indices.size());
+  const mir::ExprId indices_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(indices)},
+          .type = indices_type});
+  const mir::ExprId segment_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Construct{},
+                  .arguments =
+                      {block.exprs.Add(
+                           mir::MakeStringLiteral(
+                               builtins.string, runtime_label)),
+                       indices_id}},
+          .type = builtins.hierarchy_segment});
+
+  const mir::ExprId ctor_call_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Construct{},
+                  .arguments = {parent_self, segment_id}},
+          .type = owning_pointer_type});
+
+  // The runtime tree owns the instance (AddOwnedChild consumes the freshly
+  // built owning pointer) and hands back a borrowed handle, which is what
+  // the parent keeps and what a layout-visible route step projects through.
+  const mir::ExprId add_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kAddOwnedChild},
+                  .arguments = {parent_self, ctor_call_id}},
+          .type = builtins.scope_ptr});
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::VectorExpr{.elements = std::move(elements)},
-          .type = WrapInSequences(
-              unit_lowerer, borrowed_pointer_type, dims.size())});
+          .data = mir::PointerCastExpr{.operand = add_id},
+          .type = borrowed_pointer_type});
 }
 
-// Emits the constructor-body construction for each instance member: one
-// statement per member, storing the member's whole value -- one borrowed
-// pointer, or the nested sequence of them an array declares -- into its field.
-// The runtime tree owns every built instance.
+// Emits the constructor-body construction for every object the scope's instance
+// members declare: one built object per element, each stored into the field
+// that element was given. The runtime tree owns every built instance; the field
+// keeps the borrowed handle a layout-visible route projects through.
 void EmitInstanceMemberConstruction(
     StructuralScopeLowerer& lowerer, WalkFrame frame) {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  std::uint32_t next_instance = 0;
-  for (const auto& im : hir_scope.instance_members) {
-    const hir::InstanceMemberId id{next_instance++};
-    const mir::FieldId borrowed_handle = lowerer.InstanceBorrowedHandle(id);
-    const mir::TypeId handle_type =
-        frame.current_class->fields.Get(borrowed_handle).type;
-    const mir::ExprId parent_self = block.exprs.Add(
-        MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-    std::vector<mir::ExprId> indices;
-    const mir::ExprId value = BuildExternalUnitLevel(
-        unit_lowerer, frame, parent_self, im.instance_name,
-        MakeUniqueExternalUnitPointer(unit_lowerer, im.target_unit),
-        MakeBorrowedExternalUnitPointer(unit_lowerer, im.target_unit),
-        im.array_dims, indices);
-    const mir::ExprId member = block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            parent_self,
-            mir::FieldTarget{
-                .owner = frame.current_class_id, .slot = borrowed_handle},
-            handle_type));
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = block.exprs.Add(
-                mir::MakeAssignExpr(member, value, handle_type))});
+  for (const hir::InstanceMemberId id : hir_scope.instance_members.Ids()) {
+    const hir::InstanceMemberDecl& im = hir_scope.instance_members.Get(id);
+    const mir::TypeId owning =
+        MakeUniqueExternalUnitPointer(unit_lowerer, im.target_unit);
+    const mir::TypeId borrowed =
+        MakeBorrowedExternalUnitPointer(unit_lowerer, im.target_unit);
+    for (const DeclaredInstance& object : lowerer.Instances(id)) {
+      const mir::ExprId parent_self = block.exprs.Add(
+          MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+      const mir::ExprId value = BuildOwnedInstance(
+          unit_lowerer, frame, parent_self, im.instance_name, owning, borrowed,
+          object.coordinates);
+      const mir::ExprId member = block.exprs.Add(
+          mir::MakeFieldAccessExpr(
+              parent_self,
+              mir::FieldTarget{
+                  .owner = frame.current_class_id, .slot = object.handle},
+              borrowed));
+      block.AppendStmt(
+          mir::ExprStmt{
+              .expr = block.exprs.Add(
+                  mir::MakeAssignExpr(member, value, borrowed))});
+    }
   }
 }
 
@@ -412,11 +376,11 @@ auto BuildRouteAnchor(
 }
 
 // Descends one step into a child the receiver's scope declares: the typed
-// member access that projects the parent's handle on the child, then one
-// index per coordinate the step carries. A child with no declared dimensions
-// carries no coordinates, so the same walk reaches it with nothing to index. A
-// child whose body is another compilation unit leaves the receiver opaque from
-// there.
+// member access that projects the parent's handle on that child. The step's
+// coordinates are settled during elaboration, so they name one of the objects
+// the child declares rather than indexing anything here; a child with no
+// declared dimensions is the one-object case and carries none. A child whose
+// body is another compilation unit leaves the receiver opaque from there.
 auto AppendOwnedChildStep(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::OwnedChildStep& step) -> RouteReceiver {
@@ -425,41 +389,18 @@ auto AppendOwnedChildStep(
         "AppendOwnedChildStep: the step names a child of a scope this artifact "
         "lowers, so the route cannot have left the artifact before it");
   }
-  const auto& unit = unit_lowerer.Unit();
-  const OwnedChildAnchor anchor =
-      receiver.scope->TranslateOwnedChild(hir::StructuralHops{}, step.child);
+  const OwnedChildAnchor anchor = receiver.scope->TranslateOwnedChild(
+      hir::StructuralHops{}, step.child, step.indices);
   const mir::ClassId receiver_class = receiver.scope->ClassId();
-  mir::TypeId type = unit_lowerer.GetClassShape(receiver_class)
-                         .fields.Get(anchor.borrowed_handle)
-                         .type;
-  mir::ExprId access = block.exprs.Add(
+  const mir::TypeId type = unit_lowerer.GetClassShape(receiver_class)
+                               .fields.Get(anchor.borrowed_handle)
+                               .type;
+  const mir::ExprId access = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           receiver.expr,
           mir::FieldTarget{
               .owner = receiver_class, .slot = anchor.borrowed_handle},
           type));
-  for (const std::uint32_t index : step.indices) {
-    const auto* sequence =
-        std::get_if<mir::VectorType>(&unit.types.Get(type).data);
-    if (sequence == nullptr) {
-      throw InternalError(
-          "AppendOwnedChildStep: the step carries more coordinates than the "
-          "child member declares dimensions");
-    }
-    type = sequence->element;
-    access = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::VectorGetExpr{
-                    .vector = access,
-                    .index = block.exprs.Add(
-                        mir::Expr{
-                            .data =
-                                mir::MachineIntLiteral{
-                                    .value = static_cast<std::int64_t>(index)},
-                            .type = unit.builtins.machine_int64})},
-            .type = type});
-  }
   return RouteReceiver{.expr = access, .scope = anchor.target_scope};
 }
 
@@ -983,20 +924,26 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // it once per dimension, so reaching an element never has to name the member
   // a second time.
   {
-    std::vector<mir::FieldId> borrowed_handles;
-    borrowed_handles.reserve(hir_scope.instance_members.size());
+    std::vector<DeclaredInstances> declared;
+    declared.reserve(hir_scope.instance_members.size());
     for (const auto& im : hir_scope.instance_members) {
-      const mir::TypeId handle_type = WrapInSequences(
-          unit_lowerer,
-          MakeBorrowedExternalUnitPointer(unit_lowerer, im.target_unit),
-          im.array_dims.size());
-      borrowed_handles.push_back(shape.fields.Add(
-          mir::FieldDecl{
-              .name = std::format("{}_borrowed_handle", im.instance_name),
-              .type = handle_type}));
+      const mir::TypeId handle_type =
+          MakeBorrowedExternalUnitPointer(unit_lowerer, im.target_unit);
+      declared.push_back(
+          DeclaredInstances::Declare(
+              im.array_dims, [&](std::span<const std::uint32_t> coords) {
+                std::string name = im.instance_name;
+                for (const std::uint32_t coord : coords) {
+                  name += std::format("_{}", coord);
+                }
+                return shape.fields.Add(
+                    mir::FieldDecl{
+                        .name = std::format("{}_borrowed_handle", name),
+                        .type = handle_type});
+              }));
     }
-    instance_borrowed_handles_ = {
-        hir_scope.instance_members.size(), std::move(borrowed_handles)};
+    declared_instances_ = {
+        hir_scope.instance_members.size(), std::move(declared)};
   }
 
   // Every procedural scope becomes a name node -- an object carrying the

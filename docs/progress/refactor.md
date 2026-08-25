@@ -1003,6 +1003,24 @@ enough to warrant its own focused review.
       program is identifiable by signature and a per-unit pass cannot acquire that reach by a
       parameter change nobody notices.
 
+- [ ] R67 -- A package's variables are unreachable on the execution backend. A package cell is
+      reached by name rather than through a scope, so a read of one is an expression that names a
+      program-global cell; the execution backend has no place for that form and refuses it. The
+      cell's storage is not per-instance and hangs under no scope, so the member-storage path every
+      other variable takes does not describe it. Target: a program-global cell is storage the
+      execution session owns and hands out by name, reached by the same load and store any other
+      cell is. Nothing blocks it; it is the next wall a design with package variables meets there,
+      and the C++ backend has run them all along, so only the execution backend is behind.
+
+- [ ] R68 -- MIR's homogeneous sequence vocabulary has no producer. `VectorType`, the sequence value
+      that builds it, and the projection that reads one element are declared, translated to LIR, and
+      handled by both backends, while nothing in any lowering produces one. A node no pass emits is
+      a claim about the language that nothing tests: every arm handling it is unexercised, and the
+      first producer would discover whether those arms were ever right. Target: settle whether a
+      homogeneous sequence is a value MIR needs -- the associative literal its type doc names as the
+      motivating use is built another way today -- and either give it the producer that use implies
+      or drop the vocabulary and the arms that carry it.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -16,6 +18,7 @@
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
+#include "lyra/lowering/hir_to_mir/declared_instances.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
@@ -215,17 +218,17 @@ class StructuralScopeLowerer {
   // sibling-of-ancestor install when the child lives outside the referrer's
   // frame.
   [[nodiscard]] auto TranslateOwnedChild(
-      hir::StructuralHops hops, const hir::OwnedChildRef& child) const
-      -> OwnedChildAnchor {
+      hir::StructuralHops hops, const hir::OwnedChildRef& child,
+      std::span<const std::uint32_t> coords) const -> OwnedChildAnchor {
     if (hops.value == 0) {
       return std::visit(
           Overloaded{
               [&](const hir::InstanceMemberId& id) -> OwnedChildAnchor {
                 // A module instance's body is another compilation unit, so
-                // this artifact lowers no scope for it; the member is typed but
+                // this artifact lowers no scope for it; the object is typed but
                 // opaque from there.
                 return OwnedChildAnchor{
-                    .borrowed_handle = InstanceBorrowedHandle(id),
+                    .borrowed_handle = Instances(id).HandleAt(coords),
                     .target_scope = nullptr};
               },
               [&](const hir::GenerateChildRef& g) -> OwnedChildAnchor {
@@ -243,7 +246,7 @@ class StructuralScopeLowerer {
           "chain depth");
     }
     return parent_->TranslateOwnedChild(
-        hir::StructuralHops{hops.value - 1}, child);
+        hir::StructuralHops{hops.value - 1}, child, coords);
   }
 
   // Registry identity of the class this scope lowers to.
@@ -302,11 +305,10 @@ class StructuralScopeLowerer {
         hir::StructuralHops{hops.value - 1}, hir_id);
   }
 
-  // The handle this scope's class keeps on one instance member, which a route
-  // step navigates through to reach it.
-  [[nodiscard]] auto InstanceBorrowedHandle(hir::InstanceMemberId hir_id) const
-      -> mir::FieldId {
-    return instance_borrowed_handles_.Get(hir_id);
+  // The objects one instance member declares, and this scope's handle on each.
+  [[nodiscard]] auto Instances(hir::InstanceMemberId hir_id) const
+      -> const DeclaredInstances& {
+    return declared_instances_.Get(hir_id);
   }
 
  private:
@@ -322,8 +324,8 @@ class StructuralScopeLowerer {
       data_object_fields_;
   base::Translation<hir::RoutedRefId, RoutedRefMeta> routed_ref_targets_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;
-  base::Translation<hir::InstanceMemberId, mir::FieldId>
-      instance_borrowed_handles_;
+  base::Translation<hir::InstanceMemberId, DeclaredInstances>
+      declared_instances_;
   DeclaredScopes scopes_;
   base::Translation<hir::StructuralSubroutineId, DeclaredCallable>
       declared_subroutines_;

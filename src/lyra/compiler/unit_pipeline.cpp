@@ -27,9 +27,7 @@ auto LowerUnitPipeline(
   }
   artifacts.mir = *std::move(mir);
 
-  // A package is a namespace unit (LRM 26): it has no executable body, so it
-  // never joins the LIR path.
-  if (unit.kind == hir::UnitKind::kPackage || stop_after < StopAfter::kLir) {
+  if (stop_after < StopAfter::kLir) {
     return artifacts;
   }
 

@@ -187,12 +187,7 @@ auto Type::WrappedValueType() const -> TypeId {
 
 auto GetChildScope(const CompilationUnit& unit, TypeId type)
     -> std::optional<ChildScope> {
-  TypeId leaf = type;
-  while (const auto* vec =
-             std::get_if<VectorType>(&unit.types.Get(leaf).data)) {
-    leaf = vec->element;
-  }
-  const auto pointee = AsUniquePointee(unit, leaf);
+  const auto pointee = AsUniquePointee(unit, type);
   if (!pointee.has_value()) {
     return std::nullopt;
   }

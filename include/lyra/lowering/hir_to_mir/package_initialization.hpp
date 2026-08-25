@@ -28,12 +28,13 @@ inline constexpr std::string_view kPackageInitializeCallableName =
 
 // The design root's plan for initializing package variables (LRM 26.2 / 10.5),
 // resolved once by the whole-design assembly. Both lists name every package of
-// the design: a package that declares nothing runs an empty body, so nothing
-// asks first whether a package has work. `install_order` is any stable order,
-// the phase-1 install being order-independent; `value_initialize_order` is the
-// best-effort order the assembly chose (a dependency before its dependent where
-// a direct read makes it known, a stable order otherwise). The design root
-// realizes both into calls; it never re-derives the plan.
+// the design: a package that declares nothing runs a body that does nothing, so
+// nothing asks first what a given package supplied. `install_order` is any
+// stable order, the phase-1 install being order-independent;
+// `value_initialize_order` is the best-effort order the assembly chose (a
+// dependency before its dependent where a direct read makes it known, a stable
+// order otherwise). The design root realizes both into calls; it never
+// re-derives the plan.
 struct PackageInitializationPlan {
   std::vector<std::string> install_order;
   std::vector<std::string> value_initialize_order;

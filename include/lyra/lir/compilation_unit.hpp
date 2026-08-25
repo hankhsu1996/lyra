@@ -52,8 +52,10 @@ struct Class {
 };
 
 // The LIR of one compilation unit: its own type graph, its classes, every
-// function it compiles, and the top class. Self-contained -- it holds no
-// reference to the MIR it was lowered from.
+// function it compiles, and the class its object tree is rooted at, when it
+// roots one -- a unit that declares only a namespace compiles functions and
+// roots no objects. Self-contained -- it holds no reference to the MIR it was
+// lowered from.
 //
 // Every body is a function here, whatever declared it, and its position is the
 // identity a call names. A class reaches its own bodies the same way any other
@@ -62,7 +64,7 @@ struct CompilationUnit {
   base::Arena<Type, TypeId> types;
   base::Registry<Class, ClassId> classes;
   base::Registry<Function, FunctionId> functions;
-  ClassId root{};
+  std::optional<ClassId> root;
 };
 
 }  // namespace lyra::lir

@@ -191,10 +191,9 @@ auto BuildCancellableRegion(
   const BindingOriginId origin =
       BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId caught = frame.bindings->Declare(
-      origin,
-      mir::LocalDecl{
-          .name = "effect_" + std::to_string(source.value),
-          .type = effect_type});
+      origin, mir::LocalDecl{
+                  .name = "effect_" + std::to_string(source.value),
+                  .type = effect_type});
 
   const mir::ExprId caught_ref =
       block.exprs.Add(mir::MakeLocalRefExpr(caught, effect_type));

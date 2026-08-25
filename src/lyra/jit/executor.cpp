@@ -442,12 +442,6 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
         .kind = runtime::MemberStorageKind::kBorrowedHandle,
         .domain = runtime::ValueDomain::kNone};
   }
-  // An array of owned children is realized the same way one child is: the
-  // storage a member place reaches is the handle sequence itself, held behind
-  // one borrowed box whatever its cardinality.
-  if (const auto* vector = std::get_if<lir::VectorType>(&data)) {
-    return DescribeMember(unit, vector->element);
-  }
   // A chandle member is a value the instance owns but no process subscribes to
   // (LRM 6.14), stored inline in its slot rather than behind an observable
   // cell.
@@ -529,14 +523,9 @@ struct LoadedScopeClass {
 };
 
 // The class an owned-child member reaches, absent for a member that reaches
-// storage instead. A sequence of children wraps the same pointer once per
-// dimension, so the answer is the same at any depth.
+// storage instead.
 auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<lir::ClassId> {
-  if (const auto* vector =
-          std::get_if<lir::VectorType>(&unit.types.Get(type).data)) {
-    return OwnedChildClass(unit, vector->element);
-  }
   const std::optional<lir::TypeId> pointee = lir::Pointee(unit.types, type);
   if (!pointee) {
     return std::nullopt;
@@ -575,7 +564,9 @@ auto LoadScopeClasses(
       }
     }
   };
-  descend(descend, unit.root);
+  if (unit.root.has_value()) {
+    descend(descend, *unit.root);
+  }
   return loaded;
 }
 
@@ -615,8 +606,11 @@ auto Execute(
         std::make_move_iterator(unit_classes.end()));
   }
   loaded_units.push_back(&root_unit);
+  if (!root_unit.root.has_value()) {
+    throw InternalError("jit executor: the design root roots no object tree");
+  }
   const std::string root_class_name =
-      root_unit.classes.Get(root_unit.root).name;
+      root_unit.classes.Get(*root_unit.root).name;
   std::vector<LoadedScopeClass> root_classes =
       LoadScopeClasses(root_unit, root_metadata);
   loaded.insert(

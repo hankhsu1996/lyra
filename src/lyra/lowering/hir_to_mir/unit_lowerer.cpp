@@ -67,8 +67,8 @@ auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
 // `Install` installs every cell's declared representation and default, and
 // `Initialize` runs each LRM 10.5 value initializer through its cell. Neither
 // takes a parameter: a package has no `self`, and neither operation needs one.
-// The design root installs every package before initializing any,
-// so a value initializer always reaches installed storage. A package variable
+// The design root installs every package before initializing any, so a value
+// initializer always reaches installed storage. A package variable
 // is reached by name (`unit::name`), so a variable initializer's references
 // to sibling or other-package variables lower through the same by-name path
 // with no enclosing scope or receiver; the other-package reads are recorded
@@ -150,13 +150,13 @@ auto PopulatePackageStaticVariables(
     }
   }
 
-  // Both phases exist for every package. A package that declares nothing gets
-  // an empty body for each, because zero declarations is a count and not a
-  // different shape -- the design root then calls both without first finding
-  // out whether this package supplied them.
+  // Every package publishes both entries. A package that declares no variable
+  // publishes a body that installs none and a body that initializes none --
+  // zero declarations is a count, not another kind of package -- so the design
+  // root calls both without first finding out what this one supplied.
   //
   // The initializer's direct other-package variable reads are the by-name
-  // dependency the design root orders on.
+  // dependency the design root prefers an order on.
   const std::unordered_set<std::string> reads =
       UnitsReadBy(value_block, unit.name);
   unit.direct_initializer_package_reads.assign(reads.begin(), reads.end());

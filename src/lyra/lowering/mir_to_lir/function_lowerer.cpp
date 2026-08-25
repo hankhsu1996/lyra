@@ -259,11 +259,14 @@ auto LowerCallTarget(
                       return lir::CallTarget{
                           lir::BuiltinTarget{.fn = fn, .qualifier = qualifier}};
                     },
-                    [&](const mir::ExternalUnitCallableTarget&)
+                    [&](const mir::ExternalUnitCallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      return Unsupported(
-                          "mir_to_lir: a cross-unit package subroutine call is "
-                          "not yet lowerable to LIR");
+                      // A callable of another unit's namespace is outside this
+                      // unit and is reached by its symbol, which carries that
+                      // unit because a namespace name is unique only inside it.
+                      return lir::CallTarget{lir::ForeignTarget{
+                          .symbol = std::format(
+                              "{}.{}", t.unit_name, t.callable_name)}};
                     },
                     [&](const mir::ExternalUnitClassMethodTarget&)
                         -> diag::Result<lir::CallTarget> {

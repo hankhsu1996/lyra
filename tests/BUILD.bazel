@@ -118,6 +118,7 @@ cc_test(
         "--suite",
         "jit",
     ],
+    copts = LYRA_COPTS,
     data = [
         "suites.yaml",
         "//:lyra",

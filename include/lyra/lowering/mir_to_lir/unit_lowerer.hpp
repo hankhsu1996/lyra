@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -81,6 +82,10 @@ class UnitLowerer {
   // class, so classes take theirs in any order and none waits on another.
   [[nodiscard]] auto TakeClassIdentities(const mir::Class& cls)
       -> ClassIdentities;
+
+  // The symbol a callable of this unit's namespace is emitted and linked under.
+  [[nodiscard]] auto UnitCallableSymbol(const mir::CallableDecl& callable) const
+      -> std::string;
 
   auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
   // Records `what` (a human phrase like "a closure") as the unit's first

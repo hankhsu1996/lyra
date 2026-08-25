@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <format>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -57,6 +58,24 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
 
+  // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
+  // is a body like any other and becomes a function of the unit. Only one this
+  // program defines does: a DPI-C import is reached as a foreign symbol and
+  // declares no body here.
+  for (const mir::CallableId id : mir_->callables.Ids()) {
+    const mir::CallableDecl& callable = mir_->callables.Get(id);
+    if (!callable.code.body.has_value()) {
+      continue;
+    }
+    auto fn =
+        FunctionLowerer(*this, callable.code, UnitCallableSymbol(callable))
+            .Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    out_.functions.Add(*std::move(fn));
+  }
+
   for (const mir::ClassId id : mir_->classes.Ids()) {
     auto cls = LowerClass(id, mir_->GetClass(id));
     if (!cls) {
@@ -87,6 +106,18 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     return std::unexpected(std::move(*type_error_));
   }
   return std::move(out_);
+}
+
+auto UnitLowerer::UnitCallableSymbol(const mir::CallableDecl& callable) const
+    -> std::string {
+  // A foreign name is program-global and stands on its own (LRM 35.4). Every
+  // other namespace callable is unique only within its unit, while the whole
+  // program links into one name space, so the unit qualifies it -- the same
+  // reason a class qualifies the bodies it owns.
+  if (callable.foreign.has_value()) {
+    return callable.LinkedName();
+  }
+  return std::format("{}.{}", mir_->name, callable.name);
 }
 
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
