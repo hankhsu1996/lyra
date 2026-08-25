@@ -60,6 +60,18 @@ Rules:
         cites a project doc. State the stable contract inline instead.
         Scope: every .cpp/.hpp under src/, include/.
 
+  S008  No deriving a pool identity from a count -- a `SomethingId`
+        brace-initialized from the counter of a `for` loop bounded by a
+        `.size()`, or from a `.size()` outright. A pool confers identity; a walk
+        reads those identities back from it (`for (const XId id : pool.Ids())`)
+        and a producer takes one from it (`pool.Add` / `pool.Declare`). Deriving
+        one instead asserts that the pool numbers exactly by position and that
+        nothing else has added meanwhile -- assumptions the pool never made, and
+        which fail silently. A structural position is a different thing and is
+        spared: `base::ComponentIndex` does not end in `Id`, which is the whole
+        distinction.
+        Scope: every .cpp/.hpp under src/, include/.
+
 Usage:
   python3 tools/policy/check_cpp_style.py
 """
@@ -143,6 +155,26 @@ DOC_REFERENCE_PATTERNS = [
     (re.compile(r"\b[\w-]+\.md\b"), ".md document"),
     (re.compile(r"(?i)\binvariant\s+\d+\b"), "numbered invariant"),
 ]
+
+
+# S008: a `for` loop counting from zero to some `.size()`, and an id
+# brace-initialized from a bare name. The loop header may wrap, so the counter
+# is collected over the whole file rather than per line.
+SIZE_LOOP_COUNTER_PATTERN = re.compile(
+    r"for\s*\(\s*(?:const\s+)?"
+    r"(?:std::size_t|std::uint32_t|std::int32_t|unsigned|int|auto)\s+"
+    r"(\w+)\s*=\s*0\s*;\s*\1\s*<\s*[^;]*?\.size\(\)",
+    re.S,
+)
+ID_FROM_NAME_PATTERN = re.compile(
+    r"\b(\w*Id)\s*\{\s*(?:static_cast\s*<[^>]*>\s*\(\s*)?(\w+)\s*[\)\}]",
+    re.S,
+)
+# An id built straight out of a count, with or without arithmetic on it.
+ID_FROM_SIZE_PATTERN = re.compile(
+    r"\b(\w*Id)\s*\{\s*(?:static_cast\s*<[^>]*>\s*\(\s*)?[^{};]*?\.size\(\)",
+    re.S,
+)
 
 
 def iter_cpp_files(repo_root: Path, roots=("src", "include", "tests")):
@@ -288,6 +320,38 @@ def check_s007(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_s008(repo_root: Path) -> list[str]:
+    """Forbid deriving a pool identity from a loop counter in src/ and include/."""
+    errors = []
+    for path, rel in iter_cpp_files(repo_root, roots=("src", "include")):
+        text = path.read_text()
+        counters = {m.group(1) for m in SIZE_LOOP_COUNTER_PATTERN.finditer(text)}
+        if not counters:
+            continue
+        for m in ID_FROM_NAME_PATTERN.finditer(text):
+            id_type, source = m.group(1), m.group(2)
+            if source not in counters:
+                continue
+            lineno = text.count("\n", 0, m.start()) + 1
+            errors.append(
+                f"  {rel}:{lineno}: S008 {id_type} built from loop counter "
+                f"'{source}'; walk the pool's own ids with Ids() instead"
+            )
+    for path, rel in iter_cpp_files(repo_root, roots=("src", "include")):
+        text = path.read_text()
+        for m in ID_FROM_SIZE_PATTERN.finditer(text):
+            # A trailing return type opens a body brace too, so `-> XId {` puts
+            # an id name in front of whatever the body happens to compute.
+            if "->" in text[max(0, m.start() - 8):m.start()]:
+                continue
+            lineno = text.count("\n", 0, m.start()) + 1
+            errors.append(
+                f"  {rel}:{lineno}: S008 {m.group(1)} built from a count; take "
+                f"the identity from the pool that confers it instead"
+            )
+    return errors
+
+
 def run_self_tests() -> bool:
     def expect(cond, msg):
         if not cond:
@@ -370,6 +434,48 @@ def run_self_tests() -> bool:
                  "S007 spares unnumbered invariant")
     ok &= expect(not doc_hits("the explicit-receiver model"),
                  "S007 spares plain prose")
+
+    def counters(text):
+        return {m.group(1) for m in SIZE_LOOP_COUNTER_PATTERN.finditer(text)}
+
+    def id_sources(text):
+        return {(m.group(1), m.group(2))
+                for m in ID_FROM_NAME_PATTERN.finditer(text)}
+
+    ok &= expect(
+        counters("for (std::size_t i = 0; i < u.types.size(); ++i) {") == {"i"},
+        "S008 counter")
+    ok &= expect(
+        counters("for (std::size_t gen_idx = 0;\n"
+                 "     gen_idx < s.generates.size(); ++gen_idx) {")
+        == {"gen_idx"},
+        "S008 counter across a wrapped header")
+    ok &= expect(not counters("for (const TypeId id : u.types.Ids()) {"),
+                 "S008 spares an Ids() walk")
+    ok &= expect(not counters("for (std::size_t i = 0; i < n; ++i) {"),
+                 "S008 spares a plain bound")
+    ok &= expect(
+        ("TypeId", "i") in id_sources("u.types.Get(TypeId{"
+                                      "static_cast<std::uint32_t>(i)})"),
+        "S008 id through a cast")
+    ok &= expect(("FieldId", "i") in id_sources("mir::FieldId{i}"),
+                 "S008 id direct")
+    ok &= expect(not id_sources("base::ComponentIndex{i}"),
+                 "S008 spares a structural position")
+    ok &= expect(
+        ID_FROM_SIZE_PATTERN.search(
+            "return GenerateId{static_cast<std::uint32_t>(generates.size())};"),
+        "S008 id from a count")
+    ok &= expect(
+        ID_FROM_SIZE_PATTERN.search(
+            "lir::BlockId{static_cast<std::uint32_t>(b.size() - 1)}"),
+        "S008 id from a count with arithmetic")
+    ok &= expect(
+        not ID_FROM_SIZE_PATTERN.search("Translation<TypeId, T>{t.size()}"),
+        "S008 spares a count passed as a count")
+    ok &= expect(
+        not ID_FROM_SIZE_PATTERN.search("base::ComponentIndex{v.size() - 1}"),
+        "S008 spares a structural position from a count")
     return ok
 
 
@@ -382,6 +488,7 @@ CHECKS = [
     ("S005 cast-to-void unused-parameter/variable suppression", check_s005),
     ("S006 [[maybe_unused]] suppression", check_s006),
     ("S007 project-documentation references in comments", check_s007),
+    ("S008 pool identity rebuilt from a loop counter", check_s008),
 ]
 
 

@@ -21,7 +21,7 @@ auto BindEndpoint(
                 hir::StructuralHops{0}, m.var);
             const mir::TypeId field_type =
                 frame.EnclosingClassAtHops(mir::EnclosingHops{0})
-                    .fields.Get(field)
+                    .cls->fields.Get(field)
                     .type;
             return BoundEndpoint{
                 .field = field,

@@ -304,22 +304,20 @@ auto LowerSubroutineDeclImpl(
     return std::unexpected(std::move(return_type_or.error()));
   }
 
-  hir::ProceduralBody body;
+  hir::ProceduralBody body = unit_lowerer.MakeProceduralBody(sym);
   ConsumedBodyExpressions consumed_body_exprs;
   if (base_call_ast != nullptr) consumed_body_exprs.insert(base_call_ast);
   ProcessLowerer lowerer(unit_lowerer, sym, std::move(consumed_body_exprs));
   lowerer.AnalyzeLifetimeExtended(sym.getBody());
 
-  // Open the root lexical scope accumulators for this subroutine body. The
-  // formal params, the implicit result var, and every body-tree var declared
-  // below feed into these vectors and become the root scope's direct
-  // declarations. Nested begin/end / fork / foreach scopes push their ids
-  // into the root scope's children list.
-  std::vector<hir::ProceduralVarId> root_declarations;
-  std::vector<hir::ProceduralScopeId> root_children;
+  // A subroutine's root scope is named by the source (LRM 23.9), so a
+  // hierarchical path reaches into it and the formals, the implicit result
+  // var, and every body-tree declaration below all land in it.
+  OpenProceduralScope root{
+      unit_lowerer.LookupProceduralScope(sym),
+      hir::ProceduralScopeKind::kSubroutineRoot, std::string{sym.name}};
   const WalkFrame body_frame =
-      frame.WithProceduralBody(&body, &body.exprs, &body.patterns)
-          .WithProceduralScopeAccumulators(&root_declarations, &root_children);
+      frame.WithProceduralBody(&body).WithOpenScope(&root);
 
   std::vector<hir::SubroutineParam> params;
   params.reserve(sym.getArguments().size());
@@ -370,20 +368,10 @@ auto LowerSubroutineDeclImpl(
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
   body.root_stmt = body.stmts.Add(*std::move(body_stmt_or));
 
-  // The root scope is filled into the enclosing structural scope's procedural
-  // scopes when one is available (a class method body has no structural-scope
-  // context; its locals are placed directly on the class and the root-scope
-  // record has no consumer).
-  if (frame.current_structural_scope != nullptr) {
-    auto& scopes = frame.current_structural_scope->procedural_scopes;
-    body.root_scope = unit_lowerer.LookupProceduralScope(sym);
-    scopes.Define(
-        body.root_scope,
-        hir::ProceduralScopeDecl{
-            .label = std::nullopt,
-            .direct_declarations = std::move(root_declarations),
-            .direct_child_scopes = std::move(root_children)});
-  }
+  // The registry the root is defined in belongs to whichever declaration scope
+  // owns this body -- the enclosing structural scope for a free subroutine, the
+  // class for a method.
+  body.root_scope = frame.SealScope(std::move(root));
 
   return SubroutineLoweringResult{
       .decl =
@@ -422,8 +410,8 @@ auto LowerConstructorDecl(
 }
 
 auto LowerMethodPrototypeDecl(
-    UnitLowerer& unit_lowerer, const slang::ast::MethodPrototypeSymbol& proto)
-    -> diag::Result<hir::SubroutineDecl> {
+    UnitLowerer& unit_lowerer, const slang::ast::MethodPrototypeSymbol& proto,
+    WalkFrame class_frame) -> diag::Result<hir::SubroutineDecl> {
   const auto& mapper = unit_lowerer.SourceMapper();
 
   auto return_type_or = unit_lowerer.InternType(
@@ -432,19 +420,19 @@ auto LowerMethodPrototypeDecl(
     return std::unexpected(std::move(return_type_or.error()));
   }
 
-  hir::ProceduralBody body;
+  hir::ProceduralBody body = unit_lowerer.MakeProceduralBody(proto);
   ProcessLowerer lowerer(unit_lowerer, proto);
 
   // A pure virtual prototype has no body to walk, but it still has parameter
-  // vars whose types the signature must expose. The scope accumulators are
-  // written into by `AddProceduralVar` and discarded on return -- a prototype
-  // has no lexical body scope for downstream consumers to attach to.
-  std::vector<hir::ProceduralVarId> root_declarations;
-  std::vector<hir::ProceduralScopeId> root_children;
+  // vars whose types the signature must expose, and those vars belong to the
+  // prototype's root scope the same way a defined method's do. Having no body,
+  // it is nothing a `disable` can name, so its identity is minted here rather
+  // than ahead of the bodies.
+  OpenProceduralScope root{
+      class_frame.ProceduralScopes().Declare(),
+      hir::ProceduralScopeKind::kSubroutineRoot, std::string{proto.name}};
   const WalkFrame body_frame =
-      WalkFrame{}
-          .WithProceduralBody(&body, &body.exprs, &body.patterns)
-          .WithProceduralScopeAccumulators(&root_declarations, &root_children);
+      class_frame.WithProceduralBody(&body).WithOpenScope(&root);
 
   std::vector<hir::SubroutineParam> params;
   params.reserve(proto.getArguments().size());
@@ -460,6 +448,8 @@ auto LowerMethodPrototypeDecl(
         hir::SubroutineParam{
             .var = var, .direction = ParamDirectionOf(*formal)});
   }
+
+  body.root_scope = class_frame.SealScope(std::move(root));
 
   return hir::SubroutineDecl{
       .name = std::string{proto.name},

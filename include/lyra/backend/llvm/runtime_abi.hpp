@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -112,10 +113,14 @@ class RuntimeAbi {
   // construct entry to build its subtree, and returns the owning handle. The
   // definition is an opaque cross-unit reference the generated code never
   // inspects.
-  auto MakeUnit() -> llvm::FunctionCallee;
+  auto MakeScope() -> llvm::FunctionCallee;
 
   // Attaches a freshly built child to its parent's containment edge, returning
   // the child as a borrowed scope handle.
+  // The receiver scope's hierarchical name (LRM 21.2.1.5), returned as a
+  // transient string handle.
+  auto HierarchicalPath() -> llvm::FunctionCallee;
+
   auto AddOwnedChild() -> llvm::FunctionCallee;
 
   // The address of an instance's member storage, by class-local member index.
@@ -186,10 +191,11 @@ class RuntimeAbi {
 
   // The dynamic-array constructors (LRM 7.5.1 / 10.9.1): the empty array, the
   // sized array, the sized-from-source array, and the assignment-pattern array.
-  // Each takes the element default as a boxed prototype; `New` / `NewCopy` lead
-  // with the size, `FromLiteral` follows the prototype with the boxed element
-  // span. Element read / functional update / delete / size resolve through the
-  // generic value-builtin path, not a dedicated entry here.
+  // Each takes the element default as a boxed prototype, since an element's
+  // default cannot be derived from the array's size alone; the sized forms lead
+  // with that size and the pattern form follows the prototype with the boxed
+  // element span. Element read, functional update, delete, and size are generic
+  // value operations and resolve through that path rather than an entry here.
   auto MakeDynamicArrayDefault() -> llvm::FunctionCallee;
   auto MakeDynamicArrayNew() -> llvm::FunctionCallee;
   auto MakeDynamicArrayNewCopy() -> llvm::FunctionCallee;

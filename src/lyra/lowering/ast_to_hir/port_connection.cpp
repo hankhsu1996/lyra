@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -36,19 +37,19 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
 }
 
 // Records one instance's port connections as HIR. The instance is reached
-// from its owning scope by `head` with `element_indices` selecting the
-// element when the head is an instance array (empty for a scalar); each
-// port becomes one descent segment on the head, so a connection is recorded
-// the same way whether the instance stands alone or sits at `c[i][j]` in
-// an array. The child port is held as one cross-unit reference and the
-// connection verbatim with its direction; HIR-to-MIR realizes it
-// (LRM 23.3.3).
+// from its owning scope as `child`, with `element_indices` selecting the
+// element when it is an instance array (empty for a scalar); each port is a
+// by-name leaf past that step, so a connection is recorded the same way
+// whether the instance stands alone or sits at `c[i][j]` in an array. The
+// child port is held as one cross-unit reference and the connection verbatim
+// with its direction; HIR-to-MIR realizes it (LRM 23.3.3).
 auto ConnectElementPorts(
     StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
-    const slang::ast::InstanceSymbol& inst, hir::DownwardHead head,
+    const slang::ast::InstanceSymbol& inst, hir::OwnedChildRef child,
     ScopeFrameId home_frame, std::vector<std::uint32_t> element_indices,
     WalkFrame frame) -> diag::Result<void> {
-  head.head_indices = std::move(element_indices);
+  const hir::OwnedChildStep instance_step{
+      .child = child, .indices = std::move(element_indices)};
   const auto span = unit_lowerer.SourceMapper().PointSpanOf(inst.location);
 
   for (const auto* conn : inst.getPortConnections()) {
@@ -104,8 +105,8 @@ auto ConnectElementPorts(
     if (is_ref) {
       // A `const ref` port shares storage but forbids the child writing through
       // it (LRM 23.3.3.2); the child member is a read-only reference the parent
-      // still rebinds at construction, a storage shape distinct from the
-      // rebindable plain `ref`, so it waits for its own cut.
+      // still rebinds at construction, which is a storage shape of its own and
+      // not the rebindable plain `ref`.
       if (const auto* iv = internal->as_if<slang::ast::VariableSymbol>();
           iv != nullptr && iv->flags.has(slang::ast::VariableFlags::Const)) {
         return PortConnectionUnsupported(
@@ -113,16 +114,20 @@ auto ConnectElementPorts(
       }
     }
 
-    std::vector<hir::PathSegment> path;
-    path.push_back(
-        hir::PathSegment{.name = std::string{internal->name}, .indices = {}});
+    const auto port_recipe = [&]() -> hir::RoutedPathRecipe {
+      return hir::RoutedPathRecipe{
+          .head = hir::InUnitHead{.hops = {}},
+          .steps = {hir::PathStep{instance_step}},
+          .leaf = hir::OpaqueLeaf{.name = std::string{internal->name}},
+          .type = *type_id};
+    };
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent routed reference; a `ref` port is bound once in the resolve
     // phase, so it keeps only the by-name reach.
     const auto cell_endpoint = [&]() -> hir::PortEndpoint {
       return hir::PortCellEndpoint{
           .cell = frame.Exprs().Add(unit_lowerer.MakeRoutedMemberRef(
-              *internal, home_frame, head, path, *type_id, span))};
+              *internal, home_frame, port_recipe(), span))};
     };
 
     hir::PortDirection direction{};
@@ -187,8 +192,7 @@ auto ConnectElementPorts(
       }
       case slang::ast::ArgumentDirection::Ref: {
         direction = hir::PortDirection::kRef;
-        endpoint = hir::RoutedPathRecipe{
-            .head = head, .path = std::move(path), .type = *type_id};
+        endpoint = port_recipe();
         auto peer_or = scope.LowerExpr(*expr, frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
         peer = frame.Exprs().Add(*std::move(peer_or));
@@ -199,7 +203,7 @@ auto ConnectElementPorts(
             "ConnectElementPorts: inout reached the connection switch");
     }
 
-    frame.current_structural_scope->port_connections.push_back(
+    frame.current_structural_scope->port_connections.Add(
         hir::PortConnection{
             .span = span,
             .direction = direction,
@@ -217,7 +221,7 @@ auto ConnectElementPorts(
 // routes each to the right cell.
 auto ConnectArrayElements(
     StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
-    const slang::ast::InstanceArraySymbol& array, hir::DownwardHead head,
+    const slang::ast::InstanceArraySymbol& array, hir::OwnedChildRef child,
     ScopeFrameId home_frame, const std::vector<std::uint32_t>& index_prefix,
     WalkFrame frame) -> diag::Result<void> {
   for (std::uint32_t i = 0; i < array.elements.size(); ++i) {
@@ -227,12 +231,12 @@ auto ConnectArrayElements(
     if (element->kind == slang::ast::SymbolKind::InstanceArray) {
       auto r = ConnectArrayElements(
           scope, unit_lowerer, element->as<slang::ast::InstanceArraySymbol>(),
-          head, home_frame, element_prefix, frame);
+          child, home_frame, element_prefix, frame);
       if (!r) return std::unexpected(std::move(r.error()));
       continue;
     }
     auto r = ConnectElementPorts(
-        scope, unit_lowerer, element->as<slang::ast::InstanceSymbol>(), head,
+        scope, unit_lowerer, element->as<slang::ast::InstanceSymbol>(), child,
         home_frame, std::move(element_prefix), frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
@@ -255,7 +259,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       }
       auto r = ConnectElementPorts(
           *this, *owner_, member.as<slang::ast::InstanceSymbol>(),
-          binding->head, binding->home_frame, {}, frame);
+          binding->child, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
       // A zero-element array (`Child c[0]`, LRM 23.3.2) constructs no element
@@ -266,7 +270,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       }
       auto r = ConnectArrayElements(
           *this, *owner_, member.as<slang::ast::InstanceArraySymbol>(),
-          binding->head, binding->home_frame, {}, frame);
+          binding->child, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }
   }

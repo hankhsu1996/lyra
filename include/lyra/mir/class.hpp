@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/callable.hpp"
@@ -14,7 +15,6 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/param.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -25,9 +25,9 @@ namespace lyra::mir {
 // A class-level static constant: a named immutable value the class owns with
 // static storage, built once at compile time from `value` (the root of the
 // expression tree `body` owns; its `stmts` are empty, only `exprs` is used).
-// The data dual of a static method. A runtime scope's generated-behavior record
-// (its `ScopeProgram`, or `UnitDefinition` for a unit instance) is one such
-// constant; the constructor hands its address to the runtime base.
+// The data dual of a static method. A runtime scope's generated-behavior
+// record is one such constant; the constructor hands its address to the
+// runtime base.
 struct StaticConstantDecl {
   std::string name;
   TypeId type;
@@ -77,59 +77,10 @@ struct ConstructorDecl {
   std::vector<FieldInit> member_inits;
 };
 
-// The declaration-facing view of a callable: the facts a peer's body lowering
-// needs to know about it while its own body is being lowered. The callable's
-// body itself is not here; the finished `CallableDecl` on the class carries the
-// body once every body composes. `virtual_dispatch` is here so a peer that
-// calls this callable picks between direct and virtual invocation from a stated
-// fact, with no dependency on which class's body lowered first.
-struct CallableSignature {
-  std::optional<VirtualDispatchRole> virtual_dispatch;
-};
-
-// The structural portion of a class declaration: the facts a peer needs to
-// read about a class while its own body is being lowered. Each field has the
-// same semantics as the same-named field on `Class`; the executable parts
-// (`constructor`, callable bodies) are not represented here.
-struct ClassShape {
-  std::string name;
-  std::optional<ClassRef> base;
-  // Interface class contracts (LRM 8.26) this class commits to satisfying.
-  // Populated from the source `implements` clause of a regular class or
-  // the `extends` clause of an interface class; both source keywords name
-  // the same object-model relation -- aggregate these interface classes'
-  // pure virtual method contracts. Multiple entries are legal; the
-  // concrete-base single-value rule stays on `base`, and interface
-  // conformance introduces no instance storage.
-  std::vector<ClassRef> implements;
-  TypeId self_pointer_type;
-  TimeResolution time_resolution;
-  base::Arena<ParamDecl, ParamId> ctor_prefix_params;
-  base::Arena<FieldDecl, FieldId> fields;
-  base::Arena<StaticPropertyDecl, StaticPropertyId> static_properties;
-  base::Arena<CallableSignature, CallableId> callable_signatures;
-  std::vector<ClassId> contained;
-  // Whether the class occupies a node of the runtime object tree -- a module
-  // instance, a named generate scope, or a named procedural block. A backend
-  // that walks the tree for emission uses this to skip classes that emit
-  // standalone.
-  bool is_scope_tree_node = false;
-  // Whether the class is final (LRM 8.13). A structural class always is; an
-  // SV class carries the source-declared value.
-  bool is_final = false;
-  // Whether this class is an `interface class` declaration (LRM 8.26): its
-  // body carries only pure virtual method contracts, no instance storage
-  // and no constructor. Consumers read the bit to render the class as an
-  // abstract target-language type and to route inheritance through the
-  // multi-base mechanism `implements` names.
-  bool is_interface_class = false;
-};
-
 struct Class {
   std::string name;
   std::optional<ClassRef> base;
   std::vector<ClassRef> implements;
-  bool is_scope_tree_node = false;
   bool is_final = false;
   bool is_interface_class = false;
   TypeId self_pointer_type;
@@ -147,7 +98,7 @@ struct Class {
   // those identities. Where a backend places a class is the backend's own
   // affair and is not stated here.
   std::vector<ClassId> contained;
-  // Every callable this class owns, in one arena: instance methods (LRM 8.6),
+  // Every callable this class owns, in one pool: instance methods (LRM 8.6),
   // process and lifecycle bodies, and the receiver-less static callables (a
   // DPI-C import, LRM 35.4; a static method, LRM 8.10). An instance method
   // carries `self` as its first parameter and a static callable omits it,
@@ -155,7 +106,15 @@ struct Class {
   // receiver is a property of the signature, not a separate declaration
   // space. The constructor is not here: it is a bare body block on the
   // protocol, never a call target.
-  base::Arena<CallableDecl, CallableId> callables;
+  //
+  // A callable a peer body may name -- a subroutine or method, reachable by a
+  // forward or mutual call (LRM 13.7) -- takes its identity while the class's
+  // shape is declared, so the call resolves whatever order the two bodies
+  // lower in; its body arrives later, against that identity. A callable
+  // nothing names early -- a process, a continuous assign, a synthesized
+  // method -- takes identity and body together where it is built. Both kinds
+  // share this pool, which is why the pool admits the gap.
+  base::Registry<CallableDecl, CallableId> callables;
   // The runtime-callback adapters this class owns -- callables whose identity
   // is a plain function pointer the runtime holds, semantically distinct from
   // the instance callables above. Referenced from the class's

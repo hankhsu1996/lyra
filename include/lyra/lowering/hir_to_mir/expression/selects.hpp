@@ -4,9 +4,9 @@
 // LRM 7.2.1: a packed struct / union field access lowers as a slice over
 // the aggregate's bit plane -- MIR carries no struct-specific node.
 
-#include <cstddef>
 #include <cstdint>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
@@ -36,7 +36,7 @@ namespace lyra::lowering::hir_to_mir {
 // 11.9); the check is part of the produced expression.
 [[nodiscard]] auto BuildPackedMemberRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
-    const PackedProjection& projection, std::size_t index,
+    const PackedProjection& projection, base::ComponentIndex index,
     mir::TypeId result_type) -> mir::Expr;
 
 // The one-bit test that the tag `base` currently carries names member `index`
@@ -46,7 +46,8 @@ namespace lyra::lowering::hir_to_mir {
 // or a pattern arm sit behind the test.
 [[nodiscard]] auto BuildPackedTagTest(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
-    const PackedProjection& projection, std::size_t index) -> mir::ExprId;
+    const PackedProjection& projection, base::ComponentIndex index)
+    -> mir::ExprId;
 
 // A select's meaning is independent of the enclosing scope, so one template
 // over the pass class serves both the procedural and structural contexts;

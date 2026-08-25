@@ -1,5 +1,7 @@
 #include <concepts>
+#include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -17,6 +19,7 @@
 #include <slang/numeric/Time.h>
 #include <slang/syntax/AllSyntax.h>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/primary.hpp"
@@ -348,7 +351,10 @@ auto LowerExprImpl(
           .type = *type_id,
           .data =
               hir::TaggedUnionExpr{
-                  .member_index = field.fieldIndex, .payload = payload_id},
+                  .member_index =
+                      base::ComponentIndex{
+                          static_cast<std::uint32_t>(field.fieldIndex)},
+                  .payload = payload_id},
           .span = span};
     }
 

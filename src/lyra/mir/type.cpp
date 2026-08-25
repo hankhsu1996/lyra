@@ -161,38 +161,33 @@ auto AsUniquePointee(const CompilationUnit& unit, TypeId type)
 
 }  // namespace
 
-auto IsCapabilityWrapperType(const Type& ty) -> bool {
-  return std::holds_alternative<ObservableType>(ty.data) ||
-         std::holds_alternative<RefType>(ty.data) ||
-         std::holds_alternative<ResolvedType>(ty.data) ||
-         std::holds_alternative<DriverType>(ty.data);
+auto Type::IsCapabilityWrapper() const -> bool {
+  return std::holds_alternative<ObservableType>(data) ||
+         std::holds_alternative<RefType>(data) ||
+         std::holds_alternative<ResolvedType>(data) ||
+         std::holds_alternative<DriverType>(data);
 }
 
-auto CapabilityWrapperValueType(const Type& ty) -> TypeId {
-  if (const auto* ob = std::get_if<ObservableType>(&ty.data)) {
+auto Type::WrappedValueType() const -> TypeId {
+  if (const auto* ob = std::get_if<ObservableType>(&data)) {
     return ob->value;
   }
-  if (const auto* rf = std::get_if<RefType>(&ty.data)) {
+  if (const auto* rf = std::get_if<RefType>(&data)) {
     return rf->pointee;
   }
-  if (const auto* rn = std::get_if<ResolvedType>(&ty.data)) {
+  if (const auto* rn = std::get_if<ResolvedType>(&data)) {
     return rn->value;
   }
-  if (const auto* dr = std::get_if<DriverType>(&ty.data)) {
+  if (const auto* dr = std::get_if<DriverType>(&data)) {
     return dr->value;
   }
   throw InternalError(
-      "CapabilityWrapperValueType: type is not a capability wrapper");
+      "Type::WrappedValueType: type is not a capability wrapper");
 }
 
 auto GetChildScope(const CompilationUnit& unit, TypeId type)
     -> std::optional<ChildScope> {
-  TypeId leaf = type;
-  while (const auto* vec =
-             std::get_if<VectorType>(&unit.types.Get(leaf).data)) {
-    leaf = vec->element;
-  }
-  const auto pointee = AsUniquePointee(unit, leaf);
+  const auto pointee = AsUniquePointee(unit, type);
   if (!pointee.has_value()) {
     return std::nullopt;
   }

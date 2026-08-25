@@ -69,8 +69,8 @@ auto LowerConstructorDecl(
 // instance method, and sets `overrides` if slang identified the prototype
 // as re-declaring an existing pure slot in an abstract descendant.
 auto LowerMethodPrototypeDecl(
-    UnitLowerer& unit_lowerer, const slang::ast::MethodPrototypeSymbol& proto)
-    -> diag::Result<hir::SubroutineDecl>;
+    UnitLowerer& unit_lowerer, const slang::ast::MethodPrototypeSymbol& proto,
+    WalkFrame class_frame) -> diag::Result<hir::SubroutineDecl>;
 
 // Lowers a slang `import "DPI-C"` subroutine (LRM 35.4) into a bodyless
 // hir::ForeignImportDecl: the resolved foreign name, the pure property, and the

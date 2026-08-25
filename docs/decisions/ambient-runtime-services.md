@@ -23,8 +23,8 @@ exist in SV:
   `MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)` null-dereferences during
   HIR-to-MIR.
 - **Plain SV class method** (LRM 8.6): receiver is a `C*` where `C` does not inherit
-  `runtime::Scope` (only `is_scope_tree_node` classes do). Emit succeeds; the C++ compiler then
-  refuses with `no member named 'Services' in 'C'`.
+  `runtime::Scope`, which only a class the runtime builds as a node of the object tree does. Emit
+  succeeds; the C++ compiler then refuses with `no member named 'Services' in 'C'`.
 - **Class static initializer / static method** (LRM 8.9 / 8.10): no receiver, same failure mode as
   package function.
 

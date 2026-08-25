@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <utility>
 
@@ -179,9 +180,8 @@ auto LowerMemberAccessExpr(
         .data =
             hir::MemberAccessExpr{
                 .base_value = base_id,
-                .field_index =
-                    hir::FieldId{
-                        sel.member.as<slang::ast::FieldSymbol>().fieldIndex},
+                .field_index = base::ComponentIndex{static_cast<std::uint32_t>(
+                    sel.member.as<slang::ast::FieldSymbol>().fieldIndex)},
             },
         .span = span,
     };

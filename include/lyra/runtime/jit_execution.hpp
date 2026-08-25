@@ -79,8 +79,12 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void*;
 // build its subtree, and returns the owning handle to the caller (which hands
 // it to `lyra_rt_add_owned_child`). `definition` is an opaque cross-unit
 // reference the generated code never inspects.
-auto lyra_rt_make_unit(const void* definition, void* parent, void* segment)
+auto lyra_rt_make_scope(const void* definition, void* parent, void* segment)
     -> void*;
+
+// The scope's hierarchical name (LRM 21.2.1.5; the `%m` source), as a transient
+// string owned by the current call scope.
+auto lyra_rt_hierarchical_path(void* self) -> void*;
 
 // Attaches a freshly built child to its parent, transferring ownership into the
 // runtime tree; returns the child as a borrowed scope handle.

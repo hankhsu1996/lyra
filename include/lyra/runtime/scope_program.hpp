@@ -39,22 +39,18 @@ struct AbiStringRef {
 };
 
 // A scope's immutable constant properties, known when its definition is built
-// and never computed by running generated code: its def name (LRM 23.8; empty
-// for a generate scope or `$root`) and its effective time unit and precision as
-// powers of ten (LRM Table 20-2), each the scope's own timescale or the one it
-// inherits (LRM 3.14.2.3). These are data, not entries -- a backend supplies
-// the values, it does not supply a function that returns them.
+// and never computed by running generated code: its effective time unit and
+// precision as powers of ten (LRM Table 20-2), each the scope's own timescale
+// or the one it inherits (LRM 3.14.2.3). These are data, not entries -- a
+// backend supplies the values, it does not supply a function that returns them.
 struct ScopeMetadata {
-  AbiStringRef def_name;
   std::int8_t time_unit_power = kUnspecifiedTimePower;
   std::int8_t time_precision_power = kUnspecifiedTimePower;
 
   constexpr ScopeMetadata() = default;
   constexpr ScopeMetadata(
-      AbiStringRef def_name, std::int8_t time_unit_power,
-      std::int8_t time_precision_power)
-      : def_name(def_name),
-        time_unit_power(time_unit_power),
+      std::int8_t time_unit_power, std::int8_t time_precision_power)
+      : time_unit_power(time_unit_power),
         time_precision_power(time_precision_power) {
   }
 };
@@ -143,8 +139,8 @@ enum class ValueDomain : std::uint8_t {
 };
 
 // How a member's storage is realized. A borrowed handle is a box holding a
-// pointer the instance does not own, the storage behind a companion reference
-// to another scope. An observable cell is the subscribable variable a process
+// pointer the instance does not own, the storage behind a reference reaching
+// another scope. An observable cell is the subscribable variable a process
 // reads, writes, and waits on. An inline value is a value the instance owns but
 // no process subscribes to -- a chandle (LRM 6.14), whose pointer-sized value
 // lives in the member slot and is read and written directly.
@@ -179,22 +175,25 @@ struct MemberStorageSchema {
   }
 };
 
-// The immutable per-specialization definition of a design unit: the root
-// scope's program (held by value, so a unit's whole generated behavior is one
-// constant), the structural-construction entry, and the storage schema of its
-// members. Construction is bootstrap-called (a JIT design) or realized by the
-// backend's own constructor (the C++ backend), distinct from the per-phase
-// lifecycle dispatch. The schema tells a generic instance what storage to own
-// for each member; a backend that lays members out natively (the C++ backend,
-// whose subclass holds real fields) leaves it empty.
-struct UnitDefinition {
-  ScopeProgram root;
+// The immutable definition of one scope class: its program (held by value, so a
+// class's whole generated behavior is one constant), its
+// structural-construction entry, and the storage schema of its members. Every
+// scope class has one, whether it is the class a compilation unit publishes or
+// a class that unit keeps to itself -- what differs is only how a constructing
+// site names the definition, by linkage symbol across the unit boundary and by
+// in-artifact constant within it. Construction is bootstrap-called (a JIT
+// design) or realized by the backend's own constructor (the C++ backend),
+// distinct from the per-phase lifecycle dispatch. The schema tells a generic
+// instance what storage to own for each member; a backend that lays members out
+// natively leaves it empty.
+struct ScopeDefinition {
+  ScopeProgram program;
   ScopeEntry construct = &ScopeNoOp;
   MemberStorageSchema members;
 
-  constexpr UnitDefinition() = default;
-  constexpr UnitDefinition(ScopeProgram root, ScopeEntry construct)
-      : root(root), construct(construct) {
+  constexpr ScopeDefinition() = default;
+  constexpr ScopeDefinition(ScopeProgram program, ScopeEntry construct)
+      : program(program), construct(construct) {
   }
 };
 

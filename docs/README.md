@@ -15,6 +15,7 @@ the doc.
 - `decisions/` -- logged architectural decisions (one file per decision).
 - `glossary/` -- canonical definitions of terminology used across docs.
 - `ci/` -- CI workflow inventory.
+- `design-process.md` -- how to arrive at a design and how to falsify one.
 - `style.md` -- writing contract for docs in this directory.
 
 ## Reading Order

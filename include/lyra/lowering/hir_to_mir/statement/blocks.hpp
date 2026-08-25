@@ -12,6 +12,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -20,30 +21,24 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerEmptyStmt(std::optional<std::string> label)
     -> diag::Result<mir::Stmt>;
 
-// The lvalue reaching a scope's cancellation source, the expression a region
-// names to recognize the control effect it consumes and a `disable` names to
-// invalidate (LRM 9.6.2).
-auto CancellationSourceAccess(
-    const ProcessLowerer& process, const WalkFrame& frame,
-    StaticStoragePlacement placement) -> mir::ExprId;
-
 // Declares a target's entry guard (LRM 9.6.2): a local that marks the executing
 // process as inside the target for the guard's lifetime, so a `disable` of the
 // target reaches this execution and a check finds the target among the ones it
 // is inside. A named block and a task install one alike, as the first act of
-// the body the target names.
+// the body the target names. `source` is the target's cancellation source, a
+// field of the class enclosing this body.
 auto EmitCancellationGuard(
-    ProcessLowerer& process, const WalkFrame& frame,
-    StaticStoragePlacement placement) -> mir::LocalId;
+    ProcessLowerer& process, const WalkFrame& frame, mir::FieldId source)
+    -> mir::LocalId;
 
-// Builds the region that consumes a `disable` of the target the placement names
+// Builds the region that consumes a `disable` of the target owning `source`
 // (LRM 9.6.2) around an already-lowered `body`: it binds the effect leaving the
 // body and hands it to the consume, which either ends the effect here -- so
 // execution continues past the region -- or re-raises it for the region that
 // does name its target.
-auto MakeCancellableRegion(
+auto BuildCancellableRegion(
     ProcessLowerer& process, const WalkFrame& frame, mir::BlockId body,
-    StaticStoragePlacement placement) -> mir::TryStmt;
+    mir::FieldId source) -> mir::TryStmt;
 
 auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

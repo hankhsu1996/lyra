@@ -8,10 +8,9 @@
 
 namespace lyra::backend::cpp {
 
-// Renders a MIR `CallExpr`: dispatches on the callee variant to one of the
-// `Builtin` / `FreeFn` / `Static` / `Constructor` / `Method` / `Closure` call
-// shapes. The C++ identifier table for `BuiltinFn` lives in this file as well
-// so the expression-render dispatcher stays free of the per-id naming detail.
+// Renders a MIR call. The shape of the emitted call follows from the callee
+// and from nothing else. The C++ spelling of each runtime entry is tabulated
+// here too, so the expression dispatcher carries no per-entry naming.
 auto RenderCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> std::string;

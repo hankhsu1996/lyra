@@ -1,9 +1,10 @@
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 
-#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -40,7 +41,8 @@ auto BuildCompletionLayout(
         .type = formal.type,
         .component = std::nullopt};
     if (hir::RequiresWriteback(formal.direction)) {
-      out.component = layout.components.size();
+      out.component = base::ComponentIndex{
+          static_cast<std::uint32_t>(layout.components.size())};
       layout.components.push_back(formal.type);
     }
     layout.formals.push_back(out);
@@ -76,7 +78,7 @@ auto SubroutineCallTypeOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
 
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
-    std::size_t index, mir::TypeId component_type) -> mir::ExprId {
+    base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId {
   const mir::ExprId tuple_ref =
       block.exprs.Add(mir::MakeLocalRefExpr(completion, payload_type));
   return block.exprs.Add(

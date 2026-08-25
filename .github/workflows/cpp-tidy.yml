@@ -1,8 +1,13 @@
-name: C++ Tidy
+name: C++ Tidy (Nightly)
 
+# clang-tidy re-analyzes every translation unit from scratch, so it does not
+# fit the merge-time budget. It runs on its own schedule instead, and reports
+# rather than gates: the findings are a backlog to pay down, not a wall in
+# front of a merge.
 on:
-  push:
-    branches: [main]
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
 
 jobs:
   tidy:
@@ -32,22 +37,43 @@ jobs:
           sudo update-alternatives --set clang++ /usr/bin/clang++-20
           sudo update-alternatives --set clang /usr/bin/clang-20
 
-      - name: Print tool versions
+      - name: Build
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          clang++ --version
-          clang-tidy-20 --version
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel build //... $RBE_FLAGS
 
-      # Disabled until new pipeline is ready
-      # - name: Build
-      #   run: bazel build //...
-      #
-      # - name: Generate compile_commands.json
-      #   run: bazel run //:refresh_compile_commands
-      #
-      # - name: Run clang-tidy
-      #   run: |
-      #     CPP_FILES=$(find src -name '*.cpp' | tr '\n' ' ')
-      #     echo "Files to check: $CPP_FILES"
-      #     run-clang-tidy-20 -p . -j $(nproc) -header-filter='^.*(src|include)/lyra/.*' $CPP_FILES
-      - name: Skip (no code yet)
-        run: echo "clang-tidy disabled until new pipeline"
+      - name: Generate compile_commands.json
+        run: bazel run //:refresh_compile_commands
+
+      - name: Run clang-tidy
+        id: tidy
+        run: |
+          CPP_FILES=$(find src -name '*.cpp' | tr '\n' ' ')
+          set +e
+          run-clang-tidy-20 -p . -j "$(nproc)" -quiet \
+            -header-filter='^.*(src|include)/lyra/.*' \
+            $CPP_FILES > tidy.log 2>&1
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Summarize findings
+        if: always()
+        run: |
+          echo "### clang-tidy" >> $GITHUB_STEP_SUMMARY
+          TOTAL=$(grep -c 'warning:\|error:' tidy.log || true)
+          echo "Total findings: ${TOTAL}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -o '\[[a-z0-9-]*-[a-z0-9-]*\]$' tidy.log | sort | uniq -c | sort -rn >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload full log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clang-tidy-log
+          path: tidy.log

@@ -45,103 +45,119 @@ struct InstanceMemberId {
       -> std::strong_ordering = default;
 };
 
-// One segment of a cross-unit reference's downward navigation past the head:
-// a named member (`.name`) with the per-dimension indices selecting an array
-// element on that name (`[i][j]`), if any. `m.l.x` is three segments each
-// with empty indices; `c[1].x` is `[{c, [1]}, {x, []}]`. Indices are always
-// attached to the segment they select on -- there is no orphan index step
-// separable from its name.
-struct PathSegment {
-  std::string name;
-  std::vector<std::uint32_t> indices;
-
-  auto operator==(const PathSegment&) const -> bool = default;
-};
-
-// Where a cross-unit reference starts its navigation. A downward reference
-// reaches into an owned child the referrer's own scope declares -- an
-// instance/instance-array member, or a generate block (LRM 27) identified by
-// its position in the scope. An upward reference (LRM 23.6) locates its
-// starting scope at construction by climbing the enclosing chain. The child
-// cannot know its depth at compile time, so it locates the scope by name (or
-// as the `$root` anchor) rather than a baked-in offset.
+// A generate block (LRM 27) as a child of the scope that declares it: the
+// generate construct it belongs to, plus which of that construct's elaborated
+// blocks it is.
 struct GenerateChildRef {
   GenerateId generate;
   StructuralScopeId scope;
-};
-// A named procedural block head (LRM 9.3.5 / 23.9), identified by its SV
-// label. A named block is a layout-visible structural child of its enclosing
-// scope; the label is its stable declaration-time identity, not a by-name
-// runtime lookup. The label is meaningful only relative to the `DownwardHead`
-// owner reached by `hops` -- the enclosing structural scope directly
-// containing the block, where sibling block labels are unique (LRM 23.9) -- and
-// is not a unit-global name. HIR-to-MIR resolves it against that owner's
-// materialized scopes to a typed companion handle, so the realization is a
-// typed segment.
-struct NamedBlockRef {
-  std::string label;
 
-  auto operator==(const NamedBlockRef&) const -> bool = default;
-};
-// A downward head can sit in the current scope (`hops == 0`) or in an
-// enclosing scope (`hops > 0`). The enclosing case covers references that
-// reach an owned child of an ancestor scope without leaving the compilation
-// unit -- e.g. one generate block reading a signal in a sibling generate
-// block of their common ancestor. `child` identifies the head as one of
-// the owning scope's HIR-level identities; the install resolves it through
-// the enclosing class's owned-child binding table. `head_indices` selects an
-// element when the head is an instance / generate array; empty for a scalar
-// head or a named-block head.
-struct DownwardHead {
-  StructuralHops hops = {};
-  std::variant<InstanceMemberId, GenerateChildRef, NamedBlockRef> child;
-  std::vector<std::uint32_t> head_indices = {};
+  auto operator==(const GenerateChildRef&) const -> bool = default;
 };
 
-// The head of a routed reference whose target is a data-object member of an
-// enclosing scope of the reader, in the same compilation unit (`hops` typed
-// parent edges up, then the leaf member). Reaching a same-unit ancestor member
-// this way -- sealed once in the resolve phase like every other routed
-// reference -- rather than re-walking the parent chain on each access is what
-// keeps the hot path a single sealed-endpoint dereference. The leaf member is
-// the route's single `PathSegment`; the climb is entirely typed.
-struct EnclosingHead {
+// A child object the referrer's compilation unit declares, named by the
+// declaring scope's own identity for it.
+using OwnedChildRef = std::variant<InstanceMemberId, GenerateChildRef>;
+
+// One navigation step whose source and target objects are both declared by
+// this compilation unit, so it realizes as typed member navigation.
+// `indices` are the element coordinates within the named child, one per
+// declared dimension: an instance array is a single child spanning every
+// element (LRM 23.3.2), so the coordinates pick the element out of it. A
+// generate loop instead elaborates each iteration into a child of its own
+// (LRM 27.4), whose identity already fixes which iteration it is, so a
+// generate step carries no coordinates.
+struct OwnedChildStep {
+  OwnedChildRef child;
+  std::vector<std::uint32_t> indices;
+
+  auto operator==(const OwnedChildStep&) const -> bool = default;
+};
+
+// One navigation step past this compilation unit's layout, into an object
+// whose declaration another unit owns. The canonical hierarchical name is the
+// only identity that crosses the boundary, so the step carries it verbatim for
+// the runtime to resolve.
+struct OpaqueStep {
+  std::string name;
+  std::vector<std::uint32_t> indices;
+
+  auto operator==(const OpaqueStep&) const -> bool = default;
+};
+
+using PathStep = std::variant<OwnedChildStep, OpaqueStep>;
+
+// Where a route starts. `InUnitHead` anchors at a structural scope of this
+// unit, `hops` typed parent edges out from the referrer (0 being the
+// referrer's own scope); every step from there begins inside this unit's
+// layout. `RootHead` anchors at the parent-less topmost scope named by
+// `$root` (LRM 23.6). `VisibleChildHead` anchors at the scope an upward climb
+// finds by name (LRM 23.8), which the referrer's unit does not declare and so
+// cannot locate by a compile-time offset. Both climbing anchors leave the
+// unit's layout, so everything past them is opaque.
+struct InUnitHead {
   StructuralHops hops;
 
-  auto operator==(const EnclosingHead&) const -> bool = default;
+  auto operator==(const InUnitHead&) const -> bool = default;
 };
 
-// Where an upward cross-unit reference's navigation starts (LRM 23.8 / 23.9).
-// `UpwardRootHead` denotes the parent-less topmost scope -- the `$root`
-// source token identifies the climb target itself, so the descent suffix
-// starts past it. `UpwardNamedHead` carries the canonical structural identity
-// of the head -- its instance / generate-block name plus any per-dimension
-// index. In both cases the descent suffix is strictly below the anchor.
-struct UpwardRootHead {
-  auto operator==(const UpwardRootHead&) const -> bool = default;
+struct RootHead {
+  auto operator==(const RootHead&) const -> bool = default;
 };
 
-struct UpwardNamedHead {
+struct VisibleChildHead {
   std::string head_name;
   std::vector<std::uint32_t> head_indices;
 
-  auto operator==(const UpwardNamedHead&) const -> bool = default;
+  auto operator==(const VisibleChildHead&) const -> bool = default;
 };
 
-using RoutedRefHead =
-    std::variant<EnclosingHead, DownwardHead, UpwardRootHead, UpwardNamedHead>;
+using RouteHead = std::variant<InUnitHead, RootHead, VisibleChildHead>;
 
-// How to navigate from a scope to a cross-instance target member: `head` is
-// where navigation starts -- an enclosing ancestor, an owned child, or an
-// upward climb; `path` carries the descent from the head to the leaf, one
-// segment per named step (each with its own per-axis indices, if any); `type`
-// is the slang-resolved leaf data type. This is the route alone. Whether the
-// route materializes a persistent endpoint slot (a value reference read on the
-// hot path) or is resolved once for a one-shot bind (a `ref` port alias) is the
-// consumer's endpoint-capability decision, not a property of the route.
+// The storage a route ends at. A data object declared by the scope the steps
+// land on, or a static-lifetime local of one of that scope's bodies, which a
+// named block puts on the hierarchical path (LRM 23.9) -- the blocks between
+// are part of where the storage sits, not steps of their own, so the leaf
+// identity fixes the whole procedural descent. A leaf in another unit's body
+// is named, like the opaque steps that reach it.
+struct StructuralDataObjectLeaf {
+  StructuralDataObjectId object;
+
+  auto operator==(const StructuralDataObjectLeaf&) const -> bool = default;
+};
+
+// The body a static-lifetime local was declared in. A static's identity is
+// scoped to its body's declaration arena, so reaching one from elsewhere names
+// the body alongside it.
+using ProceduralBodyRef = std::variant<ProcessId, StructuralSubroutineId>;
+
+struct ProceduralStaticLeaf {
+  ProceduralBodyRef body;
+  ProceduralVarId var;
+
+  auto operator==(const ProceduralStaticLeaf&) const -> bool = default;
+};
+
+struct OpaqueLeaf {
+  std::string name;
+
+  auto operator==(const OpaqueLeaf&) const -> bool = default;
+};
+
+using RouteLeaf =
+    std::variant<StructuralDataObjectLeaf, ProceduralStaticLeaf, OpaqueLeaf>;
+
+// How to navigate from a scope to a target elsewhere on the object tree:
+// `head` is where navigation starts, `steps` carries the descent from there,
+// and `leaf` is the storage it ends at. `type` is the slang-resolved leaf data
+// type. This is the route alone. Whether the route materializes a persistent
+// endpoint slot (a value reference read on the hot path) or is resolved once
+// for a one-shot bind (a `ref` port alias) is the consumer's
+// endpoint-capability decision, not a property of the route.
 struct RoutedPathRecipe {
-  RoutedRefHead head;
-  std::vector<PathSegment> path;
+  RouteHead head;
+  std::vector<PathStep> steps;
+  RouteLeaf leaf;
   TypeId type;
 
   auto operator==(const RoutedPathRecipe&) const -> bool = default;
@@ -196,6 +212,13 @@ using PortEndpoint = std::variant<PortCellEndpoint, RoutedPathRecipe>;
 // continuous assignment between the two cells (LRM 23.3.3), a `ref` port as an
 // alias bind of the child's reference member to the peer's cell, performed in
 // the resolve phase (LRM 23.3.3.2).
+struct PortConnectionId {
+  std::uint32_t value;
+
+  auto operator<=>(const PortConnectionId&) const
+      -> std::strong_ordering = default;
+};
+
 struct PortConnection {
   diag::SourceSpan span;
   PortDirection direction;
@@ -207,44 +230,40 @@ struct PortConnection {
 // The lowered form of every generate construct (LRM 27): after frontend
 // elaboration each construct is a set of blocks with an instantiated / not
 // flag, so the lowering is one fully concrete scope per instantiated block,
-// constructed unconditionally. A loop iteration carries its hierarchy index; an
-// `if` / `case` arm or a bare block carries none. Each scope is lowered from
-// its own elaborated body -- its own selected arm, types, and slice widths, the
-// genvar folded to a constant -- never borrowed from another block and never a
-// runtime induction value or branch.
-struct ResolvedGenerateItem {
-  std::optional<std::int64_t> index;
-  StructuralScopeId scope{};
-};
-struct ResolvedGenerate {
-  std::vector<ResolvedGenerateItem> items;
-};
-
+// constructed unconditionally. Each scope is lowered from its own elaborated
+// body -- its own selected arm, types, and slice widths, the genvar folded to
+// a constant -- never borrowed from another block and never a runtime
+// induction value or branch. A block's position here is its identity, so
+// nothing restates which block a scope is.
 struct Generate {
-  ResolvedGenerate data;
   base::Arena<StructuralScope, StructuralScopeId> child_scopes;
 };
 
 struct StructuralScope {
-  StructuralScopeId id{};
   // LRM source name of a generate child (label, or `genblk<n>` when unnamed,
   // LRM 27.6); empty for other scopes.
   std::string source_name;
+  // The elaborated hierarchy index a generate loop iteration carries (LRM
+  // 27.4); absent for an `if` / `case` arm, a bare block, and every scope no
+  // generate produced. The index and the source label together are this
+  // scope's whole hierarchy segment, which the scope carries itself rather
+  // than leaving in a table its parent keeps about it.
+  std::optional<std::int64_t> index;
   TimeResolution time_resolution;
   base::Arena<StructuralDataObjectDecl, StructuralDataObjectId>
       structural_data_objects;
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Pattern, PatternId> patterns;
-  base::Arena<Process, ProcessId> processes;
+  base::Registry<Process, ProcessId> processes;
   base::Arena<ContinuousAssign, ContinuousAssignId> continuous_assigns;
-  base::Arena<Generate, GenerateId> generates;
-  base::Arena<InstanceMemberDecl, InstanceMemberId> instance_members;
-  std::vector<PortConnection> port_connections;
+  base::Registry<Generate, GenerateId> generates;
+  base::Registry<InstanceMemberDecl, InstanceMemberId> instance_members;
+  base::Arena<PortConnection, PortConnectionId> port_connections;
   base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
   // Body-bearing SV subroutines only. A bodyless DPI-C import never enters this
   // arena; the unit owns it, because its foreign symbol is program-global and
   // belongs to no scope (LRM 35.4).
-  base::Arena<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
+  base::Registry<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
   std::vector<ForeignExportDecl> foreign_exports;
   // Every scope's identity is minted before any body is lowered, so a `disable`
   // naming one (LRM 9.6.2) -- possibly from another process lowered first --
@@ -252,15 +271,6 @@ struct StructuralScope {
   // later. That is what the declare-then-define gap buys: the id exists up
   // front and the body pass fills the contents when it reaches the scope.
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
-
-  [[nodiscard]] auto NextGenerateId() const -> GenerateId {
-    return GenerateId{static_cast<std::uint32_t>(generates.size())};
-  }
-  [[nodiscard]] auto NextStructuralSubroutineId() const
-      -> StructuralSubroutineId {
-    return StructuralSubroutineId{
-        static_cast<std::uint32_t>(structural_subroutines.size())};
-  }
 };
 
 }  // namespace lyra::hir

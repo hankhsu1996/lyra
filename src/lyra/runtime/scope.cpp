@@ -21,8 +21,8 @@ void ScopeNoOp(Scope*) {
 }
 
 Scope::Scope(
-    Scope* parent, HierarchySegment segment, const ScopeProgram* program)
-    : parent_(parent), segment_(std::move(segment)), program_(program) {
+    Scope* parent, HierarchySegment segment, const ScopeDefinition* definition)
+    : parent_(parent), segment_(std::move(segment)), definition_(definition) {
 }
 
 auto Scope::AddOwnedChild(std::unique_ptr<Scope> child) -> Scope* {
@@ -113,6 +113,9 @@ auto Scope::HierarchicalPath() const -> lyra::value::String {
   std::vector<std::string> parts;
   for (const Scope* cur = this; cur != nullptr && cur->parent_ != nullptr;
        cur = cur->parent_) {
+    if (!cur->IsAddressable()) {
+      continue;
+    }
     parts.push_back(cur->segment_.Display());
   }
   std::string out;
@@ -127,17 +130,17 @@ auto Scope::HierarchicalPath() const -> lyra::value::String {
 
 void Scope::Resolve() {
   GeneratedCallScope call;
-  program_->resolve_state(this);
+  definition_->program.resolve_state(this);
 }
 
 void Scope::Initialize() {
   GeneratedCallScope call;
-  program_->initialize_state(this);
+  definition_->program.initialize_state(this);
 }
 
 void Scope::CreateProcesses() {
   GeneratedCallScope call;
-  program_->create_processes(this);
+  definition_->program.create_processes(this);
 }
 
 auto Scope::ResolveVisibleChild(

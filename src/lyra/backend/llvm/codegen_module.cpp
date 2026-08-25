@@ -15,6 +15,7 @@
 
 #include "lyra/backend/llvm/codegen_function.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
@@ -36,9 +37,8 @@ auto CodeGenModule::Run() -> EmittedModule {
   for (const lir::Function& fn : unit_->functions) {
     functions_.push_back(DeclareCallable(fn));
   }
-  for (std::uint32_t i = 0; i < unit_->functions.size(); ++i) {
-    CodeGenFunction(
-        *this, unit_->functions.Get(lir::FunctionId{i}), functions_[i])
+  for (const lir::FunctionId id : unit_->functions.Ids()) {
+    CodeGenFunction(*this, unit_->functions.Get(id), functions_[id.value])
         .Run();
   }
 
@@ -68,21 +68,30 @@ auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {
   return functions_.at(function.value);
 }
 
-auto CodeGenModule::UnitDefinitionRef(lir::TypeId object_type)
+auto CodeGenModule::ScopeDefinitionRef(lir::TypeId object_type)
     -> llvm::Constant* {
-  const auto* external = std::get_if<lir::ExternalUnitObjectType>(
-      &unit_->types.Get(object_type).data);
-  if (external == nullptr) {
-    throw InternalError(
-        "llvm codegen: a unit definition reference requires an external-unit "
-        "type");
-  }
+  // A class this unit compiles is named by its own name; a class another unit
+  // publishes is named by that unit's. Both resolve to a record the host built,
+  // so the reference is the same kind of symbol either way.
+  const std::string name = std::visit(
+      Overloaded{
+          [&](const lir::ObjectType& o) -> std::string {
+            return unit_->classes.Get(o.class_id).name;
+          },
+          [&](const lir::ExternalUnitObjectType& e) -> std::string {
+            return e.unit_name;
+          },
+          [&](const auto&) -> std::string {
+            throw InternalError(
+                "llvm codegen: a scope definition reference requires an object "
+                "type");
+          }},
+      unit_->types.Get(object_type).data);
   // The definition is opaque to generated code, which only forwards its
   // address; an i8 placeholder gives the external symbol a type without
   // encoding the runtime struct's layout.
   return module_->getOrInsertGlobal(
-      UnitDefinitionSymbolName(external->unit_name),
-      llvm::Type::getInt8Ty(*context_));
+      ScopeDefinitionSymbolName(name), llvm::Type::getInt8Ty(*context_));
 }
 
 }  // namespace lyra::backend::llvm_backend

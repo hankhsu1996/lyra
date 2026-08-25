@@ -22,7 +22,7 @@ class DpiScopeRegistry {
 
   [[nodiscard]] auto IsValidHandle(const Scope* scope) const -> bool;
 
-  // The fully qualified name of a valid handle (the `%m` form, LRM 21.2.1.1),
+  // The fully qualified name of a valid handle (the `%m` form, LRM 21.2.1.5),
   // owned by the directory and stable for the run; null for an unregistered
   // handle.
   [[nodiscard]] auto NameOf(const Scope* scope) const -> const char*;

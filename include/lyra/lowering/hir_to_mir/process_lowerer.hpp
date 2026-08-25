@@ -2,12 +2,14 @@
 
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/symbol_table.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -17,7 +19,8 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
-#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
+#include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -49,65 +52,62 @@ struct PromotedVarBinding {
   mir::FieldId field;
 };
 
-// Body-local environment binding for one HIR procedural var: an in-frame
-// local for an automatic, or a shared-activation handle for a
-// lifetime-extended automatic (LRM 6.21). Static-lifetime locals (LRM
-// 13.3.1) are NOT body-local; their placement is the per-callable storage
-// plan's authority, not this binding registry.
+// Where one HIR procedural var of this body keeps its storage: an in-frame
+// local for an automatic, a field of a shared activation object for a
+// lifetime-extended automatic (LRM 6.21), or a field that outlives every
+// activation for a static-lifetime local (LRM 13.3.1). Every var the body
+// reaches has exactly one of these, so a reader visits the answer rather than
+// probing one registry and falling back to another.
 using ProceduralVarBinding =
-    std::variant<AutomaticVarBinding, PromotedVarBinding>;
+    std::variant<AutomaticVarBinding, PromotedVarBinding, StaticVarBinding>;
 
-// Per-process / method lowering registries. Carries facts to the
-// surrounding module and class, time resolution, the HIR body, and
-// the procedural-var binding table. Per-recursion traversal state -- the
-// current block and class, the binding-resolution context, and whether the
-// body is a coroutine -- lives on `WalkFrame`, not on the lowerer.
+// Lowers one procedural body -- a process, a method, a subroutine, a
+// constructor -- into its callable code. What holds for the whole body sits
+// here: where it lives, what it may name, where each of its vars keeps its
+// storage. What differs between one point of the walk and another -- the block
+// being written, the class in scope, the bindings a reference resolves against
+// -- travels down the walk instead, so nothing here changes as the walk moves.
 class ProcessLowerer {
  public:
-  // Facts: every parameter is set once at construction and never mutated for
-  // the lowerer's lifetime. `enclosing_scope_lowerer` is the lowering pass
-  // for the structural scope this body sits inside; its registries resolve
-  // every reference to an enclosing-scope declaration. It is null for a
-  // class method body, which sits inside no structural scope. `callable_name`
-  // is the synthesized identifier the enclosing scope chose for this callable
-  // (`"process_N"`, or a user-given name); it names any per-callable artifact
-  // the body emits (a promoted activation scope's struct), not the produced
-  // declaration -- the caller attaches the declaration's own name.
-  // `owner_ctor_frame` is the enclosing class's constructor-time frame -- the
-  // base frame each body lowering extends with its own block / bindings,
-  // carrying the owner-class context (self pointer type, scope chain) into body
-  // lowering. A frame with no owner class is a namespace context: the produced
-  // body carries no `self`. `storage_plan` is the planner's per-callable
-  // storage plan -- static placements and the shared scope materialization
-  // table that chain queries route through. The produced value is the
-  // callable's `CallableCode`; the name and visibility a referencing site
-  // attaches belong to the declaration the caller wraps the code in, not to the
-  // lowering.
+  // `enclosing_scope_lowerer` resolves every reference to a declaration of the
+  // structural scope this body sits inside, and is null for a body that sits
+  // inside none -- a class method reaches its owner through `self` instead.
+  // `callable_name` names the artifacts the body emits, never the declaration
+  // the caller wraps this code in; that declaration's own name and visibility
+  // are the caller's to attach, since what is produced here is code and not a
+  // declaration. `owner_ctor_frame` carries the owner class into the body --
+  // a frame naming no class is a namespace context, whose body has no `self`.
+  // `scopes` is what each procedural scope of the declaration scope owns at run
+  // time, and `statics` the storage this body's own static locals were given.
   ProcessLowerer(
       UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
       std::string callable_name, WalkFrame owner_ctor_frame,
-      const CallableStoragePlan& storage_plan)
+      const DeclaredScopes& scopes, std::span<const StaticVarBinding> statics)
       : owner_(&unit_lowerer),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
         time_resolution_(time_resolution),
         hir_body_(&hir_body),
         callable_name_(std::move(callable_name)),
         owner_ctor_frame_(std::move(owner_ctor_frame)),
-        storage_plan_(&storage_plan),
+        scopes_(&scopes),
         // A body completes for no caller until it is lowered as one that does,
         // so this is the protocol every body starts with; lowering a subroutine
         // replaces it with the one its completion payload states.
         result_type_(unit_lowerer.Unit().builtins.coroutine_void) {
+    // Where every static-lifetime local of this body keeps its storage is
+    // settled before the body lowers, so each one is bound here. Reaching a
+    // static's declaration statement then binds nothing and emits nothing --
+    // the walk carries no part of the answer.
+    for (const StaticVarBinding& binding : statics) {
+      MapProceduralVar(binding.var, binding);
+    }
   }
 
   // Lowers an entire HIR process (initial / final / always / always_ff /
   // always_comb / always_latch) into its callable code -- a coroutine body the
-  // caller registers. Any static initializers the body defers to the Initialize
-  // phase accumulate on the lowerer; the caller drains them through
-  // `TakePendingStaticInitializers` after `Run` returns and integrates them
-  // into the owning class's Initialize block.
+  // caller registers.
   auto Run(const hir::Process& src) -> diag::Result<mir::CallableCode>;
 
   // Lowers a HIR subroutine declaration into its callable code. Pre-registers
@@ -222,38 +222,28 @@ class ProcessLowerer {
 
   void MapProceduralVar(
       hir::ProceduralVarId hir_id, ProceduralVarBinding binding) {
-    if (hir_id.value >= bindings_.size()) {
-      bindings_.resize(hir_id.value + 1);
-    }
-    if (bindings_[hir_id.value].has_value()) {
-      throw InternalError(
-          "ProcessLowerer::MapProceduralVar: HIR procedural var already "
-          "registered in the body-local environment");
-    }
-    bindings_[hir_id.value] = binding;
+    bindings_.Define(hir_id, binding);
   }
 
-  // Returns the body-local environment binding for an automatic / promoted
-  // var, or nullptr when the var has no body-local binding (it resolves
-  // through `LookupStaticPlacement` against the storage plan instead).
-  // Reference-resolution sites dispatch on this -- presence in the body
-  // env is the authoritative signal, not the HIR lifetime, because
-  // subroutine params / output / result_var get registered here regardless
-  // of the slang-reported lifetime.
+  // Where the named var keeps its storage. Every var a reference can name is
+  // bound before anything reads it -- a static when the body opens, a formal by
+  // the signature, an automatic by its declaration -- so an unbound var is a
+  // reference reaching a declaration the walk has not passed, which is a
+  // compiler bug rather than an answer.
+  // What binds a var is not its HIR lifetime: a subroutine's formals and its
+  // result variable are bound by the signature whatever lifetime their
+  // declarations report, which is why a reader asks here rather than reading
+  // the declaration.
   [[nodiscard]] auto LookupProceduralVar(hir::ProceduralVarId hir_id) const
-      -> const ProceduralVarBinding* {
-    if (hir_id.value >= bindings_.size() ||
-        !bindings_[hir_id.value].has_value()) {
-      return nullptr;
-    }
-    return &*bindings_[hir_id.value];
+      -> const ProceduralVarBinding& {
+    return bindings_.Get(hir_id);
   }
 
   // An activation scope is opened at block entry -- the scope struct and its
   // handle are built then -- but a promoted var's binding must register in HIR
-  // id order at its declaration like any other. The block-entry pass records
-  // the slot here; the declaration consumes it (`TakePendingActivation`) and
-  // registers the binding in order.
+  // id order at its declaration like any other. So block entry leaves the slot
+  // here and the declaration takes it back out, which is where the binding
+  // lands in order.
   void RecordPendingActivation(
       hir::ProceduralVarId hir_id, PromotedVarBinding binding) {
     pending_activation_.insert_or_assign(hir_id, binding);
@@ -283,18 +273,24 @@ class ProcessLowerer {
   // extends with its own block / bindings. Carries the outer-class context
   // (self pointer type, scope chain) so a body frame derived from it
   // resolves `self` to the owner. Body lowering does NOT write into this
-  // frame's block; static initializers are deferred via
-  // `RecordPendingStaticInitializer` and integrated by the caller in the
-  // appropriate lifecycle phase (Initialize for module-level bodies, the
-  // class constructor for SV-class methods).
+  // frame's block; a static's declaration assignment is not an effect of the
+  // body at all, and the caller performs it in the appropriate lifecycle phase
+  // (Initialize for module-level bodies, the class constructor for SV-class
+  // methods).
   [[nodiscard]] auto OwnerCtorFrame() const -> const WalkFrame& {
     return owner_ctor_frame_;
   }
 
-  // The callable's storage plan: static placements + scope materialization
-  // table for chain walks. Borrowed for the body lowering's lifetime.
-  [[nodiscard]] auto StoragePlan() const -> const CallableStoragePlan& {
-    return *storage_plan_;
+  // What each procedural scope of the enclosing declaration scope owns at run
+  // time. Borrowed for the body lowering's lifetime.
+  [[nodiscard]] auto Scopes() const -> const DeclaredScopes& {
+    return *scopes_;
+  }
+
+  // This body's own root scope. A task or function is a scope the source named
+  // (LRM 23.9), so a body starts in one; a scope entered below replaces it.
+  [[nodiscard]] auto RootScope() const -> const DeclaredScope& {
+    return scopes_->Get(hir_body_->root_scope);
   }
 
   // Whether the body being lowered reaches an object of its own. Per-instance
@@ -303,50 +299,6 @@ class ProcessLowerer {
   [[nodiscard]] auto BodyHasReceiver() const -> bool {
     return body_has_receiver_;
   }
-
-  // Resolves a HIR static-lifetime body local to the placement the planner
-  // produced during shape declaration. A compiler-bug invariant if called
-  // for a var with no placement (an automatic local).
-  [[nodiscard]] auto LookupStaticPlacement(hir::ProceduralVarId hir_id) const
-      -> StaticStoragePlacement {
-    const auto placement = storage_plan_->StaticPlacement(hir_id);
-    if (!placement.has_value()) {
-      throw InternalError(
-          "ProcessLowerer::LookupStaticPlacement: HIR procedural var has "
-          "no pre-declared static placement");
-    }
-    return *placement;
-  }
-
-  // Records that a static declaration's initializer must run in the
-  // Initialize phase. Body lowering calls this from the static-var
-  // declaration handler instead of lowering the initializer itself; the
-  // pending list is returned in the `LoweredCallable` for caller
-  // integration. The HIR `init_expr` is kept as a handle (not pre-lowered)
-  // so the dedicated initializer lowering path can lower it in the
-  // Initialize phase context.
-  void RecordPendingStaticInitializer(PendingStaticInitializer entry) {
-    pending_static_initializers_.push_back(std::move(entry));
-  }
-
-  // Hands the accumulated pending initializers to the caller (Run extracts
-  // them at the end of body lowering to fold into `LoweredCallable`).
-  [[nodiscard]] auto TakePendingStaticInitializers()
-      -> std::vector<PendingStaticInitializer> {
-    return std::move(pending_static_initializers_);
-  }
-
-  // Builds the chained MemberAccess that reaches a static-lifetime body
-  // local's storage from the current frame's `self`: starts at the
-  // enclosing class pointer, walks the placement's companion chain (queried
-  // from the procedural-scope materialization table), and ends with a
-  // FieldAccess to the storage field. The expr's type is the storage
-  // field's type read from the owner class's published shape, so an
-  // observable-wrapped static returns the wrapper itself, which the caller
-  // dereferences to reach the storage or binds a reference to.
-  [[nodiscard]] auto BuildStaticStorageAccess(
-      const WalkFrame& frame, StaticStoragePlacement placement) const
-      -> mir::Expr;
 
   // Assembles the completion-payload value a `return` should carry in the
   // subroutine being lowered: the product of the function's explicit return
@@ -368,15 +320,13 @@ class ProcessLowerer {
   const hir::ProceduralBody* hir_body_;
   std::string callable_name_;
   WalkFrame owner_ctor_frame_;
-  // Per-callable storage plan owned by the enclosing scope's lowerer;
-  // borrowed here for the body lowering's lifetime.
-  const CallableStoragePlan* storage_plan_;
+  // Owned by the enclosing declaration scope's lowerer; borrowed here for the
+  // body lowering's lifetime.
+  const DeclaredScopes* scopes_;
   // A process body always runs on the scope object that owns it; a subroutine
   // body sets this from its own form when it lowers.
   bool body_has_receiver_ = true;
-  // Body-local environment bindings, indexed by HIR procedural var id;
-  // nullopt for a static var (its placement lives on the storage plan).
-  std::vector<std::optional<ProceduralVarBinding>> bindings_;
+  base::SymbolTable<hir::ProceduralVarId, ProceduralVarBinding> bindings_;
 
   // The result type of the body being lowered, set before its body walks. It
   // is the call protocol, so every return site reads what its completion
@@ -391,11 +341,6 @@ class ProcessLowerer {
   std::vector<mir::TypeId> output_pack_types_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
-
-  // Static-initializer requests accumulated during body walk; the caller
-  // pulls them out of the returned LoweredCallable and integrates them into
-  // the Initialize phase block.
-  std::vector<PendingStaticInitializer> pending_static_initializers_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

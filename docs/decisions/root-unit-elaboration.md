@@ -50,7 +50,7 @@ $root.construct
 
 There is no separate "design-level elaboration free function" and no new unit-level free-function
 container in MIR / LIR. The top-level elaboration is the existing `construct` concept anchored at
-`$root`, realized through the existing `UnitDefinition` / `ScopeProgram` machinery. Both backends
+`$root`, realized through the existing `ScopeDefinition` / `ScopeProgram` machinery. Both backends
 lower `$root.construct` mechanically like any other `construct`; neither fabricates top
 construction.
 

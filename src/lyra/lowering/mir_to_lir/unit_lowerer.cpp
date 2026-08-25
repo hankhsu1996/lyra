@@ -1,9 +1,9 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -25,50 +25,79 @@
 namespace lyra::lowering::mir_to_lir {
 
 auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
-  for (std::size_t i = 0; i < mir_->classes.size(); ++i) {
-    if (!mir_->classes.IsDefined(mir::ClassId{static_cast<std::uint32_t>(i)})) {
+  for (const mir::ClassId id : mir_->classes.Ids()) {
+    if (!mir_->classes.IsDefined(id)) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedTypeKind,
           "mir_to_lir: undefined class in unit");
     }
   }
-  for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
-    if (!mir_->closures.IsDefined(
-            mir::ClosureId{static_cast<std::uint32_t>(i)})) {
+  for (const mir::ClosureId id : mir_->closures.Ids()) {
+    if (!mir_->closures.IsDefined(id)) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedTypeKind,
           "mir_to_lir: undefined closure in unit");
     }
   }
-  PlanFunctions();
 
-  for (std::size_t i = 0; i < mir_->classes.size(); ++i) {
-    const mir::ClassId id{static_cast<std::uint32_t>(i)};
+  // Every identity the unit will hold is taken before any body is lowered,
+  // because a body may name a function whose own body is lowered later --
+  // including itself. A closure's invoke is one function and nothing about the
+  // closure decides which, so a closure needs no answer of its own beyond it.
+  std::vector<ClassIdentities> classes;
+  classes.reserve(mir_->classes.size());
+  for (const mir::ClassId id : mir_->classes.Ids()) {
+    classes.push_back(TakeClassIdentities(mir_->GetClass(id)));
+  }
+  class_identities_ = {mir_->classes.size(), std::move(classes)};
+
+  std::vector<lir::FunctionId> closures;
+  closures.reserve(mir_->closures.size());
+  for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
+    closures.push_back(out_.functions.Declare());
+  }
+  closure_identities_ = {mir_->closures.size(), std::move(closures)};
+
+  // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
+  // is a body like any other and becomes a function of the unit. Only one this
+  // program defines does: a DPI-C import is reached as a foreign symbol and
+  // declares no body here.
+  for (const mir::CallableId id : mir_->callables.Ids()) {
+    const mir::CallableDecl& callable = mir_->callables.Get(id);
+    if (!callable.code.body.has_value()) {
+      continue;
+    }
+    auto fn =
+        FunctionLowerer(*this, callable.code, UnitCallableSymbol(callable))
+            .Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    out_.functions.Add(*std::move(fn));
+  }
+
+  for (const mir::ClassId id : mir_->classes.Ids()) {
     auto cls = LowerClass(id, mir_->GetClass(id));
     if (!cls) {
       return std::unexpected(std::move(cls.error()));
     }
-    const lir::ClassId added = out_.classes.Add(*std::move(cls));
-    if (mir_->root.has_value() && id.value == mir_->root->value) {
-      out_.root = added;
-    }
+    out_.classes.Define(class_identities_.Get(id).lir_class, *std::move(cls));
+  }
+  if (mir_->root.has_value()) {
+    out_.root = class_identities_.Get(*mir_->root).lir_class;
   }
 
   // A closure's invoke is a function like any other body's; the captures its
   // referencing site supplies arrive as its leading parameters.
-  for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
-    const mir::ClosureId id{static_cast<std::uint32_t>(i)};
-    auto fn = FunctionLowerer(
-                  *this, mir_->GetClosure(id), std::format("closure_{}", i))
-                  .Run();
+  for (const mir::ClosureId id : mir_->closures.Ids()) {
+    auto fn =
+        FunctionLowerer(
+            *this, mir_->GetClosure(id), std::format("closure_{}", id.value))
+            .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    if (out_.functions.Add(*std::move(fn)) != closure_functions_[i]) {
-      throw InternalError(
-          "mir_to_lir: a lowered function landed on an identity other than the "
-          "one planned for it");
-    }
+    out_.functions.Define(closure_identities_.Get(id), *std::move(fn));
   }
 
   // A type reached during lowering had no LIR mirror; surface it now, once the
@@ -79,25 +108,36 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   return std::move(out_);
 }
 
-void UnitLowerer::PlanFunctions() {
-  std::uint32_t next = 0;
-  class_functions_.resize(mir_->classes.size());
-  for (std::size_t i = 0; i < mir_->classes.size(); ++i) {
-    const mir::Class& cls =
-        mir_->GetClass(mir::ClassId{static_cast<std::uint32_t>(i)});
-    ClassFunctions& planned = class_functions_[i];
-    planned.constructor = lir::FunctionId{next++};
-    planned.methods.resize(cls.callables.size());
-    for (std::uint32_t c = 0; c < cls.callables.size(); ++c) {
-      if (cls.callables.Get(mir::CallableId{c}).code.body.has_value()) {
-        planned.methods[c] = lir::FunctionId{next++};
-      }
-    }
+auto UnitLowerer::UnitCallableSymbol(const mir::CallableDecl& callable) const
+    -> std::string {
+  // A foreign name is program-global and stands on its own (LRM 35.4). Every
+  // other namespace callable is unique only within its unit, while the whole
+  // program links into one name space, so the unit qualifies it -- the same
+  // reason a class qualifies the bodies it owns.
+  if (callable.foreign.has_value()) {
+    return callable.LinkedName();
   }
-  closure_functions_.reserve(mir_->closures.size());
-  for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
-    closure_functions_.push_back(lir::FunctionId{next++});
+  return std::format("{}.{}", mir_->name, callable.name);
+}
+
+auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
+    -> ClassIdentities {
+  // Only a callable this program defines becomes a function of the unit, so a
+  // bodyless one takes no function identity and answers with none.
+  std::vector<std::optional<lir::FunctionId>> methods;
+  methods.reserve(cls.callables.size());
+  ClassIdentities identities{
+      .lir_class = out_.classes.Declare(),
+      .constructor = out_.functions.Declare(),
+      .methods = {}};
+  for (const mir::CallableId callable : cls.callables.Ids()) {
+    methods.push_back(
+        cls.callables.Get(callable).code.body.has_value()
+            ? std::optional{out_.functions.Declare()}
+            : std::nullopt);
   }
+  identities.methods = {cls.callables.size(), std::move(methods)};
+  return identities;
 }
 
 auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
@@ -108,9 +148,8 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     out.base = LowerBase(*cls.base);
   }
 
-  for (std::size_t i = 0; i < cls.fields.size(); ++i) {
-    const mir::FieldDecl& field =
-        cls.fields.Get(mir::FieldId{static_cast<std::uint32_t>(i)});
+  for (const mir::FieldId id : cls.fields.Ids()) {
+    const mir::FieldDecl& field = cls.fields.Get(id);
     out.members.push_back(
         lir::Member{.name = field.name, .type = TranslateType(field.type)});
   }
@@ -118,7 +157,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // A class's bodies become functions of the unit, so each takes a name that is
   // unique across it: the owning class qualifies the body's own name, which is
   // only unique within that class.
-  const ClassFunctions& planned = class_functions_[owner.value];
+  const ClassIdentities& identities = class_identities_.Get(owner);
   auto constructor =
       FunctionLowerer(
           *this, cls.constructor.code, std::format("{}.constructor", cls.name))
@@ -126,19 +165,14 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
   }
-  if (out_.functions.Add(*std::move(constructor)) != planned.constructor) {
-    throw InternalError(
-        "mir_to_lir: a lowered function landed on an identity other than the "
-        "one planned for it");
-  }
-  out.constructor = planned.constructor;
+  out_.functions.Define(identities.constructor, *std::move(constructor));
+  out.constructor = identities.constructor;
 
   // Only a callable this program defines becomes a function: a DPI-C import is
   // reached as a foreign symbol and a pure virtual has no implementation here.
   // The interface lists the rest in arena order, so a method's position in the
   // list is the slot a dispatch indexes.
-  for (std::size_t i = 0; i < cls.callables.size(); ++i) {
-    const mir::CallableId cid{static_cast<std::uint32_t>(i)};
+  for (const mir::CallableId cid : cls.callables.Ids()) {
     const mir::CallableDecl& callable = cls.callables.Get(cid);
     if (!callable.code.body.has_value()) continue;
     auto fn =
@@ -148,31 +182,26 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    const lir::FunctionId planned_id = MethodFunction(owner, cid);
-    if (out_.functions.Add(*std::move(fn)) != planned_id) {
-      throw InternalError(
-          "mir_to_lir: a lowered function landed on an identity other than the "
-          "one planned for it");
-    }
-    out.methods.push_back(planned_id);
+    out_.functions.Define(*identities.methods.Get(cid), *std::move(fn));
+    out.methods.push_back(*identities.methods.Get(cid));
   }
   return out;
 }
 
 auto UnitLowerer::MethodFunction(
     mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId {
-  const ClassFunctions& planned = class_functions_.at(owner.value);
-  if (callable.value >= planned.methods.size() ||
-      !planned.methods[callable.value].has_value()) {
+  const std::optional<lir::FunctionId>& fn =
+      class_identities_.Get(owner).methods.Get(callable);
+  if (!fn.has_value()) {
     throw InternalError(
         "mir_to_lir: callable has no body, so it is no function of this unit");
   }
-  return *planned.methods[callable.value];
+  return *fn;
 }
 
 auto UnitLowerer::ClosureFunction(mir::ClosureId closure) const
     -> lir::FunctionId {
-  return closure_functions_.at(closure.value);
+  return closure_identities_.Get(closure);
 }
 
 auto UnitLowerer::BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId {
@@ -207,12 +236,12 @@ auto UnitLowerer::VoidType() -> lir::TypeId {
   return *void_type_;
 }
 
-auto UnitLowerer::LowerBase(const mir::ClassRef& base) -> lir::Base {
+auto UnitLowerer::LowerBase(const mir::ClassRef& base) const -> lir::Base {
   return std::visit(
       Overloaded{
-          [](const mir::IntraUnitClassRef& i) -> lir::Base {
-            return lir::Base{
-                lir::IntraUnitBase{.class_id = lir::ClassId{i.class_id.value}}};
+          [this](const mir::IntraUnitClassRef& i) -> lir::Base {
+            return lir::Base{lir::IntraUnitBase{
+                .class_id = class_identities_.Get(i.class_id).lir_class}};
           },
           [](const mir::ExternalClassRef& e) -> lir::Base {
             return lir::Base{

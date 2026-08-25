@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
+#include "lyra/mir/field.hpp"
 
 namespace lyra::mir {
 struct Class;
@@ -14,6 +16,15 @@ struct Block;
 namespace lyra::lowering::hir_to_mir {
 
 class CallableBindings;
+
+// A class the walk can name, and the identity it was minted under. Reaching one
+// is reaching the other: a reference to a member reads its type off the
+// declaration and qualifies its target with the owner, so a walk that resolved
+// only one of the two would immediately go looking for the other.
+struct EnclosingClass {
+  const mir::Class* cls = nullptr;
+  mir::ClassId id{};
+};
 
 // Singly-linked node carrying a class's parent chain so a leaf reference
 // can read the declared type of a member at `hops > 0`. Each node lives on
@@ -68,6 +79,14 @@ struct WalkFrame {
   // callable; replaced at a callable boundary.
   CallableBindings* bindings = nullptr;
 
+  // The enclosing class's borrowed handle on the name node of the procedural
+  // scope being walked. A construct that means "the scope I am in" -- the LRM
+  // 21.2.1.5 `%m` hierarchical name -- reads it off this body's `self`. Absent
+  // where the scope owns no node and where no scope is open at all; both mean
+  // the same thing to a reader, which is that the enclosing object answers for
+  // the name.
+  std::optional<mir::FieldId> scope_name_borrowed_handle;
+
   // Pushes `cls` as the current class and links the previous `current_class`
   // into the outer chain through `chain_node`, which the caller stack-allocates
   // so its lifetime spans the descent.
@@ -84,16 +103,26 @@ struct WalkFrame {
     return next;
   }
 
-  // Resolves the class at `hops`: 0 yields the current one, N walks N steps
-  // through `outer_classes`.
+  // Enters a procedural scope, adopting the name node the shape phase gave it.
+  [[nodiscard]] auto WithScopeNameBorrowedHandle(
+      std::optional<mir::FieldId> borrowed_handle) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.scope_name_borrowed_handle = borrowed_handle;
+    return next;
+  }
+
+  // The class at `hops` -- 0 is the one being written, N climbs N steps out --
+  // and the identity it was minted under. One answer, because a member
+  // reference needs both: the declaration to read the member's type off, and
+  // the owner to qualify the target with.
   [[nodiscard]] auto EnclosingClassAtHops(mir::EnclosingHops hops) const
-      -> const mir::Class& {
+      -> EnclosingClass {
     if (hops.value == 0) {
       if (current_class == nullptr) {
         throw InternalError(
             "WalkFrame::EnclosingClassAtHops: no current class");
       }
-      return *current_class;
+      return EnclosingClass{.cls = current_class, .id = current_class_id};
     }
     const ScopeChainNode* node = outer_classes;
     for (std::uint32_t step = 1; step < hops.value && node != nullptr; ++step) {
@@ -103,29 +132,7 @@ struct WalkFrame {
       throw InternalError(
           "WalkFrame::EnclosingClassAtHops: hops exceed chain depth");
     }
-    return *node->cls;
-  }
-
-  // Registry id of the class at `hops`. Used to owner-qualify a field or
-  // method target that names a member on that class's arena.
-  [[nodiscard]] auto EnclosingClassIdAtHops(mir::EnclosingHops hops) const
-      -> mir::ClassId {
-    if (hops.value == 0) {
-      if (current_class == nullptr) {
-        throw InternalError(
-            "WalkFrame::EnclosingClassIdAtHops: no current class");
-      }
-      return current_class_id;
-    }
-    const ScopeChainNode* node = outer_classes;
-    for (std::uint32_t step = 1; step < hops.value && node != nullptr; ++step) {
-      node = node->parent;
-    }
-    if (node == nullptr || node->cls == nullptr) {
-      throw InternalError(
-          "WalkFrame::EnclosingClassIdAtHops: hops exceed chain depth");
-    }
-    return node->cls_id;
+    return EnclosingClass{.cls = node->cls, .id = node->cls_id};
   }
 
   [[nodiscard]] auto WithBlock(mir::Block* block) const -> WalkFrame {

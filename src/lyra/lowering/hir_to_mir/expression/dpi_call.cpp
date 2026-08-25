@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -458,7 +459,7 @@ auto BuildBoundaryReadback(
 // The call to the foreign symbol itself, over already-marshaled arguments. The
 // callee is the linkage name in the DPI-C name space (LRM 35.4), reached by
 // name and never through a class or another unit's namespace.
-auto BuildForeignSymbolCall(
+auto MakeForeignSymbolCall(
     mir::CompilationUnit& unit, const hir::ForeignImportDecl& import,
     std::vector<mir::ExprId> carrier_args) -> mir::Expr {
   return mir::Expr{
@@ -505,7 +506,7 @@ auto LowerForeignImportInputsOnly(
   }
 
   mir::Expr foreign_call =
-      BuildForeignSymbolCall(unit, import, std::move(carrier_args));
+      MakeForeignSymbolCall(unit, import, std::move(carrier_args));
   if (!ReturnsValue(import)) {
     return foreign_call;
   }
@@ -601,7 +602,7 @@ auto PopulateForeignImportBoundary(
   }
 
   mir::Expr foreign_call =
-      BuildForeignSymbolCall(unit, import, std::move(call_args));
+      MakeForeignSymbolCall(unit, import, std::move(call_args));
   const mir::TypeId call_type = foreign_call.type;
 
   // A valued call captures its carrier result in a temp so the copy-backs run
@@ -1103,7 +1104,9 @@ auto SynthesizeForeignExportEntry(
       mir::LocalDeclStmt{.target = completion, .init = completion_source});
   const auto component_value = [&](std::size_t k) -> mir::ExprId {
     return ProjectCompletionComponent(
-        body, completion, payload_type, k, components[k].sv_type);
+        body, completion, payload_type,
+        base::ComponentIndex{static_cast<std::uint32_t>(k)},
+        components[k].sv_type);
   };
 
   // Copy each `output` / `inout` component back through its foreign pointer: a

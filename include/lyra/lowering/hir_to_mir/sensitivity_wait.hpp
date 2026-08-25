@@ -22,7 +22,7 @@ class StructuralScopeLowerer;
 // leaf's type: a plain field becomes an `AddressOf(FieldAccess(...))`, and a
 // borrowed-pointer slot (a cross-unit reference sealed in the resolve phase, or
 // another sealed pointer) is the bare `FieldAccess`.
-auto MakeValueChangeWaitStmt(
+auto BuildValueChangeWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt;

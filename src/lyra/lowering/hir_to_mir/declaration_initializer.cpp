@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 
 #include <expected>
+#include <optional>
 #include <utility>
 
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -13,17 +14,20 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto IntegratePendingStaticInitializer(
+auto IntegrateStaticInitializer(
     ProcessLowerer& process, const hir::ProceduralBody& body,
-    const WalkFrame& init_frame, const PendingStaticInitializer& pending)
+    const WalkFrame& init_frame, const StaticVarBinding& binding)
     -> diag::Result<void> {
   auto& init_block = *init_frame.current_block;
   const mir::CompilationUnit& unit = process.Owner().Unit();
+  const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(binding.var);
+  const mir::TypeId storage_type = process.Owner().TranslateType(decl.type);
 
-  const mir::ExprId target = init_block.exprs.Add(
-      process.BuildStaticStorageAccess(init_frame, pending.placement));
-  const bool target_is_observable_cell = mir::IsCapabilityWrapperType(
-      unit.types.Get(init_block.exprs.Get(target).type));
+  const mir::ExprId target =
+      init_block.exprs.Add(BuildStructuralFieldAccessExpr(
+          init_frame, unit, mir::EnclosingHops{}, binding.field));
+  const bool target_is_observable_cell =
+      unit.types.Get(init_block.exprs.Get(target).type).IsCapabilityWrapper();
 
   // An observable cell installs its declared representation and default
   // contents once at construction (LRM 10.5); a later user initializer stores
@@ -31,31 +35,30 @@ auto IntegratePendingStaticInitializer(
   // representation. The default-only case is fully expressed by that
   // installation and needs no store.
   if (target_is_observable_cell) {
-    const mir::ExprId prototype = init_block.exprs.Add(BuildDefaultValueFromHir(
-        process.Owner(), init_frame, pending.hir_type));
+    const mir::ExprId prototype = init_block.exprs.Add(
+        BuildDefaultValueFromHir(process.Owner(), init_frame, decl.type));
     init_block.AppendStmt(
         mir::ExprStmt{
             .expr = init_block.exprs.Add(
                 mir::MakeCapabilityInitializeCallExpr(
                     target, prototype, unit.builtins.void_type))});
-    if (!pending.init_expr.has_value()) {
+    if (!decl.init.has_value()) {
       return {};
     }
   }
 
   mir::ExprId init_value{};
-  if (pending.init_expr.has_value()) {
-    auto init_or =
-        process.LowerExpr(body.exprs.Get(*pending.init_expr), init_frame);
+  if (decl.init.has_value()) {
+    auto init_or = process.LowerExpr(body.exprs.Get(*decl.init), init_frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = init_block.exprs.Add(*std::move(init_or));
   } else {
-    init_value = init_block.exprs.Add(BuildDefaultValueFromHir(
-        process.Owner(), init_frame, pending.hir_type));
+    init_value = init_block.exprs.Add(
+        BuildDefaultValueFromHir(process.Owner(), init_frame, decl.type));
   }
 
   const mir::Expr assign_expr = BuildStoreExpr(
-      unit, init_block, target, init_value, std::nullopt, pending.storage_type);
+      unit, init_block, target, init_value, std::nullopt, storage_type);
   init_block.AppendStmt(
       mir::ExprStmt{.expr = init_block.exprs.Add(assign_expr)});
   return {};

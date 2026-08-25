@@ -41,7 +41,7 @@ auto BuildPackedTaggedValue(
   auto& owner = lowerer.Owner();
   auto& unit = owner.Unit();
   auto& block = *frame.current_block;
-  const auto member_width = layout.members[t.member_index].bit_width;
+  const auto member_width = layout.members[t.member_index.value].bit_width;
   const auto gap_width = layout.bit_width - layout.tag_bits - member_width;
 
   // Every run is carried in the union's own state domain, so the runs compose
@@ -52,7 +52,8 @@ auto BuildPackedTaggedValue(
   if (layout.tag_bits > 0) {
     const mir::ExprId named = block.exprs.Add(
         mir::MakeIntLiteral(
-            unit.builtins.int_type, static_cast<std::int64_t>(t.member_index)));
+            unit.builtins.int_type,
+            static_cast<std::int64_t>(t.member_index.value)));
     runs.push_back(ConvertToType(
         unit, block, named, InternFlatPacked(unit, layout.tag_bits, atom)));
   }

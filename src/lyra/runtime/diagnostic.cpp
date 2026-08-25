@@ -1,5 +1,6 @@
 #include "lyra/runtime/diagnostic.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <functional>

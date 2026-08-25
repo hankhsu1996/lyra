@@ -5,20 +5,24 @@
 #include <cstdint>
 #include <optional>
 #include <ranges>
+#include <string>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/loop_label_id.hpp"
+#include "lyra/hir/pattern_id.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/structural_hops.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 
 namespace lyra::hir {
 struct Expr;
-struct StructuralScope;
-struct ProceduralBody;
+struct Pattern;
 }  // namespace lyra::hir
 
 namespace slang::ast {
@@ -43,6 +47,29 @@ struct ScopeFrameId {
 struct ActiveIterationClause {
   const slang::ast::Symbol* element;
   hir::WithClauseId clause;
+};
+
+// A procedural scope while its own contents are still being walked. Its
+// identity is already settled -- a scope a name can reach from elsewhere is
+// minted before any body lowers, so a `disable` naming a block or task
+// (LRM 9.6.2) resolves whichever body lowers first -- but which scopes nest
+// inside it is known only once its subtree is finished; until then that lives
+// here, on the stack frame that opened it.
+struct OpenProceduralScope {
+  OpenProceduralScope(
+      hir::ProceduralScopeId id, hir::ProceduralScopeKind kind,
+      std::optional<std::string> source_name)
+      : id(id), kind(kind), source_name(std::move(source_name)) {
+  }
+
+  hir::ProceduralScopeId id;
+  hir::ProceduralScopeKind kind;
+  // Absent when the source named nothing; the stand-in is settled at sealing.
+  std::optional<std::string> source_name;
+  // Never supplied by whoever opens the scope: both fill in as the walk
+  // descends.
+  std::vector<hir::ProceduralVarId> declarations;
+  std::vector<hir::ProceduralScopeId> children;
 };
 
 // Per-recursion traversal context for AST-to-HIR. Carried by value through
@@ -96,6 +123,13 @@ struct WalkFrame {
   // entered via `WithStructuralFrame`. Null outside structural-scope handlers.
   hir::StructuralScope* current_structural_scope = nullptr;
 
+  // The registry owning the lexical procedural scopes (LRM 9.3.4) of every body
+  // declared in the enclosing declaration scope -- a structural scope or a
+  // class. Set on entry to either, so a body's scope tree is registered the
+  // same way wherever the body was declared.
+  base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>*
+      current_procedural_scopes = nullptr;
+
   // The current procedural-body write target for statement and local handlers.
   // Set when a ProcessLowerer constructs its body on the stack and entered via
   // `WithProceduralBody`. Null outside a process or subroutine body.
@@ -129,20 +163,11 @@ struct WalkFrame {
   // symbol identity. Empty outside a with-clause body.
   std::vector<ActiveIterationClause> active_iteration_clauses;
 
-  // Accumulators for the lexical procedural scope currently being built. A
-  // var-decl handler pushes its newly-minted id into the declarations
-  // vector; a nested-scope handler pushes its assembled id into the
-  // children vector. The caller that opened the scope (process root,
-  // begin/end, fork, foreach) owns the vectors and seals their contents
-  // into a `ProceduralScopeDecl` when the recursion returns.
-  //
-  // Contract: every frame that lowers procedural-body content has both
-  // accumulators set; structural-scope frames before any body opens leave
-  // them null. Handlers reached inside a body therefore dereference these
-  // unconditionally -- a null accumulator is a caller bug, not a runtime
-  // branch.
-  std::vector<hir::ProceduralVarId>* current_scope_declarations = nullptr;
-  std::vector<hir::ProceduralScopeId>* current_scope_children = nullptr;
+  // The lexical procedural scope whose contents are currently being walked.
+  // Owned by the caller that opened it; null on a frame that is not inside a
+  // procedural body, which is why a handler reached inside one dereferences it
+  // unconditionally -- a null here is a caller bug, not a runtime branch.
+  OpenProceduralScope* open_scope = nullptr;
 
   [[nodiscard]] auto Current() const -> ScopeFrameId {
     if (structural_chain.empty()) {
@@ -184,38 +209,56 @@ struct WalkFrame {
     return *current_patterns;
   }
 
-  // Pushes a new structural scope onto the chain and points
-  // current_structural_scope at the new scope. The scope is owned by the
-  // caller's stack frame (typically a Lowerer's Run); this frame just
-  // borrows it for the duration of the walk. `exprs` is the scope's expr arena,
-  // passed by the caller (which holds the complete scope type) so this header
-  // stays free of the HIR scope definition.
+  // The registry a body's lexical scopes are sealed into. Every frame that
+  // lowers procedural-body content has one; reaching it without one is a caller
+  // bug.
+  [[nodiscard]] auto ProceduralScopes() const
+      -> base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>& {
+    if (current_procedural_scopes == nullptr) {
+      throw InternalError(
+          "WalkFrame::ProceduralScopes: no procedural-scope write target");
+    }
+    return *current_procedural_scopes;
+  }
+
+  // Points the frame at the declaration scope that owns the procedural scopes
+  // of the bodies lowered below it. Called on entry to a structural scope and
+  // on entry to a class, the two declaration scopes that own bodies.
+  [[nodiscard]] auto WithProceduralScopeOwner(
+      base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>* scopes)
+      const -> WalkFrame {
+    WalkFrame next = *this;
+    next.current_procedural_scopes = scopes;
+    return next;
+  }
+
+  // Pushes a new structural scope onto the chain and makes it the write
+  // target. The scope is owned by the caller's stack frame (typically a
+  // Lowerer's Run); this frame just borrows it for the duration of the walk.
+  // The expression and pattern arenas come off the scope itself, so no caller
+  // can pair one scope with another's arenas.
   [[nodiscard]] auto WithStructuralFrame(
       ScopeFrameId child_frame, const slang::ast::Scope* slang_scope,
-      hir::StructuralScope* scope, base::Arena<hir::Expr, hir::ExprId>* exprs,
-      base::Arena<hir::Pattern, hir::PatternId>* patterns) const -> WalkFrame {
+      hir::StructuralScope* scope) const -> WalkFrame {
     WalkFrame next = *this;
     next.structural_chain.push_back(child_frame);
     next.reader_scope = slang_scope;
     next.current_structural_scope = scope;
-    next.current_exprs = exprs;
-    next.current_patterns = patterns;
+    next.current_exprs = &scope->exprs;
+    next.current_patterns = &scope->patterns;
     return next;
   }
 
-  // Sets the current procedural body. Used by ProcessLowerer::Run when it
-  // stack-allocates a hir::ProceduralBody and dispatches into it. The body
-  // pointer is unchanged for the lifetime of the process / subroutine walk;
-  // nested control flow does not push procedural bodies because HIR's
-  // procedural body is flat. `exprs` is the body's expr arena, passed by the
-  // caller for the same reason as `WithStructuralFrame`.
-  [[nodiscard]] auto WithProceduralBody(
-      hir::ProceduralBody* body, base::Arena<hir::Expr, hir::ExprId>* exprs,
-      base::Arena<hir::Pattern, hir::PatternId>* patterns) const -> WalkFrame {
+  // Makes a procedural body the write target, for the whole of a process or
+  // subroutine walk: nested control flow does not push a second body, because
+  // HIR's procedural body is flat. Its arenas come off the body for the same
+  // reason as above.
+  [[nodiscard]] auto WithProceduralBody(hir::ProceduralBody* body) const
+      -> WalkFrame {
     WalkFrame next = *this;
     next.current_procedural_body = body;
-    next.current_exprs = exprs;
-    next.current_patterns = patterns;
+    next.current_exprs = &body->exprs;
+    next.current_patterns = &body->patterns;
     return next;
   }
 
@@ -258,18 +301,41 @@ struct WalkFrame {
     return std::nullopt;
   }
 
-  // Switches the lexical scope accumulators to the pair the caller owns for
-  // the scope it just opened. The caller appends its assembled
-  // `ProceduralScopeDecl` to the structural scope's arena after the recursion
-  // returns; the resulting id is pushed into the parent scope's accumulators
-  // by the caller, not by the frame.
-  [[nodiscard]] auto WithProceduralScopeAccumulators(
-      std::vector<hir::ProceduralVarId>* declarations,
-      std::vector<hir::ProceduralScopeId>* children) const -> WalkFrame {
+  // Descends into a scope the caller just opened, so declarations and nested
+  // scopes reached below attach to it rather than to the one it nests in.
+  [[nodiscard]] auto WithOpenScope(OpenProceduralScope* scope) const
+      -> WalkFrame {
     WalkFrame next = *this;
-    next.current_scope_declarations = declarations;
-    next.current_scope_children = children;
+    next.open_scope = scope;
     return next;
+  }
+
+  // The scope the current handler's declarations belong to.
+  [[nodiscard]] auto OpenScope() const -> OpenProceduralScope& {
+    if (open_scope == nullptr) {
+      throw InternalError("WalkFrame::OpenScope: no open procedural scope");
+    }
+    return *open_scope;
+  }
+
+  // Fills a finished scope's contents into the identity minted for it and hangs
+  // it under the scope it nests in, which is the one this frame still has open.
+  // Called on the frame that was current *before* the scope opened, so being
+  // defined and being reachable from the enclosing scope are one step and
+  // neither can be forgotten. A body root has no enclosing scope and is simply
+  // defined.
+  [[nodiscard]] auto SealScope(OpenProceduralScope scope) const
+      -> hir::ProceduralScopeId {
+    ProceduralScopes().Define(
+        scope.id, hir::ProceduralScopeDecl{
+                      .kind = scope.kind,
+                      .source_name = std::move(scope.source_name),
+                      .declarations = std::move(scope.declarations),
+                      .child_scopes = std::move(scope.children)});
+    if (open_scope != nullptr) {
+      open_scope->children.push_back(scope.id);
+    }
+    return scope.id;
   }
 
   // Establishes `label` as the break target for the body being lowered. `used`

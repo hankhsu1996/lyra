@@ -113,7 +113,7 @@ auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
     case mir::RuntimeLibraryKind::kTrigger:
       return lir::RuntimeLibraryKind::kTrigger;
     case mir::RuntimeLibraryKind::kScopeProgram:
-    case mir::RuntimeLibraryKind::kUnitDefinition:
+    case mir::RuntimeLibraryKind::kScopeDefinition:
     case mir::RuntimeLibraryKind::kScopeMetadata:
     case mir::RuntimeLibraryKind::kAbiStringRef:
     case mir::RuntimeLibraryKind::kScopeExport:
@@ -254,9 +254,9 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [](const mir::EmptyType&) -> lir::TypeData {
             return lir::TypeData{lir::EmptyType{}};
           },
-          [](const mir::ObjectType& ob) -> lir::TypeData {
-            return lir::TypeData{
-                lir::ObjectType{.class_id = lir::ClassId{ob.class_id.value}}};
+          [&](const mir::ObjectType& ob) -> lir::TypeData {
+            return lir::TypeData{lir::ObjectType{
+                .class_id = class_identities_.Get(ob.class_id).lir_class}};
           },
           [](const mir::ExternalUnitObjectType& eu) -> lir::TypeData {
             return lir::TypeData{

@@ -250,7 +250,7 @@ auto RuntimeProcess::ResumeWith(
   {
     // Install the process and its owning scope as the ambient execution
     // identity for this resume. `ProcessExecutionGuard` publishes both
-    // atomically -- LRM 9.5 process identity + LRM 21.2.1.1 `%m` scope
+    // atomically -- LRM 9.5 process identity + LRM 21.2.1.5 `%m` scope
     // attribution -- and stacks via save-and-restore so a nested foreign
     // call that re-enters generated code cannot lose either identity on
     // the way back.

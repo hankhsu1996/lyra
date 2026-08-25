@@ -21,10 +21,6 @@ struct FieldId {
 // backend renders construction-time state from that statement list.
 struct FieldDecl {
   std::string name;
-  // By-name lookup key; differs from the unique physical `name` only for a
-  // generate companion, where same-name if/else arms (LRM 27.5) share one key.
-  // Empty when it equals `name`.
-  std::string source_name = {};
   TypeId type;
 };
 

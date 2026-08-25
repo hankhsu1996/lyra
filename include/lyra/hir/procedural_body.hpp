@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -27,7 +28,7 @@ struct ProceduralBody {
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Stmt, StmtId> stmts;
   base::Arena<Pattern, PatternId> patterns;
-  base::Arena<ProceduralVarDecl, ProceduralVarId> procedural_vars;
+  base::Registry<ProceduralVarDecl, ProceduralVarId> procedural_vars;
   std::uint32_t loop_label_count = 0;
 
   auto AddLoopLabel() -> LoopLabelId {
